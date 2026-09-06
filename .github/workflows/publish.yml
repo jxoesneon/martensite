@@ -45,10 +45,10 @@ jobs:
             martensite-clipboard
             martensite-dnd
             martensite-theme
+            martensite-test
             martensite-motion
             martensite-history
             martensite-l10n
-            martensite-test
             martensite
           )
           for crate in "${CRATES[@]}"; do

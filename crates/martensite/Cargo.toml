@@ -29,10 +29,6 @@ martensite-motion = { workspace = true }
 martensite-history = { workspace = true }
 martensite-l10n = { workspace = true }
 martensite-macros = { workspace = true }
-# Optional modules — gated behind features until implementations are complete.
-martensite-media = { workspace = true, optional = true }
-martensite-assets = { workspace = true, optional = true }
-martensite-devtools = { workspace = true, optional = true }
 
 [dev-dependencies]
 martensite-test = { workspace = true }
@@ -41,10 +37,6 @@ glam = { workspace = true }
 
 [features]
 default = []
-# Optional sub-crates — enabled when implementations are ready for publication.
-media = ["dep:martensite-media"]
-assets = ["dep:martensite-assets"]
-devtools = ["dep:martensite-devtools"]
 docs-rs = [
     "martensite-window/docs-rs",
     "martensite-text/docs-rs",
