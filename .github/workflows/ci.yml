@@ -15,7 +15,7 @@ jobs:
     name: Formatting & Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -28,14 +28,14 @@ jobs:
     name: Supply-Chain Gate (cargo-deny)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2.1.1
 
   test-suite:
     name: Test Suite
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Mesa Lavapipe (Software Vulkan)
         run: |
@@ -50,7 +50,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Generate Cargo.lock
         run: cargo generate-lockfile
@@ -63,7 +63,7 @@ jobs:
     name: Documentation Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Build Documentation
         run: cargo doc --workspace --no-deps --all-features
