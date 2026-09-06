@@ -487,7 +487,7 @@ fn test_runtime_context_and_scopes() {
     assert_eq!(rt_default.errors().len(), 0);
 
     let sched_default = SchedulerState::default();
-    assert_eq!(sched_default.nodes.len(), 0);
+    assert_eq!(sched_default.test_node_count(), 0);
 
     // clear_errors
     rt1.track_read_manual(s1.id(), s1.id()).unwrap_err();
@@ -568,9 +568,9 @@ fn test_full_graph_3_color_dfs_cycle_isolation() {
     state.register_source(n3);
 
     // Create cycle: n1 -> n2 -> n3 -> n1
-    state.nodes.get_mut(&n1).unwrap().subscribers.push(n2);
-    state.nodes.get_mut(&n2).unwrap().subscribers.push(n3);
-    state.nodes.get_mut(&n3).unwrap().subscribers.push(n1);
+    state.test_push_subscriber(n1, n2);
+    state.test_push_subscriber(n2, n3);
+    state.test_push_subscriber(n3, n1);
 
     // detect_cycles should catch the back-edge to Gray node, poison it, isolate the edge, and return Err
     let res = state.detect_cycles();
@@ -744,11 +744,11 @@ fn test_targeted_coverage_edge_cases() {
     state.add_dependency_link(n2, n1).unwrap();
 
     // Propagate rank increase: give n4 a higher rank and link n4 -> n1
-    state.nodes.get_mut(&n4).unwrap().rank = 10;
+    state.test_set_node_rank(n4, 10);
     state.add_dependency_link(n1, n4).unwrap();
-    assert_eq!(state.nodes.get(&n1).unwrap().rank, 11);
-    assert_eq!(state.nodes.get(&n2).unwrap().rank, 12);
-    assert_eq!(state.nodes.get(&n3).unwrap().rank, 13);
+    assert_eq!(state.test_node_rank(n1).unwrap(), 11);
+    assert_eq!(state.test_node_rank(n2).unwrap(), 12);
+    assert_eq!(state.test_node_rank(n3).unwrap(), 13);
 
     // Unregister n1 which has subscribers (hits subscribers cleanup loop)
     state.unregister_node(n1);
@@ -757,19 +757,15 @@ fn test_targeted_coverage_edge_cases() {
     state.mark_dirty_bfs(SignalId(999_999));
 
     // pop_next_pending with non-existent or clean node
-    state
-        .pending_eval_queue
-        .push(std::cmp::Reverse((1, SignalId(999_999))));
+    state.test_push_pending(1, SignalId(999_999));
     assert!(state.pop_next_pending().is_none());
 
     // pop_next_pending with a poisoned node
     let p_node = SignalId::next();
     state.register_source(p_node);
     state.poison_node(p_node);
-    state.nodes.get_mut(&p_node).unwrap().is_dirty = true;
-    state
-        .pending_eval_queue
-        .push(std::cmp::Reverse((1, p_node)));
+    state.test_set_node_dirty(p_node, true);
+    state.test_push_pending(1, p_node);
     assert!(state.pop_next_pending().is_none());
 
     // isolate_edge when nodes do not exist
@@ -780,20 +776,15 @@ fn test_targeted_coverage_edge_cases() {
     let b_id = SignalId::next();
     state.register_source(a_id);
     state.register_source(b_id);
-    state.nodes.get_mut(&a_id).unwrap().rank = 100;
-    state.nodes.get_mut(&b_id).unwrap().rank = 1;
+    state.test_set_node_rank(a_id, 100);
+    state.test_set_node_rank(b_id, 1);
     state.add_dependency_link(a_id, b_id).unwrap();
 
     // post_eval_prune when dependency node was already removed
     let p2 = SignalId::next();
     state.register_source(p2);
-    state.nodes.get_mut(&p2).unwrap().eval_epoch = 10;
-    state
-        .nodes
-        .get_mut(&p2)
-        .unwrap()
-        .dependencies
-        .push((SignalId(888_888), 1));
+    state.test_set_node_eval_epoch(p2, 10);
+    state.test_push_dependency(p2, SignalId(888_888), 1);
     state.post_eval_prune(p2);
 
     // 5. Runtime run_evaluator on poisoned node and epoch overflow
@@ -830,10 +821,10 @@ fn test_targeted_coverage_edge_cases() {
     diag.register_source(d_b);
     diag.register_source(d_c);
     diag.register_source(d_d);
-    diag.nodes.get_mut(&d_a).unwrap().subscribers.push(d_b);
-    diag.nodes.get_mut(&d_a).unwrap().subscribers.push(d_c);
-    diag.nodes.get_mut(&d_b).unwrap().subscribers.push(d_d);
-    diag.nodes.get_mut(&d_c).unwrap().subscribers.push(d_d);
+    diag.test_push_subscriber(d_a, d_b);
+    diag.test_push_subscriber(d_a, d_c);
+    diag.test_push_subscriber(d_b, d_d);
+    diag.test_push_subscriber(d_c, d_d);
     assert!(diag.detect_cycles().is_ok());
 
     // Mark dirty BFS on node whose subscribers are already dirty
@@ -854,16 +845,8 @@ fn test_targeted_coverage_edge_cases() {
     // Unregister node with dangling dependency and subscriber
     let dangling_node = SignalId::next();
     diag.register_source(dangling_node);
-    diag.nodes
-        .get_mut(&dangling_node)
-        .unwrap()
-        .dependencies
-        .push((SignalId(777_777), 1));
-    diag.nodes
-        .get_mut(&dangling_node)
-        .unwrap()
-        .subscribers
-        .push(SignalId(888_888));
+    diag.test_push_dependency(dangling_node, SignalId(777_777), 1);
+    diag.test_push_subscriber(dangling_node, SignalId(888_888));
     diag.unregister_node(dangling_node);
 
     // Hasher write &[u8]
@@ -910,15 +893,14 @@ fn test_targeted_coverage_edge_cases() {
     // pop_next_pending epoch rollover (wrapping from u32::MAX to 0 -> 1)
     let wrap_pop = SignalId::next();
     diag.register_source(wrap_pop);
-    diag.nodes.get_mut(&wrap_pop).unwrap().is_dirty = true;
-    diag.nodes.get_mut(&wrap_pop).unwrap().eval_epoch = u32::MAX;
-    diag.pending_eval_queue.clear();
-    diag.pending_eval_queue
-        .push(std::cmp::Reverse((0, wrap_pop)));
+    diag.test_set_node_dirty(wrap_pop, true);
+    diag.test_set_node_eval_epoch(wrap_pop, u32::MAX);
+    diag.test_clear_pending_queue();
+    diag.test_push_pending(0, wrap_pop);
     let popped = diag.pop_next_pending();
     assert!(popped.is_some());
     assert_eq!(popped.unwrap().1, wrap_pop);
-    assert_eq!(diag.nodes.get(&wrap_pop).unwrap().eval_epoch, 1);
+    assert_eq!(diag.test_node_eval_epoch(wrap_pop).unwrap(), 1);
 
     // Rank propagation when sub_node.rank is already strictly greater than curr_rank
     let base_node = SignalId::next();
@@ -927,11 +909,11 @@ fn test_targeted_coverage_edge_cases() {
     diag.register_source(base_node);
     diag.register_source(r_node);
     diag.register_source(s_node);
-    diag.nodes.get_mut(&s_node).unwrap().rank = 100;
+    diag.test_set_node_rank(s_node, 100);
     diag.add_dependency_link(s_node, r_node).unwrap();
     // Now trigger a rank increase on r_node from base_node that remains < 100
-    diag.nodes.get_mut(&base_node).unwrap().rank = 10;
+    diag.test_set_node_rank(base_node, 10);
     diag.add_dependency_link(r_node, base_node).unwrap();
-    assert_eq!(diag.nodes.get(&r_node).unwrap().rank, 11);
-    assert_eq!(diag.nodes.get(&s_node).unwrap().rank, 100);
+    assert_eq!(diag.test_node_rank(r_node).unwrap(), 11);
+    assert_eq!(diag.test_node_rank(s_node).unwrap(), 100);
 }

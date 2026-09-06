@@ -79,8 +79,9 @@ fn test_concurrency_stress_readers_and_arena_compaction() {
                         if len > 0 {
                             // Uniformly sample up to 32 nodes across dense storage
                             let step = (len / 32).max(1);
+                            let hot_nodes = arena_ref.hot_nodes();
                             for idx in (0..len).step_by(step) {
-                                let node = &arena_ref.hot_nodes[idx];
+                                let node = &hot_nodes[idx];
                                 let b = node.bounds;
                                 // Invariant: width must equal origin.x * 2.0, height must equal origin.y * 2.0
                                 let x_diff = (b.size.x - b.origin.x * 2.0).abs();
@@ -103,11 +104,14 @@ fn test_concurrency_stress_readers_and_arena_compaction() {
     let start_time = Instant::now();
     let mut active_ids: Vec<WidgetId> = {
         let guard = arena.read();
+        let dense_to_slot = guard.dense_to_slot();
         (0..guard.len())
             .map(|i| {
-                let slot_idx = guard.dense_to_slot[i];
-                let gen = guard.slots[slot_idx as usize].generation;
-                WidgetId::new(slot_idx, gen)
+                let slot_idx = dense_to_slot[i];
+                let gen = guard
+                    .slot_generation(slot_idx)
+                    .expect("active node must have a valid generation");
+                WidgetId::new(slot_idx, gen).unwrap()
             })
             .collect()
     };

@@ -74,15 +74,15 @@ pub struct Slot {
 /// Generational slotmap arena maintaining packed 64-byte HotNode elements alongside ColdNode storage.
 pub struct WidgetArena {
     /// Sparse slot indirection table.
-    pub slots: Vec<Slot>,
+    slots: Vec<Slot>,
     /// Dense cache-line aligned hot node records.
-    pub hot_nodes: Vec<HotNode>,
+    hot_nodes: Vec<HotNode>,
     /// Parallel cold node storage (widgets, metadata, accessibility).
-    pub cold_nodes: Vec<ColdNode>,
+    cold_nodes: Vec<ColdNode>,
     /// Reverse mapping from dense index to sparse slot index.
-    pub dense_to_slot: Vec<u32>,
+    dense_to_slot: Vec<u32>,
     /// Strict FIFO queue distributing recycled slot indices.
-    pub free_slots: VecDeque<u32>,
+    free_slots: VecDeque<u32>,
 }
 
 impl std::fmt::Debug for WidgetArena {
@@ -90,8 +90,8 @@ impl std::fmt::Debug for WidgetArena {
         f.debug_struct("WidgetArena")
             .field("len", &self.len())
             .field("capacity", &self.capacity())
-            .field("slots_len", &self.slots.len())
-            .field("free_slots_len", &self.free_slots.len())
+            .field("slots_len", &self.slot_count())
+            .field("free_slots_len", &self.free_slots_len())
             .finish()
     }
 }
@@ -135,6 +135,43 @@ impl WidgetArena {
     #[inline(always)]
     pub fn capacity(&self) -> usize {
         self.hot_nodes.capacity()
+    }
+
+    /// Return the number of sparse slot entries currently allocated.
+    #[inline(always)]
+    pub fn slot_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Return the number of recycled slot indices awaiting reuse.
+    #[inline(always)]
+    pub fn free_slots_len(&self) -> usize {
+        self.free_slots.len()
+    }
+
+    /// Return a read-only view of the dense hot node storage.
+    #[inline(always)]
+    pub fn hot_nodes(&self) -> &[HotNode] {
+        &self.hot_nodes
+    }
+
+    /// Return a read-only view of the dense-to-slot reverse mapping.
+    #[inline(always)]
+    pub fn dense_to_slot(&self) -> &[u32] {
+        &self.dense_to_slot
+    }
+
+    /// Return the generation of a sparse slot, or `None` if the slot index is out of bounds.
+    #[inline(always)]
+    pub fn slot_generation(&self, slot_idx: u32) -> Option<u32> {
+        self.slots.get(slot_idx as usize).map(|s| s.generation)
+    }
+
+    #[cfg(test)]
+    pub fn set_slot_generation_for_test(&mut self, slot_idx: u32, generation: u32) {
+        if let Some(slot) = self.slots.get_mut(slot_idx as usize) {
+            slot.generation = generation;
+        }
     }
 
     /// Check whether a widget handle is alive and points to a valid active node.
@@ -237,6 +274,7 @@ impl WidgetArena {
 
         self.dense_to_slot.push(slot_idx);
         WidgetId::new(slot_idx, self.slots[slot_idx as usize].generation)
+            .expect("generation is never zero for an active slot")
     }
 
     /// Insert a new node wrapping a boxed widget implementation with default cold metadata.
@@ -664,7 +702,10 @@ impl WidgetArena {
             if hot.parent.is_none() && hot.prev_sibling.is_none() {
                 let slot_idx = self.dense_to_slot[i];
                 let slot = self.slots[slot_idx as usize];
-                queue.push_back(WidgetId::new(slot_idx, slot.generation));
+                queue.push_back(
+                    WidgetId::new(slot_idx, slot.generation)
+                        .expect("generation is never zero for an active slot"),
+                );
             }
         }
         BreadthFirstIter { arena: self, queue }
@@ -851,7 +892,8 @@ impl<'a> Iterator for DepthFirstIter<'a> {
 
             let slot_idx = self.arena.dense_to_slot[dense_idx];
             let slot = self.arena.slots[slot_idx as usize];
-            let id = WidgetId::new(slot_idx, slot.generation);
+            let id = WidgetId::new(slot_idx, slot.generation)
+                .expect("generation is never zero for an active slot");
             let hot = &self.arena.hot_nodes[dense_idx];
 
             if hot.parent.is_none() && hot.prev_sibling.is_none() {

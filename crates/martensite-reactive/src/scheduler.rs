@@ -66,17 +66,15 @@ pub type FastBuildHasher = std::hash::BuildHasherDefault<FastHasher>;
 /// Internal scheduler state managing DAG topologies, dirty bitsets, and evaluation priority queues.
 pub struct SchedulerState {
     /// Node map indexing all reactive records.
-    pub nodes: HashMap<SignalId, NodeRecord, FastBuildHasher>,
+    pub(crate) nodes: HashMap<SignalId, NodeRecord, FastBuildHasher>,
     /// Phase 2 priority queue sorted strictly by ascending topological depth rank.
-    pub pending_eval_queue: BinaryHeap<Reverse<(u32, SignalId)>>,
+    pub(crate) pending_eval_queue: BinaryHeap<Reverse<(u32, SignalId)>>,
     /// Pre-allocated reusable queue for Phase 1 breadth-first dirty marking.
-    pub push_queue: VecDeque<SignalId>,
+    pub(crate) push_queue: VecDeque<SignalId>,
     /// Pre-allocated reusable queue for topological rank propagation.
-    pub rank_queue: VecDeque<SignalId>,
-    /// Active batch transaction nesting counter.
-    pub batch_depth: usize,
+    pub(crate) rank_queue: VecDeque<SignalId>,
     /// Cumulative log of runtime and cycle errors.
-    pub errors: Vec<ReactiveError>,
+    pub(crate) errors: Vec<ReactiveError>,
 }
 
 impl Default for SchedulerState {
@@ -93,7 +91,6 @@ impl SchedulerState {
             pending_eval_queue: BinaryHeap::with_capacity(128),
             push_queue: VecDeque::with_capacity(64),
             rank_queue: VecDeque::with_capacity(64),
-            batch_depth: 0,
             errors: Vec::new(),
         }
     }
@@ -447,5 +444,87 @@ impl SchedulerState {
             node.color = NodeColor::Black;
         }
         Ok(())
+    }
+
+    // --- Test support helpers (do not use in production code) ---
+
+    /// Returns the number of registered node records.
+    #[doc(hidden)]
+    pub fn test_node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Returns `true` if a node record exists for `id`.
+    #[doc(hidden)]
+    pub fn test_node_exists(&self, id: SignalId) -> bool {
+        self.nodes.contains_key(&id)
+    }
+
+    /// Returns the topological rank of `id`, if it exists.
+    #[doc(hidden)]
+    pub fn test_node_rank(&self, id: SignalId) -> Option<u32> {
+        self.nodes.get(&id).map(|n| n.rank)
+    }
+
+    /// Sets the topological rank of `id`.
+    #[doc(hidden)]
+    pub fn test_set_node_rank(&mut self, id: SignalId, rank: u32) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.rank = rank;
+        }
+    }
+
+    /// Returns the eval epoch of `id`, if it exists.
+    #[doc(hidden)]
+    pub fn test_node_eval_epoch(&self, id: SignalId) -> Option<u32> {
+        self.nodes.get(&id).map(|n| n.eval_epoch)
+    }
+
+    /// Sets the dirty flag of `id`.
+    #[doc(hidden)]
+    pub fn test_set_node_dirty(&mut self, id: SignalId, dirty: bool) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.is_dirty = dirty;
+        }
+    }
+
+    /// Sets the eval epoch of `id`.
+    #[doc(hidden)]
+    pub fn test_set_node_eval_epoch(&mut self, id: SignalId, epoch: u32) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.eval_epoch = epoch;
+        }
+    }
+
+    /// Adds `subscriber` to `id`'s subscriber list without validation.
+    #[doc(hidden)]
+    pub fn test_push_subscriber(&mut self, id: SignalId, subscriber: SignalId) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            if !node.subscribers.contains(&subscriber) {
+                node.subscribers.push(subscriber);
+            }
+        }
+    }
+
+    /// Adds `dependency` to `id`'s dependency list without validation.
+    #[doc(hidden)]
+    pub fn test_push_dependency(&mut self, id: SignalId, dependency: SignalId, epoch: u32) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            if !node.dependencies.iter().any(|(d, _)| *d == dependency) {
+                node.dependencies.push((dependency, epoch));
+            }
+        }
+    }
+
+    /// Clears the pending evaluation queue.
+    #[doc(hidden)]
+    pub fn test_clear_pending_queue(&mut self) {
+        self.pending_eval_queue.clear();
+    }
+
+    /// Pushes a pending evaluation entry onto the queue.
+    #[doc(hidden)]
+    pub fn test_push_pending(&mut self, rank: u32, id: SignalId) {
+        self.pending_eval_queue.push(Reverse((rank, id)));
     }
 }

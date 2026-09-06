@@ -17,15 +17,14 @@ mod suite {
 
     #[test]
     fn test_widget_id_lifecycle() {
-        let id = WidgetId::new(42, 100);
+        let id = WidgetId::new(42, 100).unwrap();
         assert_eq!(id.slot_idx(), 42);
         assert_eq!(id.generation(), 100);
         assert_eq!(id.to_u64(), (100u64 << 32) | 42u64);
 
-        // Generation 0 is adjusted to 1
+        // Generation 0 is invalid and must be rejected
         let id_zero = WidgetId::new(5, 0);
-        assert_eq!(id_zero.generation(), 1);
-        assert_eq!(id_zero.slot_idx(), 5);
+        assert!(id_zero.is_none());
 
         // u64 conversions
         let raw = id.to_u64();
@@ -162,7 +161,7 @@ mod suite {
         assert!(arena.is_alive(id2));
 
         // Dead ID checks
-        let fake_id = WidgetId::new(999, 1);
+        let fake_id = WidgetId::new(999, 1).unwrap();
         assert!(!arena.is_alive(fake_id));
         assert!(arena.get_hot(fake_id).is_none());
         assert!(arena.get_cold(fake_id).is_none());
@@ -479,15 +478,15 @@ mod suite {
         let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
 
         // Manually set generation to u32::MAX to simulate near-overflow
-        let slot_idx = id.slot_idx() as usize;
-        arena.slots[slot_idx].generation = u32::MAX;
-        let max_gen_id = WidgetId::new(id.slot_idx(), u32::MAX);
+        let slot_idx = id.slot_idx();
+        arena.set_slot_generation_for_test(slot_idx, u32::MAX);
+        let max_gen_id = WidgetId::new(slot_idx, u32::MAX).unwrap();
 
         assert!(arena.is_alive(max_gen_id));
 
         // Remove node: generation must wrap to 1, skipping 0
         arena.remove(max_gen_id);
-        assert_eq!(arena.slots[slot_idx].generation, 1);
+        assert_eq!(arena.slot_generation(slot_idx), Some(1));
         assert!(!arena.is_alive(max_gen_id));
 
         // Next allocation of this slot gets generation 1
@@ -563,7 +562,7 @@ mod suite {
         assert_eq!(c1_visited, vec![c1, g1, g2]);
 
         // Dead handle returns empty
-        let dead = WidgetId::new(999, 1);
+        let dead = WidgetId::new(999, 1).unwrap();
         assert_eq!(arena.iter_subtree(dead).next(), None);
     }
 
@@ -631,9 +630,7 @@ mod suite {
         arena.shrink_to_fit_idle();
 
         assert_eq!(arena.len(), 20);
-        assert_eq!(arena.hot_nodes.capacity(), 20);
-        assert_eq!(arena.cold_nodes.capacity(), 20);
-        assert_eq!(arena.dense_to_slot.capacity(), 20);
+        assert_eq!(arena.capacity(), 20);
 
         // Verify surviving 20 widgets remain fully intact
         for id in ids {
@@ -641,9 +638,11 @@ mod suite {
         }
 
         // Complete purge
-        for id in arena.dense_to_slot.clone() {
-            let gen = arena.slots[id as usize].generation;
-            arena.remove(WidgetId::new(id, gen));
+        let ids_to_remove: Vec<u32> = arena.dense_to_slot().to_vec();
+        for &id in &ids_to_remove {
+            if let Some(gen) = arena.slot_generation(id) {
+                arena.remove(WidgetId::new(id, gen).unwrap());
+            }
         }
         arena.shrink_to_fit_idle();
         assert_eq!(arena.len(), 0);
@@ -797,8 +796,8 @@ mod suite {
 
     #[test]
     fn test_error_display_and_formatting() {
-        let dummy_id = WidgetId::new(1, 1);
-        let dummy_id2 = WidgetId::new(2, 1);
+        let dummy_id = WidgetId::new(1, 1).unwrap();
+        let dummy_id2 = WidgetId::new(2, 1).unwrap();
 
         let errs = vec![
             ArenaError::InvalidNode(dummy_id),
@@ -856,7 +855,7 @@ mod suite {
     fn test_coverage_edge_cases() {
         // WidgetArena default
         let mut arena = WidgetArena::default();
-        let dead = WidgetId::new(999, 1);
+        let dead = WidgetId::new(999, 1).unwrap();
         let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         // Remove id to create an expired generation handle with existing slot
         arena.remove(id);
@@ -993,5 +992,111 @@ mod suite {
         w.paint(&mut crate::widget::PaintContext {});
         let mut node = accesskit::NodeBuilder::new(accesskit::Role::GenericContainer).build();
         w.accessibility(&mut node);
+    }
+
+    #[test]
+    fn test_arena_randomized_10m_operations() {
+        // Deterministic fuzz stress test: 10,000,000 random insert / dereference / remove
+        // operations against WidgetArena, verifying generational integrity and no panics.
+        const TOTAL_OPS: usize = 10_000_000;
+
+        let mut arena = WidgetArena::with_capacity(1024);
+        let mut active: Vec<WidgetId> = Vec::with_capacity(4096);
+        let mut rng: u64 = 0x1234_5678_9ABC_DEF0;
+
+        // Use a simple LCG to keep the test self-contained and reproducible.
+        let mut next_rand = || {
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            rng
+        };
+
+        let mut inserts = 0usize;
+        let mut derefs = 0usize;
+        let mut removes = 0usize;
+
+        for op_idx in 0..TOTAL_OPS {
+            let op = next_rand() % 100;
+            match op {
+                0..=49 => {
+                    // 50% inserts
+                    let val = (next_rand() % 1000) as f32 + 1.0;
+                    let hot = HotNode {
+                        bounds: Rect::new(val, val, val * 2.0, val * 2.0),
+                        ..HotNode::default()
+                    };
+                    let id = arena.insert(hot, ColdNode::default());
+                    assert!(arena.is_alive(id));
+                    active.push(id);
+                    inserts += 1;
+                }
+                50..=79 => {
+                    // 30% dereferences
+                    if !active.is_empty() {
+                        let idx = (next_rand() as usize) % active.len();
+                        let id = active[idx];
+                        if let Some(hot) = arena.get_hot(id) {
+                            let b = hot.bounds;
+                            let x_diff = (b.size.x - b.origin.x * 2.0).abs();
+                            let y_diff = (b.size.y - b.origin.y * 2.0).abs();
+                            assert!(
+                                x_diff <= 1e-3 && y_diff <= 1e-3,
+                                "torn or corrupted bounds on active id {:?}",
+                                id
+                            );
+                            assert!(arena.is_alive(id));
+                            derefs += 1;
+                        }
+                    }
+                }
+                _ => {
+                    // 20% removals
+                    if !active.is_empty() {
+                        let idx = (next_rand() as usize) % active.len();
+                        let id = active.swap_remove(idx);
+                        assert!(
+                            arena.is_alive(id),
+                            "active list must only contain live handles"
+                        );
+                        let removed = arena.remove(id);
+                        assert!(removed.is_some(), "remove must succeed for a live handle");
+                        assert!(!arena.is_alive(id), "removed handle must become stale");
+                        removes += 1;
+                    }
+                }
+            }
+
+            // Trigger periodic compaction every 1M operations.
+            if op_idx % 1_000_000 == 0 {
+                arena.shrink_to_fit_idle();
+            }
+        }
+
+        // All handles that remain in `active` must still be valid.
+        for &id in &active {
+            assert!(arena.is_alive(id), "remaining active handle must be alive");
+        }
+
+        // Drain the arena and confirm every handle becomes stale after removal.
+        for id in active.drain(..) {
+            assert!(arena.is_alive(id));
+            assert!(arena.remove(id).is_some());
+            assert!(!arena.is_alive(id));
+        }
+
+        println!(
+            "10M fuzz ops: {} inserts, {} derefs, {} removes, final_len={}",
+            inserts,
+            derefs,
+            removes,
+            arena.len()
+        );
+
+        assert_eq!(
+            arena.len(),
+            0,
+            "arena must be empty after draining active handles"
+        );
     }
 }

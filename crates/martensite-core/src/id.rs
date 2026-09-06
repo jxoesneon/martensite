@@ -8,14 +8,17 @@ pub struct WidgetId(NonZeroU64);
 
 impl WidgetId {
     /// Create a new WidgetId from slot index and generation.
-    /// Generation 0 is automatically adjusted to 1 to guarantee non-zero invariant.
+    ///
+    /// Returns `None` if `generation` is zero, preserving generation zero as an invalid sentinel.
     #[inline(always)]
-    pub const fn new(slot_idx: u32, generation: u32) -> Self {
-        let gen = if generation == 0 { 1 } else { generation };
-        let val = ((gen as u64) << 32) | (slot_idx as u64);
+    pub const fn new(slot_idx: u32, generation: u32) -> Option<Self> {
+        if generation == 0 {
+            return None;
+        }
+        let val = ((generation as u64) << 32) | (slot_idx as u64);
         match NonZeroU64::new(val) {
-            Some(nz) => Self(nz),
-            None => panic!("WidgetId invariant violated: value cannot be zero"),
+            Some(nz) => Some(Self(nz)),
+            None => None,
         }
     }
 
