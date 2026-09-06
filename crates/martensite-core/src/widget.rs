@@ -27,7 +27,8 @@ pub struct AccessibilityContext {}
 pub trait Widget: Send + Sync + 'static {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2;
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect);
-    fn event(&mut self, cx: &mut EventContext) -> EventResponse { EventResponse::Ignored }
-    fn accessibility(&self, node: &mut AccessKitNode) {}
-    fn paint(&self, cx: &mut PaintContext) {}
+    fn event(&mut self, _cx: &mut EventContext) -> EventResponse { EventResponse::Ignored }
+    fn accessibility(&self, _node: &mut AccessKitNode) {}
+    fn paint(&self, _cx: &mut PaintContext) {}
 }
+

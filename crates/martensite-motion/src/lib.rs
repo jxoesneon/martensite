@@ -49,4 +49,15 @@ impl SpringSolver {
         let v = decay * (c2 - self.omega0 * (c1 + c2 * t));
         (self.target + x, v)
     }
+
+    #[inline]
+    pub fn config(&self) -> SpringConfig {
+        self.config
+    }
+
+    #[inline]
+    pub fn damping_ratio(&self) -> f32 {
+        self.zeta
+    }
 }
+
