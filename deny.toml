@@ -43,9 +43,7 @@ deny = [
     { name = "libsqlite3-sys" },
 ]
 skip = [
-    { name = "libc" },
     { name = "windows-sys" },
-    { name = "windows-targets" },
 ]
 
 [sources]
