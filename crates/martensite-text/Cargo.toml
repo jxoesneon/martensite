@@ -10,3 +10,4 @@ description = "HarfBuzz shaping, BiDi, font fallback, and sub-pixel IME projecti
 [dependencies]
 martensite-core = { workspace = true }
 winit = { workspace = true }
+cosmic-text = { workspace = true }
