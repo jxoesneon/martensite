@@ -48,8 +48,8 @@ martensite-layout = { version = "0.0.1", path = "crates/martensite-layout" }
 martensite-wgpu = { version = "0.0.1", path = "crates/martensite-wgpu" }
 martensite-render = { version = "0.0.1", path = "crates/martensite-render" }
 martensite-text = { version = "0.0.2", path = "crates/martensite-text" }
-martensite-access = { version = "0.0.1", path = "crates/martensite-access" }
-martensite-window = { version = "0.0.1", path = "crates/martensite-window" }
+martensite-access = { version = "0.0.2", path = "crates/martensite-access" }
+martensite-window = { version = "0.0.2", path = "crates/martensite-window" }
 martensite-focus = { version = "0.0.1", path = "crates/martensite-focus" }
 martensite-clipboard = { version = "0.0.1", path = "crates/martensite-clipboard" }
 martensite-dnd = { version = "0.0.1", path = "crates/martensite-dnd" }
