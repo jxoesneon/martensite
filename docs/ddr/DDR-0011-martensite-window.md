@@ -47,10 +47,33 @@ pub struct WindowManager {
 ```
 
 ### 4. VSync & Presentation Strategy
-- **macOS/Windows**: Default to `PresentMode::Fifo` (VSync). For latency-critical apps, allow fallback to `Mailbox`.
-- **Linux (Wayland/X11)**: `PresentMode::Fifo`. `Immediate` is disabled by default to prevent tearing.
-- **Error Condition - Surface Lost**: If `SurfaceError::Lost` or `SurfaceError::Outdated` is returned during `surface.get_current_texture()`, the swapchain must be immediately reconfigured via `surface.configure` before the next frame.
-- **Error Condition - Out of Memory**: If `SurfaceError::OutOfMemory` is returned, a critical panic is executed as the process environment is irrecoverable.
+
+Default on all platforms is `PresentMode::Fifo` (compositor-controlled VSync). This satisfies Law III: 0.00% GPU usage at idle.
+
+**`PresentMode::Immediate` opt-in (Sovereign Architect decision, 2026-09-06):**  
+Applications with latency-critical rendering requirements (audio workstations, financial UIs, game-adjacent tools) may opt in to `Immediate` presentation via the `App::build()` API:
+
+```rust
+App::build()
+    .present_mode(PresentMode::Immediate) // developer owns the power regression
+    .run(|cx| { ... })
+```
+
+This is an **explicit contract**: the caller acknowledges that `Immediate` mode may cause:
+- Tearing artifacts on Wayland compositors that do not support it
+- GPU spin at rates exceeding display refresh (violates Law III — intentional override)
+- Increased power draw on battery-powered devices
+
+`PresentMode::Immediate` is **never the framework default** and is never set implicitly. If the compositor rejects it, `wgpu` falls back to `Fifo` automatically; no panic.
+
+**Platform notes:**
+- **macOS (Metal)**: No tearing; `Immediate` maps to `CAMetalLayer.displaySyncEnabled = false`.
+- **Windows (DX12)**: Tearing possible on non-G-Sync displays; user accepts this.
+- **Linux (Wayland)**: Compositor-dependent. Many reject `Immediate`; graceful `Fifo` fallback applies.
+- **Linux (X11)**: `Immediate` supported; tearing on non-TearFree displays.
+
+**Error Condition — Surface Lost**: `SurfaceError::Lost` or `SurfaceError::Outdated` → reconfigure surface before next frame (see DDR-0003 for full resurrection protocol).  
+**Error Condition — Out of Memory**: `SurfaceError::OutOfMemory` → fatal panic; environment is irrecoverable.
 
 ### 5. DPI Handling
 Per-monitor DPI changes emit `WindowEvent::ScaleFactorChanged`. 
