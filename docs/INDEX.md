@@ -137,40 +137,11 @@ Each DDR specifies a crate's internal algorithms, data structures, and invariant
 
 ---
 
-## Architecture & Verification Audits
+## Architecture Hardening & Verification
 
-Comprehensive pre-implementation audit suite across all subsystem domains:
+Comprehensive architecture review and hardening plan across all subsystem domains:
 
-### Master Hardening Plan
-- [audits/SYNTHESIS_AND_HARDENING_PLAN.md](audits/SYNTHESIS_AND_HARDENING_PLAN.md) — Synthesis and verification plan
-
-### Round 1 — Architecture Verification & Hardening
-* **Vulnerability Analysis**:
-  - [audits/REDTEAM_01_MEMORY_AND_ARENA.md](audits/REDTEAM_01_MEMORY_AND_ARENA.md) — HotNode 64B proof, niche optimization, compaction hazards
-  - [audits/REDTEAM_02_REACTIVE_DAG.md](audits/REDTEAM_02_REACTIVE_DAG.md) — Dynamic dependencies, release cycle detection, batch isolation
-  - [audits/REDTEAM_03_GEOMETRY_AND_RENDER.md](audits/REDTEAM_03_GEOMETRY_AND_RENDER.md) — O(N²) text caching, modal resize loop, GPU TDR recovery
-  - [audits/REDTEAM_04_OS_AND_MEDIA.md](audits/REDTEAM_04_OS_AND_MEDIA.md) — Wayland presentation, P010 HDR blending, kinetic IME tracking
-  - [audits/REDTEAM_05_API_AND_CONSTITUTION.md](audits/REDTEAM_05_API_AND_CONSTITUTION.md) — Dynamic value binding, IntoValue<T>, plugin frame budgets
-* **Fortifications & Proofs**:
-  - [audits/BLUETEAM_01_MEMORY_AND_ARENA.md](audits/BLUETEAM_01_MEMORY_AND_ARENA.md) — 64B cache line proof, NonZero niche guarantees, RAII FrameGuard, MADV_FREE immunity
-  - [audits/BLUETEAM_02_REACTIVE_DAG.md](audits/BLUETEAM_02_REACTIVE_DAG.md) — Epoch-based edge GC, glitch-free diamond BFS-pull batching, depth limits
-  - [audits/BLUETEAM_03_GEOMETRY_AND_RENDER.md](audits/BLUETEAM_03_GEOMETRY_AND_RENDER.md) — Width-bucketed LRU text shaping cache, synchronous modal resize FSM, GPU TDR recovery
-  - [audits/BLUETEAM_04_OS_AND_MEDIA.md](audits/BLUETEAM_04_OS_AND_MEDIA.md) — Typestate Wayland degradation, 203-nit linear HDR blending, velocity-projected IME positioning
-  - [audits/BLUETEAM_05_API_AND_CONSTITUTION.md](audits/BLUETEAM_05_API_AND_CONSTITUTION.md) — PropValue<T> dynamic signal binding, EventContext isolation, memory ring-buffers
-
-### Round 2 — Verification Convergence
-* **Follow-up Analysis**:
-  - [audits/REDTEAM_R2_01_MEMORY.md](audits/REDTEAM_R2_01_MEMORY.md) — LIFO rapid generation wrap, FrameGuard unwind panic safety, endianness
-  - [audits/REDTEAM_R2_02_REACTIVE.md](audits/REDTEAM_R2_02_REACTIVE.md) — Async across epochs, deep linear DAG false positives, pure-safe Rust MVCC
-  - [audits/REDTEAM_R2_03_GEOMETRY.md](audits/REDTEAM_R2_03_GEOMETRY.md) — Global LRU thrashing on >1024 text nodes, modal resize GPU stall, post-TDR re-binding
-  - [audits/REDTEAM_R2_04_OS_AND_MEDIA.md](audits/REDTEAM_R2_04_OS_AND_MEDIA.md) — Low-nit SDR screen crushing, kinetic IME velocity discontinuities, singular matrix inversion
-  - [audits/REDTEAM_R2_05_API_AND_CONSTITUTION.md](audits/REDTEAM_R2_05_API_AND_CONSTITUTION.md) — Monomorphization bloat, host ring-buffer memory validation, async task zombie writes
-* **Convergence Proofs & Mitigations**:
-  - [audits/BLUETEAM_R2_01_MEMORY.md](audits/BLUETEAM_R2_01_MEMORY.md) — FIFO freelist (1+ yr wrap immunity), FrameFence timeout lease, endianness neutrality
-  - [audits/BLUETEAM_R2_02_REACTIVE.md](audits/BLUETEAM_R2_02_REACTIVE.md) — 3-Color DFS active-path cycle detection (0 false positives), pure sync memo contract, ArcSwap
-  - [audits/BLUETEAM_R2_03_GEOMETRY.md](audits/BLUETEAM_R2_03_GEOMETRY.md) — Hierarchical two-tier text cache, non-blocking modal resize pump, device epoch invalidation
-  - [audits/BLUETEAM_R2_04_OS_AND_MEDIA.md](audits/BLUETEAM_R2_04_OS_AND_MEDIA.md) — Adaptive display white level query, damped velocity projection, singular determinant guards
-  - [audits/BLUETEAM_R2_05_API_AND_CONSTITUTION.md](audits/BLUETEAM_R2_05_API_AND_CONSTITUTION.md) — PropValue<T> callsite conversion (zero bloat), atomic ring-buffer sanitizer, WeakWidgetId
+- [HARDENING_PLAN.md](HARDENING_PLAN.md) — Architecture Review Synthesis & Hardening Plan (Memory, Reactivity, Geometry, Media, and Public API Invariants)
 
 ---
 

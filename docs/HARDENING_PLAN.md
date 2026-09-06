@@ -25,7 +25,7 @@ Each identified area has been addressed with verified architectural solutions.
 
 ## 2. Review Findings & Mitigations
 
-### Section 1: Memory, Arena & Compaction (`REDTEAM_01_MEMORY_AND_ARENA.md`)
+### Section 1: Memory, Arena & Compaction
 
 * **Finding 1.1: `HotNode` 64-Byte Cache Line Packing**
   * *Analysis*: `WidgetId` was originally defined with two raw `u32` fields (`slot_idx`, `generation`). Because `WidgetId` lacked a niche value, `Option<WidgetId>` consumed 12 bytes. With 4 tree pointers in `HotNode`, plus `bounds` (16B), `layout_id` (8B), `flags` (4B), and `layer_depth` (4B), size reached 80 bytes. `#[repr(C, align(64))]` padded the struct to **128 bytes**, reducing L1 cache efficiency.
@@ -39,7 +39,7 @@ Each identified area has been addressed with verified architectural solutions.
 
 ---
 
-### Section 2: Reactive DAG & Concurrency (`REDTEAM_02_REACTIVE_DAG.md`)
+### Section 2: Reactive DAG & Concurrency
 
 * **Finding 2.1: Dynamic Dependency Graph Subscriptions**
   * *Analysis*: Branching derived state (e.g. `if toggle.get() { a.get() } else { b.get() }`) can retain subscriptions to inactive branches, causing unnecessary re-evaluations.
@@ -53,7 +53,7 @@ Each identified area has been addressed with verified architectural solutions.
 
 ---
 
-### Section 3: Geometry & Rendering Pipeline (`REDTEAM_03_GEOMETRY_AND_RENDER.md`)
+### Section 3: Geometry & Rendering Pipeline
 
 * **Finding 3.1: Text Measurement Caching**
   * *Analysis*: Taffy queries intrinsic text measurements multiple times for min/max/fit bounds during flexbox and grid resolution. Re-shaping text on every query causes CPU overhead in nested layouts.
@@ -67,7 +67,7 @@ Each identified area has been addressed with verified architectural solutions.
 
 ---
 
-### Section 4: OS Boundary & Hardware Media (`REDTEAM_04_OS_AND_MEDIA.md`)
+### Section 4: OS Boundary & Hardware Media
 
 * **Finding 4.1: Wayland Presentation Mode Negotiation**
   * *Analysis*: If `PresentMode::Immediate` is requested but unsupported by the Wayland compositor, surface acquisition must avoid busy-wait loops.
@@ -84,7 +84,7 @@ Each identified area has been addressed with verified architectural solutions.
 
 ---
 
-### Section 5: API Ergonomics & Design Standards (`REDTEAM_05_API_AND_CONSTITUTION.md`)
+### Section 5: API Ergonomics & Design Standards
 
 * **Finding 5.1: Dynamic Value Binding in Modifiers**
   * *Analysis*: If component functions execute once during initial tree construction, modifier chains require a mechanism to bind reactive signals.
