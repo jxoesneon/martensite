@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-rust-version = "1.89"
+rust-version = "1.89.0"
 name = "martensite-cosmic-text"
 version = "0.19.0-martensite.1"
 authors = ["Jeremy Soller <jeremy@system76.com>"]

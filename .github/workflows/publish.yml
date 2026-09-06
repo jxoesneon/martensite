@@ -93,7 +93,11 @@ jobs:
             echo "[$(date -u +%H:%M:%S)] Publishing $crate..."
             while true; do
               log="/tmp/publish_${crate}.log"
-              if cargo publish -p "$crate" > "$log" 2>&1; then
+              # Use --no-verify for the initial release because workspace
+              # path dependencies are published sequentially and may not
+              # yet be visible in the crates.io index when the next crate
+              # is verified. Build validation is done by CI test/clippy jobs.
+              if cargo publish -p "$crate" --no-verify > "$log" 2>&1; then
                 echo "[$(date -u +%H:%M:%S)] $crate published."
                 break
               fi
@@ -119,7 +123,7 @@ jobs:
               cat "$log"
               exit 1
             done
-            # Wait between publishes to avoid rate limiting.
-            sleep 120
+            # Wait between publishes for crates.io index propagation.
+            sleep 180
           done
           echo "[$(date -u +%H:%M:%S)] All crates published."
