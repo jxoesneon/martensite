@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Unified internal scenegraph and cross-OS native drag-and-drop subsystem."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

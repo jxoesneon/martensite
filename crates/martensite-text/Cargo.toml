@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "HarfBuzz shaping, BiDi, font fallback, and sub-pixel IME projection via cosmic-text."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

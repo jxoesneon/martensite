@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Declarative procedural widget macros for Martensite."
+readme = "README.md"
 
 [lib]
 proc-macro = true

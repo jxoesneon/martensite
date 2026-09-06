@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Virtual file system (VFS), AOT naga shader validation, and dynamic texture streaming."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

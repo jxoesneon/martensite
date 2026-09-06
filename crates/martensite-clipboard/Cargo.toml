@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Multi-MIME delayed rendering clipboard engine (OLE, Cocoa, Wayland, X11)."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Fine-grained push-pull reactive signal DAG for Martensite."
+readme = "README.md"
 
 [dependencies]
 smallvec = { workspace = true }

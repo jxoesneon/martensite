@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "W3C CSS Flexbox, Grid, and Block layout bridge via Taffy for Martensite."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

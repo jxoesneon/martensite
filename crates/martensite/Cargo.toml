@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "A retained-mode, GPU-accelerated graphical user interface framework for Rust."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

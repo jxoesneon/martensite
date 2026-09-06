@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "2D spatial projected-beam navigation, modal focus traps, and SDF focus rings."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Headless CI mock windowing, deterministic virtual clock, and perceptual diffing."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

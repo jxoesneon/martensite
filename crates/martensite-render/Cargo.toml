@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Hardware-agnostic PaintList command stream and TinySkia CPU fallback backend."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

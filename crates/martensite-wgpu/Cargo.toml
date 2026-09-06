@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Compute-centric 2D GPU rasterization and self-healing WGPU device pipeline."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

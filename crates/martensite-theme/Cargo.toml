@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Semantic design tokens, Oklab perceptual uniform GPU blending, and 150ms spring transitions."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

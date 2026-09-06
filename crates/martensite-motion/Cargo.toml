@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Closed-form analytical damped harmonic oscillator spring physics solver."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

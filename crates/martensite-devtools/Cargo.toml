@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Tracing spans, Tracy/Chrome GPU timestamps, and in-app F12 developer HUD."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

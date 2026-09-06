@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Universal transactional undo/redo ledger and non-linear LCA branching tree."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

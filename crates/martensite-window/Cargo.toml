@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Winit multi-window management, fractional DPI scaling, and decoupled VSync."
+readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }

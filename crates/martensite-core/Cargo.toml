@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Generational slotmap arena, widget traits, and node graph for Martensite."
+readme = "README.md"
 
 [dependencies]
 martensite-reactive = { workspace = true }
