@@ -43,7 +43,7 @@
 //! - [`l10n`] — Localization via Fluent
 //! - [`devtools`] — Developer tooling (optional, enable `devtools` feature)
 //! - [`macros`] — Procedural macros
-//! - [`mod@test`] — Testing utilities (dev-dependency only)
+//! - Testing utilities are available via the `martensite-test` dev-dependency.
 #![forbid(unsafe_code)]
 
 pub use martensite_access as access;
