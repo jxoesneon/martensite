@@ -9,7 +9,7 @@ Official Dart and Flutter bindings for **Martensite**, the retained-mode, GPU-ac
 ## Features
 
 * **Sub-Millisecond Native Bridge**: Direct zero-copy FFI integration between the Dart VM and Martensite native memory arenas.
-* **Diffusionless Reactive Signals**: Synchronized push-pull signal graph bridging Dart streams and Rust signals.
+* **Fine-Grained Reactive Signals**: Synchronized push-pull signal graph bridging Dart streams and Rust signals.
 * **100% Platform Parity**: Native hardware acceleration across Windows, macOS, and Linux desktop environments.
 
 ## Getting Started

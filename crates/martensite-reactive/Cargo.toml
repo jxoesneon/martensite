@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Diffusionless push-pull reactive signal DAG for Martensite."
+description = "Fine-grained push-pull reactive signal DAG for Martensite."
 
 [dependencies]
 smallvec = { workspace = true }

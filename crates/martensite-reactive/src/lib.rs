@@ -1,4 +1,4 @@
-//! Diffusionless push-pull reactive signal DAG.
+//! Fine-grained push-pull reactive signal DAG for Martensite.
 #![forbid(unsafe_code)]
 
 use std::marker::PhantomData;
