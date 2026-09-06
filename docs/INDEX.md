@@ -17,7 +17,7 @@
 | Contribute code | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Review a PR | [Code Review Checklist](CODE_REVIEW_CHECKLIST.md) |
 | Understand the architecture | [Architecture Overview](ARCHITECTURE_OVERVIEW.md) |
-| Plan implementation | [Roadmap](ROADMAP.md) · [Implementation Checklist](IMPLEMENTATION_CHECKLIST.md) |
+| Plan implementation | [Roadmap](ROADMAP.md) · [Milestone Specifications](milestones/INDEX.md) · [Implementation Checklist](IMPLEMENTATION_CHECKLIST.md) |
 | Understand test strategy | [Testing Strategy](TESTING_STRATEGY.md) |
 | Understand platform coverage | [Platform Support](PLATFORM_SUPPORT.md) |
 
@@ -171,6 +171,25 @@ Comprehensive pre-implementation audit suite across all subsystem domains:
   - [audits/BLUETEAM_R2_03_GEOMETRY.md](audits/BLUETEAM_R2_03_GEOMETRY.md) — Hierarchical two-tier text cache, non-blocking modal resize pump, device epoch invalidation
   - [audits/BLUETEAM_R2_04_OS_AND_MEDIA.md](audits/BLUETEAM_R2_04_OS_AND_MEDIA.md) — Adaptive display white level query, damped velocity projection, singular determinant guards
   - [audits/BLUETEAM_R2_05_API_AND_CONSTITUTION.md](audits/BLUETEAM_R2_05_API_AND_CONSTITUTION.md) — PropValue<T> callsite conversion (zero bloat), atomic ring-buffer sanitizer, WeakWidgetId
+
+---
+
+## Milestones & Release Engineering
+
+Detailed per-milestone architectural specifications, entry/exit criteria, and verification gates:
+
+- [milestones/INDEX.md](milestones/INDEX.md) — Master Milestone Progression & Dependency Graph
+- [milestones/v0.1.0-foundation.md](milestones/v0.1.0-foundation.md) — v0.1.0 Foundation (Core Arena & Reactive DAG)
+- [milestones/v0.2.0-render-pipeline.md](milestones/v0.2.0-render-pipeline.md) — v0.2.0 Render Pipeline (WGPU, Vello, TinySkia)
+- [milestones/v0.3.0-text-layout.md](milestones/v0.3.0-text-layout.md) — v0.3.0 Text & Layout (Cosmic-Text, Taffy Two-Pass)
+- [milestones/v0.4.0-accessibility-focus.md](milestones/v0.4.0-accessibility-focus.md) — v0.4.0 Accessibility & Focus (AccessKit, 2D Spatial Focus)
+- [milestones/v0.5.0-input-platform.md](milestones/v0.5.0-input-platform.md) — v0.5.0 Input & Platform (Clipboard, DnD, IME)
+- [milestones/v0.6.0-motion-theme.md](milestones/v0.6.0-motion-theme.md) — v0.6.0 Motion & Theme (Spring Physics, Oklab)
+- [milestones/v0.7.0-subsystems.md](milestones/v0.7.0-subsystems.md) — v0.7.0 Advanced Subsystems (Undo/Redo LCA, VFS, Fluent)
+- [milestones/v0.8.0-media-hdr.md](milestones/v0.8.0-media-hdr.md) — v0.8.0 Media & Advanced GPU (NV12/P010 Zero-Copy, Display EOTF)
+- [milestones/v0.9.0-developer-experience.md](milestones/v0.9.0-developer-experience.md) — v0.9.0 Developer Experience (Tracy, Hot-Reload, Headless CI)
+- [milestones/v0.10.0-plugins-ecosystem.md](milestones/v0.10.0-plugins-ecosystem.md) — v0.10.0 Hardening, Plugins & Ecosystem (Wasmtime, Blessed Widgets)
+- [milestones/v1.0.0-production-release.md](milestones/v1.0.0-production-release.md) — v1.0.0 Production Stability (API Freeze, docs.rs, Crates.io)
 
 ---
 

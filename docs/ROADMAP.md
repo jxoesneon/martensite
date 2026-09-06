@@ -1,6 +1,9 @@
 # Martensite v1.0.0 Implementation Roadmap
 
+> For granular component specifications, verified invariants, and verification gates, see the [Master Milestone Specification Index](milestones/INDEX.md).
+
 ## v0.1.0 — The Hardened Foundation
+*Detailed Specification:* [docs/milestones/v0.1.0-foundation.md](milestones/v0.1.0-foundation.md)
 **Entry Criteria:** Phase 0 (Workspace scaffold) complete.
 **Deliverables:**
 - `martensite-core`: Implement `WidgetArena`, `HotNode`, `ColdNode`, `WidgetId`, and arena compaction algorithm (dense/sparse).
@@ -13,6 +16,7 @@
 **Mitigations:** Comprehensive fuzz testing on arena reallocations; glitch-free topological evaluation enforcement.
 
 ## v0.2.0 — The Rendering Pipeline
+*Detailed Specification:* [docs/milestones/v0.2.0-render-pipeline.md](milestones/v0.2.0-render-pipeline.md)
 **Entry Criteria:** v0.1.0 complete. Stable core and reactivity primitives.
 **Deliverables:**
 - `martensite-wgpu`: Implement `GpuRenderer` surface acquisition, swapchain management, and device loss resurrection handling.
@@ -27,6 +31,7 @@
 **Mitigations:** Strict adherence to DDR-0003 for WGPU resilience; CPU fallback pipeline via TinySkia.
 
 ## v0.3.0 — Text & Layout
+*Detailed Specification:* [docs/milestones/v0.3.0-text-layout.md](milestones/v0.3.0-text-layout.md)
 **Entry Criteria:** v0.2.0 complete. Functioning window and renderer.
 **Deliverables:**
 - `martensite-text`: Integrate `cosmic-text`, full `FontSystem`, BiDi, HarfBuzz shaping.
@@ -40,6 +45,7 @@
 **Mitigations:** Aggressive caching in `martensite-text`; strict enforcement of zero 1-frame lag via ADR-0003 two-pass design.
 
 ## v0.4.0 — Accessibility & Focus
+*Detailed Specification:* [docs/milestones/v0.4.0-accessibility-focus.md](milestones/v0.4.0-accessibility-focus.md)
 **Entry Criteria:** v0.3.0 complete. Text and layout stable.
 **Deliverables:**
 - `martensite-access`: AccessKit integration, `TreeUpdate` adapter, sync to UIA/NSAccessibility/AT-SPI2.
@@ -52,6 +58,7 @@
 **Mitigations:** Incremental tree updates; strict focus scope push/pop validation.
 
 ## v0.5.0 — Input & Platform
+*Detailed Specification:* [docs/milestones/v0.5.0-input-platform.md](milestones/v0.5.0-input-platform.md)
 **Entry Criteria:** v0.4.0 complete. Usable UI with focus management.
 **Deliverables:**
 - `martensite-clipboard`: Implement `ClipboardItem`, multi-MIME OLE/Cocoa/Wayland engine with lazy evaluation.
@@ -68,6 +75,7 @@
 **Mitigations:** Pure Rust FFI where possible; decoupling OS blocking calls from render loop.
 
 ## v0.6.0 — Motion & Theme
+*Detailed Specification:* [docs/milestones/v0.6.0-motion-theme.md](milestones/v0.6.0-motion-theme.md)
 **Entry Criteria:** v0.5.0 complete. Stable inputs and OS integration.
 **Deliverables:**
 - `martensite-motion`: Analytical spring physics solver, `SpringConfig`, `SpringSolver`. C1 continuity interpolation.
@@ -80,6 +88,7 @@
 **Mitigations:** Closed-form analytical spring solutions instead of iterative integration.
 
 ## v0.7.0 — Advanced Subsystems
+*Detailed Specification:* [docs/milestones/v0.7.0-subsystems.md](milestones/v0.7.0-subsystems.md)
 **Entry Criteria:** v0.6.0 complete. Complete fundamental UI framework.
 **Deliverables:**
 - `martensite-history`: Transactional undo/redo, LCA tree algorithm for history nodes.
@@ -94,6 +103,7 @@
 **Mitigations:** Strict upper limits on history depth; asynchronous VFS backend.
 
 ## v0.8.0 — Media & Advanced GPU
+*Detailed Specification:* [docs/milestones/v0.8.0-media-hdr.md](milestones/v0.8.0-media-hdr.md)
 **Entry Criteria:** v0.7.0 complete.
 **Deliverables:**
 - `martensite-media`: Zero-copy hardware surface passthrough (DXGI NT Handles, IOSurface, Vulkan dma-buf) supporting both **NV12 (8-bit SDR)** and **P010 (10-bit HDR)** formats.
@@ -107,6 +117,7 @@
 **Mitigations:** Rely heavily on `wgpu` HAL primitives; automatic tone-mapping to SDR when HDR swapchain is unavailable.
 
 ## v0.9.0 — Developer Experience
+*Detailed Specification:* [docs/milestones/v0.9.0-developer-experience.md](milestones/v0.9.0-developer-experience.md)
 **Entry Criteria:** v0.8.0 complete. Core framework complete.
 **Deliverables:**
 - `martensite-devtools`: Tracy spans integration, F12 in-app HUD.
@@ -123,6 +134,7 @@
 **Mitigations:** Strict state definition isolation in cdylib; fixed-step `VirtualClock`.
 
 ## v0.10.0 — Hardening, Plugins & Ecosystem
+*Detailed Specification:* [docs/milestones/v0.10.0-plugins-ecosystem.md](milestones/v0.10.0-plugins-ecosystem.md)
 **Entry Criteria:** v0.9.0 complete. Full feature set implemented.
 **Deliverables:**
 - `martensite-plugin`: WebAssembly runtime sandbox powered by `wasmtime`. Linear memory isolation, Plugin ABI v1, and granular capability grants (`SignalRead`, `SignalWrite`, `FileRead`, `Network`).
@@ -139,6 +151,7 @@
 **Mitigations:** Inline trampoline optimization; begin fuzzing campaign infrastructure early in Phase 7.
 
 ## v1.0.0 — Production Stability
+*Detailed Specification:* [docs/milestones/v1.0.0-production-release.md](milestones/v1.0.0-production-release.md)
 **Entry Criteria:** v0.10.0 complete. Zero known critical bugs.
 **Deliverables:**
 - API Freeze.
