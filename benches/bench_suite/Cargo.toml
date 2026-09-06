@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Criterion benchmark suite for Martensite core performance gates."
+publish = false
 autobins = false
 
 [dependencies]
@@ -12,6 +17,9 @@ martensite = { workspace = true }
 martensite-core = { workspace = true }
 martensite-reactive = { workspace = true }
 criterion = { workspace = true }
+
+[lints]
+workspace = true
 
 [lib]
 bench = false

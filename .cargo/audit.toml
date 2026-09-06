@@ -1,0 +1,10 @@
+# cargo-audit configuration — mirrors deny.toml advisory ignores.
+# These are unmaintained transitive dependencies via cosmic-text/syntect
+# that cannot be upgraded until upstream releases a fix.
+
+[advisories]
+ignore = [
+    "RUSTSEC-2025-0141", # bincode unmaintained (transitive via cosmic-text/syntect)
+    "RUSTSEC-2024-0388", # derivative unmaintained (transitive via cosmic-text/syntect)
+    "RUSTSEC-2024-0320", # yaml-rust unmaintained (transitive via cosmic-text/syntect)
+]

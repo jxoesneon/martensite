@@ -15,6 +15,9 @@ documentation = "https://docs.rs/martensite-cosmic-text"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jxoesneon/martensite"
+keywords = ["gui", "ui", "text", "shaping", "cosmic"]
+categories = ["gui", "text-processing"]
+homepage = "https://martensite.dev"
 
 [package.metadata.docs.rs]
 features = ["vi"]

@@ -5,6 +5,14 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Industrial dashboard example application for Martensite."
+publish = false
 
 [dependencies]
 martensite = { workspace = true }
+
+[lints]
+workspace = true

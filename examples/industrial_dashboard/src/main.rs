@@ -1,3 +1,4 @@
+//! Industrial dashboard example demonstrating Martensite arena and signal primitives.
 use martensite::prelude::*;
 
 fn main() {

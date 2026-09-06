@@ -171,12 +171,14 @@ mod suite {
         if let Some(hot) = arena.get_hot_mut(id1) {
             hot.z_index = 5;
         }
-        assert_eq!(arena.get_hot(id1).unwrap().z_index, 5);
+        let hot = arena.get_hot(id1).expect("hot node must exist");
+        assert_eq!(hot.z_index, 5);
 
         if let Some(cold) = arena.get_cold_mut(id1) {
             cold.debug_name = Some("custom_node");
         }
-        assert_eq!(arena.get_cold(id1).unwrap().debug_name, Some("custom_node"));
+        let cold = arena.get_cold(id1).expect("cold node must exist");
+        assert_eq!(cold.debug_name, Some("custom_node"));
 
         let both = arena.get_both(id1);
         assert!(both.is_some());
@@ -186,11 +188,13 @@ mod suite {
 
         let both_mut = arena.get_both_mut(id1);
         assert!(both_mut.is_some());
-        let (h_mut, c_mut) = both_mut.unwrap();
+        let (h_mut, c_mut) = both_mut.expect("both_mut must exist");
         h_mut.z_index = 10;
         c_mut.debug_name = Some("mutated");
-        assert_eq!(arena.get_hot(id1).unwrap().z_index, 10);
-        assert_eq!(arena.get_cold(id1).unwrap().debug_name, Some("mutated"));
+        let hot = arena.get_hot(id1).expect("hot must exist");
+        assert_eq!(hot.z_index, 10);
+        let cold = arena.get_cold(id1).expect("cold must exist");
+        assert_eq!(cold.debug_name, Some("mutated"));
     }
 
     // --- 4. Tree Hierarchy and Mutation Tests ---

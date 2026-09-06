@@ -30,10 +30,33 @@ jobs:
       - name: Dry-run packaging
         if: ${{ github.event.inputs.dry_run == 'true' }}
         run: |
-          # Verify every crate packages cleanly before any real publish.
-          for crate in $(cargo metadata --format-version 1 --no-deps | \
-            python3 -c "import json,sys; d=json.load(sys.stdin); \
-            print(' '.join(p['name'] for p in d['packages'] if p['publish'] is None))"); do
+          # Verify every publishable crate packages cleanly before any real publish.
+          CRATES=(
+            martensite-reactive
+            martensite-macros
+            martensite-core
+            martensite-layout
+            martensite-wgpu
+            martensite-render
+            martensite-cosmic-text
+            martensite-text
+            martensite-access
+            martensite-window
+            martensite-focus
+            martensite-clipboard
+            martensite-dnd
+            martensite-theme
+            martensite-motion
+            martensite-media
+            martensite-history
+            martensite-assets
+            martensite-l10n
+            martensite-devtools
+            martensite-test
+            martensite
+            martensite-blessed
+          )
+          for crate in "${CRATES[@]}"; do
             echo "Packaging $crate..."
             cargo package -p "$crate" --allow-dirty
           done

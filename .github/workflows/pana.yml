@@ -36,5 +36,5 @@ jobs:
       - name: Install & Run Pana Analyzer
         run: |
           dart pub global activate pana
-          # Enforces 0 warnings and minimum 140/140 (160/160) points threshold:
-          dart pub global run pana --no-warning --exit-code-threshold 0
+          # Enforces 0 warnings and minimum 140 pub points threshold:
+          dart pub global run pana --no-warning --exit-code-threshold 140

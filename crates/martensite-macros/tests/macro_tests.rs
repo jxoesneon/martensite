@@ -2,17 +2,21 @@
 
 use martensite_macros::widget;
 
+widget!(MyTestWidget);
+
+/// Verifies that `widget!` expands to a unit struct implementing `Default`.
 #[test]
-fn widget_macro_accepts_empty_token_stream() {
-    // The widget! macro should accept an empty token stream and expand
-    // (the current implementation expands to nothing). If expansion failed,
-    // this test would not compile.
-    widget!();
+fn widget_macro_creates_unit_struct() {
+    let _widget: MyTestWidget = MyTestWidget;
+    let _widget2: MyTestWidget = Default::default();
 }
 
+widget!(WidgetA);
+widget!(WidgetB);
+
+/// Verifies that `widget!` creates distinct types for different names.
 #[test]
-fn widget_macro_accepts_arbitrary_tokens() {
-    // The macro is currently a no-op that accepts any token stream,
-    // so providing tokens must also expand without error.
-    widget!(some tokens here);
+fn widget_macro_creates_distinct_types() {
+    let _a: WidgetA = WidgetA;
+    let _b: WidgetB = WidgetB;
 }

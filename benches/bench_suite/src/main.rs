@@ -3,6 +3,9 @@
 //! Evaluates core generational slotmap arena operations, linear DAG signal propagation,
 //! and transactional diamond reactive networks against formal milestone exit gates.
 #![forbid(unsafe_code)]
+// Benchmark binaries generate criterion functions via macros that cannot be
+// individually documented; allow missing docs for the generated functions only.
+#![allow(missing_docs)]
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

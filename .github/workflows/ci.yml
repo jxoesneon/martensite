@@ -69,3 +69,12 @@ jobs:
         run: cargo doc --workspace --no-deps --all-features
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  benchmarks:
+    name: Benchmark Exit Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run Benchmark Suite (smoke)
+        run: cargo bench -p bench_suite --bench bench_suite -- --quick --test
