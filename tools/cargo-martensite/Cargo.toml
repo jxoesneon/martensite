@@ -9,6 +9,7 @@ keywords.workspace = true
 categories.workspace = true
 homepage.workspace = true
 description = "Developer CLI toolchain for sub-second hot-reloading and asset compilation."
+readme = "README.md"
 publish = false
 
 [dependencies]

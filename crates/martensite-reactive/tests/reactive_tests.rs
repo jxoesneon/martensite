@@ -48,7 +48,7 @@ fn test_signal_clone_and_concurrency() {
     }
 
     for h in handles {
-        h.join().unwrap();
+        h.join().expect("test invariant");
     }
 
     assert_eq!(sig.get(), 800);
@@ -371,7 +371,7 @@ fn test_topological_deep_linear_chain() {
         memos.push(m);
     }
 
-    let last = memos.last().unwrap();
+    let last = memos.last().expect("test invariant");
     // 1 + 10 = 11
     assert_eq!(last.get(), 11);
 
@@ -737,18 +737,18 @@ fn test_targeted_coverage_edge_cases() {
     state.register_source(n4);
 
     // Link n1 -> n2 -> n3
-    state.add_dependency_link(n2, n1).unwrap();
-    state.add_dependency_link(n3, n2).unwrap();
+    state.add_dependency_link(n2, n1).expect("test invariant");
+    state.add_dependency_link(n3, n2).expect("test invariant");
 
     // Call add_dependency_link again to hit existing link branches
-    state.add_dependency_link(n2, n1).unwrap();
+    state.add_dependency_link(n2, n1).expect("test invariant");
 
     // Propagate rank increase: give n4 a higher rank and link n4 -> n1
     state.test_set_node_rank(n4, 10);
-    state.add_dependency_link(n1, n4).unwrap();
-    assert_eq!(state.test_node_rank(n1).unwrap(), 11);
-    assert_eq!(state.test_node_rank(n2).unwrap(), 12);
-    assert_eq!(state.test_node_rank(n3).unwrap(), 13);
+    state.add_dependency_link(n1, n4).expect("test invariant");
+    assert_eq!(state.test_node_rank(n1).expect("test invariant"), 11);
+    assert_eq!(state.test_node_rank(n2).expect("test invariant"), 12);
+    assert_eq!(state.test_node_rank(n3).expect("test invariant"), 13);
 
     // Unregister n1 which has subscribers (hits subscribers cleanup loop)
     state.unregister_node(n1);
@@ -778,7 +778,9 @@ fn test_targeted_coverage_edge_cases() {
     state.register_source(b_id);
     state.test_set_node_rank(a_id, 100);
     state.test_set_node_rank(b_id, 1);
-    state.add_dependency_link(a_id, b_id).unwrap();
+    state
+        .add_dependency_link(a_id, b_id)
+        .expect("test invariant");
 
     // post_eval_prune when dependency node was already removed
     let p2 = SignalId::next();
@@ -838,8 +840,8 @@ fn test_targeted_coverage_edge_cases() {
     diag.register_source(u);
     diag.register_source(v);
     diag.register_source(w);
-    diag.add_dependency_link(v, u).unwrap();
-    diag.add_dependency_link(w, v).unwrap();
+    diag.add_dependency_link(v, u).expect("test invariant");
+    diag.add_dependency_link(w, v).expect("test invariant");
     diag.unregister_node(v);
 
     // Unregister node with dangling dependency and subscriber
@@ -899,8 +901,11 @@ fn test_targeted_coverage_edge_cases() {
     diag.test_push_pending(0, wrap_pop);
     let popped = diag.pop_next_pending();
     assert!(popped.is_some());
-    assert_eq!(popped.unwrap().1, wrap_pop);
-    assert_eq!(diag.test_node_eval_epoch(wrap_pop).unwrap(), 1);
+    assert_eq!(popped.expect("test invariant").1, wrap_pop);
+    assert_eq!(
+        diag.test_node_eval_epoch(wrap_pop).expect("test invariant"),
+        1
+    );
 
     // Rank propagation when sub_node.rank is already strictly greater than curr_rank
     let base_node = SignalId::next();
@@ -910,10 +915,12 @@ fn test_targeted_coverage_edge_cases() {
     diag.register_source(r_node);
     diag.register_source(s_node);
     diag.test_set_node_rank(s_node, 100);
-    diag.add_dependency_link(s_node, r_node).unwrap();
+    diag.add_dependency_link(s_node, r_node)
+        .expect("test invariant");
     // Now trigger a rank increase on r_node from base_node that remains < 100
     diag.test_set_node_rank(base_node, 10);
-    diag.add_dependency_link(r_node, base_node).unwrap();
-    assert_eq!(diag.test_node_rank(r_node).unwrap(), 11);
-    assert_eq!(diag.test_node_rank(s_node).unwrap(), 100);
+    diag.add_dependency_link(r_node, base_node)
+        .expect("test invariant");
+    assert_eq!(diag.test_node_rank(r_node).expect("test invariant"), 11);
+    assert_eq!(diag.test_node_rank(s_node).expect("test invariant"), 100);
 }

@@ -111,7 +111,7 @@ fn test_concurrency_stress_readers_and_arena_compaction() {
                 let gen = guard
                     .slot_generation(slot_idx)
                     .expect("active node must have a valid generation");
-                WidgetId::new(slot_idx, gen).unwrap()
+                WidgetId::new(slot_idx, gen).expect("test invariant")
             })
             .collect()
     };
@@ -554,12 +554,15 @@ fn test_pathological_deep_linear_chain_10k() {
     let build_duration = start_build.elapsed();
 
     // Initial evaluation verification
-    assert_eq!(memos.last().unwrap().get(), CHAIN_DEPTH as i64);
+    assert_eq!(
+        memos.last().expect("test invariant").get(),
+        CHAIN_DEPTH as i64
+    );
 
     // Propagate mutation from root down 10,000 nodes
     let start_eval = Instant::now();
     root.set(42);
-    let final_val = memos.last().unwrap().get();
+    let final_val = memos.last().expect("test invariant").get();
     let eval_duration = start_eval.elapsed();
 
     println!(

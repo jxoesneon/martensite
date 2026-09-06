@@ -17,7 +17,7 @@ mod suite {
 
     #[test]
     fn test_widget_id_lifecycle() {
-        let id = WidgetId::new(42, 100).unwrap();
+        let id = WidgetId::new(42, 100).expect("test invariant");
         assert_eq!(id.slot_idx(), 42);
         assert_eq!(id.generation(), 100);
         assert_eq!(id.to_u64(), (100u64 << 32) | 42u64);
@@ -161,7 +161,7 @@ mod suite {
         assert!(arena.is_alive(id2));
 
         // Dead ID checks
-        let fake_id = WidgetId::new(999, 1).unwrap();
+        let fake_id = WidgetId::new(999, 1).expect("test invariant");
         assert!(!arena.is_alive(fake_id));
         assert!(arena.get_hot(fake_id).is_none());
         assert!(arena.get_cold(fake_id).is_none());
@@ -182,7 +182,7 @@ mod suite {
 
         let both = arena.get_both(id1);
         assert!(both.is_some());
-        let (h, c) = both.unwrap();
+        let (h, c) = both.expect("test invariant");
         assert_eq!(h.z_index, 5);
         assert_eq!(c.debug_name, Some("custom_node"));
 
@@ -212,7 +212,7 @@ mod suite {
         assert_eq!(arena.last_child(root), None);
 
         // Append c1
-        arena.append_child(root, c1).unwrap();
+        arena.append_child(root, c1).expect("test invariant");
         assert_eq!(arena.parent(c1), Some(root));
         assert_eq!(arena.first_child(root), Some(c1));
         assert_eq!(arena.last_child(root), Some(c1));
@@ -221,7 +221,7 @@ mod suite {
         assert_eq!(arena.depth_rank(c1), Some(1));
 
         // Append c2
-        arena.append_child(root, c2).unwrap();
+        arena.append_child(root, c2).expect("test invariant");
         assert_eq!(arena.first_child(root), Some(c1));
         assert_eq!(arena.last_child(root), Some(c2));
         assert_eq!(arena.next_sibling(c1), Some(c2));
@@ -230,7 +230,7 @@ mod suite {
         assert_eq!(arena.depth_rank(c2), Some(1));
 
         // Append c3
-        arena.append_child(root, c3).unwrap();
+        arena.append_child(root, c3).expect("test invariant");
         assert_eq!(arena.first_child(root), Some(c1));
         assert_eq!(arena.last_child(root), Some(c3));
         assert_eq!(arena.next_sibling(c2), Some(c3));
@@ -240,7 +240,7 @@ mod suite {
 
         // Append grandchild
         let g1 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
-        arena.append_child(c1, g1).unwrap();
+        arena.append_child(c1, g1).expect("test invariant");
         assert_eq!(arena.depth_rank(g1), Some(2));
         assert_eq!(arena.parent(g1), Some(c1));
     }
@@ -252,11 +252,11 @@ mod suite {
         let c1 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         let c2 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
 
-        arena.prepend_child(root, c1).unwrap();
+        arena.prepend_child(root, c1).expect("test invariant");
         assert_eq!(arena.first_child(root), Some(c1));
         assert_eq!(arena.last_child(root), Some(c1));
 
-        arena.prepend_child(root, c2).unwrap();
+        arena.prepend_child(root, c2).expect("test invariant");
         assert_eq!(arena.first_child(root), Some(c2));
         assert_eq!(arena.last_child(root), Some(c1));
         assert_eq!(arena.next_sibling(c2), Some(c1));
@@ -272,11 +272,11 @@ mod suite {
         let c3 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         let mid = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
 
-        arena.append_child(root, c1).unwrap();
-        arena.append_child(root, c3).unwrap();
+        arena.append_child(root, c1).expect("test invariant");
+        arena.append_child(root, c3).expect("test invariant");
 
         // Insert mid before c3
-        arena.insert_before(c3, mid).unwrap();
+        arena.insert_before(c3, mid).expect("test invariant");
         assert_eq!(arena.next_sibling(c1), Some(mid));
         assert_eq!(arena.prev_sibling(mid), Some(c1));
         assert_eq!(arena.next_sibling(mid), Some(c3));
@@ -285,7 +285,7 @@ mod suite {
         assert_eq!(arena.depth_rank(mid), Some(1));
 
         // Insert c2 after mid
-        arena.insert_after(mid, c2).unwrap();
+        arena.insert_after(mid, c2).expect("test invariant");
         assert_eq!(arena.next_sibling(mid), Some(c2));
         assert_eq!(arena.prev_sibling(c2), Some(mid));
         assert_eq!(arena.next_sibling(c2), Some(c3));
@@ -293,14 +293,14 @@ mod suite {
 
         // Insert before head
         let head = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
-        arena.insert_before(c1, head).unwrap();
+        arena.insert_before(c1, head).expect("test invariant");
         assert_eq!(arena.first_child(root), Some(head));
         assert_eq!(arena.next_sibling(head), Some(c1));
         assert_eq!(arena.prev_sibling(c1), Some(head));
 
         // Insert after tail
         let tail = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
-        arena.insert_after(c3, tail).unwrap();
+        arena.insert_after(c3, tail).expect("test invariant");
         assert_eq!(arena.last_child(root), Some(tail));
         assert_eq!(arena.next_sibling(c3), Some(tail));
         assert_eq!(arena.prev_sibling(tail), Some(c3));
@@ -315,19 +315,19 @@ mod suite {
         let sub = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         let leaf = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
 
-        arena.append_child(r1, sub).unwrap();
-        arena.append_child(sub, leaf).unwrap();
+        arena.append_child(r1, sub).expect("test invariant");
+        arena.append_child(sub, leaf).expect("test invariant");
 
         assert_eq!(arena.depth_rank(sub), Some(1));
         assert_eq!(arena.depth_rank(leaf), Some(2));
 
         // Nest r2 deeper: make r2 a child of an ancestor r0
         let r0 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
-        arena.append_child(r0, r2).unwrap();
+        arena.append_child(r0, r2).expect("test invariant");
         assert_eq!(arena.depth_rank(r2), Some(1));
 
         // Move sub from r1 to r2
-        arena.append_child(r2, sub).unwrap();
+        arena.append_child(r2, sub).expect("test invariant");
         assert_eq!(arena.parent(sub), Some(r2));
         assert_eq!(arena.first_child(r1), None);
         assert_eq!(arena.depth_rank(sub), Some(2));
@@ -342,24 +342,24 @@ mod suite {
         let c2 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         let c3 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
 
-        arena.append_child(root, c1).unwrap();
-        arena.append_child(root, c2).unwrap();
-        arena.append_child(root, c3).unwrap();
+        arena.append_child(root, c1).expect("test invariant");
+        arena.append_child(root, c2).expect("test invariant");
+        arena.append_child(root, c3).expect("test invariant");
 
         // Remove middle child c2
-        arena.remove_child(root, c2).unwrap();
+        arena.remove_child(root, c2).expect("test invariant");
         assert_eq!(arena.next_sibling(c1), Some(c3));
         assert_eq!(arena.prev_sibling(c3), Some(c1));
         assert_eq!(arena.parent(c2), None);
         assert_eq!(arena.depth_rank(c2), Some(0));
 
         // Remove head child c1
-        arena.detach(c1).unwrap();
+        arena.detach(c1).expect("test invariant");
         assert_eq!(arena.first_child(root), Some(c3));
         assert_eq!(arena.prev_sibling(c3), None);
 
         // Remove remaining tail child c3
-        arena.detach(c3).unwrap();
+        arena.detach(c3).expect("test invariant");
         assert_eq!(arena.first_child(root), None);
         assert_eq!(arena.last_child(root), None);
     }
@@ -371,8 +371,8 @@ mod suite {
         let b = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         let c = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
 
-        arena.append_child(a, b).unwrap();
-        arena.append_child(b, c).unwrap();
+        arena.append_child(a, b).expect("test invariant");
+        arena.append_child(b, c).expect("test invariant");
 
         // Self-parenting
         assert!(matches!(
@@ -427,9 +427,9 @@ mod suite {
         let c2 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         let c3 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
 
-        arena.append_child(root, c1).unwrap();
-        arena.append_child(root, c2).unwrap();
-        arena.append_child(root, c3).unwrap();
+        arena.append_child(root, c1).expect("test invariant");
+        arena.append_child(root, c2).expect("test invariant");
+        arena.append_child(root, c3).expect("test invariant");
 
         // Remove c2 from arena via arena.remove()
         let removed = arena.remove(c2);
@@ -484,7 +484,7 @@ mod suite {
         // Manually set generation to u32::MAX to simulate near-overflow
         let slot_idx = id.slot_idx();
         arena.set_slot_generation_for_test(slot_idx, u32::MAX);
-        let max_gen_id = WidgetId::new(slot_idx, u32::MAX).unwrap();
+        let max_gen_id = WidgetId::new(slot_idx, u32::MAX).expect("test invariant");
 
         assert!(arena.is_alive(max_gen_id));
 
@@ -510,9 +510,9 @@ mod suite {
         let c2 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         let c3 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
 
-        arena.append_child(root, c1).unwrap();
-        arena.append_child(root, c2).unwrap();
-        arena.append_child(root, c3).unwrap();
+        arena.append_child(root, c1).expect("test invariant");
+        arena.append_child(root, c2).expect("test invariant");
+        arena.append_child(root, c3).expect("test invariant");
 
         // Forward traversal
         let collected: Vec<WidgetId> = arena.children(root).collect();
@@ -553,10 +553,10 @@ mod suite {
         let g1 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         let g2 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
 
-        arena.append_child(root, c1).unwrap();
-        arena.append_child(root, c2).unwrap();
-        arena.append_child(c1, g1).unwrap();
-        arena.append_child(c1, g2).unwrap();
+        arena.append_child(root, c1).expect("test invariant");
+        arena.append_child(root, c2).expect("test invariant");
+        arena.append_child(c1, g1).expect("test invariant");
+        arena.append_child(c1, g2).expect("test invariant");
 
         let visited: Vec<WidgetId> = arena.iter_subtree(root).collect();
         assert_eq!(visited, vec![root, c1, g1, g2, c2]);
@@ -566,7 +566,7 @@ mod suite {
         assert_eq!(c1_visited, vec![c1, g1, g2]);
 
         // Dead handle returns empty
-        let dead = WidgetId::new(999, 1).unwrap();
+        let dead = WidgetId::new(999, 1).expect("test invariant");
         assert_eq!(arena.iter_subtree(dead).next(), None);
     }
 
@@ -582,9 +582,9 @@ mod suite {
         let r2 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         let c = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
 
-        arena.append_child(r1, a).unwrap();
-        arena.append_child(r1, b).unwrap();
-        arena.append_child(r2, c).unwrap();
+        arena.append_child(r1, a).expect("test invariant");
+        arena.append_child(r1, b).expect("test invariant");
+        arena.append_child(r2, c).expect("test invariant");
 
         // Depth-first traversal
         let df: Vec<WidgetId> = arena.iter_depth_first().collect();
@@ -645,7 +645,7 @@ mod suite {
         let ids_to_remove: Vec<u32> = arena.dense_to_slot().to_vec();
         for &id in &ids_to_remove {
             if let Some(gen) = arena.slot_generation(id) {
-                arena.remove(WidgetId::new(id, gen).unwrap());
+                arena.remove(WidgetId::new(id, gen).expect("test invariant"));
             }
         }
         arena.shrink_to_fit_idle();
@@ -703,7 +703,7 @@ mod suite {
         });
 
         fence.wait_for_zero();
-        h.join().unwrap();
+        h.join().expect("test invariant");
         assert_eq!(fence.active_readers(), 0);
     }
 
@@ -729,10 +729,10 @@ mod suite {
         }
 
         let mut arena = WidgetArena::new();
-        arena.begin_compaction(&fence).unwrap();
+        arena.begin_compaction(&fence).expect("test invariant");
         arena.end_compaction(&fence);
 
-        handle.join().unwrap();
+        handle.join().expect("test invariant");
         assert!(completed.load(Ordering::SeqCst));
         assert_eq!(fence.active_readers(), 0);
         assert_eq!(fence.epoch(), 2);
@@ -748,7 +748,7 @@ mod suite {
 
         let mut arena = WidgetArena::new();
         // Compaction should timeout and force-reclaim the stalled reader lease
-        arena.begin_compaction(&fence).unwrap();
+        arena.begin_compaction(&fence).expect("test invariant");
         arena.end_compaction(&fence);
 
         assert_eq!(fence.reclaimed_leases(), 1);
@@ -784,13 +784,15 @@ mod suite {
 
         let mut arena = WidgetArena::new();
         for _ in 0..5 {
-            arena.compact_and_shrink_idle(&fence).unwrap();
+            arena
+                .compact_and_shrink_idle(&fence)
+                .expect("test invariant");
             thread::sleep(Duration::from_millis(5));
         }
 
         stop_flag.store(true, Ordering::SeqCst);
         for h in handles {
-            h.join().unwrap();
+            h.join().expect("test invariant");
         }
 
         assert_eq!(fence.active_readers(), 0);
@@ -800,8 +802,8 @@ mod suite {
 
     #[test]
     fn test_error_display_and_formatting() {
-        let dummy_id = WidgetId::new(1, 1).unwrap();
-        let dummy_id2 = WidgetId::new(2, 1).unwrap();
+        let dummy_id = WidgetId::new(1, 1).expect("test invariant");
+        let dummy_id2 = WidgetId::new(2, 1).expect("test invariant");
 
         let errs = vec![
             ArenaError::InvalidNode(dummy_id),
@@ -859,7 +861,7 @@ mod suite {
     fn test_coverage_edge_cases() {
         // WidgetArena default
         let mut arena = WidgetArena::default();
-        let dead = WidgetId::new(999, 1).unwrap();
+        let dead = WidgetId::new(999, 1).expect("test invariant");
         let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         // Remove id to create an expired generation handle with existing slot
         arena.remove(id);
@@ -920,8 +922,8 @@ mod suite {
             Err(ArenaError::InvalidNode(_))
         ));
 
-        arena.append_child(live1, live2).unwrap();
-        arena.append_child(live2, live3).unwrap();
+        arena.append_child(live1, live2).expect("test invariant");
+        arena.append_child(live2, live3).expect("test invariant");
         assert_eq!(
             arena.insert_before(live3, live1),
             Err(ArenaError::CycleDetected)
@@ -970,7 +972,7 @@ mod suite {
 
         thread::sleep(Duration::from_millis(15));
         fence_arc.mark_compaction_end();
-        reader_thread.join().unwrap();
+        reader_thread.join().expect("test invariant");
 
         fence.mark_compaction_end();
         assert!(!fence.is_compaction_in_progress());
@@ -985,9 +987,9 @@ mod suite {
         // Detached node within a subtree
         let n1 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
         let n2 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
-        arena.append_child(n1, n2).unwrap();
+        arena.append_child(n1, n2).expect("test invariant");
         // Artificially clear parent of n2 while keeping it as child of n1
-        arena.get_hot_mut(n2).unwrap().parent = None;
+        arena.get_hot_mut(n2).expect("test invariant").parent = None;
         let collected: Vec<_> = arena.iter_subtree(n1).collect();
         assert_eq!(collected, vec![n1, n2]);
 

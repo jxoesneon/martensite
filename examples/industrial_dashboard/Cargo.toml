@@ -9,6 +9,7 @@ keywords.workspace = true
 categories.workspace = true
 homepage.workspace = true
 description = "Industrial dashboard example application for Martensite."
+readme = "README.md"
 publish = false
 
 [dependencies]

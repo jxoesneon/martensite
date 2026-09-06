@@ -8,3 +8,13 @@ fn main() {
     println!("Active Reactive Signal Value: {}", signal.get());
     println!("Arena + Signal primitives: operational.");
 }
+
+/// Smoke test verifying the example crate compiles and links correctly.
+#[cfg(test)]
+#[test]
+fn example_smoke_test() {
+    let arena = WidgetArena::new();
+    assert!(arena.is_empty());
+    let signal = Signal::new(42);
+    assert_eq!(signal.get(), 42);
+}
