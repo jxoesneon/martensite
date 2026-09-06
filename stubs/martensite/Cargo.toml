@@ -5,6 +5,7 @@ edition = "2021"
 rust-version = "1.80.0"
 authors = ["Jose Eduardo Rojas Jimenez <joseeduardox@gmail.com>"]
 description = "A retained-mode, GPU-accelerated graphical user interface framework for Rust."
+publish = false
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jxoesneon/martensite"
 homepage = "https://martensite.dev"

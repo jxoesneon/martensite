@@ -8,7 +8,7 @@ on:
 
 jobs:
   pana-scoring-gate:
-    name: Verify 160/160 Pub Points via Pana
+    name: Verify 140 Pub Points via Pana
     runs-on: ubuntu-latest
     defaults:
       run:

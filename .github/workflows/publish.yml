@@ -24,13 +24,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-workspaces
-        run: cargo install cargo-workspaces --locked
-
       - name: Dry-run packaging
         if: ${{ github.event.inputs.dry_run == 'true' }}
         run: |
           # Verify every publishable crate packages cleanly before any real publish.
+          # Uses --no-verify because workspace path dependencies are not yet on crates.io.
+          # Build validation is done by the CI test job.
           CRATES=(
             martensite-reactive
             martensite-macros
@@ -47,18 +46,14 @@ jobs:
             martensite-dnd
             martensite-theme
             martensite-motion
-            martensite-media
             martensite-history
-            martensite-assets
             martensite-l10n
-            martensite-devtools
             martensite-test
             martensite
-            martensite-blessed
           )
           for crate in "${CRATES[@]}"; do
             echo "Packaging $crate..."
-            cargo package -p "$crate" --allow-dirty
+            cargo package -p "$crate" --allow-dirty --no-verify
           done
 
       - name: Publish to crates.io
@@ -70,6 +65,8 @@ jobs:
 
           # Crates in topological dependency order.
           # martensite-cosmic-text must come before martensite-text.
+          # Empty placeholder crates (assets, media, devtools, blessed) are
+          # excluded until they have real implementations.
           CRATES=(
             martensite-reactive
             martensite-macros
@@ -86,14 +83,10 @@ jobs:
             martensite-dnd
             martensite-theme
             martensite-motion
-            martensite-media
             martensite-history
-            martensite-assets
             martensite-l10n
-            martensite-devtools
             martensite-test
             martensite
-            martensite-blessed
           )
 
           for crate in "${CRATES[@]}"; do

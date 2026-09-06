@@ -420,16 +420,22 @@ impl WidgetArena {
         }
 
         let (parent_opt, prev_opt, next_opt) = {
-            let hot = self.get_hot(id).unwrap();
+            let hot = self.get_hot(id).expect("arena invariant");
             (hot.parent, hot.prev_sibling, hot.next_sibling)
         };
 
         // Update parent's first_child pointer if id was head
         if let Some(parent_id) = parent_opt {
             if self.is_alive(parent_id) {
-                let is_first = self.get_hot(parent_id).unwrap().first_child == Some(id);
+                let is_first = self
+                    .get_hot(parent_id)
+                    .expect("arena invariant")
+                    .first_child
+                    == Some(id);
                 if is_first {
-                    self.get_hot_mut(parent_id).unwrap().first_child = next_opt;
+                    self.get_hot_mut(parent_id)
+                        .expect("arena invariant")
+                        .first_child = next_opt;
                 }
             }
         }
@@ -437,20 +443,24 @@ impl WidgetArena {
         // Link prev sibling to next sibling
         if let Some(prev_id) = prev_opt {
             if self.is_alive(prev_id) {
-                self.get_hot_mut(prev_id).unwrap().next_sibling = next_opt;
+                self.get_hot_mut(prev_id)
+                    .expect("arena invariant")
+                    .next_sibling = next_opt;
             }
         }
 
         // Link next sibling to prev sibling
         if let Some(next_id) = next_opt {
             if self.is_alive(next_id) {
-                self.get_hot_mut(next_id).unwrap().prev_sibling = prev_opt;
+                self.get_hot_mut(next_id)
+                    .expect("arena invariant")
+                    .prev_sibling = prev_opt;
             }
         }
 
         // Clear id's sibling and parent links
         {
-            let hot = self.get_hot_mut(id).unwrap();
+            let hot = self.get_hot_mut(id).expect("arena invariant");
             hot.parent = None;
             hot.prev_sibling = None;
             hot.next_sibling = None;
@@ -479,11 +489,13 @@ impl WidgetArena {
         // Detach child from existing location
         self.detach(child)?;
 
-        let parent_first = self.get_hot(parent).unwrap().first_child;
+        let parent_first = self.get_hot(parent).expect("arena invariant").first_child;
         match parent_first {
             None => {
-                self.get_hot_mut(parent).unwrap().first_child = Some(child);
-                let child_hot = self.get_hot_mut(child).unwrap();
+                self.get_hot_mut(parent)
+                    .expect("arena invariant")
+                    .first_child = Some(child);
+                let child_hot = self.get_hot_mut(child).expect("arena invariant");
                 child_hot.parent = Some(parent);
                 child_hot.prev_sibling = None;
                 child_hot.next_sibling = None;
@@ -493,17 +505,19 @@ impl WidgetArena {
                 while let Some(next) = self.next_sibling(last) {
                     last = next;
                 }
-                self.get_hot_mut(last).unwrap().next_sibling = Some(child);
-                let child_hot = self.get_hot_mut(child).unwrap();
+                self.get_hot_mut(last)
+                    .expect("arena invariant")
+                    .next_sibling = Some(child);
+                let child_hot = self.get_hot_mut(child).expect("arena invariant");
                 child_hot.parent = Some(parent);
                 child_hot.prev_sibling = Some(last);
                 child_hot.next_sibling = None;
             }
         }
 
-        let parent_depth = self.get_hot(parent).unwrap().depth_rank;
+        let parent_depth = self.get_hot(parent).expect("arena invariant").depth_rank;
         let child_depth = parent_depth.saturating_add(1);
-        self.get_hot_mut(child).unwrap().depth_rank = child_depth;
+        self.get_hot_mut(child).expect("arena invariant").depth_rank = child_depth;
         self.update_subtree_depths(child, child_depth);
 
         Ok(())
@@ -526,21 +540,25 @@ impl WidgetArena {
 
         self.detach(child)?;
 
-        let old_first = self.get_hot(parent).unwrap().first_child;
-        self.get_hot_mut(parent).unwrap().first_child = Some(child);
+        let old_first = self.get_hot(parent).expect("arena invariant").first_child;
+        self.get_hot_mut(parent)
+            .expect("arena invariant")
+            .first_child = Some(child);
 
-        let child_hot = self.get_hot_mut(child).unwrap();
+        let child_hot = self.get_hot_mut(child).expect("arena invariant");
         child_hot.parent = Some(parent);
         child_hot.prev_sibling = None;
         child_hot.next_sibling = old_first;
 
         if let Some(old_first_id) = old_first {
-            self.get_hot_mut(old_first_id).unwrap().prev_sibling = Some(child);
+            self.get_hot_mut(old_first_id)
+                .expect("arena invariant")
+                .prev_sibling = Some(child);
         }
 
-        let parent_depth = self.get_hot(parent).unwrap().depth_rank;
+        let parent_depth = self.get_hot(parent).expect("arena invariant").depth_rank;
         let child_depth = parent_depth.saturating_add(1);
-        self.get_hot_mut(child).unwrap().depth_rank = child_depth;
+        self.get_hot_mut(child).expect("arena invariant").depth_rank = child_depth;
         self.update_subtree_depths(child, child_depth);
 
         Ok(())
@@ -567,25 +585,31 @@ impl WidgetArena {
 
         self.detach(node)?;
 
-        let target_prev = self.get_hot(target).unwrap().prev_sibling;
+        let target_prev = self.get_hot(target).expect("arena invariant").prev_sibling;
         {
-            let node_hot = self.get_hot_mut(node).unwrap();
+            let node_hot = self.get_hot_mut(node).expect("arena invariant");
             node_hot.parent = Some(parent);
             node_hot.prev_sibling = target_prev;
             node_hot.next_sibling = Some(target);
         }
 
-        self.get_hot_mut(target).unwrap().prev_sibling = Some(node);
+        self.get_hot_mut(target)
+            .expect("arena invariant")
+            .prev_sibling = Some(node);
 
         if let Some(prev_id) = target_prev {
-            self.get_hot_mut(prev_id).unwrap().next_sibling = Some(node);
+            self.get_hot_mut(prev_id)
+                .expect("arena invariant")
+                .next_sibling = Some(node);
         } else {
-            self.get_hot_mut(parent).unwrap().first_child = Some(node);
+            self.get_hot_mut(parent)
+                .expect("arena invariant")
+                .first_child = Some(node);
         }
 
-        let parent_depth = self.get_hot(parent).unwrap().depth_rank;
+        let parent_depth = self.get_hot(parent).expect("arena invariant").depth_rank;
         let node_depth = parent_depth.saturating_add(1);
-        self.get_hot_mut(node).unwrap().depth_rank = node_depth;
+        self.get_hot_mut(node).expect("arena invariant").depth_rank = node_depth;
         self.update_subtree_depths(node, node_depth);
 
         Ok(())
@@ -612,23 +636,27 @@ impl WidgetArena {
 
         self.detach(node)?;
 
-        let target_next = self.get_hot(target).unwrap().next_sibling;
+        let target_next = self.get_hot(target).expect("arena invariant").next_sibling;
         {
-            let node_hot = self.get_hot_mut(node).unwrap();
+            let node_hot = self.get_hot_mut(node).expect("arena invariant");
             node_hot.parent = Some(parent);
             node_hot.prev_sibling = Some(target);
             node_hot.next_sibling = target_next;
         }
 
-        self.get_hot_mut(target).unwrap().next_sibling = Some(node);
+        self.get_hot_mut(target)
+            .expect("arena invariant")
+            .next_sibling = Some(node);
 
         if let Some(next_id) = target_next {
-            self.get_hot_mut(next_id).unwrap().prev_sibling = Some(node);
+            self.get_hot_mut(next_id)
+                .expect("arena invariant")
+                .prev_sibling = Some(node);
         }
 
-        let parent_depth = self.get_hot(parent).unwrap().depth_rank;
+        let parent_depth = self.get_hot(parent).expect("arena invariant").depth_rank;
         let node_depth = parent_depth.saturating_add(1);
-        self.get_hot_mut(node).unwrap().depth_rank = node_depth;
+        self.get_hot_mut(node).expect("arena invariant").depth_rank = node_depth;
         self.update_subtree_depths(node, node_depth);
 
         Ok(())
