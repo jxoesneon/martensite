@@ -96,14 +96,15 @@
 ## v0.8.0 — Media & Advanced GPU
 **Entry Criteria:** v0.7.0 complete.
 **Deliverables:**
-- `martensite-media`: Zero-copy hardware surface passthrough (DXGI/IOSurface/dma-buf).
+- `martensite-media`: Zero-copy hardware surface passthrough (DXGI NT Handles, IOSurface, Vulkan dma-buf) supporting both **NV12 (8-bit SDR)** and **P010 (10-bit HDR)** formats.
+- Complete HDR color pipeline: BT.709 SDR and BT.2020 PQ EOTF WGSL compute shaders, HDR swapchain negotiation (DXGI FP16, macOS EDR, Vulkan HDR10), and Hable/Uchimura filmic tone-mapping fallback for SDR displays.
 - `martensite-wgpu`: Shader extensions and 3D interop APIs.
-**Exit Criteria:** Hardware-accelerated video playback renders seamlessly inside the widget hierarchy without copy overhead.
+**Exit Criteria:** Hardware-accelerated 4K HDR and SDR video playback renders seamlessly inside the widget hierarchy with zero CPU frame copies (~0.0ms CPU dispatch).
 **Estimated LOC additions:**
-- `martensite-media`: ~2500 LOC
+- `martensite-media`: ~3200 LOC
 - `martensite-wgpu`: ~1000 LOC
-**Key Risks:** Graphics API fragmentation (Vulkan/Metal/DX12) causing surface mapping failures.
-**Mitigations:** Rely heavily on `wgpu` primitives; provide software fallback.
+**Key Risks:** Graphics API fragmentation (Vulkan/Metal/DX12) causing surface mapping failures; display HDR capability desync.
+**Mitigations:** Rely heavily on `wgpu` HAL primitives; automatic tone-mapping to SDR when HDR swapchain is unavailable.
 
 ## v0.9.0 — Developer Experience
 **Entry Criteria:** v0.8.0 complete. Core framework complete.
@@ -121,19 +122,21 @@
 **Key Risks:** Hot-reload crashing state boundaries; non-deterministic golden frame generation.
 **Mitigations:** Strict state definition isolation in cdylib; fixed-step `VirtualClock`.
 
-## v0.10.0 — Hardening & Ecosystem
+## v0.10.0 — Hardening, Plugins & Ecosystem
 **Entry Criteria:** v0.9.0 complete. Full feature set implemented.
 **Deliverables:**
-- `martensite-blessed`: Curated higher-level crate tier for common patterns. (Note: New crate required).
-- Comprehensive fuzzing campaign across all subsystems.
-- Accessibility audit.
-- Benchmark publication.
-**Exit Criteria:** Fuzzers run 48 hours with zero panics. A11y audit passes. Benchmarks published vs baselines (egui, iced).
+- `martensite-plugin`: WebAssembly runtime sandbox powered by `wasmtime`. Linear memory isolation, Plugin ABI v1, and granular capability grants (`SignalRead`, `SignalWrite`, `FileRead`, `Network`).
+- `martensite-blessed`: Curated higher-level crate tier for common patterns (data tables, charting, code editor, audio viewports).
+- Comprehensive fuzzing campaign across all subsystems (48-hour soak).
+- Accessibility audit (WCAG 2.1 AA verification via AccessKit).
+- Benchmark publication comparing throughput/latency against egui and iced baselines.
+**Exit Criteria:** Wasmtime sandboxed plugins mount and render safely. Fuzzers run 48 hours with zero panics. A11y audit passes. Benchmarks published.
 **Estimated LOC additions:**
+- `martensite-plugin`: ~2500 LOC
 - `martensite-blessed`: ~3000 LOC
 - Tests/Bench: ~2000 LOC
-**Key Risks:** Unexpected edge-case crashes exposed by fuzzing delaying v1.0.0.
-**Mitigations:** Start fuzzing campaign infrastructure early in Phase 7.
+**Key Risks:** Wasmtime trampoline latency exceeding frame budget; unexpected edge-case crashes exposed by fuzzing delaying v1.0.0.
+**Mitigations:** Inline trampoline optimization; begin fuzzing campaign infrastructure early in Phase 7.
 
 ## v1.0.0 — Sovereign Stability
 **Entry Criteria:** v0.10.0 complete. Zero known critical bugs.

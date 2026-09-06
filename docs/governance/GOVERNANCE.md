@@ -175,8 +175,27 @@ To provide absolute predictability for enterprise production deployments, indust
    - A formal proposal and approval by the Core & Layout Working Group.
    - Demonstration of substantial compiler capabilities, safety improvements, or language features required by the engine.
    - An explicit notice published in the release notes of at least one minor version preceding the bump.
-3. **Automated CI Enforcement**: All pull requests must pass the complete test suite on the designated MSRV compiler target.
+---
+
+## 6. Stewardship & Post-v1.0 Foundation Succession
+
+To guarantee long-term institutional stability, mitigate single-point-of-failure risks (Bus Factor = 1), and provide sovereign assurances for enterprise adoption:
+
+### 6.1 Pre-v1.0 Stewardship
+During the active bootstrapping and stabilization phases leading up to `v1.0.0`, executive authority remains vested in the Sovereign Architect. This structure preserves conceptual integrity, maintains development velocity, and prevents dilution of the Ten Golden Laws during core engine synthesis.
+
+### 6.2 Post-v1.0 Foundation Transition
+Upon the successful stabilization and publication of `martensite v1.0.0`:
+1. **Foundation Stewardship**: Project stewardship, trademarks, and domain assets (`martensite.dev`) will be transferred to a recognized, vendor-neutral open-source foundation (such as the **Rust Foundation** or **Linux Foundation**).
+2. **Multi-Steward Governance**: Governance will formally transition to a multi-steward council composed of elected Working Group representatives, core contributors, and institutional stakeholders, mirroring the governance topologies of foundational Rust infrastructure (e.g., Cargo, rustfmt, Clippy).
+3. **Constitution Immutability**: The core tenets of `CHARTER.md`—including permanent dual-licensing (MIT/Apache 2.0), 100% Pure-Rust homogeneity, and Pixel Sovereignty—are codified as irrevocable constitutional invariants.
+
+### 6.3 Inactivity & Emergency Contingency
+In the pre-1.0 era, should the Sovereign Architect experience prolonged, unannounced inactivity exceeding **90 consecutive calendar days** without appointing a designated delegate:
+* The five Federated Working Group leads shall automatically convene as an **Emergency Governance Council**.
+* By a supermajority vote ($\ge 4$ of 5 leads), the Council is empowered to appoint an interim Sovereign Architect or initiate immediate foundation transfer to ensure project survival and continuity.
 
 ---
 
 *This Governance Charter stands as the operational law of Martensite, ensuring an enduring, stable, and sovereign engineering platform.*
+
