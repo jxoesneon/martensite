@@ -5,7 +5,18 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+autobins = false
 
 [dependencies]
 martensite = { workspace = true }
+martensite-core = { workspace = true }
+martensite-reactive = { workspace = true }
 criterion = { workspace = true }
+
+[lib]
+bench = false
+
+[[bench]]
+name = "bench_suite"
+path = "src/main.rs"
+harness = false

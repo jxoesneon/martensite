@@ -19,7 +19,6 @@ impl WidgetId {
         }
     }
 
-
     /// Retrieve the dense/sparse slot index.
     #[inline(always)]
     pub const fn slot_idx(self) -> u32 {
@@ -56,5 +55,3 @@ impl WidgetId {
         Self::from_u64(u64::from_le_bytes(bytes))
     }
 }
-
-

@@ -1,61 +1,33 @@
 //! Fine-grained push-pull reactive signal DAG for Martensite.
+//!
+//! Provides transactional batching, topological scheduling, dynamic dependency pruning,
+//! and 3-color DFS cycle detection with zero unsafe code.
 #![forbid(unsafe_code)]
 
-use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use parking_lot::RwLock;
+pub mod cycle;
+pub mod effect;
+pub mod memo;
+pub mod runtime;
+pub mod scheduler;
+pub mod signal;
 
-static NEXT_SIG_ID: AtomicU64 = AtomicU64::new(1);
+pub use cycle::{CycleError, NodeColor};
+pub use effect::Effect;
+pub use memo::Memo;
+pub use runtime::{
+    batch, create_effect, create_memo, create_signal, flush, NodeEvaluator, ReactiveError,
+    ReactiveRuntime,
+};
+pub use scheduler::{FastBuildHasher, FastHasher, NodeRecord, SchedulerState};
+pub use signal::{Signal, SignalId};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SignalId(pub u64);
-
-#[derive(Clone)]
-pub struct Signal<T: Clone + 'static> {
-    pub id: SignalId,
-    value: Arc<RwLock<T>>,
-    _marker: PhantomData<T>,
-}
-
-impl<T: Clone + 'static> Signal<T> {
-    pub fn new(initial: T) -> Self {
-        Self {
-            id: SignalId(NEXT_SIG_ID.fetch_add(1, Ordering::Relaxed)),
-            value: Arc::new(RwLock::new(initial)),
-            _marker: PhantomData,
-        }
-    }
-
-    #[inline(always)]
-    pub fn get(&self) -> T {
-        self.value.read().clone()
-    }
-
-    #[inline(always)]
-    pub fn set(&self, val: T) {
-        *self.value.write() = val;
-    }
-
-    #[inline(always)]
-    pub fn update(&self, f: impl FnOnce(&mut T)) {
-        f(&mut *self.value.write());
-    }
-}
-
-pub struct Memo<T: Clone + 'static> {
-    evaluator: Arc<dyn Fn() -> T + Send + Sync>,
-}
-
-impl<T: Clone + 'static> Memo<T> {
-    pub fn new(eval: impl Fn() -> T + Send + Sync + 'static) -> Self {
-        Self {
-            evaluator: Arc::new(eval),
-        }
-    }
-
-    #[inline(always)]
-    pub fn get(&self) -> T {
-        (self.evaluator)()
-    }
+/// Convenience prelude module for importing fundamental reactive abstractions.
+pub mod prelude {
+    pub use crate::cycle::{CycleError, NodeColor};
+    pub use crate::effect::Effect;
+    pub use crate::memo::Memo;
+    pub use crate::runtime::{
+        batch, create_effect, create_memo, create_signal, flush, ReactiveError, ReactiveRuntime,
+    };
+    pub use crate::signal::{Signal, SignalId};
 }

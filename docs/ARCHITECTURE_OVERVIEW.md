@@ -60,12 +60,12 @@ When `user_name` changes:
 
 Martensite strictly enforces the **Two-Pass Geometry Law**.
 * **Intrinsic Measurement**: Nodes report how big they *want* to be based on their content (e.g., text shaping via `cosmic-text`).
-* **Placement**: We hand these constraints to `Taffy`, an ultra-fast, zero-allocation Rust port of Yoga. Taffy resolves standard CSS Flexbox and Grid rules, outputting exact pixel coordinates.
+* **Placement**: We hand these constraints to `Taffy`, a zero-allocation Rust layout engine. Taffy resolves standard CSS Flexbox and Grid rules, outputting exact pixel coordinates.
 * **Result**: UI elements never jump, pop, or oscillate on the first frame because layout is mathematically finalized before the GPU ever sees the draw commands.
 
 ## 5. Vello Rendering
 
-Martensite does not use traditional immediate-mode triangles or native OS widgets. It uses **Vello**, a revolutionary 2D compute-shader rasterizer built on `wgpu`.
+Martensite does not use traditional immediate-mode triangles or native OS widgets. It uses **Vello**, a 2D compute-shader rasterizer built on `wgpu`.
 * Instead of uploading thousands of vertices, Martensite uploads high-level vector commands (Bezier curves, gradients, glyph runs).
 * Vello uses the GPU's compute pipelines to resolve these shapes into tiles, bypassing the traditional rasterization pipeline bottlenecks.
 * This is what gives Martensite its 1-pixel subpixel-snapped boundaries and physical rendering precision.

@@ -2,11 +2,19 @@
 #![forbid(unsafe_code)]
 
 pub mod arena;
+pub mod fence;
 pub mod id;
 pub mod node;
 pub mod widget;
 
+pub use arena::{ArenaError, BreadthFirstIter, Children, DepthFirstIter, SubtreeIter, WidgetArena};
+pub use fence::{FrameFence, FrameGuard};
 pub use id::WidgetId;
-pub use node::{HotNode, ColdNode, NodeFlags, Rect};
-pub use arena::WidgetArena;
-pub use widget::{Widget, EventResponse, LayoutConstraints, LayoutContext, EventContext, PaintContext, AccessibilityContext};
+pub use node::{ColdNode, HotNode, NodeFlags, Rect};
+pub use widget::{
+    AccessibilityContext, DummyWidget, EventContext, EventResponse, LayoutConstraints,
+    LayoutContext, PaintContext, Widget,
+};
+
+#[cfg(test)]
+mod tests;

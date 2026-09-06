@@ -1,1 +1,2 @@
-// Criterion benchmark suites for Martensite
+//! Criterion benchmark suites for Martensite.
+#![forbid(unsafe_code)]

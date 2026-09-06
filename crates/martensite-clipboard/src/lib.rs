@@ -8,7 +8,9 @@ pub struct ClipboardItem {
 }
 
 impl ClipboardItem {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
     pub fn offer_text(mut self, text: impl Into<String>) -> Self {
         self.text = Some(text.into());
         self

@@ -11,8 +11,16 @@ pub struct SpringConfig {
 }
 
 impl SpringConfig {
-    pub const CRITICAL: Self = Self { mass: 1.0, stiffness: 180.0, damping: 26.8328 };
-    pub const SNAPPY: Self   = Self { mass: 1.0, stiffness: 300.0, damping: 25.0 };
+    pub const CRITICAL: Self = Self {
+        mass: 1.0,
+        stiffness: 180.0,
+        damping: 26.8328,
+    };
+    pub const SNAPPY: Self = Self {
+        mass: 1.0,
+        stiffness: 300.0,
+        damping: 25.0,
+    };
 }
 
 pub struct SpringSolver {
@@ -60,4 +68,3 @@ impl SpringSolver {
         self.zeta
     }
 }
-

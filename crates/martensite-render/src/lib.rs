@@ -14,10 +14,11 @@ pub struct PaintList {
     pub commands: Vec<PaintCommand>,
 }
 
-
 impl PaintList {
     pub fn new() -> Self {
-        Self { commands: Vec::new() }
+        Self {
+            commands: Vec::new(),
+        }
     }
 
     pub fn clear(&mut self) {

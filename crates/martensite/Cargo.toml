@@ -28,3 +28,7 @@ martensite-l10n = { workspace = true }
 martensite-devtools = { workspace = true }
 martensite-macros = { workspace = true }
 martensite-test = { workspace = true }
+
+[dev-dependencies]
+parking_lot = { workspace = true }
+glam = { workspace = true }

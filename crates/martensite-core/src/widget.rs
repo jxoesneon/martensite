@@ -1,6 +1,6 @@
-use crate::node::{Rect, HotNode};
-use glam::Vec2;
+use crate::node::{HotNode, Rect};
 use accesskit::Node as AccessKitNode;
+use glam::Vec2;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct LayoutConstraints {
@@ -27,8 +27,21 @@ pub struct AccessibilityContext {}
 pub trait Widget: Send + Sync + 'static {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2;
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect);
-    fn event(&mut self, _cx: &mut EventContext) -> EventResponse { EventResponse::Ignored }
+    fn event(&mut self, _cx: &mut EventContext) -> EventResponse {
+        EventResponse::Ignored
+    }
     fn accessibility(&self, _node: &mut AccessKitNode) {}
     fn paint(&self, _cx: &mut PaintContext) {}
 }
 
+/// Default inert widget implementation for placeholder nodes and testing.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct DummyWidget;
+
+impl Widget for DummyWidget {
+    fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
+        Vec2::ZERO
+    }
+
+    fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+}
