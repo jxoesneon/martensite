@@ -11,7 +11,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! martensite = "0.0.2"
+//! martensite = "0.1.0"
 //! ```
 //!
 //! Import the prelude for the most commonly used types:
