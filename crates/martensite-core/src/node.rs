@@ -40,15 +40,20 @@ bitflags::bitflags! {
 #[repr(C, align(64))]
 #[derive(Copy, Clone, Debug)]
 pub struct HotNode {
-    pub layout_id: taffy::NodeId,
-    pub bounds: Rect,
-    pub flags: NodeFlags,
-    pub layer_depth: u32,
-    pub parent: Option<WidgetId>,
-    pub first_child: Option<WidgetId>,
-    pub next_sibling: Option<WidgetId>,
-    pub prev_sibling: Option<WidgetId>,
+    pub bounds: Rect,                  // 16 bytes (offset 0..16)
+    pub layout_id: taffy::NodeId,      // 8 bytes  (offset 16..24)
+    pub flags: NodeFlags,              // 4 bytes  (offset 24..28)
+    pub layer_depth: u16,              // 2 bytes  (offset 28..30)
+    pub z_index: i16,                  // 2 bytes  (offset 30..32)
+    pub parent: Option<WidgetId>,      // 8 bytes  (offset 32..40)
+    pub first_child: Option<WidgetId>, // 8 bytes  (offset 40..48)
+    pub next_sibling: Option<WidgetId>,// 8 bytes  (offset 48..56)
+    pub prev_sibling: Option<WidgetId>,// 8 bytes  (offset 56..64)
 }
+
+// Compile-time invariant verification: HotNode must be exactly 64 bytes on 64-bit platforms
+const _: () = assert!(std::mem::size_of::<HotNode>() == 64);
+const _: () = assert!(std::mem::align_of::<HotNode>() == 64);
 
 pub struct ColdNode {
     pub debug_name: Option<&'static str>,
@@ -57,3 +62,22 @@ pub struct ColdNode {
     pub a11y_name: Option<String>,
     pub widget: Box<dyn crate::widget::Widget>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::{align_of, size_of};
+
+    #[test]
+    fn test_sizes() {
+        assert_eq!(size_of::<HotNode>(), 64);
+        assert_eq!(align_of::<HotNode>(), 64);
+        assert_eq!(size_of::<WidgetId>(), 8);
+        assert_eq!(size_of::<Option<WidgetId>>(), 8);
+        assert_eq!(size_of::<taffy::NodeId>(), 8);
+        assert_eq!(size_of::<Rect>(), 16);
+        assert_eq!(size_of::<NodeFlags>(), 4);
+    }
+}
+
+

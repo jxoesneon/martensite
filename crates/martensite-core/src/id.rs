@@ -1,26 +1,47 @@
-#[repr(C)]
+use std::num::NonZeroU64;
+
+/// A 64-bit copyable generational handle to a widget in the arena.
+/// Guaranteed 8-byte layout with niche optimization (Option<WidgetId> is 8 bytes).
+#[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct WidgetId {
-    pub slot_idx: u32,
-    pub generation: u32,
-}
+pub struct WidgetId(NonZeroU64);
 
 impl WidgetId {
+    /// Create a new WidgetId from slot index and generation.
+    /// Generation 0 is automatically adjusted to 1 to guarantee non-zero invariant.
     #[inline(always)]
     pub const fn new(slot_idx: u32, generation: u32) -> Self {
-        Self { slot_idx, generation }
-    }
-
-    #[inline(always)]
-    pub fn to_u64(self) -> u64 {
-        ((self.generation as u64) << 32) | (self.slot_idx as u64)
-    }
-
-    #[inline(always)]
-    pub fn from_u64(val: u64) -> Self {
-        Self {
-            slot_idx: val as u32,
-            generation: (val >> 32) as u32,
+        let gen = if generation == 0 { 1 } else { generation };
+        let val = ((gen as u64) << 32) | (slot_idx as u64);
+        match NonZeroU64::new(val) {
+            Some(nz) => Self(nz),
+            None => panic!("WidgetId invariant violated: value cannot be zero"),
         }
     }
+
+
+    /// Retrieve the dense/sparse slot index.
+    #[inline(always)]
+    pub const fn slot_idx(self) -> u32 {
+        (self.0.get() & 0xFFFF_FFFF) as u32
+    }
+
+    /// Retrieve the generational counter.
+    #[inline(always)]
+    pub const fn generation(self) -> u32 {
+        (self.0.get() >> 32) as u32
+    }
+
+    /// Convert to a raw 64-bit integer.
+    #[inline(always)]
+    pub const fn to_u64(self) -> u64 {
+        self.0.get()
+    }
+
+    /// Construct from a raw 64-bit integer, returning None if 0.
+    #[inline(always)]
+    pub fn from_u64(val: u64) -> Option<Self> {
+        NonZeroU64::new(val).map(Self)
+    }
 }
+

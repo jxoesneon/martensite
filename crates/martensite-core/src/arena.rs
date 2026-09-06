@@ -28,14 +28,14 @@ impl WidgetArena {
 
     #[inline(always)]
     pub fn is_alive(&self, id: WidgetId) -> bool {
-        self.slots.get(id.slot_idx as usize)
-            .map_or(false, |slot| slot.generation == id.generation)
+        self.slots.get(id.slot_idx() as usize)
+            .map_or(false, |slot| slot.generation == id.generation())
     }
 
     #[inline(always)]
     pub fn get_hot(&self, id: WidgetId) -> Option<&HotNode> {
-        let slot = self.slots.get(id.slot_idx as usize)?;
-        if slot.generation == id.generation {
+        let slot = self.slots.get(id.slot_idx() as usize)?;
+        if slot.generation == id.generation() {
             Some(&self.hot_nodes[slot.dense_idx as usize])
         } else {
             None
@@ -62,19 +62,20 @@ impl WidgetArena {
     }
 
     pub fn remove(&mut self, id: WidgetId) -> Option<(HotNode, ColdNode)> {
-        let slot = self.slots.get_mut(id.slot_idx as usize)?;
-        if slot.generation != id.generation {
+        let slot = self.slots.get_mut(id.slot_idx() as usize)?;
+        if slot.generation != id.generation() {
             return None;
         }
 
-        slot.generation = slot.generation.wrapping_add(1);
+        // Advance generation skipping 0 to preserve NonZero niche optimization
+        slot.generation = if slot.generation == u32::MAX { 1 } else { slot.generation + 1 };
         let removed_dense = slot.dense_idx as usize;
         let last_dense = self.hot_nodes.len() - 1;
 
         let hot = self.hot_nodes.swap_remove(removed_dense);
         let cold = self.cold_nodes.swap_remove(removed_dense);
         self.dense_to_slot.swap_remove(removed_dense);
-        self.free_slots.push(id.slot_idx);
+        self.free_slots.push(id.slot_idx());
 
         if removed_dense != last_dense {
             let relocated_slot_idx = self.dense_to_slot[removed_dense] as usize;
@@ -83,4 +84,5 @@ impl WidgetArena {
 
         Some((hot, cold))
     }
+
 }
