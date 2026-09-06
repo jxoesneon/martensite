@@ -23,6 +23,7 @@ members = [
     "crates/martensite-macros",
     "crates/martensite-test",
     "crates/martensite-blessed",
+    "crates/martensite-cosmic-text",
     "tools/cargo-martensite",
     "examples/industrial_dashboard",
     "benches/bench_suite",
@@ -62,12 +63,13 @@ martensite-devtools = { version = "0.0.1", path = "crates/martensite-devtools" }
 martensite-macros = { version = "0.0.1", path = "crates/martensite-macros" }
 martensite-test = { version = "0.0.1", path = "crates/martensite-test" }
 martensite-blessed = { version = "0.0.1", path = "crates/martensite-blessed" }
+martensite-cosmic-text = { version = "0.19.0-martensite.1", path = "crates/martensite-cosmic-text" }
 
 # Core rendering stack — versions verified against crates.io on 2026-09-06
 wgpu = { version = "30", default-features = false, features = ["wgsl"] }
 vello = { version = "0.10", default-features = false }
 taffy = { version = "0.8", default-features = false, features = ["flexbox", "grid", "block_layout", "taffy_tree"] }
-cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
+cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.1", path = "crates/martensite-cosmic-text", default-features = false, features = ["std", "swash"] }
 accesskit = { version = "0.25" }
 accesskit_winit = { version = "0.34" }
 winit = { version = "0.31.0-beta.3", default-features = false }
@@ -95,9 +97,6 @@ criterion = { version = "0.5", features = ["html_reports"] }
 unsafe_code = "deny"
 missing_docs = "warn"
 rust_2021_idioms = { level = "warn", priority = -1 }
-
-[patch.crates-io]
-cosmic-text = { path = "patches/cosmic-text" }
 
 [profile.dev]
 opt-level = 1

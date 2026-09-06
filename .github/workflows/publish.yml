@@ -1,0 +1,109 @@
+name: Publish to crates.io
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run as dry-run (skip actual upload)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish Crates (Dependency Order)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-workspaces
+        run: cargo install cargo-workspaces --locked
+
+      - name: Dry-run packaging
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          # Verify every crate packages cleanly before any real publish.
+          for crate in $(cargo metadata --format-version 1 --no-deps | \
+            python3 -c "import json,sys; d=json.load(sys.stdin); \
+            print(' '.join(p['name'] for p in d['packages'] if p['publish'] is None))"); do
+            echo "Packaging $crate..."
+            cargo package -p "$crate" --allow-dirty
+          done
+
+      - name: Publish to crates.io
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Crates in topological dependency order.
+          # martensite-cosmic-text must come before martensite-text.
+          CRATES=(
+            martensite-reactive
+            martensite-macros
+            martensite-core
+            martensite-layout
+            martensite-wgpu
+            martensite-render
+            martensite-cosmic-text
+            martensite-text
+            martensite-access
+            martensite-window
+            martensite-focus
+            martensite-clipboard
+            martensite-dnd
+            martensite-theme
+            martensite-motion
+            martensite-media
+            martensite-history
+            martensite-assets
+            martensite-l10n
+            martensite-devtools
+            martensite-test
+            martensite
+            martensite-blessed
+          )
+
+          for crate in "${CRATES[@]}"; do
+            echo "[$(date -u +%H:%M:%S)] Publishing $crate..."
+            while true; do
+              log="/tmp/publish_${crate}.log"
+              if cargo publish -p "$crate" > "$log" 2>&1; then
+                echo "[$(date -u +%H:%M:%S)] $crate published."
+                break
+              fi
+              if grep -q "already exists" "$log"; then
+                echo "[$(date -u +%H:%M:%S)] $crate already published; skipping."
+                break
+              fi
+              if grep -q "429 Too Many Requests" "$log"; then
+                reset=$(grep -oE '[A-Za-z]+, [0-9]{2} [A-Za-z]{3} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT' "$log" | head -1)
+                wait=600
+                if [ -n "$reset" ]; then
+                  reset_epoch=$(TZ=UTC date -d "$reset" +%s 2>/dev/null || echo "")
+                  now=$(TZ=UTC date +%s)
+                  if [ -n "$reset_epoch" ] && [ "$((reset_epoch - now))" -gt 0 ]; then
+                    wait=$((reset_epoch - now + 60))
+                  fi
+                fi
+                echo "[$(date -u +%H:%M:%S)] Rate limited; waiting ${wait}s (reset: ${reset:-unknown})"
+                sleep "$wait"
+                continue
+              fi
+              echo "[$(date -u +%H:%M:%S)] FAILED: $crate"
+              cat "$log"
+              exit 1
+            done
+            # Wait between publishes to avoid rate limiting.
+            sleep 120
+          done
+          echo "[$(date -u +%H:%M:%S)] All crates published."

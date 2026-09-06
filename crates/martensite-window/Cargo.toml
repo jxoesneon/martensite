@@ -13,3 +13,9 @@ martensite-core = { workspace = true }
 winit = { workspace = true }
 wgpu = { workspace = true }
 slotmap = { workspace = true }
+
+[features]
+docs-rs = ["winit/x11"]
+
+[package.metadata.docs.rs]
+features = ["docs-rs"]

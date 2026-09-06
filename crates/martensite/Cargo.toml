@@ -33,3 +33,13 @@ martensite-test = { workspace = true }
 [dev-dependencies]
 parking_lot = { workspace = true }
 glam = { workspace = true }
+
+[features]
+docs-rs = [
+    "martensite-window/docs-rs",
+    "martensite-text/docs-rs",
+    "martensite-access/docs-rs",
+]
+
+[package.metadata.docs.rs]
+features = ["docs-rs"]

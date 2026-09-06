@@ -13,3 +13,9 @@ martensite-core = { workspace = true }
 accesskit = { workspace = true }
 accesskit_winit = { workspace = true }
 winit = { workspace = true }
+
+[features]
+docs-rs = ["winit/x11"]
+
+[package.metadata.docs.rs]
+features = ["docs-rs"]
