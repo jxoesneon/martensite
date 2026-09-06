@@ -144,21 +144,36 @@ Comprehensive pre-implementation audit suite executed by autonomous specialized 
 ### Master Hardening Plan
 - [audits/SYNTHESIS_AND_HARDENING_PLAN.md](audits/SYNTHESIS_AND_HARDENING_PLAN.md) — Master synthesis and hardening roadmap
 
-### Red Team (Adversarial Assault)
-- [audits/REDTEAM_01_MEMORY_AND_ARENA.md](audits/REDTEAM_01_MEMORY_AND_ARENA.md) — HotNode 64B proof, niche optimization, and compaction hazards
-- [audits/REDTEAM_02_REACTIVE_DAG.md](audits/REDTEAM_02_REACTIVE_DAG.md) — Dynamic dependencies, release cycle detection, and batch isolation
-- [audits/REDTEAM_03_GEOMETRY_AND_RENDER.md](audits/REDTEAM_03_GEOMETRY_AND_RENDER.md) — O(N²) text caching, modal resize loop, and GPU TDR recovery
-- [audits/REDTEAM_04_OS_AND_MEDIA.md](audits/REDTEAM_04_OS_AND_MEDIA.md) — Wayland presentation, P010 HDR blending, and kinetic IME tracking
-- [audits/REDTEAM_05_API_AND_CONSTITUTION.md](audits/REDTEAM_05_API_AND_CONSTITUTION.md) — Static view trap, IntoValue<T>, and Wasmtime frame budgets
+### Round 1 — Initial Assault & Fortification
+* **Red Team (Adversarial Assault)**:
+  - [audits/REDTEAM_01_MEMORY_AND_ARENA.md](audits/REDTEAM_01_MEMORY_AND_ARENA.md) — HotNode 64B proof, niche optimization, compaction hazards
+  - [audits/REDTEAM_02_REACTIVE_DAG.md](audits/REDTEAM_02_REACTIVE_DAG.md) — Dynamic dependencies, release cycle detection, batch isolation
+  - [audits/REDTEAM_03_GEOMETRY_AND_RENDER.md](audits/REDTEAM_03_GEOMETRY_AND_RENDER.md) — O(N²) text caching, modal resize loop, GPU TDR recovery
+  - [audits/REDTEAM_04_OS_AND_MEDIA.md](audits/REDTEAM_04_OS_AND_MEDIA.md) — Wayland presentation, P010 HDR blending, kinetic IME tracking
+  - [audits/REDTEAM_05_API_AND_CONSTITUTION.md](audits/REDTEAM_05_API_AND_CONSTITUTION.md) — Static view trap, IntoValue<T>, Wasmtime frame budgets
+* **Blue Team (Defensive Fortification)**:
+  - [audits/BLUETEAM_01_MEMORY_AND_ARENA.md](audits/BLUETEAM_01_MEMORY_AND_ARENA.md) — 64B cache line proof, NonZero niche guarantees, RAII FrameGuard, MADV_FREE immunity
+  - [audits/BLUETEAM_02_REACTIVE_DAG.md](audits/BLUETEAM_02_REACTIVE_DAG.md) — Epoch-based edge GC, glitch-free diamond BFS-pull batching, depth limits
+  - [audits/BLUETEAM_03_GEOMETRY_AND_RENDER.md](audits/BLUETEAM_03_GEOMETRY_AND_RENDER.md) — Width-bucketed LRU text shaping cache, synchronous modal resize FSM, GPU TDR recovery
+  - [audits/BLUETEAM_04_OS_AND_MEDIA.md](audits/BLUETEAM_04_OS_AND_MEDIA.md) — Typestate Wayland degradation, 203-nit linear HDR blending, velocity-projected IME positioning
+  - [audits/BLUETEAM_05_API_AND_CONSTITUTION.md](audits/BLUETEAM_05_API_AND_CONSTITUTION.md) — IntoValue<T> dynamic signal binding, EventContext isolation, Wasmtime ring-buffers
 
-### Blue Team (Defensive Fortification)
-- [audits/BLUETEAM_01_MEMORY_AND_ARENA.md](audits/BLUETEAM_01_MEMORY_AND_ARENA.md) — 64B cache line proof, NonZero niche guarantees, RAII FrameGuard, MADV_FREE immunity
-- [audits/BLUETEAM_02_REACTIVE_DAG.md](audits/BLUETEAM_02_REACTIVE_DAG.md) — Epoch-based edge GC, glitch-free diamond BFS-pull batching, release depth circuit breakers
-- [audits/BLUETEAM_03_GEOMETRY_AND_RENDER.md](audits/BLUETEAM_03_GEOMETRY_AND_RENDER.md) — Width-bucketed LRU text shaping cache, synchronous modal resize FSM, GPU TDR recovery
-- [audits/BLUETEAM_04_OS_AND_MEDIA.md](audits/BLUETEAM_04_OS_AND_MEDIA.md) — Typestate Wayland degradation, 203-nit linear HDR blending, velocity-projected IME positioning
-- [audits/BLUETEAM_05_API_AND_CONSTITUTION.md](audits/BLUETEAM_05_API_AND_CONSTITUTION.md) — IntoValue<T> dynamic signal binding, EventContext isolation, Wasmtime ring-buffers
+### Round 2 — Ciel Double Loop Convergence
+* **Red Team (Counter-Attacks)**:
+  - [audits/REDTEAM_R2_01_MEMORY.md](audits/REDTEAM_R2_01_MEMORY.md) — LIFO rapid generation wrap, FrameGuard unwind panic safety, endianness
+  - [audits/REDTEAM_R2_02_REACTIVE.md](audits/REDTEAM_R2_02_REACTIVE.md) — Async across epochs, deep linear DAG false positives, pure-safe Rust MVCC
+  - [audits/REDTEAM_R2_03_GEOMETRY.md](audits/REDTEAM_R2_03_GEOMETRY.md) — Global LRU thrashing on >1024 text nodes, modal resize GPU stall, post-TDR re-binding
+  - [audits/REDTEAM_R2_04_OS_AND_MEDIA.md](audits/REDTEAM_R2_04_OS_AND_MEDIA.md) — Low-nit SDR screen crushing, kinetic IME velocity discontinuities, singular matrix inversion
+  - [audits/REDTEAM_R2_05_API_AND_CONSTITUTION.md](audits/REDTEAM_R2_05_API_AND_CONSTITUTION.md) — Monomorphization bloat, host ring-buffer memory validation, async task zombie writes
+* **Blue Team (Convergence Proofs)**:
+  - [audits/BLUETEAM_R2_01_MEMORY.md](audits/BLUETEAM_R2_01_MEMORY.md) — FIFO freelist (1+ yr wrap immunity), FrameFence timeout lease, endianness neutrality
+  - [audits/BLUETEAM_R2_02_REACTIVE.md](audits/BLUETEAM_R2_02_REACTIVE.md) — 3-Color DFS active-path cycle detection (0 false positives), pure sync memo contract, ArcSwap
+  - [audits/BLUETEAM_R2_03_GEOMETRY.md](audits/BLUETEAM_R2_03_GEOMETRY.md) — Hierarchical two-tier text cache, non-blocking modal resize pump, device epoch invalidation
+  - [audits/BLUETEAM_R2_04_OS_AND_MEDIA.md](audits/BLUETEAM_R2_04_OS_AND_MEDIA.md) — Adaptive display white level query, damped velocity projection, singular determinant guards
+  - [audits/BLUETEAM_R2_05_API_AND_CONSTITUTION.md](audits/BLUETEAM_R2_05_API_AND_CONSTITUTION.md) — PropValue<T> callsite conversion (zero bloat), atomic ring-buffer sanitizer, WeakWidgetId
 
 ---
+
 
 ## Architectural Decisions Status
 

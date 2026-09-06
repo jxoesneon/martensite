@@ -43,5 +43,18 @@ impl WidgetId {
     pub fn from_u64(val: u64) -> Option<Self> {
         NonZeroU64::new(val).map(Self)
     }
+
+    /// Convert to little-endian byte array for wire/shader/storage serialization.
+    #[inline(always)]
+    pub const fn to_le_bytes(self) -> [u8; 8] {
+        self.0.get().to_le_bytes()
+    }
+
+    /// Construct from little-endian byte array, returning None if 0.
+    #[inline(always)]
+    pub fn from_le_bytes(bytes: [u8; 8]) -> Option<Self> {
+        Self::from_u64(u64::from_le_bytes(bytes))
+    }
 }
+
 

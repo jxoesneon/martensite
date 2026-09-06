@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use crate::id::WidgetId;
 use crate::node::{HotNode, ColdNode};
 
@@ -7,12 +8,13 @@ pub struct Slot {
     pub dense_idx: u32,
 }
 
+
 pub struct WidgetArena {
     pub slots: Vec<Slot>,
     pub hot_nodes: Vec<HotNode>,
     pub cold_nodes: Vec<ColdNode>,
     pub dense_to_slot: Vec<u32>,
-    pub free_slots: Vec<u32>,
+    pub free_slots: VecDeque<u32>,
 }
 
 impl Default for WidgetArena {
@@ -28,7 +30,7 @@ impl WidgetArena {
             hot_nodes: Vec::with_capacity(256),
             cold_nodes: Vec::with_capacity(256),
             dense_to_slot: Vec::with_capacity(256),
-            free_slots: Vec::new(),
+            free_slots: VecDeque::new(),
         }
     }
 
@@ -37,7 +39,6 @@ impl WidgetArena {
         self.slots.get(id.slot_idx() as usize)
             .is_some_and(|slot| slot.generation == id.generation())
     }
-
 
     #[inline(always)]
     pub fn get_hot(&self, id: WidgetId) -> Option<&HotNode> {
@@ -54,7 +55,8 @@ impl WidgetArena {
         self.hot_nodes.push(hot);
         self.cold_nodes.push(cold);
 
-        let slot_idx = if let Some(free_idx) = self.free_slots.pop() {
+        // FIFO slot reuse: pop from front
+        let slot_idx = if let Some(free_idx) = self.free_slots.pop_front() {
             let slot = &mut self.slots[free_idx as usize];
             slot.dense_idx = dense_idx;
             free_idx
@@ -82,7 +84,8 @@ impl WidgetArena {
         let hot = self.hot_nodes.swap_remove(removed_dense);
         let cold = self.cold_nodes.swap_remove(removed_dense);
         self.dense_to_slot.swap_remove(removed_dense);
-        self.free_slots.push(id.slot_idx());
+        // FIFO slot reuse: push to back
+        self.free_slots.push_back(id.slot_idx());
 
         if removed_dense != last_dense {
             let relocated_slot_idx = self.dense_to_slot[removed_dense] as usize;
@@ -91,5 +94,5 @@ impl WidgetArena {
 
         Some((hot, cold))
     }
-
 }
+
