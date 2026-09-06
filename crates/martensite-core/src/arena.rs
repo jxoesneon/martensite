@@ -64,7 +64,7 @@ impl std::error::Error for ArenaError {}
 
 /// Slot entry in the sparse lookup table.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Slot {
+pub(crate) struct Slot {
     /// Generational counter tracking allocation lifecycle.
     pub generation: u32,
     /// Index into dense parallel arrays.
