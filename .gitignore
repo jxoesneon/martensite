@@ -17,3 +17,7 @@ tests/snapshots/diffs/
 # Developer overrides
 .env
 .env.local
+
+# Ciel local domain (agent-specific context)
+.ciel/
+.fastembed_cache/

@@ -22,6 +22,7 @@ members = [
     "crates/martensite-devtools",
     "crates/martensite-macros",
     "crates/martensite-test",
+    "crates/martensite-blessed",
     "tools/cargo-martensite",
     "examples/industrial_dashboard",
     "benches/bench_suite",
@@ -30,7 +31,7 @@ members = [
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.80.0"
+rust-version = "1.85.0"
 authors = ["Jose Eduardo Rojas Jimenez <joseeduardox@gmail.com>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jxoesneon/martensite"
@@ -60,21 +61,25 @@ martensite-l10n = { version = "0.0.1", path = "crates/martensite-l10n" }
 martensite-devtools = { version = "0.0.1", path = "crates/martensite-devtools" }
 martensite-macros = { version = "0.0.1", path = "crates/martensite-macros" }
 martensite-test = { version = "0.0.1", path = "crates/martensite-test" }
+martensite-blessed = { version = "0.0.1", path = "crates/martensite-blessed" }
 
-wgpu = { version = "22.0", default-features = false, features = ["wgsl"] }
-vello = { version = "0.2.1", default-features = false }
-taffy = { version = "0.5.2", default-features = false, features = ["flexbox", "grid", "block_layout"] }
-cosmic-text = { version = "0.12.1", default-features = false, features = ["std", "swash"] }
-accesskit = { version = "0.16.0" }
-accesskit_winit = { version = "0.22.0" }
-winit = { version = "0.30.5", default-features = false, features = ["rwh_06"] }
+# Core rendering stack — versions verified against crates.io on 2026-09-06
+wgpu = { version = "24", default-features = false, features = ["wgsl"] }
+vello = { version = "0.4", default-features = false }
+taffy = { version = "0.8", default-features = false, features = ["flexbox", "grid", "block_layout", "taffy_tree"] }
+cosmic-text = { version = "0.12", default-features = false, features = ["std", "swash"] }
+accesskit = { version = "0.16" }
+accesskit_winit = { version = "0.22" }
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
+
+# Utility libraries
 slotmap = { version = "1.0", features = ["serde"] }
-bitflags = "2.6"
-bytemuck = { version = "1.18", features = ["derive"] }
+bitflags = "2"
+bytemuck = { version = "1", features = ["derive"] }
 tracing = "0.1"
-smallvec = { version = "1.13", features = ["union"] }
+smallvec = { version = "1", features = ["union"] }
 kurbo = "0.11"
-peniko = "0.2"
+peniko = "0.3"
 glam = { version = "0.28", features = ["bytemuck"] }
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 softbuffer = { version = "0.4" }
@@ -89,7 +94,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"
-rust_2021_idioms = "warn"
+rust_2021_idioms = { level = "warn", priority = -1 }
 
 [profile.dev]
 opt-level = 1

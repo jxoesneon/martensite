@@ -3,7 +3,6 @@
 
 pub use taffy::prelude::*;
 pub use taffy::TaffyTree;
-use martensite_core::{WidgetArena, WidgetId};
 
 pub struct LayoutEngine {
     pub tree: TaffyTree,
