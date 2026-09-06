@@ -14,11 +14,11 @@ impl GpuRenderer {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
-        }))
-        .ok_or("No adapter found")?;
+            apply_limit_buckets: true,
+        }))?;
 
         let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))?;
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
 
         Ok(Self {
             instance,

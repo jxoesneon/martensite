@@ -64,28 +64,27 @@ martensite-test = { version = "0.0.1", path = "crates/martensite-test" }
 martensite-blessed = { version = "0.0.1", path = "crates/martensite-blessed" }
 
 # Core rendering stack — versions verified against crates.io on 2026-09-06
-wgpu = { version = "24", default-features = false, features = ["wgsl"] }
-vello = { version = "0.4", default-features = false }
+wgpu = { version = "30", default-features = false, features = ["wgsl"] }
+vello = { version = "0.10", default-features = false }
 taffy = { version = "0.8", default-features = false, features = ["flexbox", "grid", "block_layout", "taffy_tree"] }
-cosmic-text = { version = "0.12", default-features = false, features = ["std", "swash"] }
-accesskit = { version = "0.16" }
-accesskit_winit = { version = "0.22" }
-winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
+accesskit = { version = "0.25" }
+accesskit_winit = { version = "0.34" }
+winit = { version = "0.31.0-beta.3", default-features = false }
 
 # Utility libraries
-slotmap = { version = "1.0", features = ["serde"] }
-bitflags = "2"
-bytemuck = { version = "1", features = ["derive"] }
-tracing = "0.1"
-smallvec = { version = "1", features = ["union"] }
-kurbo = "0.11"
-peniko = "0.3"
-glam = { version = "0.28", features = ["bytemuck"] }
-tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+slotmap = { version = "1.1", features = ["serde"] }
+bitflags = "2.13"
+bytemuck = { version = "1.25", features = ["derive"] }
+tracing = "0.1.44"
+smallvec = { version = "1.13", features = ["union"] }
+kurbo = "0.13"
+peniko = "0.6"
+glam = { version = "0.33", features = ["bytemuck"] }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 softbuffer = { version = "0.4" }
-pollster = "0.3"
+pollster = "1.0"
 parking_lot = "0.12"
-fluent-bundle = "0.15"
+fluent-bundle = "0.16"
 unic-langid = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 bincode = "1.3"

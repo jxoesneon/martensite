@@ -990,7 +990,7 @@ mod suite {
         // Widget trait default methods
         let w = DummyWidget;
         w.paint(&mut crate::widget::PaintContext {});
-        let mut node = accesskit::NodeBuilder::new(accesskit::Role::GenericContainer).build();
+        let mut node = accesskit::Node::new(accesskit::Role::GenericContainer);
         w.accessibility(&mut node);
     }
 
