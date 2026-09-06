@@ -3,9 +3,11 @@
 
 use std::time::Duration;
 
+#[derive(Default)]
 pub struct VirtualClock {
     pub elapsed: Duration,
 }
+
 
 impl VirtualClock {
     pub fn new() -> Self { Self { elapsed: Duration::ZERO } }

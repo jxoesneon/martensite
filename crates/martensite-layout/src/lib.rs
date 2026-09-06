@@ -4,9 +4,11 @@
 pub use taffy::prelude::*;
 pub use taffy::TaffyTree;
 
+#[derive(Default)]
 pub struct LayoutEngine {
     pub tree: TaffyTree,
 }
+
 
 impl LayoutEngine {
     pub fn new() -> Self {

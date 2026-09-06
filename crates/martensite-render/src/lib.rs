@@ -9,9 +9,11 @@ pub enum PaintCommand {
     DrawText(Point, String, f32, [u8; 4]),
 }
 
+#[derive(Default)]
 pub struct PaintList {
     pub commands: Vec<PaintCommand>,
 }
+
 
 impl PaintList {
     pub fn new() -> Self {

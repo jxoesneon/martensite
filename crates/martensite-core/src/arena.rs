@@ -15,6 +15,12 @@ pub struct WidgetArena {
     pub free_slots: Vec<u32>,
 }
 
+impl Default for WidgetArena {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WidgetArena {
     pub fn new() -> Self {
         Self {
@@ -29,8 +35,9 @@ impl WidgetArena {
     #[inline(always)]
     pub fn is_alive(&self, id: WidgetId) -> bool {
         self.slots.get(id.slot_idx() as usize)
-            .map_or(false, |slot| slot.generation == id.generation())
+            .is_some_and(|slot| slot.generation == id.generation())
     }
+
 
     #[inline(always)]
     pub fn get_hot(&self, id: WidgetId) -> Option<&HotNode> {
