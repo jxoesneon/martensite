@@ -12,3 +12,35 @@ use winit::dpi::{LogicalPosition, LogicalSize};
 pub fn compute_ime_bounds(x: f64, y: f64, height: f64) -> (LogicalPosition<f64>, LogicalSize<f64>) {
     (LogicalPosition::new(x, y), LogicalSize::new(2.0, height))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::compute_ime_bounds;
+
+    #[test]
+    fn returns_correct_position_and_size() {
+        let (pos, size) = compute_ime_bounds(10.0, 20.0, 30.0);
+        assert_eq!(pos.x, 10.0);
+        assert_eq!(pos.y, 20.0);
+        assert_eq!(size.width, 2.0);
+        assert_eq!(size.height, 30.0);
+    }
+
+    #[test]
+    fn zero_height() {
+        let (pos, size) = compute_ime_bounds(5.0, 5.0, 0.0);
+        assert_eq!(pos.x, 5.0);
+        assert_eq!(pos.y, 5.0);
+        assert_eq!(size.width, 2.0);
+        assert_eq!(size.height, 0.0);
+    }
+
+    #[test]
+    fn negative_coordinates() {
+        let (pos, size) = compute_ime_bounds(-10.0, -20.0, 30.0);
+        assert_eq!(pos.x, -10.0);
+        assert_eq!(pos.y, -20.0);
+        assert_eq!(size.width, 2.0);
+        assert_eq!(size.height, 30.0);
+    }
+}

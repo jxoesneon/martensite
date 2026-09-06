@@ -81,3 +81,78 @@ impl SpringSolver {
         self.zeta
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{SpringConfig, SpringSolver};
+
+    fn approx_eq(a: f32, b: f32, tol: f32) -> bool {
+        (a - b).abs() < tol
+    }
+
+    #[test]
+    fn critical_and_snappy_are_distinct() {
+        assert_ne!(SpringConfig::CRITICAL, SpringConfig::SNAPPY);
+    }
+
+    #[test]
+    fn new_computes_correct_zeta_for_critical() {
+        let solver = SpringSolver::new(SpringConfig::CRITICAL, 0.0, 1.0, 0.0);
+        // Critical damping: zeta = damping / (2 * sqrt(mass * stiffness))
+        // = 26.8328 / (2 * sqrt(180)) ≈ 1.0
+        assert!(approx_eq(solver.damping_ratio(), 1.0, 1e-3));
+    }
+
+    #[test]
+    fn new_computes_correct_zeta_for_snappy() {
+        let solver = SpringSolver::new(SpringConfig::SNAPPY, 0.0, 1.0, 0.0);
+        // zeta = 25.0 / (2 * sqrt(300)) ≈ 0.7217
+        assert!(approx_eq(solver.damping_ratio(), 0.7217, 1e-3));
+    }
+
+    #[test]
+    fn sample_at_t_zero_returns_initial_position() {
+        let solver = SpringSolver::new(SpringConfig::CRITICAL, 0.0, 10.0, 0.0);
+        let (pos, _vel) = solver.sample();
+        // At t=0, position should be the initial position (0.0).
+        // A tolerance accounts for elapsed time before sampling.
+        assert!(approx_eq(pos, 0.0, 1.0));
+    }
+
+    #[test]
+    fn config_returns_used_config() {
+        let config = SpringConfig::CRITICAL;
+        let solver = SpringSolver::new(config, 0.0, 1.0, 0.0);
+        assert_eq!(solver.config(), config);
+    }
+
+    #[test]
+    fn damping_ratio_returns_zeta() {
+        let solver = SpringSolver::new(SpringConfig::SNAPPY, 0.0, 1.0, 0.0);
+        let zeta = solver.damping_ratio();
+        // SNAPPY is underdamped: 0 < zeta < 1
+        assert!(zeta > 0.0);
+        assert!(zeta < 1.0);
+    }
+
+    #[test]
+    fn zero_displacement_zero_velocity_stays_at_target() {
+        let target = 5.0_f32;
+        let solver = SpringSolver::new(SpringConfig::CRITICAL, target, target, 0.0);
+        let (pos, vel) = solver.sample();
+        assert_eq!(pos, target);
+        assert_eq!(vel, 0.0);
+    }
+
+    #[test]
+    fn virtual_clock_advances_deterministically() {
+        let mut clock = martensite_test::VirtualClock::new();
+        assert_eq!(clock.elapsed.as_nanos(), 0);
+
+        clock.advance(std::time::Duration::from_millis(16));
+        assert_eq!(clock.elapsed.as_millis(), 16);
+
+        clock.advance(std::time::Duration::from_millis(16));
+        assert_eq!(clock.elapsed.as_millis(), 32);
+    }
+}

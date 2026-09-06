@@ -37,3 +37,53 @@ impl LayoutEngine {
         self.tree.compute_layout(root, available_space).ok();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AvailableSpace, LayoutEngine, Size, Style};
+
+    #[test]
+    fn new_creates_empty_tree() {
+        let mut engine = LayoutEngine::new();
+        // A fresh engine has a tree that can accept new leaf nodes.
+        let _ = engine
+            .tree
+            .new_leaf(Style::default())
+            .expect("create leaf in empty tree");
+    }
+
+    #[test]
+    fn default_matches_new() {
+        let mut new_engine = LayoutEngine::new();
+        let mut default_engine = LayoutEngine::default();
+        // Both start empty; the first node created in each should have the same id.
+        let new_node = new_engine
+            .tree
+            .new_leaf(Style::default())
+            .expect("create leaf");
+        let default_node = default_engine
+            .tree
+            .new_leaf(Style::default())
+            .expect("create leaf");
+        assert_eq!(new_node, default_node);
+    }
+
+    #[test]
+    fn can_add_nodes_and_compute_layout() {
+        let mut engine = LayoutEngine::new();
+        let child = engine.tree.new_leaf(Style::default()).expect("create leaf");
+        let root = engine
+            .tree
+            .new_with_children(Style::default(), &[child])
+            .expect("create root");
+        engine.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MaxContent,
+            },
+        );
+        let layout = engine.tree.layout(root).expect("get layout");
+        assert_eq!(layout.order, 0);
+    }
+}

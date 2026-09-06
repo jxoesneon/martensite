@@ -19,3 +19,11 @@
 //!
 //! All blessed crates are held to the same rigorous quality bar as the core engine
 //! and adhere to Martensite's Core Architectural Principles.
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn crate_compiles() {
+        // The crate compiling and this test running is the smoke test.
+    }
+}

@@ -22,3 +22,47 @@ impl VirtualClock {
         self.elapsed += dt;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::VirtualClock;
+    use std::time::Duration;
+
+    #[test]
+    fn new_creates_zero_elapsed() {
+        let clock = VirtualClock::new();
+        assert_eq!(clock.elapsed, Duration::ZERO);
+    }
+
+    #[test]
+    fn default_creates_zero_elapsed() {
+        let clock = VirtualClock::default();
+        assert_eq!(clock.elapsed, Duration::ZERO);
+    }
+
+    #[test]
+    fn advance_adds_to_elapsed() {
+        let mut clock = VirtualClock::new();
+        clock.advance(Duration::from_secs(5));
+        assert_eq!(clock.elapsed, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn multiple_advances_accumulate() {
+        let mut clock = VirtualClock::new();
+        clock.advance(Duration::from_secs(3));
+        clock.advance(Duration::from_millis(500));
+        clock.advance(Duration::from_micros(100));
+        assert_eq!(
+            clock.elapsed,
+            Duration::from_secs(3) + Duration::from_millis(500) + Duration::from_micros(100)
+        );
+    }
+
+    #[test]
+    fn advance_with_zero_is_noop() {
+        let mut clock = VirtualClock::new();
+        clock.advance(Duration::ZERO);
+        assert_eq!(clock.elapsed, Duration::ZERO);
+    }
+}

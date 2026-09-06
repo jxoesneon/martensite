@@ -1,10 +1,13 @@
 [package]
 name = "martensite-window"
-version = "0.0.2"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
 description = "Winit multi-window management, fractional DPI scaling, and decoupled VSync."
 readme = "README.md"
 

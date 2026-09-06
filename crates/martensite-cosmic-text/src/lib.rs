@@ -165,3 +165,80 @@ type BuildHasher = core::hash::BuildHasherDefault<rustc_hash::FxHasher>;
 type HashMap<K, V> = std::collections::HashMap<K, V, BuildHasher>;
 #[cfg(not(feature = "std"))]
 type HashMap<K, V> = hashbrown::HashMap<K, V, BuildHasher>;
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use crate::{Attrs, Buffer, FontSystem, Metrics};
+
+    #[test]
+    fn metrics_new_stores_values() {
+        let metrics = Metrics::new(14.0, 20.0);
+        assert_eq!(metrics.font_size, 14.0);
+        assert_eq!(metrics.line_height, 20.0);
+    }
+
+    #[test]
+    fn metrics_relative_calculates_line_height() {
+        let metrics = Metrics::relative(10.0, 1.5);
+        assert_eq!(metrics.font_size, 10.0);
+        assert_eq!(metrics.line_height, 15.0);
+    }
+
+    #[test]
+    fn metrics_scale_multiplies_values() {
+        let metrics = Metrics::new(10.0, 20.0).scale(2.0);
+        assert_eq!(metrics.font_size, 20.0);
+        assert_eq!(metrics.line_height, 40.0);
+    }
+
+    #[test]
+    fn metrics_default_is_zero() {
+        let metrics = Metrics::default();
+        assert_eq!(metrics.font_size, 0.0);
+        assert_eq!(metrics.line_height, 0.0);
+    }
+
+    #[test]
+    fn metrics_display_formats_values() {
+        let metrics = Metrics::new(14.0, 20.0);
+        assert_eq!(format!("{}", metrics), "14px / 20px");
+    }
+
+    #[test]
+    fn attrs_new_has_sane_defaults() {
+        let attrs = Attrs::new();
+        assert!(attrs.color_opt.is_none(), "default color should be unset");
+        assert_eq!(attrs.metadata, 0, "default metadata should be zero");
+    }
+
+    #[test]
+    fn attrs_setters_are_fluent() {
+        let attrs = Attrs::new().metadata(42);
+        assert_eq!(attrs.metadata, 42);
+    }
+
+    #[test]
+    fn buffer_new_empty_has_no_lines() {
+        let buffer = Buffer::new_empty(Metrics::new(14.0, 20.0));
+        assert!(buffer.lines.is_empty(), "new_empty buffer has no lines");
+    }
+
+    #[test]
+    fn buffer_new_with_font_system_seeds_a_line() {
+        let mut font_system = FontSystem::new();
+        let buffer = Buffer::new(&mut font_system, Metrics::new(14.0, 20.0));
+        // Buffer::new seeds an empty text line, so there is exactly one line.
+        assert_eq!(buffer.lines.len(), 1);
+    }
+
+    #[test]
+    fn font_system_new_constructs_database() {
+        let font_system = FontSystem::new();
+        // The Debug impl must surface the FontSystem type name.
+        let debug = format!("{:?}", font_system);
+        assert!(
+            debug.contains("FontSystem"),
+            "FontSystem debug output should contain its type name"
+        );
+    }
+}

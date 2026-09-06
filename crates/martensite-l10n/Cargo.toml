@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
 description = "Natural language grammatical localization and BiDi mirroring via Project Fluent."
 readme = "README.md"
 

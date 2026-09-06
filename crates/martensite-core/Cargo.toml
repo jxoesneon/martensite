@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
 description = "Generational slotmap arena, widget traits, and node graph for Martensite."
 readme = "README.md"
 
@@ -17,5 +20,9 @@ bitflags = { workspace = true }
 tracing = { workspace = true }
 glam = { workspace = true }
 slotmap = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
 [lints]
 workspace = true

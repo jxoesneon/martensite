@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
 description = "Multi-MIME delayed rendering clipboard engine (OLE, Cocoa, Wayland, X11)."
 readme = "README.md"
 

@@ -40,3 +40,34 @@ impl GpuRenderer {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::GpuRenderer;
+
+    #[test]
+    #[ignore = "requires a wgpu backend feature enabled and a GPU available"]
+    fn new_does_not_panic() {
+        // A GPU may not be available in CI; we only verify that new() does not panic
+        // when a backend is actually available.
+        let _ = GpuRenderer::new();
+    }
+
+    #[test]
+    #[ignore = "requires a wgpu backend feature enabled and a GPU available"]
+    fn new_handles_missing_gpu_gracefully() {
+        // The error path must be handled gracefully when no GPU is available.
+        match GpuRenderer::new() {
+            Ok(renderer) => {
+                // When construction succeeds, the core wgpu resources must be present.
+                let _ = &renderer.instance;
+                let _ = &renderer.adapter;
+                let _ = &renderer.device;
+                let _ = &renderer.queue;
+            }
+            Err(_) => {
+                // No suitable adapter/device available (e.g. headless CI).
+            }
+        }
+    }
+}

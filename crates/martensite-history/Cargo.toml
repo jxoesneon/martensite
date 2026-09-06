@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
 description = "Universal transactional undo/redo ledger and non-linear LCA branching tree."
 readme = "README.md"
 

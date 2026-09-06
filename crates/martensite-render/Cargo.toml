@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
 description = "Hardware-agnostic PaintList command stream and TinySkia CPU fallback backend."
 readme = "README.md"
 

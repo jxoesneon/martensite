@@ -21,3 +21,41 @@ impl ClipboardItem {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ClipboardItem;
+
+    #[test]
+    fn new_creates_empty_item() {
+        let item = ClipboardItem::new();
+        assert!(item.text.is_none());
+        assert!(item.html.is_none());
+    }
+
+    #[test]
+    fn default_matches_new() {
+        let new_item = ClipboardItem::new();
+        let default_item = ClipboardItem::default();
+        assert!(new_item.text.is_none());
+        assert!(default_item.text.is_none());
+        assert!(new_item.html.is_none());
+        assert!(default_item.html.is_none());
+    }
+
+    #[test]
+    fn offer_text_sets_text_and_returns_self() {
+        let item = ClipboardItem::new().offer_text("hello");
+        assert_eq!(item.text, Some("hello".to_string()));
+        assert!(item.html.is_none());
+    }
+
+    #[test]
+    fn offer_text_accepts_str_and_string() {
+        let from_str = ClipboardItem::new().offer_text("from &str");
+        assert_eq!(from_str.text, Some("from &str".to_string()));
+
+        let from_string = ClipboardItem::new().offer_text(String::from("from String"));
+        assert_eq!(from_string.text, Some("from String".to_string()));
+    }
+}

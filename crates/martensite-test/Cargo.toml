@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
 description = "Headless CI mock windowing, deterministic virtual clock, and perceptual diffing."
 readme = "README.md"
 

@@ -1,10 +1,13 @@
 [package]
 name = "martensite-text"
-version = "0.0.2"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
 description = "HarfBuzz shaping, BiDi, font fallback, and sub-pixel IME projection via cosmic-text."
 readme = "README.md"
 
