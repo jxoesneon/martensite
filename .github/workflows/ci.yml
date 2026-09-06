@@ -40,7 +40,7 @@ jobs:
       - name: Install Mesa Lavapipe (Software Vulkan)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1-mesa
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
       - name: Run Tests
         run: cargo test --workspace --all-targets
         env:
@@ -51,6 +51,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
+      - name: Run cargo-audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit

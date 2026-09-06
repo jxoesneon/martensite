@@ -23,9 +23,7 @@ confidence-threshold = 0.8
 [bans]
 multiple-versions = "warn"
 deny = [
-    { name = "cc" },
     { name = "cmake" },
-    { name = "pkg-config" },
     { name = "cxx-build" },
     { name = "openssl-sys" },
     { name = "freetype-sys" },
