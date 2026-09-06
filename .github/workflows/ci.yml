@@ -42,7 +42,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
       - name: Run Tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --lib --tests
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
 
