@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // This is a Martensite fork of cosmic-text. Upstream code style is preserved.
-
-// Upstream cosmic-text has intra-doc links that don't resolve in our fork context.
+//
+// This crate inherits workspace lints but overrides the following rules
+// because it is a vendored upstream fork whose code we do not own:
+// - `unsafe_code`: upstream uses `unsafe` for fontdb face data sharing.
+// - `missing_docs`: upstream does not document every public item.
+// - `clippy::all`: upstream code style differs from workspace conventions.
+// - `rustdoc::broken_intra_doc_links`: upstream links don't resolve in fork context.
+#![allow(unsafe_code)]
+#![allow(missing_docs)]
+#![allow(clippy::all)]
 #![allow(rustdoc::broken_intra_doc_links)]
 
 //! # COSMIC Text

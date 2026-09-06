@@ -76,5 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run Benchmark Suite (smoke)
+      - name: Run Benchmark Suite (strict exit gates)
         run: cargo bench -p bench_suite --bench bench_suite -- --quick --test
+        env:
+          MARTENSITE_STRICT_BENCH: "1"
