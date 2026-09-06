@@ -1,0 +1,80 @@
+name: Martensite CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  style-and-lints:
+    name: Code Formatting & Clippy Lints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.80.0
+        with:
+          components: rustfmt, clippy
+      - name: Rustfmt Check
+        run: cargo fmt --all -- --check
+      - name: Clippy Lints
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  purity-and-bans:
+    name: Supply-Chain Purity Gate (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  cross-compile-matrix:
+    name: Zero C/C++ Cross-Compile Verification
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-pc-windows-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+          - wasm32-unknown-unknown
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.80.0
+        with:
+          targets: ${{ matrix.target }}
+      - name: Check Cross Target (Zero C toolchain installed)
+        run: cargo check --target ${{ matrix.target }} --all-targets
+
+  test-suite:
+    name: Headless Test Suite & Golden Snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.80.0
+      - name: Install Mesa Lavapipe (Software Vulkan)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1-mesa
+      - name: Run Test Matrix
+        run: cargo test --workspace -- --nocapture
+        env:
+          WGPU_ADAPTER_NAME: "llvmpipe"
+      - name: Upload Snapshot Diffs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-diffs
+          path: target/snapshots/diffs/
+
+  semver-invariance:
+    name: SemVer 1.0 Breaking Changes Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.80.0
+      - uses: obi-software/cargo-semver-checks-action@v2
+        continue-on-error: true # Non-blocking until v1.0.0

@@ -1,0 +1,19 @@
+# Rust / Cargo output
+target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE / Editor configuration
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Test / Snapshot diff artifacts
+target/snapshots/diffs/
+tests/snapshots/diffs/
+
+# Developer overrides
+.env
+.env.local

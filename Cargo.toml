@@ -1,0 +1,104 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/martensite",
+    "crates/martensite-core",
+    "crates/martensite-reactive",
+    "crates/martensite-layout",
+    "crates/martensite-wgpu",
+    "crates/martensite-render",
+    "crates/martensite-text",
+    "crates/martensite-access",
+    "crates/martensite-window",
+    "crates/martensite-focus",
+    "crates/martensite-clipboard",
+    "crates/martensite-dnd",
+    "crates/martensite-theme",
+    "crates/martensite-motion",
+    "crates/martensite-media",
+    "crates/martensite-history",
+    "crates/martensite-assets",
+    "crates/martensite-l10n",
+    "crates/martensite-devtools",
+    "crates/martensite-macros",
+    "crates/martensite-test",
+    "tools/cargo-martensite",
+    "examples/industrial_dashboard",
+    "benches/bench_suite",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.80.0"
+authors = ["Jose Eduardo Rojas Jimenez <joseeduardox@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jxoesneon/martensite"
+homepage = "https://martensite.dev"
+keywords = ["gui", "ui", "wgpu", "vello", "reactive"]
+categories = ["gui", "rendering::graphics-api"]
+
+[workspace.dependencies]
+martensite = { version = "0.0.1", path = "crates/martensite" }
+martensite-core = { version = "0.0.1", path = "crates/martensite-core" }
+martensite-reactive = { version = "0.0.1", path = "crates/martensite-reactive" }
+martensite-layout = { version = "0.0.1", path = "crates/martensite-layout" }
+martensite-wgpu = { version = "0.0.1", path = "crates/martensite-wgpu" }
+martensite-render = { version = "0.0.1", path = "crates/martensite-render" }
+martensite-text = { version = "0.0.1", path = "crates/martensite-text" }
+martensite-access = { version = "0.0.1", path = "crates/martensite-access" }
+martensite-window = { version = "0.0.1", path = "crates/martensite-window" }
+martensite-focus = { version = "0.0.1", path = "crates/martensite-focus" }
+martensite-clipboard = { version = "0.0.1", path = "crates/martensite-clipboard" }
+martensite-dnd = { version = "0.0.1", path = "crates/martensite-dnd" }
+martensite-theme = { version = "0.0.1", path = "crates/martensite-theme" }
+martensite-motion = { version = "0.0.1", path = "crates/martensite-motion" }
+martensite-media = { version = "0.0.1", path = "crates/martensite-media" }
+martensite-history = { version = "0.0.1", path = "crates/martensite-history" }
+martensite-assets = { version = "0.0.1", path = "crates/martensite-assets" }
+martensite-l10n = { version = "0.0.1", path = "crates/martensite-l10n" }
+martensite-devtools = { version = "0.0.1", path = "crates/martensite-devtools" }
+martensite-macros = { version = "0.0.1", path = "crates/martensite-macros" }
+martensite-test = { version = "0.0.1", path = "crates/martensite-test" }
+
+wgpu = { version = "22.0", default-features = false, features = ["wgsl"] }
+vello = { version = "0.2.1", default-features = false }
+taffy = { version = "0.5.2", default-features = false, features = ["flexbox", "grid", "block_layout"] }
+cosmic-text = { version = "0.12.1", default-features = false, features = ["std", "swash"] }
+accesskit = { version = "0.16.0" }
+accesskit_winit = { version = "0.22.0" }
+winit = { version = "0.30.5", default-features = false, features = ["rwh_06"] }
+slotmap = { version = "1.0", features = ["serde"] }
+bitflags = "2.6"
+bytemuck = { version = "1.18", features = ["derive"] }
+tracing = "0.1"
+smallvec = { version = "1.13", features = ["union"] }
+kurbo = "0.11"
+peniko = "0.2"
+glam = { version = "0.28", features = ["bytemuck"] }
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+softbuffer = { version = "0.4" }
+pollster = "0.3"
+parking_lot = "0.12"
+fluent-bundle = "0.15"
+unic-langid = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+rust_2021_idioms = "warn"
+
+[profile.dev]
+opt-level = 1
+debug = 1
+incremental = true
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = true

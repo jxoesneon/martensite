@@ -1,0 +1,22 @@
+[bans]
+multiple-versions = "warn"
+deny = [
+    { name = "cc" },
+    { name = "cmake" },
+    { name = "pkg-config" },
+    { name = "cxx-build" },
+    { name = "openssl-sys" },
+    { name = "freetype-sys" },
+    { name = "fontconfig-sys" },
+    { name = "shaderc-sys" },
+    { name = "glib-sys" },
+    { name = "gobject-sys" },
+    { name = "atk-sys" },
+    { name = "zlib-sys" },
+    { name = "libsqlite3-sys" },
+]
+skip = [
+    { name = "libc" },
+    { name = "windows-sys" },
+    { name = "windows-targets" },
+]

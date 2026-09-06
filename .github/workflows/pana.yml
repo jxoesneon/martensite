@@ -1,0 +1,40 @@
+name: Pub.dev Scoring & Pana Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pana-scoring-gate:
+    name: Verify 160/160 Pub Points via Pana
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/martensite_dart
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Dart SDK
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Verify Code Formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Run Dart Analyzer with Recommended Lints
+        run: dart analyze --fatal-infos --fatal-warnings
+
+      - name: Run Unit Tests
+        run: dart test
+
+      - name: Install & Run Pana Analyzer
+        run: |
+          dart pub global activate pana
+          # Enforces 0 warnings and minimum 140/140 (160/160) points threshold:
+          dart pub global run pana --no-warning --exit-code-threshold 0
