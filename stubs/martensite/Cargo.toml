@@ -1,0 +1,16 @@
+[package]
+name = "martensite"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.80.0"
+authors = ["Jose Eduardo Rojas Jimenez <joseeduardox@gmail.com>"]
+description = "The sovereign, retained-mode, GPU-accelerated graphical user interface engine for Rust."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jxoesneon/martensite"
+homepage = "https://martensite.dev"
+keywords = ["gui", "ui", "wgpu", "vello", "reactive"]
+categories = ["gui", "rendering::graphics-api"]
+readme = "README.md"
+
+[dependencies]
+# v0.0.1 namespace reservation stub - zero runtime dependencies

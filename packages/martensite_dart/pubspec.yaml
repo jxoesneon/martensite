@@ -1,0 +1,17 @@
+name: martensite
+description: Official Dart and Flutter client bindings for Martensite, the sovereign GPU-accelerated GUI engine.
+version: 0.0.1
+homepage: https://martensite.dev
+repository: https://github.com/jxoesneon/martensite
+issue_tracker: https://github.com/jxoesneon/martensite/issues
+documentation: https://docs.rs/martensite
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  ffi: ^2.1.2
+
+dev_dependencies:
+  lints: ^4.0.0
+  test: ^1.25.0

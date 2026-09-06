@@ -1,0 +1,16 @@
+[package]
+name = "martensite-ui"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.80.0"
+authors = ["Jose Eduardo Rojas Jimenez <joseeduardox@gmail.com>"]
+description = "Official redirect alias package for Martensite, the sovereign Rust GUI engine."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jxoesneon/martensite"
+homepage = "https://martensite.dev"
+keywords = ["gui", "ui", "martensite", "vello", "reactive"]
+categories = ["gui", "rendering::graphics-api"]
+readme = "README.md"
+
+[dependencies]
+# v0.0.1 namespace reservation stub - zero runtime dependencies
