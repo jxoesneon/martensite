@@ -1,0 +1,18 @@
+[package]
+name = "martensite-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Generational slotmap arena, widget traits, and node graph for Martensite."
+
+[dependencies]
+martensite-reactive = { workspace = true }
+taffy = { workspace = true }
+accesskit = { workspace = true }
+smallvec = { workspace = true }
+bitflags = { workspace = true }
+tracing = { workspace = true }
+glam = { workspace = true }
+slotmap = { workspace = true }

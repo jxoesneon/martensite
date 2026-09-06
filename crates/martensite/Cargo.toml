@@ -1,0 +1,30 @@
+[package]
+name = "martensite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The sovereign, retained, GPU-accelerated GUI engine for Rust."
+
+[dependencies]
+martensite-core = { workspace = true }
+martensite-reactive = { workspace = true }
+martensite-layout = { workspace = true }
+martensite-wgpu = { workspace = true }
+martensite-render = { workspace = true }
+martensite-text = { workspace = true }
+martensite-access = { workspace = true }
+martensite-window = { workspace = true }
+martensite-focus = { workspace = true }
+martensite-clipboard = { workspace = true }
+martensite-dnd = { workspace = true }
+martensite-theme = { workspace = true }
+martensite-motion = { workspace = true }
+martensite-media = { workspace = true }
+martensite-history = { workspace = true }
+martensite-assets = { workspace = true }
+martensite-l10n = { workspace = true }
+martensite-devtools = { workspace = true }
+martensite-macros = { workspace = true }
+martensite-test = { workspace = true }

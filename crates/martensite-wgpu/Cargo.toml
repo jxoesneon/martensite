@@ -1,0 +1,15 @@
+[package]
+name = "martensite-wgpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Compute-centric 2D GPU rasterization and self-healing WGPU device pipeline."
+
+[dependencies]
+martensite-core = { workspace = true }
+wgpu = { workspace = true }
+vello = { workspace = true }
+pollster = { workspace = true }
+tracing = { workspace = true }

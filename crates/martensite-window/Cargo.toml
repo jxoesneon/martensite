@@ -1,0 +1,14 @@
+[package]
+name = "martensite-window"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Winit multi-window management, fractional DPI scaling, and decoupled VSync."
+
+[dependencies]
+martensite-core = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+slotmap = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "martensite-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "HarfBuzz shaping, BiDi, font fallback, and sub-pixel IME projection via cosmic-text."
+
+[dependencies]
+martensite-core = { workspace = true }
+cosmic-text = { workspace = true }
+winit = { workspace = true }

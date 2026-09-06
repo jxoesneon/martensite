@@ -1,0 +1,13 @@
+[package]
+name = "martensite-layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "W3C CSS Flexbox, Grid, and Block layout bridge via Taffy for Martensite."
+
+[dependencies]
+martensite-core = { workspace = true }
+taffy = { workspace = true }
+glam = { workspace = true }
