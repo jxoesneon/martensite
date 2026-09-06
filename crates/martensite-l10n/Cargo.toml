@@ -1,0 +1,13 @@
+[package]
+name = "martensite-l10n"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Natural language grammatical localization and BiDi mirroring via Project Fluent."
+
+[dependencies]
+martensite-core = { workspace = true }
+fluent-bundle = { workspace = true }
+unic-langid = { workspace = true }

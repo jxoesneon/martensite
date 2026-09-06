@@ -1,0 +1,12 @@
+[package]
+name = "martensite-history"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Universal transactional undo/redo ledger and non-linear LCA branching tree."
+
+[dependencies]
+martensite-core = { workspace = true }
+martensite-reactive = { workspace = true }

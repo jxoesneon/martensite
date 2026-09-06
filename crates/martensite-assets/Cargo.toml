@@ -1,0 +1,11 @@
+[package]
+name = "martensite-assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Virtual file system (VFS), AOT naga shader validation, and dynamic texture streaming."
+
+[dependencies]
+martensite-core = { workspace = true }
