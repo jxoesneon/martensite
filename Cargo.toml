@@ -41,13 +41,13 @@ keywords = ["gui", "ui", "wgpu", "vello", "reactive"]
 categories = ["gui", "rendering::graphics-api"]
 
 [workspace.dependencies]
-martensite = { version = "0.0.1", path = "crates/martensite" }
+martensite = { version = "0.0.2", path = "crates/martensite" }
 martensite-core = { version = "0.0.1", path = "crates/martensite-core" }
 martensite-reactive = { version = "0.0.1", path = "crates/martensite-reactive" }
 martensite-layout = { version = "0.0.1", path = "crates/martensite-layout" }
 martensite-wgpu = { version = "0.0.1", path = "crates/martensite-wgpu" }
 martensite-render = { version = "0.0.1", path = "crates/martensite-render" }
-martensite-text = { version = "0.0.1", path = "crates/martensite-text" }
+martensite-text = { version = "0.0.2", path = "crates/martensite-text" }
 martensite-access = { version = "0.0.1", path = "crates/martensite-access" }
 martensite-window = { version = "0.0.1", path = "crates/martensite-window" }
 martensite-focus = { version = "0.0.1", path = "crates/martensite-focus" }
