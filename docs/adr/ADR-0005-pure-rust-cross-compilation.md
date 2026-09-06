@@ -2,7 +2,7 @@
 
 * **Status:** Accepted
 * **Date:** 2026-09-06
-* **Deciders:** Master (Sovereign Architect), Ciel (Infrastructure & Security Guild)
+* **Deciders:** Martensite Architecture Working Group
 * **Technical Domain:** Workspace Supply Chain, `deny.toml`, CI Matrix
 
 ## Context and Problem Statement

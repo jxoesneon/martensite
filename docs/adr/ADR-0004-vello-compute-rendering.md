@@ -2,7 +2,7 @@
 
 * **Status:** Accepted
 * **Date:** 2026-09-06
-* **Deciders:** Master (Sovereign Architect), Ciel (Graphics & Compute Guild)
+* **Deciders:** Martensite Architecture Working Group
 * **Technical Domain:** `martensite-wgpu`, `martensite-render`
 
 ## Context and Problem Statement

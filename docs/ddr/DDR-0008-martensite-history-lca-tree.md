@@ -2,7 +2,7 @@
 
 * **Subsystem:** `martensite-history`
 * **Status:** Approved
-* **Authors:** Ciel (Specialist Guilds: Systems, Data & Architecture)
+* **Authors:** Martensite Architecture Working Group
 * **Related ADRs:** ADR-0002
 
 ## 1. System Topology & History Graph Invariants

@@ -2,7 +2,7 @@
 
 * **Subsystem:** `martensite-text`
 * **Status:** Approved
-* **Authors:** Ciel (Specialist Guilds: Text, IME & Platform)
+* **Authors:** Martensite Architecture Working Group
 * **Related ADRs:** ADR-0006
 
 ## 1. System Topology & Mathematical Layout Invariants

@@ -1,7 +1,7 @@
-# Red Team Audit 04: OS Boundary & Hardware Media Saboteur
+# Red Team Audit 04: OS Boundary & Hardware Media Reviewer
 **Target:** OS window integration, hardware media pipeline, IME positioning, clipboard/DnD, event routing.
 **Date:** 2026-09-06
-**Auditor:** Swarm Member 4
+**Auditor:** Architecture Review Team
 
 ## 1. Wayland Immediate Present Mode Protocol Violation & Spin-Lock
 **Vulnerability:** Under `DDR-0011`, `PresentMode::Immediate` allows unbounded rendering for latency-critical apps. However, on Wayland, the core protocol operates on frame callbacks (`wl_surface.frame`). If a compositor does not support `wp_tearing_control_v1`, submitting buffers without waiting for frame callbacks is a protocol violation.

@@ -2,7 +2,7 @@
 
 * **Subsystem:** `martensite-theme`
 * **Status:** Approved
-* **Authors:** Ciel (Specialist Guilds: Graphics, Architecture & UX)
+* **Authors:** Martensite Architecture Working Group
 * **Related ADRs:** ADR-0010
 
 ## 1. Mathematical Theory & Color Space Topology

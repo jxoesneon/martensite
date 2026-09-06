@@ -1,7 +1,7 @@
-# Adversarial Audit Report: API Ergonomics & Ten Golden Laws (Red Team 05)
+# Architecture Review Report: API Ergonomics & Core Architectural Principles (Red Team 05)
 
 **Target:** Martensite v1.0.0 Public API, Constitutional Documents, Wasmtime Plugin ABI
-**Auditor:** Swarm Member 5 (The API Ergonomics & Ten Golden Laws Inquisitor)
+**Auditor:** Architecture Review Team
 **Date:** September 6, 2026
 
 ## 1. The Borrow Checker Trap in Context (`cx`) & Event Handlers
@@ -24,7 +24,7 @@ button("Click Me")
         // capture `Copy` vs `Clone` types when mixed with non-copy environments.
     });
 ```
-Moreover, `on_click` provides `&mut EventContext`. But what if a developer wants to spawn an async task on click? The `Context` API provides `cx.spawn(...)`, but `EventContext` does not document a `spawn` method in the specification! If they try to capture `&mut Context` from the outer scope, the borrow checker will vehemently reject it, forcing developers to use `Rc<RefCell<Context>>`—a direct violation of Law IV (The Single-Tree Generational Arena Law).
+Moreover, `on_click` provides `&mut EventContext`. But what if a developer wants to spawn an async task on click? The `Context` API provides `cx.spawn(...)`, but `EventContext` does not document a `spawn` method in the specification! If they try to capture `&mut Context` from the outer scope, the borrow checker will vehemently reject it, forcing developers to use `Rc<RefCell<Context>>`—a direct conflict with Principle 4 (Single Flat Arena Topology).
 
 ### Remediation
 1. Ensure `EventContext` and `LayoutContext` can escalate to or deref into a standard `Context` capable of `.spawn()` and `.signal()`.
@@ -35,7 +35,7 @@ Moreover, `on_click` provides `&mut EventContext`. But what if a developer wants
 ## 2. Hidden Heap Allocations & The "Static View" Trap in Widget Builders
 
 ### The Flaw (Critical Architectural Contradiction)
-Law V (Invariant 5.1) states: *"Component view declarations execute exactly once during initialization to forge the node hierarchy. Component functions must never re-run top-to-bottom on state changes."*
+Principle 5 states: *"Component view declarations execute exactly once during initialization to forge the node hierarchy. Component functions must never re-run top-to-bottom on state changes."*
 
 Yet, the `WidgetExt` trait is defined as taking raw primitive values:
 ```rust
@@ -51,7 +51,7 @@ column().padding(padding_sig.get()) // reads 10.0 ONCE
 ```
 When `padding_sig` changes, the padding will **never update** because the builder function never re-runs, and `.padding()` consumed the primitive `f32` by value, not the signal! 
 
-Furthermore, `WidgetExt` methods consume `self` and return `Self`. This means `TextWidget::padding` must return `TextWidget`. This implies `TextWidget` is a monolithic "fat struct" containing fields for padding, margin, borders, tooltips, etc. This contradicts the 64-byte `HotNode` requirement and requires boxing or heap allocations, violating Law II.
+Furthermore, `WidgetExt` methods consume `self` and return `Self`. This means `TextWidget::padding` must return `TextWidget`. This implies `TextWidget` is a monolithic "fat struct" containing fields for padding, margin, borders, tooltips, etc. This contradicts the 64-byte `HotNode` requirement and requires boxing or heap allocations, violating Principle 2 (Deterministic Zero-GC Lifecycle).
 
 ### Remediation
 1. **Reactive Modifiers:** Modifier methods must accept `IntoValue<T>`, an enum that can be either a static value or a `Signal<T>` / `Memo<T>`. 
@@ -90,6 +90,6 @@ SPEC-0001-API notes under `martensite` (Phase 1): *"Limitations v0.x: Single win
 Yet `wg-platform` in GOVERNANCE is mandated to handle *"Winit multi-window management"*. This is a minor misalignment but creates confusion regarding the v1.0.0 target scope versus current limitations.
 
 ### 3. Idle 0.00% Resource Conflict
-The Event-Sleep Law (Law III) states CPU/GPU must be at 0.00% when idle. 
+Principle 3 (Event-Driven Quiescence) states CPU/GPU utilization must be zero when idle. 
 ADR-0029 allows Wasmtime plugins with no constraints on background polling within the wasm module. If a plugin continuously spins or polls within its sandbox, it will violate the host's 0.00% CPU mandate.
 *Remediation:* The Wasmtime engine must strictly pause execution or block the wasm instance unless explicitly awoken by a host-routed event or registered timeout via the host capability interface.

@@ -4,7 +4,7 @@
 **Status:** Maintained
 **Target:** v1.0.0
 
-Martensite is a sovereign, retained-mode GUI engine with a strict mandate for pure-Rust cross-platform compilation. We adhere to the Anti-Slop Doctrine: if it is listed as Tier 1, it is unconditionally verifiable and tested.
+Martensite is a retained-mode GUI framework with a commitment to pure-Rust cross-platform compilation. Tier 1 targets are tested and verified in automated CI.
 
 ## Tier 1: Fully Supported, CI-Tested, Guaranteed
 

@@ -1,18 +1,18 @@
 # Martensite Documentation Standards
 
-The documentation of Martensite is the final manifestation of the Anti-Slop Doctrine. It must be brutally honest, technically exhaustive, and engineered for professional systems programmers. Marketing fluff, hype words, and ambiguous promises are strictly forbidden.
+Documentation in Martensite must be precise, technically accurate, and focused on clear mechanical descriptions. Marketing language, promotional phrasing, and ambiguous claims are avoided.
 
 ## 1. Required Rustdoc Structure for Public Items
 
-Every public item (`pub struct`, `pub trait`, `pub fn`, `pub enum`, `pub const`) must have a comprehensive rustdoc string. The structure must rigidly follow this exact section order:
+Every public item (`pub struct`, `pub trait`, `pub fn`, `pub enum`, `pub const`) must have a comprehensive rustdoc string. The structure follows this section order:
 
-1. **Short Summary**: A single, declarative sentence explaining what the item is or does. No trailing period if it is a sentence fragment, though full sentences are preferred.
-2. **Extended Description**: Exhaustive details on behavior, state management, and memory implications.
+1. **Short Summary**: A single, declarative sentence explaining what the item is or does. Full sentences are preferred.
+2. **Extended Description**: Details on behavior, state management, and memory implications.
 3. **`# Examples`**: Executable doctests proving usage.
 4. **`# Panics`** (If applicable)
 5. **`# Errors`** (If applicable)
 6. **`# Safety`** (If applicable, required for all `unsafe fn` or `unsafe trait`)
-7. **`# Limitations`**: Brutally honest boundaries of the API.
+7. **`# Limitations`**: Explicit boundaries and unsupported configurations of the API.
 
 ### Example
 
@@ -47,17 +47,17 @@ pub struct NodeId {
 
 ## 2. Mandatory Sections
 
-*   **`# Examples`**: Every single public function, macro, and struct must include at least one executable example. The example must compile and run via `cargo test --doc`.
-*   **`# Panics`**: If a function can panic under any circumstance (e.g., unwrapping an internal `Option`, indexing out of bounds, reaching capacity limits), you must document the exact conditions that cause the panic.
-*   **`# Errors`**: If a function returns a `Result<T, E>`, you must document all possible variants of `E` that can be returned and the specific circumstances that trigger them.
+*   **`# Examples`**: Every public function, macro, and struct should include an executable example. The example must compile and run via `cargo test --doc`.
+*   **`# Panics`**: If a function can panic under any circumstance (e.g., unwrapping an internal `Option`, indexing out of bounds, reaching capacity limits), document the exact conditions that cause the panic.
+*   **`# Errors`**: If a function returns a `Result<T, E>`, document all possible variants of `E` that can be returned and the specific circumstances that trigger them.
 *   **`# Safety`**: Any `unsafe fn` or `unsafe trait` must have a `# Safety` section outlining the precise contractual invariants the caller must uphold to avoid Undefined Behavior (UB).
-*   **`# Limitations`**: A defining trait of Martensite documentation. You must explicitly list what the API *cannot* do. (e.g., "This text layout engine does not currently support vertical right-to-left CJK rendering").
+*   **`# Limitations`**: Explicitly document what the API does not support (e.g., "This layout engine does not currently support vertical right-to-left CJK rendering").
 
-## 3. Anti-Slop Writing Rules
+## 3. Style and Clarity Guidelines
 
-Martensite documentation is characterized by technical brutalism.
+Martensite documentation prioritizes clarity, conciseness, and technical precision.
 
-**Banned Phrases (The "Hype" List):**
+**Avoid Promotional Language:**
 *   "Blazingly fast"
 *   "Lightning fast"
 *   "Magic" / "Magical"
@@ -66,10 +66,10 @@ Martensite documentation is characterized by technical brutalism.
 *   "Revolutionary"
 *   "Next-generation"
 
-**Writing Directives:**
+**Directives:**
 *   **Use measurable claims**: Instead of "fast layout," use "layout computes in $O(N)$ time over the widget hierarchy."
-*   **Be objective**: State what the code does mechanically. Do not editorialize the developer experience.
-*   **No generative AI slop**: Do not use LLMs to generate verbose, redundant paragraphs that simply restate the function signature in prose.
+*   **Be objective**: Describe concrete mechanisms, inputs, outputs, and side effects.
+*   **Avoid redundant prose**: Do not add filler sentences that simply restate the function signature without providing additional context.
 
 ## 4. Benchmark Documentation Format
 

@@ -1,6 +1,6 @@
 # BLUE TEAM HARDENING REPORT: Geometry & Render Pipeline Assessment
 **Target:** `martensite-layout`, `martensite-render`, `martensite-wgpu`
-**Specialist:** Blue Team Specialist 3 (Geometry & Rendering Shield Specialist)
+**Specialist:** Architecture Hardening Team
 **Date:** 2026-09-06
 **Status:** IMPLEMENTED & MATHEMATICALLY VERIFIED
 
@@ -159,7 +159,7 @@ During `SuspendedWithRetry` (>32ms elapsed), if the OS still requests screen red
 **Defensive Objective:** Terminate spurious CI failures caused by anti-aliasing variations between `vello` (GPU compute) and `tiny-skia` (CPU geometry) rasterizers.
 
 **Implementation:**
-Golden frame CI must mathematically forgive subpixel AA edge artifacts while ruthlessly failing structural layout deviations.
+Golden frame CI must accommodate subpixel AA edge artifacts while strictly failing structural layout deviations.
 
 **Perceptual Diffing Metric Definition (SSIM + Edge Masking):**
 1. **Disable Subpixel AA:** Text rendering across both backends is forced into standard grayscale AA during CI execution (`cosmic_text::SwashCache` configured with `Lcd: false`).
@@ -178,4 +178,4 @@ Golden frame CI must mathematically forgive subpixel AA edge artifacts while rut
        );
    }
    ```
-By utilizing DSSIM with grayscale AA, the CI harness remains deterministic and robust against pipeline-specific subpixel coverage logic, conforming exactly to the Anti-Slop Doctrine's Iron Law of Verification.
+By utilizing DSSIM with grayscale AA, the CI harness remains deterministic and robust against pipeline-specific subpixel coverage logic, conforming exactly to the Automated Verification Standard.

@@ -2,7 +2,7 @@
 
 * **Status:** Accepted
 * **Date:** 2026-09-06
-* **Deciders:** Master (Sovereign Architect), Ciel (Systems & Experience Guilds)
+* **Deciders:** Martensite Architecture Working Group
 * **Technical Domain:** `martensite-window`, `martensite-core`, `martensite-wgpu`
 
 ## Context and Problem Statement

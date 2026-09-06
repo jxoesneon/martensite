@@ -1,3 +1,3 @@
 fn main() {
-    println!("Martensite Sovereign Toolchain CLI v0.0.1");
+    println!("Martensite CLI v0.0.1");
 }

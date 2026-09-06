@@ -4,7 +4,7 @@
 [![package publisher](https://img.shields.io/pub/publisher/martensite.svg)](https://pub.dev/packages/martensite/publisher)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/jxoesneon/martensite/blob/main/LICENSE-MIT)
 
-Official Dart and Flutter bindings for **Martensite**, the sovereign, retained-mode, GPU-accelerated graphical user interface engine written in Rust.
+Official Dart and Flutter bindings for **Martensite**, the retained-mode, GPU-accelerated graphical user interface framework written in Rust.
 
 ## Features
 

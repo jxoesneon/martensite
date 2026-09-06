@@ -2,7 +2,7 @@
 
 * **Status:** Accepted
 * **Date:** 2026-09-06
-* **Deciders:** Master (Sovereign Architect), Ciel (Systems, Experience & Quality Guilds)
+* **Deciders:** Martensite Architecture Working Group
 * **Technical Domain:** `martensite-motion`, `martensite-reactive`
 
 ## Context and Problem Statement

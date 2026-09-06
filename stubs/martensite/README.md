@@ -1,6 +1,6 @@
 # Martensite
 
-The sovereign, retained-mode, GPU-accelerated graphical user interface engine for Rust.
+A retained-mode, GPU-accelerated graphical user interface framework for Rust.
 
 **Status:** Official namespace reservation (`v0.0.1`). Active development in progress.
 

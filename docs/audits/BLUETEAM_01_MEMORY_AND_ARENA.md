@@ -1,7 +1,7 @@
 # BLUE TEAM AUDIT 01: MEMORY & ARENA FORTIFICATION
 
 **Status:** INVARIANTS SECURED & MATHEMATICALLY VERIFIED
-**Auditor:** Blue Team Specialist 1 (Memory & Arena Fortification)
+**Auditor:** Architecture Hardening Team
 **Target:** `martensite-core` / `martensite-arena` / DDR-0001 / DDR-0021
 
 ---
@@ -9,7 +9,7 @@
 ## 1. Mathematical Invariant Proof of HotNode 64-Byte Cache-Line Packing
 
 ### The 64-Byte Alignment Theorem
-To satisfy Law II (Zero-GC & Bounded Memory Law) and ensure zero false sharing while maximizing L1 cache line utilization, `HotNode` is mathematically proven to consume exactly 64 bytes without any structural padding inflation.
+To satisfy Principle 2 (Deterministic Zero-GC Lifecycle) and ensure zero false sharing while maximizing L1 cache line utilization, `HotNode` is verified to consume exactly 64 bytes without structural padding inflation.
 
 **Exact Byte Offsets and Layout:**
 - `00..16` (16 bytes): `bounds: Rect` (two `glam::Vec2` components, each 8 bytes).

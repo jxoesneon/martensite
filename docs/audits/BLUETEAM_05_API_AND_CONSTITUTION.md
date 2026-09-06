@@ -1,12 +1,12 @@
 # Blue Team Defensive Report 05: API Fortification & Constitutional Compliance
 
 **Target:** Martensite v1.0.0 Public API, Constitutional Documents, Wasmtime Plugin ABI
-**Author:** Blue Team Specialist 5 (API Fortification & Constitutional Compliance Specialist)
+**Author:** Architecture Hardening Team
 **Date:** 2026-09-06
 
 ## 1. Eradication of the "Static View" Trap via `IntoValue<T>`
 
-To perfectly satisfy Law V (The Zero-VDOM Signal Law) and eradicate the hidden heap allocation / monolithic widget trap, we introduce the `PropValue<T>` state enum and the `IntoValue<T>` trait constraint. 
+To satisfy Principle 5 (Fine-Grained Reactive Updates) and avoid hidden heap allocations or monolithic widget structures, we introduce the `PropValue<T>` state enum and the `IntoValue<T>` trait constraint. 
 
 ### Rust Trait Definition
 ```rust
@@ -42,7 +42,7 @@ pub trait WidgetExt: Sized + Widget {
 }
 ```
 
-### Proof of Law V Adherence
+### Verification of Principle 5 Adherence
 When a modifier receives a `PropValue::Static(T)`, the value is written directly to the node's property payload in the Generational Arena. When a modifier receives a `PropValue::Dynamic(Signal<T>)`, the node registers its own lightweight `WidgetId` directly to the signal's observer list. 
 When `signal.set(new_value)` is invoked:
 1. The signal iterates its observer list.
@@ -60,7 +60,7 @@ The friction reported by the Red Team stems from conflating build-time orchestra
 * **`Context` (Ambient Authority):** Responsible for tree construction, injecting theme data, and defining initial reactive topologies. It is strictly active during the one-time `build()` execution.
 * **`EventContext` (Event-Time Localized Scope):** A strictly scoped interface injected into `on_click` and `on_hover`. 
 
-To completely eliminate borrow-checker fighting without violating Law IV (`Rc<RefCell<T>>` banishment):
+To completely eliminate borrow-checker fighting without violating Principle 4 (Single Flat Arena Topology):
 1. `Signal<T>` is a strictly 64-bit `Copy` type. It moves trivially into multiple closures.
 2. `EventContext` provides localized equivalents for asynchronous side-effects, meaning developers never need to capture the parent `Context`.
 
@@ -126,19 +126,19 @@ A DAW waveform plugin needs to draw 1,000 vertices:
 
 ## 4. Master Constitutional Alignment Matrix
 
-The following matrix verifies zero contradictions between the Ten Golden Laws and the project architecture.
+The following matrix verifies zero contradictions between the Core Architectural Principles and the project architecture.
 
-| Constitutional Law | Feature/ADR / API | Alignment Verification & Fixes Enforced | Contradictions |
+| Core Architectural Principle | Feature/ADR / API | Alignment Verification & Fixes Enforced | Contradictions |
 | :--- | :--- | :--- | :--- |
-| **Law I: Pixel Sovereignty** | `martensite-wgpu`, ADR-0018 | All `Widget` traits map strictly to compute shader pipelines (Vello/WGPU). No OS widget wrappers are permitted. | None. |
-| **Law II: Zero-GC** | Modifiers, `PropValue<T>` | Modifier chaining via `IntoValue<T>` writes to the Arena slot directly. No heap-allocated fat structs. | Fixed via `IntoValue<T>` adoption. |
-| **Law III: Event-Sleep** | Context async spawning | Background futures communicate via Atomics that trigger OS waker. Engine otherwise blocks on `epoll`/`GetMessageW`. | Wasmtime plugin continuous polling fixed by host-side scheduler suspension unless awakened via Capability events. |
-| **Law IV: Single-Tree** | Generational Arena, Signal | `Signal` is an `Rc`-free 64-bit `Copy` handle. Subtree nodes use 64-bit `WidgetId`. | None. |
-| **Law V: Zero-VDOM** | `WidgetExt` API | `PropValue::Dynamic` bypasses closure re-execution. Dirty bitmasks strictly target leaf invalidation. | Fixed via `PropValue<T>` constraint. |
-| **Law VI: Pure-Rust** | ADR-0029 (Wasm plugins) | Plugins use `wasm32-wasi` generated from pure Rust via `cargo`. `wasmtime` has zero C dependencies. | Reconciled winit/wayland-client purity in CHARTER via 100% native Rust X11/Wayland bindings. |
-| **Law VII: Two-Pass Geom** | `Widget` Trait API | Explicit separation of `measure(cx, constraints)` and `layout(cx, bounds)`. | None. |
-| **Law VIII: A11y First** | `Widget` Trait API | `accessibility(cx, node)` is a mandatory contract for all components. | None. |
-| **Law IX: World Typography** | `martensite-text` | Enforced integration of `cosmic-text` and `fontdb`. | None. |
-| **Law X: Permissive Freedom** | GOVERNANCE.md | Permanent MIT / Apache 2.0 dual license codified into foundation charter lock. | None. |
+| **Principle 1: Direct GPU Rendering** | `martensite-wgpu`, ADR-0018 | All `Widget` traits map strictly to compute shader pipelines (Vello/WGPU). No OS widget wrappers are permitted. | None. |
+| **Principle 2: Deterministic Zero-GC Lifecycle** | Modifiers, `PropValue<T>` | Modifier chaining via `IntoValue<T>` writes to the Arena slot directly. No heap-allocated fat structs. | Fixed via `IntoValue<T>` adoption. |
+| **Principle 3: Event-Driven Quiescence** | Context async spawning | Background futures communicate via Atomics that trigger OS waker. Engine otherwise blocks on `epoll`/`GetMessageW`. | Wasmtime plugin continuous polling fixed by host-side scheduler suspension unless awakened via Capability events. |
+| **Principle 4: Single Flat Arena Topology** | Generational Arena, Signal | `Signal` is an `Rc`-free 64-bit `Copy` handle. Subtree nodes use 64-bit `WidgetId`. | None. |
+| **Principle 5: Fine-Grained Reactive Updates** | `WidgetExt` API | `PropValue::Dynamic` bypasses closure re-execution. Dirty bitmasks strictly target leaf invalidation. | Fixed via `PropValue<T>` constraint. |
+| **Principle 6: Pure-Rust Dependency Architecture** | ADR-0029 (Wasm plugins) | Plugins use `wasm32-wasi` generated from pure Rust via `cargo`. `wasmtime` has zero C dependencies. | Reconciled winit/wayland-client purity in CHARTER via 100% native Rust X11/Wayland bindings. |
+| **Principle 7: Two-Pass Layout Finality** | `Widget` Trait API | Explicit separation of `measure(cx, constraints)` and `layout(cx, bounds)`. | None. |
+| **Principle 8: Universal Accessibility Integration** | `Widget` Trait API | `accessibility(cx, node)` is a mandatory contract for all components. | None. |
+| **Principle 9: Full Complex Text Shaping** | `martensite-text` | Enforced integration of `cosmic-text` and `fontdb`. | None. |
+| **Principle 10: Permissive Open-Source Licensing** | GOVERNANCE.md | Permanent MIT / Apache 2.0 dual license codified into foundation charter lock. | None. |
 
-*Zero architectural loopholes remain. Martensite is fortified.*
+*All core architectural invariants are validated across specifications and public APIs.*

@@ -2,7 +2,7 @@
 
 * **Subsystem:** `cargo-martensite`
 * **Status:** Approved
-* **Authors:** Ciel (Specialist Guilds: Toolchain, Performance & Systems)
+* **Authors:** Martensite Architecture Working Group
 * **Related ADRs:** ADR-0001, ADR-0002
 
 ## 1. System Topology & Host-Guest cdylib Architecture

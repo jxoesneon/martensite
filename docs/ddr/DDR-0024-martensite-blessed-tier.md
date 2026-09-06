@@ -1,14 +1,14 @@
 # DDR-0024: Martensite Blessed Tier
 
 ## Context
-Martensite's core engine must remain focused and minimal, providing the essential building blocks for a sovereign, retained-mode, GPU-accelerated GUI. However, complex real-world applications require a rich ecosystem of standard widgets (e.g., data tables, charts, rich text editors). To bridge this gap without bloating the core, we are establishing the `martensite-blessed` tier.
+Martensite's core engine must remain focused and minimal, providing the essential building blocks for a retained-mode, GPU-accelerated GUI framework. However, complex real-world applications require a rich ecosystem of standard widgets (e.g., data tables, charts, rich text editors). To bridge this gap without bloating the core, we are establishing the `martensite-blessed` tier.
 
 ## Definition of the Blessed Tier
 The `martensite-blessed` tier is a curated set of ecosystem crates that have been officially reviewed and endorsed by the Martensite core team. These crates are considered "tier-1" extensions.
 
 ## Quality Bar and Requirements
 To qualify for blessed status, an ecosystem crate must:
-1. **Adhere to the Ten Golden Laws:** The crate must strictly follow Martensite's core philosophy (e.g., precise specifications, measurable performance, zero slop).
+1. **Adhere to Core Architectural Principles:** The crate must strictly follow Martensite's core philosophy (e.g., precise specifications, measurable performance, verified invariants).
 2. **Exhaustive Documentation:** All public APIs must be fully documented without hyperbole, including edge cases, failure modes, and platform differences.
 3. **Robust Testing:** Extensive unit, integration, and fuzz testing (where applicable) ensuring stability matching the core engine.
 4. **Performance:** Must leverage Martensite's GPU rendering pipeline efficiently without introducing significant overhead or breaking the reactive UI architecture.

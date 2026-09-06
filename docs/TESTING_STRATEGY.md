@@ -42,7 +42,7 @@ All code within the Martensite project is subject to the following testing domai
 
 ## 2. Criterion Benchmark Specifications
 
-In accordance with CHARTER.md (Mandate III, IV and Anti-Slop 4.3), the following reproducible Criterion benchmarks must execute inside `benches/bench_suite`:
+In accordance with CHARTER.md (Requirements III, IV and Section 4.3), the following reproducible Criterion benchmarks execute inside `benches/bench_suite`:
 
 *   **Signal propagation latency**:
     *   **Structure**: Construct a 10,000-node dependency DAG. Mutate a single root source signal.
@@ -62,11 +62,11 @@ In accordance with CHARTER.md (Mandate III, IV and Anti-Slop 4.3), the following
     *   **Metric**: Measure Megabytes (`MB`). Target is <20 MB.
 *   **Baseline comparison (egui, iced)**:
     *   **Methodology**: Identical 10k text-node rendering loop implemented in egui and iced for side-by-side execution.
-    *   **Metric**: Frame time (ms) and peak memory (MB) under maximum synthetic load.
+    *   **Metric**: Frame time (ms) and peak memory (MB) under maximum benchmark load.
 
 ## 3. Golden Frame CI Architecture
 
-In accordance with DDR-0009, Martensite enforces 100% bit-exact pixel sovereignty through a headless golden snapshot system.
+In accordance with DDR-0009, Martensite verifies cross-platform rendering consistency through a headless golden snapshot system.
 
 *   **Mock Surface Initialization**: Runs via `MockWindowBackend` without physical display hardware. CI uses LLVMpipe/Lavapipe (`WGPU_ADAPTER_NAME="llvmpipe"`) to simulate Vulkan natively in software.
 *   **Deterministic Virtual Clock Advancement**: Time is governed strictly by `VirtualClock::advance()`. Frame dt is explicitly stepped in exact intervals (e.g., 16ms), guaranteeing reproducible physical animation states without CPU jitter.

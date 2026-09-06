@@ -29,7 +29,7 @@ pub enum LayoutError {
 * **Panic:** Permitted **only** when an unrecoverable invariant is breached:
   - Memory corruption or out-of-bounds arena access on a validated `WidgetId`.
   - Mutex poisoning within the internal rendering scheduler.
-  - Usage of `todo!()` or `unimplemented!()` in production code (Strictly forbidden by the Anti-Slop doctrine; CI will fail).
+  - Usage of `todo!()` or `unimplemented!()` in production code (forbidden by quality standards; CI will fail).
 
 ## 4. Subsystem Recovery Mechanics
 

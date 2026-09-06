@@ -1,6 +1,6 @@
-# Red Team Audit 04: OS Boundary Hardening & Color Science Resilience (Round 2)
+# Architecture Review 04: OS Boundary & Color Science (Round 2)
 **Date:** 2026-09-06
-**Specialist:** Red Team Saboteur 4
+**Specialist:** Architecture Review Team
 
 ## 1. Low-Nit SDR Displays (<203 nits)
 **Status:** VULNERABLE (Highlight Crushing & Clipping)

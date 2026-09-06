@@ -4,11 +4,11 @@
 **Status:** Stable V1 Contract  
 **Target:** `martensite` crates ecosystem
 
-This document provides the exhaustive, technical specification for the Martensite v1.0.0 application programming interface. It adheres strictly to the Anti-Slop Doctrine (RFC-0000-CHARTER): all specifications are declarative, measurable, and free of hyperbole.
+This document provides the technical specification for the Martensite v1.0.0 application programming interface. Specifications are declarative, measurable, and focused on operational mechanics.
 
 ## 1. The App Entry Point
 
-The `App` builder is the primary host-process bootstrapper. It configures the native OS window, initializes the WGPU render context, and enters the deep-sleep event loop (Mandate III, Event-Sleep Law).
+The `App` builder is the primary host-process bootstrapper. It configures the native OS window, initializes the WGPU render context, and enters the event-driven sleep loop (Requirement III, Event-Driven Sleep).
 
 ```rust
 pub struct App {

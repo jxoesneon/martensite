@@ -1,6 +1,6 @@
 # Blue Team Audit 04: OS Boundary Hardening & Color Science Resilience
 **Date:** 2026-09-06
-**Specialist:** Blue Team 4 (OS Boundary & Color Science)
+**Specialist:** Architecture Hardening Team
 
 ## 1. Wayland Presentation Resilience FSM
 To prevent swapchain exhaustion and protocol violations when fallback occurs on Wayland, the presentation mode requests must be managed via a strict typestate-driven FSM. 

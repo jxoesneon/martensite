@@ -1,6 +1,6 @@
-# RED TEAM AUDIT: Geometry & Render Pipeline Assessment
+# Architecture Review 03: Geometry & Render Pipeline Assessment
 **Target:** `martensite-layout`, `martensite-render`, `martensite-wgpu`
-**Auditor:** Swarm Member 3 (Adversarial Systems Auditor)
+**Auditor:** Architecture Review Team
 **Date:** 2026-09-06
 
 ## 1. Two-Pass Layout vs Intrinsic Text Measurement Recursion
@@ -59,4 +59,4 @@ Vello uses hardware fine-rasterization compute shaders. TinySkia uses analytical
 
 **Concrete Remediation:**
 1. CI golden tests must be backend-specific (e.g., `button_test_vello.png` vs `button_test_tinyskia.png`). You cannot cross-compare them.
-2. If cross-comparison is mandated by the Sovereign Architect, you must explicitly disable subpixel anti-aliasing in both pipelines during CI execution, and apply a spatial blur perceptual diff algorithm (e.g., dssim) rather than strict absolute-error pixel matching.
+2. If cross-comparison is mandated by the Lead Architect, you must explicitly disable subpixel anti-aliasing in both pipelines during CI execution, and apply a spatial blur perceptual diff algorithm (e.g., dssim) rather than strict absolute-error pixel matching.

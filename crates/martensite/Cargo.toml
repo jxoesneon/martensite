@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "The sovereign, retained, GPU-accelerated GUI engine for Rust."
+description = "A retained-mode, GPU-accelerated graphical user interface framework for Rust."
 
 [dependencies]
 martensite-core = { workspace = true }

@@ -1,6 +1,6 @@
 # Martensite Architecture Overview
 
-Welcome to the core engine of Martensite. This document is the definitive guide to how Martensite converts operating system events into pixels on the screen, maintaining absolute 0.00% idle resource consumption and zero garbage collection.
+Welcome to the core engine of Martensite. This document is the definitive guide to how Martensite converts operating system events into pixels on the screen, maintaining zero idle CPU utilization when quiescent and deterministic memory management without garbage collection.
 
 ## 1. The Frame Lifecycle: Event to Pixel
 
@@ -92,5 +92,5 @@ Accessibility is mandatory. `AccessKit` provides a cross-platform semantic tree 
 * **Vello**: The compute-shader 2D graphics rasterizer backing Martensite.
 * **Taffy**: The zero-allocation Flexbox/Grid layout engine.
 * **AccessKit**: The cross-platform accessibility synchronization bridge.
-* **Zero-GC**: The absolute lack of garbage collection in the hot path.
-* **Pixel Sovereignty**: The engine's refusal to use native OS widgets, ensuring 100% cross-platform visual consistency.
+* **Zero-GC**: The absence of runtime garbage collection and zero dynamic allocations in the hot interaction path.
+* **Direct GPU Rendering**: Direct rendering through GPU compute pipelines rather than wrapping native OS controls, ensuring cross-platform visual consistency.

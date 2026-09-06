@@ -1,12 +1,12 @@
-# RED TEAM AUDIT 01: MEMORY & ARENA ARCHITECTURE
+# Architecture Review 01: Memory & Arena Architecture
 
 **Status:** SEVERE VULNERABILITIES DETECTED  
-**Auditor:** Swarm Member 1 (Adversarial Systems Architect)  
+**Auditor:** Architecture Review Team  
 **Target:** `martensite-core` / `martensite-arena` / DDR-0001 / DDR-0021  
 
 ---
 
-## 1. HotNode Cache Line Sabotage (The 128-Byte Silent Inflation)
+## 1. HotNode Cache Line Verification (128-Byte Alignment Hazard)
 
 ### **The Attack**
 `DDR-0001` mandates that `HotNode` is strictly 64 bytes (`#[repr(C, align(64))]`) to guarantee 100% L1 cache-line alignment and prevent false sharing. However, the specified layout violently fails this invariant.

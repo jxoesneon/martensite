@@ -1,7 +1,7 @@
 # BLUETEAM R2 02: REACTIVE DAG HARDENING
 
 **Target:** `REDTEAM_R2_02_REACTIVE.md`
-**Doctrine:** Anti-Slop. Exact state machine proofs, pure-safe Rust structures, mathematically verified contracts. `#![forbid(unsafe_code)]`.
+**Doctrine:** Verified Quality Standards. Exact state machine proofs, pure-safe Rust structures, mathematically verified contracts. `#![forbid(unsafe_code)]`.
 
 ---
 

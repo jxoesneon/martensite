@@ -138,7 +138,7 @@
 **Key Risks:** Wasmtime trampoline latency exceeding frame budget; unexpected edge-case crashes exposed by fuzzing delaying v1.0.0.
 **Mitigations:** Inline trampoline optimization; begin fuzzing campaign infrastructure early in Phase 7.
 
-## v1.0.0 — Sovereign Stability
+## v1.0.0 — Production Stability
 **Entry Criteria:** v0.10.0 complete. Zero known critical bugs.
 **Deliverables:**
 - API Freeze.

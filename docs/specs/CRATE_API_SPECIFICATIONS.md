@@ -3,7 +3,7 @@
 **Document Identifier:** SPEC-0001-API
 **Status:** Invariant Core Specification
 
-This document provides complete API specifications for all 21 crates within the Martensite project workspace. It strictly follows the rules of the Anti-Slop Doctrine: precise, objective, and exhaustive definitions with measurable constraints. 
+This document provides complete API specifications for all 21 crates within the Martensite project workspace. It provides precise, objective, and clear definitions with measurable constraints. 
 
 ---
 
@@ -29,7 +29,7 @@ impl AppBuilder {
 ---
 
 ## 2. `martensite-core`
-**1. Purpose:** The sovereign arbiter of the generational widget arena, node topology, and unified scene graph.
+**1. Purpose:** Core manager of the generational widget arena, node topology, and unified scene graph.
 **2. API Surface:**
 ```rust
 pub struct WidgetArena { /* ... */ }
@@ -54,7 +54,7 @@ pub trait Widget: Send + Sync + 'static { /* ... */ }
 ---
 
 ## 3. `martensite-reactive`
-**1. Purpose:** Diffusionless push-pull reactive signal DAG.
+**1. Purpose:** Push-pull reactive signal DAG engine.
 **2. API Surface:**
 ```rust
 pub struct Signal<T: Clone + 'static> { /* ... */ }

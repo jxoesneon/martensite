@@ -1,5 +1,5 @@
 # Blue Team Defensive Report: R2_01_MEMORY
-## Ciel Double Loop (Round 2 Convergence)
+## Architecture Review (Round 2 Convergence)
 
 ### 1. Defeating the LIFO Free-List Rapid Slot Wrapping Attack
 

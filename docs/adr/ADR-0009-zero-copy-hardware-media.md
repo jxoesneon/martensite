@@ -2,7 +2,7 @@
 
 * **Status:** Accepted
 * **Date:** 2026-09-06
-* **Deciders:** Master (Sovereign Architect), Ciel (Systems, Spatial & Graphics Guilds)
+* **Deciders:** Martensite Architecture Working Group
 * **Technical Domain:** `martensite-media`, `martensite-wgpu`
 
 ## Context and Problem Statement

@@ -2,7 +2,7 @@
 
 * **Status:** Accepted
 * **Date:** 2026-09-06
-* **Deciders:** Master (Sovereign Architect), Ciel (Systems Architecture Guild)
+* **Deciders:** Martensite Architecture Working Group
 * **Technical Domain:** `martensite-core`, `martensite-arena`
 
 ## Context and Problem Statement
@@ -11,7 +11,7 @@ Graphical user interface architectures fundamentally model hierarchical and spat
 
 Historical GUI toolkits in the Rust ecosystem have attempted three failed patterns:
 1. **The Shared Pointer Swamp (`Rc<RefCell<Node>>`)**: Used in early toolkits and GTK-rs wrappers. This introduces heavy reference-counting overhead, cache-locality destruction via scattered heap allocations, and frequent runtime panic risks (`BorrowMutError`) during event propagation cascades.
-2. **The Procedural Destruction Pattern (`egui`)**: Abandoning persistent retained state entirely. While memory safety is trivialized, it forces continuous 60Hz/120Hz CPU redraw loops, destroys battery life, and makes native OS accessibility inspection nearly impossible.
+2. **Immediate-mode state re-evaluation**: Reconstructing UI representations each frame eliminates reference cycles, but can increase CPU overhead during continuous updates and requires synthetic bridge layers to maintain persistent accessibility hierarchies.
 3. **The Global Index Tree with Sparse Fragmentation**: Flat arrays with unchecked generational reuse leading to ABA use-after-free bugs and sparse arrays that destroy CPU cache-line prefetching.
 
 We must decide on a unified, high-performance, strictly safe memory architecture for storing, referencing, and traversing widget hierarchies in Martensite.

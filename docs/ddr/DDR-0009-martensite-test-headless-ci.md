@@ -2,7 +2,7 @@
 
 * **Subsystem:** `martensite-test`
 * **Status:** Approved
-* **Authors:** Ciel (Specialist Guilds: Quality, Testing & Infrastructure)
+* **Authors:** Martensite Architecture Working Group
 * **Related ADRs:** ADR-0004, ADR-0005
 
 ## 1. System Topology & Testing Invariants

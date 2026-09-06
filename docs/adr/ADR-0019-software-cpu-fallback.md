@@ -2,7 +2,7 @@
 
 * **Status:** Accepted — Decision Finalised
 * **Date:** 2026-09-06
-* **Deciders:** Jose Eduardo Rojas Jimenez (Sovereign Architect)
+* **Deciders:** Jose Eduardo Rojas Jimenez (Lead Architect)
 * **Technical Domain:** `martensite-render`, `martensite-wgpu`
 * **OQ:** OQ-2 — resolved 2026-09-06
 
@@ -19,8 +19,8 @@ The question is what happens when `App::build().run(...)` is called in these env
 
 ## Decision Drivers
 
-- **Law I (Pixel Sovereignty):** Every pixel rendered via Martensite must be produced by the same pipeline. Silently switching backends mid-deployment means the developer never discovers a severe performance regression.
-- **Anti-Slop Doctrine §4.2 (Iron Law of Verification):** No capability shall be hidden. A 100× performance gap between GPU and CPU rendering is a capability gap the developer must consciously own.
+- **Principle 1 (Direct GPU Rendering):** Rendering is driven uniformly through GPU compute pipelines to ensure predictable rendering behavior. Silently switching backends mid-deployment obscures severe performance regressions.
+- **Explicit Performance Standard:** System behavior and performance characteristics must be explicit. The substantial performance difference between GPU and CPU rendering is an architectural boundary that should be acknowledged explicitly.
 - **CI/headless validity:** Headless testing is a legitimate requirement. The answer is an explicit flag, not a silent fallback.
 
 ## Considered Options
@@ -28,7 +28,7 @@ The question is what happens when `App::build().run(...)` is called in these env
 ### Option A — Silent automatic fallback
 On GPU init failure, quietly fall back to TinySkia. Developer gets a running app. Performance regression may never be noticed in production.
 
-**Rejected.** This violates the Iron Law of Verification. An application unknowingly running on software rasterization in production and shipping to users is a silent defect.
+**Rejected.** This conflicts with explicit verification standards. An application running on software rasterization without developer awareness could conceal significant performance regressions.
 
 ### Option B — Hard error with explicit opt-in (chosen)
 On GPU init failure, `App::run()` returns `Err(MartensiteError::NoGpuAdapter)` unless `allow_software_fallback(true)` was set. When the flag is set, TinySkia is used and a `tracing::warn!` is emitted on every startup.

@@ -25,7 +25,7 @@ Martensite is built on the `forbid(unsafe_code)` guarantee wherever possible, pa
 In subsystems requiring FFI or hardware interaction (e.g., `martensite-wgpu`, `martensite-window`):
 * `unsafe` is strictly quarantined.
 * Every `unsafe` block must be immediately preceded by a `// SAFETY:` block documenting the explicit preconditions required to avoid Undefined Behavior (UB).
-* Adding new `unsafe` blocks requires explicit sign-off from the Sovereign Architect or the respective Working Group lead.
+* Adding new `unsafe` blocks requires explicit sign-off from the Lead Architect or the respective Working Group lead.
 
 ## 4. Sandbox Isolation
 

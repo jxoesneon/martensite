@@ -2,7 +2,7 @@
 
 * **Status:** Accepted — Decision Finalised
 * **Date:** 2026-09-06
-* **Deciders:** Jose Eduardo Rojas Jimenez (Sovereign Architect)
+* **Deciders:** Jose Eduardo Rojas Jimenez (Lead Architect)
 * **Technical Domain:** `martensite-plugin` (new crate, Phase 6), `martensite`
 * **OQ:** OQ-4 — resolved 2026-09-06
 
@@ -31,7 +31,7 @@ The risk: a malicious or buggy plugin can read the host process's memory, crash 
 ### Option A — Defer to v1.1
 Ship v1.0 with only the Widget trait (trusted, same-process). Sandboxed plugins come later.
 
-**Rejected.** The Sovereign Architect confirmed: ship at v1.0. The industrial workstation use cases (DAW, CAD, trading terminal) are first-class targets, not future work.
+**Rejected.** The Lead Architect confirmed: ship at v1.0. The industrial workstation use cases (DAW, CAD, trading terminal) are first-class targets, not future work.
 
 ### Option B — OS process isolation
 Each plugin runs in a separate OS process; host communicates via IPC (pipes, sockets, shared memory). Heavy: plugin startup time is 50–200ms, IPC latency is 1–5ms per frame call.
@@ -106,7 +106,7 @@ This functionality lives in a new workspace crate added at Phase 6:
 - Adds `martensite-plugin` as a new crate (not in current workspace — must be scaffolded in Phase 6)
 - `wasmtime` is a large dependency (~10MB compiled); gated behind the `plugins` feature
 - Plugin debugging is harder than native code (wasm stack traces, no native debugger attach)
-- Adds 2–3 months to v1.0 timeline — acknowledged and accepted by Sovereign Architect
+- Adds 2–3 months to v1.0 timeline — acknowledged and accepted by the Lead Architect
 
 ## Implementation Notes
 

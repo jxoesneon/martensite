@@ -18,4 +18,4 @@
 //! - Tree views
 //!
 //! All blessed crates are held to the same rigorous quality bar as the core engine
-//! and adhere to Martensite's Ten Golden Laws.
+//! and adhere to Martensite's Core Architectural Principles.

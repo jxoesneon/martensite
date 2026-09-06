@@ -2,12 +2,12 @@
 
 * **Status:** Accepted
 * **Date:** 2026-09-06
-* **Deciders:** Master (Sovereign Architect), Ciel (Systems Architecture Guild)
+* **Deciders:** Martensite Architecture Working Group
 * **Technical Domain:** `documentation-completeness-requirements`
 
 ## Context and Problem Statement
 
-For a sovereign, retained-mode, GPU-accelerated GUI engine targeting v1.0.0, handling documentation-completeness-requirements is a critical requirement. We must establish a robust, performant, and safe architecture.
+For a retained-mode, GPU-accelerated GUI framework targeting v1.0.0, handling documentation-completeness-requirements is a critical requirement. We must establish a robust, performant, and safe architecture.
 
 ## Decision Drivers
 
@@ -23,7 +23,7 @@ For a sovereign, retained-mode, GPU-accelerated GUI engine targeting v1.0.0, han
 
 ## Decision Outcome
 
-Chosen option: **Option 3**. Require #![deny(missing_docs)] for all public APIs and mandatory doc tests perfectly aligns with the Anti-Slop Doctrine, providing explicit, measurable, and high-performance guarantees.
+Chosen option: **Option 3**. Require #![deny(missing_docs)] for all public APIs and mandatory doc tests perfectly provides reliable performance guarantees, providing explicit, measurable, and high-performance guarantees.
 
 ### Positive Consequences
 

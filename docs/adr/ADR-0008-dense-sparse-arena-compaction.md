@@ -2,7 +2,7 @@
 
 * **Status:** Accepted
 * **Date:** 2026-09-06
-* **Deciders:** Master (Sovereign Architect), Ciel (Systems & Quality Guilds)
+* **Deciders:** Martensite Architecture Working Group
 * **Technical Domain:** `martensite-arena`, `martensite-core`
 
 ## Context and Problem Statement

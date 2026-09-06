@@ -2,13 +2,13 @@
 
 * **Status:** Accepted
 * **Date:** 2026-09-06
-* **Deciders:** Master (Sovereign Architect), Ciel (Layout & Systems Guild)
+* **Deciders:** Martensite Architecture Working Group
 * **Technical Domain:** `martensite-layout`, `martensite-core`
 
 ## Context and Problem Statement
 
 Desktop user interfaces must dynamically adapt to varying window dimensions, localized string lengths, fractional display scaling, and dynamic content resizing.
-* **The Single-Pass Immediate-Mode Failure (`egui`)**: Immediate-mode UI engines calculate layout during the same procedural pass that handles events and renders draw calls. This results in **one-frame layout lag** where dynamic content (e.g., expanding panels, auto-sizing windows) jitters visually for one frame before settling.
+* **Single-pass layout coupling**: Performing layout measurement and drawing in a single procedural pass can produce intermediate sizing discrepancies when dynamic content depends on cross-axis constraints that settle across frame boundaries.
 * **The Web Layout Engine Bloat (Blink/WebKit)**: Web browsers implement massive, monolithic layout engines with complex cascading specificity wars and non-deterministic reflow performance.
 
 We must establish a deterministic, high-performance layout architecture that provides full support for industry-standard W3C Flexbox and CSS Grid layouts while guaranteeing zero visual lag.

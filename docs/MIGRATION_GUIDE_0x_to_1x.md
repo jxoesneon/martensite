@@ -26,7 +26,7 @@ The reactivity engine now enforces a directed acyclic graph (DAG) topological so
 
 ### Traits
 * **`Widget::draw`** has been renamed to **`Widget::paint`** and now requires a `&mut PaintContext` rather than raw WGPU command encoders.
-* Added mandatory `Widget::measure` and `Widget::layout` for the two-pass geometry engine (Law VII).
+* Added mandatory `Widget::measure` and `Widget::layout` for the two-pass geometry engine (Principle 7: Two-Pass Layout Finality).
 
 ### Modifiers
 * The `Style` struct has been flattened into chained trait methods via `WidgetExt`.

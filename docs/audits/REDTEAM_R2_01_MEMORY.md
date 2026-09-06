@@ -1,4 +1,4 @@
-# RED TEAM AUDIT: ROUND 2 - MEMORY & ARENA VULNERABILITIES
+# Architecture Review: Round 2 - Memory & Arena Analysis
 
 **Status:** INVARIANTS BREACHED (CRITICAL FAILURES DETECTED)
 **Target:** Blue Team Defensive Claims (BLUETEAM_01_MEMORY_AND_ARENA.md)

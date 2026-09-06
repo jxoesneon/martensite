@@ -1,6 +1,6 @@
-# RED TEAM AUDIT REPORT: Round 2 Geometry & Render Pipeline
+# Architecture Review: Round 2 - Geometry & Render Pipeline
 **Target:** `martensite-layout`, `martensite-render`, `martensite-wgpu`
-**Red Team Specialist:** Saboteur 3
+**Red Team Specialist:** Architecture Review Team
 **Date:** 2026-09-06
 
 ## 1. `TextShapeCache` Memory Exhaustion & LRU Thrashing

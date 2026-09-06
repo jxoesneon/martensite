@@ -1,10 +1,10 @@
 # BLUE TEAM AUDIT 02: REACTIVE DAG ARMOR & TRANSACTIONAL RESILIENCE
 
-**Author:** Blue Team Specialist 2 (Reactive DAG Armor & Transactional Resilience Specialist)  
+**Author:** Architecture Hardening Team  
 **Target:** `martensite-reactive` architecture, `REDTEAM_02_REACTIVE_DAG.md`
 
 ## EXECUTIVE SUMMARY
-This document outlines the definitive defensive architecture and algorithmic guarantees resolving the vulnerabilities exposed by the Red Team. It establishes the mathematical soundness, structural integrity, and multi-threaded transactional resilience of Martensite's push-pull reactive engine, adhering strictly to The Ten Golden Laws (specifically Law V: The Zero-VDOM Signal Law).
+This document outlines the definitive defensive architecture and algorithmic guarantees resolving the vulnerabilities exposed by the Red Team. It establishes the mathematical soundness, structural integrity, and multi-threaded transactional resilience of Martensite's push-pull reactive engine, adhering strictly to the Core Architectural Principles (specifically Principle 5: Fine-Grained Reactive Updates).
 
 ---
 

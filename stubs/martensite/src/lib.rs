@@ -1,6 +1,6 @@
 //! # Martensite
 //!
-//! The sovereign, retained-mode, GPU-accelerated graphical user interface engine for Rust.
+//! A retained-mode, GPU-accelerated graphical user interface framework for Rust.
 //!
 //! *Note: v0.0.1 is an official namespace reservation package. Active development is underway.*
 //! Visit <https://github.com/jxoesneon/martensite> for architecture and progress.

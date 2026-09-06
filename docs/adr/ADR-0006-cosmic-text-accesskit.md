@@ -2,14 +2,14 @@
 
 * **Status:** Accepted
 * **Date:** 2026-09-06
-* **Deciders:** Master (Sovereign Architect), Ciel (Systems, Experience & Quality Guilds)
+* **Deciders:** Martensite Architecture Working Group
 * **Technical Domain:** `martensite-text`, `martensite-access`, `martensite-core`
 
 ## Context and Problem Statement
 
 Historically, GUI toolkits treat accessibility (a11y) and non-Latin typography as secondary afterthoughts or auxiliary bolt-on libraries. 
 * **Typography Failure**: Engines rely on basic ASCII/Latin rasterizers (e.g., `ab_glyph`, `stb_truetype`). When confronted with Arabic cursive shaping, Hebrew bidirectional (BiDi) text, Indic consonant conjuncts (Devanagari/Tamil), or Japanese Kanji fallbacks, these engines render disconnected glyphs, incorrect reading orders, or replacement boxes ("tofu" `□`). Retrofitting HarfBuzz text shaping and Unicode bidirectional analysis (UAX #9) after layout engine stabilization requires destructive architectural rewrites.
-* **Accessibility Failure**: Immediate-mode toolkits (`egui`) and procedural rendering loops lack a persistent semantic tree. Because widgets exist only for the microsecond of their procedural execution, screen readers (Windows UI Automation, macOS NSAccessibility, Linux AT-SPI2) cannot query persistent node hierarchies, inspect focus states, or dispatch asynchronous actions without brittle, high-latency frame-diffing shims. Furthermore, web-canvas hybrid approaches (Flutter Web) synthesize invisible, desynchronized HTML DOM overlays that break password managers and assistive hardware.
+* **Accessibility Integration Considerations**: Assistive technologies (Windows UI Automation, macOS NSAccessibility, Linux AT-SPI2) require persistent accessibility trees with stable node IDs and deterministic focus hierarchies. Systems lacking a persistent node hierarchy must maintain separate reconciliation layers to process OS accessibility events, which introduces additional synchronization complexity.
 
 We must decide whether to defer typography and accessibility to post-v1.0 iterations or embed them as non-negotiable architectural primitives from Day Zero.
 

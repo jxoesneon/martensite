@@ -1,5 +1,5 @@
-# REDTEAM AUDIT 02: REACTIVE DAG & CONCURRENCY
-**Auditor:** Swarm Member 2 (Reactive DAG & Concurrency Saboteur)  
+# Architecture Review 02: Reactive DAG & Concurrency
+**Auditor:** Architecture Review Team  
 **Target:** `martensite-reactive` architecture, `DDR-0002-martensite-reactive-scheduler.md`, `ADR-0002`, and `lib.rs`.
 
 ## EXECUTIVE SUMMARY
@@ -45,7 +45,7 @@ The theorem in DDR-0002 holds *only* if the graph is static and all dirty flags 
 ## 3. Cycle Detection & Release-Mode Soundness (The Infinite `flush` Loop)
 
 ### The Vulnerability
-Charter Mandate III dictates absolute 0.00% idle resource consumption. DDR-0002 lacks cycle detection. 
+Core requirements mandate zero idle CPU utilization when quiescent. DDR-0002 lacks cycle detection. 
 Consider an accidental graph cycle: $A \to B \to A$.
 During Phase 1 (`mark_dirty`), the algorithm terminates because `if !self.nodes[sub].is_dirty` prevents infinite queuing.
 However, in Phase 2 (`flush`):

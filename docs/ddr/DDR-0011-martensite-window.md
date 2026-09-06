@@ -48,9 +48,9 @@ pub struct WindowManager {
 
 ### 4. VSync & Presentation Strategy
 
-Default on all platforms is `PresentMode::Fifo` (compositor-controlled VSync). This satisfies Law III: 0.00% GPU usage at idle.
+Default on all platforms is `PresentMode::Fifo` (compositor-controlled VSync). This satisfies Principle 3: zero idle GPU usage when quiescent.
 
-**`PresentMode::Immediate` opt-in (Sovereign Architect decision, 2026-09-06):**  
+**`PresentMode::Immediate` opt-in (Lead Architect decision, 2026-09-06):**  
 Applications with latency-critical rendering requirements (audio workstations, financial UIs, game-adjacent tools) may opt in to `Immediate` presentation via the `App::build()` API:
 
 ```rust
@@ -61,7 +61,7 @@ App::build()
 
 This is an **explicit contract**: the caller acknowledges that `Immediate` mode may cause:
 - Tearing artifacts on Wayland compositors that do not support it
-- GPU spin at rates exceeding display refresh (violates Law III — intentional override)
+- GPU rendering at rates exceeding display refresh (overrides Principle 3 by explicit developer opt-in)
 - Increased power draw on battery-powered devices
 
 `PresentMode::Immediate` is **never the framework default** and is never set implicitly. If the compositor rejects it, `wgpu` falls back to `Fifo` automatically; no panic.

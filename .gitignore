@@ -18,6 +18,5 @@ tests/snapshots/diffs/
 .env
 .env.local
 
-# Ciel local domain (agent-specific context)
-.ciel/
+# Local cache
 .fastembed_cache/
