@@ -18,7 +18,7 @@ Add `martensite` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  martensite: ^0.0.1
+  martensite: ^0.0.2
 ```
 
 ## Usage

@@ -5,7 +5,7 @@
 library martensite;
 
 /// The canonical semantic version string of the Martensite engine.
-const String martensiteVersion = '0.0.1';
+const String martensiteVersion = '0.0.2';
 
 /// Represents a persistent 64-bit handle to a node inside the Martensite generational arena.
 class WidgetHandle {

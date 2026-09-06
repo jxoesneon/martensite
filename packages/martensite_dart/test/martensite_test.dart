@@ -4,7 +4,7 @@ import 'package:test/test.dart';
 void main() {
   group('Martensite Dart Bindings', () {
     test('version string is defined', () {
-      expect(martensiteVersion, equals('0.0.1'));
+      expect(martensiteVersion, equals('0.0.2'));
     });
 
     test('widget handle encoding', () {
