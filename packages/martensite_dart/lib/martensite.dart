@@ -4,8 +4,6 @@
 /// generational slotmap node management, and push-pull reactive signals.
 library martensite;
 
-import 'dart:ffi' as ffi;
-
 /// The canonical semantic version string of the Martensite engine.
 const String martensiteVersion = '0.0.1';
 
