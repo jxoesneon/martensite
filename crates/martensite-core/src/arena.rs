@@ -168,6 +168,7 @@ impl WidgetArena {
     }
 
     #[cfg(test)]
+    /// Test-only helper to directly set a slot's generation value.
     pub fn set_slot_generation_for_test(&mut self, slot_idx: u32, generation: u32) {
         if let Some(slot) = self.slots.get_mut(slot_idx as usize) {
             slot.generation = generation;

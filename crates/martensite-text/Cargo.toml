@@ -18,3 +18,5 @@ docs-rs = ["winit/x11"]
 
 [package.metadata.docs.rs]
 features = ["docs-rs"]
+[lints]
+workspace = true

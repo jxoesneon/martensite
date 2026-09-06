@@ -1,7 +1,7 @@
 use std::num::NonZeroU64;
 
 /// A 64-bit copyable generational handle to a widget in the arena.
-/// Guaranteed 8-byte layout with niche optimization (Option<WidgetId> is 8 bytes).
+/// Guaranteed 8-byte layout with niche optimization (`Option<WidgetId>` is 8 bytes).
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WidgetId(NonZeroU64);

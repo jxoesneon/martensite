@@ -14,3 +14,5 @@ wgpu = { workspace = true }
 vello = { workspace = true }
 pollster = { workspace = true }
 tracing = { workspace = true }
+[lints]
+workspace = true

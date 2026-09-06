@@ -208,6 +208,11 @@ impl ReactiveRuntime {
         }
     }
 
+    /// Tracks a signal read during the current evaluation, registering a dependency.
+    ///
+    /// Called internally by `Signal::get` and `Memo::get` to record that the
+    /// currently-evaluating node depends on `id`. Cycle detection is performed
+    /// and the read is pruned if a cycle is detected.
     pub fn track_read(&self, id: SignalId) {
         let (caller, is_cycle) = ACTIVE_EVAL_STACK.with(|stack| {
             let s = stack.borrow();

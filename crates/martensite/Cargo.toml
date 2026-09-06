@@ -43,3 +43,5 @@ docs-rs = [
 
 [package.metadata.docs.rs]
 features = ["docs-rs"]
+[lints]
+workspace = true

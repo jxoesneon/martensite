@@ -14,3 +14,5 @@ tiny-skia = { workspace = true }
 softbuffer = { workspace = true }
 kurbo = { workspace = true }
 peniko = { workspace = true }
+[lints]
+workspace = true

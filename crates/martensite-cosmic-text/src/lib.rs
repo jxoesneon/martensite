@@ -2,6 +2,9 @@
 //
 // This is a Martensite fork of cosmic-text. Upstream code style is preserved.
 
+// Upstream cosmic-text has intra-doc links that don't resolve in our fork context.
+#![allow(rustdoc::broken_intra_doc_links)]
+
 //! # COSMIC Text
 //!
 //! This library provides advanced text handling in a generic way. It provides abstractions for

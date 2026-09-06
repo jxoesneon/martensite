@@ -12,3 +12,5 @@ readme = "README.md"
 proc-macro = true
 
 [dependencies]
+[lints]
+workspace = true

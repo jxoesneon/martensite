@@ -1,13 +1,25 @@
 //! WGPU compute rasterization and GPU resurrection engine.
 
+/// GPU renderer encapsulating the core `wgpu` resources required for
+/// compute-based rasterization and GPU resurrection workflows.
 pub struct GpuRenderer {
+    /// The `wgpu` instance used to enumerate and create adapters and surfaces.
     pub instance: wgpu::Instance,
+    /// The physical GPU adapter selected for high-performance compute work.
     pub adapter: wgpu::Adapter,
+    /// The logical device used to allocate resources and submit commands.
     pub device: wgpu::Device,
+    /// The command queue used to submit work to the GPU.
     pub queue: wgpu::Queue,
 }
 
 impl GpuRenderer {
+    /// Creates a new [`GpuRenderer`] by requesting a high-performance adapter
+    /// and its associated device and queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no suitable adapter or device could be acquired.
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

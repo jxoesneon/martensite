@@ -95,8 +95,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
-missing_docs = "warn"
-rust_2021_idioms = { level = "warn", priority = -1 }
+missing_docs = "deny"
 
 [profile.dev]
 opt-level = 1

@@ -41,6 +41,10 @@ pub struct NodeRecord {
     pub dirty_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
+/// Fast inline hasher using a multiplicative FxHash-style algorithm.
+///
+/// Used internally by the scheduler for hash maps with integer keys
+/// (SignalId), where cryptographic strength is unnecessary and speed matters.
 #[derive(Default, Clone, Copy)]
 pub struct FastHasher(u64);
 
@@ -61,6 +65,9 @@ impl std::hash::Hasher for FastHasher {
     }
 }
 
+/// Builder for [`FastHasher`], used as a custom `BuildHasher`.
+///
+/// Enables `HashMap<K, V, FastBuildHasher>` for fast integer-keyed maps.
 pub type FastBuildHasher = std::hash::BuildHasherDefault<FastHasher>;
 
 /// Internal scheduler state managing DAG topologies, dirty bitsets, and evaluation priority queues.

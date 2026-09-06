@@ -11,3 +11,5 @@ readme = "README.md"
 [dependencies]
 martensite-core = { workspace = true }
 tiny-skia = { workspace = true }
+[lints]
+workspace = true
