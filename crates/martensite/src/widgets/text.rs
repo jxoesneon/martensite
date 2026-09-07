@@ -20,6 +20,10 @@ use martensite_text::{Attrs, Family, FontManager, TextMetrics, TextShapeCache};
 /// first measure.
 pub struct Text {
     /// The text content to display.
+    ///
+    /// If you mutate this field directly, call `invalidate_cache()` afterwards
+    /// to ensure the next measurement re-shapes the text. Use `set_content()`
+    /// for a convenient method that handles this automatically.
     pub content: String,
     /// Font size in logical pixels.
     pub font_size: f32,
@@ -62,24 +66,52 @@ impl Text {
         }
     }
 
+    /// Sets the text content and invalidates caches.
+    ///
+    /// Use this instead of directly mutating `self.content` to ensure
+    /// that cached measurements are cleared.
+    #[inline]
+    pub fn set_content(&mut self, content: impl Into<String>) {
+        self.content = content.into();
+        self.invalidate_cache();
+    }
+
+    /// Invalidates all cached measurements.
+    ///
+    /// Call this after directly mutating `content`, `font_size`,
+    /// `family`, `line_height`, or `rtl` fields.
+    #[inline]
+    pub fn invalidate_cache(&mut self) {
+        self.inline_cache.clear();
+    }
+
     /// Sets the font size.
+    ///
+    /// Clears the inline cache since the measurement inputs have changed.
     #[inline]
     pub fn font_size(mut self, size: f32) -> Self {
         self.font_size = size;
+        self.inline_cache.clear();
         self
     }
 
     /// Sets the line height.
+    ///
+    /// Clears the inline cache since the measurement inputs have changed.
     #[inline]
     pub fn line_height(mut self, height: f32) -> Self {
         self.line_height = Some(height);
+        self.inline_cache.clear();
         self
     }
 
     /// Sets the font family name.
+    ///
+    /// Clears the inline cache since the measurement inputs have changed.
     #[inline]
     pub fn family(mut self, family: impl Into<String>) -> Self {
         self.family = family.into();
+        self.inline_cache.clear();
         self
     }
 
@@ -91,9 +123,12 @@ impl Text {
     }
 
     /// Sets the RTL direction.
+    ///
+    /// Clears the inline cache since the measurement inputs have changed.
     #[inline]
     pub fn rtl(mut self) -> Self {
         self.rtl = true;
+        self.inline_cache.clear();
         self
     }
 

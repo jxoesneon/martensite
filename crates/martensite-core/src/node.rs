@@ -188,14 +188,22 @@ impl InlineTextCache {
     /// Matches if the difference between cached width and `available_width` is within 0.01px.
     /// For non-finite values (infinity, NaN), matches only on exact equality.
     /// Returns `(measured_width, measured_height)` on hit.
+    ///
+    /// NaN values never match (standard IEEE 754 behavior).
     #[inline(always)]
     pub fn get(&self, available_width: f32) -> Option<(f32, f32)> {
+        // NaN never matches any entry (including itself).
+        if available_width.is_nan() {
+            return None;
+        }
         self.entries
             .iter()
             .find(|(w, _, _)| {
                 if available_width.is_finite() && w.is_finite() {
                     (*w - available_width).abs() < 0.01
                 } else {
+                    // For non-finite values (infinity), use exact equality.
+                    // NaN is already handled above.
                     *w == available_width
                 }
             })
