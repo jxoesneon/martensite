@@ -1,6 +1,9 @@
 name: Publish to crates.io
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -25,7 +28,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Dry-run packaging
-        if: ${{ github.event.inputs.dry_run == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
         run: |
           # Verify every publishable crate packages cleanly before any real publish.
           # Uses --no-verify because workspace path dependencies are not yet on crates.io.
@@ -57,7 +60,7 @@ jobs:
           done
 
       - name: Publish to crates.io
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ github.event_name == 'push' || github.event.inputs.dry_run != 'true' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
