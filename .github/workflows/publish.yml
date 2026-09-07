@@ -155,8 +155,8 @@ jobs:
             martensite-assets
             martensite-media
             martensite-devtools
-            martensite-blessed
             martensite
+            martensite-blessed
           )
           for crate in "${CRATES[@]}"; do
             echo "Packaging $crate..."
@@ -193,8 +193,8 @@ jobs:
             martensite-assets
             martensite-media
             martensite-devtools
-            martensite-blessed
             martensite
+            martensite-blessed
           )
 
           for crate in "${CRATES[@]}"; do
