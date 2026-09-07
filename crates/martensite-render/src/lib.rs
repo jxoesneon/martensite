@@ -25,7 +25,7 @@ pub use paint::{
 };
 pub use presentation::{
     nonzero as presentation_nonzero, present_rgba_to_softbuffer, rgba_to_softbuffer,
-    PresentationError,
+    PresentationError, SoftbufferPresenter,
 };
 pub use tinyskia_backend::TinySkiaBackend;
 pub use vello_backend::VelloRenderer;

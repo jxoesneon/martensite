@@ -1,6 +1,6 @@
 //! WGPU compute rasterization and GPU resurrection engine.
 //!
-//! `martensite-wgpu` provides three modules covering the v0.2.0 rendering
+//! `martensite-wgpu` provides four modules covering the v0.2.0 rendering
 //! pipeline milestone:
 //!
 //! * [`device`] — [`device::GpuContext`] encapsulates the instance, adapter,
@@ -12,6 +12,9 @@
 //! * [`resilience`] — [`resilience::RecoveryMachine`] implements the formal
 //!   typestate GPU device-loss recovery FSM with exponential backoff and a
 //!   CPU fallback path.
+//! * [`orchestrator`] — [`orchestrator::RenderOrchestrator`] bridges
+//!   `martensite-render` with the WGPU device pipeline, switching between
+//!   Vello GPU rendering and TinySkia CPU fallback based on recovery state.
 //!
 //! # Safety
 //!
@@ -22,12 +25,15 @@
 /// GPU device context: adapter enumeration, feature selection, device/queue
 /// lifecycle.
 pub mod device;
+/// Render pipeline orchestrator bridging GPU and CPU backends.
+pub mod orchestrator;
 /// GPU device-loss recovery finite state machine.
 pub mod resilience;
 /// Surface and swapchain management.
 pub mod surface;
 
 pub use device::{GpuContext, GpuContextError};
+pub use orchestrator::{OrchestratorError, RenderMode, RenderOrchestrator};
 pub use resilience::{
     backoff_duration, DeviceStatus, RecoveryMachine, SurfaceError, DEFAULT_FALLBACK_THRESHOLD,
     DEFAULT_MAX_RETRIES, RECOVERY_BUDGET,

@@ -6,7 +6,14 @@
 //! pipeline will transparently fall back to [`TinySkiaBackend`] when the GPU
 //! device is lost or unavailable, presenting via the `softbuffer` crate to the window.
 //!
+//! The [`AppConfig`] produced by the builder is consumed by the
+//! `martensite-wgpu` [`RenderOrchestrator`] to determine:
+//! - Whether CPU fallback is permitted (`allow_software_fallback`)
+//! - How long to wait before activating fallback (`fallback_timeout`)
+//! - Whether to bypass the GPU entirely (`prefer_cpu`)
+//!
 //! [`TinySkiaBackend`]: martensite_render::TinySkiaBackend
+//! [`RenderOrchestrator`]: martensite_wgpu::RenderOrchestrator
 
 use std::time::Duration;
 

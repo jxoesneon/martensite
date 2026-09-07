@@ -1,4 +1,6 @@
 //! Procedural macros for Martensite.
+#![forbid(unsafe_code)]
+
 use proc_macro::TokenStream;
 
 /// Declares a Martensite widget, expanding to a unit-type struct that

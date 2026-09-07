@@ -16,11 +16,14 @@ readme = "README.md"
 martensite-core = { workspace = true }
 tiny-skia = { workspace = true }
 kurbo = { workspace = true }
+softbuffer = { workspace = true }
+raw-window-handle = { workspace = true }
+peniko = { workspace = true, optional = true }
 vello = { workspace = true, optional = true }
 
 [features]
 default = []
-vello = ["dep:vello"]
+vello = ["dep:vello", "dep:peniko"]
 
 [lints]
 workspace = true

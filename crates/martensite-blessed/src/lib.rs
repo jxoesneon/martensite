@@ -20,6 +20,8 @@
 //! All blessed crates are held to the same rigorous quality bar as the core engine
 //! and adhere to Martensite's Core Architectural Principles.
 
+#![forbid(unsafe_code)]
+
 #[cfg(test)]
 mod tests {
     #[test]

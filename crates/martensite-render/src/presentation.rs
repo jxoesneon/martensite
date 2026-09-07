@@ -1,16 +1,16 @@
-//! CPU pixel buffer presentation helpers for `softbuffer`.
+//! CPU pixel buffer presentation via `softbuffer`.
 //!
 //! When the GPU device is lost or unavailable, the [`TinySkiaBackend`]
-//! renders into an RGBA CPU pixel buffer. This module provides conversion
-//! utilities that prepare the buffer for upload to a window surface
-//! via the `softbuffer` crate, enabling software-only rendering without
-//! a GPU swapchain.
+//! renders into an RGBA CPU pixel buffer. This module provides
+//! [`SoftbufferPresenter`] which manages a `softbuffer::Surface` and
+//! uploads that buffer to a window surface, enabling software-only
+//! rendering without a GPU swapchain.
 //!
 //! [`TinySkiaBackend`]: crate::tinyskia_backend::TinySkiaBackend
 
 use std::num::NonZeroU32;
 
-/// Error returned by software presentation operations.
+/// Error returned by [`SoftbufferPresenter`] operations.
 #[derive(Debug)]
 pub enum PresentationError {
     /// The surface has not been configured yet.
@@ -30,6 +30,8 @@ pub enum PresentationError {
     EmptyBuffer,
     /// The surface width or height is zero.
     ZeroDimension,
+    /// The underlying `softbuffer` operation failed.
+    Softbuffer(String),
 }
 
 impl std::fmt::Display for PresentationError {
@@ -47,6 +49,7 @@ impl std::fmt::Display for PresentationError {
             ),
             Self::EmptyBuffer => write!(f, "pixel buffer is empty"),
             Self::ZeroDimension => write!(f, "surface width or height is zero"),
+            Self::Softbuffer(msg) => write!(f, "softbuffer error: {msg}"),
         }
     }
 }
@@ -57,7 +60,7 @@ impl std::error::Error for PresentationError {}
 /// into the `X8R8G8B8` (u32) format expected by `softbuffer`.
 ///
 /// This function performs the color channel swizzle from RGBA byte order
-/// to the packed 0xRRGGBB u32 format, discarding the alpha channel
+/// to the packed `0x00RRGGBB` u32 format, discarding the alpha channel
 /// (softbuffer surfaces are opaque by default).
 ///
 /// # Errors
@@ -81,7 +84,8 @@ pub fn rgba_to_softbuffer(rgba: &[u8]) -> Result<Vec<u32>, PresentationError> {
     Ok(pixels)
 }
 
-/// Presents an RGBA pixel buffer to a `softbuffer` surface.
+/// Validates and prepares an RGBA pixel buffer for presentation to a
+/// `softbuffer` surface.
 ///
 /// This is the software fallback presentation path used when the GPU
 /// device is lost or unavailable. The `rgba_buffer` must be in
@@ -134,6 +138,115 @@ pub fn nonzero(value: u32, err: PresentationError) -> Result<NonZeroU32, Present
     NonZeroU32::new(value).ok_or(err)
 }
 
+/// A presenter that manages a `softbuffer::Surface` for CPU-only rendering.
+///
+/// This wraps the `softbuffer` surface lifecycle, providing a simple
+/// `present` API that takes an RGBA pixel buffer and uploads it to the
+/// window. The presenter handles surface configuration, resize, and
+/// buffer mutation.
+///
+/// # Type Parameters
+///
+/// * `D` — The display handle type (implements `HasDisplayHandle`).
+/// * `W` — The window handle type (implements `HasWindowHandle`).
+pub struct SoftbufferPresenter<D, W> {
+    surface: softbuffer::Surface<D, W>,
+    width: u32,
+    height: u32,
+}
+
+impl<D, W> SoftbufferPresenter<D, W>
+where
+    D: raw_window_handle::HasDisplayHandle,
+    W: raw_window_handle::HasWindowHandle,
+{
+    /// Creates a new presenter from an existing `softbuffer` context and
+    /// window handle.
+    ///
+    /// The surface is created from the context and window handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PresentationError::Softbuffer`] if the surface cannot be
+    /// created.
+    pub fn new(
+        context: &softbuffer::Context<D>,
+        window: W,
+    ) -> Result<Self, PresentationError> {
+        let surface = softbuffer::Surface::new(context, window)
+            .map_err(|e| PresentationError::Softbuffer(e.to_string()))?;
+        Ok(Self {
+            surface,
+            width: 0,
+            height: 0,
+        })
+    }
+
+    /// Creates a presenter from an already-created `softbuffer::Surface`.
+    ///
+    /// This is useful when the caller wants to manage surface creation
+    /// themselves (e.g. for testing or custom window integration).
+    #[must_use]
+    pub fn from_surface(surface: softbuffer::Surface<D, W>) -> Self {
+        Self {
+            surface,
+            width: 0,
+            height: 0,
+        }
+    }
+
+    /// Configures the surface dimensions for presentation.
+    ///
+    /// This should be called whenever the window is resized.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+    }
+
+    /// Presents an RGBA pixel buffer to the softbuffer surface.
+    ///
+    /// The buffer must be in RGBA8 format with dimensions matching the
+    /// last [`resize`](Self::resize) call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PresentationError`] if the buffer is malformed or the
+    /// softbuffer surface operation fails.
+    pub fn present(&mut self, rgba_buffer: &[u8]) -> Result<(), PresentationError> {
+        if self.width == 0 || self.height == 0 {
+            return Err(PresentationError::NotConfigured);
+        }
+        let pixels = present_rgba_to_softbuffer(rgba_buffer, self.width, self.height)?;
+        self.surface
+            .resize(
+                NonZeroU32::new(self.width).ok_or(PresentationError::ZeroDimension)?,
+                NonZeroU32::new(self.height).ok_or(PresentationError::ZeroDimension)?,
+            )
+            .map_err(|e| PresentationError::Softbuffer(e.to_string()))?;
+        let mut buffer = self
+            .surface
+            .buffer_mut()
+            .map_err(|e| PresentationError::Softbuffer(e.to_string()))?;
+        buffer.copy_from_slice(&pixels);
+        buffer
+            .present()
+            .map_err(|e| PresentationError::Softbuffer(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Returns the current configured surface width.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Returns the current configured surface height.
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{nonzero, present_rgba_to_softbuffer, rgba_to_softbuffer, PresentationError};
@@ -143,11 +256,8 @@ mod tests {
         let rgba = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255];
         let result = rgba_to_softbuffer(&rgba).expect("conversion succeeds");
         assert_eq!(result.len(), 3);
-        // Red: 0x00FF0000
         assert_eq!(result[0], 0x00FF_0000);
-        // Green: 0x0000FF00
         assert_eq!(result[1], 0x0000_FF00);
-        // Blue: 0x000000FF
         assert_eq!(result[2], 0x0000_00FF);
     }
 
@@ -180,7 +290,7 @@ mod tests {
 
     #[test]
     fn present_with_matching_dimensions_succeeds() {
-        let rgba = vec![128u8; 4 * 4 * 4]; // 4x4 RGBA
+        let rgba = vec![128u8; 4 * 4 * 4];
         let result = present_rgba_to_softbuffer(&rgba, 4, 4);
         assert!(result.is_ok());
         assert_eq!(result.expect("pixels").len(), 16);
@@ -188,7 +298,7 @@ mod tests {
 
     #[test]
     fn present_with_size_mismatch_returns_error() {
-        let rgba = vec![128u8; 8]; // only 2 pixels, not 4x4
+        let rgba = vec![128u8; 8];
         let result = present_rgba_to_softbuffer(&rgba, 4, 4);
         assert!(matches!(
             result,
@@ -230,5 +340,7 @@ mod tests {
         };
         assert!(format!("{err}").contains("50x50"));
         assert!(format!("{err}").contains("100x100"));
+        let err = PresentationError::Softbuffer("test error".to_string());
+        assert!(format!("{err}").contains("test error"));
     }
 }

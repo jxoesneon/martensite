@@ -1,5 +1,7 @@
 //! Zero-copy GPU media surfaces and 3D interop.
 
+#![forbid(unsafe_code)]
+
 #[cfg(test)]
 mod tests {
     #[test]

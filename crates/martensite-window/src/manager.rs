@@ -127,7 +127,9 @@ impl WindowManager {
     /// `event_loop` is the active winit event loop that owns window
     /// creation; `attributes` configure the window's size, title, and other
     /// platform properties. On success the window's current scale factor is
-    /// queried from the platform and stored alongside it.
+    /// queried from the platform, validated via [`DpiScale::is_valid`], and
+    /// stored alongside it. If the platform returns an invalid scale factor
+    /// (non-finite or non-positive), a default of `1.0` is used instead.
     ///
     /// # Errors
     ///
@@ -143,7 +145,15 @@ impl WindowManager {
     ) -> Result<WindowKey, winit::error::RequestError> {
         let window = event_loop.create_window(attributes)?;
         let id = window.id();
-        let dpi_scale = window.scale_factor();
+        let raw_scale = window.scale_factor();
+        // Validate the platform-provided scale factor. If it is invalid
+        // (non-finite or non-positive), fall back to 1.0 rather than
+        // storing a value that would panic DpiScale::new later.
+        let dpi_scale = if DpiScale::is_valid(raw_scale) {
+            raw_scale
+        } else {
+            1.0
+        };
         let key = self.windows.insert(WindowEntry {
             window,
             dpi_scale,
