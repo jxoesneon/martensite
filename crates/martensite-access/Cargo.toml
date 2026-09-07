@@ -18,6 +18,10 @@ accesskit = { workspace = true }
 accesskit_winit = { workspace = true }
 winit = { workspace = true }
 
+[dev-dependencies]
+glam = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+
 [features]
 docs-rs = ["winit/x11"]
 

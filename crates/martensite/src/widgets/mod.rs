@@ -31,12 +31,18 @@
 //! in the arena for Taffy-driven flexbox layout, but for v0.3.0 the
 //! widget-internal approach is used.
 
+pub mod button;
+pub mod checkbox;
 pub mod container;
 pub mod flex;
 pub mod stack;
 pub mod text;
+pub mod text_input;
 
+pub use button::Button;
+pub use checkbox::CheckBox;
 pub use container::Container;
 pub use flex::{Flex, FlexDirection};
 pub use stack::Stack;
 pub use text::Text;
+pub use text_input::TextInput;

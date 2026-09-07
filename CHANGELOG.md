@@ -5,6 +5,93 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-21
+
+### Added
+
+- **Accessibility**: `martensite-access` `AccessKitAdapter` with incremental
+  `TreeUpdate` generation, `WidgetId` ↔ `NodeId` mapping, dirty bit tracking
+  via `NodeFlags::DIRTY_A11Y`, and synchronous emission following layout
+  finalization.
+  - `build_update` generates a full accessibility tree from the arena,
+    scoped to the adapter's root subtree, and clears dirty flags.
+  - `build_incremental_update` emits only dirty nodes and their ancestors
+    for lightweight updates with correct child-list propagation, and
+    tracks focus changes (including focus clearing) via
+    `last_emitted_focus`.
+  - `mark_dirty`, `clear_dirty`, `clear_all_dirty` for dirty bit management.
+  - `set_focus` reflects the focused widget in `TreeUpdate::focus`.
+  - `resolve` maps incoming `NodeId` back to `WidgetId` with liveness check.
+  - `decode_action` on the adapter validates `target_tree` and decodes
+    `ActionRequest` into `A11yAction`.
+  - Uses `accesskit::TreeId::ROOT` for the main accessibility tree.
+  - Hidden nodes do not advertise `Action::Focus`.
+- **Accessibility**: `properties` module with `AccessibilityBuilder` for
+  declarative property construction (roles, labels, descriptions, values,
+  tooltips, focusable, disabled, expanded, toggled, clickable states).
+- **Accessibility**: `actions` module with `A11yAction` enum,
+  `decode_action_request` for AccessKit action routing with `target_tree`
+  validation, malformed `SetValue` rejection, and `ActionData` preservation
+  via `A11yAction::Other`. `ActionHandler` trait, `QueuedActionDispatcher`
+  for batch processing, and `ClosureActionHandler` for inline closures.
+- **Accessibility**: `winit` module with `MartensiteAccessBridge` implementing
+  `ActivationHandler`, `ActionHandler`, and `DeactivationHandler` for
+  `accesskit_winit` integration. Thread-safe via `Mutex`, supports
+  pluggable `MartensiteActionHandler` for decoded actions.
+- **Focus**: `martensite-focus` `FocusManager` with active focus tracking,
+  tab navigation (forward/reverse with wrapping), and scope-aware navigation.
+  - `set_focus` validates liveness, `FOCUSABLE`, `VISIBLE`, non-`INERT`,
+    and active scope containment.
+  - `push_scope` validates root liveness via the arena.
+  - `pop_scope` restores prior focus or falls back to nearest visible
+    focusable sibling, avoiding stale focus states.
+  - Reverse Tab from unknown focus starts at the last candidate.
+  - Tab candidate collection excludes inert and non-visible widgets.
+  - Spatial navigation enforces active-scope containment.
+- **Focus**: `spatial` module with projected-beam 2D directional navigation
+  algorithm:
+  - Score = α·Distance + β·AngularDeviation
+  - 80° forward cone rejection
+  - Tree-order tie-breaking
+  - `navigate` and `navigate_within_scope` for modal-restricted navigation
+  - Configurable α/β weights via `SpatialNavigator::with_weights`
+  - NaN/infinity guards on geometry and weights
+  - Inert candidate exclusion
+  - Source node focusability/visibility validation
+- **Focus**: `scope` module with `FocusScope` and `FocusScopeStack` for
+  modal focus trapping:
+  - `push`/`pop` with prior focus capture and auto-restoration
+  - Fallback to nearest visible focusable widget when prior focus is dead
+  - Nested scope support for stacked modals
+  - `is_in_current_scope` for boundary checks
+- **Widgets**: Interactive standard widgets with full accessibility:
+  - `Button` — `Role::Button`, label, `Action::Click`, `Action::Focus`,
+    disabled state, tooltip.
+  - `CheckBox` — `Role::CheckBox`, label, `Action::Click`, `Action::Focus`,
+    `Toggled` state, disabled state.
+  - `TextInput` — `Role::TextInput`, label, value, `Action::Focus`,
+    `Action::SetValue`, read-only and disabled states.
+- **Integration**: Integration tests verifying accessibility tree
+  generation, action dispatching, tab/spatial navigation, modal scope
+  trapping (Tab, Shift+Tab, spatial, programmatic focus), inert widget
+  exclusion, incremental parent propagation on child removal, interactive
+  widget roles/labels/actions, and combined adapter+manager workflows.
+
+### Changed
+
+- All 22 workspace crates bumped from `0.3.0` to `0.4.0`.
+- `martensite-access` `build_update` and `build_incremental_update` now
+  take `&mut WidgetArena` and `&mut self` to clear dirty flags after
+  emission.
+- `martensite-access` `decode_action_request` now requires an
+  `expected_tree_id` parameter for target tree validation.
+- `martensite-access` `A11yAction::Other` now carries `Option<ActionData>`.
+- `martensite-focus` `push_scope` now takes `&WidgetArena` and returns
+  `bool` for root validation.
+- `martensite-focus` now depends on `glam` for vector math.
+- `martensite-access` `uuid` dependency moved to dev-dependencies (TreeId
+  is now `TreeId::ROOT`).
+
 ## [0.3.0] - 2026-09-20
 
 ### Added
