@@ -67,6 +67,12 @@ fn gradient_stops_to_peniko(stops: &crate::paint::GradientStops) -> ColorStops {
 pub struct VelloRenderer {
     #[cfg(feature = "vello")]
     scene: Scene,
+    /// The number of clip layers pushed during the current frame.
+    /// These are all popped at the end of `render()` to keep the scene
+    /// balanced, matching the TinySkia clip_stack design where clips
+    /// accumulate for the remainder of the frame and reset each frame.
+    #[cfg(feature = "vello")]
+    clip_depth: u32,
     last_command_count: usize,
 }
 
@@ -77,6 +83,8 @@ impl VelloRenderer {
         Self {
             #[cfg(feature = "vello")]
             scene: Scene::new(),
+            #[cfg(feature = "vello")]
+            clip_depth: 0,
             last_command_count: 0,
         }
     }
@@ -112,6 +120,7 @@ impl VelloRenderer {
     #[cfg(feature = "vello")]
     pub fn reset(&mut self) {
         self.scene.reset();
+        self.clip_depth = 0;
         self.last_command_count = 0;
     }
 
@@ -142,13 +151,8 @@ impl VelloRenderer {
             PaintCommand::StrokeRect(rect, width, color) => {
                 if rect.width() > 0.0 && rect.height() > 0.0 {
                     let stroke = KurboStroke::new(f64::from(*width));
-                    self.scene.stroke(
-                        &stroke,
-                        Affine::IDENTITY,
-                        rgba_to_color(*color),
-                        None,
-                        rect,
-                    );
+                    self.scene
+                        .stroke(&stroke, Affine::IDENTITY, rgba_to_color(*color), None, rect);
                 }
             }
             PaintCommand::FillPath(path, color) => {
@@ -162,13 +166,8 @@ impl VelloRenderer {
             }
             PaintCommand::StrokePath(path, width, color) => {
                 let stroke = KurboStroke::new(f64::from(*width));
-                self.scene.stroke(
-                    &stroke,
-                    Affine::IDENTITY,
-                    rgba_to_color(*color),
-                    None,
-                    path,
-                );
+                self.scene
+                    .stroke(&stroke, Affine::IDENTITY, rgba_to_color(*color), None, path);
             }
             PaintCommand::FillLinearGradient(rect, stops, start, end) => {
                 if rect.width() <= 0.0 || rect.height() <= 0.0 {
@@ -201,6 +200,7 @@ impl VelloRenderer {
                         Affine::IDENTITY,
                         rect,
                     );
+                    self.clip_depth += 1;
                 }
             }
             PaintCommand::ClipRoundedRect(rect, radius) => {
@@ -213,6 +213,7 @@ impl VelloRenderer {
                         Affine::IDENTITY,
                         &rr,
                     );
+                    self.clip_depth += 1;
                 }
             }
             PaintCommand::DrawText(point, text, size, color) => {
@@ -275,9 +276,17 @@ impl RenderBackend for VelloRenderer {
         #[cfg(feature = "vello")]
         {
             self.scene.reset();
+            self.clip_depth = 0;
             for command in &paint_list.commands {
                 self.render_command(command);
             }
+            // Pop all pushed clip layers to keep the Vello scene balanced.
+            // This matches the TinySkia clip_stack design where clips
+            // accumulate for the remainder of the frame and reset each frame.
+            for _ in 0..self.clip_depth {
+                self.scene.pop_layer();
+            }
+            self.clip_depth = 0;
         }
     }
 }

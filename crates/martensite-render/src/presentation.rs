@@ -169,10 +169,7 @@ where
     ///
     /// Returns [`PresentationError::Softbuffer`] if the surface cannot be
     /// created.
-    pub fn new(
-        context: &softbuffer::Context<D>,
-        window: W,
-    ) -> Result<Self, PresentationError> {
+    pub fn new(context: &softbuffer::Context<D>, window: W) -> Result<Self, PresentationError> {
         let surface = softbuffer::Surface::new(context, window)
             .map_err(|e| PresentationError::Softbuffer(e.to_string()))?;
         Ok(Self {

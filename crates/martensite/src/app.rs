@@ -6,14 +6,14 @@
 //! pipeline will transparently fall back to [`TinySkiaBackend`] when the GPU
 //! device is lost or unavailable, presenting via the `softbuffer` crate to the window.
 //!
-//! The [`AppConfig`] produced by the builder is consumed by the
-//! `martensite-wgpu` [`RenderOrchestrator`] to determine:
+//! The [`AppConfig`] produced by the builder should be converted to
+//! [`martensite_wgpu::OrchestratorConfig`] and passed to
+//! [`martensite_wgpu::RenderOrchestrator::new`] to control:
 //! - Whether CPU fallback is permitted (`allow_software_fallback`)
-//! - How long to wait before activating fallback (`fallback_timeout`)
 //! - Whether to bypass the GPU entirely (`prefer_cpu`)
+//! - How long to wait before activating fallback (`fallback_timeout`)
 //!
 //! [`TinySkiaBackend`]: martensite_render::TinySkiaBackend
-//! [`RenderOrchestrator`]: martensite_wgpu::RenderOrchestrator
 
 use std::time::Duration;
 
@@ -68,6 +68,15 @@ impl Default for AppConfig {
             allow_software_fallback: false,
             fallback_timeout: DEFAULT_FALLBACK_TIMEOUT,
             prefer_cpu: false,
+        }
+    }
+}
+
+impl From<AppConfig> for martensite_wgpu::OrchestratorConfig {
+    fn from(config: AppConfig) -> Self {
+        Self {
+            allow_software_fallback: config.allow_software_fallback,
+            prefer_cpu: config.prefer_cpu,
         }
     }
 }
@@ -229,5 +238,24 @@ mod tests {
         let config = App::build().allow_software_fallback(true).build();
         let cloned = config.clone();
         assert!(cloned.allow_software_fallback());
+    }
+
+    #[test]
+    fn app_config_converts_to_orchestrator_config() {
+        let config = App::build()
+            .allow_software_fallback(true)
+            .prefer_cpu(true)
+            .build();
+        let orchestrator_config: martensite_wgpu::OrchestratorConfig = config.into();
+        assert!(orchestrator_config.allow_software_fallback);
+        assert!(orchestrator_config.prefer_cpu);
+    }
+
+    #[test]
+    fn default_app_config_converts_to_default_orchestrator_config() {
+        let config = AppConfig::default();
+        let orchestrator_config: martensite_wgpu::OrchestratorConfig = config.into();
+        assert!(!orchestrator_config.allow_software_fallback);
+        assert!(!orchestrator_config.prefer_cpu);
     }
 }

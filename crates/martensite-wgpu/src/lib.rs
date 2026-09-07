@@ -33,7 +33,7 @@ pub mod resilience;
 pub mod surface;
 
 pub use device::{GpuContext, GpuContextError};
-pub use orchestrator::{OrchestratorError, RenderMode, RenderOrchestrator};
+pub use orchestrator::{OrchestratorConfig, OrchestratorError, RenderMode, RenderOrchestrator};
 pub use resilience::{
     backoff_duration, DeviceStatus, RecoveryMachine, SurfaceError, DEFAULT_FALLBACK_THRESHOLD,
     DEFAULT_MAX_RETRIES, RECOVERY_BUDGET,
