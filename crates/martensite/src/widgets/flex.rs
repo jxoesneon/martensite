@@ -187,7 +187,8 @@ impl Flex {
         }
 
         // Note: children_main already includes total_gap (see caller),
-        // so we do not subtract it again here.
+        // so free_space = total_main - sum(child_sizes) - total_gap.
+        // This is the space available for alignment distribution.
         let free_space = (total_main - children_main).max(0.0);
 
         match self.main_axis_alignment {
@@ -246,6 +247,9 @@ impl Flex {
             }
             MainAxisAlignment::SpaceEvenly => {
                 let mut offsets = Vec::with_capacity(n);
+                // free_space = total_main - sum(child_sizes) - total_gap
+                // We distribute free_space evenly across (n+1) slots.
+                // Inter-child spacing is gap + space; leading/trailing is space.
                 let space = if n > 0 {
                     free_space / (n + 1) as f32
                 } else {
@@ -282,13 +286,13 @@ impl Widget for Flex {
         for child in &mut self.children {
             // Give each child the remaining main-axis space after
             // accounting for previously-measured siblings and gaps.
-            let remaining_main =
-                if constraints.max_size.x.is_finite() && constraints.max_size.y.is_finite() {
-                    let max_main = self.direction.main(constraints.max_size);
-                    (max_main - total_main - total_gap).max(0.0)
-                } else {
-                    f32::MAX
-                };
+            // Only check the main-axis constraint, not the cross-axis.
+            let max_main = self.direction.main(constraints.max_size);
+            let remaining_main = if max_main.is_finite() {
+                (max_main - total_main - total_gap).max(0.0)
+            } else {
+                f32::MAX
+            };
             let cross_limit = self.direction.cross(constraints.max_size);
             let child_max = if self.direction.is_row() {
                 Vec2::new(remaining_main, cross_limit)
