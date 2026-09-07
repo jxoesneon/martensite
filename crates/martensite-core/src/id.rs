@@ -46,6 +46,19 @@ impl WidgetId {
         NonZeroU64::new(val).map(Self)
     }
 
+    /// Construct from slot index and generation, panicking if generation is zero.
+    ///
+    /// This is a convenience constructor for use when generation is guaranteed non-zero.
+    #[inline(always)]
+    pub const fn from_parts(slot_idx: u32, generation: u32) -> Self {
+        // WidgetId::new returns None only if generation is zero.
+        // If generation is zero, this will panic at const-eval time.
+        match Self::new(slot_idx, generation) {
+            Some(id) => id,
+            None => panic!("WidgetId::from_parts: generation must be non-zero"),
+        }
+    }
+
     /// Convert to little-endian byte array for wire/shader/storage serialization.
     #[inline(always)]
     pub const fn to_le_bytes(self) -> [u8; 8] {

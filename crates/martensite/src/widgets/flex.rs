@@ -186,8 +186,9 @@ impl Flex {
             return vec![];
         }
 
-        let total_gap = self.gap * (n.saturating_sub(1)) as f32;
-        let free_space = (total_main - children_main - total_gap).max(0.0);
+        // Note: children_main already includes total_gap (see caller),
+        // so we do not subtract it again here.
+        let free_space = (total_main - children_main).max(0.0);
 
         match self.main_axis_alignment {
             MainAxisAlignment::Start => {

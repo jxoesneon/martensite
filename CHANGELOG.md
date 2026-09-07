@@ -52,18 +52,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overflow.
 - `LayoutEngine::id_map` changed from `Vec` to `HashMap` for O(1)
   lookups.
+- `LayoutEngine::compute_with_widgets` measure closure now converts
+  Taffy's `known_dimensions` and `available_space` into real
+  `LayoutConstraints`, enabling constraint-driven text wrapping and
+  flex sizing. Removed the separate pre-measure pass.
 - `FontManager::load_font_file` now returns only newly loaded face
   IDs instead of all faces in the database.
+- `FontManager::load_font_file_result` added for error-returning
+  variant.
+- `InlineTextCache` now stores `(measured_width, measured_height)`
+  tuples instead of just height, fixing stale width on cache hits.
+- `InlineTextCache::get` handles `f32::INFINITY` correctly.
+- `ShapeCacheKey` now includes `family_hash` and `line_height_bits`
+  for correct cache invalidation on family/line-height changes.
+- `MaxWidthBits` now distinguishes `Some(0.0)` from `None`
+  (unbounded).
+- `TextMetrics::is_empty` now uses `||` (consistent with
+  `Size::is_empty`).
+- `Flex::measure` gives children remaining main-axis space instead
+  of full container max_size.
 - `martensite` crate adds `accesskit`, `glam`, and `taffy` as direct
   dependencies for base widget implementations.
 
 ### Fixed
 
-- Performance test thresholds corrected from seconds to milliseconds.
+- Performance test thresholds corrected from seconds to microseconds.
   Tests marked `#[ignore]` with documented reasons where Taffy's
   recursive engine cannot meet the spec's aspirational targets.
 - `ShapeCacheKey` now includes `max_width_bits` to prevent cache
   collisions between wrapped text at different widths.
+- `Flex::layout` column direction no longer swaps width/height in
+  child bounds.
+- `Flex::compute_main_offsets` uses defensive `.get(i)` access to
+  prevent panics when `child_sizes` is not populated.
+- `relayout_incremental` now calls `compute_with_widgets` instead
+  of plain Taffy `compute`, ensuring widget-aware measurement.
+- `arena.rs`: replaced `let _ =` silencer with proper error check.
+- Integration tests now assert positive bounds and include a
+  text-wrapping test verifying narrow constraints produce greater
+  height.
 
 ## [0.2.0] - 2026-09-13
 

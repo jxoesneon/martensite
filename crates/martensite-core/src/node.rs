@@ -204,12 +204,18 @@ impl InlineTextCache {
 
     /// Inserts or updates a `(available_width, measured_width, measured_height)` triple into the cache.
     ///
-    /// If an entry matching `available_width` (within 0.01px) already exists, its
-    /// measured size is updated in-place. Otherwise, the oldest slot is overwritten in FIFO order.
+    /// If an entry matching `available_width` (within 0.01px for finite values,
+    /// exact equality for non-finite values) already exists, its measured size
+    /// is updated in-place. Otherwise, the oldest slot is overwritten in FIFO order.
     #[inline]
     pub fn put(&mut self, available_width: f32, measured_width: f32, measured_height: f32) {
         for entry in &mut self.entries {
-            if (entry.0 - available_width).abs() < 0.01 {
+            let matches = if available_width.is_finite() && entry.0.is_finite() {
+                (entry.0 - available_width).abs() < 0.01
+            } else {
+                entry.0 == available_width
+            };
+            if matches {
                 entry.1 = measured_width;
                 entry.2 = measured_height;
                 return;

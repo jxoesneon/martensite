@@ -356,6 +356,19 @@ impl LayoutEngine {
                 if let Some((hot, cold)) = arena.get_both_mut(*widget_id) {
                     // Convert Taffy's known dimensions and available space
                     // into LayoutConstraints for the widget.
+                    //
+                    // # Known Limitation: MinContent Sizing
+                    //
+                    // Taffy's `MinContent` requests the narrowest possible
+                    // intrinsic size (e.g. the longest unbreakable word for
+                    // text). We approximate this as `0.0` because the
+                    // `Widget::measure` API does not distinguish between
+                    // min-content and max-content queries. A future milestone
+                    // will add a `MeasureMode` parameter to `Widget::measure`
+                    // to support proper min-content sizing. For v0.3.0, this
+                    // approximation is acceptable because Taffy primarily
+                    // uses `MaxContent` and `Definite` constraints during
+                    // flexbox layout.
                     let max_width = match (known.width, available_space.width) {
                         (Some(w), _) => w,
                         (None, AvailableSpace::Definite(w)) => w,

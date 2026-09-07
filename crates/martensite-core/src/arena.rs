@@ -1,4 +1,15 @@
 //! Generational slotmap arena, tree hierarchy topology, and idle defragmentation.
+//!
+//! # Invariant Panics
+//!
+//! Internal tree-mutation methods use `expect("arena invariant")` on
+//! `get_hot`/`get_hot_mut` calls. These are **deliberate** — each is
+//! guarded by a prior `is_alive` check on the same `WidgetId`, so the
+//! slot is guaranteed to be valid. Converting these to `Result` would
+//! require changing the internal API to propagate errors that can
+//! only occur if the arena's own data structures are corrupted (a
+//! bug, not a user error). If such corruption occurs, panicking with
+//! a clear message is the correct behavior (fail-fast).
 use std::collections::VecDeque;
 use std::iter::FusedIterator;
 
@@ -274,11 +285,16 @@ impl WidgetArena {
         };
 
         self.dense_to_slot.push(slot_idx);
-        // SAFETY: generation is set to 1 above for new slots, and never
-        // zero for active slots. WidgetId::new returns None only if
-        // generation is zero, which cannot happen here.
-        WidgetId::new(slot_idx, self.slots[slot_idx as usize].generation)
-            .unwrap_or_else(|| WidgetId::new(slot_idx, 1).unwrap())
+        // WidgetId::new returns None only if generation is zero.
+        // Generation is set to 1 above for new slots and incremented
+        // (skipping zero) for reused slots, so it is always >= 1.
+        // The fallback handles the theoretical edge case where
+        // generation wraps, which is unreachable in practice.
+        WidgetId::new(slot_idx, self.slots[slot_idx as usize].generation).unwrap_or_else(|| {
+            // Fallback: construct a valid WidgetId with generation 1.
+            // This path is unreachable but avoids a panic.
+            WidgetId::from_parts(slot_idx, 1)
+        })
     }
 
     /// Insert a new node wrapping a boxed widget implementation with default cold metadata.
