@@ -14,5 +14,9 @@ readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }
+glam = { workspace = true }
+bitflags = { workspace = true }
+winit = { workspace = true }
+
 [lints]
 workspace = true

@@ -16,6 +16,8 @@ readme = "README.md"
 martensite-core = { workspace = true }
 winit = { workspace = true }
 slotmap = { workspace = true }
+glam = { workspace = true }
+bitflags = { workspace = true }
 
 [features]
 docs-rs = ["winit/x11"]

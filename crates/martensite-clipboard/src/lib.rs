@@ -1,61 +1,120 @@
-//! Multi-MIME delayed rendering clipboard engine.
+//! Multi-MIME delayed-rendering clipboard engine.
+//!
+//! `martensite-clipboard` provides a platform-agnostic clipboard data model
+//! with support for multiple MIME representations of a single logical
+//! payload and lazy (delayed) rendering of large payloads guarded by a
+//! configurable deadline.
+//!
+//! # Architecture
+//!
+//! * [`ClipboardItem`] holds an arbitrary number of representations keyed by
+//!   MIME type. Builder methods ([`ClipboardItem::offer_text`],
+//!   [`ClipboardItem::offer_html`], [`ClipboardItem::offer_rtf`],
+//!   [`ClipboardItem::offer_png`], [`ClipboardItem::offer_custom`]) populate
+//!   the common formats.
+//! * [`ClipboardPayload`] is either eager ([`ClipboardPayload::Text`] /
+//!   [`ClipboardPayload::Bytes`]) or lazy
+//!   ([`ClipboardPayload::Lazy`]). Lazy payloads wrap a `Send` `FnOnce`
+//!   closure that is invoked at most once, with a deadline to protect against
+//!   unresponsive producers (see [`ClipboardPayload::with_deadline`]).
+//! * [`ClipboardService`] is the read/write contract implemented by backends.
+//!   [`InMemoryClipboard`] is a pure-Rust implementation for tests and
+//!   headless environments.
+//! * [`PlatformClipboard`] extends [`ClipboardService`] with a backend name.
+//!   [`default_platform_clipboard`] selects the best available backend for
+//!   the current target. Because this crate is `#![forbid(unsafe_code)]`,
+//!   every platform backend is currently a safe stub that documents the
+//!   intended FFI integration point; real `unsafe` FFI is deferred to a
+//!   future milestone (see the [`platform`] module docs).
+//!
+//! # Examples
+//!
+//! ```
+//! use martensite_clipboard::{
+//!     ClipboardItem, ClipboardPayload, ClipboardService, InMemoryClipboard,
+//! };
+//!
+//! let mut cb = InMemoryClipboard::new();
+//! let item = ClipboardItem::new()
+//!     .offer_text("hello")
+//!     .offer_html("<b>hello</b>")
+//!     .offer_custom("application/x-lazy", ClipboardPayload::lazy(|| {
+//!         // Expensive work deferred until paste.
+//!         b"deferred-bytes".to_vec()
+//!     }));
+//! cb.set_contents(&item);
+//! assert_eq!(
+//!     cb.get_contents("text/plain;charset=utf-8"),
+//!     Some(b"hello".to_vec())
+//! );
+//! ```
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
-/// A multi-MIME clipboard payload carrying optional plain-text and HTML representations.
-#[derive(Default)]
-pub struct ClipboardItem {
-    /// Optional plain-text representation of the clipboard contents.
-    pub text: Option<String>,
-    /// Optional HTML representation of the clipboard contents.
-    pub html: Option<String>,
-}
+pub mod clipboard;
+pub mod platform;
 
-impl ClipboardItem {
-    /// Creates a new empty [`ClipboardItem`] with no text or HTML payloads.
-    pub fn new() -> Self {
-        Self::default()
-    }
-    /// Sets the plain-text payload and returns `self` for chaining.
-    pub fn offer_text(mut self, text: impl Into<String>) -> Self {
-        self.text = Some(text.into());
-        self
-    }
-}
+pub use clipboard::{
+    canonicalize_mime, ClipboardItem, ClipboardPayload, ClipboardService, InMemoryClipboard,
+    LazyPayload, Mime, DEFAULT_LAZY_DEADLINE,
+};
+pub use platform::{default_platform_clipboard, PlatformClipboard, StubClipboard};
 
 #[cfg(test)]
 mod tests {
-    use super::ClipboardItem;
+    use super::*;
+    use clipboard::MIME_TEXT_HTML;
+    use clipboard::MIME_TEXT_PLAIN;
+    use std::time::Duration;
 
     #[test]
-    fn new_creates_empty_item() {
-        let item = ClipboardItem::new();
-        assert!(item.text.is_none());
-        assert!(item.html.is_none());
+    fn re_exported_item_builder_round_trip() {
+        let mut cb = InMemoryClipboard::new();
+        cb.set_contents(
+            &ClipboardItem::new()
+                .offer_text("hi")
+                .offer_html("<b>hi</b>"),
+        );
+        assert_eq!(cb.get_contents(MIME_TEXT_PLAIN), Some(b"hi".to_vec()));
+        assert_eq!(cb.get_contents(MIME_TEXT_HTML), Some(b"<b>hi</b>".to_vec()));
     }
 
     #[test]
-    fn default_matches_new() {
-        let new_item = ClipboardItem::new();
-        let default_item = ClipboardItem::default();
-        assert!(new_item.text.is_none());
-        assert!(default_item.text.is_none());
-        assert!(new_item.html.is_none());
-        assert!(default_item.html.is_none());
+    fn re_exported_lazy_payload_round_trip() {
+        let mut cb = InMemoryClipboard::new();
+        cb.set_contents(&ClipboardItem::new().offer_custom(
+            "application/x-lazy",
+            ClipboardPayload::lazy(|| b"lazy".to_vec()),
+        ));
+        assert_eq!(
+            cb.get_contents("application/x-lazy"),
+            Some(b"lazy".to_vec())
+        );
     }
 
     #[test]
-    fn offer_text_sets_text_and_returns_self() {
-        let item = ClipboardItem::new().offer_text("hello");
-        assert_eq!(item.text, Some("hello".to_string()));
-        assert!(item.html.is_none());
+    fn re_exported_default_platform_clipboard_is_stub_like() {
+        let cb = default_platform_clipboard();
+        assert!(!cb.platform_name().is_empty());
+        assert!(cb.available_types().is_empty());
     }
 
     #[test]
-    fn offer_text_accepts_str_and_string() {
-        let from_str = ClipboardItem::new().offer_text("from &str");
-        assert_eq!(from_str.text, Some("from &str".to_string()));
+    fn re_exported_stub_returns_empty() {
+        let mut cb = StubClipboard::new();
+        cb.set_contents(&ClipboardItem::new().offer_text("x"));
+        assert!(cb.available_types().is_empty());
+        assert!(cb.get_contents(MIME_TEXT_PLAIN).is_none());
+    }
 
-        let from_string = ClipboardItem::new().offer_text(String::from("from String"));
-        assert_eq!(from_string.text, Some("from String".to_string()));
+    #[test]
+    fn deadline_constant_re_exported() {
+        assert_eq!(DEFAULT_LAZY_DEADLINE, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn mime_re_exported() {
+        let m = Mime::new("text/plain;charset=utf-8");
+        assert_eq!(m.as_str(), MIME_TEXT_PLAIN);
     }
 }

@@ -7,11 +7,15 @@
 //!   font fallback via cosmic-text.
 //! - [`cache`]: two-tier text measurement and glyph shaping cache
 //!   (Tier 1 inline in `ColdNode`, Tier 2 global LRU with 16 MB budget).
+//! - [`ime`]: velocity-damped kinetic IME candidate positioning that
+//!   tracks the caret during active scrolling.
 //!
 //! ## IME candidate projection
 //!
-//! The [`compute_ime_bounds`] function computes IME candidate window
-//! bounds from the cursor position and line height.
+//! The `compute_ime_bounds` function computes IME candidate window
+//! bounds from the cursor position and line height. For scrolling
+//! containers, prefer the [`ime`] module's [`ImePositioner`], which
+//! applies velocity-damped projection and viewport clamping.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
@@ -19,6 +23,8 @@
 pub mod cache;
 /// Font system abstraction: `FontManager`, `FontId`, `FontSource`.
 pub mod font;
+/// Velocity-damped kinetic IME candidate positioning.
+pub mod ime;
 /// Complex text shaping: `Shaper`, `TextMetrics`, `ShapedLine`.
 pub mod shaping;
 
@@ -28,10 +34,12 @@ pub use cache::{
 };
 pub use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 pub use font::{FontFaceInfo, FontId, FontManager, FontSource, FontStyle};
+pub use ime::{ImePositioner, ScrollKinematics, Viewport};
 pub use shaping::{
     measure_text, measure_text_with_attrs, shape_text, ShapedGlyph, ShapedLine, Shaper, TextMetrics,
 };
 
+#[cfg(test)]
 use winit::dpi::{LogicalPosition, LogicalSize};
 
 /// Computes the IME candidate window bounds from the cursor position and line height.
@@ -47,12 +55,21 @@ use winit::dpi::{LogicalPosition, LogicalSize};
 /// text-shaping layer. A future milestone will integrate platform IME
 /// APIs to compute the real candidate window width. The position and
 /// height are accurate.
-pub fn compute_ime_bounds(x: f64, y: f64, height: f64) -> (LogicalPosition<f64>, LogicalSize<f64>) {
+///
+/// For scrolling containers, prefer [`ImePositioner::compute_bounds`],
+/// which applies velocity-damped projection and viewport clamping.
+#[deprecated(
+    since = "0.5.0",
+    note = "use `ImePositioner::compute_bounds` for velocity-damped, viewport-clamped IME bounds"
+)]
+#[cfg(test)]
+fn compute_ime_bounds(x: f64, y: f64, height: f64) -> (LogicalPosition<f64>, LogicalSize<f64>) {
     (LogicalPosition::new(x, y), LogicalSize::new(2.0, height))
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(deprecated)]
     use super::compute_ime_bounds;
 
     #[test]

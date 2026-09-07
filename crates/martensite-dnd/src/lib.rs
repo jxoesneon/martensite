@@ -1,5 +1,24 @@
 //! Unified Drag-and-Drop engine.
+//!
+//! This crate provides a detached, process-wide drag-and-drop subsystem for
+//! the Martensite GUI framework. The core design principle is that a
+//! [`DndSession`] holds an opaque, thread-safe payload that remains valid for
+//! the entire lifetime of a drag operation, even if the originating window or
+//! widget is evicted from the widget arena mid-flight. The session is only
+//! retired when the OS signals a drop completion or cancellation.
+//!
+//! The [`session`] module provides [`DndSession`] and the process-wide
+//! [`DndSessionManager`]. The [`target`] module provides [`DropTarget`]
+//! registration, validation, and the drag-enter / drag-leave / drop lifecycle
+//! via [`DropTargetRegistry`].
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
+
+pub mod session;
+pub mod target;
+
+pub use session::{DndSession, DndSessionManager, DndStatus, SessionId};
+pub use target::{DropEffectMask, DropTarget, DropTargetRegistry, DropTargetState, TargetId};
 
 /// Describes the effect of a drag-and-drop operation on the source data.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]

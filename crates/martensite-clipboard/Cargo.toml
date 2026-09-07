@@ -14,5 +14,12 @@ readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }
+
+[features]
+default = []
+# Enables Wayland data-device clipboard integration on Linux.
+# When disabled on Linux, the X11 stub is selected instead.
+wayland = []
+
 [lints]
 workspace = true

@@ -5,6 +5,31 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-07
+
+### Added
+
+- **Clipboard**: Multi-MIME clipboard provider with lazy evaluation,
+  platform backend abstraction (Windows OLE, macOS NSPasteboard, Wayland/X11
+  stubs), and a 500 ms IPC timeout for cross-process clipboard reads.
+- **Drag-and-Drop**: Process-wide detached `DndSession` carrying
+  `Arc<dyn Any + Send + Sync>` payloads, with a `DndSessionManager` for
+  session lifecycle. Drop target registry with enter/leave/drop lifecycle
+  and `DropEffectMask` bitflags for effect negotiation.
+- **Window**: Two-stage hit-testing pipeline — AABB broad-phase followed by
+  an inverse 3×3 affine narrow-phase, with a singular matrix guard
+  (`|det| < 1e-6`). Non-rectangular clip verification supports rect,
+  rounded rect, and winding-number path. Event routing pipeline with
+  pointer capture and mouse tracking.
+- **Text**: Velocity-damped kinetic IME candidate positioning
+  (`P_ime = P_caret + v·Δt·e^(-λ·Δt)`) using `ScrollKinematics` velocity
+  estimation, with viewport clamping to keep the candidate window on-screen.
+
+### Changed
+
+- All 22 workspace crates bumped from `0.4.0` to `0.5.0`.
+  (`martensite-cosmic-text` retains its own `0.19.0-martensite.1` version.)
+
 ## [0.4.0] - 2026-09-21
 
 ### Added
