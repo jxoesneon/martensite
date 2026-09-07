@@ -15,7 +15,7 @@ pub mod widget;
 pub use arena::{ArenaError, BreadthFirstIter, Children, DepthFirstIter, SubtreeIter, WidgetArena};
 pub use fence::{FrameFence, FrameGuard};
 pub use id::WidgetId;
-pub use node::{ColdNode, HotNode, NodeFlags, Rect};
+pub use node::{ColdNode, HotNode, InlineTextCache, NodeFlags, Rect};
 pub use widget::{
     AccessibilityContext, DummyWidget, EventContext, EventResponse, LayoutConstraints,
     LayoutContext, PaintContext, Widget,

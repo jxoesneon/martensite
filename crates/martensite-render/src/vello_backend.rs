@@ -12,7 +12,9 @@
 //! but performs no GPU work, allowing downstream crates to compile against
 //! the type unconditionally.
 
-use crate::paint::{GlyphRun, PaintCommand, PaintList};
+#[cfg(feature = "vello")]
+use crate::paint::{GlyphRun, PaintCommand};
+use crate::paint::PaintList;
 use crate::RenderBackend;
 
 #[cfg(feature = "vello")]

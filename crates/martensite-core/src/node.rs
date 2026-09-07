@@ -161,6 +161,88 @@ impl Default for HotNode {
     }
 }
 
+/// Inline text measurement cache storing the last 4 measured (width, height) constraint pairs.
+///
+/// Packaged inside [`ColdNode`] to eliminate redundant text shaping passes
+/// during iterative flexbox layout probes in $O(1)$ time without locking or heap allocation.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct InlineTextCache {
+    /// Four inline constraint/height slots: `(width_constraint, measured_height)`.
+    entries: [(f32, f32); 4],
+    /// Ring-buffer cursor for FIFO replacement when all 4 slots are occupied.
+    cursor: usize,
+}
+
+impl InlineTextCache {
+    /// Creates an empty inline text measurement cache.
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            entries: [(f32::NAN, f32::NAN); 4],
+            cursor: 0,
+        }
+    }
+
+    /// Queries the cache for a measured height matching the given `available_width`.
+    ///
+    /// Matches if the difference between cached width and `available_width` is within 0.01px.
+    #[inline(always)]
+    pub fn get(&self, available_width: f32) -> Option<f32> {
+        self.entries
+            .iter()
+            .find(|(w, _)| (*w - available_width).abs() < 0.01)
+            .map(|(_, h)| *h)
+    }
+
+    /// Inserts or updates a `(available_width, measured_height)` pair into the cache.
+    ///
+    /// If an entry matching `available_width` (within 0.01px) already exists, its height
+    /// is updated in-place. Otherwise, the oldest slot is overwritten in FIFO order.
+    #[inline]
+    pub fn put(&mut self, available_width: f32, measured_height: f32) {
+        for entry in &mut self.entries {
+            if (entry.0 - available_width).abs() < 0.01 {
+                entry.1 = measured_height;
+                return;
+            }
+        }
+        self.entries[self.cursor] = (available_width, measured_height);
+        self.cursor = (self.cursor + 1) % 4;
+    }
+
+    /// Clears all entries from the inline text cache.
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        self.entries = [(f32::NAN, f32::NAN); 4];
+        self.cursor = 0;
+    }
+
+    /// Returns a slice of the 4 inline slot entries.
+    #[inline(always)]
+    pub const fn entries(&self) -> &[(f32, f32); 4] {
+        &self.entries
+    }
+
+    /// Returns `true` if no valid entries are currently stored.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.entries.iter().all(|(w, _)| w.is_nan())
+    }
+
+    /// Returns the number of valid entries currently stored.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.entries.iter().filter(|(w, _)| !w.is_nan()).count()
+    }
+}
+
+impl Default for InlineTextCache {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Cold node data storing infrequently accessed widget state.
 ///
 /// Contains accessibility metadata, debug names, tooltips, and the
@@ -175,6 +257,8 @@ pub struct ColdNode {
     pub a11y_role: accesskit::Role,
     /// Accessibility name.
     pub a11y_name: Option<String>,
+    /// Tier 1 inline text measurement cache for $O(1)$ flexbox constraint probes.
+    pub text_cache: InlineTextCache,
     /// Boxed widget implementation.
     pub widget: Box<dyn crate::widget::Widget>,
 }
@@ -187,6 +271,7 @@ impl ColdNode {
             tooltip: None,
             a11y_role: accesskit::Role::GenericContainer,
             a11y_name: None,
+            text_cache: InlineTextCache::new(),
             widget,
         }
     }
@@ -212,6 +297,12 @@ impl ColdNode {
     /// Set accessibility name.
     pub fn with_a11y_name(mut self, name: impl Into<String>) -> Self {
         self.a11y_name = Some(name.into());
+        self
+    }
+
+    /// Set inline text cache.
+    pub fn with_text_cache(mut self, text_cache: InlineTextCache) -> Self {
+        self.text_cache = text_cache;
         self
     }
 }

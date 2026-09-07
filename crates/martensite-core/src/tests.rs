@@ -1105,4 +1105,69 @@ mod suite {
             "arena must be empty after draining active handles"
         );
     }
+
+    #[test]
+    fn test_inline_text_cache_lifecycle() {
+        use crate::node::InlineTextCache;
+
+        let mut cache = InlineTextCache::new();
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.get(100.0), None);
+
+        // Insert first entry
+        cache.put(100.0, 24.0);
+        assert!(!cache.is_empty());
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get(100.0), Some(24.0));
+        assert_eq!(cache.get(100.005), Some(24.0)); // within 0.01
+        assert_eq!(cache.get(100.02), None); // beyond 0.01
+
+        // Update existing entry
+        cache.put(100.005, 30.0);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get(100.0), Some(30.0));
+
+        // Insert up to 4 entries
+        cache.put(200.0, 48.0);
+        cache.put(300.0, 72.0);
+        cache.put(400.0, 96.0);
+        assert_eq!(cache.len(), 4);
+        assert_eq!(cache.get(100.0), Some(30.0));
+        assert_eq!(cache.get(200.0), Some(48.0));
+        assert_eq!(cache.get(300.0), Some(72.0));
+        assert_eq!(cache.get(400.0), Some(96.0));
+
+        // 5th entry evicts oldest (slot 0: 100.0)
+        cache.put(500.0, 120.0);
+        assert_eq!(cache.len(), 4);
+        assert_eq!(cache.get(100.0), None);
+        assert_eq!(cache.get(500.0), Some(120.0));
+
+        // Clear
+        cache.clear();
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.get(500.0), None);
+    }
+
+    #[test]
+    fn test_cold_node_text_cache_integration() {
+        use crate::node::InlineTextCache;
+
+        let mut cache = InlineTextCache::new();
+        cache.put(150.0, 36.0);
+        let cold = ColdNode::default().with_text_cache(cache);
+        assert_eq!(cold.text_cache.get(150.0), Some(36.0));
+
+        let mut arena = WidgetArena::new();
+        let id = arena.insert(HotNode::default(), cold);
+        let cold_ref = arena.get_cold(id).expect("alive node");
+        assert_eq!(cold_ref.text_cache.get(150.0), Some(36.0));
+
+        // Mutate through arena
+        let cold_mut = arena.get_cold_mut(id).expect("alive node");
+        cold_mut.text_cache.put(250.0, 50.0);
+        assert_eq!(arena.get_cold(id).unwrap().text_cache.get(250.0), Some(50.0));
+    }
 }
