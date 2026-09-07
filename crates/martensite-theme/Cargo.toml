@@ -13,7 +13,7 @@ description = "Semantic design tokens, Oklab perceptual uniform GPU blending, an
 readme = "README.md"
 
 [dependencies]
-martensite-core = { workspace = true }
 bytemuck = { workspace = true }
+
 [lints]
 workspace = true

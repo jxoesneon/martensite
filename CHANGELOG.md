@@ -5,6 +5,24 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-09-07
+
+### Added
+
+- **Motion**: Closed-form analytical spring solver supporting underdamped,
+  critically damped, and overdamped regimes with C¹ velocity continuity on
+  interruption. Animation driver with velocity handoff for seamless gesture
+  redirection.
+- **Theme**: Oklab/Oklch perceptual color pipeline with sRGB conversion,
+  hue-preserving gamut mapping, WCAG 2.1 and APCA contrast calculation.
+  Design token dictionary with light/dark mode definitions. GPU theme
+  transition uniform buffers and WGSL fragment shader for 150ms smooth
+  palette morphing with zero CPU allocations.
+
+### Changed
+
+- All workspace crates bumped from `0.5.0` to `0.6.0`.
+
 ## [0.5.0] - 2026-09-07
 
 ### Added

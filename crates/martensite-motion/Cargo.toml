@@ -13,10 +13,7 @@ description = "Closed-form analytical damped harmonic oscillator spring physics 
 readme = "README.md"
 
 [dependencies]
-martensite-core = { workspace = true }
-
-[dev-dependencies]
-martensite-test = { workspace = true }
+glam = { workspace = true }
 
 [lints]
 workspace = true
