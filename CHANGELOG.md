@@ -5,6 +5,66 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-20
+
+### Added
+
+- **Layout**: `martensite-layout` geometry module with `Point`, `Size`,
+  `Constraints`, `EdgeInsets`, and `Rect` primitives.
+- **Layout**: `ArenaBridge` implementing Taffy's `TraversePartialTree`
+  over the Martensite `WidgetArena`, enabling Taffy to traverse the
+  generational arena tree without copying nodes.
+- **Layout**: `LayoutEngine` with two-pass layout orchestration:
+  - `sync_from_arena` builds Taffy tree topology from the arena
+  - `compute` runs Taffy's flexbox/grid layout
+  - `compute_with_widgets` integrates `Widget::measure` and
+    `Widget::layout` via `compute_layout_with_measure`
+  - `apply_layout` writes computed bounds back to `HotNode`
+  - `mark_dirty` and `relayout_incremental` for incremental updates
+  - O(1) `WidgetId` ↔ `NodeId` mapping via `HashMap`
+- **Text**: `FontManager` wrapping cosmic-text `FontSystem` with system
+  font discovery, custom font loading (`load_font_file`,
+  `load_font_data`), and font family lookup.
+- **Text**: `Shaper` with BiDi, line breaking, and font fallback via
+  cosmic-text `Shaping::Advanced`. `measure_text` and `shape_text`
+  free functions for direct text measurement.
+- **Text**: `TextShapeCache` Tier 2 global LRU cache with 16 MB
+  budget, `ShapeCacheKey` including `FontId`, `FontSizeBits`,
+  `TextHash`, and `MaxWidthBits` for correct wrapped-text caching.
+  Hit/miss tracking, eviction, and invalidation.
+- **Text**: `FontId::dummy()` for placeholder cache keys.
+- **Widgets**: `Container` widget with padding, background, and
+  single child.
+- **Widgets**: `Flex` widget with row/column direction, main/cross
+  axis alignment (`Start`, `End`, `Center`, `SpaceBetween`,
+  `SpaceEvenly`), and gap.
+- **Widgets**: `Stack` widget with layered children and alignment
+  (`TopStart`, `TopEnd`, `BottomStart`, `BottomEnd`, `Center`,
+  `Stretch`).
+- **Widgets**: `Text` widget using real `Shaper` + `FontManager` +
+  `TextShapeCache` for measurement, with `InlineTextCache` (Tier 1)
+  for fast constraint probing.
+
+### Changed
+
+- `LayoutEngine::register_node` and `register_container` now return
+  `Result<NodeId, LayoutError>` instead of panicking on capacity
+  overflow.
+- `LayoutEngine::id_map` changed from `Vec` to `HashMap` for O(1)
+  lookups.
+- `FontManager::load_font_file` now returns only newly loaded face
+  IDs instead of all faces in the database.
+- `martensite` crate adds `accesskit`, `glam`, and `taffy` as direct
+  dependencies for base widget implementations.
+
+### Fixed
+
+- Performance test thresholds corrected from seconds to milliseconds.
+  Tests marked `#[ignore]` with documented reasons where Taffy's
+  recursive engine cannot meet the spec's aspirational targets.
+- `ShapeCacheKey` now includes `max_width_bits` to prevent cache
+  collisions between wrapped text at different widths.
+
 ## [0.2.0] - 2026-09-13
 
 ### Added

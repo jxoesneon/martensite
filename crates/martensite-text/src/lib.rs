@@ -28,7 +28,9 @@ pub use cache::{
 };
 pub use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 pub use font::{FontFaceInfo, FontId, FontManager, FontSource, FontStyle};
-pub use shaping::{measure_text, shape_text, ShapedGlyph, ShapedLine, Shaper, TextMetrics};
+pub use shaping::{
+    measure_text, measure_text_with_attrs, shape_text, ShapedGlyph, ShapedLine, Shaper, TextMetrics,
+};
 
 use winit::dpi::{LogicalPosition, LogicalSize};
 

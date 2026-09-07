@@ -235,9 +235,29 @@ pub fn measure_text(
     line_height: f32,
     max_width: Option<f32>,
 ) -> TextMetrics {
+    measure_text_with_attrs(
+        manager,
+        text,
+        &Attrs::new(),
+        font_size,
+        line_height,
+        max_width,
+    )
+}
+
+/// Convenience function to measure text with explicit attributes
+/// (font family, direction, weight, etc.).
+pub fn measure_text_with_attrs(
+    manager: &mut FontManager,
+    text: &str,
+    attrs: &Attrs,
+    font_size: f32,
+    line_height: f32,
+    max_width: Option<f32>,
+) -> TextMetrics {
     let mut shaper = Shaper::new_empty(Metrics::new(font_size, line_height));
     shaper.set_size(max_width, None);
-    shaper.set_text(text, &Attrs::new());
+    shaper.set_text(text, attrs);
     shaper.shape(manager.system_mut());
     shaper.measure()
 }

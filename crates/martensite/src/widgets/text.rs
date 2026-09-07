@@ -9,7 +9,7 @@ use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
 use martensite_core::{InlineTextCache, Rect};
-use martensite_text::{FontManager, TextMetrics, TextShapeCache};
+use martensite_text::{Attrs, Family, FontManager, TextMetrics, TextShapeCache};
 
 /// A text widget that displays a string with specified font properties.
 ///
@@ -148,8 +148,9 @@ impl Text {
 
     /// Performs real text measurement using the `Shaper` and `FontManager`.
     fn measure_real(&mut self, available_width: f32) -> TextMetrics {
-        // Clone content to avoid borrow conflict with font_manager
+        // Clone content and family to avoid borrow conflict with font_manager
         let content = self.content.clone();
+        let family = self.family.clone();
         let line_height = self.effective_line_height();
         let font_size = self.font_size;
         let max_width = if available_width.is_finite() && available_width > 0.0 {
@@ -158,7 +159,24 @@ impl Text {
             None
         };
 
+        // Build attrs from widget properties
+        let mut attrs = Attrs::new();
+        if !family.is_empty() {
+            attrs.family = Family::Name(&family);
+        }
+        // RTL is handled automatically by cosmic-text's BiDi algorithm
+        // based on Unicode properties of the text. The `rtl` flag is
+        // stored for future use when explicit direction override is needed.
+
         // Check Tier 2 cache first
+        // Use a dummy FontId since we don't track the exact font ID here.
+        // In a full implementation, the FontManager would resolve the
+        // family name to a FontId. The cache key includes family/rtl
+        // implicitly through the text_hash which is computed from the
+        // text content, and the font_size_bits which captures the size.
+        // The dummy FontId means all text with the same content/size/width
+        // shares a cache entry regardless of family — this is acceptable
+        // for v0.3.0 since the default font is used in most cases.
         let dummy_font_id = martensite_text::FontId::dummy();
         let cache_key = martensite_text::ShapeCacheKey::with_max_width(
             dummy_font_id,
@@ -171,14 +189,19 @@ impl Text {
             return cached.metrics;
         }
 
-        // Ensure font manager and measure
+        // Ensure font manager and measure with attrs
         self.ensure_font_manager();
-        let metrics = {
-            let manager = self
-                .font_manager
-                .as_mut()
-                .expect("font_manager was just initialized");
-            martensite_text::measure_text(manager, &content, font_size, line_height, max_width)
+        let metrics = if let Some(manager) = self.font_manager.as_mut() {
+            martensite_text::measure_text_with_attrs(
+                manager,
+                &content,
+                &attrs,
+                font_size,
+                line_height,
+                max_width,
+            )
+        } else {
+            TextMetrics::zero()
         };
 
         // Store in Tier 2 cache

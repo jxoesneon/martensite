@@ -305,7 +305,7 @@ impl Widget for Flex {
         let direction = self.direction;
 
         for (i, child) in self.children.iter_mut().enumerate() {
-            let child_size = self.child_sizes[i];
+            let child_size = self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO);
             let child_main = direction.main(child_size);
             let child_cross = if matches!(cross_alignment, CrossAxisAlignment::Stretch) {
                 cross_size

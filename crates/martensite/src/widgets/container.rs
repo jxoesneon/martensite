@@ -119,7 +119,18 @@ impl Widget for Container {
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
 
-        let content = self.content_area();
+        // Compute content area from bounds minus padding, not from
+        // cached measure results. This ensures correct layout even
+        // when measure was not called or was called with different
+        // constraints.
+        let content = Rect::new(
+            bounds.origin.x + self.padding.left,
+            bounds.origin.y + self.padding.top,
+            (bounds.size.x - self.padding.horizontal()).max(0.0),
+            (bounds.size.y - self.padding.vertical()).max(0.0),
+        );
+        self.cached_content_size = Size::new(content.size.x, content.size.y);
+
         if let Some(child) = &mut self.child {
             child.layout(cx, content);
         }

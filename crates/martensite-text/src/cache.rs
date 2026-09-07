@@ -336,7 +336,6 @@ impl TextShapeCache {
     /// [`Self::insert`].
     pub fn trim(&mut self, keep_age: u64) {
         let current_age = self.age;
-        let before = self.entries.len();
         self.entries.retain(|_, (age, shape)| {
             if *age + keep_age >= current_age {
                 true
@@ -345,7 +344,6 @@ impl TextShapeCache {
                 false
             }
         });
-        let _ = before;
     }
 
     /// Invalidates all entries for a specific font (e.g., when a font

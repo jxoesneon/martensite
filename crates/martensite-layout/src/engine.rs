@@ -5,6 +5,25 @@
 //! widget arena's tree topology. Each widget is represented by a Taffy
 //! node whose style is derived from the widget's layout properties.
 //!
+//! ## Design Note: Mirrored TaffyTree vs ArenaBridge
+//!
+//! The [`ArenaBridge`](crate::taffy_bridge::ArenaBridge) implements
+//! `TraversePartialTree` over the `WidgetArena`, allowing Taffy to
+//! traverse the arena directly. However, `LayoutEngine` maintains its
+//! own `TaffyTree<WidgetId>` instead of using the bridge because:
+//!
+//! 1. Taffy's `compute_layout_with_measure` requires `&mut TaffyTree`
+//!    to store layout results, which is incompatible with borrowing
+//!    the arena through a bridge.
+//! 2. The `TaffyTree` stores per-node styles and measure contexts
+//!    (`WidgetId`) that are needed during layout computation.
+//! 3. The bridge is useful for read-only tree traversal (e.g.,
+//!    debugging, accessibility tree construction) but not for the
+//!    mutable layout pass.
+//!
+//! `ArenaBridge` remains available for consumers that need read-only
+//! traversal of the arena as a Taffy-compatible tree.
+//!
 //! ## Pass 1 — Intrinsic measurement
 //!
 //! Taffy computes each node's intrinsic (content-driven) size by walking
@@ -140,7 +159,11 @@ impl LayoutEngine {
         style: Style,
     ) -> Result<NodeId, LayoutError> {
         if let Some(&existing) = self.id_map.get(&widget_id) {
-            let _ = self.tree.set_style(existing, style);
+            // set_style only fails on invalid node_id, which can't happen
+            // here since `existing` was just looked up from id_map.
+            if self.tree.set_style(existing, style).is_err() {
+                return Err(LayoutError::TaffyError("set_style failed".into()));
+            }
             return Ok(existing);
         }
         // Use new_leaf_with_context so the WidgetId is stored as the
@@ -238,10 +261,12 @@ impl LayoutEngine {
         }
         queue.push_back(root);
         while let Some(wid) = queue.pop_front() {
-            // Ensure node is registered. Ignore errors (capacity overflow
-            // is extraordinarily unlikely with u64-backed slotmap).
-            if self.lookup_node(wid).is_none() {
-                let _ = self.register_node(wid, Style::default());
+            // Ensure node is registered. Errors on capacity overflow
+            // (extraordinarily unlikely with u64-backed slotmap); skip
+            // the node if registration fails.
+            if self.lookup_node(wid).is_none() && self.register_node(wid, Style::default()).is_err()
+            {
+                continue;
             }
             let children: Vec<WidgetId> = arena.children(wid).collect();
             if !children.is_empty() {
@@ -253,7 +278,14 @@ impl LayoutEngine {
                     }
                 }
                 if let Some(parent_node) = self.lookup_node(wid) {
-                    let _ = self.tree.set_children(parent_node, &child_nodes);
+                    // set_children may fail on invalid node_id, which
+                    // can't happen here since parent_node was just
+                    // looked up. Logically safe to ignore.
+                    if self.tree.set_children(parent_node, &child_nodes).is_err() {
+                        // Node was removed between lookup and set_children;
+                        // skip this subtree.
+                        continue;
+                    }
                 }
                 for c in children {
                     queue.push_back(c);
@@ -463,7 +495,8 @@ impl LayoutEngine {
             .lookup_node(root)
             .ok_or(LayoutError::NodeNotFound(NodeId::new(0)))?;
         self.compute(root_node, available)?;
-        self.apply_layout(arena);
+        // Use apply_layout_with_widgets to ensure Widget::layout is called
+        self.apply_layout_with_widgets(arena, root);
         Ok(())
     }
 
@@ -797,9 +830,9 @@ mod tests {
         // characteristic. The test is marked #[ignore] in debug mode
         // and only runs in release.
         assert!(
-            elapsed.as_secs_f64() < 0.001,
-            "1000-node flex layout took {:?}, expected < 1ms",
-            elapsed
+            elapsed.as_micros() < 1000,
+            "1000-node flex layout took {}us, expected < 1000us (1ms)",
+            elapsed.as_micros()
         );
     }
 
@@ -843,9 +876,9 @@ mod tests {
             .unwrap();
         let elapsed = start.elapsed();
         assert!(
-            elapsed.as_secs_f64() < 0.00005,
-            "incremental relayout took {:?}, expected < 0.05ms",
-            elapsed
+            elapsed.as_micros() < 50,
+            "incremental relayout took {}us, expected < 50us (0.05ms)",
+            elapsed.as_micros()
         );
     }
 
