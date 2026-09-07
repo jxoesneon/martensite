@@ -10,6 +10,15 @@ use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
 use martensite_core::Rect;
 
 /// The direction of flex layout.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::FlexDirection;
+///
+/// assert!(FlexDirection::Row.is_row());
+/// assert!(FlexDirection::Column.is_column());
+/// ```
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum FlexDirection {
     /// Children are arranged horizontally (left to right).
@@ -94,6 +103,22 @@ pub enum CrossAxisAlignment {
 }
 
 /// A flex container widget that arranges children in a row or column.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Flex;
+/// use martensite::widgets::flex::MainAxisAlignment;
+/// use martensite_core::widget::DummyWidget;
+///
+/// let row = Flex::row()
+///     .gap(8.0)
+///     .main_axis_alignment(MainAxisAlignment::Center)
+///     .child(DummyWidget)
+///     .child(DummyWidget);
+/// assert_eq!(row.child_count(), 2);
+/// assert!(row.direction.is_row());
+/// ```
 pub struct Flex {
     /// The direction of layout (row or column).
     pub direction: FlexDirection,
@@ -126,12 +151,30 @@ impl Flex {
     }
 
     /// Creates a new row (horizontal flex).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Flex;
+    ///
+    /// let row = Flex::row();
+    /// assert!(row.direction.is_row());
+    /// ```
     #[inline]
     pub fn row() -> Self {
         Self::new(FlexDirection::Row)
     }
 
     /// Creates a new column (vertical flex).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Flex;
+    ///
+    /// let col = Flex::column();
+    /// assert!(col.direction.is_column());
+    /// ```
     #[inline]
     pub fn column() -> Self {
         Self::new(FlexDirection::Column)

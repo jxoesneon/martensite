@@ -18,6 +18,20 @@ use martensite_text::{Attrs, Family, FontManager, TextMetrics, TextShapeCache};
 /// these would be shared via the application context; for the v0.3.0
 /// milestone, each `Text` widget creates a `FontManager` lazily on
 /// first measure.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Text;
+///
+/// let t = Text::new("Hello, world!")
+///     .font_size(20.0)
+///     .family("sans-serif")
+/// .rtl();
+/// assert_eq!(t.content, "Hello, world!");
+/// assert_eq!(t.font_size, 20.0);
+/// assert!(t.rtl);
+/// ```
 pub struct Text {
     /// The text content to display.
     ///
@@ -50,6 +64,16 @@ pub struct Text {
 impl Text {
     /// Creates a new text widget with the given content and default
     /// font size (16px).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("Hello");
+    /// assert_eq!(t.content, "Hello");
+    /// assert_eq!(t.font_size, 16.0);
+    /// ```
     pub fn new(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),

@@ -296,8 +296,13 @@ impl RenderBackend for VelloRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::paint::{GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintList};
-    use kurbo::{Point, Rect};
+    use crate::paint::PaintList;
+    use kurbo::Rect;
+
+    #[cfg(feature = "vello")]
+    use crate::paint::{GlyphInstance, GlyphRun, GradientStop, GradientStops};
+    #[cfg(feature = "vello")]
+    use kurbo::Point;
 
     #[test]
     fn new_starts_empty() {

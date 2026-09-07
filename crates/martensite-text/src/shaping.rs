@@ -85,6 +85,20 @@ pub struct ShapedLine {
 /// The shaper is reusable: call [`Shaper::set_text`] to change the
 /// text, then [`Shaper::shape`] to perform shaping and line breaking,
 /// and [`Shaper::measure`] or [`Shaper::lines`] to extract results.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::{Attrs, Family, FontManager, Metrics, Shaper};
+///
+/// let mut mgr = FontManager::new();
+/// let mut shaper = Shaper::new(mgr.system_mut(), Metrics::new(16.0, 20.0));
+/// let attrs = Attrs::new().family(Family::SansSerif);
+/// shaper.set_text("Hello", &attrs);
+/// shaper.shape(mgr.system_mut());
+/// let metrics = shaper.measure();
+/// assert!(metrics.width >= 0.0);
+/// ```
 pub struct Shaper {
     buffer: Buffer,
 }

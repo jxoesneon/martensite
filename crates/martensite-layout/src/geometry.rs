@@ -8,6 +8,16 @@
 use glam::Vec2;
 
 /// A 2D point in logical (layout) coordinate space.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_layout::geometry::Point;
+///
+/// let p = Point::new(10.0, 20.0);
+/// assert_eq!(p.x, 10.0);
+/// assert_eq!(p.y, 20.0);
+/// ```
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Point {
     /// Horizontal coordinate.
@@ -43,6 +53,16 @@ impl Point {
 }
 
 /// A 2D size in logical (layout) coordinate space.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_layout::geometry::Size;
+///
+/// let s = Size::new(100.0, 200.0);
+/// assert_eq!(s.area(), 20_000.0);
+/// assert!(!s.is_empty());
+/// ```
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Size {
     /// Width in logical pixels.
@@ -86,6 +106,17 @@ impl Size {
 /// During the first pass of two-pass layout, the engine sends these
 /// constraints to each widget's `measure` method. The widget returns a
 /// `Size` that falls within `[min, max]`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_layout::geometry::{Constraints, Size};
+///
+/// let c = Constraints::loose(200.0, 100.0);
+/// let s = c.constrain(Size::new(300.0, 50.0));
+/// assert_eq!(s.width, 200.0);  // clamped to max
+/// assert_eq!(s.height, 50.0);  // within bounds
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Constraints {
     /// Minimum acceptable width.
@@ -163,6 +194,17 @@ impl Default for Constraints {
 ///
 /// All values are in logical pixels. `left` and `top` are measured from
 /// the corresponding edge inward.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_layout::geometry::{EdgeInsets, Size};
+///
+/// let insets = EdgeInsets::uniform(10.0);
+/// let content = insets.deflate(Size::new(100.0, 100.0));
+/// assert_eq!(content.width, 80.0);
+/// assert_eq!(content.height, 80.0);
+/// ```
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct EdgeInsets {
     /// Inset from the left edge.

@@ -134,6 +134,16 @@ impl From<fontdb::Style> for FontStyle {
 /// querying. The underlying [`FontSystem`] is exposed via
 /// [`FontManager::system`] and [`FontManager::system_mut`] for
 /// direct use with cosmic-text APIs (e.g., `Buffer`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::FontManager;
+///
+/// let mgr = FontManager::new();
+/// // Discovers all system fonts on construction.
+/// let _faces = mgr.faces();
+/// ```
 pub struct FontManager {
     system: FontSystem,
 }

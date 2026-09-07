@@ -13,6 +13,18 @@ use martensite_layout::geometry::{EdgeInsets, Size};
 use martensite_theme::Oklab;
 
 /// A container widget with padding, optional background, and a single child.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Container;
+/// use martensite_layout::geometry::EdgeInsets;
+///
+/// let c = Container::new()
+///     .padding_uniform(16.0)
+///     .child(Container::new());
+/// assert!(c.child.is_some());
+/// ```
 pub struct Container {
     /// Padding around the child content.
     pub padding: EdgeInsets,
@@ -28,6 +40,15 @@ pub struct Container {
 
 impl Container {
     /// Creates a new empty container with no padding and no background.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Container;
+    ///
+    /// let c = Container::new();
+    /// assert!(c.child.is_none());
+    /// ```
     pub fn new() -> Self {
         Self {
             padding: EdgeInsets::default(),

@@ -116,6 +116,15 @@ pub fn edge_insets_to_style(insets: EdgeInsets) -> Style {
 /// After the topology is built, call [`LayoutEngine::compute`] to run
 /// both passes, then [`LayoutEngine::apply_layout`] to write results
 /// back into the arena.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_layout::LayoutEngine;
+///
+/// let engine = LayoutEngine::new();
+/// assert_eq!(engine.node_count(), 0);
+/// ```
 pub struct LayoutEngine {
     /// The underlying Taffy layout tree.
     pub tree: TaffyTree<WidgetId>,

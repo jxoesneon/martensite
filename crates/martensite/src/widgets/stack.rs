@@ -28,6 +28,20 @@ pub enum StackAlignment {
 }
 
 /// A stack widget that layers children on top of each other.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Stack;
+/// use martensite::widgets::stack::StackAlignment;
+/// use martensite_core::widget::DummyWidget;
+///
+/// let s = Stack::new()
+///     .alignment(StackAlignment::Center)
+///     .child(DummyWidget)
+///     .child(DummyWidget);
+/// assert_eq!(s.child_count(), 2);
+/// ```
 pub struct Stack {
     /// How to align children within the stack.
     pub alignment: StackAlignment,
@@ -41,6 +55,15 @@ pub struct Stack {
 
 impl Stack {
     /// Creates a new empty stack.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Stack;
+    ///
+    /// let s = Stack::new();
+    /// assert_eq!(s.child_count(), 0);
+    /// ```
     pub fn new() -> Self {
         Self {
             alignment: StackAlignment::default(),

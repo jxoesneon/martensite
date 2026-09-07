@@ -238,6 +238,16 @@ impl CachedShape {
 /// The cache tracks access order via an internal age counter. Each
 /// access updates the entry's age. When the budget is exceeded, the
 /// oldest entries are evicted first.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::TextShapeCache;
+///
+/// let cache = TextShapeCache::with_default_budget();
+/// assert!(cache.is_empty());
+/// assert_eq!(cache.budget(), 16 * 1024 * 1024);
+/// ```
 pub struct TextShapeCache {
     entries: HashMap<ShapeCacheKey, (u64, CachedShape)>,
     /// Current age counter; incremented on each access.
