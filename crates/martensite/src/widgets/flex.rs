@@ -1,0 +1,537 @@
+//! `Flex` widget: row/column flexbox layout for multiple children.
+//!
+//! The `Flex` widget arranges its children along a main axis (horizontal
+//! for `Row`, vertical for `Column`) and aligns them on the cross axis.
+//! It supports gaps between children and main-axis distribution.
+
+use accesskit::Node as AccessKitNode;
+use glam::Vec2;
+use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
+use martensite_core::Rect;
+
+/// The direction of flex layout.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FlexDirection {
+    /// Children are arranged horizontally (left to right).
+    #[default]
+    Row,
+    /// Children are arranged vertically (top to bottom).
+    Column,
+}
+
+impl FlexDirection {
+    /// Returns `true` if this is a horizontal (row) direction.
+    #[inline]
+    pub fn is_row(self) -> bool {
+        matches!(self, Self::Row)
+    }
+
+    /// Returns `true` if this is a vertical (column) direction.
+    #[inline]
+    pub fn is_column(self) -> bool {
+        matches!(self, Self::Column)
+    }
+
+    /// Returns the main-axis component of a `Vec2`.
+    #[inline]
+    pub fn main(self, v: Vec2) -> f32 {
+        if self.is_row() {
+            v.x
+        } else {
+            v.y
+        }
+    }
+
+    /// Returns the cross-axis component of a `Vec2`.
+    #[inline]
+    pub fn cross(self, v: Vec2) -> f32 {
+        if self.is_row() {
+            v.y
+        } else {
+            v.x
+        }
+    }
+
+    /// Constructs a `Vec2` from main and cross components.
+    #[inline]
+    pub fn vec(self, main: f32, cross: f32) -> Vec2 {
+        if self.is_row() {
+            Vec2::new(main, cross)
+        } else {
+            Vec2::new(cross, main)
+        }
+    }
+}
+
+/// How to distribute children along the main axis.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MainAxisAlignment {
+    /// Children are packed toward the start of the main axis.
+    #[default]
+    Start,
+    /// Children are packed toward the end of the main axis.
+    End,
+    /// Children are centered along the main axis.
+    Center,
+    /// Children are evenly distributed with equal space between them.
+    SpaceBetween,
+    /// Children are evenly distributed with equal space around them.
+    SpaceEvenly,
+}
+
+/// How to align children on the cross axis.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CrossAxisAlignment {
+    /// Children are stretched to fill the cross axis.
+    #[default]
+    Stretch,
+    /// Children are aligned to the start of the cross axis.
+    Start,
+    /// Children are aligned to the end of the cross axis.
+    End,
+    /// Children are centered on the cross axis.
+    Center,
+}
+
+/// A flex container widget that arranges children in a row or column.
+pub struct Flex {
+    /// The direction of layout (row or column).
+    pub direction: FlexDirection,
+    /// How to distribute children along the main axis.
+    pub main_axis_alignment: MainAxisAlignment,
+    /// How to align children on the cross axis.
+    pub cross_axis_alignment: CrossAxisAlignment,
+    /// Gap between children in logical pixels.
+    pub gap: f32,
+    /// The child widgets.
+    pub children: Vec<Box<dyn Widget>>,
+    /// Cached child sizes from the last measure pass.
+    child_sizes: Vec<Vec2>,
+    /// Cached bounds from the last layout pass.
+    cached_bounds: Rect,
+}
+
+impl Flex {
+    /// Creates a new flex container with the given direction.
+    pub fn new(direction: FlexDirection) -> Self {
+        Self {
+            direction,
+            main_axis_alignment: MainAxisAlignment::default(),
+            cross_axis_alignment: CrossAxisAlignment::default(),
+            gap: 0.0,
+            children: Vec::new(),
+            child_sizes: Vec::new(),
+            cached_bounds: Rect::default(),
+        }
+    }
+
+    /// Creates a new row (horizontal flex).
+    #[inline]
+    pub fn row() -> Self {
+        Self::new(FlexDirection::Row)
+    }
+
+    /// Creates a new column (vertical flex).
+    #[inline]
+    pub fn column() -> Self {
+        Self::new(FlexDirection::Column)
+    }
+
+    /// Sets the main axis alignment.
+    #[inline]
+    pub fn main_axis_alignment(mut self, alignment: MainAxisAlignment) -> Self {
+        self.main_axis_alignment = alignment;
+        self
+    }
+
+    /// Sets the cross axis alignment.
+    #[inline]
+    pub fn cross_axis_alignment(mut self, alignment: CrossAxisAlignment) -> Self {
+        self.cross_axis_alignment = alignment;
+        self
+    }
+
+    /// Sets the gap between children.
+    #[inline]
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = gap;
+        self
+    }
+
+    /// Adds a child widget.
+    #[inline]
+    pub fn child(mut self, child: impl Widget + 'static) -> Self {
+        self.children.push(Box::new(child));
+        self
+    }
+
+    /// Adds multiple child widgets.
+    #[inline]
+    pub fn children(mut self, children: impl IntoIterator<Item = Box<dyn Widget>>) -> Self {
+        self.children.extend(children);
+        self
+    }
+
+    /// Returns the number of children.
+    #[inline]
+    pub fn child_count(&self) -> usize {
+        self.children.len()
+    }
+
+    /// Computes the main-axis offset for each child given the total
+    /// main-axis size and the total children main-axis size.
+    fn compute_main_offsets(&self, total_main: f32, children_main: f32) -> Vec<f32> {
+        let n = self.children.len();
+        if n == 0 {
+            return vec![];
+        }
+
+        let total_gap = self.gap * (n.saturating_sub(1)) as f32;
+        let free_space = (total_main - children_main - total_gap).max(0.0);
+
+        match self.main_axis_alignment {
+            MainAxisAlignment::Start => {
+                let mut offsets = Vec::with_capacity(n);
+                let mut cursor = 0.0f32;
+                for i in 0..n {
+                    offsets.push(cursor);
+                    cursor += self.direction.main(self.child_sizes[i]);
+                    cursor += self.gap;
+                }
+                offsets
+            }
+            MainAxisAlignment::End => {
+                let mut offsets = Vec::with_capacity(n);
+                let mut cursor = free_space;
+                for i in 0..n {
+                    offsets.push(cursor);
+                    cursor += self.direction.main(self.child_sizes[i]);
+                    cursor += self.gap;
+                }
+                offsets
+            }
+            MainAxisAlignment::Center => {
+                let mut offsets = Vec::with_capacity(n);
+                let mut cursor = free_space / 2.0;
+                for i in 0..n {
+                    offsets.push(cursor);
+                    cursor += self.direction.main(self.child_sizes[i]);
+                    cursor += self.gap;
+                }
+                offsets
+            }
+            MainAxisAlignment::SpaceBetween => {
+                let mut offsets = Vec::with_capacity(n);
+                let space_between = if n > 1 {
+                    free_space / (n - 1) as f32
+                } else {
+                    0.0
+                };
+                let mut cursor = 0.0f32;
+                for i in 0..n {
+                    offsets.push(cursor);
+                    cursor += self.direction.main(self.child_sizes[i]);
+                    cursor += self.gap + space_between;
+                }
+                offsets
+            }
+            MainAxisAlignment::SpaceEvenly => {
+                let mut offsets = Vec::with_capacity(n);
+                let space = if n > 0 {
+                    free_space / (n + 1) as f32
+                } else {
+                    0.0
+                };
+                let mut cursor = space;
+                for i in 0..n {
+                    offsets.push(cursor);
+                    cursor += self.direction.main(self.child_sizes[i]);
+                    cursor += self.gap + space;
+                }
+                offsets
+            }
+        }
+    }
+}
+
+impl Widget for Flex {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        let n = self.children.len();
+        if n == 0 {
+            return Vec2::ZERO;
+        }
+
+        self.child_sizes.clear();
+        self.child_sizes.reserve(n);
+
+        let mut total_main = 0.0f32;
+        let mut max_cross = 0.0f32;
+
+        for child in &mut self.children {
+            let child_constraints = LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: constraints.max_size,
+            };
+            let size = child.measure(cx, child_constraints);
+            self.child_sizes.push(size);
+            total_main += self.direction.main(size);
+            max_cross = max_cross.max(self.direction.cross(size));
+        }
+
+        total_main += self.gap * (n.saturating_sub(1)) as f32;
+
+        self.direction.vec(total_main, max_cross)
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.cached_bounds = bounds;
+        let n = self.children.len();
+        if n == 0 {
+            return;
+        }
+
+        let total_main = self.direction.main(bounds.size);
+        let cross_size = self.direction.cross(bounds.size);
+
+        let children_main: f32 = self
+            .child_sizes
+            .iter()
+            .map(|s| self.direction.main(*s))
+            .sum::<f32>()
+            + self.gap * (n.saturating_sub(1)) as f32;
+
+        let main_offsets = self.compute_main_offsets(total_main, children_main);
+        let cross_alignment = self.cross_axis_alignment;
+        let direction = self.direction;
+
+        for (i, child) in self.children.iter_mut().enumerate() {
+            let child_size = self.child_sizes[i];
+            let child_main = direction.main(child_size);
+            let child_cross = if matches!(cross_alignment, CrossAxisAlignment::Stretch) {
+                cross_size
+            } else {
+                direction.cross(child_size)
+            };
+
+            let main_offset = main_offsets[i];
+            let cross_offset = match cross_alignment {
+                CrossAxisAlignment::Stretch | CrossAxisAlignment::Start => 0.0,
+                CrossAxisAlignment::End => (cross_size - child_cross).max(0.0),
+                CrossAxisAlignment::Center => ((cross_size - child_cross) / 2.0).max(0.0),
+            };
+
+            let (x, y) = if direction.is_row() {
+                (
+                    bounds.origin.x + main_offset,
+                    bounds.origin.y + cross_offset,
+                )
+            } else {
+                (
+                    bounds.origin.x + cross_offset,
+                    bounds.origin.y + main_offset,
+                )
+            };
+
+            let child_bounds = Rect::new(x, y, child_main, child_cross);
+            child.layout(cx, child_bounds);
+        }
+    }
+
+    fn accessibility(&self, node: &mut AccessKitNode) {
+        node.set_role(accesskit::Role::GenericContainer);
+    }
+}
+
+impl std::fmt::Debug for Flex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Flex")
+            .field("direction", &self.direction)
+            .field("main_axis_alignment", &self.main_axis_alignment)
+            .field("cross_axis_alignment", &self.cross_axis_alignment)
+            .field("gap", &self.gap)
+            .field("child_count", &self.children.len())
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use martensite_core::widget::DummyWidget;
+    use martensite_core::HotNode;
+
+    fn make_cx(hot: &mut HotNode) -> LayoutContext<'_> {
+        LayoutContext { hot }
+    }
+
+    #[test]
+    fn flex_row_new() {
+        let f = Flex::row();
+        assert_eq!(f.direction, FlexDirection::Row);
+        assert!(f.children.is_empty());
+    }
+
+    #[test]
+    fn flex_column_new() {
+        let f = Flex::column();
+        assert_eq!(f.direction, FlexDirection::Column);
+    }
+
+    #[test]
+    fn flex_direction_helpers() {
+        assert!(FlexDirection::Row.is_row());
+        assert!(!FlexDirection::Row.is_column());
+        assert!(FlexDirection::Column.is_column());
+        let v = Vec2::new(10.0, 20.0);
+        assert_eq!(FlexDirection::Row.main(v), 10.0);
+        assert_eq!(FlexDirection::Row.cross(v), 20.0);
+        assert_eq!(FlexDirection::Column.main(v), 20.0);
+        assert_eq!(FlexDirection::Column.cross(v), 10.0);
+    }
+
+    #[test]
+    fn flex_measure_empty() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row();
+        let size = f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, 100.0),
+            },
+        );
+        assert_eq!(size, Vec2::ZERO);
+    }
+
+    #[test]
+    fn flex_measure_with_dummy_children() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row()
+            .child(DummyWidget)
+            .child(DummyWidget)
+            .child(DummyWidget);
+        let size = f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, 100.0),
+            },
+        );
+        // DummyWidgets measure ZERO, so flex is ZERO
+        assert_eq!(size, Vec2::ZERO);
+    }
+
+    #[test]
+    fn flex_layout_positions_children() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row().child(DummyWidget).child(DummyWidget);
+        // Measure first to populate child_sizes
+        f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, 100.0),
+            },
+        );
+        // Layout
+        f.layout(&mut cx, Rect::new(0.0, 0.0, 200.0, 100.0));
+        assert_eq!(f.cached_bounds, Rect::new(0.0, 0.0, 200.0, 100.0));
+    }
+
+    #[test]
+    fn flex_main_axis_alignment_center() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row()
+            .main_axis_alignment(MainAxisAlignment::Center)
+            .child(DummyWidget);
+        f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, 100.0),
+            },
+        );
+        f.layout(&mut cx, Rect::new(0.0, 0.0, 100.0, 50.0));
+        // Should not panic
+    }
+
+    #[test]
+    fn flex_space_between() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row()
+            .main_axis_alignment(MainAxisAlignment::SpaceBetween)
+            .child(DummyWidget)
+            .child(DummyWidget);
+        f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, 100.0),
+            },
+        );
+        f.layout(&mut cx, Rect::new(0.0, 0.0, 100.0, 50.0));
+    }
+
+    #[test]
+    fn flex_space_evenly() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row()
+            .main_axis_alignment(MainAxisAlignment::SpaceEvenly)
+            .child(DummyWidget);
+        f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, 100.0),
+            },
+        );
+        f.layout(&mut cx, Rect::new(0.0, 0.0, 100.0, 50.0));
+    }
+
+    #[test]
+    fn flex_cross_axis_alignment() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row()
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(DummyWidget);
+        f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, 100.0),
+            },
+        );
+        f.layout(&mut cx, Rect::new(0.0, 0.0, 100.0, 50.0));
+    }
+
+    #[test]
+    fn flex_gap() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row().gap(10.0).child(DummyWidget).child(DummyWidget);
+        let size = f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, 100.0),
+            },
+        );
+        // DummyWidgets are zero, so size is just gap
+        assert_eq!(size.x, 10.0);
+    }
+
+    #[test]
+    fn flex_debug_format() {
+        let f = Flex::row().gap(5.0).child(DummyWidget);
+        let debug = format!("{:?}", f);
+        assert!(debug.contains("Flex"));
+        assert!(debug.contains("Row"));
+    }
+}

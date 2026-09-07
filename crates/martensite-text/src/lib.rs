@@ -1,8 +1,34 @@
-//! Typography and IME candidate projection.
+//! Typography and text layout for Martensite.
+//!
+//! This crate provides:
+//! - [`font`]: font system abstraction, system font discovery via
+//!   `fontdb`, and custom font asset loading.
+//! - [`shaping`]: complex text shaping with BiDi, line breaking, and
+//!   font fallback via cosmic-text.
+//! - [`cache`]: two-tier text measurement and glyph shaping cache
+//!   (Tier 1 inline in `ColdNode`, Tier 2 global LRU with 16 MB budget).
+//!
+//! ## IME candidate projection
+//!
+//! The [`compute_ime_bounds`] function computes IME candidate window
+//! bounds from the cursor position and line height.
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
-/// Re-exported text layout primitives from `cosmic_text`.
-pub use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping};
+/// Two-tier text cache: `TextShapeCache`, `ShapeCacheKey`.
+pub mod cache;
+/// Font system abstraction: `FontManager`, `FontId`, `FontSource`.
+pub mod font;
+/// Complex text shaping: `Shaper`, `TextMetrics`, `ShapedLine`.
+pub mod shaping;
+
+pub use cache::{
+    CachedShape, FontSizeBits, ShapeCacheKey, TextHash, TextShapeCache, DEFAULT_MEMORY_BUDGET,
+};
+pub use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
+pub use font::{FontFaceInfo, FontId, FontManager, FontSource, FontStyle};
+pub use shaping::{measure_text, shape_text, ShapedGlyph, ShapedLine, Shaper, TextMetrics};
+
 use winit::dpi::{LogicalPosition, LogicalSize};
 
 /// Computes the IME candidate window bounds from the cursor position and line height.

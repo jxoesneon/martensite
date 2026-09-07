@@ -1168,6 +1168,9 @@ mod suite {
         // Mutate through arena
         let cold_mut = arena.get_cold_mut(id).expect("alive node");
         cold_mut.text_cache.put(250.0, 50.0);
-        assert_eq!(arena.get_cold(id).unwrap().text_cache.get(250.0), Some(50.0));
+        assert_eq!(
+            arena.get_cold(id).unwrap().text_cache.get(250.0),
+            Some(50.0)
+        );
     }
 }

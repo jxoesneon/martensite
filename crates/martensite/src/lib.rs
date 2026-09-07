@@ -45,6 +45,7 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod widgets;
 
 pub use martensite_access as access;
 pub use martensite_clipboard as clipboard;
@@ -70,6 +71,7 @@ pub use martensite_window as window;
 /// ```
 pub mod prelude {
     pub use crate::app::{App, AppBuilder, AppConfig};
+    pub use crate::widgets::{Container, Flex, FlexDirection, Stack, Text};
     pub use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, Widget, WidgetArena, WidgetId};
     pub use martensite_motion::{SpringConfig, SpringSolver};
     pub use martensite_reactive::{Memo, Signal};

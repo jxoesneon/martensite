@@ -16,6 +16,7 @@ readme = "README.md"
 martensite-core = { workspace = true }
 winit = { workspace = true }
 cosmic-text = { workspace = true }
+fontdb = { workspace = true }
 
 [features]
 docs-rs = ["winit/x11"]

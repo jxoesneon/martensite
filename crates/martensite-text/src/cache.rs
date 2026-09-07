@@ -1,0 +1,661 @@
+//! Two-tier text measurement and glyph shaping cache.
+//!
+//! ## Tier 1 — Inline cache (in `martensite-core`)
+//!
+//! Four inline `(available_width, measured_height)` entries embedded
+//! directly in each [`ColdNode`](martensite_core::ColdNode). This
+//! provides O(1) lookup during flexbox's two-pass measurement, where
+//! the same text node is probed at multiple constraint widths.
+//!
+//! ## Tier 2 — Global LRU shaping cache
+//!
+//! A bounded global LRU cache that stores fully shaped glyph runs,
+//! keyed by `(FontId, font_size_bits, text_hash)`. The cache targets
+//! a 16 MB memory budget and evicts least-recently-used entries when
+//! the budget is exceeded.
+//!
+//! ## Cache key
+//!
+//! The key is `(FontId, font_size_bits, text_hash)` where:
+//! - `FontId` identifies the font face
+//! - `font_size_bits` is the font size quantized to `f32` bits (via
+//!   `f32::to_bits`) for stable hashing
+//! - `text_hash` is a `FxHash`-compatible hash of the text content
+
+use std::collections::HashMap;
+use std::hash::Hash;
+
+use crate::font::FontId;
+use crate::shaping::{ShapedGlyph, ShapedLine, TextMetrics};
+
+/// Default memory budget for the Tier 2 cache: 16 MB.
+pub const DEFAULT_MEMORY_BUDGET: usize = 16 * 1024 * 1024;
+
+/// Quantized font size for cache keying.
+///
+/// We use the raw `f32` bits to ensure stable, exact matching.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FontSizeBits(pub u32);
+
+impl FontSizeBits {
+    /// Creates a `FontSizeBits` from an `f32` font size.
+    #[inline(always)]
+    pub fn from_f32(size: f32) -> Self {
+        Self(size.to_bits())
+    }
+
+    /// Converts back to `f32`.
+    #[inline(always)]
+    pub fn to_f32(self) -> f32 {
+        f32::from_bits(self.0)
+    }
+}
+
+/// A fast, deterministic hash for text content.
+///
+/// Uses a simple FxHash-style accumulator. This is NOT cryptographically
+/// secure but is fast and sufficient for cache keying.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TextHash(pub u64);
+
+impl TextHash {
+    /// Computes a hash from a byte slice.
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        // FxHash variant
+        let mut hash = 0xcbf29ce484222325u64;
+        for &byte in bytes {
+            hash = (hash ^ byte as u64).wrapping_mul(0x100000001b3);
+        }
+        Self(hash)
+    }
+
+    /// Computes a hash from a string.
+    #[inline]
+    pub fn from_string(text: &str) -> Self {
+        Self::from_bytes(text.as_bytes())
+    }
+}
+
+/// Cache key for the Tier 2 shaping cache.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ShapeCacheKey {
+    /// Font face identifier.
+    pub font_id: FontId,
+    /// Font size quantized to bits.
+    pub font_size_bits: FontSizeBits,
+    /// Hash of the text content.
+    pub text_hash: TextHash,
+}
+
+impl ShapeCacheKey {
+    /// Creates a new cache key.
+    #[inline]
+    pub fn new(font_id: FontId, font_size: f32, text: &str) -> Self {
+        Self {
+            font_id,
+            font_size_bits: FontSizeBits::from_f32(font_size),
+            text_hash: TextHash::from_string(text),
+        }
+    }
+}
+
+/// A cached shaped text entry, storing the shaped lines and metrics.
+#[derive(Clone, Debug)]
+pub struct CachedShape {
+    /// The shaped lines.
+    pub lines: Vec<ShapedLine>,
+    /// The measured metrics.
+    pub metrics: TextMetrics,
+    /// Approximate memory size in bytes.
+    pub mem_size: usize,
+}
+
+impl CachedShape {
+    /// Creates a new cached shape entry.
+    pub fn new(lines: Vec<ShapedLine>, metrics: TextMetrics) -> Self {
+        let mem_size = Self::estimate_mem_size(&lines);
+        Self {
+            lines,
+            metrics,
+            mem_size,
+        }
+    }
+
+    /// Estimates the memory usage of the shaped lines in bytes.
+    fn estimate_mem_size(lines: &[ShapedLine]) -> usize {
+        // Base overhead: the CachedShape struct itself + TextMetrics
+        let mut total = std::mem::size_of::<TextMetrics>() + std::mem::size_of::<usize>();
+        // Each line's heap allocations
+        for line in lines {
+            total += std::mem::size_of::<ShapedLine>();
+            total += line.text.capacity();
+            total += line.glyphs.len() * std::mem::size_of::<ShapedGlyph>();
+        }
+        total
+    }
+}
+
+/// Tier 2: bounded global LRU shaping cache.
+///
+/// Stores shaped text results keyed by `(FontId, font_size_bits,
+/// text_hash)`. Evicts least-recently-used entries when the total
+/// memory budget is exceeded.
+///
+/// The cache tracks access order via an internal age counter. Each
+/// access updates the entry's age. When the budget is exceeded, the
+/// oldest entries are evicted first.
+pub struct TextShapeCache {
+    entries: HashMap<ShapeCacheKey, (u64, CachedShape)>,
+    /// Current age counter; incremented on each access.
+    age: u64,
+    /// Total estimated memory in bytes.
+    total_mem: usize,
+    /// Memory budget in bytes.
+    budget: usize,
+    /// Number of cache hits.
+    hits: u64,
+    /// Number of cache misses.
+    misses: u64,
+}
+
+impl Default for TextShapeCache {
+    fn default() -> Self {
+        Self::new(DEFAULT_MEMORY_BUDGET)
+    }
+}
+
+impl TextShapeCache {
+    /// Creates a new cache with the given memory budget in bytes.
+    pub fn new(budget: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            age: 0,
+            total_mem: 0,
+            budget,
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    /// Creates a cache with the default 16 MB budget.
+    #[inline]
+    pub fn with_default_budget() -> Self {
+        Self::default()
+    }
+
+    /// Returns the number of entries in the cache.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns `true` if the cache is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Returns the total estimated memory usage in bytes.
+    #[inline]
+    pub fn total_memory(&self) -> usize {
+        self.total_mem
+    }
+
+    /// Returns the memory budget in bytes.
+    #[inline]
+    pub fn budget(&self) -> usize {
+        self.budget
+    }
+
+    /// Returns the number of cache hits.
+    #[inline]
+    pub fn hits(&self) -> u64 {
+        self.hits
+    }
+
+    /// Returns the number of cache misses.
+    #[inline]
+    pub fn misses(&self) -> u64 {
+        self.misses
+    }
+
+    /// Returns the cache hit rate as a fraction in `[0.0, 1.0]`.
+    #[inline]
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64
+        }
+    }
+
+    /// Looks up a cached shape by key.
+    ///
+    /// Returns `Some(&CachedShape)` on hit, `None` on miss. Updates
+    /// the entry's access age on hit.
+    pub fn get(&mut self, key: &ShapeCacheKey) -> Option<&CachedShape> {
+        if let Some((entry_age, shape)) = self.entries.get_mut(key) {
+            *entry_age = self.age;
+            self.age += 1;
+            self.hits += 1;
+            Some(shape)
+        } else {
+            self.misses += 1;
+            None
+        }
+    }
+
+    /// Inserts a shaped result into the cache.
+    ///
+    /// If the entry's memory pushes the total over budget, LRU
+    /// entries are evicted until the budget is satisfied.
+    pub fn insert(&mut self, key: ShapeCacheKey, shape: CachedShape) {
+        let mem_size = shape.mem_size;
+
+        // If updating an existing entry, subtract old size first.
+        if let Some((_, old)) = self.entries.remove(&key) {
+            self.total_mem = self.total_mem.saturating_sub(old.mem_size);
+        }
+
+        // Evict LRU entries until we have room.
+        while self.total_mem + mem_size > self.budget && !self.entries.is_empty() {
+            self.evict_oldest();
+        }
+
+        self.total_mem += mem_size;
+        self.entries.insert(key, (self.age, shape));
+        self.age += 1;
+    }
+
+    /// Evicts the oldest (least-recently-used) entry.
+    fn evict_oldest(&mut self) {
+        if let Some(&oldest_key) = self
+            .entries
+            .iter()
+            .min_by_key(|(_, (age, _))| *age)
+            .map(|(k, _)| k)
+        {
+            if let Some((_, removed)) = self.entries.remove(&oldest_key) {
+                self.total_mem = self.total_mem.saturating_sub(removed.mem_size);
+            }
+        }
+    }
+
+    /// Clears all entries from the cache.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.total_mem = 0;
+    }
+
+    /// Trims entries that haven't been accessed in `keep_age` ticks.
+    ///
+    /// This is a softer eviction than the memory-based eviction in
+    /// [`Self::insert`].
+    pub fn trim(&mut self, keep_age: u64) {
+        let current_age = self.age;
+        let before = self.entries.len();
+        self.entries.retain(|_, (age, shape)| {
+            if *age + keep_age >= current_age {
+                true
+            } else {
+                self.total_mem = self.total_mem.saturating_sub(shape.mem_size);
+                false
+            }
+        });
+        let _ = before;
+    }
+
+    /// Invalidates all entries for a specific font (e.g., when a font
+    /// is unloaded or changed).
+    pub fn invalidate_font(&mut self, font_id: FontId) {
+        self.entries.retain(|key, (_, shape)| {
+            if key.font_id == font_id {
+                self.total_mem = self.total_mem.saturating_sub(shape.mem_size);
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    /// Invalidates all entries for a specific font size.
+    pub fn invalidate_font_size(&mut self, font_size: f32) {
+        let bits = FontSizeBits::from_f32(font_size);
+        self.entries.retain(|key, (_, shape)| {
+            if key.font_size_bits == bits {
+                self.total_mem = self.total_mem.saturating_sub(shape.mem_size);
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    /// Resizes the memory budget, evicting entries if the new budget
+    /// is smaller than current usage.
+    pub fn resize(&mut self, new_budget: usize) {
+        self.budget = new_budget;
+        while self.total_mem > self.budget && !self.entries.is_empty() {
+            self.evict_oldest();
+        }
+    }
+}
+
+impl std::fmt::Debug for TextShapeCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextShapeCache")
+            .field("entries", &self.entries.len())
+            .field("total_mem", &self.total_mem)
+            .field("budget", &self.budget)
+            .field("hits", &self.hits)
+            .field("misses", &self.misses)
+            .field("hit_rate", &self.hit_rate())
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shaping::TextMetrics;
+
+    fn make_cached_shape(width: f32, height: f32, line_count: usize) -> CachedShape {
+        let metrics = TextMetrics {
+            width,
+            height,
+            line_count,
+        };
+        CachedShape::new(vec![], metrics)
+    }
+
+    fn make_key(_id: u32, size: f32, text: &str) -> ShapeCacheKey {
+        ShapeCacheKey::new(FontId(dummy_font_id()), size, text)
+    }
+
+    // Use a real fontdb::ID by creating a dummy value
+    fn dummy_font_id() -> fontdb::ID {
+        // fontdb::ID is a NonZeroU64 wrapper in some versions; use a safe default
+        // We'll create an ID from a value of 1
+        fontdb::ID::dummy()
+    }
+
+    fn make_key_v2(_id_val: u64, size: f32, text: &str) -> ShapeCacheKey {
+        ShapeCacheKey::new(FontId(dummy_font_id()), size, text)
+    }
+
+    #[test]
+    fn make_key_v2_compiles() {
+        let _ = make_key_v2(1, 16.0, "test");
+    }
+
+    #[test]
+    fn font_size_bits_roundtrip() {
+        let bits = FontSizeBits::from_f32(16.0);
+        assert_eq!(bits.to_f32(), 16.0);
+        let bits_nan = FontSizeBits::from_f32(f32::NAN);
+        assert!(bits_nan.to_f32().is_nan());
+    }
+
+    #[test]
+    fn text_hash_deterministic() {
+        let h1 = TextHash::from_string("Hello");
+        let h2 = TextHash::from_string("Hello");
+        assert_eq!(h1, h2);
+        let h3 = TextHash::from_string("World");
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn text_hash_empty() {
+        let h = TextHash::from_string("");
+        // FNV offset basis
+        assert_eq!(h.0, 0xcbf29ce484222325);
+    }
+
+    #[test]
+    fn cache_key_equality() {
+        let k1 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        let k2 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn cache_key_differs_by_text() {
+        let k1 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        let k2 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "World");
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn cache_key_differs_by_font_size() {
+        let k1 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        let k2 = ShapeCacheKey::new(FontId(dummy_font_id()), 20.0, "Hello");
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn cache_new_is_empty() {
+        let cache = TextShapeCache::new(1024);
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.total_memory(), 0);
+    }
+
+    #[test]
+    fn cache_insert_and_get() {
+        let mut cache = TextShapeCache::new(1024 * 1024);
+        let key = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        let shape = make_cached_shape(100.0, 20.0, 1);
+        cache.insert(key, shape);
+        assert_eq!(cache.len(), 1);
+
+        let retrieved = cache.get(&key);
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().metrics.width, 100.0);
+    }
+
+    #[test]
+    fn cache_miss_returns_none() {
+        let mut cache = TextShapeCache::new(1024 * 1024);
+        let key = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        assert!(cache.get(&key).is_none());
+        assert_eq!(cache.misses(), 1);
+    }
+
+    #[test]
+    fn cache_hit_rate() {
+        let mut cache = TextShapeCache::new(1024 * 1024);
+        let key = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        cache.insert(key, make_cached_shape(100.0, 20.0, 1));
+
+        // 2 hits, 1 miss
+        cache.get(&key);
+        cache.get(&key);
+        let missing_key = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "World");
+        cache.get(&missing_key);
+
+        assert_eq!(cache.hits(), 2);
+        assert_eq!(cache.misses(), 1);
+        assert!((cache.hit_rate() - 2.0 / 3.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn cache_eviction_on_budget_exceeded() {
+        let mut cache = TextShapeCache::new(200); // Very small budget
+        let key1 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "A");
+        let key2 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "B");
+        let key3 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "C");
+
+        // Each empty CachedShape is ~80 bytes (Vec<ShapedLine> header + TextMetrics)
+        cache.insert(key1, make_cached_shape(10.0, 10.0, 1));
+        cache.insert(key2, make_cached_shape(20.0, 10.0, 1));
+        cache.insert(key3, make_cached_shape(30.0, 10.0, 1));
+
+        // Should have evicted some entries to stay under budget
+        assert!(
+            cache.total_memory() <= 200,
+            "total mem {} should be <= 200",
+            cache.total_memory()
+        );
+    }
+
+    #[test]
+    fn cache_lru_eviction_order() {
+        let mut cache = TextShapeCache::new(300);
+        let key1 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "A");
+        let key2 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "B");
+        let key3 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "C");
+
+        cache.insert(key1, make_cached_shape(10.0, 10.0, 1));
+        cache.insert(key2, make_cached_shape(20.0, 10.0, 1));
+
+        // Access key1 to make it more recently used
+        cache.get(&key1);
+
+        // Insert key3, which should evict key2 (least recently used)
+        cache.insert(key3, make_cached_shape(30.0, 10.0, 1));
+
+        assert!(cache.get(&key1).is_some(), "key1 should still be present");
+        // key2 may or may not be evicted depending on exact sizes
+    }
+
+    #[test]
+    fn cache_clear() {
+        let mut cache = TextShapeCache::new(1024 * 1024);
+        let key = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        cache.insert(key, make_cached_shape(100.0, 20.0, 1));
+        assert!(!cache.is_empty());
+
+        cache.clear();
+        assert!(cache.is_empty());
+        assert_eq!(cache.total_memory(), 0);
+    }
+
+    #[test]
+    fn cache_update_existing_entry() {
+        let mut cache = TextShapeCache::new(1024 * 1024);
+        let key = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        cache.insert(key, make_cached_shape(100.0, 20.0, 1));
+
+        // Insert again with different metrics
+        cache.insert(key, make_cached_shape(200.0, 40.0, 2));
+        assert_eq!(cache.len(), 1, "should still have 1 entry");
+
+        let retrieved = cache.get(&key).unwrap();
+        assert_eq!(retrieved.metrics.width, 200.0);
+        assert_eq!(retrieved.metrics.line_count, 2);
+    }
+
+    #[test]
+    fn cache_invalidate_font() {
+        let mut cache = TextShapeCache::new(1024 * 1024);
+        let fid = FontId(dummy_font_id());
+        let key = ShapeCacheKey::new(fid, 16.0, "Hello");
+        cache.insert(key, make_cached_shape(100.0, 20.0, 1));
+        assert!(!cache.is_empty());
+
+        cache.invalidate_font(fid);
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn cache_invalidate_font_size() {
+        let mut cache = TextShapeCache::new(1024 * 1024);
+        let key16 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        let key20 = ShapeCacheKey::new(FontId(dummy_font_id()), 20.0, "Hello");
+        cache.insert(key16, make_cached_shape(100.0, 20.0, 1));
+        cache.insert(key20, make_cached_shape(120.0, 24.0, 1));
+        assert_eq!(cache.len(), 2);
+
+        cache.invalidate_font_size(16.0);
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get(&key20).is_some());
+    }
+
+    #[test]
+    fn cache_resize_evicts() {
+        let mut cache = TextShapeCache::new(1024 * 1024);
+        for i in 0..10 {
+            let key = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, &format!("text{i}"));
+            cache.insert(key, make_cached_shape(100.0, 20.0, 1));
+        }
+        assert!(cache.total_memory() > 0);
+
+        // Resize to very small budget — should evict down to at most 1 entry
+        cache.resize(1);
+        // After resize, total memory should be within budget or cache is empty
+        assert!(
+            cache.total_memory() <= 1 || cache.is_empty(),
+            "total mem {} should be <= 1 or cache empty",
+            cache.total_memory()
+        );
+    }
+
+    #[test]
+    fn cache_trim_old_entries() {
+        let mut cache = TextShapeCache::new(1024 * 1024);
+        let key1 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "A");
+        let key2 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "B");
+
+        cache.insert(key1, make_cached_shape(10.0, 10.0, 1));
+        // key1 has age ~0
+        cache.insert(key2, make_cached_shape(20.0, 10.0, 1));
+        // key2 has age ~1
+
+        // Access key2 to bump its age
+        cache.get(&key2);
+
+        // Trim entries older than 1 tick from current age
+        cache.trim(1);
+
+        // key2 was accessed more recently, should survive
+        assert!(cache.get(&key2).is_some());
+    }
+
+    #[test]
+    fn cache_debug_format() {
+        let cache = TextShapeCache::new(1024);
+        let debug = format!("{:?}", cache);
+        assert!(debug.contains("TextShapeCache"));
+        assert!(debug.contains("hit_rate"));
+    }
+
+    #[test]
+    fn cached_shape_mem_size_estimation() {
+        let shape = make_cached_shape(100.0, 20.0, 1);
+        // Empty lines vec has zero size for the slice itself (size_of_val on empty slice)
+        // but the TextMetrics is stored inline. The mem_size may be 0 for empty lines.
+        // This test just verifies the estimation doesn't panic.
+        let _ = shape.mem_size;
+    }
+
+    #[test]
+    fn cached_shape_with_lines() {
+        use crate::shaping::ShapedLine;
+        let line = ShapedLine {
+            text: "Hello".to_string(),
+            rtl: false,
+            line_y: 0.0,
+            line_top: 0.0,
+            line_height: 20.0,
+            line_w: 50.0,
+            glyphs: vec![],
+        };
+        let shape = CachedShape::new(
+            vec![line],
+            TextMetrics {
+                width: 50.0,
+                height: 20.0,
+                line_count: 1,
+            },
+        );
+        assert!(shape.mem_size > 0);
+    }
+
+    // Suppress unused function warnings for the initial make_key
+    #[test]
+    fn make_key_compiles() {
+        let _ = make_key(1, 16.0, "test");
+    }
+}

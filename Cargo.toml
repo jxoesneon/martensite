@@ -70,6 +70,7 @@ wgpu = { version = "30", default-features = false, features = ["wgsl"] }
 vello = { version = "0.10", default-features = false }
 taffy = { version = "0.8", default-features = false, features = ["flexbox", "grid", "block_layout", "taffy_tree"] }
 cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.1", path = "crates/martensite-cosmic-text", default-features = false, features = ["std", "swash"] }
+fontdb = { version = "0.24", default-features = false }
 accesskit = { version = "0.25" }
 accesskit_winit = { version = "0.34" }
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11"] }
