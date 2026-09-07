@@ -1,0 +1,253 @@
+//! GPU device context: adapter enumeration, feature selection, and
+//! device/queue lifecycle management.
+//!
+//! [`GpuContext`] is the entry point for acquiring a logical `wgpu` device and
+//! queue. It encapsulates the instance, the selected physical adapter, and the
+//! resulting device/queue pair, exposing helpers for adapter enumeration with
+//! power-preference selection and for verifying that the acquired device
+//! satisfies a required feature/limit set.
+
+use std::time::Duration;
+
+/// Errors that can occur while constructing a [`GpuContext`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuContextError {
+    /// No adapter matching the requested options could be found on the system.
+    NoAdapter,
+    /// An adapter was selected, but the system refused to hand back a logical
+    /// device and queue.
+    DeviceRequestFailed,
+}
+
+impl std::fmt::Display for GpuContextError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoAdapter => {
+                f.write_str("no suitable GPU adapter was found for the requested options")
+            }
+            Self::DeviceRequestFailed => {
+                f.write_str("failed to request a logical device from the selected adapter")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GpuContextError {}
+
+/// A complete, ready-to-use GPU context.
+///
+/// `GpuContext` owns the four core `wgpu` resources required for compute-based
+/// rasterization and GPU resurrection workflows:
+///
+/// * the [`wgpu::Instance`] used to enumerate adapters and create surfaces,
+/// * the selected physical [`wgpu::Adapter`],
+/// * the logical [`wgpu::Device`] used to allocate resources, and
+/// * the command [`wgpu::Queue`] used to submit work.
+///
+/// It is constructed via [`GpuContext::new`] (default high-performance
+/// selection) or [`GpuContext::with_power_preference`] for explicit control.
+pub struct GpuContext {
+    /// The `wgpu` instance used to enumerate and create adapters and surfaces.
+    pub instance: wgpu::Instance,
+    /// The physical GPU adapter selected for high-performance compute work.
+    pub adapter: wgpu::Adapter,
+    /// The logical device used to allocate resources and submit commands.
+    pub device: wgpu::Device,
+    /// The command queue used to submit work to the GPU.
+    pub queue: wgpu::Queue,
+    /// Cached descriptive metadata for the selected adapter.
+    pub adapter_info: wgpu::AdapterInfo,
+}
+
+impl GpuContext {
+    /// Creates a new [`GpuContext`] by requesting a high-performance adapter
+    /// and its associated device and queue.
+    ///
+    /// This is equivalent to calling
+    /// [`GpuContext::with_power_preference`] with
+    /// [`wgpu::PowerPreference::HighPerformance`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuContextError::NoAdapter`] if no suitable adapter could be
+    /// acquired, or [`GpuContextError::DeviceRequestFailed`] if the adapter
+    /// was found but the device request failed.
+    pub fn new() -> Result<Self, GpuContextError> {
+        Self::with_power_preference(wgpu::PowerPreference::HighPerformance)
+    }
+
+    /// Creates a new [`GpuContext`] requesting an adapter matching the supplied
+    /// power preference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuContextError::NoAdapter`] if no suitable adapter could be
+    /// acquired, or [`GpuContextError::DeviceRequestFailed`] if the adapter
+    /// was found but the device request failed.
+    pub fn with_power_preference(
+        power_preference: wgpu::PowerPreference,
+    ) -> Result<Self, GpuContextError> {
+        let instance = wgpu::Instance::default();
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+            apply_limit_buckets: true,
+        }))
+        .map_err(|_| GpuContextError::NoAdapter)?;
+
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                .map_err(|_| GpuContextError::DeviceRequestFailed)?;
+
+        let adapter_info = adapter.get_info();
+
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            adapter_info,
+        })
+    }
+
+    /// Enumerates every adapter currently visible to the instance, ordered by
+    /// the supplied power preference.
+    ///
+    /// The returned vector is sorted so that adapters best matching the
+    /// requested power preference appear first. This is useful for diagnostic
+    /// UI and for the recovery FSM, which must re-enumerate adapters after a
+    /// device loss.
+    #[must_use]
+    pub fn enumerate_adapters(
+        instance: &wgpu::Instance,
+        power_preference: wgpu::PowerPreference,
+    ) -> Vec<wgpu::Adapter> {
+        let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+        // Stable sort by a power-preference score so the most-desired adapter
+        // ends up first without disturbing the relative order of equal-score
+        // adapters returned by the backend.
+        adapters.sort_by(|a, b| {
+            let sa = power_score(a.get_info().device_type, power_preference);
+            let sb = power_score(b.get_info().device_type, power_preference);
+            sb.cmp(&sa)
+        });
+        adapters
+    }
+
+    /// Returns `true` when the acquired device supports every feature in
+    /// `required`.
+    ///
+    /// Use this for feature selection before allocating resources that depend
+    /// on optional capabilities.
+    #[must_use]
+    pub fn supports_features(&self, required: wgpu::Features) -> bool {
+        self.device.features().contains(required)
+    }
+
+    /// Returns `true` when the acquired device meets or exceeds every limit in
+    /// `required`.
+    ///
+    /// Comparison is delegated to [`wgpu::Limits::check_limits`], which
+    /// correctly treats "higher is better" limits (e.g. max texture
+    /// dimensions) and "lower is better" alignment limits (e.g.
+    /// `min_uniform_buffer_offset_alignment`) with the appropriate ordering.
+    #[must_use]
+    pub fn meets_limits(&self, required: &wgpu::Limits) -> bool {
+        required.check_limits(&self.device.limits())
+    }
+
+    /// Returns the maximum duration the recovery FSM should wait before
+    /// declaring a device permanently lost and falling back to the CPU
+    /// rasterizer.
+    ///
+    /// The default is 32 milliseconds, matching the v0.2.0 milestone
+    /// specification.
+    #[must_use]
+    pub fn fallback_threshold() -> Duration {
+        Duration::from_millis(32)
+    }
+}
+
+impl std::fmt::Debug for GpuContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GpuContext")
+            .field("adapter_info", &self.adapter_info)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Scores an adapter against a power preference.
+///
+/// Higher is better. Discrete GPUs score highest when `HighPerformance` is
+/// requested; integrated/Cpu adapters score highest when `LowPower` is
+/// requested.
+fn power_score(device_type: wgpu::DeviceType, preference: wgpu::PowerPreference) -> u8 {
+    match preference {
+        wgpu::PowerPreference::HighPerformance => match device_type {
+            wgpu::DeviceType::DiscreteGpu => 3,
+            wgpu::DeviceType::IntegratedGpu => 2,
+            wgpu::DeviceType::Other | wgpu::DeviceType::VirtualGpu => 1,
+            wgpu::DeviceType::Cpu => 0,
+        },
+        wgpu::PowerPreference::LowPower => match device_type {
+            wgpu::DeviceType::Cpu => 3,
+            wgpu::DeviceType::IntegratedGpu => 2,
+            wgpu::DeviceType::Other | wgpu::DeviceType::VirtualGpu => 1,
+            wgpu::DeviceType::DiscreteGpu => 0,
+        },
+        wgpu::PowerPreference::None => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a wgpu backend feature enabled and a GPU available"]
+    fn new_high_performance_context_succeeds_or_errors_gracefully() {
+        // A GPU may not be available in CI; we only verify that construction
+        // either yields a usable context or returns a structured error.
+        match GpuContext::new() {
+            Ok(ctx) => {
+                assert!(!ctx.adapter_info.name.is_empty());
+                assert!(ctx.supports_features(wgpu::Features::empty()));
+                assert!(ctx.meets_limits(&wgpu::Limits::downlevel_defaults()));
+            }
+            Err(GpuContextError::NoAdapter | GpuContextError::DeviceRequestFailed) => {}
+        }
+    }
+
+    #[test]
+    fn power_score_orders_discrete_above_integrated_for_high_performance() {
+        let discrete = wgpu::DeviceType::DiscreteGpu;
+        let integrated = wgpu::DeviceType::IntegratedGpu;
+        assert!(
+            power_score(discrete, wgpu::PowerPreference::HighPerformance)
+                > power_score(integrated, wgpu::PowerPreference::HighPerformance)
+        );
+        assert!(
+            power_score(integrated, wgpu::PowerPreference::LowPower)
+                > power_score(discrete, wgpu::PowerPreference::LowPower)
+        );
+    }
+
+    #[test]
+    fn limits_check_requires_geq_on_every_field() {
+        let a = wgpu::Limits::defaults();
+        let mut b = a.clone();
+        b.max_bind_groups = a.max_bind_groups + 1;
+        // `b` demands more bind groups than `a` provides, so `a` does not meet
+        // `b` (`required.check_limits(&device)` is false).
+        assert!(!b.check_limits(&a));
+        // `a` demands at most what `b` provides, so `b` meets `a`.
+        assert!(a.check_limits(&b));
+    }
+
+    #[test]
+    fn fallback_threshold_matches_milestone_specification() {
+        assert_eq!(GpuContext::fallback_threshold(), Duration::from_millis(32));
+    }
+}

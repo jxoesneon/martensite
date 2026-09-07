@@ -18,5 +18,11 @@ tiny-skia = { workspace = true }
 softbuffer = { workspace = true }
 kurbo = { workspace = true }
 peniko = { workspace = true }
+vello = { workspace = true, optional = true }
+
+[features]
+default = []
+vello = ["dep:vello"]
+
 [lints]
 workspace = true

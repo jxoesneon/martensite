@@ -1,73 +1,57 @@
 //! WGPU compute rasterization and GPU resurrection engine.
+//!
+//! `martensite-wgpu` provides three modules covering the v0.2.0 rendering
+//! pipeline milestone:
+//!
+//! * [`device`] — [`device::GpuContext`] encapsulates the instance, adapter,
+//!   device, and queue, with adapter enumeration, power-preference selection,
+//!   and feature/limit verification.
+//! * [`surface`] — [`surface::SurfaceWrapper`] manages a `wgpu` surface and its
+//!   swapchain configuration, with present-mode negotiation and resize
+//!   re-creation.
+//! * [`resilience`] — [`resilience::RecoveryMachine`] implements the formal
+//!   typestate GPU device-loss recovery FSM with exponential backoff and a
+//!   CPU fallback path.
+//!
+//! # Safety
+//!
+//! This crate contains no `unsafe` code (`#![forbid(unsafe_code)]`).
 
-/// GPU renderer encapsulating the core `wgpu` resources required for
-/// compute-based rasterization and GPU resurrection workflows.
-pub struct GpuRenderer {
-    /// The `wgpu` instance used to enumerate and create adapters and surfaces.
-    pub instance: wgpu::Instance,
-    /// The physical GPU adapter selected for high-performance compute work.
-    pub adapter: wgpu::Adapter,
-    /// The logical device used to allocate resources and submit commands.
-    pub device: wgpu::Device,
-    /// The command queue used to submit work to the GPU.
-    pub queue: wgpu::Queue,
-}
+#![forbid(unsafe_code)]
 
-impl GpuRenderer {
-    /// Creates a new [`GpuRenderer`] by requesting a high-performance adapter
-    /// and its associated device and queue.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if no suitable adapter or device could be acquired.
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-            apply_limit_buckets: true,
-        }))?;
+/// GPU device context: adapter enumeration, feature selection, device/queue
+/// lifecycle.
+pub mod device;
+/// GPU device-loss recovery finite state machine.
+pub mod resilience;
+/// Surface and swapchain management.
+pub mod surface;
 
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
-
-        Ok(Self {
-            instance,
-            adapter,
-            device,
-            queue,
-        })
-    }
-}
+pub use device::{GpuContext, GpuContextError};
+pub use resilience::{
+    backoff_duration, DeviceStatus, RecoveryMachine, SurfaceError, DEFAULT_FALLBACK_THRESHOLD,
+    DEFAULT_MAX_RETRIES, RECOVERY_BUDGET,
+};
+pub use surface::{SurfaceWrapper, SurfaceWrapperError};
 
 #[cfg(test)]
 mod tests {
-    use super::GpuRenderer;
+    use super::*;
 
     #[test]
-    #[ignore = "requires a wgpu backend feature enabled and a GPU available"]
-    fn new_does_not_panic() {
-        // A GPU may not be available in CI; we only verify that new() does not panic
-        // when a backend is actually available.
-        let _ = GpuRenderer::new();
+    fn re_exports_are_constructible() {
+        // The re-exported recovery machine must be usable directly from the
+        // crate root without importing submodules.
+        let m = RecoveryMachine::new();
+        assert!(m.is_active());
     }
 
     #[test]
-    #[ignore = "requires a wgpu backend feature enabled and a GPU available"]
-    fn new_handles_missing_gpu_gracefully() {
-        // The error path must be handled gracefully when no GPU is available.
-        match GpuRenderer::new() {
-            Ok(renderer) => {
-                // When construction succeeds, the core wgpu resources must be present.
-                let _ = &renderer.instance;
-                let _ = &renderer.adapter;
-                let _ = &renderer.device;
-                let _ = &renderer.queue;
-            }
-            Err(_) => {
-                // No suitable adapter/device available (e.g. headless CI).
-            }
-        }
+    fn surface_wrapper_error_alias_matches_inner_type() {
+        // The crate-root alias must be the same type as the surface module's
+        // error so callers can use either path interchangeably.
+        let a: SurfaceWrapperError = surface::SurfaceWrapperError::NotConfigured;
+        let b: surface::SurfaceWrapperError = SurfaceWrapperError::NotConfigured;
+        assert_eq!(a, b);
     }
 }

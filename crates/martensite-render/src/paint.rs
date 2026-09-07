@@ -1,0 +1,487 @@
+//! The [`PaintList`] command stream and supporting types.
+//!
+//! Layout produces an ordered list of [`PaintCommand`]s which are then consumed
+//! by a [`crate::RenderBackend`]. The representation is intentionally
+//! allocation-light: a single [`PaintList`] can be cleared and reused across
+//! frames so that no per-frame heap traffic is required for steady-state
+//! rendering.
+
+use kurbo::{BezPath, Point, Rect};
+
+/// A single color stop within a gradient, defined by a normalized position in
+/// `[0.0, 1.0]` and an RGBA color.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GradientStop {
+    /// Normalized stop position in the range `[0.0, 1.0]`.
+    pub position: f32,
+    /// RGBA color at this stop (non-premultiplied).
+    pub color: [u8; 4],
+}
+
+impl GradientStop {
+    /// Creates a new gradient stop.
+    pub const fn new(position: f32, color: [u8; 4]) -> Self {
+        Self { position, color }
+    }
+}
+
+/// An ordered collection of [`GradientStop`]s describing a color ramp.
+#[derive(Clone, Debug, Default)]
+pub struct GradientStops {
+    /// The ordered stop list.
+    pub stops: Vec<GradientStop>,
+}
+
+impl GradientStops {
+    /// Creates an empty stop list.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a stop list from the given slice.
+    pub fn from_slice(stops: &[GradientStop]) -> Self {
+        Self {
+            stops: stops.to_vec(),
+        }
+    }
+
+    /// Appends a single stop.
+    pub fn push(&mut self, stop: GradientStop) {
+        self.stops.push(stop);
+    }
+
+    /// Returns `true` when the stop list contains no entries.
+    pub fn is_empty(&self) -> bool {
+        self.stops.is_empty()
+    }
+
+    /// Returns the number of stops.
+    pub fn len(&self) -> usize {
+        self.stops.len()
+    }
+}
+
+/// A single pre-resolved glyph instance ready for rasterization.
+///
+/// Coordinates are in device pixels and the `glyph_id` is an index into the
+/// font's glyph table. This type is backend-agnostic: the concrete renderer is
+/// responsible for mapping the id to the appropriate atlas or outline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphInstance {
+    /// The X coordinate of the glyph origin, in device pixels.
+    pub x: f32,
+    /// The Y coordinate of the glyph origin, in device pixels.
+    pub y: f32,
+    /// The font-specific glyph identifier.
+    pub glyph_id: u32,
+}
+
+/// A run of glyphs sharing a font, size, and color.
+///
+/// All glyph positions are pre-resolved so the backend can blit them without
+/// performing any further shaping or layout work.
+#[derive(Clone, Debug, Default)]
+pub struct GlyphRun {
+    /// The font size in device pixels.
+    pub font_size: f32,
+    /// The RGBA color (non-premultiplied) of all glyphs in the run.
+    pub color: [u8; 4],
+    /// The pre-resolved glyph instances.
+    pub glyphs: Vec<GlyphInstance>,
+}
+
+impl GlyphRun {
+    /// Creates an empty glyph run.
+    pub fn new(font_size: f32, color: [u8; 4]) -> Self {
+        Self {
+            font_size,
+            color,
+            glyphs: Vec::new(),
+        }
+    }
+
+    /// Appends a single glyph instance.
+    pub fn push(&mut self, glyph: GlyphInstance) {
+        self.glyphs.push(glyph);
+    }
+
+    /// Returns `true` when the run contains no glyphs.
+    pub fn is_empty(&self) -> bool {
+        self.glyphs.is_empty()
+    }
+}
+
+/// A single drawing operation emitted into a [`PaintList`].
+#[derive(Clone, Debug)]
+pub enum PaintCommand {
+    /// Fill a rectangle with a solid RGBA color.
+    FillRect(Rect, [u8; 4]),
+    /// Stroke the outline of a rectangle with the given line width and RGBA color.
+    StrokeRect(Rect, f32, [u8; 4]),
+    /// Fill a Bézier path with a solid RGBA color.
+    FillPath(BezPath, [u8; 4]),
+    /// Stroke a Bézier path with the given line width and RGBA color.
+    StrokePath(BezPath, f32, [u8; 4]),
+    /// Fill a rectangle with a linear gradient between two points.
+    FillLinearGradient(Rect, GradientStops, [f64; 2], [f64; 2]),
+    /// Fill a rectangle with a radial gradient centered at a point with a radius.
+    FillRadialGradient(Rect, GradientStops, [f64; 2], f64),
+    /// Push a rectangular clip onto the active clip stack.
+    ClipRect(Rect),
+    /// Push a rounded-rectangular clip onto the active clip stack.
+    ClipRoundedRect(Rect, f32),
+    /// Draw a text string at the given position, font size, and RGBA color.
+    DrawText(Point, String, f32, [u8; 4]),
+    /// Draw a pre-resolved [`GlyphRun`].
+    DrawGlyphRun(GlyphRun),
+}
+
+/// A helper for incrementally constructing a [`kurbo::BezPath`].
+///
+/// This is a thin convenience wrapper around [`BezPath`] that records the
+/// current subpath state and provides ergonomic builder methods. It is purely
+/// advisory — the underlying [`BezPath`] can always be extracted with
+/// [`PathBuilder::build`].
+#[derive(Clone, Debug, Default)]
+pub struct PathBuilder {
+    path: BezPath,
+}
+
+impl PathBuilder {
+    /// Creates a new, empty path builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Begins a new subpath at `p`.
+    pub fn move_to(&mut self, p: Point) {
+        self.path.move_to(p);
+    }
+
+    /// Adds a line segment to `p`.
+    pub fn line_to(&mut self, p: Point) {
+        self.path.line_to(p);
+    }
+
+    /// Adds a quadratic Bézier segment with control point `p1` and end `p2`.
+    pub fn quad_to(&mut self, p1: Point, p2: Point) {
+        self.path.quad_to(p1, p2);
+    }
+
+    /// Adds a cubic Bézier segment with control points `p1`, `p2` and end `p3`.
+    pub fn curve_to(&mut self, p1: Point, p2: Point, p3: Point) {
+        self.path.curve_to(p1, p2, p3);
+    }
+
+    /// Closes the current subpath.
+    pub fn close_path(&mut self) {
+        self.path.close_path();
+    }
+
+    /// Returns a reference to the underlying path elements.
+    pub fn elements(&self) -> &[kurbo::PathEl] {
+        self.path.elements()
+    }
+
+    /// Finalizes the builder and returns the constructed [`BezPath`].
+    pub fn build(self) -> BezPath {
+        self.path
+    }
+}
+
+/// An ordered list of [`PaintCommand`]s produced by the layout phase and
+/// consumed by a [`crate::RenderBackend`].
+///
+/// The list is designed for zero-allocation steady-state rendering: call
+/// [`PaintList::clear`] between frames to retain the underlying capacity.
+#[derive(Default)]
+pub struct PaintList {
+    /// The ordered sequence of paint commands to render.
+    pub commands: Vec<PaintCommand>,
+}
+
+impl PaintList {
+    /// Creates a new, empty `PaintList`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Removes all commands from the list, leaving it empty but preserving the
+    /// allocated capacity for reuse on subsequent frames.
+    pub fn clear(&mut self) {
+        self.commands.clear();
+    }
+
+    /// Pushes a [`PaintCommand::FillRect`].
+    pub fn push_fill_rect(&mut self, rect: Rect, color: [u8; 4]) {
+        self.commands.push(PaintCommand::FillRect(rect, color));
+    }
+
+    /// Pushes a [`PaintCommand::StrokeRect`].
+    pub fn push_stroke_rect(&mut self, rect: Rect, width: f32, color: [u8; 4]) {
+        self.commands
+            .push(PaintCommand::StrokeRect(rect, width, color));
+    }
+
+    /// Pushes a [`PaintCommand::FillPath`].
+    pub fn push_path(&mut self, path: BezPath, color: [u8; 4]) {
+        self.commands.push(PaintCommand::FillPath(path, color));
+    }
+
+    /// Pushes a [`PaintCommand::StrokePath`].
+    pub fn push_stroke_path(&mut self, path: BezPath, width: f32, color: [u8; 4]) {
+        self.commands
+            .push(PaintCommand::StrokePath(path, width, color));
+    }
+
+    /// Pushes a [`PaintCommand::FillLinearGradient`].
+    pub fn push_linear_gradient(
+        &mut self,
+        rect: Rect,
+        stops: GradientStops,
+        start: [f64; 2],
+        end: [f64; 2],
+    ) {
+        self.commands
+            .push(PaintCommand::FillLinearGradient(rect, stops, start, end));
+    }
+
+    /// Pushes a [`PaintCommand::FillRadialGradient`].
+    pub fn push_radial_gradient(
+        &mut self,
+        rect: Rect,
+        stops: GradientStops,
+        center: [f64; 2],
+        radius: f64,
+    ) {
+        self.commands.push(PaintCommand::FillRadialGradient(
+            rect, stops, center, radius,
+        ));
+    }
+
+    /// Pushes a [`PaintCommand::ClipRect`].
+    pub fn push_clip(&mut self, rect: Rect) {
+        self.commands.push(PaintCommand::ClipRect(rect));
+    }
+
+    /// Pushes a [`PaintCommand::ClipRoundedRect`].
+    pub fn push_clip_rounded(&mut self, rect: Rect, radius: f32) {
+        self.commands
+            .push(PaintCommand::ClipRoundedRect(rect, radius));
+    }
+
+    /// Pushes a [`PaintCommand::DrawText`].
+    pub fn push_text(&mut self, origin: Point, text: String, size: f32, color: [u8; 4]) {
+        self.commands
+            .push(PaintCommand::DrawText(origin, text, size, color));
+    }
+
+    /// Pushes a [`PaintCommand::DrawGlyphRun`].
+    pub fn push_glyph_run(&mut self, run: GlyphRun) {
+        self.commands.push(PaintCommand::DrawGlyphRun(run));
+    }
+
+    /// Returns the number of commands currently in the list.
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+
+    /// Returns `true` when the list contains no commands.
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gradient_stop_new() {
+        let stop = GradientStop::new(0.5, [1, 2, 3, 4]);
+        assert_eq!(stop.position, 0.5);
+        assert_eq!(stop.color, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn gradient_stops_push_and_len() {
+        let mut stops = GradientStops::new();
+        assert!(stops.is_empty());
+        stops.push(GradientStop::new(0.0, [0, 0, 0, 255]));
+        stops.push(GradientStop::new(1.0, [255, 255, 255, 255]));
+        assert_eq!(stops.len(), 2);
+        assert!(!stops.is_empty());
+    }
+
+    #[test]
+    fn gradient_stops_from_slice() {
+        let stops = GradientStops::from_slice(&[
+            GradientStop::new(0.0, [0, 0, 0, 255]),
+            GradientStop::new(1.0, [255, 0, 0, 255]),
+        ]);
+        assert_eq!(stops.len(), 2);
+    }
+
+    #[test]
+    fn glyph_run_push_and_empty() {
+        let mut run = GlyphRun::new(16.0, [0, 0, 0, 255]);
+        assert!(run.is_empty());
+        run.push(GlyphInstance {
+            x: 0.0,
+            y: 0.0,
+            glyph_id: 1,
+        });
+        assert!(!run.is_empty());
+        assert_eq!(run.glyphs.len(), 1);
+    }
+
+    #[test]
+    fn path_builder_builds_closed_square() {
+        let mut builder = PathBuilder::new();
+        builder.move_to(Point::new(0.0, 0.0));
+        builder.line_to(Point::new(10.0, 0.0));
+        builder.line_to(Point::new(10.0, 10.0));
+        builder.line_to(Point::new(0.0, 10.0));
+        builder.close_path();
+        let path = builder.build();
+        // move + 3 lines + close = 5 elements
+        assert_eq!(path.elements().len(), 5);
+    }
+
+    #[test]
+    fn path_builder_quad_and_curve() {
+        let mut builder = PathBuilder::new();
+        builder.move_to(Point::new(0.0, 0.0));
+        builder.quad_to(Point::new(5.0, 5.0), Point::new(10.0, 0.0));
+        builder.curve_to(
+            Point::new(15.0, 0.0),
+            Point::new(20.0, 5.0),
+            Point::new(25.0, 0.0),
+        );
+        let path = builder.build();
+        // move + quad + curve = 3 elements
+        assert_eq!(path.elements().len(), 3);
+    }
+
+    #[test]
+    fn paint_list_push_fill_rect() {
+        let mut list = PaintList::new();
+        list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+        assert_eq!(list.len(), 1);
+        assert!(matches!(list.commands[0], PaintCommand::FillRect(..)));
+    }
+
+    #[test]
+    fn paint_list_push_stroke_rect() {
+        let mut list = PaintList::new();
+        list.push_stroke_rect(Rect::ZERO, 2.0, [0, 255, 0, 255]);
+        assert_eq!(list.len(), 1);
+        assert!(matches!(list.commands[0], PaintCommand::StrokeRect(..)));
+    }
+
+    #[test]
+    fn paint_list_push_path() {
+        let mut list = PaintList::new();
+        let mut builder = PathBuilder::new();
+        builder.move_to(Point::ZERO);
+        builder.line_to(Point::new(1.0, 1.0));
+        list.push_path(builder.build(), [0, 0, 255, 255]);
+        assert_eq!(list.len(), 1);
+        assert!(matches!(list.commands[0], PaintCommand::FillPath(..)));
+    }
+
+    #[test]
+    fn paint_list_push_stroke_path() {
+        let mut list = PaintList::new();
+        let mut builder = PathBuilder::new();
+        builder.move_to(Point::ZERO);
+        builder.line_to(Point::new(1.0, 1.0));
+        list.push_stroke_path(builder.build(), 1.5, [0, 0, 255, 255]);
+        assert_eq!(list.len(), 1);
+        assert!(matches!(list.commands[0], PaintCommand::StrokePath(..)));
+    }
+
+    #[test]
+    fn paint_list_push_linear_gradient() {
+        let mut list = PaintList::new();
+        let stops = GradientStops::from_slice(&[
+            GradientStop::new(0.0, [0, 0, 0, 255]),
+            GradientStop::new(1.0, [255, 255, 255, 255]),
+        ]);
+        list.push_linear_gradient(Rect::ZERO, stops, [0.0, 0.0], [10.0, 0.0]);
+        assert_eq!(list.len(), 1);
+        assert!(matches!(
+            list.commands[0],
+            PaintCommand::FillLinearGradient(..)
+        ));
+    }
+
+    #[test]
+    fn paint_list_push_radial_gradient() {
+        let mut list = PaintList::new();
+        let stops = GradientStops::from_slice(&[
+            GradientStop::new(0.0, [0, 0, 0, 255]),
+            GradientStop::new(1.0, [255, 255, 255, 255]),
+        ]);
+        list.push_radial_gradient(Rect::ZERO, stops, [5.0, 5.0], 10.0);
+        assert_eq!(list.len(), 1);
+        assert!(matches!(
+            list.commands[0],
+            PaintCommand::FillRadialGradient(..)
+        ));
+    }
+
+    #[test]
+    fn paint_list_push_clip() {
+        let mut list = PaintList::new();
+        list.push_clip(Rect::new(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(list.len(), 1);
+        assert!(matches!(list.commands[0], PaintCommand::ClipRect(..)));
+    }
+
+    #[test]
+    fn paint_list_push_clip_rounded() {
+        let mut list = PaintList::new();
+        list.push_clip_rounded(Rect::new(0.0, 0.0, 10.0, 10.0), 4.0);
+        assert_eq!(list.len(), 1);
+        assert!(matches!(
+            list.commands[0],
+            PaintCommand::ClipRoundedRect(..)
+        ));
+    }
+
+    #[test]
+    fn paint_list_push_text_and_glyph_run() {
+        let mut list = PaintList::new();
+        list.push_text(Point::ZERO, "hi".to_string(), 12.0, [0, 0, 0, 255]);
+        list.push_glyph_run(GlyphRun::new(12.0, [0, 0, 0, 255]));
+        assert_eq!(list.len(), 2);
+        assert!(matches!(list.commands[0], PaintCommand::DrawText(..)));
+        assert!(matches!(list.commands[1], PaintCommand::DrawGlyphRun(..)));
+    }
+
+    #[test]
+    fn paint_list_clear_preserves_capacity() {
+        let mut list = PaintList::new();
+        for _ in 0..10 {
+            list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+        }
+        let capacity = list.commands.capacity();
+        assert!(capacity >= 10);
+        list.clear();
+        assert!(list.is_empty());
+        assert_eq!(list.commands.capacity(), capacity);
+    }
+
+    #[test]
+    fn paint_list_commands_appear_in_order() {
+        let mut list = PaintList::new();
+        list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+        list.push_stroke_rect(Rect::ZERO, 1.0, [0, 255, 0, 255]);
+        list.push_text(Point::ZERO, "hi".to_string(), 12.0, [0, 0, 255, 255]);
+        assert_eq!(list.len(), 3);
+        assert!(matches!(list.commands[0], PaintCommand::FillRect(..)));
+        assert!(matches!(list.commands[1], PaintCommand::StrokeRect(..)));
+        assert!(matches!(list.commands[2], PaintCommand::DrawText(..)));
+    }
+}

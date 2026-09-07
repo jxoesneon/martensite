@@ -1,0 +1,533 @@
+//! Multi-window management built on top of [`slotmap`] storage.
+//!
+//! [`WindowManager`] owns every open window in the application, tracks the
+//! DPI scale factor reported by the platform for each one, and routes
+//! [`winit`] window events to the appropriate per-window state.
+//!
+//! Windows are addressed by an opaque [`WindowKey`] returned from
+//! [`WindowManager::create_window`]. Internally the manager uses a
+//! [`SlotMap`] so that keys remain stable across insertions and removals and
+//! dangling keys (from a window that has since been destroyed) are detected
+//! cheaply.
+//!
+//! # Event routing
+//!
+//! [`WindowManager::handle_window_event`] inspects a `WindowEvent` for a
+//! given [`WindowId`] and:
+//!
+//! - updates the per-window DPI scale factor on
+//!   `WindowEvent::ScaleFactorChanged`,
+//! - signals that the window should be closed on
+//!   `WindowEvent::CloseRequested`,
+//! - signals that the window entry must be dropped on
+//!   `WindowEvent::Destroyed`.
+//!
+//! The returned [`WindowEventOutcome`] lets the surrounding event loop
+//! decide whether to tear down a surface, exit the application when the last
+//! window closes, and so on.
+
+use slotmap::{new_key_type, SlotMap};
+
+use crate::dpi::DpiScale;
+use crate::{Window, WindowId};
+
+// Generate a strongly-typed key for the window slotmap. This prevents the
+// window key from being confused with any other slotmap key in the program.
+new_key_type! {
+    /// Opaque, stable handle to a window tracked by a [`WindowManager`].
+    ///
+    /// Keys remain valid across insertions and removals and are cheap to
+    /// copy. A key whose window has been destroyed will no longer resolve
+    /// via [`WindowManager::get_window`] — such a key is simply stale and
+    /// yields `None` rather than panicking.
+    pub struct WindowKey;
+}
+
+/// The outcome of routing a single `WindowEvent` through
+/// [`WindowManager::handle_window_event`].
+///
+/// Callers (typically an [`ApplicationHandler`]) inspect this to decide
+/// whether to tear down GPU surfaces, request application exit, or simply
+/// continue processing further events.
+///
+/// [`ApplicationHandler`]: winit::application::ApplicationHandler
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WindowEventOutcome {
+    /// The event was observed but requires no special action from the
+    /// caller.
+    None,
+    /// The user requested the window be closed (e.g. clicked the title-bar
+    /// close button). The manager has *not* removed the window yet — the
+    /// caller should destroy any associated GPU surface and then call
+    /// [`WindowManager::destroy_window`].
+    CloseRequested,
+    /// The platform destroyed the underlying window. The manager has
+    /// already removed the corresponding [`WindowEntry`]; the caller should
+    /// drop any resources keyed on that [`WindowId`].
+    Destroyed,
+    /// The window's DPI scale factor changed. The manager has updated the
+    /// per-window scale; the new factor is provided so the caller can
+    /// reconfigure surface extents and re-rasterize at the new resolution.
+    ScaleFactorChanged(f64),
+    /// A redraw was requested for the window. The caller should render and
+    /// present a new frame.
+    RedrawRequested,
+}
+
+/// A single tracked window and its associated per-window state.
+///
+/// Each entry bundles the owning [`Window`] handle, the DPI scale factor
+/// currently in effect for the window, and the winit-assigned [`WindowId`]
+/// used to correlate incoming events.
+#[derive(Debug)]
+pub struct WindowEntry {
+    /// The platform window handle.
+    pub window: Box<dyn Window>,
+    /// The current DPI scale factor (physical-to-logical ratio) for this
+    /// window.
+    pub dpi_scale: f64,
+    /// The winit identifier used to route events to this window.
+    pub id: WindowId,
+}
+
+impl WindowEntry {
+    /// Returns a [`DpiScale`] view over this window's current scale factor.
+    ///
+    /// This is a convenience for callers that want the full
+    /// physical↔logical conversion API without having to construct a
+    /// [`DpiScale`] themselves.
+    #[must_use]
+    pub fn dpi(&self) -> DpiScale {
+        DpiScale::new(self.dpi_scale)
+    }
+}
+
+/// Owns and dispatches events for every open window in the application.
+///
+/// Storage is backed by a [`SlotMap`] keyed by [`WindowKey`], giving stable
+/// O(1) lookup, insertion, and removal even as windows are created and
+/// destroyed over the lifetime of the process.
+#[derive(Debug)]
+pub struct WindowManager {
+    /// Slotmap holding one [`WindowEntry`] per open window.
+    windows: SlotMap<WindowKey, WindowEntry>,
+}
+
+impl WindowManager {
+    /// Creates a new, empty [`WindowManager`].
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            windows: SlotMap::with_key(),
+        }
+    }
+
+    /// Creates and registers a new window.
+    ///
+    /// `event_loop` is the active winit event loop that owns window
+    /// creation; `attributes` configure the window's size, title, and other
+    /// platform properties. On success the window's current scale factor is
+    /// queried from the platform and stored alongside it.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the [`winit`] [`RequestError`] if the platform refuses to
+    /// create the window (denied permission, out of memory, incompatible
+    /// system, etc.).
+    ///
+    /// [`RequestError`]: winit::error::RequestError
+    pub fn create_window(
+        &mut self,
+        event_loop: &dyn winit::event_loop::ActiveEventLoop,
+        attributes: winit::window::WindowAttributes,
+    ) -> Result<WindowKey, winit::error::RequestError> {
+        let window = event_loop.create_window(attributes)?;
+        let id = window.id();
+        let dpi_scale = window.scale_factor();
+        let key = self.windows.insert(WindowEntry {
+            window,
+            dpi_scale,
+            id,
+        });
+        Ok(key)
+    }
+
+    /// Removes a window from management and returns its [`WindowEntry`].
+    ///
+    /// Returns `None` if `key` does not refer to a currently-tracked window
+    /// (for example, if it was already destroyed via a
+    /// `WindowEvent::Destroyed` event).
+    ///
+    /// `WindowEvent::Destroyed`: winit::event::WindowEvent::Destroyed
+    pub fn destroy_window(&mut self, key: WindowKey) -> Option<WindowEntry> {
+        self.windows.remove(key)
+    }
+
+    /// Returns a shared reference to the [`WindowEntry`] for `key`, or
+    /// `None` if the key is stale.
+    #[must_use]
+    pub fn get_window(&self, key: WindowKey) -> Option<&WindowEntry> {
+        self.windows.get(key)
+    }
+
+    /// Returns a mutable reference to the [`WindowEntry`] for `key`, or
+    /// `None` if the key is stale.
+    #[must_use]
+    pub fn get_window_mut(&mut self, key: WindowKey) -> Option<&mut WindowEntry> {
+        self.windows.get_mut(key)
+    }
+
+    /// Iterates over all tracked windows by reference.
+    pub fn iter_windows(&self) -> impl Iterator<Item = (WindowKey, &WindowEntry)> {
+        self.windows.iter()
+    }
+
+    /// Iterates over all tracked windows by mutable reference.
+    pub fn iter_windows_mut(&mut self) -> impl Iterator<Item = (WindowKey, &mut WindowEntry)> {
+        self.windows.iter_mut()
+    }
+
+    /// Returns the number of windows currently tracked.
+    #[must_use]
+    pub fn window_count(&self) -> usize {
+        self.windows.len()
+    }
+
+    /// Returns `true` if no windows are currently tracked.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.windows.is_empty()
+    }
+
+    /// Finds the [`WindowKey`] whose window matches the given [`WindowId`].
+    ///
+    /// This is the bridge between winit events (which carry a [`WindowId`])
+    /// and the slotmap-keyed storage used internally. Returns `None` if no
+    /// tracked window has that id.
+    #[must_use]
+    pub fn key_for_id(&self, id: WindowId) -> Option<WindowKey> {
+        self.windows
+            .iter()
+            .find(|(_, entry)| entry.id == id)
+            .map(|(key, _)| key)
+    }
+
+    /// Routes a `WindowEvent` for the window identified by `id`.
+    ///
+    /// The manager updates its internal per-window state as appropriate
+    /// (e.g. refreshing the DPI scale factor) and returns a
+    /// [`WindowEventOutcome`] describing what the caller should do next.
+    ///
+    /// If `id` does not correspond to a tracked window, [`WindowEventOutcome::None`]
+    /// is returned — this can happen transiently for events delivered after
+    /// a window has been destroyed.
+    pub fn handle_window_event(
+        &mut self,
+        id: WindowId,
+        event: &winit::event::WindowEvent,
+    ) -> WindowEventOutcome {
+        use winit::event::WindowEvent;
+
+        let Some(key) = self.key_for_id(id) else {
+            return WindowEventOutcome::None;
+        };
+
+        match event {
+            WindowEvent::CloseRequested => WindowEventOutcome::CloseRequested,
+            WindowEvent::Destroyed => {
+                // The platform window is gone; drop our entry so the key
+                // becomes stale and resources can be reclaimed.
+                self.destroy_window(key);
+                WindowEventOutcome::Destroyed
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                if let Some(entry) = self.get_window_mut(key) {
+                    entry.dpi_scale = *scale_factor;
+                }
+                WindowEventOutcome::ScaleFactorChanged(*scale_factor)
+            }
+            WindowEvent::RedrawRequested => WindowEventOutcome::RedrawRequested,
+            _ => WindowEventOutcome::None,
+        }
+    }
+}
+
+impl Default for WindowManager {
+    /// Returns an empty [`WindowManager`], equivalent to [`WindowManager::new`].
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WindowEventOutcome, WindowManager};
+    use crate::dpi::DpiScale;
+
+    // NOTE: `WindowManager::create_window` requires a running winit event
+    // loop, which cannot be spawned inside a normal unit test. The tests
+    // below therefore exercise the slotmap storage logic directly by
+    // inserting synthetic `WindowEntry` values through a test-only helper.
+    //
+    // Integration tests that drive a real event loop live in the
+    // `#[ignore]`-gated tests at the bottom of this module.
+
+    // `WindowId` is opaque and `Box<dyn Window>` cannot be constructed
+    // without a running event loop, and both would require `unsafe` to
+    // fabricate. To keep the storage tests `#![forbid(unsafe_code)]`-clean we
+    // instead verify the slotmap mechanics through a parallel helper that
+    // does not require real `WindowId`/`Window` values: see the
+    // `slotmap_mechanics` tests below which use a stand-in entry type.
+    //
+    // The tests that *do* need real `WindowId`s are gated behind `#[ignore]`
+    // and run against a live event loop.
+
+    /// Stand-in entry mirroring the slotmap mechanics of `WindowEntry`
+    /// without requiring a real `Window` or `WindowId`.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct FakeEntry {
+        id: u64,
+        dpi_scale: f64,
+    }
+
+    /// A minimal slotmap wrapper used to validate the storage logic that
+    /// `WindowManager` relies on, without needing winit types.
+    #[derive(Debug, Default)]
+    struct FakeManager {
+        windows: slotmap::SlotMap<super::WindowKey, FakeEntry>,
+    }
+
+    impl FakeManager {
+        fn new() -> Self {
+            Self {
+                windows: slotmap::SlotMap::with_key(),
+            }
+        }
+
+        fn insert(&mut self, id: u64, dpi_scale: f64) -> super::WindowKey {
+            self.windows.insert(FakeEntry { id, dpi_scale })
+        }
+
+        fn remove(&mut self, key: super::WindowKey) -> Option<FakeEntry> {
+            self.windows.remove(key)
+        }
+
+        fn get(&self, key: super::WindowKey) -> Option<&FakeEntry> {
+            self.windows.get(key)
+        }
+
+        fn get_mut(&mut self, key: super::WindowKey) -> Option<&mut FakeEntry> {
+            self.windows.get_mut(key)
+        }
+
+        fn len(&self) -> usize {
+            self.windows.len()
+        }
+
+        fn is_empty(&self) -> bool {
+            self.windows.is_empty()
+        }
+
+        fn iter(&self) -> impl Iterator<Item = (super::WindowKey, &FakeEntry)> {
+            self.windows.iter()
+        }
+
+        fn key_for_id(&self, id: u64) -> Option<super::WindowKey> {
+            self.windows
+                .iter()
+                .find(|(_, entry)| entry.id == id)
+                .map(|(key, _)| key)
+        }
+    }
+
+    #[test]
+    fn new_manager_is_empty() {
+        let mgr = WindowManager::new();
+        assert!(mgr.is_empty());
+        assert_eq!(mgr.window_count(), 0);
+    }
+
+    #[test]
+    fn default_equals_new() {
+        let a = WindowManager::new();
+        let b = WindowManager::default();
+        assert_eq!(a.window_count(), b.window_count());
+        assert!(a.is_empty() && b.is_empty());
+    }
+
+    #[test]
+    fn slotmap_mechanics_insert_and_get() {
+        let mut mgr = FakeManager::new();
+        assert!(mgr.is_empty());
+
+        let k0 = mgr.insert(10, 1.0);
+        let k1 = mgr.insert(20, 2.0);
+        assert_ne!(k0, k1);
+        assert_eq!(mgr.len(), 2);
+        assert!(!mgr.is_empty());
+
+        assert_eq!(mgr.get(k0).map(|e| e.id), Some(10));
+        assert_eq!(mgr.get(k1).map(|e| e.id), Some(20));
+    }
+
+    #[test]
+    fn slotmap_mechanics_remove_returns_entry() {
+        let mut mgr = FakeManager::new();
+        let k = mgr.insert(42, 1.5);
+        assert_eq!(mgr.len(), 1);
+
+        let removed = mgr.remove(k);
+        assert_eq!(removed.map(|e| (e.id, e.dpi_scale)), Some((42, 1.5)));
+        assert_eq!(mgr.len(), 0);
+        assert!(mgr.get(k).is_none());
+    }
+
+    #[test]
+    fn slotmap_mechanics_remove_stale_key_returns_none() {
+        let mut mgr = FakeManager::new();
+        let k = mgr.insert(1, 1.0);
+        let _ = mgr.remove(k);
+        assert!(mgr.remove(k).is_none());
+    }
+
+    #[test]
+    fn slotmap_mechanics_get_mut_updates_dpi() {
+        let mut mgr = FakeManager::new();
+        let k = mgr.insert(7, 1.0);
+        {
+            let entry = mgr.get_mut(k).expect("just-inserted key must resolve");
+            entry.dpi_scale = 1.5;
+        }
+        assert_eq!(mgr.get(k).map(|e| e.dpi_scale), Some(1.5));
+    }
+
+    #[test]
+    fn slotmap_mechanics_key_for_id_resolves() {
+        let mut mgr = FakeManager::new();
+        let k0 = mgr.insert(100, 1.0);
+        let k1 = mgr.insert(200, 2.0);
+
+        assert_eq!(mgr.key_for_id(100), Some(k0));
+        assert_eq!(mgr.key_for_id(200), Some(k1));
+        assert_eq!(mgr.key_for_id(999), None);
+    }
+
+    #[test]
+    fn slotmap_mechanics_iter_visits_all() {
+        let mut mgr = FakeManager::new();
+        let k0 = mgr.insert(1, 1.0);
+        let k1 = mgr.insert(2, 2.0);
+        let k2 = mgr.insert(3, 3.0);
+
+        let mut seen: Vec<(super::WindowKey, u64)> = mgr.iter().map(|(k, e)| (k, e.id)).collect();
+        seen.sort_by_key(|(_, id)| *id);
+
+        assert_eq!(seen, vec![(k0, 1), (k1, 2), (k2, 3)],);
+    }
+
+    #[test]
+    fn slotmap_mechanics_remove_makes_key_stale_but_others_survive() {
+        let mut mgr = FakeManager::new();
+        let k0 = mgr.insert(1, 1.0);
+        let k1 = mgr.insert(2, 2.0);
+
+        assert!(mgr.remove(k0).is_some());
+        assert!(mgr.get(k0).is_none(), "removed key should be stale");
+        assert!(
+            mgr.get(k1).is_some(),
+            "unrelated key must remain valid after a removal",
+        );
+        assert_eq!(mgr.len(), 1);
+    }
+
+    #[test]
+    fn window_entry_dpi_returns_scale_view() {
+        // We cannot build a real `WindowEntry` (no event loop), but the
+        // `dpi()` helper is pure arithmetic over `dpi_scale`, so verify it
+        // through the `DpiScale` type directly to lock the contract.
+        let scale = DpiScale::new(2.0);
+        assert_eq!(scale.to_physical(100.0), 200.0);
+        assert_eq!(scale.to_logical(200.0), 100.0);
+    }
+
+    #[test]
+    fn window_event_outcome_variants_are_distinct() {
+        assert_ne!(WindowEventOutcome::None, WindowEventOutcome::CloseRequested);
+        assert_ne!(
+            WindowEventOutcome::CloseRequested,
+            WindowEventOutcome::Destroyed,
+        );
+        assert_ne!(
+            WindowEventOutcome::ScaleFactorChanged(1.0),
+            WindowEventOutcome::ScaleFactorChanged(2.0),
+        );
+        assert_eq!(
+            WindowEventOutcome::RedrawRequested,
+            WindowEventOutcome::RedrawRequested,
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Event-loop-gated tests.
+    //
+    // These tests require a running winit `EventLoop` to construct real
+    // `Window`/`WindowId` values. They are `#[ignore]` by default because
+    // they cannot run in headless CI and may block on platform windowing
+    // systems. Run them explicitly with:
+    //
+    //     cargo test -p martensite-window -- --ignored
+    //
+    /// Verifies that a real window can be created, tracked, and destroyed
+    /// through `WindowManager` on a live event loop.
+    #[test]
+    #[ignore = "requires a running winit event loop and a windowing system"]
+    fn create_and_destroy_real_window() {
+        use winit::application::ApplicationHandler;
+        use winit::event_loop::{ActiveEventLoop, EventLoop};
+        use winit::window::WindowAttributes;
+
+        struct App {
+            mgr: WindowManager,
+            done: bool,
+        }
+
+        impl ApplicationHandler for App {
+            fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+                let attrs = WindowAttributes::default().with_title("martensite-window test");
+                let key = self
+                    .mgr
+                    .create_window(event_loop, attrs)
+                    .expect("window creation should succeed on a live event loop");
+                assert_eq!(self.mgr.window_count(), 1);
+                assert!(self.mgr.get_window(key).is_some());
+                assert!(self.mgr.destroy_window(key).is_some());
+                assert_eq!(self.mgr.window_count(), 0);
+                self.done = true;
+                event_loop.exit();
+            }
+
+            fn window_event(
+                &mut self,
+                _event_loop: &dyn ActiveEventLoop,
+                _id: winit::window::WindowId,
+                _event: winit::event::WindowEvent,
+            ) {
+            }
+
+            fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+                if self.done {
+                    event_loop.exit();
+                }
+            }
+        }
+
+        let event_loop = EventLoop::new().expect("event loop creation should succeed");
+        let app = App {
+            mgr: WindowManager::new(),
+            done: false,
+        };
+        event_loop
+            .run_app(app)
+            .expect("event loop should run cleanly");
+    }
+}

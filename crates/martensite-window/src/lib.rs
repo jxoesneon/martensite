@@ -1,21 +1,65 @@
-//! Multi-window management and fractional DPI scaling.
+//! Multi-window management and fractional DPI scaling for Martensite.
+//!
+//! This crate provides two cooperating modules:
+//!
+//! - [`dpi`] — the [`DpiScale`] type for converting between physical and
+//!   logical pixels with full fractional scale-factor support (e.g. `1.25x`,
+//!   `1.5x`, `1.75x`), plus runtime updates when a window moves between
+//!   monitors with different DPIs.
+//! - [`manager`] — the [`WindowManager`] which owns every open window,
+//!   tracks per-window DPI scale factors, and routes [`winit`] window
+//!   events to the appropriate per-window state via a [`slotmap`]-backed
+//!   store.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use martensite_window::{WindowManager, dpi::DpiScale};
+//! use winit::application::ApplicationHandler;
+//! use winit::event::WindowEvent;
+//! use winit::event_loop::{ActiveEventLoop, EventLoop};
+//! use winit::window::{WindowAttributes, WindowId};
+//!
+//! struct App {
+//!     mgr: WindowManager,
+//! }
+//!
+//! impl ApplicationHandler for App {
+//!     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+//!         let attrs = WindowAttributes::default().with_title("Martensite");
+//!         let _key = self.mgr.create_window(event_loop, attrs)
+//!             .expect("window creation failed");
+//!     }
+//!
+//!     fn window_event(
+//!         &mut self,
+//!         event_loop: &dyn ActiveEventLoop,
+//!         id: WindowId,
+//!         event: WindowEvent,
+//!     ) {
+//!         use martensite_window::manager::WindowEventOutcome;
+//!         match self.mgr.handle_window_event(id, &event) {
+//!             WindowEventOutcome::CloseRequested => event_loop.exit(),
+//!             _ => {}
+//!         }
+//!     }
+//!
+//!     fn about_to_wait(&mut self, _event_loop: &dyn ActiveEventLoop) {}
+//! }
+//!
+//! let event_loop = EventLoop::new().expect("failed to create event loop");
+//! let app = App { mgr: WindowManager::new() };
+//! event_loop.run_app(app).expect("event loop exited with error");
+//! ```
 #![forbid(unsafe_code)]
 
-pub use winit::window::{Window, WindowId};
+pub mod dpi;
+pub mod manager;
 
-#[cfg(test)]
-mod tests {
-    use super::{Window, WindowId};
+pub use winit::error::RequestError;
+pub use winit::event::WindowEvent;
+pub use winit::event_loop::ActiveEventLoop;
+pub use winit::window::{Window, WindowAttributes, WindowId};
 
-    #[test]
-    fn reexports_are_accessible() {
-        // Window and WindowId require a running event loop to construct,
-        // so we only verify the re-exported types are accessible from this
-        // crate's public API.
-        // `WindowId` is a struct; verify it is usable in type position.
-        let _: Option<WindowId> = None;
-        // `Window` is a trait; verify it is accessible as a trait bound.
-        fn _accepts_window<T: Window + ?Sized>() {}
-        // Reaching this point proves the re-exported types are accessible.
-    }
-}
+pub use dpi::DpiScale;
+pub use manager::{WindowEntry, WindowEventOutcome, WindowKey, WindowManager};

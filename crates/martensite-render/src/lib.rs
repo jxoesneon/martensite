@@ -1,39 +1,33 @@
-//! Intermediate PaintList stream and software rasterization fallback.
+//! Intermediate PaintList command stream and rendering backends.
+//!
+//! This crate provides the hardware-agnostic [`PaintList`] command stream
+//! produced by layout, plus two concrete implementations of the
+//! [`RenderBackend`] trait:
+//!
+//! - [`tinyskia_backend::TinySkiaBackend`] — a pure-CPU rasterizer built on
+//!   `tiny_skia`, suitable for headless CI and software fallback.
+//! - [`vello_backend::VelloRenderer`] — a GPU renderer that translates a
+//!   `PaintList` into a Vello scene (gated behind the `vello` feature).
+//!
+//! A perceptual diffing engine ([`diff`]) is provided for reftest-style
+//! verification of rendered output.
+
 #![forbid(unsafe_code)]
 
-use kurbo::{Point, Rect};
+pub mod diff;
+pub mod paint;
+pub mod tinyskia_backend;
+pub mod vello_backend;
 
-/// A single drawing operation emitted into a [`PaintList`].
-pub enum PaintCommand {
-    /// Fill a rectangle with a solid RGBA color.
-    FillRect(Rect, [u8; 4]),
-    /// Stroke the outline of a rectangle with the given line width and RGBA color.
-    StrokeRect(Rect, f32, [u8; 4]),
-    /// Draw a text string at the given position, font size, and RGBA color.
-    DrawText(Point, String, f32, [u8; 4]),
-}
+pub use paint::{
+    GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintCommand, PaintList, PathBuilder,
+};
+pub use tinyskia_backend::TinySkiaBackend;
+pub use vello_backend::VelloRenderer;
 
-/// An ordered list of [`PaintCommand`]s produced by the layout phase and
-/// consumed by a [`RenderBackend`].
-#[derive(Default)]
-pub struct PaintList {
-    /// The ordered sequence of paint commands to render.
-    pub commands: Vec<PaintCommand>,
-}
-
-impl PaintList {
-    /// Creates a new, empty `PaintList`.
-    pub fn new() -> Self {
-        Self {
-            commands: Vec::new(),
-        }
-    }
-
-    /// Removes all commands from the list, leaving it empty.
-    pub fn clear(&mut self) {
-        self.commands.clear();
-    }
-}
+// Re-export the core rendering trait and supporting geometry types for
+// downstream convenience.
+pub use kurbo::{BezPath, Point, Rect};
 
 /// Abstraction over the concrete rendering target that consumes a [`PaintList`].
 pub trait RenderBackend: Send + 'static {
