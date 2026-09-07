@@ -169,6 +169,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Target version is the workspace package version.
+          WORKSPACE_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/^version *= *"\(.*\)".*/\1/')
+          echo "[$(date -u +%H:%M:%S)] Workspace version: ${WORKSPACE_VERSION}"
+
           # Crates in topological dependency order.
           # martensite-cosmic-text must come before martensite-text.
           CRATES=(
@@ -197,8 +201,24 @@ jobs:
             martensite-blessed
           )
 
+          # Target version is the workspace package version.
+          TARGET_VERSION="$WORKSPACE_VERSION"
+
+          published=0
           for crate in "${CRATES[@]}"; do
-            echo "[$(date -u +%H:%M:%S)] Publishing $crate..."
+            # Pre-check: query crates.io API for the crate's max published
+            # version. If TARGET_VERSION is already published, skip immediately
+            # without invoking cargo publish or sleeping.
+            api_url="https://crates.io/api/v1/crates/${crate}"
+            existing=$(curl -fsSL -A "martensite-ci (https://github.com/jxoesneon/martensite)" "$api_url" 2>/dev/null \
+              | grep -oE '"max_stable_version":"[^"]*"' | head -1 \
+              | sed 's/"max_stable_version":"//;s/"//')
+            if [ "$existing" = "$TARGET_VERSION" ]; then
+              echo "[$(date -u +%H:%M:%S)] $crate ${TARGET_VERSION} already on crates.io; skipping."
+              continue
+            fi
+            echo "[$(date -u +%H:%M:%S)] $crate: latest=${existing:-none}, target=${TARGET_VERSION}; publishing..."
+
             while true; do
               log="/tmp/publish_${crate}.log"
               # Use --no-verify for the initial release because workspace
@@ -231,10 +251,11 @@ jobs:
               cat "$log"
               exit 1
             done
-            # Wait between publishes for crates.io index propagation.
+            published=$((published + 1))
+            # Wait between NEW publishes only, for crates.io index propagation.
             sleep 180
           done
-          echo "[$(date -u +%H:%M:%S)] All crates published."
+          echo "[$(date -u +%H:%M:%S)] All crates processed. Newly published: ${published}."
 
   # ──────────────────────────────────────────────────────────
   # GITHUB RELEASE — create release notes after publishing
