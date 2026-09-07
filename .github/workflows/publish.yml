@@ -138,8 +138,8 @@ jobs:
             martensite-macros
             martensite-core
             martensite-layout
-            martensite-wgpu
             martensite-render
+            martensite-wgpu
             martensite-cosmic-text
             martensite-text
             martensite-access
@@ -176,8 +176,8 @@ jobs:
             martensite-macros
             martensite-core
             martensite-layout
-            martensite-wgpu
             martensite-render
+            martensite-wgpu
             martensite-cosmic-text
             martensite-text
             martensite-access
