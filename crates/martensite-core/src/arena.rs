@@ -754,10 +754,8 @@ impl WidgetArena {
             if hot.parent.is_none() && hot.prev_sibling.is_none() {
                 let slot_idx = self.dense_to_slot[i];
                 let slot = self.slots[slot_idx as usize];
-                queue.push_back(
-                    WidgetId::new(slot_idx, slot.generation)
-                        .expect("generation is never zero for an active slot"),
-                );
+                // Generation is never zero for an active slot (see arena docs).
+                queue.push_back(WidgetId::from_parts(slot_idx, slot.generation));
             }
         }
         BreadthFirstIter { arena: self, queue }
@@ -944,8 +942,8 @@ impl<'a> Iterator for DepthFirstIter<'a> {
 
             let slot_idx = self.arena.dense_to_slot[dense_idx];
             let slot = self.arena.slots[slot_idx as usize];
-            let id = WidgetId::new(slot_idx, slot.generation)
-                .expect("generation is never zero for an active slot");
+            // Generation is never zero for an active slot (see arena docs).
+            let id = WidgetId::from_parts(slot_idx, slot.generation);
             let hot = &self.arena.hot_nodes[dense_idx];
 
             if hot.parent.is_none() && hot.prev_sibling.is_none() {
