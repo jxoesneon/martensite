@@ -491,13 +491,9 @@ impl LayoutEngine {
         available: Size<AvailableSpace>,
     ) -> Result<(), LayoutError> {
         self.mark_dirty(arena, dirty_leaf);
-        let root_node = self
-            .lookup_node(root)
-            .ok_or(LayoutError::NodeNotFound(NodeId::new(0)))?;
-        self.compute(root_node, available)?;
-        // Use apply_layout_with_widgets to ensure Widget::layout is called
-        self.apply_layout_with_widgets(arena, root);
-        Ok(())
+        // Use compute_with_widgets to re-measure and re-layout with
+        // widget-aware measure functions, not plain Taffy compute.
+        self.compute_with_widgets(arena, root, available)
     }
 
     /// Returns an iterator over all registered `(WidgetId, NodeId)` pairs.

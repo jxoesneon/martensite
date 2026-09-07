@@ -195,7 +195,9 @@ impl Flex {
                 let mut cursor = 0.0f32;
                 for i in 0..n {
                     offsets.push(cursor);
-                    cursor += self.direction.main(self.child_sizes[i]);
+                    cursor += self
+                        .direction
+                        .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO));
                     cursor += self.gap;
                 }
                 offsets
@@ -205,7 +207,9 @@ impl Flex {
                 let mut cursor = free_space;
                 for i in 0..n {
                     offsets.push(cursor);
-                    cursor += self.direction.main(self.child_sizes[i]);
+                    cursor += self
+                        .direction
+                        .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO));
                     cursor += self.gap;
                 }
                 offsets
@@ -215,7 +219,9 @@ impl Flex {
                 let mut cursor = free_space / 2.0;
                 for i in 0..n {
                     offsets.push(cursor);
-                    cursor += self.direction.main(self.child_sizes[i]);
+                    cursor += self
+                        .direction
+                        .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO));
                     cursor += self.gap;
                 }
                 offsets
@@ -230,7 +236,9 @@ impl Flex {
                 let mut cursor = 0.0f32;
                 for i in 0..n {
                     offsets.push(cursor);
-                    cursor += self.direction.main(self.child_sizes[i]);
+                    cursor += self
+                        .direction
+                        .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO));
                     cursor += self.gap + space_between;
                 }
                 offsets
@@ -245,7 +253,9 @@ impl Flex {
                 let mut cursor = space;
                 for i in 0..n {
                     offsets.push(cursor);
-                    cursor += self.direction.main(self.child_sizes[i]);
+                    cursor += self
+                        .direction
+                        .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO));
                     cursor += self.gap + space;
                 }
                 offsets
@@ -332,7 +342,14 @@ impl Widget for Flex {
                 )
             };
 
-            let child_bounds = Rect::new(x, y, child_main, child_cross);
+            // For Row: width=child_main, height=child_cross
+            // For Column: width=child_cross, height=child_main
+            let (w, h) = if direction.is_row() {
+                (child_main, child_cross)
+            } else {
+                (child_cross, child_main)
+            };
+            let child_bounds = Rect::new(x, y, w, h);
             child.layout(cx, child_bounds);
         }
     }
