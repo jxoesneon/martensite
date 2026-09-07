@@ -66,14 +66,37 @@ impl GradientStops {
 /// Coordinates are in device pixels and the `glyph_id` is an index into the
 /// font's glyph table. This type is backend-agnostic: the concrete renderer is
 /// responsible for mapping the id to the appropriate atlas or outline.
+///
+/// The `width` and `height` fields carry the glyph's pre-measured bounding box
+/// in device pixels so that a backend can rasterize the glyph's footprint
+/// without consulting a font atlas. Full glyph-outline rasterization is
+/// deferred to the text pipeline (planned for v0.3.0).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphInstance {
     /// The X coordinate of the glyph origin, in device pixels.
     pub x: f32,
-    /// The Y coordinate of the glyph origin, in device pixels.
+    /// The Y coordinate of the glyph origin (baseline), in device pixels.
     pub y: f32,
     /// The font-specific glyph identifier.
     pub glyph_id: u32,
+    /// The pre-measured glyph advance width, in device pixels.
+    pub width: f32,
+    /// The pre-measured glyph bounding-box height, in device pixels.
+    pub height: f32,
+}
+
+impl GlyphInstance {
+    /// Creates a new glyph instance with the given origin, identifier, and
+    /// pre-measured bounding-box dimensions (in device pixels).
+    pub fn new(x: f32, y: f32, glyph_id: u32, width: f32, height: f32) -> Self {
+        Self {
+            x,
+            y,
+            glyph_id,
+            width,
+            height,
+        }
+    }
 }
 
 /// A run of glyphs sharing a font, size, and color.
@@ -326,11 +349,7 @@ mod tests {
     fn glyph_run_push_and_empty() {
         let mut run = GlyphRun::new(16.0, [0, 0, 0, 255]);
         assert!(run.is_empty());
-        run.push(GlyphInstance {
-            x: 0.0,
-            y: 0.0,
-            glyph_id: 1,
-        });
+        run.push(GlyphInstance::new(0.0, 0.0, 1, 8.0, 16.0));
         assert!(!run.is_empty());
         assert_eq!(run.glyphs.len(), 1);
     }

@@ -1,12 +1,14 @@
 //! Perceptual image diffing engine based on DSSIM (Structural Similarity).
 //!
 //! The engine compares two RGBA images of identical dimensions and produces a
-//! [`DiffResult`] containing an overall SSIM score, an edge-masked SSIM score,
-//! and a pass/fail verdict. Two tolerance bands are used:
+//! [`DiffResult`] containing separate SSIM scores for interior and edge
+//! windows, an overall SSIM for reporting, and a pass/fail verdict. Two
+//! tolerance bands are used:
 //!
-//! - **Edge-masked regions** (pixels along high-frequency luminance gradients)
-//!   use a relaxed threshold of `SSIM >= 0.995`.
-//! - **Fill interiors** use a strict threshold of `SSIM >= 0.9999`.
+//! - **Edge windows** (blocks that contain at least one high-frequency
+//!   luminance-gradient pixel) use a relaxed threshold of `SSIM >= 0.995`.
+//! - **Interior windows** (blocks with no edge pixels, i.e. solid fills) use
+//!   a strict threshold of `SSIM >= 0.9999`.
 //!
 //! This mirrors the behavior of perceptual diff tools used by browser engine
 //! reftest harnesses: anti-aliased edges are allowed minor sub-pixel drift
@@ -16,13 +18,25 @@
 #[derive(Clone, Copy, Debug)]
 pub struct DiffResult {
     /// The mean SSIM across all evaluated windows, in `[0.0, 1.0]` where `1.0`
-    /// is identical.
+    /// is identical. This is reported for diagnostic purposes only and is not
+    /// used by the pass condition.
     pub overall_ssim: f64,
     /// The mean SSIM computed only over windows classified as high-frequency
-    /// edges. When no edges are present this equals `overall_ssim`.
+    /// edges. When no edges are present this equals `overall_ssim`. Retained
+    /// for backward compatibility; new code should prefer [`DiffResult::edge_ssim`].
     pub edge_masked_ssim: f64,
-    /// `true` when both the overall and edge-masked scores meet their
-    /// respective thresholds.
+    /// The mean SSIM over windows that contain **no** edge pixels. These
+    /// represent solid-fill interiors and are held to the strict
+    /// [`FILL_SSIM_THRESHOLD`]. When every window contains an edge this
+    /// defaults to `1.0` (vacuously passing the interior check).
+    pub interior_ssim: f64,
+    /// The mean SSIM over windows that **do** contain edge pixels. These
+    /// represent anti-aliased or high-frequency boundaries and are held to the
+    /// relaxed [`EDGE_SSIM_THRESHOLD`]. When no edges are present this
+    /// defaults to `1.0` (vacuously passing the edge check).
+    pub edge_ssim: f64,
+    /// `true` when the interior windows meet [`FILL_SSIM_THRESHOLD`] **and**
+    /// the edge windows meet [`EDGE_SSIM_THRESHOLD`].
     pub passed: bool,
 }
 
@@ -78,11 +92,6 @@ fn edge_mask(gray: &[f64], width: usize, height: usize) -> Vec<bool> {
         }
     }
     mask
-}
-
-/// Computes the SSIM of a single `WINDOW x WINDOW` block.
-fn ssim_block(a: &[f64], b: &[f64], stride: usize, origin_a: usize, origin_b: usize) -> f64 {
-    ssim_block_sized(a, b, stride, WINDOW, WINDOW, origin_a, origin_b)
 }
 
 /// Computes the SSIM of a `width x height` block starting at the given origins.
@@ -143,6 +152,8 @@ pub fn perceptual_diff(expected: &[u8], actual: &[u8], width: u32, height: u32) 
         return DiffResult {
             overall_ssim: 0.0,
             edge_masked_ssim: 0.0,
+            interior_ssim: 0.0,
+            edge_ssim: 0.0,
             passed: false,
         };
     }
@@ -158,34 +169,64 @@ pub fn perceptual_diff(expected: &[u8], actual: &[u8], width: u32, height: u32) 
 
     let mut overall_sum = 0.0;
     let mut overall_count = 0usize;
+    let mut interior_sum = 0.0;
+    let mut interior_count = 0usize;
     let mut edge_sum = 0.0;
     let mut edge_count = 0usize;
 
     if w < WINDOW || h < WINDOW {
         // Image smaller than a single window: evaluate the whole image as one
-        // block using the actual image dimensions.
+        // block using the actual image dimensions, then classify it as an edge
+        // or interior window based on whether any edge pixels are present.
         let block_ssim = ssim_block_sized(&gray_a, &gray_b, w, w, h, 0, 0);
+        let has_edge = edges.iter().any(|&e| e);
+        if has_edge {
+            edge_sum = block_ssim;
+            edge_count = 1;
+        } else {
+            interior_sum = block_ssim;
+            interior_count = 1;
+        }
+        let interior_ssim = if interior_count > 0 {
+            interior_sum / interior_count as f64
+        } else {
+            1.0
+        };
+        let edge_ssim = if edge_count > 0 {
+            edge_sum / edge_count as f64
+        } else {
+            1.0
+        };
         return DiffResult {
             overall_ssim: block_ssim,
-            edge_masked_ssim: block_ssim,
-            passed: block_ssim >= FILL_SSIM_THRESHOLD,
+            edge_masked_ssim: edge_ssim,
+            interior_ssim,
+            edge_ssim,
+            passed: interior_ssim >= FILL_SSIM_THRESHOLD && edge_ssim >= EDGE_SSIM_THRESHOLD,
         };
     }
 
+    // Iterate over the image in WINDOW x WINDOW blocks. When the image
+    // dimensions are not exact multiples of WINDOW, the trailing partial
+    // blocks along the right and bottom edges are accumulated with their
+    // actual (smaller) extents rather than discarded.
     let mut y = 0;
-    while y + WINDOW <= h {
+    while y < h {
+        let block_h = if y + WINDOW <= h { WINDOW } else { h - y };
         let mut x = 0;
-        while x + WINDOW <= w {
+        while x < w {
+            let block_w = if x + WINDOW <= w { WINDOW } else { w - x };
             let origin = y * w + x;
-            let block_ssim = ssim_block(&gray_a, &gray_b, w, origin, origin);
+            let block_ssim =
+                ssim_block_sized(&gray_a, &gray_b, w, block_w, block_h, origin, origin);
             overall_sum += block_ssim;
             overall_count += 1;
 
-            // A block is considered edge-masked if any pixel within it is
+            // A block is considered an edge block if any pixel within it is
             // flagged as a high-frequency edge.
             let mut has_edge = false;
-            for dy in 0..WINDOW {
-                for dx in 0..WINDOW {
+            for dy in 0..block_h {
+                for dx in 0..block_w {
                     if edges[origin + dy * w + dx] {
                         has_edge = true;
                         break;
@@ -198,6 +239,9 @@ pub fn perceptual_diff(expected: &[u8], actual: &[u8], width: u32, height: u32) 
             if has_edge {
                 edge_sum += block_ssim;
                 edge_count += 1;
+            } else {
+                interior_sum += block_ssim;
+                interior_count += 1;
             }
             x += WINDOW;
         }
@@ -209,17 +253,33 @@ pub fn perceptual_diff(expected: &[u8], actual: &[u8], width: u32, height: u32) 
     } else {
         1.0
     };
-    let edge_masked_ssim = if edge_count > 0 {
+    let interior_ssim = if interior_count > 0 {
+        interior_sum / interior_count as f64
+    } else {
+        // No interior windows: vacuously pass the strict check.
+        1.0
+    };
+    let edge_ssim = if edge_count > 0 {
         edge_sum / edge_count as f64
+    } else {
+        // No edge windows: vacuously pass the relaxed check.
+        1.0
+    };
+    // `edge_masked_ssim` retained for backward compatibility; it mirrors the
+    // edge-window mean (falling back to the overall mean when there are none).
+    let edge_masked_ssim = if edge_count > 0 {
+        edge_ssim
     } else {
         overall_ssim
     };
 
-    let passed = overall_ssim >= FILL_SSIM_THRESHOLD && edge_masked_ssim >= EDGE_SSIM_THRESHOLD;
+    let passed = interior_ssim >= FILL_SSIM_THRESHOLD && edge_ssim >= EDGE_SSIM_THRESHOLD;
 
     DiffResult {
         overall_ssim,
         edge_masked_ssim,
+        interior_ssim,
+        edge_ssim,
         passed,
     }
 }
@@ -243,6 +303,9 @@ mod tests {
         let result = perceptual_diff(&a, &b, 32, 32);
         assert!(result.passed, "identical images should pass");
         assert!(result.overall_ssim > 0.9999);
+        // A solid fill has no edges, so every window is interior.
+        assert!(result.interior_ssim > 0.9999);
+        assert_eq!(result.edge_ssim, 1.0, "no edge windows => edge_ssim is 1.0");
     }
 
     #[test]
@@ -251,6 +314,8 @@ mod tests {
         let b = solid_image(32, 32, [0, 0, 255, 255]);
         let result = perceptual_diff(&a, &b, 32, 32);
         assert!(!result.passed, "different solid colors should fail");
+        // Both are solid fills so the failure is in interior_ssim.
+        assert!(result.interior_ssim < FILL_SSIM_THRESHOLD);
     }
 
     #[test]
@@ -260,9 +325,9 @@ mod tests {
         let result = perceptual_diff(&a, &b, 32, 32);
         // A uniform 5-unit shift should drop below the strict fill threshold.
         assert!(
-            result.overall_ssim < FILL_SSIM_THRESHOLD,
+            result.interior_ssim < FILL_SSIM_THRESHOLD,
             "uniform shift should fail strict threshold, got {}",
-            result.overall_ssim
+            result.interior_ssim
         );
         assert!(!result.passed);
     }
@@ -274,6 +339,8 @@ mod tests {
         let result = perceptual_diff(&a, &short, 32, 32);
         assert!(!result.passed);
         assert_eq!(result.overall_ssim, 0.0);
+        assert_eq!(result.interior_ssim, 0.0);
+        assert_eq!(result.edge_ssim, 0.0);
     }
 
     #[test]
@@ -282,10 +349,38 @@ mod tests {
         let b = solid_image(4, 4, [10, 20, 30, 255]);
         let result = perceptual_diff(&a, &b, 4, 4);
         assert!(result.passed);
+        // No edges in a solid fill, so it is classified as interior.
+        assert!(result.interior_ssim >= FILL_SSIM_THRESHOLD);
+        assert_eq!(result.edge_ssim, 1.0);
     }
 
     #[test]
-    fn edge_image_has_edge_masked_score() {
+    fn tiny_edge_image_uses_relaxed_threshold() {
+        // A 4x4 image with a sharp vertical edge at x=2. Smaller than WINDOW
+        // so it takes the small-image branch, but it still has edge pixels.
+        let mut a = Vec::with_capacity(4 * 4 * 4);
+        for _y in 0..4 {
+            for x in 0..4 {
+                let c = if x < 2 {
+                    [0, 0, 0, 255]
+                } else {
+                    [255, 255, 255, 255]
+                };
+                a.extend_from_slice(&c);
+            }
+        }
+        let b = a.clone();
+        let result = perceptual_diff(&a, &b, 4, 4);
+        assert!(result.passed);
+        // The single block contains edges so it is classified as an edge
+        // window and held to the relaxed threshold.
+        assert!(result.edge_ssim >= EDGE_SSIM_THRESHOLD);
+        // No interior windows => interior_ssim vacuously passes at 1.0.
+        assert_eq!(result.interior_ssim, 1.0);
+    }
+
+    #[test]
+    fn edge_image_has_edge_score() {
         // Build a 16x16 image with a sharp vertical edge at x=8.
         let mut a = Vec::with_capacity(16 * 16 * 4);
         for _y in 0..16 {
@@ -301,8 +396,105 @@ mod tests {
         let b = a.clone();
         let result = perceptual_diff(&a, &b, 16, 16);
         assert!(result.passed);
-        // The edge band should be detected, so edge_masked_ssim should be
-        // computed from at least one edge window.
-        assert!(result.edge_masked_ssim >= EDGE_SSIM_THRESHOLD);
+        // The edge band should be detected, so edge_ssim should be computed
+        // from at least one edge window.
+        assert!(result.edge_ssim >= EDGE_SSIM_THRESHOLD);
+    }
+
+    #[test]
+    fn interior_and_edge_separation() {
+        // Build a 32x32 image: solid black on the left half, solid white on
+        // the right half, with a sharp vertical edge at x=16. The left and
+        // right quarters are pure interior windows; the middle column of
+        // windows straddles the edge.
+        let mut a = Vec::with_capacity(32 * 32 * 4);
+        for _y in 0..32 {
+            for x in 0..32 {
+                let c = if x < 16 {
+                    [0, 0, 0, 255]
+                } else {
+                    [255, 255, 255, 255]
+                };
+                a.extend_from_slice(&c);
+            }
+        }
+        let b = a.clone();
+        let result = perceptual_diff(&a, &b, 32, 32);
+        assert!(result.passed);
+        // Identical images => both bands are perfect.
+        assert!(result.interior_ssim >= FILL_SSIM_THRESHOLD);
+        assert!(result.edge_ssim >= EDGE_SSIM_THRESHOLD);
+        // There must be at least one interior and one edge window.
+        // overall_ssim is the mean of both, and should be 1.0 for identical.
+        assert!(result.overall_ssim > 0.9999);
+    }
+
+    #[test]
+    fn interior_fail_not_rescued_by_relaxed_edge() {
+        // A 32x32 image where the left half is solid grey and the right half
+        // is solid grey with a 5-unit shift, plus a sharp boundary. The
+        // interior windows on the right should fail the strict threshold even
+        // though the edge windows along the boundary may pass the relaxed one.
+        let mut a = Vec::with_capacity(32 * 32 * 4);
+        let mut b = Vec::with_capacity(32 * 32 * 4);
+        for _y in 0..32 {
+            for x in 0..32 {
+                let ca = [200, 200, 200, 255];
+                // Shift the right half of `b` by 5 units.
+                let cb = if x < 16 {
+                    [200, 200, 200, 255]
+                } else {
+                    [205, 205, 205, 255]
+                };
+                a.extend_from_slice(&ca);
+                b.extend_from_slice(&cb);
+            }
+        }
+        let result = perceptual_diff(&a, &b, 32, 32);
+        // The interior windows on the right half differ by a uniform 5-unit
+        // shift, which must fail the strict fill threshold.
+        assert!(
+            result.interior_ssim < FILL_SSIM_THRESHOLD,
+            "interior should fail strict threshold, got {}",
+            result.interior_ssim
+        );
+        assert!(!result.passed, "interior failure must fail overall");
+    }
+
+    #[test]
+    fn non_multiple_of_eight_includes_partial_blocks() {
+        // A 12x12 image (not a multiple of 8) with identical solid fills.
+        // The loop must accumulate the partial 4-wide blocks on the right and
+        // 4-tall blocks at the bottom rather than ignoring them.
+        let a = solid_image(12, 12, [100, 150, 200, 255]);
+        let b = solid_image(12, 12, [100, 150, 200, 255]);
+        let result = perceptual_diff(&a, &b, 12, 12);
+        assert!(result.passed);
+        assert!(result.interior_ssim >= FILL_SSIM_THRESHOLD);
+        // overall_ssim should reflect all 4 blocks (8x8, 4x8, 8x4, 4x4).
+        assert!(result.overall_ssim > 0.9999);
+    }
+
+    #[test]
+    fn non_multiple_of_eight_partial_block_failure_detected() {
+        // A 12x12 image where the bottom-right 4x4 partial block differs. If
+        // partial blocks were ignored this would incorrectly pass.
+        let a = solid_image(12, 12, [100, 100, 100, 255]);
+        let mut b = solid_image(12, 12, [100, 100, 100, 255]);
+        // Corrupt the bottom-right 4x4 partial block of `b`.
+        for y in 8..12 {
+            for x in 8..12 {
+                let idx = (y * 12 + x) * 4;
+                b[idx] = 200;
+                b[idx + 1] = 200;
+                b[idx + 2] = 200;
+            }
+        }
+        let result = perceptual_diff(&a, &b, 12, 12);
+        assert!(
+            !result.passed,
+            "partial-block difference must be detected, interior_ssim={}",
+            result.interior_ssim
+        );
     }
 }
