@@ -2,7 +2,7 @@
 //!
 //! [`TinySkiaBackend`] renders a [`PaintList`] into an
 //! in-memory RGBA pixel buffer using pure-CPU rasterization. The resulting
-//! buffer can be handed to [`softbuffer`] for presentation on a window surface,
+//! buffer can be handed to the `softbuffer` crate for presentation on a window surface,
 //! or inspected directly by tests. Because no GPU is required, this backend is
 //! the primary target for headless CI rendering tests.
 

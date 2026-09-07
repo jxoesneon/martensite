@@ -242,7 +242,14 @@ impl WindowManager {
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let Some(entry) = self.get_window_mut(key) {
-                    entry.dpi_scale = *scale_factor;
+                    // Validate through DpiScale::new so non-finite or
+                    // non-positive scale factors cannot be stored and
+                    // later panic when WindowEntry::dpi() is called.
+                    // If the platform delivers an invalid scale factor,
+                    // keep the previous value and report it back.
+                    if DpiScale::is_valid(*scale_factor) {
+                        entry.dpi_scale = *scale_factor;
+                    }
                 }
                 WindowEventOutcome::ScaleFactorChanged(*scale_factor)
             }

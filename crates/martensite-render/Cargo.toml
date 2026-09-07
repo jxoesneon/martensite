@@ -15,9 +15,7 @@ readme = "README.md"
 [dependencies]
 martensite-core = { workspace = true }
 tiny-skia = { workspace = true }
-softbuffer = { workspace = true }
 kurbo = { workspace = true }
-peniko = { workspace = true }
 vello = { workspace = true, optional = true }
 
 [features]

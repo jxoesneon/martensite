@@ -143,9 +143,9 @@ fn ssim_block_sized(
 /// Computes the perceptual diff between two RGBA images of identical
 /// dimensions.
 ///
-/// Both `expected` and `actual` must contain exactly `width * height * 4`
-/// bytes. The function panics in debug builds if the inputs are malformed; in
-/// production builds a best-effort `DiffResult` indicating failure is returned.
+/// Both `expected` and `actual` must contain at least `width * height * 4`
+/// bytes. If either buffer is shorter, a failure [`DiffResult`] is returned
+/// without panicking.
 pub fn perceptual_diff(expected: &[u8], actual: &[u8], width: u32, height: u32) -> DiffResult {
     let expected_len = (width as usize) * (height as usize) * 4;
     if expected.len() < expected_len || actual.len() < expected_len {

@@ -40,8 +40,11 @@
 //! - [`history`] — Undo/redo history
 //! - [`l10n`] — Localization via Fluent
 //! - [`macros`] — Procedural macros
+//! - [`app`] — Application builder and software fallback configuration
 //! - Testing utilities are available via the `martensite-test` dev-dependency.
 #![forbid(unsafe_code)]
+
+pub mod app;
 
 pub use martensite_access as access;
 pub use martensite_clipboard as clipboard;
@@ -66,6 +69,7 @@ pub use martensite_window as window;
 /// use martensite::prelude::*;
 /// ```
 pub mod prelude {
+    pub use crate::app::{App, AppBuilder, AppConfig};
     pub use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, Widget, WidgetArena, WidgetId};
     pub use martensite_motion::{SpringConfig, SpringSolver};
     pub use martensite_reactive::{Memo, Signal};

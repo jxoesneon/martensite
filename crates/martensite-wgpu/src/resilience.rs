@@ -96,6 +96,19 @@ impl SurfaceError {
     pub fn is_device_loss(self) -> bool {
         matches!(self, Self::Lost | Self::DeviceRemoved)
     }
+
+    /// Returns `true` when this error is transient and can be resolved by
+    /// reconfiguring the surface without going through full device-loss
+    /// recovery.
+    ///
+    /// Transient errors include [`SurfaceError::Outdated`] (surface needs
+    /// reconfiguration after resize) and [`SurfaceError::Timeout`] (temporary
+    /// acquire failure). These do not require adapter re-enumeration or
+    /// device recreation.
+    #[must_use]
+    pub fn is_transient(self) -> bool {
+        matches!(self, Self::Outdated | Self::Timeout | Self::Occluded)
+    }
 }
 
 impl std::fmt::Display for SurfaceError {
@@ -273,23 +286,43 @@ impl RecoveryMachine {
 
     /// Handles an observed surface or device error.
     ///
-    /// When the machine is [`DeviceStatus::Active`], this transitions to
-    /// [`DeviceStatus::DeviceLost`] and records the start of the recovery
-    /// interval. When already in a recovery state, the error is ignored (the
-    /// machine is already handling the loss).
-    pub fn handle_surface_error(&mut self, error: SurfaceError) {
-        self.handle_surface_error_at(error, Instant::now());
+    /// When the machine is [`DeviceStatus::Active`]:
+    /// - **Transient errors** ([`SurfaceError::is_transient`]) are recorded
+    ///   but do not trigger device-loss recovery; the caller should
+    ///   reconfigure the surface and continue.
+    /// - **Device-loss errors** ([`SurfaceError::is_device_loss`]) transition
+    ///   to [`DeviceStatus::DeviceLost`] and record the start of the recovery
+    ///   interval.
+    /// - **Validation errors** are treated as device-loss because they
+    ///   typically indicate a misconfigured pipeline that requires recreation.
+    ///
+    /// When already in a recovery state, the error is ignored (the machine
+    /// is already handling the loss).
+    ///
+    /// Returns `true` if the error was transient and the caller should
+    /// reconfigure the surface without entering recovery; returns `false`
+    /// if the machine entered the recovery path or was already in one.
+    pub fn handle_surface_error(&mut self, error: SurfaceError) -> bool {
+        self.handle_surface_error_at(error, Instant::now())
     }
 
     /// [`RecoveryMachine::handle_surface_error`] with an explicit clock for
     /// deterministic testing.
-    pub fn handle_surface_error_at(&mut self, error: SurfaceError, now: Instant) {
+    pub fn handle_surface_error_at(&mut self, error: SurfaceError, now: Instant) -> bool {
         if self.status.is_active() {
+            if error.is_transient() {
+                // Transient errors (Outdated, Timeout, Occluded) only need
+                // a surface reconfigure, not full device-loss recovery.
+                return true;
+            }
             self.recovery_start = Some(now);
             self.status = DeviceStatus::DeviceLost {
                 error,
                 timestamp: now,
             };
+            false
+        } else {
+            false
         }
     }
 
@@ -485,7 +518,12 @@ mod tests {
         let t0 = Instant::now();
         m.handle_surface_error_at(SurfaceError::Lost, t0);
         // A second error while in DeviceLost must not overwrite the first.
-        m.handle_surface_error_at(SurfaceError::Timeout, t0 + Duration::from_millis(1));
+        let transient =
+            m.handle_surface_error_at(SurfaceError::Timeout, t0 + Duration::from_millis(1));
+        assert!(
+            !transient,
+            "second error while recovering should not be transient"
+        );
         assert_eq!(
             m.status(),
             &DeviceStatus::DeviceLost {
@@ -493,6 +531,64 @@ mod tests {
                 timestamp: t0,
             }
         );
+    }
+
+    #[test]
+    fn transient_outdated_error_does_not_trigger_recovery() {
+        let mut m = RecoveryMachine::new();
+        let t0 = Instant::now();
+        let is_transient = m.handle_surface_error_at(SurfaceError::Outdated, t0);
+        assert!(is_transient, "Outdated should be transient");
+        assert!(
+            m.is_active(),
+            "machine should remain Active after transient error"
+        );
+    }
+
+    #[test]
+    fn transient_timeout_error_does_not_trigger_recovery() {
+        let mut m = RecoveryMachine::new();
+        let t0 = Instant::now();
+        let is_transient = m.handle_surface_error_at(SurfaceError::Timeout, t0);
+        assert!(is_transient, "Timeout should be transient");
+        assert!(
+            m.is_active(),
+            "machine should remain Active after transient error"
+        );
+    }
+
+    #[test]
+    fn transient_occluded_error_does_not_trigger_recovery() {
+        let mut m = RecoveryMachine::new();
+        let t0 = Instant::now();
+        let is_transient = m.handle_surface_error_at(SurfaceError::Occluded, t0);
+        assert!(is_transient, "Occluded should be transient");
+        assert!(
+            m.is_active(),
+            "machine should remain Active after transient error"
+        );
+    }
+
+    #[test]
+    fn validation_error_triggers_recovery() {
+        let mut m = RecoveryMachine::new();
+        let t0 = Instant::now();
+        let is_transient = m.handle_surface_error_at(SurfaceError::Validation, t0);
+        assert!(!is_transient, "Validation should not be transient");
+        assert!(
+            !m.is_active(),
+            "machine should enter recovery after Validation error"
+        );
+    }
+
+    #[test]
+    fn is_transient_classifies_errors_correctly() {
+        assert!(SurfaceError::Outdated.is_transient());
+        assert!(SurfaceError::Timeout.is_transient());
+        assert!(SurfaceError::Occluded.is_transient());
+        assert!(!SurfaceError::Lost.is_transient());
+        assert!(!SurfaceError::DeviceRemoved.is_transient());
+        assert!(!SurfaceError::Validation.is_transient());
     }
 
     #[test]

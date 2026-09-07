@@ -16,11 +16,16 @@
 
 pub mod diff;
 pub mod paint;
+pub mod presentation;
 pub mod tinyskia_backend;
 pub mod vello_backend;
 
 pub use paint::{
     GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintCommand, PaintList, PathBuilder,
+};
+pub use presentation::{
+    nonzero as presentation_nonzero, present_rgba_to_softbuffer, rgba_to_softbuffer,
+    PresentationError,
 };
 pub use tinyskia_backend::TinySkiaBackend;
 pub use vello_backend::VelloRenderer;

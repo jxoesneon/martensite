@@ -105,6 +105,17 @@ impl DpiScale {
     pub fn scale_factor(&self) -> f64 {
         self.scale_factor
     }
+
+    /// Returns `true` if `scale_factor` is a valid DPI scale factor.
+    ///
+    /// A valid scale factor is finite and strictly positive. This is the
+    /// non-panicking counterpart to the assertion in [`DpiScale::new`] and
+    /// is intended for callers that receive scale factors from external
+    /// sources (e.g. winit events) and need to validate before storing.
+    #[must_use]
+    pub fn is_valid(scale_factor: f64) -> bool {
+        scale_factor.is_finite() && scale_factor > 0.0
+    }
 }
 
 impl Default for DpiScale {
@@ -284,5 +295,28 @@ mod tests {
         assert_eq!(a, b);
         let c = DpiScale::new(2.0);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn is_valid_accepts_positive_finite() {
+        assert!(DpiScale::is_valid(1.0));
+        assert!(DpiScale::is_valid(0.5));
+        assert!(DpiScale::is_valid(1.25));
+        assert!(DpiScale::is_valid(3.0));
+        assert!(DpiScale::is_valid(0.01));
+    }
+
+    #[test]
+    fn is_valid_rejects_zero_and_negative() {
+        assert!(!DpiScale::is_valid(0.0));
+        assert!(!DpiScale::is_valid(-1.0));
+        assert!(!DpiScale::is_valid(-0.01));
+    }
+
+    #[test]
+    fn is_valid_rejects_non_finite() {
+        assert!(!DpiScale::is_valid(f64::NAN));
+        assert!(!DpiScale::is_valid(f64::INFINITY));
+        assert!(!DpiScale::is_valid(f64::NEG_INFINITY));
     }
 }
