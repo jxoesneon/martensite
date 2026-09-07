@@ -218,6 +218,7 @@ impl Text {
 impl Widget for Text {
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let available_width = constraints.max_size.x;
+        let max_height = constraints.max_size.y;
 
         // Try the inline cache first (Tier 1)
         if let Some((cached_width, cached_height)) = self.inline_cache.get(available_width) {
@@ -226,7 +227,13 @@ impl Widget for Text {
             } else {
                 cached_width
             };
-            return Vec2::new(width, cached_height);
+            // Clamp height to max constraint
+            let height = if max_height.is_finite() {
+                cached_height.min(max_height)
+            } else {
+                cached_height
+            };
+            return Vec2::new(width, height);
         }
 
         // Full measurement using real Shaper + FontManager + Tier 2 cache
@@ -242,8 +249,14 @@ impl Widget for Text {
         } else {
             metrics.width
         };
+        // Clamp height to max constraint to respect the measure contract
+        let height = if max_height.is_finite() {
+            metrics.height.min(max_height)
+        } else {
+            metrics.height
+        };
 
-        Vec2::new(width, metrics.height)
+        Vec2::new(width, height)
     }
 
     fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
