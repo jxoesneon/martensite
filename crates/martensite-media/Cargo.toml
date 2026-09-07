@@ -10,7 +10,6 @@ keywords.workspace = true
 categories.workspace = true
 homepage.workspace = true
 description = "Zero-copy hardware media surfaces (DXGI, IOSurface, dma-buf) and external 3D interop."
-publish = false
 readme = "README.md"
 
 [dependencies]

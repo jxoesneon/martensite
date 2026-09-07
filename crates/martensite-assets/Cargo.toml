@@ -10,7 +10,6 @@ keywords.workspace = true
 categories.workspace = true
 homepage.workspace = true
 description = "Virtual file system (VFS), AOT naga shader validation, and dynamic texture streaming."
-publish = false
 readme = "README.md"
 
 [dependencies]

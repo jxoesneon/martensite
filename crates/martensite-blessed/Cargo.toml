@@ -10,7 +10,6 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Curated tier-1 ecosystem extensions for the Martensite GUI framework"
-publish = false
 readme = "README.md"
 
 [dependencies]

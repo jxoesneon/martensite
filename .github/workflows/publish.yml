@@ -52,6 +52,10 @@ jobs:
             martensite-motion
             martensite-history
             martensite-l10n
+            martensite-assets
+            martensite-media
+            martensite-devtools
+            martensite-blessed
             martensite
           )
           for crate in "${CRATES[@]}"; do
@@ -68,8 +72,6 @@ jobs:
 
           # Crates in topological dependency order.
           # martensite-cosmic-text must come before martensite-text.
-          # Empty placeholder crates (assets, media, devtools, blessed) are
-          # excluded until they have real implementations.
           CRATES=(
             martensite-reactive
             martensite-macros
@@ -89,6 +91,10 @@ jobs:
             martensite-motion
             martensite-history
             martensite-l10n
+            martensite-assets
+            martensite-media
+            martensite-devtools
+            martensite-blessed
             martensite
           )
 
