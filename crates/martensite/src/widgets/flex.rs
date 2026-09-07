@@ -276,11 +276,27 @@ impl Widget for Flex {
 
         let mut total_main = 0.0f32;
         let mut max_cross = 0.0f32;
+        let total_gap = self.gap * (n.saturating_sub(1)) as f32;
 
         for child in &mut self.children {
+            // Give each child the remaining main-axis space after
+            // accounting for previously-measured siblings and gaps.
+            let remaining_main =
+                if constraints.max_size.x.is_finite() && constraints.max_size.y.is_finite() {
+                    let max_main = self.direction.main(constraints.max_size);
+                    (max_main - total_main - total_gap).max(0.0)
+                } else {
+                    f32::MAX
+                };
+            let cross_limit = self.direction.cross(constraints.max_size);
+            let child_max = if self.direction.is_row() {
+                Vec2::new(remaining_main, cross_limit)
+            } else {
+                Vec2::new(cross_limit, remaining_main)
+            };
             let child_constraints = LayoutConstraints {
                 min_size: Vec2::ZERO,
-                max_size: constraints.max_size,
+                max_size: child_max,
             };
             let size = child.measure(cx, child_constraints);
             self.child_sizes.push(size);
@@ -288,7 +304,7 @@ impl Widget for Flex {
             max_cross = max_cross.max(self.direction.cross(size));
         }
 
-        total_main += self.gap * (n.saturating_sub(1)) as f32;
+        total_main += total_gap;
 
         self.direction.vec(total_main, max_cross)
     }

@@ -168,21 +168,20 @@ impl Text {
         // based on Unicode properties of the text. The `rtl` flag is
         // stored for future use when explicit direction override is needed.
 
-        // Check Tier 2 cache first
-        // Use a dummy FontId since we don't track the exact font ID here.
-        // In a full implementation, the FontManager would resolve the
-        // family name to a FontId. The cache key includes family/rtl
-        // implicitly through the text_hash which is computed from the
-        // text content, and the font_size_bits which captures the size.
-        // The dummy FontId means all text with the same content/size/width
-        // shares a cache entry regardless of family — this is acceptable
-        // for v0.3.0 since the default font is used in most cases.
+        // Check Tier 2 cache first.
+        // The cache key includes family_hash and line_height_bits so that
+        // changes to family or line height correctly invalidate the cache.
+        // A dummy FontId is used because the Text widget owns its own
+        // FontManager and uses Cosmic Text's fallback selection; the
+        // family_hash field ensures different families produce different keys.
         let dummy_font_id = martensite_text::FontId::dummy();
-        let cache_key = martensite_text::ShapeCacheKey::with_max_width(
+        let cache_key = martensite_text::ShapeCacheKey::with_max_width_and_family(
             dummy_font_id,
             font_size,
             &content,
             max_width,
+            &family,
+            line_height,
         );
 
         if let Some(cached) = self.shape_cache.get(&cache_key) {
@@ -204,7 +203,11 @@ impl Text {
             TextMetrics::zero()
         };
 
-        // Store in Tier 2 cache
+        // Store in Tier 2 cache. We store the metrics along with an empty
+        // lines vector because the Shaper's internal ShapedLine type is not
+        // directly accessible from the widget layer in this milestone.
+        // A future milestone will expose the shaped lines for glyph
+        // rendering. The metrics are the consumed output for layout.
         let cached = martensite_text::CachedShape::new(vec![], metrics);
         self.shape_cache.insert(cache_key, cached);
 
@@ -217,11 +220,11 @@ impl Widget for Text {
         let available_width = constraints.max_size.x;
 
         // Try the inline cache first (Tier 1)
-        if let Some(cached_height) = self.inline_cache.get(available_width) {
+        if let Some((cached_width, cached_height)) = self.inline_cache.get(available_width) {
             let width = if available_width.is_finite() {
-                available_width.min(self.cached_metrics.width)
+                available_width.min(cached_width)
             } else {
-                self.cached_metrics.width
+                cached_width
             };
             return Vec2::new(width, cached_height);
         }
@@ -230,8 +233,9 @@ impl Widget for Text {
         let metrics = self.measure_real(available_width);
         self.cached_metrics = metrics;
 
-        // Store in inline cache (Tier 1)
-        self.inline_cache.put(available_width, metrics.height);
+        // Store in inline cache (Tier 1): both width and height
+        self.inline_cache
+            .put(available_width, metrics.width, metrics.height);
 
         let width = if available_width.is_finite() {
             metrics.width.min(available_width)

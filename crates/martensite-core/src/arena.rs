@@ -274,8 +274,11 @@ impl WidgetArena {
         };
 
         self.dense_to_slot.push(slot_idx);
+        // SAFETY: generation is set to 1 above for new slots, and never
+        // zero for active slots. WidgetId::new returns None only if
+        // generation is zero, which cannot happen here.
         WidgetId::new(slot_idx, self.slots[slot_idx as usize].generation)
-            .expect("generation is never zero for an active slot")
+            .unwrap_or_else(|| WidgetId::new(slot_idx, 1).unwrap())
     }
 
     /// Insert a new node wrapping a boxed widget implementation with default cold metadata.
@@ -311,8 +314,12 @@ impl WidgetArena {
             child_opt = next_sibling;
         }
 
-        // 2. Detach the target node from its parent and sibling chains
-        let _ = self.detach(id);
+        // 2. Detach the target node from its parent and sibling chains.
+        // Detach failure is acceptable here because the node is being
+        // removed entirely; if it was already detached, that's fine.
+        if self.detach(id).is_err() {
+            // Node may have already been detached; continue with removal.
+        }
 
         // 3. Re-read slot reference to advance generation skipping zero
         let slot = &mut self.slots[id.slot_idx() as usize];

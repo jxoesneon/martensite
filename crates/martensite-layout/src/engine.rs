@@ -334,28 +334,54 @@ impl LayoutEngine {
             .lookup_node(root)
             .ok_or(LayoutError::NodeNotFound(NodeId::new(0)))?;
 
-        // Pass 1: Pre-measure all leaf widgets
-        let leaf_sizes = self.measure_leaves(arena, root);
-
-        // Build a lookup from WidgetId → measured size
-        let size_map: std::collections::HashMap<WidgetId, Vec2> = leaf_sizes.into_iter().collect();
-
-        // Build a lookup from NodeId → WidgetId
+        // Build a lookup from NodeId → WidgetId.
+        // This is owned, so no borrow conflict with self.tree.
         let node_to_widget: std::collections::HashMap<NodeId, WidgetId> = self
             .id_map
             .iter()
             .map(|(wid, node)| (*node, *wid))
             .collect();
 
-        // Pass 2: Run Taffy layout with a measure function that returns
-        // pre-measured sizes for leaf nodes.
-        let measure = |_known: Size<Option<f32>>,
-                       _available: Size<AvailableSpace>,
+        // Run Taffy layout with a measure function that calls Widget::measure
+        // with the actual constraints Taffy provides. This ensures text
+        // wrapping, flex sizing, and container padding all respond to
+        // real parent constraints rather than unbounded space.
+        let tree = &mut self.tree;
+        let measure = |known: Size<Option<f32>>,
+                       available_space: Size<AvailableSpace>,
                        node_id: NodeId,
                        _context: Option<&mut WidgetId>,
                        _style: &Style| {
             if let Some(widget_id) = node_to_widget.get(&node_id) {
-                if let Some(size) = size_map.get(widget_id) {
+                if let Some((hot, cold)) = arena.get_both_mut(*widget_id) {
+                    // Convert Taffy's known dimensions and available space
+                    // into LayoutConstraints for the widget.
+                    let max_width = match (known.width, available_space.width) {
+                        (Some(w), _) => w,
+                        (None, AvailableSpace::Definite(w)) => w,
+                        (None, AvailableSpace::MaxContent) => f32::MAX,
+                        (None, AvailableSpace::MinContent) => 0.0,
+                    };
+                    let max_height = match (known.height, available_space.height) {
+                        (Some(h), _) => h,
+                        (None, AvailableSpace::Definite(h)) => h,
+                        (None, AvailableSpace::MaxContent) => f32::MAX,
+                        (None, AvailableSpace::MinContent) => 0.0,
+                    };
+                    // If known dimensions are provided, use them as both
+                    // min and max (fixed size). Otherwise, min is zero.
+                    let (min_w, min_h) = match (known.width, known.height) {
+                        (Some(w), Some(h)) => (w, h),
+                        (Some(w), None) => (w, 0.0),
+                        (None, Some(h)) => (0.0, h),
+                        (None, None) => (0.0, 0.0),
+                    };
+                    let constraints = LayoutConstraints {
+                        min_size: Vec2::new(min_w, min_h),
+                        max_size: Vec2::new(max_width, max_height),
+                    };
+                    let mut cx = LayoutContext { hot };
+                    let size = cold.widget.measure(&mut cx, constraints);
                     return Size {
                         width: size.x,
                         height: size.y,
@@ -368,44 +394,13 @@ impl LayoutEngine {
             }
         };
 
-        self.tree
-            .compute_layout_with_measure(root_node, available, measure)
+        tree.compute_layout_with_measure(root_node, available, measure)
             .map_err(|e| LayoutError::TaffyError(format!("{e:?}")))?;
 
         // Apply layouts back to arena and call Widget::layout
         self.apply_layout_with_widgets(arena, root);
 
         Ok(())
-    }
-
-    /// Measures all leaf widgets in the subtree rooted at `root`.
-    ///
-    /// Returns a map of `WidgetId` → measured `Vec2` size.
-    fn measure_leaves(&self, arena: &mut WidgetArena, root: WidgetId) -> Vec<(WidgetId, Vec2)> {
-        let mut sizes = Vec::new();
-        let mut queue = std::collections::VecDeque::new();
-        queue.push_back(root);
-
-        while let Some(wid) = queue.pop_front() {
-            let children: Vec<WidgetId> = arena.children(wid).collect();
-            if children.is_empty() {
-                // Leaf node — measure the widget
-                if let Some((hot, cold)) = arena.get_both_mut(wid) {
-                    let constraints = LayoutConstraints {
-                        min_size: Vec2::ZERO,
-                        max_size: Vec2::new(f32::MAX, f32::MAX),
-                    };
-                    let mut cx = LayoutContext { hot };
-                    let size = cold.widget.measure(&mut cx, constraints);
-                    sizes.push((wid, size));
-                }
-            } else {
-                for c in children {
-                    queue.push_back(c);
-                }
-            }
-        }
-        sizes
     }
 
     /// Applies computed Taffy layouts back to the arena and calls

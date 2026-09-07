@@ -176,22 +176,34 @@ impl FontManager {
     /// A single font file may contain multiple faces. Returns an empty
     /// vec if the file could not be loaded.
     pub fn load_font_file(&mut self, path: impl Into<PathBuf>) -> Vec<FontId> {
+        self.load_font_file_result(path).unwrap_or_default()
+    }
+
+    /// Loads a custom font from a file path and registers it in the
+    /// font database, returning a `Result`.
+    ///
+    /// Returns the IDs of the font faces that were loaded from the file.
+    /// A single font file may contain multiple faces.
+    pub fn load_font_file_result(
+        &mut self,
+        path: impl Into<PathBuf>,
+    ) -> Result<Vec<FontId>, std::io::Error> {
         let path = path.into();
         // Record face IDs before loading
         let before: std::collections::HashSet<fontdb::ID> =
             self.system.db().faces().map(|f| f.id).collect();
-        match self.system.db_mut().load_font_file(&path) {
-            Ok(()) => {
-                // Return only the newly added face IDs
-                self.system
-                    .db()
-                    .faces()
-                    .filter(|f| !before.contains(&f.id))
-                    .map(|f| FontId(f.id))
-                    .collect()
-            }
-            Err(_) => Vec::new(),
-        }
+        self.system.db_mut().load_font_file(&path).map_err(|e| {
+            // Convert fontdb error to io::Error
+            std::io::Error::other(format!("{e:?}"))
+        })?;
+        // Return only the newly added face IDs
+        Ok(self
+            .system
+            .db()
+            .faces()
+            .filter(|f| !before.contains(&f.id))
+            .map(|f| FontId(f.id))
+            .collect())
     }
 
     /// Loads a custom font from in-memory binary data.

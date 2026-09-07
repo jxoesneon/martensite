@@ -167,8 +167,8 @@ impl Default for HotNode {
 /// during iterative flexbox layout probes in $O(1)$ time without locking or heap allocation.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct InlineTextCache {
-    /// Four inline constraint/height slots: `(width_constraint, measured_height)`.
-    entries: [(f32, f32); 4],
+    /// Four inline constraint/size slots: `(width_constraint, measured_width, measured_height)`.
+    entries: [(f32, f32, f32); 4],
     /// Ring-buffer cursor for FIFO replacement when all 4 slots are occupied.
     cursor: usize,
 }
@@ -178,61 +178,70 @@ impl InlineTextCache {
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            entries: [(f32::NAN, f32::NAN); 4],
+            entries: [(f32::NAN, f32::NAN, f32::NAN); 4],
             cursor: 0,
         }
     }
 
-    /// Queries the cache for a measured height matching the given `available_width`.
+    /// Queries the cache for a measured size matching the given `available_width`.
     ///
     /// Matches if the difference between cached width and `available_width` is within 0.01px.
+    /// For non-finite values (infinity, NaN), matches only on exact equality.
+    /// Returns `(measured_width, measured_height)` on hit.
     #[inline(always)]
-    pub fn get(&self, available_width: f32) -> Option<f32> {
+    pub fn get(&self, available_width: f32) -> Option<(f32, f32)> {
         self.entries
             .iter()
-            .find(|(w, _)| (*w - available_width).abs() < 0.01)
-            .map(|(_, h)| *h)
+            .find(|(w, _, _)| {
+                if available_width.is_finite() && w.is_finite() {
+                    (*w - available_width).abs() < 0.01
+                } else {
+                    *w == available_width
+                }
+            })
+            .map(|(_, mw, mh)| (*mw, *mh))
     }
 
-    /// Inserts or updates a `(available_width, measured_height)` pair into the cache.
+    /// Inserts or updates a `(available_width, measured_width, measured_height)` triple into the cache.
     ///
-    /// If an entry matching `available_width` (within 0.01px) already exists, its height
-    /// is updated in-place. Otherwise, the oldest slot is overwritten in FIFO order.
+    /// If an entry matching `available_width` (within 0.01px) already exists, its
+    /// measured size is updated in-place. Otherwise, the oldest slot is overwritten in FIFO order.
     #[inline]
-    pub fn put(&mut self, available_width: f32, measured_height: f32) {
+    pub fn put(&mut self, available_width: f32, measured_width: f32, measured_height: f32) {
         for entry in &mut self.entries {
             if (entry.0 - available_width).abs() < 0.01 {
-                entry.1 = measured_height;
+                entry.1 = measured_width;
+                entry.2 = measured_height;
                 return;
             }
         }
-        self.entries[self.cursor] = (available_width, measured_height);
+        self.entries[self.cursor] = (available_width, measured_width, measured_height);
         self.cursor = (self.cursor + 1) % 4;
     }
 
     /// Clears all entries from the inline text cache.
     #[inline(always)]
     pub fn clear(&mut self) {
-        self.entries = [(f32::NAN, f32::NAN); 4];
+        self.entries = [(f32::NAN, f32::NAN, f32::NAN); 4];
         self.cursor = 0;
     }
 
     /// Returns a slice of the 4 inline slot entries.
     #[inline(always)]
-    pub const fn entries(&self) -> &[(f32, f32); 4] {
+    pub const fn entries(&self) -> &[(f32, f32, f32); 4] {
         &self.entries
     }
 
     /// Returns `true` if no valid entries are currently stored.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.entries.iter().all(|(w, _)| w.is_nan())
+        self.entries.iter().all(|(w, _, _)| w.is_nan())
     }
 
     /// Returns the number of valid entries currently stored.
     #[inline]
     pub fn len(&self) -> usize {
-        self.entries.iter().filter(|(w, _)| !w.is_nan()).count()
+        self.entries.iter().filter(|(w, _, _)| !w.is_nan()).count()
     }
 }
 

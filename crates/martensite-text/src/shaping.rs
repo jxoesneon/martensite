@@ -29,10 +29,12 @@ impl TextMetrics {
         Self::default()
     }
 
-    /// Returns `true` if both width and height are zero.
+    /// Returns `true` if either dimension is zero or negative.
+    ///
+    /// This is consistent with `martensite_layout::geometry::Size::is_empty`.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.width <= 0.0 && self.height <= 0.0
+        self.width <= 0.0 || self.height <= 0.0
     }
 }
 

@@ -88,6 +88,10 @@ pub struct ShapeCacheKey {
     /// Available width for wrapping, quantized to bits.
     /// `u32::MAX` represents unbounded (no wrapping).
     pub max_width_bits: MaxWidthBits,
+    /// Hash of the font family name.
+    pub family_hash: TextHash,
+    /// Line height quantized to bits.
+    pub line_height_bits: LineHeightBits,
 }
 
 /// Quantized max width for cache keying.
@@ -98,21 +102,54 @@ pub struct MaxWidthBits(pub u32);
 impl MaxWidthBits {
     /// Creates a `MaxWidthBits` from an optional `f32` width.
     /// `None` maps to `u32::MAX` (unbounded).
+    /// `Some(0.0)` or negative maps to `0` (zero width).
     #[inline]
     pub fn from_opt(width: Option<f32>) -> Self {
         match width {
             Some(w) if w.is_finite() && w > 0.0 => Self(w.to_bits()),
+            Some(w) if w.is_finite() && w <= 0.0 => Self(0),
             _ => Self(u32::MAX),
         }
     }
 
     /// Converts back to `Option<f32>`.
+    /// `u32::MAX` represents unbounded (None).
+    /// `0` represents zero width (Some(0.0)).
     #[inline]
     pub fn to_opt(self) -> Option<f32> {
         if self.0 == u32::MAX {
             None
+        } else if self.0 == 0 {
+            Some(0.0)
         } else {
             Some(f32::from_bits(self.0))
+        }
+    }
+}
+
+/// Quantized line height for cache keying.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LineHeightBits(pub u32);
+
+impl LineHeightBits {
+    /// Creates a `LineHeightBits` from an `f32` line height.
+    /// Zero or negative maps to `0` (default line height).
+    #[inline]
+    pub fn from_f32(line_height: f32) -> Self {
+        if line_height.is_finite() && line_height > 0.0 {
+            Self(line_height.to_bits())
+        } else {
+            Self(0)
+        }
+    }
+
+    /// Converts back to `f32`.
+    #[inline]
+    pub fn to_f32(self) -> f32 {
+        if self.0 == 0 {
+            0.0
+        } else {
+            f32::from_bits(self.0)
         }
     }
 }
@@ -121,7 +158,7 @@ impl ShapeCacheKey {
     /// Creates a new cache key.
     #[inline]
     pub fn new(font_id: FontId, font_size: f32, text: &str) -> Self {
-        Self::with_max_width(font_id, font_size, text, None)
+        Self::with_max_width_and_family(font_id, font_size, text, None, "", 0.0)
     }
 
     /// Creates a new cache key with a max width for wrapping.
@@ -132,11 +169,26 @@ impl ShapeCacheKey {
         text: &str,
         max_width: Option<f32>,
     ) -> Self {
+        Self::with_max_width_and_family(font_id, font_size, text, max_width, "", 0.0)
+    }
+
+    /// Creates a new cache key with max width, family, and line height.
+    #[inline]
+    pub fn with_max_width_and_family(
+        font_id: FontId,
+        font_size: f32,
+        text: &str,
+        max_width: Option<f32>,
+        family: &str,
+        line_height: f32,
+    ) -> Self {
         Self {
             font_id,
             font_size_bits: FontSizeBits::from_f32(font_size),
             text_hash: TextHash::from_string(text),
             max_width_bits: MaxWidthBits::from_opt(max_width),
+            family_hash: TextHash::from_string(family),
+            line_height_bits: LineHeightBits::from_f32(line_height),
         }
     }
 }

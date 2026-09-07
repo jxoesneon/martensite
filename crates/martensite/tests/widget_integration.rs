@@ -40,10 +40,18 @@ fn container_with_text_no_panic() {
         )
         .expect("layout should succeed");
 
-    // Root should have non-zero bounds
+    // Root should have positive bounds (text has real metrics)
     let hot = arena.get_hot(root).expect("root should exist");
-    assert!(hot.bounds.width() >= 0.0);
-    assert!(hot.bounds.height() >= 0.0);
+    assert!(
+        hot.bounds.width() > 0.0,
+        "container width should be positive, got {}",
+        hot.bounds.width()
+    );
+    assert!(
+        hot.bounds.height() > 0.0,
+        "container height should be positive, got {}",
+        hot.bounds.height()
+    );
 }
 
 #[test]
@@ -68,7 +76,17 @@ fn flex_with_text_children_no_panic() {
         .expect("layout should succeed");
 
     let hot = arena.get_hot(root).expect("root should exist");
-    assert!(hot.bounds.width() >= 0.0);
+    // Flex with two text children should have positive width
+    assert!(
+        hot.bounds.width() > 0.0,
+        "flex width should be positive, got {}",
+        hot.bounds.width()
+    );
+    assert!(
+        hot.bounds.height() > 0.0,
+        "flex height should be positive, got {}",
+        hot.bounds.height()
+    );
 }
 
 #[test]
@@ -92,7 +110,16 @@ fn stack_with_text_children_no_panic() {
         .expect("layout should succeed");
 
     let hot = arena.get_hot(root).expect("root should exist");
-    assert!(hot.bounds.width() >= 0.0);
+    assert!(
+        hot.bounds.width() > 0.0,
+        "stack width should be positive, got {}",
+        hot.bounds.width()
+    );
+    assert!(
+        hot.bounds.height() > 0.0,
+        "stack height should be positive, got {}",
+        hot.bounds.height()
+    );
 }
 
 #[test]
@@ -119,7 +146,59 @@ fn nested_container_flex_text_no_panic() {
         .expect("layout should succeed");
 
     let hot = arena.get_hot(root).expect("root should exist");
-    assert!(hot.bounds.width() >= 0.0);
+    assert!(
+        hot.bounds.width() > 0.0,
+        "nested container width should be positive, got {}",
+        hot.bounds.width()
+    );
+    assert!(
+        hot.bounds.height() > 0.0,
+        "nested container height should be positive, got {}",
+        hot.bounds.height()
+    );
+}
+
+#[test]
+fn text_wraps_in_narrow_container() {
+    // Text with a narrow constraint should have a larger height than
+    // text with an unbounded constraint (i.e., wrapping occurs).
+    let mut hot1 = HotNode::new(taffy::NodeId::new(0));
+    let mut cx1 = LayoutContext { hot: &mut hot1 };
+    let mut t_narrow =
+        Text::new("The quick brown fox jumps over the lazy dog repeatedly").font_size(16.0);
+    let size_narrow = t_narrow.measure(
+        &mut cx1,
+        LayoutConstraints {
+            min_size: Vec2::ZERO,
+            max_size: Vec2::new(50.0, f32::MAX),
+        },
+    );
+
+    let mut hot2 = HotNode::new(taffy::NodeId::new(0));
+    let mut cx2 = LayoutContext { hot: &mut hot2 };
+    let mut t_wide =
+        Text::new("The quick brown fox jumps over the lazy dog repeatedly").font_size(16.0);
+    let size_wide = t_wide.measure(
+        &mut cx2,
+        LayoutConstraints {
+            min_size: Vec2::ZERO,
+            max_size: Vec2::new(f32::MAX, f32::MAX),
+        },
+    );
+
+    // Narrow text should wrap, producing greater height
+    assert!(
+        size_narrow.y > size_wide.y,
+        "narrow text height {} should exceed wide text height {}",
+        size_narrow.y,
+        size_wide.y
+    );
+    // Narrow text width should be <= the constraint
+    assert!(
+        size_narrow.x <= 50.0,
+        "narrow text width {} should be <= 50.0",
+        size_narrow.x
+    );
 }
 
 #[test]
