@@ -23,7 +23,8 @@ pub mod font;
 pub mod shaping;
 
 pub use cache::{
-    CachedShape, FontSizeBits, ShapeCacheKey, TextHash, TextShapeCache, DEFAULT_MEMORY_BUDGET,
+    CachedShape, FontSizeBits, MaxWidthBits, ShapeCacheKey, TextHash, TextShapeCache,
+    DEFAULT_MEMORY_BUDGET,
 };
 pub use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 pub use font::{FontFaceInfo, FontId, FontManager, FontSource, FontStyle};

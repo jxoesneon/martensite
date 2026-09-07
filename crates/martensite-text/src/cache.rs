@@ -85,16 +85,58 @@ pub struct ShapeCacheKey {
     pub font_size_bits: FontSizeBits,
     /// Hash of the text content.
     pub text_hash: TextHash,
+    /// Available width for wrapping, quantized to bits.
+    /// `u32::MAX` represents unbounded (no wrapping).
+    pub max_width_bits: MaxWidthBits,
+}
+
+/// Quantized max width for cache keying.
+/// `u32::MAX` represents unbounded (no wrapping).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct MaxWidthBits(pub u32);
+
+impl MaxWidthBits {
+    /// Creates a `MaxWidthBits` from an optional `f32` width.
+    /// `None` maps to `u32::MAX` (unbounded).
+    #[inline]
+    pub fn from_opt(width: Option<f32>) -> Self {
+        match width {
+            Some(w) if w.is_finite() && w > 0.0 => Self(w.to_bits()),
+            _ => Self(u32::MAX),
+        }
+    }
+
+    /// Converts back to `Option<f32>`.
+    #[inline]
+    pub fn to_opt(self) -> Option<f32> {
+        if self.0 == u32::MAX {
+            None
+        } else {
+            Some(f32::from_bits(self.0))
+        }
+    }
 }
 
 impl ShapeCacheKey {
     /// Creates a new cache key.
     #[inline]
     pub fn new(font_id: FontId, font_size: f32, text: &str) -> Self {
+        Self::with_max_width(font_id, font_size, text, None)
+    }
+
+    /// Creates a new cache key with a max width for wrapping.
+    #[inline]
+    pub fn with_max_width(
+        font_id: FontId,
+        font_size: f32,
+        text: &str,
+        max_width: Option<f32>,
+    ) -> Self {
         Self {
             font_id,
             font_size_bits: FontSizeBits::from_f32(font_size),
             text_hash: TextHash::from_string(text),
+            max_width_bits: MaxWidthBits::from_opt(max_width),
         }
     }
 }

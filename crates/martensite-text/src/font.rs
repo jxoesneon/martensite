@@ -26,6 +26,13 @@ impl FontId {
         Self(id)
     }
 
+    /// Creates a dummy font identifier for use as a placeholder cache key
+    /// when the actual font ID is not yet known.
+    #[inline(always)]
+    pub fn dummy() -> Self {
+        Self(fontdb::ID::dummy())
+    }
+
     /// Returns the raw `fontdb::ID`.
     #[inline(always)]
     pub fn raw(self) -> fontdb::ID {
@@ -166,17 +173,25 @@ impl FontManager {
     /// font database.
     ///
     /// Returns the IDs of the font faces that were loaded from the file.
-    /// A single font file may contain multiple faces.
+    /// A single font file may contain multiple faces. Returns an empty
+    /// vec if the file could not be loaded.
     pub fn load_font_file(&mut self, path: impl Into<PathBuf>) -> Vec<FontId> {
         let path = path.into();
-        let mut ids = Vec::new();
-        self.system.db_mut().load_font_file(&path).ok();
-        // Query all face IDs — we can't easily know which were just added,
-        // so we return all face IDs from the database.
-        for face in self.system.db().faces() {
-            ids.push(FontId(face.id));
+        // Record face IDs before loading
+        let before: std::collections::HashSet<fontdb::ID> =
+            self.system.db().faces().map(|f| f.id).collect();
+        match self.system.db_mut().load_font_file(&path) {
+            Ok(()) => {
+                // Return only the newly added face IDs
+                self.system
+                    .db()
+                    .faces()
+                    .filter(|f| !before.contains(&f.id))
+                    .map(|f| FontId(f.id))
+                    .collect()
+            }
+            Err(_) => Vec::new(),
         }
-        ids
     }
 
     /// Loads a custom font from in-memory binary data.
