@@ -210,9 +210,14 @@ jobs:
             # version. If TARGET_VERSION is already published, skip immediately
             # without invoking cargo publish or sleeping.
             api_url="https://crates.io/api/v1/crates/${crate}"
-            existing=$(curl -fsSL -A "martensite-ci (https://github.com/jxoesneon/martensite)" "$api_url" 2>/dev/null \
+            # Use `|| true` on the pipeline so that crates with no stable
+            # version (e.g. pre-release-only like martensite-cosmic-text) or
+            # crates not yet on crates.io don't abort the script under
+            # `set -euo pipefail`. grep returns exit code 1 when there is no
+            # match, which is a normal condition here.
+            existing=$( (curl -fsSL -A "martensite-ci (https://github.com/jxoesneon/martensite)" "$api_url" 2>/dev/null \
               | grep -oE '"max_stable_version":"[^"]*"' | head -1 \
-              | sed 's/"max_stable_version":"//;s/"//')
+              | sed 's/"max_stable_version":"//;s/"//') || true )
             if [ "$existing" = "$TARGET_VERSION" ]; then
               echo "[$(date -u +%H:%M:%S)] $crate ${TARGET_VERSION} already on crates.io; skipping."
               continue
