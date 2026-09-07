@@ -5,6 +5,53 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-13
+
+### Added
+
+- **WGPU**: `GpuContext` with adapter enumeration, power-preference selection,
+  feature/limit verification, and device/queue lifecycle management.
+- **WGPU**: `SurfaceWrapper` for surface configuration, present-mode negotiation
+  (`Mailbox → FifoRelaxed → Fifo`), and resize re-creation.
+- **WGPU**: `RecoveryMachine` formal device-loss recovery FSM with exponential
+  backoff (1 ms initial, doubling), retry budget, and CPU fallback after
+  exhaustion. States: `Active`, `DeviceLost`, `SuspendedWithRetry`,
+  `Recreated`, `Restored`, `FallbackCpu`. Recovery budget: 16.6 ms.
+- **WGPU**: `RenderOrchestrator` bridging GPU and CPU backends, consuming
+  `OrchestratorConfig` to gate fallback on `allow_software_fallback` and
+  `prefer_cpu` settings.
+- **Render**: `PaintList` command stream with 10 `PaintCommand` variants:
+  `FillRect`, `StrokeRect`, `FillPath`, `StrokePath`, `FillLinearGradient`,
+  `FillRadialGradient`, `ClipRect`, `ClipRoundedRect`, `DrawText`,
+  `DrawGlyphRun`.
+- **Render**: `VelloRenderer` translating `PaintCommand` into Vello `Scene`
+  draw calls (fill, stroke, gradient, clip layers with balanced push/pop,
+  text/glyph approximation). Feature-gated under `vello`.
+- **Render**: `TinySkiaBackend` CPU rasterizer with clipping, gradients,
+  paths, and text/glyph approximations. Produces RGBA8 pixel buffer.
+- **Render**: `SoftbufferPresenter` wrapping `softbuffer::Surface` for
+  real CPU-to-window pixel presentation via `present()`.
+- **Render**: DSSIM-inspired perceptual diffing with edge/interior SSIM
+  classification (edge threshold 0.995, interior threshold 0.9999).
+- **Window**: `WindowManager` with SlotMap-backed multi-window storage.
+- **Window**: `DpiScale` with finite-positive validation, fractional
+  coordinate conversion, and creation-time validation.
+- **App**: `AppBuilder`/`AppConfig` with `allow_software_fallback`,
+  `fallback_timeout`, and `prefer_cpu` configuration. Converts to
+  `OrchestratorConfig` via `From` impl.
+
+### Changed
+
+- Workspace version bumped from 0.1.0 to 0.2.0.
+- Internal workspace dependency version literals updated to 0.2.0.
+- Dart package version bumped from 0.1.0 to 0.2.0.
+- Added `#![forbid(unsafe_code)]` to `martensite-blessed`, `martensite-media`,
+  and `martensite-macros`.
+- `WindowManager::create_window` now validates platform scale factor via
+  `DpiScale::is_valid`, falling back to 1.0 for invalid values.
+- `handle_surface_error` distinguishes transient surface errors from
+  device-loss errors.
+
 ## [0.1.0] - 2026-09-06
 
 ### Added
