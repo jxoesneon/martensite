@@ -454,7 +454,8 @@ impl HistoryTree {
         while self.nodes.len() > self.max_nodes {
             let mut candidate: Option<(u64, NodeId)> = None;
             for (id, node) in self.nodes.iter() {
-                if !protected.contains(&id) && id != self.root
+                if !protected.contains(&id)
+                    && id != self.root
                     && (candidate.is_none() || node.last_visited < candidate.unwrap().0)
                 {
                     candidate = Some((node.last_visited, id));
