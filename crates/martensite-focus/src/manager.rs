@@ -302,14 +302,7 @@ impl FocusManager {
     fn collect_tab_candidates(&self, arena: &WidgetArena) -> Vec<WidgetId> {
         let mut candidates = Vec::new();
 
-        let iter: Box<dyn Iterator<Item = WidgetId>> =
-            if let Some(scope) = self.scopes.current_scope_root() {
-                Box::new(arena.iter_subtree(scope))
-            } else {
-                Box::new(arena.iter_depth_first())
-            };
-
-        for id in iter {
+        let mut collect = |id: WidgetId| {
             if let Some(hot) = arena.get_hot(id) {
                 if hot.flags.contains(NodeFlags::FOCUSABLE)
                     && hot.flags.contains(NodeFlags::VISIBLE)
@@ -318,7 +311,18 @@ impl FocusManager {
                     candidates.push(id);
                 }
             }
+        };
+
+        if let Some(scope) = self.scopes.current_scope_root() {
+            for id in arena.iter_subtree(scope) {
+                collect(id);
+            }
+        } else {
+            for id in arena.iter_depth_first() {
+                collect(id);
+            }
         }
+
         candidates
     }
 }

@@ -109,7 +109,7 @@ pub enum TokenKey {
 ///     ThemeToken::Color(Oklab { l: 0.96, a: 0.0, b: 0.0, alpha: 1.0 }),
 /// );
 /// assert!(matches!(
-///     theme.get_color(TokenKey::BackgroundColor),
+///     theme.color(TokenKey::BackgroundColor),
 ///     Some(_)
 /// ));
 /// ```
@@ -144,11 +144,34 @@ impl Theme {
     ///
     /// Returns `None` if the key is absent or the stored token is not a
     /// [`ThemeToken::Color`].
-    pub fn get_color(&self, key: TokenKey) -> Option<Oklab> {
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_theme::{Oklab, Theme, ThemeToken, TokenKey};
+    ///
+    /// let mut theme = Theme::new("Custom");
+    /// theme.set(
+    ///     TokenKey::BackgroundColor,
+    ///     ThemeToken::Color(Oklab { l: 0.96, a: 0.0, b: 0.0, alpha: 1.0 }),
+    /// );
+    /// assert!(theme.color(TokenKey::BackgroundColor).is_some());
+    /// assert!(theme.color(TokenKey::Spacing).is_none());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn color(&self, key: TokenKey) -> Option<Oklab> {
         match self.tokens.get(&key)? {
             ThemeToken::Color(c) => Some(*c),
             _ => None,
         }
+    }
+
+    /// Backwards-compatible alias for [`color`](Self::color).
+    #[inline]
+    #[must_use]
+    pub fn get_color(&self, key: TokenKey) -> Option<Oklab> {
+        self.color(key)
     }
 
     /// Convenience accessor that returns the `f32` value of a dimension token.
@@ -156,7 +179,20 @@ impl Theme {
     /// Returns `None` if the key is absent or the stored token is not a
     /// numeric token ([`ThemeToken::Dimension`], [`ThemeToken::FontSize`],
     /// [`ThemeToken::Duration`], or [`ThemeToken::Easing`]).
-    pub fn get_dimension(&self, key: TokenKey) -> Option<f32> {
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_theme::{Theme, ThemeToken, TokenKey};
+    ///
+    /// let mut theme = Theme::new("Custom");
+    /// theme.set(TokenKey::Spacing, ThemeToken::Dimension(16.0));
+    /// assert_eq!(theme.dimension(TokenKey::Spacing), Some(16.0));
+    /// assert!(theme.dimension(TokenKey::BackgroundColor).is_none());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn dimension(&self, key: TokenKey) -> Option<f32> {
         match self.tokens.get(&key)? {
             ThemeToken::Dimension(v)
             | ThemeToken::FontSize(v)
@@ -164,6 +200,13 @@ impl Theme {
             | ThemeToken::Easing(v) => Some(*v),
             _ => None,
         }
+    }
+
+    /// Backwards-compatible alias for [`dimension`](Self::dimension).
+    #[inline]
+    #[must_use]
+    pub fn get_dimension(&self, key: TokenKey) -> Option<f32> {
+        self.dimension(key)
     }
 
     /// Merges tokens from `other` into `self`.
@@ -722,10 +765,10 @@ mod tests {
     #[test]
     fn default_light_has_white_background_and_dark_text() {
         let theme = default_light();
-        let bg = theme.get_color(TokenKey::BackgroundColor).unwrap();
+        let bg = theme.color(TokenKey::BackgroundColor).unwrap();
         assert!(approx_eq(bg.l, 0.96));
         assert!(approx_eq(bg.alpha, 1.0));
-        let text = theme.get_color(TokenKey::TextColor).unwrap();
+        let text = theme.color(TokenKey::TextColor).unwrap();
         assert!(approx_eq(text.l, 0.20));
         assert_eq!(theme.name, "Light");
     }
@@ -733,10 +776,10 @@ mod tests {
     #[test]
     fn default_dark_has_dark_background_and_light_text() {
         let theme = default_dark();
-        let bg = theme.get_color(TokenKey::BackgroundColor).unwrap();
+        let bg = theme.color(TokenKey::BackgroundColor).unwrap();
         assert!(approx_eq(bg.l, 0.20));
         assert!(approx_eq(bg.alpha, 1.0));
-        let text = theme.get_color(TokenKey::TextColor).unwrap();
+        let text = theme.color(TokenKey::TextColor).unwrap();
         assert!(approx_eq(text.l, 0.96));
         assert_eq!(theme.name, "Dark");
     }
@@ -752,21 +795,26 @@ mod tests {
             alpha: 1.0,
         };
         theme.set(TokenKey::PrimaryColor, ThemeToken::Color(color));
+        assert_eq!(theme.color(TokenKey::PrimaryColor), Some(color));
         assert_eq!(theme.get_color(TokenKey::PrimaryColor), Some(color));
 
         theme.set(TokenKey::Spacing, ThemeToken::Dimension(32.0));
+        assert_eq!(theme.dimension(TokenKey::Spacing), Some(32.0));
         assert_eq!(theme.get_dimension(TokenKey::Spacing), Some(32.0));
 
         theme.set(TokenKey::FontSizeMedium, ThemeToken::FontSize(18.0));
+        assert_eq!(theme.dimension(TokenKey::FontSizeMedium), Some(18.0));
         assert_eq!(theme.get_dimension(TokenKey::FontSizeMedium), Some(18.0));
 
         theme.set(TokenKey::AnimationDuration, ThemeToken::Duration(250.0));
+        assert_eq!(theme.dimension(TokenKey::AnimationDuration), Some(250.0));
         assert_eq!(
             theme.get_dimension(TokenKey::AnimationDuration),
             Some(250.0)
         );
 
         theme.set(TokenKey::AnimationEasing, ThemeToken::Easing(0.42));
+        assert_eq!(theme.dimension(TokenKey::AnimationEasing), Some(0.42));
         assert_eq!(theme.get_dimension(TokenKey::AnimationEasing), Some(0.42));
 
         theme.set(
@@ -783,6 +831,7 @@ mod tests {
     fn get_color_returns_none_for_non_color_token() {
         let mut theme = Theme::new("test");
         theme.set(TokenKey::Spacing, ThemeToken::Dimension(16.0));
+        assert_eq!(theme.color(TokenKey::Spacing), None);
         assert_eq!(theme.get_color(TokenKey::Spacing), None);
     }
 
@@ -798,6 +847,7 @@ mod tests {
                 alpha: 1.0,
             }),
         );
+        assert_eq!(theme.dimension(TokenKey::PrimaryColor), None);
         assert_eq!(theme.get_dimension(TokenKey::PrimaryColor), None);
     }
 
@@ -805,7 +855,9 @@ mod tests {
     fn get_returns_none_for_missing_key() {
         let theme = Theme::new("empty");
         assert!(theme.get(TokenKey::PrimaryColor).is_none());
+        assert!(theme.color(TokenKey::PrimaryColor).is_none());
         assert!(theme.get_color(TokenKey::PrimaryColor).is_none());
+        assert!(theme.dimension(TokenKey::Spacing).is_none());
         assert!(theme.get_dimension(TokenKey::Spacing).is_none());
     }
 
@@ -825,10 +877,12 @@ mod tests {
 
         base.merge(&override_theme);
 
+        assert_eq!(base.color(TokenKey::BackgroundColor), Some(new_bg));
         assert_eq!(base.get_color(TokenKey::BackgroundColor), Some(new_bg));
+        assert_eq!(base.dimension(TokenKey::Spacing), Some(99.0));
         assert_eq!(base.get_dimension(TokenKey::Spacing), Some(99.0));
         // Untouched tokens remain.
-        assert!(base.get_color(TokenKey::TextColor).is_some());
+        assert!(base.color(TokenKey::TextColor).is_some());
     }
 
     #[test]

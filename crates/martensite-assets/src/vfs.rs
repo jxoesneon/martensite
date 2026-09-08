@@ -837,7 +837,7 @@ mod tests {
         listed.sort();
         assert_eq!(
             listed,
-            vec!["a.txt", "dir/b.txt", "dir/c.bin"]
+            ["a.txt", "dir/b.txt", "dir/c.bin"]
                 .into_iter()
                 .map(String::from)
                 .collect::<Vec<_>>()
@@ -976,7 +976,7 @@ mod tests {
             listed.sort();
             assert_eq!(
                 listed,
-                vec!["sub/data.bin", "sub/nested.txt", "top.txt",]
+                ["sub/data.bin", "sub/nested.txt", "top.txt"]
                     .into_iter()
                     .map(String::from)
                     .collect::<Vec<_>>()

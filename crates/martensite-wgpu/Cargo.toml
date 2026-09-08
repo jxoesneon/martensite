@@ -15,9 +15,13 @@ readme = "README.md"
 [dependencies]
 martensite-core = { workspace = true }
 martensite-render = { workspace = true }
+martensite-media = { workspace = true }
 wgpu = { workspace = true }
 vello = { workspace = true }
 pollster = { workspace = true }
 tracing = { workspace = true }
+bytemuck = { workspace = true }
+glam = { workspace = true }
+
 [lints]
 workspace = true

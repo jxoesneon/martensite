@@ -119,10 +119,22 @@ pub mod text;
 /// ```
 pub mod text_input;
 
+/// Hardware video presentation widget.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::media::MediaView;
+///
+/// let view = MediaView::new();
+/// ```
+pub mod media;
+
 pub use button::Button;
 pub use checkbox::CheckBox;
 pub use container::Container;
 pub use flex::{Flex, FlexDirection};
+pub use media::{MediaView, VideoFit};
 pub use stack::Stack;
 pub use text::Text;
 pub use text_input::TextInput;

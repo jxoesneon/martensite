@@ -145,7 +145,7 @@ impl ThemeUniforms {
             if i >= MAX_THEME_COLORS {
                 break;
             }
-            if let Some(color) = theme.get_color(key) {
+            if let Some(color) = theme.color(key) {
                 uniforms.set_color(i, color);
             }
         }

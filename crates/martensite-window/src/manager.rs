@@ -38,7 +38,7 @@ new_key_type! {
     ///
     /// Keys remain valid across insertions and removals and are cheap to
     /// copy. A key whose window has been destroyed will no longer resolve
-    /// via [`WindowManager::get_window`] — such a key is simply stale and
+    /// via [`WindowManager::window`] — such a key is simply stale and
     /// yields `None` rather than panicking.
     pub struct WindowKey;
 }
@@ -175,35 +175,91 @@ impl WindowManager {
 
     /// Returns a shared reference to the [`WindowEntry`] for `key`, or
     /// `None` if the key is stale.
+    #[inline]
+    #[must_use]
+    pub fn window(&self, key: WindowKey) -> Option<&WindowEntry> {
+        self.windows.get(key)
+    }
+
+    /// Backwards-compatible alias for [`window`](Self::window).
+    #[inline]
     #[must_use]
     pub fn get_window(&self, key: WindowKey) -> Option<&WindowEntry> {
-        self.windows.get(key)
+        self.window(key)
     }
 
     /// Returns a mutable reference to the [`WindowEntry`] for `key`, or
     /// `None` if the key is stale.
+    #[inline]
     #[must_use]
-    pub fn get_window_mut(&mut self, key: WindowKey) -> Option<&mut WindowEntry> {
+    pub fn window_mut(&mut self, key: WindowKey) -> Option<&mut WindowEntry> {
         self.windows.get_mut(key)
     }
 
+    /// Backwards-compatible alias for [`window_mut`](Self::window_mut).
+    #[inline]
+    #[must_use]
+    pub fn get_window_mut(&mut self, key: WindowKey) -> Option<&mut WindowEntry> {
+        self.window_mut(key)
+    }
+
     /// Iterates over all tracked windows by reference.
-    pub fn iter_windows(&self) -> impl Iterator<Item = (WindowKey, &WindowEntry)> {
+    #[inline]
+    pub fn windows(&self) -> impl Iterator<Item = (WindowKey, &WindowEntry)> {
         self.windows.iter()
     }
 
+    /// Backwards-compatible alias for [`windows`](Self::windows).
+    #[inline]
+    pub fn iter_windows(&self) -> impl Iterator<Item = (WindowKey, &WindowEntry)> {
+        self.windows()
+    }
+
     /// Iterates over all tracked windows by mutable reference.
-    pub fn iter_windows_mut(&mut self) -> impl Iterator<Item = (WindowKey, &mut WindowEntry)> {
+    #[inline]
+    pub fn windows_mut(&mut self) -> impl Iterator<Item = (WindowKey, &mut WindowEntry)> {
         self.windows.iter_mut()
     }
 
+    /// Backwards-compatible alias for [`windows_mut`](Self::windows_mut).
+    #[inline]
+    pub fn iter_windows_mut(&mut self) -> impl Iterator<Item = (WindowKey, &mut WindowEntry)> {
+        self.windows_mut()
+    }
+
     /// Returns the number of windows currently tracked.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_window::WindowManager;
+    ///
+    /// let mgr = WindowManager::new();
+    /// assert_eq!(mgr.len(), 0);
+    /// ```
+    #[inline]
     #[must_use]
-    pub fn window_count(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.windows.len()
     }
 
+    /// Backwards-compatible alias for [`len`](Self::len).
+    #[inline]
+    #[must_use]
+    pub fn window_count(&self) -> usize {
+        self.len()
+    }
+
     /// Returns `true` if no windows are currently tracked.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_window::WindowManager;
+    ///
+    /// let mgr = WindowManager::new();
+    /// assert!(mgr.is_empty());
+    /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.windows.is_empty()
@@ -251,7 +307,7 @@ impl WindowManager {
                 WindowEventOutcome::Destroyed
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                if let Some(entry) = self.get_window_mut(key) {
+                if let Some(entry) = self.window_mut(key) {
                     // Validate through DpiScale::new so non-finite or
                     // non-positive scale factors cannot be stored and
                     // later panic when WindowEntry::dpi() is called.
@@ -515,9 +571,12 @@ mod tests {
                     .mgr
                     .create_window(event_loop, attrs)
                     .expect("window creation should succeed on a live event loop");
+                assert_eq!(self.mgr.len(), 1);
                 assert_eq!(self.mgr.window_count(), 1);
+                assert!(self.mgr.window(key).is_some());
                 assert!(self.mgr.get_window(key).is_some());
                 assert!(self.mgr.destroy_window(key).is_some());
+                assert_eq!(self.mgr.len(), 0);
                 assert_eq!(self.mgr.window_count(), 0);
                 self.done = true;
                 event_loop.exit();

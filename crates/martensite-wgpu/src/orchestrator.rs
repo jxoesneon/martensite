@@ -357,11 +357,11 @@ mod tests {
     #[test]
     fn orchestrator_error_display() {
         assert_eq!(
-            format!("{}", OrchestratorError::NoBackend),
+            OrchestratorError::NoBackend.to_string(),
             "no rendering backend available"
         );
         assert_eq!(
-            format!("{}", OrchestratorError::BackendInitFailed),
+            OrchestratorError::BackendInitFailed.to_string(),
             "rendering backend initialization failed"
         );
     }

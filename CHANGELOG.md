@@ -5,6 +5,38 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-08
+
+### Added
+
+- **Media & Hardware Video Playback (`martensite-media`)**:
+  - Zero-copy hardware video surface bindings supporting DXGI NT shared handles (`HardwareHandle::DxgiSharedHandle`), macOS `IOSurface`, Linux `dma-buf`, and mock handles.
+  - Multi-planar format negotiation (`FormatNegotiator`) for NV12 (8-bit SDR) and P010 (10-bit HDR) YUV surfaces, as well as packed RGBA8 and RGBA16Float textures.
+  - Sub-millisecond CPU frame dispatch telemetry (`VideoSurface::update_handle`, `cpu_utilization_pct`) verifying < 1% CPU utilization (< 0.10 ms dispatch) for 4K 60fps video.
+- **HDR Color Pipeline & Optical Compositing (`martensite-media::color`)**:
+  - Analytical BT.709 and BT.2020 YUV <-> RGB color space transformation matrices with colorimetric test pattern accuracy (ΔE < 0.05, well below the 1.0 threshold).
+  - Full-range and limited-range quantization normalization for 8-bit and 10-bit video streams.
+  - SMPTE ST 2084 PQ electro-optical transfer function (EOTF) and inverse OETF across dynamic range (0.005 to 10,000 nits) with relative error < 10⁻⁴.
+  - CIE 1931 XYZ and CIE 1976 L*a*b* color difference metric (`delta_e_76`).
+  - Open-domain linear optical space (`ScRgb`) with pre-multiplied alpha blending (`ScRgb::blend_over`), preserving specular dynamic range without SDR clipping and maintaining WCAG AA (≥ 4.5:1) contrast for UI overlays.
+- **Filmic Tone-Mapping Operators & Display Adaptation (`martensite-media::tonemap`)**:
+  - Display profile abstraction (`DisplayProfile`) with dynamic SDR reference white level scaling and peak luminance headroom calculation.
+  - Monotonic Hable (Uncharted 2) and Uchimura (Gran Turismo) filmic tone curves (`hable_tonemap_scalar`, `uchimura_tonemap_scalar`, `ToneMapOperator`) providing smooth highlight rolloff and toe contrast preservation.
+- **WGPU Video Interop & Compute Pipeline (`martensite-wgpu::interop`)**:
+  - `MEDIA_YUV_EOTF_WGSL` compute shader performing hardware YUV planar sampling, color range expansion, BT.709/BT.2020 matrix transform, PQ EOTF decoding, gamut mapping, and optional Hable tone-mapping directly on GPU.
+  - 256-byte aligned `VideoPipelineUniforms` (`Pod`, `Zeroable`) for direct WGPU uniform buffer uploads.
+  - Swapchain format selector favoring 16-bit float HDR swapchains (`Rgba16Float`) when available.
+- **MediaView Widget (`martensite::widgets::media`)**:
+  - Retained-mode `MediaView` widget integrating hardware video surfaces into the Martensite layout tree.
+  - Aspect ratio preservation supporting `VideoFit::Contain`, `VideoFit::Cover`, `VideoFit::Fill`, and `VideoFit::Fixed` with letterbox/pillarbox destination rect calculation (`MediaView::compute_dest_rect`).
+  - AccessKit accessibility integration exposing `accesskit::Role::Video`.
+
+### Changed
+
+- All workspace crates bumped from `0.7.0` to `0.8.0`.
+- Added `martensite-media` to root workspace members and re-exported as `martensite::media`.
+- Re-exported `wgpu` from `martensite-wgpu`.
+
 ## [0.7.0] - 2026-09-08
 
 ### Added
@@ -26,6 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - All workspace crates bumped from `0.6.0` to `0.7.0`.
 - Added `notify` 8.2, `naga` 30, and `fluent-langneg` 0.14 dependencies.
+- Aligned public APIs with Rust API Guidelines (RFC 344 / C-GETTER, C-LEN, C-BUILDER):
+  - Added idiomatic noun-phrase accessors `Theme::color()`, `Theme::dimension()`, `WindowManager::window()`, `WindowManager::window_mut()`, `WindowManager::windows()`, `WindowManager::windows_mut()`, `WindowManager::len()`, `WindowManager::is_empty()`, and `DndSessionManager::session()`, `DndSessionManager::session_mut()`. Legacy `get_*`, `window_count`, and `iter_windows` methods are preserved as `#[inline]` forwarding aliases for 100% backward compatibility.
+  - Added `Text::content(&self) -> &str` borrowed accessor alongside existing `pub content: String` field for architecture-compliant direct mutation.
+  - Added `#[must_use]` across all widget builder methods (`Button`, `CheckBox`, `TextInput`, `Container`, `Flex`, `Stack`, `Text`) to prevent silently discarded method chains.
+- Optimized hot paths and reduced heap churn:
+  - Replaced intermediate allocation in `HistoryLedger::redo()` with zero-allocation `.iter().copied().max_by_key(...).ok_or(...)` iterator pipeline.
+  - Replaced heap-allocated trait object iterator (`Box<dyn Iterator>`) in `FocusManager` subtree navigation with zero-allocation local closure traversal.
+  - Formatted `ClipboardItem::types()` debug output directly from map keys without intermediate `Vec` collection.
 
 ## [0.6.0] - 2026-09-07
 

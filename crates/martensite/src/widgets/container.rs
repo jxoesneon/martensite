@@ -83,6 +83,7 @@ impl Container {
     /// assert_eq!(c.padding.left, 8.0);
     /// ```
     #[inline]
+    #[must_use]
     pub fn padding(mut self, padding: EdgeInsets) -> Self {
         self.padding = padding;
         self
@@ -99,6 +100,7 @@ impl Container {
     /// assert_eq!(c.padding.horizontal(), 24.0);
     /// ```
     #[inline]
+    #[must_use]
     pub fn padding_uniform(mut self, value: f32) -> Self {
         self.padding = EdgeInsets::uniform(value);
         self
@@ -116,6 +118,7 @@ impl Container {
     /// assert!(c.background.is_some());
     /// ```
     #[inline]
+    #[must_use]
     pub fn background(mut self, color: Oklab) -> Self {
         self.background = Some(color);
         self
@@ -132,6 +135,7 @@ impl Container {
     /// assert!(c.child.is_some());
     /// ```
     #[inline]
+    #[must_use]
     pub fn child(mut self, child: impl Widget + 'static) -> Self {
         self.child = Some(Box::new(child));
         self

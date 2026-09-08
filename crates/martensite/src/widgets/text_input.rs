@@ -32,6 +32,7 @@ use martensite_core::Rect;
 /// assert_eq!(input.label, "Email");
 /// assert_eq!(input.value, "user@example.com");
 /// ```
+#[derive(Clone)]
 pub struct TextInput {
     /// The accessible label for the text input.
     pub label: String,
@@ -81,6 +82,7 @@ impl TextInput {
     /// assert_eq!(input.value, "alice");
     /// ```
     #[inline]
+    #[must_use]
     pub fn value(mut self, value: impl Into<String>) -> Self {
         self.value = value.into();
         self
@@ -97,6 +99,7 @@ impl TextInput {
     /// assert_eq!(input.placeholder, "Type query...");
     /// ```
     #[inline]
+    #[must_use]
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
         self
@@ -113,6 +116,7 @@ impl TextInput {
     /// assert!(!input.enabled);
     /// ```
     #[inline]
+    #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
@@ -129,6 +133,7 @@ impl TextInput {
     /// assert!(input.read_only);
     /// ```
     #[inline]
+    #[must_use]
     pub fn read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
         self
@@ -204,19 +209,6 @@ impl std::fmt::Debug for TextInput {
             .field("enabled", &self.enabled)
             .field("read_only", &self.read_only)
             .finish()
-    }
-}
-
-impl Clone for TextInput {
-    fn clone(&self) -> Self {
-        Self {
-            label: self.label.clone(),
-            value: self.value.clone(),
-            placeholder: self.placeholder.clone(),
-            enabled: self.enabled,
-            read_only: self.read_only,
-            cached_bounds: self.cached_bounds,
-        }
     }
 }
 

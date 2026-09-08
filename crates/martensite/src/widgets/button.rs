@@ -33,6 +33,7 @@ use martensite_core::Rect;
 /// assert_eq!(btn.label, "Submit");
 /// assert!(btn.enabled);
 /// ```
+#[derive(Clone)]
 pub struct Button {
     /// The accessible label displayed on the button.
     pub label: String,
@@ -76,6 +77,7 @@ impl Button {
     /// assert!(!btn.enabled);
     /// ```
     #[inline]
+    #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
@@ -92,6 +94,7 @@ impl Button {
     /// assert_eq!(btn.tooltip.as_deref(), Some("Click for assistance"));
     /// ```
     #[inline]
+    #[must_use]
     pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
         self.tooltip = Some(tooltip.into());
         self
@@ -146,17 +149,6 @@ impl std::fmt::Debug for Button {
             .field("label", &self.label)
             .field("enabled", &self.enabled)
             .finish()
-    }
-}
-
-impl Clone for Button {
-    fn clone(&self) -> Self {
-        Self {
-            label: self.label.clone(),
-            enabled: self.enabled,
-            tooltip: self.tooltip.clone(),
-            cached_bounds: self.cached_bounds,
-        }
     }
 }
 

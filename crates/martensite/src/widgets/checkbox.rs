@@ -31,6 +31,7 @@ use martensite_core::Rect;
 /// assert_eq!(cb.label, "Accept terms");
 /// assert!(cb.checked);
 /// ```
+#[derive(Clone)]
 pub struct CheckBox {
     /// The accessible label for the checkbox.
     pub label: String,
@@ -74,6 +75,7 @@ impl CheckBox {
     /// assert!(cb.checked);
     /// ```
     #[inline]
+    #[must_use]
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = checked;
         self
@@ -90,6 +92,7 @@ impl CheckBox {
     /// assert!(!cb.enabled);
     /// ```
     #[inline]
+    #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
@@ -163,17 +166,6 @@ impl std::fmt::Debug for CheckBox {
             .field("checked", &self.checked)
             .field("enabled", &self.enabled)
             .finish()
-    }
-}
-
-impl Clone for CheckBox {
-    fn clone(&self) -> Self {
-        Self {
-            label: self.label.clone(),
-            checked: self.checked,
-            enabled: self.enabled,
-            cached_bounds: self.cached_bounds,
-        }
     }
 }
 

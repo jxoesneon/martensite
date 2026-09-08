@@ -181,7 +181,7 @@ fn clipboard_to_dnd_session_to_drop_full_flow() {
     );
     assert_eq!(manager.active_sessions(), 1);
     assert_eq!(
-        manager.get_session(session_id).unwrap().status(),
+        manager.session(session_id).unwrap().status(),
         DndStatus::Idle
     );
 
@@ -197,20 +197,20 @@ fn clipboard_to_dnd_session_to_drop_full_flow() {
     );
 
     // Enter the target at the centre and confirm it accepts the session.
-    let enter_state = registry.enter_target(target_id, manager.get_session(session_id).unwrap());
+    let enter_state = registry.enter_target(target_id, manager.session(session_id).unwrap());
     assert_eq!(enter_state, DropTargetState::Hovered);
 
     // Drop: complete the session against the target via a mutable borrow.
     let drop_effect = {
         let session = manager
-            .get_session_mut(session_id)
+            .session_mut(session_id)
             .expect("session should exist for drop");
         registry.drop_on_target(target_id, session)
     };
     assert_eq!(drop_effect, Some(DropEffect::Copy));
 
     // The session is now completed and the payload is still recoverable.
-    let session = manager.get_session(session_id).unwrap();
+    let session = manager.session(session_id).unwrap();
     assert!(session.is_expired());
     assert_eq!(session.status(), DndStatus::Completed(DropEffect::Copy));
     let recovered = session
@@ -589,7 +589,7 @@ fn dnd_session_survives_invalid_source_window() {
 
     // The session is still registered, not expired, and its payload is intact.
     let session = manager
-        .get_session(session_id)
+        .session(session_id)
         .expect("session must survive after source window is dropped");
     assert!(!session.is_expired());
     assert_eq!(session.status(), DndStatus::Idle);
@@ -601,7 +601,7 @@ fn dnd_session_survives_invalid_source_window() {
 
     // The session can still be completed normally.
     assert!(manager.complete_session(session_id, DropEffect::Copy));
-    let session = manager.get_session(session_id).unwrap();
+    let session = manager.session(session_id).unwrap();
     assert_eq!(session.status(), DndStatus::Completed(DropEffect::Copy));
     assert!(session.is_expired());
     // And the payload is still accessible after completion.
@@ -620,7 +620,7 @@ fn dnd_session_without_source_window_is_valid() {
         vec![],
         None,
     );
-    let session = manager.get_session(id).unwrap();
+    let session = manager.session(id).unwrap();
     assert!(session.source_window.is_none());
     assert_eq!(session.payload_typed::<i32>(), Some(&7));
     assert!(!session.is_expired());

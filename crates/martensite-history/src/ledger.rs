@@ -279,16 +279,14 @@ impl<S: 'static> HistoryLedger<S> {
     /// assert_eq!(*ledger.state(), 5);
     /// ```
     pub fn redo(&mut self) -> Result<(), LedgerError> {
-        let children = self.tree.current_children().to_vec();
-        if children.is_empty() {
-            return Err(LedgerError::NoRedo);
-        }
-
         // Pick the most recently visited child.
-        let best = children
-            .into_iter()
+        let best = self
+            .tree
+            .current_children()
+            .iter()
+            .copied()
             .max_by_key(|&c| self.tree.node(c).map(|n| n.last_visited).unwrap_or(0))
-            .unwrap();
+            .ok_or(LedgerError::NoRedo)?;
 
         self.tree.move_to_child(best);
         let current = self.tree.current();

@@ -25,6 +25,8 @@
 /// GPU device context: adapter enumeration, feature selection, device/queue
 /// lifecycle.
 pub mod device;
+/// External video surface memory import, texture format negotiation, and compute EOTF shaders.
+pub mod interop;
 /// Render pipeline orchestrator bridging GPU and CPU backends.
 pub mod orchestrator;
 /// GPU device-loss recovery finite state machine.
@@ -33,12 +35,14 @@ pub mod resilience;
 pub mod surface;
 
 pub use device::{GpuContext, GpuContextError};
+pub use interop::{FormatNegotiator, VideoPipelineUniforms, MEDIA_YUV_EOTF_WGSL};
 pub use orchestrator::{OrchestratorConfig, OrchestratorError, RenderMode, RenderOrchestrator};
 pub use resilience::{
     backoff_duration, DeviceStatus, RecoveryMachine, SurfaceError, DEFAULT_FALLBACK_THRESHOLD,
     DEFAULT_MAX_RETRIES, RECOVERY_BUDGET,
 };
 pub use surface::{SurfaceWrapper, SurfaceWrapperError};
+pub use wgpu;
 
 #[cfg(test)]
 mod tests {

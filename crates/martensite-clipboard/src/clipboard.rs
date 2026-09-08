@@ -551,7 +551,7 @@ impl ClipboardItem {
 impl std::fmt::Debug for ClipboardItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClipboardItem")
-            .field("types", &self.payloads.keys().collect::<Vec<_>>())
+            .field("types", &self.payloads.keys())
             .finish_non_exhaustive()
     }
 }

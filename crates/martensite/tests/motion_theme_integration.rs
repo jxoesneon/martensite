@@ -658,7 +658,7 @@ fn theme_uniforms_from_theme() {
 
     // The first color (BackgroundColor) should match the theme's value.
     let bg = theme
-        .get_color(TokenKey::BackgroundColor)
+        .color(TokenKey::BackgroundColor)
         .expect("light theme should have BackgroundColor");
     assert!(
         oklab_approx_eq(uniforms.colors[0], bg, 1e-6),
@@ -667,7 +667,7 @@ fn theme_uniforms_from_theme() {
 
     // The second color (SurfaceColor) should match.
     let surface = theme
-        .get_color(TokenKey::SurfaceColor)
+        .color(TokenKey::SurfaceColor)
         .expect("light theme should have SurfaceColor");
     assert!(
         oklab_approx_eq(uniforms.colors[1], surface, 1e-6),

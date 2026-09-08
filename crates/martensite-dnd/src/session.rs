@@ -268,7 +268,7 @@ impl DndSessionManager {
     ///
     /// let mut manager = DndSessionManager::new();
     /// let id = manager.start_session(Arc::new(1_i32), vec![], None);
-    /// assert!(manager.get_session(id).is_some());
+    /// assert!(manager.session(id).is_some());
     /// ```
     pub fn start_session(
         &mut self,
@@ -293,11 +293,20 @@ impl DndSessionManager {
     ///
     /// let mut manager = DndSessionManager::new();
     /// let id = manager.start_session(Arc::new(1_i32), vec![], None);
-    /// assert!(manager.get_session(id).is_some());
-    /// assert!(manager.get_session((id.0 + 1).into()).is_none());
+    /// assert!(manager.session(id).is_some());
+    /// assert!(manager.session((id.0 + 1).into()).is_none());
     /// ```
-    pub fn get_session(&self, id: SessionId) -> Option<&DndSession> {
+    #[inline]
+    #[must_use]
+    pub fn session(&self, id: SessionId) -> Option<&DndSession> {
         self.sessions.get(&id)
+    }
+
+    /// Backwards-compatible alias for [`session`](Self::session).
+    #[inline]
+    #[must_use]
+    pub fn get_session(&self, id: SessionId) -> Option<&DndSession> {
+        self.session(id)
     }
 
     /// Returns an exclusive reference to the session with the given `id`, if
@@ -311,12 +320,21 @@ impl DndSessionManager {
     ///
     /// let mut manager = DndSessionManager::new();
     /// let id = manager.start_session(Arc::new(1_i32), vec![], None);
-    /// if let Some(session) = manager.get_session_mut(id) {
+    /// if let Some(session) = manager.session_mut(id) {
     ///     session.complete(DropEffect::Copy);
     /// }
     /// ```
-    pub fn get_session_mut(&mut self, id: SessionId) -> Option<&mut DndSession> {
+    #[inline]
+    #[must_use]
+    pub fn session_mut(&mut self, id: SessionId) -> Option<&mut DndSession> {
         self.sessions.get_mut(&id)
+    }
+
+    /// Backwards-compatible alias for [`session_mut`](Self::session_mut).
+    #[inline]
+    #[must_use]
+    pub fn get_session_mut(&mut self, id: SessionId) -> Option<&mut DndSession> {
+        self.session_mut(id)
     }
 
     /// Marks the session with the given `id` as completed with `effect`.
@@ -479,7 +497,7 @@ mod tests {
         let mut manager = DndSessionManager::new();
         let id = manager.start_session(Arc::new("payload"), vec!["text/plain".into()], None);
         assert_eq!(manager.active_sessions(), 1);
-        let session = manager.get_session(id).expect("session should exist");
+        let session = manager.session(id).expect("session should exist");
         assert_eq!(session.available_types, vec!["text/plain"]);
     }
 
@@ -487,6 +505,7 @@ mod tests {
     fn manager_get_missing_returns_none() {
         let mut manager = DndSessionManager::new();
         let _id = manager.start_session(Arc::new(0_i32), vec![], None);
+        assert!(manager.session(SessionId(999)).is_none());
         assert!(manager.get_session(SessionId(999)).is_none());
     }
 
@@ -495,6 +514,10 @@ mod tests {
         let mut manager = DndSessionManager::new();
         let id = manager.start_session(Arc::new(0_i32), vec![], None);
         assert!(manager.complete_session(id, DropEffect::Copy));
+        assert_eq!(
+            manager.session(id).unwrap().status(),
+            DndStatus::Completed(DropEffect::Copy)
+        );
         assert_eq!(
             manager.get_session(id).unwrap().status(),
             DndStatus::Completed(DropEffect::Copy)
@@ -512,10 +535,7 @@ mod tests {
         let mut manager = DndSessionManager::new();
         let id = manager.start_session(Arc::new(0_i32), vec![], None);
         assert!(manager.cancel_session(id));
-        assert_eq!(
-            manager.get_session(id).unwrap().status(),
-            DndStatus::Cancelled
-        );
+        assert_eq!(manager.session(id).unwrap().status(), DndStatus::Cancelled);
     }
 
     #[test]
@@ -552,17 +572,12 @@ mod tests {
         assert_ne!(b, c);
         assert_ne!(a, c);
         assert_eq!(manager.active_sessions(), 3);
+        assert_eq!(manager.session(a).unwrap().payload_typed::<i32>(), Some(&1));
+        assert_eq!(manager.session(b).unwrap().payload_typed::<i32>(), Some(&2));
+        assert_eq!(manager.session(c).unwrap().payload_typed::<i32>(), Some(&3));
         assert_eq!(
             manager.get_session(a).unwrap().payload_typed::<i32>(),
             Some(&1)
-        );
-        assert_eq!(
-            manager.get_session(b).unwrap().payload_typed::<i32>(),
-            Some(&2)
-        );
-        assert_eq!(
-            manager.get_session(c).unwrap().payload_typed::<i32>(),
-            Some(&3)
         );
     }
 

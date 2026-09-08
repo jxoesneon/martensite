@@ -101,6 +101,22 @@ impl Text {
         }
     }
 
+    /// Returns a borrowed reference to the text content.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("Hello");
+    /// assert_eq!(t.content(), "Hello");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
     /// Sets the text content and invalidates caches.
     ///
     /// Use this instead of directly mutating `self.content` to ensure
@@ -153,6 +169,7 @@ impl Text {
     /// assert_eq!(t.font_size, 24.0);
     /// ```
     #[inline]
+    #[must_use]
     pub fn font_size(mut self, size: f32) -> Self {
         self.font_size = size;
         self.inline_cache.clear();
@@ -172,6 +189,7 @@ impl Text {
     /// assert_eq!(t.line_height, Some(28.0));
     /// ```
     #[inline]
+    #[must_use]
     pub fn line_height(mut self, height: f32) -> Self {
         self.line_height = Some(height);
         self.inline_cache.clear();
@@ -191,6 +209,7 @@ impl Text {
     /// assert_eq!(t.family, "monospace");
     /// ```
     #[inline]
+    #[must_use]
     pub fn family(mut self, family: impl Into<String>) -> Self {
         self.family = family.into();
         self.inline_cache.clear();
@@ -209,6 +228,7 @@ impl Text {
     /// assert!(t.color.is_some());
     /// ```
     #[inline]
+    #[must_use]
     pub fn color(mut self, color: martensite_theme::Oklab) -> Self {
         self.color = Some(color);
         self
@@ -227,6 +247,7 @@ impl Text {
     /// assert!(t.rtl);
     /// ```
     #[inline]
+    #[must_use]
     pub fn rtl(mut self) -> Self {
         self.rtl = true;
         self.inline_cache.clear();

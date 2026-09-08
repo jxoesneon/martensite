@@ -38,9 +38,6 @@ pub struct HistoryNode {
     pub(crate) children: SmallVec<[NodeId; 4]>,
     /// Depth in the tree (root = 0).
     pub(crate) depth: u32,
-    /// Monotonically increasing sequence number for LRU pruning.
-    #[allow(dead_code)]
-    pub(crate) sequence: u64,
     /// Whether this node was the most recently visited node.
     pub(crate) last_visited: u64,
 }
@@ -90,8 +87,6 @@ pub struct HistoryTree {
     pub(crate) current: NodeId,
     /// Maximum number of nodes before pruning kicks in.
     pub(crate) max_nodes: usize,
-    /// Next sequence number to assign.
-    pub(crate) next_sequence: u64,
     /// Next last-visited counter for LRU tracking.
     pub(crate) next_visit: u64,
 }
@@ -120,7 +115,6 @@ impl HistoryTree {
             parent: None,
             children: SmallVec::new(),
             depth: 0,
-            sequence: 0,
             last_visited: 0,
         });
         Self {
@@ -128,7 +122,6 @@ impl HistoryTree {
             root,
             current: root,
             max_nodes,
-            next_sequence: 1,
             next_visit: 1,
         }
     }
@@ -181,8 +174,6 @@ impl HistoryTree {
     pub fn append_child(&mut self) -> NodeId {
         let parent = self.current;
         let depth = self.nodes[parent].depth + 1;
-        let seq = self.next_sequence;
-        self.next_sequence += 1;
         let visit = self.next_visit;
         self.next_visit += 1;
 
@@ -190,7 +181,6 @@ impl HistoryTree {
             parent: Some(parent),
             children: SmallVec::new(),
             depth,
-            sequence: seq,
             last_visited: visit,
         });
         self.nodes[parent].children.push(id);
@@ -198,7 +188,7 @@ impl HistoryTree {
 
         // Prune if over capacity. The removed NodeIds are discarded
         // here; callers using HistoryLedger handle ops cleanup via
-        // the prune_and_collect method.
+        // cleanup_pruned_ops.
         if self.nodes.len() > self.max_nodes {
             let _ = self.prune();
         }
@@ -255,7 +245,7 @@ impl HistoryTree {
     /// path, or use [`crate::HistoryLedger::jump_to`] for the full
     /// transactional navigation.
     ///
-    /// Returns `Err(())` if the target node does not exist.
+    /// Returns `Err(NodeIdError)` if the target node does not exist.
     ///
     /// # Example
     ///

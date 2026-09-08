@@ -69,13 +69,15 @@ impl Effect {
     }
 
     /// Returns the unique `SignalId` for this effect.
-    #[inline(always)]
+    #[inline]
+    #[must_use]
     pub fn id(&self) -> SignalId {
         self.id
     }
 
     /// Returns a reference to the bound `ReactiveRuntime`.
-    #[inline(always)]
+    #[inline]
+    #[must_use]
     pub fn runtime(&self) -> &Arc<ReactiveRuntime> {
         &self.runtime
     }

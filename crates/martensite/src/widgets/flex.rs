@@ -249,6 +249,7 @@ impl Flex {
     /// assert!(row.direction.is_row());
     /// ```
     #[inline]
+    #[must_use]
     pub fn row() -> Self {
         Self::new(FlexDirection::Row)
     }
@@ -264,6 +265,7 @@ impl Flex {
     /// assert!(col.direction.is_column());
     /// ```
     #[inline]
+    #[must_use]
     pub fn column() -> Self {
         Self::new(FlexDirection::Column)
     }
@@ -280,6 +282,7 @@ impl Flex {
     /// assert_eq!(flex.main_axis_alignment, MainAxisAlignment::Center);
     /// ```
     #[inline]
+    #[must_use]
     pub fn main_axis_alignment(mut self, alignment: MainAxisAlignment) -> Self {
         self.main_axis_alignment = alignment;
         self
@@ -297,6 +300,7 @@ impl Flex {
     /// assert_eq!(flex.cross_axis_alignment, CrossAxisAlignment::Center);
     /// ```
     #[inline]
+    #[must_use]
     pub fn cross_axis_alignment(mut self, alignment: CrossAxisAlignment) -> Self {
         self.cross_axis_alignment = alignment;
         self
@@ -313,6 +317,7 @@ impl Flex {
     /// assert_eq!(flex.gap, 16.0);
     /// ```
     #[inline]
+    #[must_use]
     pub fn gap(mut self, gap: f32) -> Self {
         self.gap = gap;
         self
@@ -329,6 +334,7 @@ impl Flex {
     /// assert_eq!(flex.child_count(), 1);
     /// ```
     #[inline]
+    #[must_use]
     pub fn child(mut self, child: impl Widget + 'static) -> Self {
         self.children.push(Box::new(child));
         self
@@ -347,6 +353,7 @@ impl Flex {
     /// assert_eq!(flex.child_count(), 2);
     /// ```
     #[inline]
+    #[must_use]
     pub fn children(mut self, children: impl IntoIterator<Item = Box<dyn Widget>>) -> Self {
         self.children.extend(children);
         self

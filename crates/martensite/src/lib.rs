@@ -11,7 +11,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! martensite = "0.7.0"
+//! martensite = "0.8.0"
 //! ```
 //!
 //! # Examples
@@ -58,7 +58,7 @@
 /// ```
 pub mod app;
 
-/// Foundational widgets (`Button`, `CheckBox`, `Container`, `Flex`, `Stack`, `Text`, `TextInput`).
+/// Foundational widgets (`Button`, `CheckBox`, `Container`, `Flex`, `MediaView`, `Stack`, `Text`, `TextInput`).
 ///
 /// # Examples
 ///
@@ -79,6 +79,7 @@ pub use martensite_history as history;
 pub use martensite_l10n as l10n;
 pub use martensite_layout as layout;
 pub use martensite_macros as macros;
+pub use martensite_media as media;
 pub use martensite_motion as motion;
 pub use martensite_reactive as reactive;
 pub use martensite_render as render;
@@ -96,8 +97,13 @@ pub use martensite_window as window;
 /// ```
 pub mod prelude {
     pub use crate::app::{App, AppBuilder, AppConfig};
-    pub use crate::widgets::{Container, Flex, FlexDirection, Stack, Text};
+    pub use crate::widgets::{Container, Flex, FlexDirection, MediaView, Stack, Text, VideoFit};
     pub use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, Widget, WidgetArena, WidgetId};
+    pub use martensite_media::color::{ColorSpace, ScRgb, TransferFunction};
+    pub use martensite_media::surface::{
+        ColorRange, HardwareHandle, VideoFrameMetadata, VideoPixelFormat, VideoSurface,
+    };
+    pub use martensite_media::tonemap::{DisplayProfile, ToneMapOperator};
     pub use martensite_motion::{SpringConfig, SpringSolver};
     pub use martensite_reactive::{Memo, Signal};
     pub use martensite_theme::Oklab;

@@ -105,6 +105,7 @@ impl Stack {
     /// assert_eq!(s.alignment, StackAlignment::Center);
     /// ```
     #[inline]
+    #[must_use]
     pub fn alignment(mut self, alignment: StackAlignment) -> Self {
         self.alignment = alignment;
         self
@@ -121,6 +122,7 @@ impl Stack {
     /// assert_eq!(s.child_count(), 1);
     /// ```
     #[inline]
+    #[must_use]
     pub fn child(mut self, child: impl Widget + 'static) -> Self {
         self.children.push(Box::new(child));
         self
