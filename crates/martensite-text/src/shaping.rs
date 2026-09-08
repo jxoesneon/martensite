@@ -7,9 +7,13 @@
 //! reordering, line breaking, and font fallback automatically through
 //! cosmic-text's `Shaping::Advanced` mode.
 
-use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping};
+use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 
+use crate::bidi::{BidiDirection, BidiMirrorMap, BidiResolved};
+use crate::cache::{CachedShape, ShapeCacheKey};
+use crate::cascade::{classify_script, FallbackKey, InstalledFontFallbackResolver, ScriptTag};
 use crate::font::{FontId, FontManager};
+use crate::vertical::{apply_vertical_features, WritingMode};
 
 /// The result of measuring shaped text.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -20,6 +24,114 @@ pub struct TextMetrics {
     pub height: f32,
     /// The number of lines after wrapping.
     pub line_count: usize,
+}
+
+/// Direction and writing-mode options that affect shaping results.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct ShapingOptions {
+    /// Base paragraph direction for BiDi resolution.
+    pub direction: BidiDirection,
+    /// Vertical or horizontal writing mode.
+    pub writing_mode: WritingMode,
+    /// Whether to enable vertical OpenType features when the writing mode is vertical.
+    pub enable_vertical_features: bool,
+    /// Optional culture key used for fallback chain resolution.
+    pub fallback_key: Option<FallbackKey>,
+}
+
+impl ShapingOptions {
+    /// Default horizontal LTR shaping options.
+    #[inline]
+    pub const fn default() -> Self {
+        Self {
+            direction: BidiDirection::Ltr,
+            writing_mode: WritingMode::HorizontalTb,
+            enable_vertical_features: true,
+            fallback_key: None,
+        }
+    }
+
+    /// Shaping options for a vertical right-to-left flow.
+    #[inline]
+    pub const fn vertical_rl() -> Self {
+        Self {
+            direction: BidiDirection::Ltr,
+            writing_mode: WritingMode::VerticalRl,
+            enable_vertical_features: true,
+            fallback_key: None,
+        }
+    }
+
+    /// Returns a display name for a [`Family`] selector suitable for the
+    /// fallback resolver.
+    fn family_display_name<'a>(family: &'a Family<'a>) -> &'a str {
+        match family {
+            Family::Name(name) => name,
+            Family::Serif => "serif",
+            Family::SansSerif => "sans-serif",
+            Family::Cursive => "cursive",
+            Family::Fantasy => "fantasy",
+            Family::Monospace => "monospace",
+        }
+    }
+
+    /// Resolves the fallback chain for `text` and `attrs` against the
+    /// installed font database.
+    ///
+    /// The script used for the platform cascade is taken from
+    /// [`Self::fallback_key`] when set, otherwise it is detected from the
+    /// dominant script of `text`.
+    pub fn resolve_fallback_chain(
+        &self,
+        font_system: &FontSystem,
+        text: &str,
+        attrs: &Attrs,
+    ) -> Vec<String> {
+        let resolver = InstalledFontFallbackResolver::new(font_system);
+        if let Some(key) = &self.fallback_key {
+            // Resolve against the culture-specific script from the key.
+            let mut chain = vec![Self::family_display_name(&attrs.family).to_string()];
+            for family in resolver.installed_fallbacks_for_script(key.script) {
+                if !chain.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
+                    chain.push(family);
+                }
+            }
+            return chain;
+        }
+        resolver.resolve_for_text(text, Self::family_display_name(&attrs.family))
+    }
+
+    /// Builds a [`ShapeCacheKey`] for `text` under these options.
+    ///
+    /// The key incorporates the base BiDi direction, writing mode, and a
+    /// hash of the resolved fallback chain so that shaped results are
+    /// never conflated across typographic configurations.
+    #[allow(clippy::too_many_arguments)]
+    pub fn cache_key(
+        &self,
+        font_system: &FontSystem,
+        font_id: FontId,
+        font_size: f32,
+        text: &str,
+        max_width: Option<f32>,
+        family: &str,
+        line_height: f32,
+        attrs: &Attrs,
+    ) -> ShapeCacheKey {
+        let chain = self.resolve_fallback_chain(font_system, text, attrs);
+        let families: Vec<&str> = chain.iter().map(String::as_str).collect();
+        ShapeCacheKey::with_options(
+            font_id,
+            font_size,
+            text,
+            max_width,
+            family,
+            line_height,
+            self.direction,
+            self.writing_mode,
+            &families,
+        )
+    }
 }
 
 impl TextMetrics {
@@ -101,6 +213,21 @@ pub struct ShapedLine {
 /// ```
 pub struct Shaper {
     buffer: Buffer,
+    /// Resolved base BiDi embedding level of the current text, if set.
+    base_bidi_level: Option<u8>,
+    /// Visual order indices of the resolved BiDi runs.
+    visual_run_order: Vec<usize>,
+    /// Mirrored-glyph positions for RTL runs of the current text.
+    mirror_map: Option<BidiMirrorMap>,
+    /// Resolved fallback chain for the current text, in priority order.
+    fallback_chain: Vec<String>,
+    /// Family names actually applied to buffer spans, in text order.
+    ///
+    /// Populated by [`Self::shape_with_options`] when the resolved
+    /// fallback chain supplies per-script families; cleared otherwise.
+    applied_families: Vec<String>,
+    /// Writing mode used for the current text.
+    writing_mode: WritingMode,
 }
 
 impl Shaper {
@@ -108,6 +235,12 @@ impl Shaper {
     pub fn new(font_system: &mut FontSystem, metrics: Metrics) -> Self {
         Self {
             buffer: Buffer::new(font_system, metrics),
+            base_bidi_level: None,
+            visual_run_order: Vec::new(),
+            mirror_map: None,
+            fallback_chain: Vec::new(),
+            applied_families: Vec::new(),
+            writing_mode: WritingMode::HorizontalTb,
         }
     }
 
@@ -116,7 +249,34 @@ impl Shaper {
     pub fn new_empty(metrics: Metrics) -> Self {
         Self {
             buffer: Buffer::new_empty(metrics),
+            base_bidi_level: None,
+            visual_run_order: Vec::new(),
+            mirror_map: None,
+            fallback_chain: Vec::new(),
+            applied_families: Vec::new(),
+            writing_mode: WritingMode::HorizontalTb,
         }
+    }
+
+    /// Records resolved BiDi metadata for `text` under `direction`.
+    fn resolve_bidi(&mut self, text: &str, direction: BidiDirection) {
+        if text.is_empty() {
+            self.base_bidi_level = Some(match direction {
+                BidiDirection::Rtl => 1,
+                _ => 0,
+            });
+            self.visual_run_order.clear();
+            self.mirror_map = Some(BidiMirrorMap::new(text));
+            return;
+        }
+        let resolved = BidiResolved::new(text, direction);
+        self.base_bidi_level = Some(resolved.base_level());
+        self.visual_run_order = resolved
+            .visual_runs()
+            .iter()
+            .map(|run| run.visual_order)
+            .collect();
+        self.mirror_map = Some(resolved.mirror_map());
     }
 
     /// Sets the font size and line height.
@@ -135,8 +295,13 @@ impl Shaper {
     /// Sets the text to be shaped with the given attributes.
     ///
     /// Uses `Shaping::Advanced` for full BiDi, fallback, and complex
-    /// script support.
+    /// script support. BiDi metadata is resolved with automatic base
+    /// direction detection.
     pub fn set_text(&mut self, text: &str, attrs: &Attrs) {
+        self.resolve_bidi(text, BidiDirection::Auto);
+        self.fallback_chain.clear();
+        self.applied_families.clear();
+        self.writing_mode = WritingMode::HorizontalTb;
         self.buffer.set_text(text, attrs, Shaping::Advanced, None);
     }
 
@@ -237,6 +402,252 @@ impl Shaper {
         self.set_text(text, attrs);
         self.shape(font_system);
         self.measure()
+    }
+
+    /// Computes the attributes passed to the buffer for `options`.
+    ///
+    /// When `options.writing_mode` is vertical and
+    /// `options.enable_vertical_features` is true, the vertical OpenType
+    /// feature tags (`vert`, `vrt2`, `vkrn`) are enabled on the
+    /// attributes.
+    fn effective_attrs<'a>(attrs: &Attrs<'a>, options: &ShapingOptions) -> Attrs<'a> {
+        if options.writing_mode.is_vertical() && options.enable_vertical_features {
+            apply_vertical_features(attrs.clone())
+        } else {
+            attrs.clone()
+        }
+    }
+
+    /// Sets the text to be shaped, applying direction and vertical-feature options.
+    ///
+    /// When `options.writing_mode` is vertical and `options.enable_vertical_features`
+    /// is true, the vertical OpenType feature tags (`vert`, `vrt2`, `vkrn`) are
+    /// enabled on the attributes before passing them to the buffer.
+    ///
+    /// Note: this entry point does not apply the resolved installed-font
+    /// fallback chain because it has no access to the [`FontSystem`].
+    /// Prefer [`Self::shape_with_options`], which wires the resolved
+    /// per-script fallback families into the buffer's attribute spans.
+    pub fn set_text_with_options(&mut self, text: &str, attrs: &Attrs, options: &ShapingOptions) {
+        self.resolve_bidi(text, options.direction);
+        self.writing_mode = options.writing_mode;
+        self.applied_families.clear();
+        let effective_attrs = Self::effective_attrs(attrs, options);
+        self.buffer
+            .set_text(text, &effective_attrs, Shaping::Advanced, None);
+    }
+
+    /// Splits `text` into contiguous script runs.
+    ///
+    /// Returns `(start, end, script)` byte-range triples. Neutral
+    /// characters (whitespace, controls, and [`ScriptTag::Other`]) are
+    /// absorbed into the surrounding run so that e.g. spaces between
+    /// words do not create single-character spans. A leading run of
+    /// neutral characters is assigned the script of the first
+    /// non-neutral run that follows it (falling back to `Latin` when
+    /// the entire text is neutral).
+    fn script_runs(text: &str) -> Vec<(usize, usize, ScriptTag)> {
+        let mut runs: Vec<(usize, usize, ScriptTag)> = Vec::new();
+        for (idx, ch) in text.char_indices() {
+            let tag = classify_script(ch);
+            let neutral = ch.is_whitespace() || ch.is_control() || tag == ScriptTag::Other;
+            match runs.last_mut() {
+                Some((_, end, last)) if *last == tag || neutral => *end = idx + ch.len_utf8(),
+                _ => {
+                    let effective = if neutral {
+                        // Look ahead past neutrals so a leading neutral run
+                        // adopts the following script rather than Latin.
+                        text[idx..]
+                            .chars()
+                            .find(|c| {
+                                !c.is_whitespace()
+                                    && !c.is_control()
+                                    && classify_script(*c) != ScriptTag::Other
+                            })
+                            .map(classify_script)
+                            .unwrap_or(ScriptTag::Latin)
+                    } else {
+                        tag
+                    };
+                    runs.push((idx, idx + ch.len_utf8(), effective));
+                }
+            }
+        }
+        runs
+    }
+
+    /// Performs shaping and line breaking with direction/writing-mode aware options.
+    ///
+    /// In addition to BiDi-aware shaping, this resolves the installed-font
+    /// fallback chain for the text (see
+    /// [`ShapingOptions::resolve_fallback_chain`]) and stores it for
+    /// retrieval via [`Self::fallback_chain`] and [`Self::cached_shape`].
+    ///
+    /// # How the resolved chain reaches the shaper
+    ///
+    /// cosmic-text's [`Attrs`] supports exactly one [`Family`] selector,
+    /// and its internal [`FontFallbackIter`] is driven by the platform
+    /// fallback tables inside the vendored `FontSystem`, not by
+    /// user-supplied chains. The supported mechanism for steering font
+    /// selection per script is therefore [`Buffer::set_rich_text`] with
+    /// an [`cosmic_text::AttrsList`]-style per-span `family`: this method
+    /// splits the text into contiguous script runs (via
+    /// [`classify_script`]) and assigns each run the first family in the
+    /// resolved chain whose installed faces cover that run's
+    /// codepoints. Runs without a covering candidate keep `attrs.family`
+    /// so cosmic-text's internal per-word fallback still applies. The
+    /// families actually applied are recorded in
+    /// [`Self::applied_families`].
+    ///
+    /// [`FontFallbackIter`]: cosmic_text::FontSystem
+    pub fn shape_with_options(
+        &mut self,
+        font_system: &mut FontSystem,
+        text: &str,
+        attrs: &Attrs,
+        options: &ShapingOptions,
+    ) {
+        self.fallback_chain = options.resolve_fallback_chain(font_system, text, attrs);
+        self.resolve_bidi(text, options.direction);
+        self.writing_mode = options.writing_mode;
+        self.applied_families.clear();
+
+        let effective_attrs = Self::effective_attrs(attrs, options);
+        let default_family =
+            ShapingOptions::family_display_name(&effective_attrs.family).to_string();
+
+        if text.is_empty() || self.fallback_chain.len() <= 1 {
+            // No usable fallback chain: plain set_text path. cosmic-text
+            // still performs its own internal per-word fallback.
+            self.buffer
+                .set_text(text, &effective_attrs, Shaping::Advanced, None);
+            self.shape(font_system);
+            return;
+        }
+
+        let resolver = InstalledFontFallbackResolver::new(font_system);
+        // Group contiguous script runs by the resolved family that should
+        // shape them. `None` means "keep the requested family and let
+        // cosmic-text's internal fallback handle it".
+        let mut run_family: Vec<(usize, usize, Option<usize>)> = Vec::new();
+        for (start, end, _script) in Self::script_runs(text) {
+            let run_text = &text[start..end];
+            // First family in the resolved chain (which begins with the
+            // requested primary) whose installed faces cover this run.
+            let chosen = self
+                .fallback_chain
+                .iter()
+                .position(|family| resolver.family_covers_text(family, run_text));
+            match run_family.last_mut() {
+                Some((_, prev_end, prev)) if *prev == chosen => *prev_end = end,
+                _ => run_family.push((start, end, chosen)),
+            }
+        }
+
+        let chain = self.fallback_chain.clone();
+        let mut spans: Vec<(&str, Attrs<'_>)> = Vec::new();
+        let mut applied: Vec<String> = Vec::new();
+        for (start, end, family_idx) in run_family {
+            let (name, span_attrs) = match family_idx {
+                Some(i) if !chain[i].eq_ignore_ascii_case(&default_family) => (
+                    chain[i].clone(),
+                    effective_attrs
+                        .clone()
+                        .family(Family::Name(chain[i].as_str())),
+                ),
+                _ => (default_family.clone(), effective_attrs.clone()),
+            };
+            spans.push((&text[start..end], span_attrs));
+            applied.push(name);
+        }
+
+        self.applied_families = applied;
+        self.buffer
+            .set_rich_text(spans, &effective_attrs, Shaping::Advanced, None);
+        self.shape(font_system);
+    }
+
+    /// Returns the resolved base BiDi embedding level of the current text
+    /// (even = LTR, odd = RTL), if text has been set.
+    pub fn base_bidi_level(&self) -> Option<u8> {
+        self.base_bidi_level
+    }
+
+    /// Returns the visual order indices of the resolved BiDi runs of the
+    /// current text.
+    ///
+    /// The index at position `i` is the visual slot of the `i`-th logical
+    /// run. Empty when no text has been set.
+    pub fn visual_run_order(&self) -> &[usize] {
+        &self.visual_run_order
+    }
+
+    /// Returns the mirrored-glyph map for the current text, if any.
+    ///
+    /// Apply these substitutions at glyph rasterization time; the source
+    /// text is never mutated.
+    pub fn mirror_map(&self) -> Option<&BidiMirrorMap> {
+        self.mirror_map.as_ref()
+    }
+
+    /// Returns the fallback chain resolved for the current text.
+    ///
+    /// Populated by [`Self::shape_with_options`]; empty otherwise.
+    pub fn fallback_chain(&self) -> &[String] {
+        &self.fallback_chain
+    }
+
+    /// Returns the family names actually applied to buffer spans during
+    /// the last [`Self::shape_with_options`] call, in text order.
+    ///
+    /// Each entry is the [`Family::Name`] assigned to that span (or the
+    /// requested family when no resolved fallback covered the run).
+    /// Empty when the plain [`Self::set_text`] path was used.
+    pub fn applied_families(&self) -> &[String] {
+        &self.applied_families
+    }
+
+    /// Builds a [`ShapeCacheKey`] for `text` under `options`.
+    ///
+    /// See [`ShapingOptions::cache_key`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn cache_key(
+        &self,
+        font_system: &FontSystem,
+        font_id: FontId,
+        font_size: f32,
+        text: &str,
+        max_width: Option<f32>,
+        family: &str,
+        line_height: f32,
+        attrs: &Attrs,
+        options: &ShapingOptions,
+    ) -> ShapeCacheKey {
+        options.cache_key(
+            font_system,
+            font_id,
+            font_size,
+            text,
+            max_width,
+            family,
+            line_height,
+            attrs,
+        )
+    }
+
+    /// Builds a [`CachedShape`] from the current shaped buffer and the
+    /// BiDi/fallback metadata recorded during shaping.
+    ///
+    /// Must be called after [`Shaper::shape`].
+    pub fn cached_shape(&self) -> CachedShape {
+        CachedShape::with_metadata(
+            self.lines(),
+            self.measure(),
+            self.base_bidi_level.unwrap_or(0),
+            self.visual_run_order.clone(),
+            self.fallback_chain.clone(),
+            self.writing_mode,
+        )
     }
 }
 
@@ -411,6 +822,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn shaping_options_default_horizontal_ltr() {
+        let opts = ShapingOptions::default();
+        assert_eq!(opts.direction, BidiDirection::Ltr);
+        assert!(opts.writing_mode.is_horizontal());
+        assert!(!opts.writing_mode.is_vertical());
+    }
+
+    #[test]
+    fn shaper_applies_vertical_features() {
+        let mut manager = FontManager::with_fonts(std::iter::empty());
+        let mut shaper = Shaper::new_empty(Metrics::new(16.0, 20.0));
+        let attrs = Attrs::new();
+        let mut options = ShapingOptions::vertical_rl();
+        options.enable_vertical_features = true;
+        // This should not panic even with no installed fonts.
+        shaper.shape_with_options(manager.system_mut(), "漢字A", &attrs, &options);
+    }
+
+    #[test]
+    fn shaper_base_bidi_level_rtl() {
+        let mut manager = FontManager::with_fonts(std::iter::empty());
+        let mut shaper = Shaper::new_empty(Metrics::new(16.0, 20.0));
+        let attrs = Attrs::new();
+        let options = ShapingOptions {
+            direction: BidiDirection::Rtl,
+            writing_mode: WritingMode::HorizontalTb,
+            enable_vertical_features: false,
+            fallback_key: None,
+        };
+        shaper.shape_with_options(manager.system_mut(), "مرحبا", &attrs, &options);
+        // The base level should be odd (RTL) when shaping explicit RTL text.
+        assert_eq!(shaper.base_bidi_level(), Some(1));
     }
 
     #[test]

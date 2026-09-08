@@ -25,9 +25,9 @@ pub mod taffy_bridge;
 pub mod vertical_flow;
 
 pub use engine::{
-    constraints_to_available, edge_insets_to_style, taffy_layout_to_rect, IdMapIter, LayoutEngine,
-    LayoutError,
+    constraints_to_available, edge_insets_to_style, taffy_layout_to_bidi_rect,
+    taffy_layout_to_rect, IdMapIter, LayoutEngine, LayoutError,
 };
-pub use geometry::{Constraints, EdgeInsets, Point, Size};
+pub use geometry::{BidiRect, Constraints, EdgeInsets, Point, SelectionGeometry, Size};
 pub use taffy_bridge::{node_id_to_widget_id, widget_id_to_node_id, ArenaBridge, ArenaChildIter};
 pub use vertical_flow::{FlowTransposition, LogicalPoint, LogicalSize, WritingMode};

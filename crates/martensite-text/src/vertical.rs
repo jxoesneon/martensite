@@ -8,6 +8,32 @@
 
 use martensite_core::Rect;
 
+/// Direction of text flow for the purposes of layout and shaping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum WritingMode {
+    /// Standard horizontal top-to-bottom, left-to-right text.
+    #[default]
+    HorizontalTb,
+    /// Vertical right-to-left text flow (e.g. traditional CJK).
+    VerticalRl,
+    /// Vertical left-to-right text flow.
+    VerticalLr,
+}
+
+impl WritingMode {
+    /// Returns `true` if the writing mode is vertical.
+    #[inline]
+    pub const fn is_vertical(&self) -> bool {
+        matches!(self, Self::VerticalRl | Self::VerticalLr)
+    }
+
+    /// Returns `true` if the writing mode is horizontal.
+    #[inline]
+    pub const fn is_horizontal(&self) -> bool {
+        matches!(self, Self::HorizontalTb)
+    }
+}
+
 /// Vertical text glyph orientation per Unicode Standard Annex #50 (UAX #50).
 ///
 /// Indicates whether a character is displayed upright (unrotated), rotated 90 degrees
@@ -249,6 +275,78 @@ impl VerticalMetrics {
     }
 }
 
+/// A run of characters sharing the same vertical orientation.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::vertical::{VerticalOrientation, VerticalRun};
+///
+/// let run = VerticalRun::new(0, 6, VerticalOrientation::Upright);
+/// assert_eq!(run.orientation, VerticalOrientation::Upright);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerticalRun {
+    /// Start byte index in the source text.
+    pub start: usize,
+    /// End byte index in the source text (exclusive).
+    pub end: usize,
+    /// Orientation applied to every character in this run.
+    pub orientation: VerticalOrientation,
+}
+
+impl VerticalRun {
+    /// Creates a new `VerticalRun`.
+    #[inline]
+    pub const fn new(start: usize, end: usize, orientation: VerticalOrientation) -> Self {
+        Self {
+            start,
+            end,
+            orientation,
+        }
+    }
+
+    /// Returns the length of this run in bytes.
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    /// Returns `true` if this run covers no bytes.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.start >= self.end
+    }
+}
+
+/// Splits `text` into contiguous runs of the same [`VerticalOrientation`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::vertical::{VerticalOrientation, collect_vertical_runs};
+///
+/// let runs = collect_vertical_runs("漢字A");
+/// assert_eq!(runs[0].orientation, VerticalOrientation::Upright);
+/// assert_eq!(runs[1].orientation, VerticalOrientation::Rotated);
+/// ```
+pub fn collect_vertical_runs(text: &str) -> Vec<VerticalRun> {
+    let mut runs: Vec<VerticalRun> = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    while let Some((start, ch)) = chars.next() {
+        let orientation = classify_vertical_orientation(ch);
+        let end = chars.peek().map(|(idx, _)| *idx).unwrap_or(text.len());
+        if let Some(last) = runs.last_mut() {
+            if last.orientation == orientation {
+                last.end = end;
+                continue;
+            }
+        }
+        runs.push(VerticalRun::new(start, end, orientation));
+    }
+    runs
+}
+
 /// OpenType layout feature tags for vertical typography.
 ///
 /// # Examples
@@ -297,6 +395,46 @@ impl VerticalFeatureTags {
     pub fn standard_tags() -> &'static [&'static str] {
         &[Self::VERT, Self::VRT2, Self::VKRN]
     }
+}
+
+/// Returns a [`cosmic_text::FontFeatures`] value with the standard vertical
+/// OpenType features enabled.
+///
+/// This can be passed to [`cosmic_text::Attrs::font_features`] when shaping
+/// vertical text so the font system activates `vert`, `vrt2`, and `vkrn`
+/// when the current font supports them.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::vertical::vertical_features;
+///
+/// let features = vertical_features();
+/// assert!(!features.features.is_empty());
+/// ```
+pub fn vertical_features() -> cosmic_text::FontFeatures {
+    let mut features = cosmic_text::FontFeatures::new();
+    for tag in VerticalFeatureTags::standard_tags() {
+        let bytes: &[u8; 4] = tag.as_bytes().try_into().expect("feature tags are 4 bytes");
+        let tag = cosmic_text::FeatureTag::new(bytes);
+        features.set(tag, 1);
+    }
+    features
+}
+
+/// Applies vertical OpenType features to an [`cosmic_text::Attrs`] value.
+///
+/// # Examples
+///
+/// ```
+/// use cosmic_text::Attrs;
+/// use martensite_text::vertical::apply_vertical_features;
+///
+/// let attrs = apply_vertical_features(Attrs::new());
+/// assert!(!attrs.font_features.features.is_empty());
+/// ```
+pub fn apply_vertical_features(attrs: cosmic_text::Attrs<'_>) -> cosmic_text::Attrs<'_> {
+    attrs.font_features(vertical_features())
 }
 
 #[cfg(test)]
@@ -430,5 +568,34 @@ mod tests {
         assert_eq!(tags[0], "vert");
         assert_eq!(tags[1], "vrt2");
         assert_eq!(tags[2], "vkrn");
+    }
+
+    #[test]
+    fn test_collect_vertical_runs() {
+        let runs = collect_vertical_runs("漢字A");
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].orientation, VerticalOrientation::Upright);
+        assert!(!runs[0].is_empty());
+        assert_eq!(runs[1].orientation, VerticalOrientation::Rotated);
+    }
+
+    #[test]
+    fn test_vertical_features_enabled() {
+        let features = vertical_features();
+        assert!(!features.features.is_empty());
+        let tags: Vec<_> = features
+            .features
+            .iter()
+            .map(|f| std::str::from_utf8(f.tag.as_bytes()).unwrap().to_string())
+            .collect();
+        assert!(tags.contains(&"vert".to_string()));
+        assert!(tags.contains(&"vrt2".to_string()));
+        assert!(tags.contains(&"vkrn".to_string()));
+    }
+
+    #[test]
+    fn test_apply_vertical_features_to_attrs() {
+        let attrs = apply_vertical_features(cosmic_text::Attrs::new());
+        assert!(!attrs.font_features.features.is_empty());
     }
 }

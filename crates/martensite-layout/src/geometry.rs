@@ -5,6 +5,7 @@
 //! communicate measurement constraints and final positions between the
 //! widget tree and the layout engine.
 
+use crate::vertical_flow::{FlowTransposition, LogicalPoint, LogicalSize};
 use glam::Vec2;
 
 /// A 2D point in logical (layout) coordinate space.
@@ -279,6 +280,196 @@ impl EdgeInsets {
     }
 }
 
+/// A rectangle expressed in both physical screen coordinates and flow-relative
+/// logical coordinates, enabling writing-mode-aware selection geometry.
+///
+/// `BidiRect` is the bridge between Taffy's physical layout output and the
+/// logical (inline/block) coordinate system required for correct bidi text
+/// selection, caret positioning, and hit-testing in vertical writing modes.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_layout::geometry::{BidiRect, Point, Size};
+/// use martensite_layout::vertical_flow::{FlowTransposition, WritingMode};
+///
+/// let trans = FlowTransposition::new(WritingMode::VerticalRl, Size::new(500.0, 800.0));
+/// let rect = BidiRect::from_physical(Point::new(460.0, 60.0), Size::new(80.0, 200.0), &trans);
+/// assert_eq!(rect.logical_origin.inline, 60.0);
+/// assert_eq!(rect.logical_size.inline, 200.0);
+/// ```
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct BidiRect {
+    /// Origin in physical screen coordinates.
+    pub physical_origin: Point,
+    /// Size in physical screen coordinates.
+    pub physical_size: Size,
+    /// Origin in flow-relative logical coordinates.
+    pub logical_origin: LogicalPoint,
+    /// Size in flow-relative logical coordinates.
+    pub logical_size: LogicalSize,
+}
+
+impl BidiRect {
+    /// Constructs a `BidiRect` from physical coordinates, computing the
+    /// logical counterparts via the given [`FlowTransposition`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_layout::geometry::{BidiRect, Point, Size};
+    /// use martensite_layout::vertical_flow::{FlowTransposition, WritingMode};
+    ///
+    /// let trans = FlowTransposition::new(WritingMode::HorizontalTb, Size::new(800.0, 600.0));
+    /// let rect = BidiRect::from_physical(Point::new(10.0, 20.0), Size::new(100.0, 30.0), &trans);
+    /// assert_eq!(rect.logical_origin.inline, 10.0);
+    /// ```
+    pub fn from_physical(origin: Point, size: Size, transposition: &FlowTransposition) -> Self {
+        Self {
+            physical_origin: origin,
+            physical_size: size,
+            logical_origin: transposition.to_logical_point(origin),
+            logical_size: transposition.to_logical_size(size),
+        }
+    }
+
+    /// Constructs a `BidiRect` from flow-relative logical coordinates,
+    /// computing the physical counterparts via the given [`FlowTransposition`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_layout::geometry::{BidiRect, Point, Size};
+    /// use martensite_layout::vertical_flow::{
+    ///     FlowTransposition, LogicalPoint, LogicalSize, WritingMode,
+    /// };
+    ///
+    /// let trans = FlowTransposition::new(WritingMode::VerticalLr, Size::new(500.0, 800.0));
+    /// let rect = BidiRect::from_logical(
+    ///     LogicalPoint::new(60.0, 40.0),
+    ///     LogicalSize::new(200.0, 80.0),
+    ///     &trans,
+    /// );
+    /// assert_eq!(rect.physical_origin, Point::new(40.0, 60.0));
+    /// ```
+    pub fn from_logical(
+        origin: LogicalPoint,
+        size: LogicalSize,
+        transposition: &FlowTransposition,
+    ) -> Self {
+        Self {
+            physical_origin: transposition.to_physical_point(origin),
+            physical_size: transposition.to_physical_size(size),
+            logical_origin: origin,
+            logical_size: size,
+        }
+    }
+
+    /// Returns `true` if the given physical point lies inside this rectangle.
+    #[inline]
+    pub fn contains_physical(&self, point: Point) -> bool {
+        point.x >= self.physical_origin.x
+            && point.x <= self.physical_origin.x + self.physical_size.width
+            && point.y >= self.physical_origin.y
+            && point.y <= self.physical_origin.y + self.physical_size.height
+    }
+
+    /// Returns `true` if this rectangle intersects another in physical space.
+    #[inline]
+    pub fn intersects_physical(&self, other: &BidiRect) -> bool {
+        self.physical_origin.x < other.physical_origin.x + other.physical_size.width
+            && self.physical_origin.x + self.physical_size.width > other.physical_origin.x
+            && self.physical_origin.y < other.physical_origin.y + other.physical_size.height
+            && self.physical_origin.y + self.physical_size.height > other.physical_origin.y
+    }
+}
+
+/// A collection of [`BidiRect`]s representing a text selection across
+/// potentially multiple lines or columns in any writing mode.
+///
+/// In horizontal mode, each rect typically represents one selected line.
+/// In vertical modes, each rect represents one selected column.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_layout::geometry::{BidiRect, Point, SelectionGeometry, Size};
+/// use martensite_layout::vertical_flow::{FlowTransposition, WritingMode};
+///
+/// let trans = FlowTransposition::new(WritingMode::HorizontalTb, Size::new(800.0, 600.0));
+/// let sel = SelectionGeometry::single_line(
+///     Point::new(10.0, 100.0),
+///     Size::new(200.0, 20.0),
+///     &trans,
+/// );
+/// assert_eq!(sel.rects().len(), 1);
+/// ```
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SelectionGeometry {
+    rects: Vec<BidiRect>,
+}
+
+impl SelectionGeometry {
+    /// Creates an empty selection geometry.
+    #[inline]
+    pub fn new() -> Self {
+        Self { rects: Vec::new() }
+    }
+
+    /// Creates a selection geometry for a single contiguous line or column.
+    pub fn single_line(origin: Point, size: Size, transposition: &FlowTransposition) -> Self {
+        Self {
+            rects: vec![BidiRect::from_physical(origin, size, transposition)],
+        }
+    }
+
+    /// Appends a selection rect.
+    #[inline]
+    pub fn push(&mut self, rect: BidiRect) {
+        self.rects.push(rect);
+    }
+
+    /// Returns a slice of all selection rects.
+    #[inline]
+    pub fn rects(&self) -> &[BidiRect] {
+        &self.rects
+    }
+
+    /// Returns `true` if there are no selection rects.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.rects.is_empty()
+    }
+
+    /// Computes the physical-space axis-aligned bounding box of all rects.
+    ///
+    /// Returns a default (zero) `BidiRect` if empty.
+    pub fn bounding_box(&self) -> BidiRect {
+        if self.rects.is_empty() {
+            return BidiRect::default();
+        }
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+        for r in &self.rects {
+            min_x = min_x.min(r.physical_origin.x);
+            min_y = min_y.min(r.physical_origin.y);
+            max_x = max_x.max(r.physical_origin.x + r.physical_size.width);
+            max_y = max_y.max(r.physical_origin.y + r.physical_size.height);
+        }
+        // The bounding box is always in physical space; logical fields
+        // reflect the first rect's transposition context, which is
+        // sufficient for single-mode selections.
+        BidiRect {
+            physical_origin: Point::new(min_x, min_y),
+            physical_size: Size::new(max_x - min_x, max_y - min_y),
+            logical_origin: LogicalPoint::default(),
+            logical_size: LogicalSize::default(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,5 +582,128 @@ mod tests {
         let inner = e.deflate(Size::new(50.0, 50.0));
         assert_eq!(inner.width, 0.0);
         assert_eq!(inner.height, 0.0);
+    }
+
+    // ---- BidiRect tests (RED phase: these types do not exist yet) ----
+
+    #[test]
+    fn bidi_rect_from_physical_horizontal() {
+        use crate::vertical_flow::{FlowTransposition, WritingMode};
+        let trans = FlowTransposition::new(WritingMode::HorizontalTb, Size::new(800.0, 600.0));
+        let rect = BidiRect::from_physical(Point::new(10.0, 20.0), Size::new(100.0, 30.0), &trans);
+        // In horizontal mode, physical == logical.
+        assert_eq!(rect.physical_origin, Point::new(10.0, 20.0));
+        assert_eq!(rect.physical_size, Size::new(100.0, 30.0));
+        assert_eq!(rect.logical_origin.inline, 10.0);
+        assert_eq!(rect.logical_origin.block, 20.0);
+        assert_eq!(rect.logical_size.inline, 100.0);
+        assert_eq!(rect.logical_size.block, 30.0);
+    }
+
+    #[test]
+    fn bidi_rect_from_physical_vertical_rl() {
+        use crate::vertical_flow::{FlowTransposition, WritingMode};
+        let container = Size::new(500.0, 800.0);
+        let trans = FlowTransposition::new(WritingMode::VerticalRl, container);
+        // Physical rect at (460, 60) size (80, 200) — in vertical-rl:
+        //   inline = physical.y = 60, block = container.width - physical.x = 500 - 460 = 40
+        //   logical_size.inline = physical_size.height = 200, block = physical_size.width = 80
+        let rect = BidiRect::from_physical(Point::new(460.0, 60.0), Size::new(80.0, 200.0), &trans);
+        assert_eq!(rect.logical_origin.inline, 60.0);
+        assert_eq!(rect.logical_origin.block, 40.0);
+        assert_eq!(rect.logical_size.inline, 200.0);
+        assert_eq!(rect.logical_size.block, 80.0);
+    }
+
+    #[test]
+    fn bidi_rect_from_logical_roundtrip_vertical_lr() {
+        use crate::vertical_flow::{FlowTransposition, LogicalPoint, LogicalSize, WritingMode};
+        let container = Size::new(500.0, 800.0);
+        let trans = FlowTransposition::new(WritingMode::VerticalLr, container);
+        let log_origin = LogicalPoint::new(60.0, 40.0);
+        let log_size = LogicalSize::new(200.0, 80.0);
+        let rect = BidiRect::from_logical(log_origin, log_size, &trans);
+        // Round-trip: logical -> physical -> logical should match.
+        assert_eq!(rect.logical_origin, log_origin);
+        assert_eq!(rect.logical_size, log_size);
+        // Physical: x = block = 40, y = inline = 60, width = block_dim = 80, height = inline_dim = 200
+        assert_eq!(rect.physical_origin, Point::new(40.0, 60.0));
+        assert_eq!(rect.physical_size, Size::new(80.0, 200.0));
+    }
+
+    #[test]
+    fn bidi_rect_contains_physical_point() {
+        use crate::vertical_flow::{FlowTransposition, WritingMode};
+        let trans = FlowTransposition::new(WritingMode::HorizontalTb, Size::new(800.0, 600.0));
+        let rect = BidiRect::from_physical(Point::new(10.0, 20.0), Size::new(100.0, 30.0), &trans);
+        assert!(rect.contains_physical(Point::new(50.0, 35.0)));
+        assert!(!rect.contains_physical(Point::new(5.0, 35.0)));
+        assert!(!rect.contains_physical(Point::new(50.0, 55.0)));
+    }
+
+    #[test]
+    fn bidi_rect_intersects() {
+        use crate::vertical_flow::{FlowTransposition, WritingMode};
+        let trans = FlowTransposition::new(WritingMode::HorizontalTb, Size::new(800.0, 600.0));
+        let a = BidiRect::from_physical(Point::new(0.0, 0.0), Size::new(50.0, 50.0), &trans);
+        let b = BidiRect::from_physical(Point::new(25.0, 25.0), Size::new(50.0, 50.0), &trans);
+        let c = BidiRect::from_physical(Point::new(100.0, 100.0), Size::new(10.0, 10.0), &trans);
+        assert!(a.intersects_physical(&b));
+        assert!(!a.intersects_physical(&c));
+    }
+
+    // ---- SelectionGeometry tests ----
+
+    #[test]
+    fn selection_geometry_single_line_horizontal() {
+        use crate::vertical_flow::{FlowTransposition, WritingMode};
+        let trans = FlowTransposition::new(WritingMode::HorizontalTb, Size::new(800.0, 600.0));
+        let sel =
+            SelectionGeometry::single_line(Point::new(10.0, 100.0), Size::new(200.0, 20.0), &trans);
+        assert_eq!(sel.rects().len(), 1);
+        assert_eq!(sel.rects()[0].physical_origin, Point::new(10.0, 100.0));
+        assert_eq!(sel.rects()[0].physical_size, Size::new(200.0, 20.0));
+    }
+
+    #[test]
+    fn selection_geometry_multi_line_vertical_rl() {
+        use crate::vertical_flow::{FlowTransposition, WritingMode};
+        let container = Size::new(500.0, 800.0);
+        let trans = FlowTransposition::new(WritingMode::VerticalRl, container);
+        let mut sel = SelectionGeometry::new();
+        // Two vertical columns of selected text.
+        sel.push(BidiRect::from_physical(
+            Point::new(400.0, 10.0),
+            Size::new(30.0, 200.0),
+            &trans,
+        ));
+        sel.push(BidiRect::from_physical(
+            Point::new(360.0, 10.0),
+            Size::new(30.0, 150.0),
+            &trans,
+        ));
+        assert_eq!(sel.rects().len(), 2);
+        // First rect is further right (lower block offset in vertical-rl).
+        assert!(sel.rects()[0].logical_origin.block < sel.rects()[1].logical_origin.block);
+    }
+
+    #[test]
+    fn selection_geometry_bounding_box() {
+        use crate::vertical_flow::{FlowTransposition, WritingMode};
+        let trans = FlowTransposition::new(WritingMode::HorizontalTb, Size::new(800.0, 600.0));
+        let mut sel = SelectionGeometry::new();
+        sel.push(BidiRect::from_physical(
+            Point::new(10.0, 100.0),
+            Size::new(780.0, 20.0),
+            &trans,
+        ));
+        sel.push(BidiRect::from_physical(
+            Point::new(10.0, 120.0),
+            Size::new(400.0, 20.0),
+            &trans,
+        ));
+        let bbox = sel.bounding_box();
+        assert_eq!(bbox.physical_origin, Point::new(10.0, 100.0));
+        assert_eq!(bbox.physical_size, Size::new(780.0, 40.0));
     }
 }

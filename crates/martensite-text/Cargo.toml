@@ -19,6 +19,10 @@ winit = { workspace = true }
 cosmic-text = { workspace = true }
 fontdb = { workspace = true }
 unicode-bidi = { workspace = true }
+unicode-bidi-mirroring = "0.2"
+unicode-linebreak = "0.1.5"
+swash = "0.2"
+smallvec = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

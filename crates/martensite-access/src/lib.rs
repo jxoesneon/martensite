@@ -24,7 +24,11 @@ pub mod adapter;
 pub mod caret;
 /// Automated WCAG 2.2 AA/AAA accessibility evaluation and Section 508 VPAT verification.
 pub mod compliance;
+/// Live region change detection and announcement queue.
+pub mod live;
 pub mod properties;
+/// Incremental semantic tree synchronization.
+pub mod tree;
 pub mod winit;
 
 pub use accesskit::{Node, NodeId, Rect, Role, TreeUpdate};
@@ -32,9 +36,13 @@ pub use adapter::AccessKitAdapter;
 pub use caret::{CaretTracker, TextAffinity, TextBoundary, TextSelection};
 pub use compliance::{
     check_target_size, check_text_contrast, check_ui_component_contrast, contrast_ratio,
-    relative_luminance, ColorRgba, FocusAppearanceCheck, Section508VpatReport, TextSize, WcagLevel,
+    minimum_focus_indicator_area, relative_luminance, ColorRgba, FocusAppearanceCheck,
+    FocusAreaCheck, Section508VpatReport, TextSize, VpatConformanceLevel, VpatCriterion,
+    VpatReport, WcagLevel,
 };
+pub use live::{LiveAnnouncement, LiveRegionMonitor, POLITE_COALESCE_MS};
 pub use properties::AccessibilityBuilder;
+pub use tree::{NodeFingerprint, SemanticTreeSync, TreeDiff};
 
 /// Converts a [`martensite_core::WidgetId`] to an [`accesskit::NodeId`].
 ///

@@ -17,6 +17,8 @@ martensite-core = { workspace = true }
 accesskit = { workspace = true }
 accesskit_winit = { workspace = true }
 winit = { workspace = true }
+unicode-segmentation = "1.12"
+unicode-bidi = { workspace = true }
 
 [dev-dependencies]
 glam = { workspace = true }

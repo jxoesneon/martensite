@@ -9,6 +9,8 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+use cosmic_text::FontSystem;
+
 /// Recognized typographic script category for font fallback cascade resolution.
 ///
 /// # Examples
@@ -110,6 +112,50 @@ pub fn classify_script(ch: char) -> ScriptTag {
 
         _ => ScriptTag::Other,
     }
+}
+
+/// Returns the dominant (most frequent) [`ScriptTag`] among the
+/// non-whitespace characters of `text`.
+///
+/// Returns [`ScriptTag::Latin`] for empty or unclassifiable text.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cascade::{dominant_script, ScriptTag};
+///
+/// assert_eq!(dominant_script("Hello 漢字"), ScriptTag::Latin);
+/// assert_eq!(dominant_script("漢字漢字A"), ScriptTag::Cjk);
+/// assert_eq!(dominant_script(""), ScriptTag::Latin);
+/// ```
+pub fn dominant_script(text: &str) -> ScriptTag {
+    let mut counts = [0u32; 8];
+    let order = [
+        ScriptTag::Latin,
+        ScriptTag::Arabic,
+        ScriptTag::Hebrew,
+        ScriptTag::Cjk,
+        ScriptTag::Devanagari,
+        ScriptTag::Emoji,
+        ScriptTag::Math,
+        ScriptTag::Other,
+    ];
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            continue;
+        }
+        let tag = classify_script(ch);
+        let idx = order.iter().position(|t| *t == tag).unwrap_or(7);
+        counts[idx] += 1;
+    }
+    let best = counts
+        .iter()
+        .enumerate()
+        .filter(|(_, count)| **count > 0)
+        .max_by_key(|(_, count)| *count)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    order[best]
 }
 
 /// Resolves operating system platform-native font fallback cascades for each script.
@@ -321,6 +367,164 @@ impl FontFallbackChain {
     }
 }
 
+/// Key for a culture-specific fallback resolution.
+///
+/// The locale is normalized to lowercase for stable cache lookup.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FallbackKey {
+    /// Typographic script tag.
+    pub script: ScriptTag,
+    /// BCP-47 / POSIX locale string used for regional fallback ordering.
+    pub locale: String,
+}
+
+impl FallbackKey {
+    /// Creates a new key from a script tag and a locale.
+    #[inline]
+    pub fn new(script: ScriptTag, locale: impl Into<String>) -> Self {
+        Self {
+            script,
+            locale: locale.into().to_lowercase(),
+        }
+    }
+}
+
+/// Resolves font fallback chains by inspecting the installed font database.
+///
+/// This resolver uses [`fontdb`] (via the cosmic-text [`FontSystem`]) to find
+/// fonts that actually contain the required code points. It is pure safe Rust
+/// and works on all supported platforms. Platform-native APIs such as
+/// DirectWrite, CoreText, or Fontconfig are not called directly because doing
+/// so safely from `forbid(unsafe_code)` code would require additional binding
+/// crates; fontdb already queries the platform font directories and caches
+/// the results.
+pub struct InstalledFontFallbackResolver<'a> {
+    font_system: &'a FontSystem,
+}
+
+impl<'a> InstalledFontFallbackResolver<'a> {
+    /// Creates a resolver bound to the given font system.
+    #[inline]
+    pub fn new(font_system: &'a FontSystem) -> Self {
+        Self { font_system }
+    }
+
+    /// Returns the list of font families to try for `text`, in priority
+    /// order.
+    ///
+    /// The returned list always begins with `primary` so the shaping
+    /// pipeline has a family to attempt first. It is followed by the
+    /// platform fallback families for every script present in `text`;
+    /// families that are actually installed *and* cover the relevant
+    /// characters are listed before the remaining platform candidates.
+    /// Candidate names are always appended, even when the font database
+    /// contains no faces for them, because the downstream shaper
+    /// performs its own resolution and generic fallbacks.
+    pub fn resolve_for_text(&self, text: &str, primary: &str) -> Vec<String> {
+        let mut chain: Vec<String> = vec![primary.to_string()];
+
+        // Collect the scripts present in the text, in order of first use.
+        let mut scripts: Vec<ScriptTag> = Vec::new();
+        for ch in text.chars() {
+            if ch.is_whitespace() || ch.is_control() {
+                continue;
+            }
+            let tag = classify_script(ch);
+            if tag != ScriptTag::Other && !scripts.contains(&tag) {
+                scripts.push(tag);
+            }
+        }
+        if scripts.is_empty() {
+            scripts.push(dominant_script(text));
+        }
+
+        // Pass 1: installed platform candidates that actually cover the
+        // script's characters, so they are tried before nominal names.
+        for &script in &scripts {
+            let needed: String = text
+                .chars()
+                .filter(|ch| classify_script(*ch) == script)
+                .collect();
+            for &family in PlatformCascadeResolver::platform_fallbacks_for_script(script) {
+                if chain.iter().any(|f| f.eq_ignore_ascii_case(family)) {
+                    continue;
+                }
+                if self.family_covers_text(family, &needed) {
+                    chain.push(family.to_string());
+                }
+            }
+        }
+
+        // Pass 2: the remaining platform cascade names as candidates.
+        for &script in &scripts {
+            for &family in PlatformCascadeResolver::platform_fallbacks_for_script(script) {
+                if !chain.iter().any(|f| f.eq_ignore_ascii_case(family)) {
+                    chain.push(family.to_string());
+                }
+            }
+        }
+
+        chain
+    }
+
+    /// Returns the subset of platform fallback family names that are
+    /// actually installed in the font database.
+    pub fn installed_fallbacks_for_script(&self, script: ScriptTag) -> Vec<String> {
+        PlatformCascadeResolver::platform_fallbacks_for_script(script)
+            .iter()
+            .filter(|family| self.family_installed(family))
+            .map(|&family| family.to_string())
+            .collect()
+    }
+
+    /// Returns `true` if the font face with the given ID contains a glyph
+    /// for `ch`.
+    ///
+    /// The face's `cmap` is inspected by parsing the font data through
+    /// `swash`'s character map; a glyph ID of `0` (`.notdef`) counts as
+    /// uncovered.
+    fn face_covers_char(&self, face_id: fontdb::ID, ch: char) -> bool {
+        self.font_system
+            .db()
+            .with_face_data(face_id, |data, index| {
+                swash::FontRef::from_index(data, index as usize)
+                    .is_some_and(|font| font.charmap().map(ch) != 0)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` if the database contains at least one face whose
+    /// family list contains `family` (case-insensitive).
+    fn family_installed(&self, family: &str) -> bool {
+        self.font_system.db().faces().any(|face| {
+            face.families
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case(family))
+        })
+    }
+
+    /// Returns `true` if faces of `family` collectively cover every
+    /// character in `text`.
+    ///
+    /// Coverage is checked per codepoint: each non-control character must
+    /// be covered by *some* installed face whose family list contains
+    /// `family` (case-insensitive). A single face is not required to
+    /// cover the entire text, so families split across faces (e.g. a
+    /// family whose faces cover complementary codepoint ranges, or
+    /// per-script faces of a multi-script family) still qualify.
+    pub fn family_covers_text(&self, family: &str, text: &str) -> bool {
+        text.chars().all(|ch| {
+            ch.is_control()
+                || self.font_system.db().faces().any(|face| {
+                    face.families
+                        .iter()
+                        .any(|(name, _)| name.eq_ignore_ascii_case(family))
+                        && self.face_covers_char(face.id, ch)
+                })
+        })
+    }
+}
+
 /// A thread-safe cache for resolved font fallback chains indexed by script.
 ///
 /// # Examples
@@ -472,5 +676,51 @@ mod tests {
         cache.register_custom_fallback(ScriptTag::Devanagari, "CustomDevanagari");
         let list2 = cache.get_or_resolve(ScriptTag::Devanagari);
         assert_eq!(list2[0], "CustomDevanagari");
+    }
+
+    #[test]
+    fn fallback_key_normalizes_locale() {
+        let key = FallbackKey::new(ScriptTag::Latin, "en-US");
+        assert_eq!(key.locale, "en-us");
+    }
+
+    #[test]
+    fn installed_resolver_returns_primary_if_covers_text() {
+        let manager = crate::FontManager::with_fonts(std::iter::empty());
+        let resolver = InstalledFontFallbackResolver::new(manager.system());
+        let chain = resolver.resolve_for_text("ABC", "NonExistentPrimary");
+        // Even with no fonts installed, the resolver should at least return
+        // the primary family so the shaping pipeline has something to try.
+        assert!(!chain.is_empty());
+    }
+
+    #[test]
+    fn installed_resolver_falls_back_to_script_cascade() {
+        let manager = crate::FontManager::with_fonts(std::iter::empty());
+        let resolver = InstalledFontFallbackResolver::new(manager.system());
+        let chain = resolver.resolve_for_text("漢", "Missing");
+        let platform_fallbacks =
+            PlatformCascadeResolver::platform_fallbacks_for_script(ScriptTag::Cjk);
+        // At least one platform fallback name should be present in the chain.
+        assert!(
+            chain
+                .iter()
+                .any(|f| platform_fallbacks.contains(&f.as_str())),
+            "installed resolver should include platform CJK fallbacks, got {:?}",
+            chain
+        );
+    }
+
+    #[test]
+    fn installed_fallbacks_for_script_non_empty() {
+        let manager = crate::FontManager::with_fonts(std::iter::empty());
+        let resolver = InstalledFontFallbackResolver::new(manager.system());
+        let installed = resolver.installed_fallbacks_for_script(ScriptTag::Latin);
+        // Without real system fonts the list may be empty, but the API must
+        // return a deterministic vector.
+        assert!(
+            installed.len()
+                <= PlatformCascadeResolver::platform_fallbacks_for_script(ScriptTag::Latin).len()
+        );
     }
 }

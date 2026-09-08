@@ -1,13 +1,18 @@
-//! Unicode Bidirectional Algorithm (UAX #9) and line breaking rules (UAX #14).
+//! Unicode Bidirectional Algorithm (UAX #9) integration for shaping.
 //!
-//! This module provides primitives for:
-//! - Analyzing paragraph text to resolve base direction and embedding levels.
-//! - Extracting bidirectional runs (`BidiRun`) in logical order.
-//! - Reordering runs into visual display order per UAX #9 Rule L2.
-//! - Mirrored character substitution in RTL runs (parentheses, brackets, etc.).
-//! - Kinsoku Shori (UAX #14 line breaking) start and end prohibition rules.
+//! This module wraps the canonical `unicode-bidi` crate to expose
+//! Martensite-level primitives:
+//! - Paragraph analysis with automatic base direction detection.
+//! - Logical and visual run extraction.
+//! - Logical/visual character index mapping.
+//! - Mirrored glyph positions for RTL runs without corrupting source text.
+//!
+//! Mirroring and line-break prohibitions are no longer performed by dead
+//! helper functions on raw strings; instead they are produced as metadata
+//! that the shaping pipeline can apply to individual glyphs. See
+//! [`line_break`](crate::line_break) for UAX #14 support.
 
-use unicode_bidi::{bidi_class, BidiClass, BidiInfo, Level};
+use unicode_bidi::{bidi_class, BidiClass, BidiInfo, Level, ParagraphInfo};
 
 /// Base or run direction for bidirectional text layout.
 ///
@@ -28,6 +33,18 @@ pub enum BidiDirection {
     Rtl,
     /// Direction automatically detected from the first strong directional character.
     Auto,
+}
+
+impl BidiDirection {
+    /// Converts a `bool` RTL flag into a [`BidiDirection`].
+    #[inline]
+    pub const fn from_rtl(rtl: bool) -> Self {
+        if rtl {
+            Self::Rtl
+        } else {
+            Self::Ltr
+        }
+    }
 }
 
 /// A contiguous slice of text possessing a single resolved bidirectional level and direction.
@@ -52,6 +69,10 @@ pub struct BidiRun {
     pub level: u8,
     /// Resolved direction of the run.
     pub direction: BidiDirection,
+    /// Visual display order index (0 is leftmost in the rendered line).
+    pub visual_order: usize,
+    /// Logical order index (position in the source string).
+    pub logical_order: usize,
 }
 
 impl BidiRun {
@@ -72,6 +93,8 @@ impl BidiRun {
             end,
             level,
             direction,
+            visual_order: 0,
+            logical_order: 0,
         }
     }
 
@@ -195,7 +218,9 @@ impl BidiParagraph {
                 } else {
                     BidiDirection::Ltr
                 };
-                runs.push(BidiRun::new(run_start, i, current_level, dir));
+                let mut run = BidiRun::new(run_start, i, current_level, dir);
+                run.logical_order = runs.len();
+                runs.push(run);
                 run_start = i;
                 current_level = lvl_num;
             }
@@ -206,7 +231,9 @@ impl BidiParagraph {
         } else {
             BidiDirection::Ltr
         };
-        runs.push(BidiRun::new(run_start, text.len(), current_level, dir));
+        let mut last = BidiRun::new(run_start, text.len(), current_level, dir);
+        last.logical_order = runs.len();
+        runs.push(last);
 
         Self {
             text: text.to_string(),
@@ -256,6 +283,10 @@ impl BidiParagraph {
     /// let visual_runs = para.reorder_visually();
     /// assert!(!visual_runs.is_empty());
     /// ```
+    ///
+    /// Each returned run's [`BidiRun::visual_order`] is populated with its
+    /// position in display order; [`BidiRun::logical_order`] retains the
+    /// run's position in source order.
     pub fn reorder_visually(&self) -> Vec<BidiRun> {
         if self.runs.is_empty() {
             return Vec::new();
@@ -265,7 +296,12 @@ impl BidiParagraph {
         let max_level = visual.iter().map(|r| r.level).max().unwrap_or(0);
         let min_odd_level = match visual.iter().map(|r| r.level).filter(|&l| l % 2 == 1).min() {
             Some(l) => l,
-            None => return visual,
+            None => {
+                for (i, run) in visual.iter_mut().enumerate() {
+                    run.visual_order = i;
+                }
+                return visual;
+            }
         };
 
         for lvl in (min_odd_level..=max_level).rev() {
@@ -283,234 +319,261 @@ impl BidiParagraph {
             }
         }
 
+        for (i, run) in visual.iter_mut().enumerate() {
+            run.visual_order = i;
+        }
         visual
     }
 }
 
-/// Returns the mirrored Unicode glyph for the given character, if one exists.
+/// A fully resolved BiDi paragraph that exposes logical/visual index mapping.
 ///
-/// Handles ASCII and Unicode parentheses, brackets, curly braces, angle brackets,
-/// guillemets, and full-width brackets.
-///
-/// # Examples
-///
-/// ```
-/// use martensite_text::bidi::get_mirrored_char;
-///
-/// assert_eq!(get_mirrored_char('('), Some(')'));
-/// assert_eq!(get_mirrored_char(')'), Some('('));
-/// assert_eq!(get_mirrored_char('«'), Some('»'));
-/// assert_eq!(get_mirrored_char('【'), Some('】'));
-/// assert_eq!(get_mirrored_char('A'), None);
-/// ```
-pub fn get_mirrored_char(ch: char) -> Option<char> {
-    match ch {
-        '(' => Some(')'),
-        ')' => Some('('),
-        '[' => Some(']'),
-        ']' => Some('['),
-        '{' => Some('}'),
-        '}' => Some('{'),
-        '<' => Some('>'),
-        '>' => Some('<'),
-        '«' => Some('»'),
-        '»' => Some('«'),
-        '‹' => Some('›'),
-        '›' => Some('‹'),
-        '（' => Some('）'),
-        '）' => Some('（'),
-        '［' => Some('］'),
-        '］' => Some('［'),
-        '｛' => Some('｝'),
-        '｝' => Some('｛'),
-        '〈' => Some('〉'),
-        '〉' => Some('〈'),
-        '《' => Some('》'),
-        '》' => Some('《'),
-        '「' => Some('」'),
-        '」' => Some('「'),
-        '『' => Some('』'),
-        '』' => Some('『'),
-        '【' => Some('】'),
-        '】' => Some('【'),
-        '〔' => Some('〕'),
-        '〕' => Some('〔'),
-        '〖' => Some('〗'),
-        '〗' => Some('〖'),
-        '⟨' => Some('⟩'),
-        '⟩' => Some('⟨'),
-        '⟪' => Some('⟫'),
-        '⟫' => Some('⟪'),
-        '⟦' => Some('⟧'),
-        '⟧' => Some('⟦'),
-        _ => None,
-    }
+/// Unlike [`BidiParagraph`], this type stores the underlying `BidiInfo` so it
+/// can produce character-level mappings between logical source positions and
+/// visual display positions.
+#[derive(Debug)]
+pub struct BidiResolved<'text> {
+    text: &'text str,
+    bidi_info: BidiInfo<'text>,
+    para: ParagraphInfo,
+    base_direction: BidiDirection,
 }
 
-/// Mirrors mirrored characters inside all runs identified as right-to-left (`is_rtl()`).
-///
-/// Characters in LTR runs remain unchanged. Characters in RTL runs are substituted with
-/// their mirrored pair if one is defined by [`get_mirrored_char`].
-///
-/// # Examples
-///
-/// ```
-/// use martensite_text::bidi::{BidiDirection, BidiParagraph, mirror_text_in_rtl_runs};
-///
-/// let para = BidiParagraph::new("مرحبا (1)", BidiDirection::Rtl);
-/// let mirrored = mirror_text_in_rtl_runs(&para.text, &para.runs);
-/// assert!(mirrored.contains(')') || mirrored.contains('('));
-/// ```
-pub fn mirror_text_in_rtl_runs(text: &str, runs: &[BidiRun]) -> String {
-    let mut result = String::with_capacity(text.len());
-    for run in runs {
-        if let Some(slice) = text.get(run.start..run.end) {
-            if run.is_rtl() {
-                for ch in slice.chars() {
-                    result.push(get_mirrored_char(ch).unwrap_or(ch));
-                }
-            } else {
-                result.push_str(slice);
-            }
+impl<'text> BidiResolved<'text> {
+    /// Resolves the BiDi embedding levels for `text`.
+    pub fn new(text: &'text str, default_dir: BidiDirection) -> Self {
+        let base_level = match default_dir {
+            BidiDirection::Auto => match BidiInfo::new(text, None).paragraphs.first() {
+                Some(p) => p.level.number(),
+                None => 0,
+            },
+            BidiDirection::Ltr => 0,
+            BidiDirection::Rtl => 1,
+        };
+        let level = Level::new(base_level).ok();
+        let bidi_info = BidiInfo::new(text, level);
+        let para = bidi_info
+            .paragraphs
+            .first()
+            .cloned()
+            .unwrap_or_else(|| ParagraphInfo {
+                range: 0..text.len(),
+                level: Level::ltr(),
+            });
+        let base_direction = if base_level % 2 == 1 {
+            BidiDirection::Rtl
+        } else {
+            BidiDirection::Ltr
+        };
+        Self {
+            text,
+            bidi_info,
+            para,
+            base_direction,
         }
     }
-    result
+
+    /// Returns the original text.
+    #[inline]
+    pub fn text(&self) -> &'text str {
+        self.text
+    }
+
+    /// Returns the base paragraph direction.
+    #[inline]
+    pub fn base_direction(&self) -> BidiDirection {
+        self.base_direction
+    }
+
+    /// Returns the resolved base embedding level.
+    #[inline]
+    pub fn base_level(&self) -> u8 {
+        self.para.level.number()
+    }
+
+    /// Returns the logical runs of the paragraph in source order.
+    pub fn logical_runs(&self) -> Vec<BidiRun> {
+        let levels = self
+            .bidi_info
+            .reordered_levels(&self.para, self.para.range.clone());
+        if levels.is_empty() {
+            return Vec::new();
+        }
+        let mut runs = Vec::new();
+        let mut start = self.para.range.start;
+        let mut current = levels[start].number();
+        for (i, lvl) in levels
+            .iter()
+            .enumerate()
+            .skip(self.para.range.start + 1)
+            .take(
+                self.para
+                    .range
+                    .end
+                    .saturating_sub(self.para.range.start + 1),
+            )
+        {
+            let num = lvl.number();
+            if num != current {
+                runs.push(self.make_run(start, i, current, runs.len()));
+                start = i;
+                current = num;
+            }
+        }
+        runs.push(self.make_run(start, self.para.range.end, current, runs.len()));
+        runs
+    }
+
+    /// Returns the visual runs of the paragraph in display order.
+    pub fn visual_runs(&self) -> Vec<BidiRun> {
+        let logical = self.logical_runs();
+        let (levels, visual) = self
+            .bidi_info
+            .visual_runs(&self.para, self.para.range.clone());
+        let mut result = Vec::with_capacity(visual.len());
+        for (visual_order, run) in visual.iter().enumerate() {
+            let level = levels[run.start].number();
+            let start = run.start;
+            let end = run.end;
+            let logical_order = logical
+                .iter()
+                .position(|r| r.start == start && r.end == end)
+                .unwrap_or(0);
+            let mut r = self.make_run(start, end, level, logical_order);
+            r.visual_order = visual_order;
+            result.push(r);
+        }
+        result
+    }
+
+    /// Maps a logical character index to its visual display index.
+    pub fn logical_to_visual(&self, logical_index: usize) -> Option<usize> {
+        let levels = self
+            .bidi_info
+            .reordered_levels_per_char(&self.para, self.para.range.clone());
+        let visual_map = BidiInfo::reorder_visual(&levels);
+        // Build the inverse map.
+        let mut logical_to_visual = vec![None; visual_map.len()];
+        for (visual, &logical) in visual_map.iter().enumerate() {
+            if logical < logical_to_visual.len() {
+                logical_to_visual[logical] = Some(visual);
+            }
+        }
+        logical_to_visual.get(logical_index).copied().flatten()
+    }
+
+    /// Maps a visual display index to its logical source index.
+    pub fn visual_to_logical(&self, visual_index: usize) -> Option<usize> {
+        let levels = self
+            .bidi_info
+            .reordered_levels_per_char(&self.para, self.para.range.clone());
+        let visual_map = BidiInfo::reorder_visual(&levels);
+        visual_map.get(visual_index).copied()
+    }
+
+    /// Returns a sequence of (byte_index, mirrored_char) pairs for characters
+    /// that should be mirrored in RTL contexts.
+    pub fn mirror_map(&self) -> BidiMirrorMap {
+        let levels = self
+            .bidi_info
+            .reordered_levels(&self.para, self.para.range.clone());
+        let level_numbers: Vec<u8> = levels.iter().map(|l| l.number()).collect();
+        BidiMirrorMap::for_text_and_levels(self.text, &level_numbers)
+    }
+
+    fn make_run(&self, start: usize, end: usize, level: u8, logical_order: usize) -> BidiRun {
+        let direction = if level % 2 == 1 {
+            BidiDirection::Rtl
+        } else {
+            BidiDirection::Ltr
+        };
+        BidiRun {
+            start,
+            end,
+            level,
+            direction,
+            visual_order: 0,
+            logical_order,
+        }
+    }
 }
 
-/// Returns `true` if the character is prohibited from starting a line under UAX #14 Kinsoku Shori rules.
+/// Map of character positions to their mirrored glyphs for RTL display.
 ///
-/// Prohibited line start characters include closing punctuation, quotation marks, commas, periods,
-/// small Japanese kana, and prolonged sound marks.
-///
-/// # Examples
-///
-/// ```
-/// use martensite_text::bidi::is_prohibited_line_start;
-///
-/// assert!(is_prohibited_line_start(')'));
-/// assert!(is_prohibited_line_start('。'));
-/// assert!(is_prohibited_line_start('っ'));
-/// assert!(!is_prohibited_line_start('A'));
-/// ```
-pub fn is_prohibited_line_start(ch: char) -> bool {
-    matches!(
-        ch,
-        ')' | ']'
-            | '}'
-            | '>'
-            | '»'
-            | '›'
-            | '”'
-            | '’'
-            | '"'
-            | '\''
-            | '）'
-            | '］'
-            | '｝'
-            | '〉'
-            | '》'
-            | '」'
-            | '』'
-            | '】'
-            | '〕'
-            | '〗'
-            | '⟩'
-            | '⟫'
-            | '⟧'
-            | ','
-            | '.'
-            | '!'
-            | '?'
-            | ':'
-            | ';'
-            | '、'
-            | '。'
-            | '，'
-            | '．'
-            | '！'
-            | '？'
-            | '：'
-            | '；'
-            | 'ァ'
-            | 'ィ'
-            | 'ゥ'
-            | 'ェ'
-            | 'ォ'
-            | 'ッ'
-            | 'ャ'
-            | 'ュ'
-            | 'ョ'
-            | 'ヮ'
-            | 'ヵ'
-            | 'ヶ'
-            | 'ぁ'
-            | 'ぃ'
-            | 'ぅ'
-            | 'ぇ'
-            | 'ぉ'
-            | 'っ'
-            | 'ゃ'
-            | 'ゅ'
-            | 'ょ'
-            | 'ゎ'
-            | 'ー'
-            | '～'
-            | '〜'
-            | '…'
-            | '‥'
-            | '°'
-            | '′'
-            | '″'
-            | '℃'
-    )
+/// This is intended to be applied by the glyph rasterizer, not by mutating
+/// the source text before shaping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BidiMirrorMap {
+    entries: Vec<(usize, char)>,
 }
 
-/// Returns `true` if the character is prohibited from ending a line under UAX #14 Kinsoku Shori rules.
-///
-/// Prohibited line end characters include opening punctuation, opening quotation marks,
-/// and currency symbols.
-///
-/// # Examples
-///
-/// ```
-/// use martensite_text::bidi::is_prohibited_line_end;
-///
-/// assert!(is_prohibited_line_end('('));
-/// assert!(is_prohibited_line_end('「'));
-/// assert!(is_prohibited_line_end('$'));
-/// assert!(!is_prohibited_line_end('Z'));
-/// ```
-pub fn is_prohibited_line_end(ch: char) -> bool {
-    matches!(
-        ch,
-        '(' | '['
-            | '{'
-            | '<'
-            | '«'
-            | '‹'
-            | '“'
-            | '‘'
-            | '（'
-            | '［'
-            | '｛'
-            | '〈'
-            | '《'
-            | '「'
-            | '『'
-            | '【'
-            | '〔'
-            | '〖'
-            | '⟨'
-            | '⟪'
-            | '⟦'
-            | '$'
-            | '¥'
-            | '£'
-            | '€'
-            | '￥'
-            | '＄'
-            | '₩'
-    )
+impl BidiMirrorMap {
+    /// Creates a mirror map for `text` by resolving its embedding levels
+    /// with the default (auto-detected) paragraph direction.
+    ///
+    /// Equivalent to running [`BidiInfo::new`] on the text and feeding the
+    /// resulting levels to [`Self::for_text_and_levels`]. For explicit
+    /// control over the base direction use [`BidiResolved::mirror_map`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::bidi::BidiMirrorMap;
+    ///
+    /// let map = BidiMirrorMap::new("(abc)");
+    /// // Auto-detected direction is LTR, so nothing is mirrored.
+    /// assert!(map.entries().is_empty());
+    /// ```
+    pub fn new(text: &str) -> Self {
+        if text.is_empty() {
+            return Self {
+                entries: Vec::new(),
+            };
+        }
+        let bidi_info = BidiInfo::new(text, None);
+        let levels: Vec<u8> = bidi_info.levels.iter().map(|l| l.number()).collect();
+        Self::for_text_and_levels(text, &levels)
+    }
+
+    /// Creates a mirror map for the given text and resolved embedding levels.
+    ///
+    /// A character is mirrored when it has the `Bidi_Mirrored` property and is
+    /// located in an RTL embedding level. The byte index recorded is the start
+    /// byte of the character in the source text.
+    pub fn for_text_and_levels(text: &str, levels: &[u8]) -> Self {
+        let mut entries = Vec::new();
+        for (idx, ch) in text.char_indices() {
+            if idx >= levels.len() {
+                break;
+            }
+            let rtl = levels[idx] % 2 == 1;
+            if rtl && unicode_bidi_mirroring::is_mirroring(ch) {
+                if let Some(mirror) = Self::char_mirror(ch) {
+                    entries.push((idx, mirror));
+                }
+            }
+        }
+        Self { entries }
+    }
+
+    fn char_mirror(ch: char) -> Option<char> {
+        // The canonical UAX #9 mirroring table.
+        unicode_bidi_mirroring::get_mirrored(ch)
+    }
+
+    /// Returns the mirrored glyph for the byte position, if any.
+    pub fn mirror_at(&self, byte_index: usize) -> Option<char> {
+        self.entries
+            .iter()
+            .find(|(idx, _)| *idx == byte_index)
+            .map(|(_, ch)| *ch)
+    }
+
+    /// Returns all mirrored positions.
+    #[inline]
+    pub fn entries(&self) -> &[(usize, char)] {
+        &self.entries
+    }
 }
 
 #[cfg(test)]
@@ -518,12 +581,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_bidi_direction_default() {
+    fn bidi_direction_default() {
         assert_eq!(BidiDirection::default(), BidiDirection::Ltr);
     }
 
     #[test]
-    fn test_bidi_run_methods() {
+    fn bidi_direction_from_rtl() {
+        assert_eq!(BidiDirection::from_rtl(false), BidiDirection::Ltr);
+        assert_eq!(BidiDirection::from_rtl(true), BidiDirection::Rtl);
+    }
+
+    #[test]
+    fn bidi_run_methods() {
         let ltr_run = BidiRun::new(0, 10, 0, BidiDirection::Ltr);
         assert!(!ltr_run.is_rtl());
         assert_eq!(ltr_run.len(), 10);
@@ -539,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_base_direction() {
+    fn detect_base_direction() {
         assert_eq!(
             BidiParagraph::detect_base_direction("Hello World"),
             BidiDirection::Ltr
@@ -560,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bidi_paragraph_pure_ltr() {
+    fn bidi_paragraph_pure_ltr() {
         let text = "The quick brown fox";
         let para = BidiParagraph::new(text, BidiDirection::Auto);
         assert_eq!(para.base_direction, BidiDirection::Ltr);
@@ -574,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bidi_paragraph_pure_rtl() {
+    fn bidi_paragraph_pure_rtl() {
         let text = "שלום עולם";
         let para = BidiParagraph::new(text, BidiDirection::Auto);
         assert_eq!(para.base_direction, BidiDirection::Rtl);
@@ -588,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bidi_paragraph_mixed_text() {
+    fn bidi_paragraph_mixed_text() {
         let text = "Hello שלום World";
         let para = BidiParagraph::new(text, BidiDirection::Ltr);
         assert_eq!(para.base_direction, BidiDirection::Ltr);
@@ -599,63 +668,8 @@ mod tests {
     }
 
     #[test]
-    fn test_mirrored_char_substitution() {
-        assert_eq!(get_mirrored_char('('), Some(')'));
-        assert_eq!(get_mirrored_char(')'), Some('('));
-        assert_eq!(get_mirrored_char('['), Some(']'));
-        assert_eq!(get_mirrored_char(']'), Some('['));
-        assert_eq!(get_mirrored_char('{'), Some('}'));
-        assert_eq!(get_mirrored_char('}'), Some('{'));
-        assert_eq!(get_mirrored_char('<'), Some('>'));
-        assert_eq!(get_mirrored_char('>'), Some('<'));
-        assert_eq!(get_mirrored_char('«'), Some('»'));
-        assert_eq!(get_mirrored_char('»'), Some('«'));
-        assert_eq!(get_mirrored_char('（'), Some('）'));
-        assert_eq!(get_mirrored_char('）'), Some('（'));
-        assert_eq!(get_mirrored_char('【'), Some('】'));
-        assert_eq!(get_mirrored_char('】'), Some('【'));
-        assert_eq!(get_mirrored_char('X'), None);
-    }
-
-    #[test]
-    fn test_mirror_text_in_rtl_runs() {
-        let text = "(test) [עברית] {abc}";
-        let para = BidiParagraph::new(text, BidiDirection::Ltr);
-        let mirrored = mirror_text_in_rtl_runs(&para.text, &para.runs);
-        assert!(mirrored.starts_with("(test) "));
-        assert!(mirrored.ends_with(" {abc}"));
-        // Brackets inside the RTL run should be swapped
-        assert!(mirrored.contains(']'));
-        assert!(mirrored.contains('['));
-    }
-
-    #[test]
-    fn test_kinsoku_shori_rules() {
-        assert!(is_prohibited_line_start(')'));
-        assert!(is_prohibited_line_start(']'));
-        assert!(is_prohibited_line_start('}'));
-        assert!(is_prohibited_line_start('。'));
-        assert!(is_prohibited_line_start('、'));
-        assert!(is_prohibited_line_start('っ'));
-        assert!(is_prohibited_line_start('ー'));
-        assert!(!is_prohibited_line_start('('));
-        assert!(!is_prohibited_line_start('漢'));
-
-        assert!(is_prohibited_line_end('('));
-        assert!(is_prohibited_line_end('['));
-        assert!(is_prohibited_line_end('{'));
-        assert!(is_prohibited_line_end('「'));
-        assert!(is_prohibited_line_end('『'));
-        assert!(is_prohibited_line_end('$'));
-        assert!(is_prohibited_line_end('￥'));
-        assert!(!is_prohibited_line_end(')'));
-        assert!(!is_prohibited_line_end('字'));
-    }
-
-    #[test]
-    fn test_reorder_visually_no_odd_levels() {
+    fn reorder_visually_no_odd_levels() {
         let mut para = BidiParagraph::new("Hello World", BidiDirection::Ltr);
-        // Explicitly set even levels higher than 0 (e.g. level 2)
         para.runs = vec![
             BidiRun::new(0, 5, 2, BidiDirection::Ltr),
             BidiRun::new(5, 11, 2, BidiDirection::Ltr),
@@ -663,5 +677,63 @@ mod tests {
         let visual = para.reorder_visually();
         assert_eq!(visual[0].start, 0);
         assert_eq!(visual[1].start, 5);
+    }
+
+    #[test]
+    fn resolved_logical_runs_present() {
+        let text = "abc שלום 123";
+        let resolved = BidiResolved::new(text, BidiDirection::Auto);
+        let runs = resolved.logical_runs();
+        assert!(
+            runs.len() >= 3,
+            "expected multiple logical runs for mixed LTR/RTL text, got {}",
+            runs.len()
+        );
+        for (i, run) in runs.iter().enumerate() {
+            assert_eq!(run.logical_order, i);
+        }
+    }
+
+    #[test]
+    fn resolved_visual_runs_reordered() {
+        let text = "abc שלום 123";
+        let resolved = BidiResolved::new(text, BidiDirection::Auto);
+        let visual = resolved.visual_runs();
+        assert!(!visual.is_empty());
+        // Visual order indices must be a permutation of 0..n.
+        let orders: Vec<_> = visual.iter().map(|r| r.visual_order).collect();
+        let mut sorted = orders.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..orders.len()).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn resolved_logical_visual_roundtrip() {
+        let text = "Hello مرحبا World";
+        let resolved = BidiResolved::new(text, BidiDirection::Auto);
+        let char_count = text.chars().count();
+        for logical in 0..char_count {
+            let visual = resolved
+                .logical_to_visual(logical)
+                .expect("valid logical index");
+            let back = resolved
+                .visual_to_logical(visual)
+                .expect("valid visual index");
+            assert_eq!(
+                back, logical,
+                "logical<->visual roundtrip failed at logical {logical} -> visual {visual}"
+            );
+        }
+    }
+
+    #[test]
+    fn mirror_map_identifies_parens_in_rtl() {
+        let text = "(test)";
+        let resolved = BidiResolved::new(text, BidiDirection::Rtl);
+        let map = resolved.mirror_map();
+        assert!(
+            map.mirror_at(text.find('(').unwrap()).is_some(),
+            "opening paren should be mirrored in RTL"
+        );
     }
 }

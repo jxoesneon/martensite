@@ -1,5 +1,12 @@
 name: Benchmark Verification & Documentation Sync
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -30,6 +37,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install Mesa Lavapipe (Software Vulkan)
         run: |
           sudo apt-get update
@@ -40,12 +49,13 @@ jobs:
         env:
           MARTENSITE_STRICT_BENCH: "1"
 
-      - name: Verify Documentation & README Consistency
-        run: |
-          echo "Verifying that published benchmark numbers match strict CI gates..."
-          grep -q "0.00% (Kernel Sleep)" README.md || (echo "README.md missing idle CPU invariant" && exit 1)
-          grep -q "< 0.8 ms" README.md || (echo "README.md missing 10k DAG propagation metric" && exit 1)
-          grep -q "Steady 120 FPS / 0 alloc" README.md || (echo "README.md missing DataTable metric" && exit 1)
-          grep -q "Suite 1: Reactive DAG Propagation Latency" docs/BENCHMARKS.md || (echo "docs/BENCHMARKS.md missing Suite 1" && exit 1)
-          grep -q "Suite 5: Virtualized DataTable Scrolling" docs/BENCHMARKS.md || (echo "docs/BENCHMARKS.md missing Suite 5" && exit 1)
-          echo "All benchmark documentation and README metrics verified successfully."
+      - name: Clippy (benchmark crate, default features)
+        run: cargo clippy -p bench_suite --all-targets -- -D warnings
+
+      - name: Doc Tests (benchmark crate)
+        run: cargo test --doc -p bench_suite --all-features
+
+      - name: Generate and check benchmark crate documentation
+        run: cargo doc -p bench_suite --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"

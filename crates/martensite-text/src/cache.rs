@@ -25,8 +25,10 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
+use crate::bidi::BidiDirection;
 use crate::font::FontId;
 use crate::shaping::{ShapedGlyph, ShapedLine, TextMetrics};
+use crate::vertical::WritingMode;
 
 /// Default memory budget for the Tier 2 cache: 16 MB.
 pub const DEFAULT_MEMORY_BUDGET: usize = 16 * 1024 * 1024;
@@ -92,6 +94,12 @@ pub struct ShapeCacheKey {
     pub family_hash: TextHash,
     /// Line height quantized to bits.
     pub line_height_bits: LineHeightBits,
+    /// Base BiDi direction.
+    pub direction: DirectionBits,
+    /// Writing mode (horizontal/vertical).
+    pub writing_mode: WritingModeBits,
+    /// Hash of the resolved fallback chain.
+    pub fallback_hash: FallbackHash,
 }
 
 /// Quantized max width for cache keying.
@@ -131,6 +139,71 @@ impl MaxWidthBits {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LineHeightBits(pub u32);
 
+/// Quantized BiDi direction for cache keying.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub enum DirectionBits {
+    /// Left-to-right base direction.
+    #[default]
+    Ltr,
+    /// Right-to-left base direction.
+    Rtl,
+    /// Automatic direction detection.
+    Auto,
+}
+
+impl DirectionBits {
+    /// Creates a `DirectionBits` from a [`BidiDirection`].
+    #[inline]
+    pub const fn from_direction(dir: BidiDirection) -> Self {
+        match dir {
+            BidiDirection::Ltr => Self::Ltr,
+            BidiDirection::Rtl => Self::Rtl,
+            BidiDirection::Auto => Self::Auto,
+        }
+    }
+}
+
+/// Writing mode for cache keying.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub enum WritingModeBits {
+    /// Horizontal top-to-bottom flow.
+    #[default]
+    HorizontalTb,
+    /// Vertical right-to-left flow.
+    VerticalRl,
+    /// Vertical left-to-right flow.
+    VerticalLr,
+}
+
+impl WritingModeBits {
+    /// Creates a `WritingModeBits` from a [`WritingMode`].
+    #[inline]
+    pub const fn from_mode(mode: WritingMode) -> Self {
+        match mode {
+            WritingMode::HorizontalTb => Self::HorizontalTb,
+            WritingMode::VerticalRl => Self::VerticalRl,
+            WritingMode::VerticalLr => Self::VerticalLr,
+        }
+    }
+}
+
+/// Hash of a resolved fallback chain, used in cache keys.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub struct FallbackHash(pub u64);
+
+impl FallbackHash {
+    /// Computes a hash from an iterator of family names.
+    pub fn from_families<'a>(families: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut hash = 0xcbf29ce484222325u64;
+        for family in families {
+            for &byte in family.as_bytes() {
+                hash = (hash ^ byte as u64).wrapping_mul(0x100000001b3);
+            }
+        }
+        Self(hash)
+    }
+}
+
 impl LineHeightBits {
     /// Creates a `LineHeightBits` from an `f32` line height.
     /// Zero or negative maps to `0` (default line height).
@@ -158,7 +231,17 @@ impl ShapeCacheKey {
     /// Creates a new cache key.
     #[inline]
     pub fn new(font_id: FontId, font_size: f32, text: &str) -> Self {
-        Self::with_max_width_and_family(font_id, font_size, text, None, "", 0.0)
+        Self::with_options(
+            font_id,
+            font_size,
+            text,
+            None,
+            "",
+            0.0,
+            BidiDirection::Ltr,
+            WritingMode::HorizontalTb,
+            &[],
+        )
     }
 
     /// Creates a new cache key with a max width for wrapping.
@@ -169,7 +252,17 @@ impl ShapeCacheKey {
         text: &str,
         max_width: Option<f32>,
     ) -> Self {
-        Self::with_max_width_and_family(font_id, font_size, text, max_width, "", 0.0)
+        Self::with_options(
+            font_id,
+            font_size,
+            text,
+            max_width,
+            "",
+            0.0,
+            BidiDirection::Ltr,
+            WritingMode::HorizontalTb,
+            &[],
+        )
     }
 
     /// Creates a new cache key with max width, family, and line height.
@@ -182,6 +275,33 @@ impl ShapeCacheKey {
         family: &str,
         line_height: f32,
     ) -> Self {
+        Self::with_options(
+            font_id,
+            font_size,
+            text,
+            max_width,
+            family,
+            line_height,
+            BidiDirection::Ltr,
+            WritingMode::HorizontalTb,
+            &[],
+        )
+    }
+
+    /// Creates a full cache key including direction, writing mode, and fallback.
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_options(
+        font_id: FontId,
+        font_size: f32,
+        text: &str,
+        max_width: Option<f32>,
+        family: &str,
+        line_height: f32,
+        direction: BidiDirection,
+        writing_mode: WritingMode,
+        fallback_families: &[&str],
+    ) -> Self {
         Self {
             font_id,
             font_size_bits: FontSizeBits::from_f32(font_size),
@@ -189,6 +309,9 @@ impl ShapeCacheKey {
             max_width_bits: MaxWidthBits::from_opt(max_width),
             family_hash: TextHash::from_string(family),
             line_height_bits: LineHeightBits::from_f32(line_height),
+            direction: DirectionBits::from_direction(direction),
+            writing_mode: WritingModeBits::from_mode(writing_mode),
+            fallback_hash: FallbackHash::from_families(fallback_families.iter().copied()),
         }
     }
 }
@@ -202,6 +325,14 @@ pub struct CachedShape {
     pub metrics: TextMetrics,
     /// Approximate memory size in bytes.
     pub mem_size: usize,
+    /// Resolved base BiDi embedding level (even = LTR, odd = RTL).
+    pub base_bidi_level: u8,
+    /// Visual run order indices, if BiDi reordering was applied.
+    pub visual_run_order: Vec<usize>,
+    /// Resolved fallback chain families, in priority order.
+    pub fallback_chain: Vec<String>,
+    /// Writing mode used for shaping.
+    pub writing_mode: WritingMode,
 }
 
 impl CachedShape {
@@ -212,7 +343,28 @@ impl CachedShape {
             lines,
             metrics,
             mem_size,
+            base_bidi_level: 0,
+            visual_run_order: Vec::new(),
+            fallback_chain: Vec::new(),
+            writing_mode: WritingMode::HorizontalTb,
         }
+    }
+
+    /// Creates a new cached shape entry with extended v0.11 metadata.
+    pub fn with_metadata(
+        lines: Vec<ShapedLine>,
+        metrics: TextMetrics,
+        base_bidi_level: u8,
+        visual_run_order: Vec<usize>,
+        fallback_chain: Vec<String>,
+        writing_mode: WritingMode,
+    ) -> Self {
+        let mut shape = Self::new(lines, metrics);
+        shape.base_bidi_level = base_bidi_level;
+        shape.visual_run_order = visual_run_order;
+        shape.fallback_chain = fallback_chain;
+        shape.writing_mode = writing_mode;
+        shape
     }
 
     /// Estimates the memory usage of the shaped lines in bytes.
@@ -534,6 +686,78 @@ mod tests {
         let k1 = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
         let k2 = ShapeCacheKey::new(FontId(dummy_font_id()), 20.0, "Hello");
         assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn cache_key_includes_direction_and_writing_mode() {
+        let key_ltr = ShapeCacheKey::with_options(
+            FontId(dummy_font_id()),
+            16.0,
+            "Hello",
+            None,
+            "",
+            0.0,
+            crate::bidi::BidiDirection::Ltr,
+            crate::vertical::WritingMode::HorizontalTb,
+            &[],
+        );
+        let key_rtl = ShapeCacheKey::with_options(
+            FontId(dummy_font_id()),
+            16.0,
+            "Hello",
+            None,
+            "",
+            0.0,
+            crate::bidi::BidiDirection::Rtl,
+            crate::vertical::WritingMode::HorizontalTb,
+            &[],
+        );
+        let key_vertical = ShapeCacheKey::with_options(
+            FontId(dummy_font_id()),
+            16.0,
+            "Hello",
+            None,
+            "",
+            0.0,
+            crate::bidi::BidiDirection::Ltr,
+            crate::vertical::WritingMode::VerticalRl,
+            &[],
+        );
+        assert_ne!(
+            key_ltr, key_rtl,
+            "LTR and RTL should produce different keys"
+        );
+        assert_ne!(
+            key_ltr, key_vertical,
+            "horizontal and vertical should produce different keys"
+        );
+    }
+
+    #[test]
+    fn cache_key_includes_fallback_hash() {
+        let key_no_fallback = ShapeCacheKey::with_options(
+            FontId(dummy_font_id()),
+            16.0,
+            "Hello",
+            None,
+            "",
+            0.0,
+            crate::bidi::BidiDirection::Ltr,
+            crate::vertical::WritingMode::HorizontalTb,
+            &[],
+        );
+        let key_with_fallback = ShapeCacheKey::with_options(
+            FontId(dummy_font_id()),
+            16.0,
+            "Hello",
+            None,
+            "",
+            0.0,
+            crate::bidi::BidiDirection::Ltr,
+            crate::vertical::WritingMode::HorizontalTb,
+            &["Noto Sans"],
+        );
+        assert_ne!(key_no_fallback, key_with_fallback);
     }
 
     #[test]

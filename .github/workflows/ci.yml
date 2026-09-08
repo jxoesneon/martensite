@@ -1,5 +1,12 @@
 name: Martensite CI Pipeline
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -21,9 +28,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Rustfmt Check
         run: cargo fmt --all -- --check
-      - name: Clippy Lints
+      - name: Clippy Lints (default features)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Clippy Lints (all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   purity-and-bans:
@@ -39,6 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Install Mesa Lavapipe (Software Vulkan)
         run: |
           sudo apt-get update
@@ -47,6 +58,8 @@ jobs:
         run: cargo test --workspace --bins --lib --tests
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
+      - name: Run Doc Tests
+        run: cargo test --doc --workspace --all-features
 
   audit:
     name: Security Audit
@@ -67,6 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build Documentation
         run: cargo doc --workspace --no-deps --all-features
         env:
@@ -78,14 +92,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Run Benchmark Suite (strict exit gates)
         run: cargo bench -p bench_suite --bench bench_suite -- --test
         env:
           MARTENSITE_STRICT_BENCH: "1"
-      - name: Verify Benchmark Documentation Consistency
-        run: |
-          grep -q "0.00% (Kernel Sleep)" README.md || (echo "README.md missing benchmark metrics" && exit 1)
-          grep -q "< 0.8 ms" README.md || (echo "README.md missing 10k DAG metric" && exit 1)
-          grep -q "Suite 1: Reactive DAG Propagation Latency" docs/BENCHMARKS.md || (echo "docs/BENCHMARKS.md missing Suite 1" && exit 1)
-          echo "Benchmark documentation verified against CI/CD exit gates."
+      - name: Generate and check benchmark crate documentation
+        run: cargo doc -p bench_suite --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
 

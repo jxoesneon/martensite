@@ -20,31 +20,35 @@ Prior to `1.0.0`, minor versions (`0.x.0`) may contain breaking changes, though 
 
 ## 3. Topologically Sorted Publication Sequence
 
-Due to the strict workspace constraints and inter-crate dependencies, the 24 internal crates (21 core crates, 1 CLI tool, 1 example, 1 bench suite) must be published in a strict bottom-up leaf-first topological order. `examples` and `benches` are excluded from crates.io.
+Due to the strict workspace constraints and inter-crate dependencies, the publishable crates must be published in the exact bottom-up leaf-first topological order encoded in `.github/workflows/publish.yml`. `examples` and `benches` are excluded from crates.io.
 
-1. `martensite-macros`
-2. `martensite-core`
-3. `martensite-reactive`
+1. `martensite-reactive`
+2. `martensite-macros`
+3. `martensite-core`
 4. `martensite-layout`
-5. `martensite-theme`
-6. `martensite-motion`
-7. `martensite-history`
-8. `martensite-assets`
-9. `martensite-l10n`
-10. `martensite-text`
-11. `martensite-access`
+5. `martensite-media`
+6. `martensite-render`
+7. `martensite-wgpu`
+8. `martensite-cosmic-text`
+9. `martensite-text`
+10. `martensite-access`
+11. `martensite-window`
 12. `martensite-focus`
 13. `martensite-clipboard`
 14. `martensite-dnd`
-15. `martensite-media`
-16. `martensite-render`
-17. `martensite-wgpu`
-18. `martensite-window`
-19. `martensite-test`
-20. `martensite-devtools`
-21. `cargo-martensite`
-22. `martensite` (The facade)
+15. `martensite-theme`
+16. `martensite-test`
+17. `martensite-motion`
+18. `martensite-history`
+19. `martensite-l10n`
+20. `martensite-assets`
+21. `martensite-devtools`
+22. `martensite-plugin`
+23. `martensite`
+24. `martensite-blessed`
 *(Not published: `examples/industrial_dashboard`, `benches/bench_suite`)*
+
+> **Note:** `cargo-semver-checks` must be run (locally or in CI) before any publish tag to verify that public API changes are reflected in the version bump. The `publish.yml` workflow embeds all CI gates as `needs:` on the `publish` job, and dry-run packaging is performed with `cargo package --allow-dirty --no-verify` before real uploads.
 
 ## 4. Changelog & GitHub Releases
 

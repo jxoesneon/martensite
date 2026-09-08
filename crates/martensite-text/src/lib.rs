@@ -19,7 +19,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-/// Unicode Bidirectional Algorithm (UAX #9) and Kinsoku Shori line breaking (UAX #14).
+/// Unicode Bidirectional Algorithm (UAX #9) integration for shaping.
 pub mod bidi;
 /// Two-tier text cache: `TextShapeCache`, `ShapeCacheKey`.
 pub mod cache;
@@ -29,31 +29,34 @@ pub mod cascade;
 pub mod font;
 /// Velocity-damped kinetic IME candidate positioning.
 pub mod ime;
+/// Unicode line breaking (UAX #14) and Kinsoku Shori.
+pub mod line_break;
 /// Complex text shaping: `Shaper`, `TextMetrics`, `ShapedLine`.
 pub mod shaping;
 /// Unicode vertical text layout (UAX #50) and coordinate transformation.
 pub mod vertical;
 
-pub use bidi::{
-    get_mirrored_char, is_prohibited_line_end, is_prohibited_line_start, mirror_text_in_rtl_runs,
-    BidiDirection, BidiParagraph, BidiRun,
-};
+pub use bidi::{BidiDirection, BidiMirrorMap, BidiParagraph, BidiResolved, BidiRun};
 pub use cache::{
-    CachedShape, FontSizeBits, LineHeightBits, MaxWidthBits, ShapeCacheKey, TextHash,
-    TextShapeCache, DEFAULT_MEMORY_BUDGET,
+    CachedShape, DirectionBits, FallbackHash, FontSizeBits, LineHeightBits, MaxWidthBits,
+    ShapeCacheKey, TextHash, TextShapeCache, WritingModeBits, DEFAULT_MEMORY_BUDGET,
 };
 pub use cascade::{
-    classify_script, FontFallbackCache, FontFallbackChain, PlatformCascadeResolver, ScriptTag,
+    classify_script, FallbackKey, FontFallbackCache, FontFallbackChain,
+    InstalledFontFallbackResolver, PlatformCascadeResolver, ScriptTag,
 };
 pub use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 pub use font::{FontFaceInfo, FontId, FontManager, FontSource, FontStyle};
 pub use ime::{ImePositioner, ScrollKinematics, Viewport};
+pub use line_break::{BreakOpportunity, LineBreaker};
 pub use shaping::{
-    measure_text, measure_text_with_attrs, shape_text, ShapedGlyph, ShapedLine, Shaper, TextMetrics,
+    measure_text, measure_text_with_attrs, shape_text, ShapedGlyph, ShapedLine, Shaper,
+    ShapingOptions, TextMetrics,
 };
 pub use vertical::{
-    classify_vertical_orientation, VerticalFeatureTags, VerticalGlyphTransform, VerticalMetrics,
-    VerticalOrientation,
+    apply_vertical_features, classify_vertical_orientation, collect_vertical_runs,
+    VerticalFeatureTags, VerticalGlyphTransform, VerticalMetrics, VerticalOrientation, VerticalRun,
+    WritingMode,
 };
 
 #[cfg(test)]
