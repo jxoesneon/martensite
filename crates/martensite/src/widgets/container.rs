@@ -4,6 +4,18 @@
 //! The container is the most basic layout primitive. It wraps a single
 //! child widget, applies padding (via [`EdgeInsets`]), and can optionally
 //! paint a background color.
+//!
+//! # Examples
+//!
+//! ```
+//! use martensite::widgets::container::Container;
+//! use martensite::widgets::text::Text;
+//!
+//! let container = Container::new()
+//!     .child(Text::new("Inside container"));
+//! ```
+//!
+//! [`EdgeInsets`]: martensite_layout::geometry::EdgeInsets
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
@@ -60,6 +72,16 @@ impl Container {
     }
 
     /// Sets the padding.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Container;
+    /// use martensite_layout::geometry::EdgeInsets;
+    ///
+    /// let c = Container::new().padding(EdgeInsets::uniform(8.0));
+    /// assert_eq!(c.padding.left, 8.0);
+    /// ```
     #[inline]
     pub fn padding(mut self, padding: EdgeInsets) -> Self {
         self.padding = padding;
@@ -67,6 +89,15 @@ impl Container {
     }
 
     /// Sets uniform padding on all sides.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Container;
+    ///
+    /// let c = Container::new().padding_uniform(12.0);
+    /// assert_eq!(c.padding.horizontal(), 24.0);
+    /// ```
     #[inline]
     pub fn padding_uniform(mut self, value: f32) -> Self {
         self.padding = EdgeInsets::uniform(value);
@@ -74,6 +105,16 @@ impl Container {
     }
 
     /// Sets the background color.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Container;
+    /// use martensite_theme::Oklab;
+    ///
+    /// let c = Container::new().background(Oklab { l: 0.8, a: 0.0, b: 0.0, alpha: 1.0 });
+    /// assert!(c.background.is_some());
+    /// ```
     #[inline]
     pub fn background(mut self, color: Oklab) -> Self {
         self.background = Some(color);
@@ -81,6 +122,15 @@ impl Container {
     }
 
     /// Sets the child widget.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Container;
+    ///
+    /// let c = Container::new().child(Container::new());
+    /// assert!(c.child.is_some());
+    /// ```
     #[inline]
     pub fn child(mut self, child: impl Widget + 'static) -> Self {
         self.child = Some(Box::new(child));
@@ -88,6 +138,16 @@ impl Container {
     }
 
     /// Returns the content area (bounds minus padding) from the last layout.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Container;
+    ///
+    /// let c = Container::new().padding_uniform(8.0);
+    /// let area = c.content_area();
+    /// assert_eq!(area.origin.x, 8.0);
+    /// ```
     #[inline]
     pub fn content_area(&self) -> Rect {
         Rect::new(

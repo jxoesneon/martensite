@@ -3,6 +3,19 @@
 //! The `Flex` widget arranges its children along a main axis (horizontal
 //! for `Row`, vertical for `Column`) and aligns them on the cross axis.
 //! It supports gaps between children and main-axis distribution.
+//!
+//! # Examples
+//!
+//! ```
+//! use martensite::widgets::flex::Flex;
+//! use martensite::widgets::text::Text;
+//!
+//! let row = Flex::row()
+//!     .gap(8.0)
+//!     .child(Text::new("First"))
+//!     .child(Text::new("Second"));
+//! assert_eq!(row.child_count(), 2);
+//! ```
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
@@ -30,18 +43,47 @@ pub enum FlexDirection {
 
 impl FlexDirection {
     /// Returns `true` if this is a horizontal (row) direction.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::FlexDirection;
+    ///
+    /// assert!(FlexDirection::Row.is_row());
+    /// assert!(!FlexDirection::Column.is_row());
+    /// ```
     #[inline]
     pub fn is_row(self) -> bool {
         matches!(self, Self::Row)
     }
 
     /// Returns `true` if this is a vertical (column) direction.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::FlexDirection;
+    ///
+    /// assert!(FlexDirection::Column.is_column());
+    /// assert!(!FlexDirection::Row.is_column());
+    /// ```
     #[inline]
     pub fn is_column(self) -> bool {
         matches!(self, Self::Column)
     }
 
     /// Returns the main-axis component of a `Vec2`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::FlexDirection;
+    /// use glam::Vec2;
+    ///
+    /// let v = Vec2::new(10.0, 20.0);
+    /// assert_eq!(FlexDirection::Row.main(v), 10.0);
+    /// assert_eq!(FlexDirection::Column.main(v), 20.0);
+    /// ```
     #[inline]
     pub fn main(self, v: Vec2) -> f32 {
         if self.is_row() {
@@ -52,6 +94,17 @@ impl FlexDirection {
     }
 
     /// Returns the cross-axis component of a `Vec2`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::FlexDirection;
+    /// use glam::Vec2;
+    ///
+    /// let v = Vec2::new(10.0, 20.0);
+    /// assert_eq!(FlexDirection::Row.cross(v), 20.0);
+    /// assert_eq!(FlexDirection::Column.cross(v), 10.0);
+    /// ```
     #[inline]
     pub fn cross(self, v: Vec2) -> f32 {
         if self.is_row() {
@@ -62,6 +115,16 @@ impl FlexDirection {
     }
 
     /// Constructs a `Vec2` from main and cross components.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::FlexDirection;
+    /// use glam::Vec2;
+    ///
+    /// assert_eq!(FlexDirection::Row.vec(10.0, 20.0), Vec2::new(10.0, 20.0));
+    /// assert_eq!(FlexDirection::Column.vec(10.0, 20.0), Vec2::new(20.0, 10.0));
+    /// ```
     #[inline]
     pub fn vec(self, main: f32, cross: f32) -> Vec2 {
         if self.is_row() {
@@ -73,6 +136,14 @@ impl FlexDirection {
 }
 
 /// How to distribute children along the main axis.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::flex::MainAxisAlignment;
+///
+/// assert_eq!(MainAxisAlignment::default(), MainAxisAlignment::Start);
+/// ```
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum MainAxisAlignment {
     /// Children are packed toward the start of the main axis.
@@ -89,6 +160,14 @@ pub enum MainAxisAlignment {
 }
 
 /// How to align children on the cross axis.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::flex::CrossAxisAlignment;
+///
+/// assert_eq!(CrossAxisAlignment::default(), CrossAxisAlignment::Stretch);
+/// ```
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CrossAxisAlignment {
     /// Children are stretched to fill the cross axis.
@@ -138,6 +217,15 @@ pub struct Flex {
 
 impl Flex {
     /// Creates a new flex container with the given direction.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{Flex, FlexDirection};
+    ///
+    /// let flex = Flex::new(FlexDirection::Row);
+    /// assert!(flex.direction.is_row());
+    /// ```
     pub fn new(direction: FlexDirection) -> Self {
         Self {
             direction,
@@ -181,6 +269,16 @@ impl Flex {
     }
 
     /// Sets the main axis alignment.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Flex;
+    /// use martensite::widgets::flex::MainAxisAlignment;
+    ///
+    /// let flex = Flex::row().main_axis_alignment(MainAxisAlignment::Center);
+    /// assert_eq!(flex.main_axis_alignment, MainAxisAlignment::Center);
+    /// ```
     #[inline]
     pub fn main_axis_alignment(mut self, alignment: MainAxisAlignment) -> Self {
         self.main_axis_alignment = alignment;
@@ -188,6 +286,16 @@ impl Flex {
     }
 
     /// Sets the cross axis alignment.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Flex;
+    /// use martensite::widgets::flex::CrossAxisAlignment;
+    ///
+    /// let flex = Flex::row().cross_axis_alignment(CrossAxisAlignment::Center);
+    /// assert_eq!(flex.cross_axis_alignment, CrossAxisAlignment::Center);
+    /// ```
     #[inline]
     pub fn cross_axis_alignment(mut self, alignment: CrossAxisAlignment) -> Self {
         self.cross_axis_alignment = alignment;
@@ -195,6 +303,15 @@ impl Flex {
     }
 
     /// Sets the gap between children.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Flex;
+    ///
+    /// let flex = Flex::row().gap(16.0);
+    /// assert_eq!(flex.gap, 16.0);
+    /// ```
     #[inline]
     pub fn gap(mut self, gap: f32) -> Self {
         self.gap = gap;
@@ -202,6 +319,15 @@ impl Flex {
     }
 
     /// Adds a child widget.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{Container, Flex};
+    ///
+    /// let flex = Flex::row().child(Container::new());
+    /// assert_eq!(flex.child_count(), 1);
+    /// ```
     #[inline]
     pub fn child(mut self, child: impl Widget + 'static) -> Self {
         self.children.push(Box::new(child));
@@ -209,6 +335,17 @@ impl Flex {
     }
 
     /// Adds multiple child widgets.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{Container, Flex};
+    /// use martensite_core::widget::Widget;
+    ///
+    /// let items: Vec<Box<dyn Widget>> = vec![Box::new(Container::new()), Box::new(Container::new())];
+    /// let flex = Flex::row().children(items);
+    /// assert_eq!(flex.child_count(), 2);
+    /// ```
     #[inline]
     pub fn children(mut self, children: impl IntoIterator<Item = Box<dyn Widget>>) -> Self {
         self.children.extend(children);
@@ -216,6 +353,15 @@ impl Flex {
     }
 
     /// Returns the number of children.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Flex;
+    ///
+    /// let flex = Flex::row();
+    /// assert_eq!(flex.child_count(), 0);
+    /// ```
     #[inline]
     pub fn child_count(&self) -> usize {
         self.children.len()

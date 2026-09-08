@@ -14,7 +14,10 @@ readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }
+martensite-reactive = { workspace = true }
 fluent-bundle = { workspace = true }
 unic-langid = { workspace = true }
+fluent-langneg = { workspace = true }
+
 [lints]
 workspace = true

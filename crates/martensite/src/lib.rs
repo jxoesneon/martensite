@@ -11,8 +11,10 @@
 //!
 //! ```toml
 //! [dependencies]
-//! martensite = "0.1.0"
+//! martensite = "0.7.0"
 //! ```
+//!
+//! # Examples
 //!
 //! Import the prelude for the most commonly used types:
 //!
@@ -44,7 +46,28 @@
 //! - Testing utilities are available via the `martensite-test` dev-dependency.
 #![forbid(unsafe_code)]
 
+/// Application builder and runtime configuration.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::app::App;
+///
+/// let config = App::build().build();
+/// assert!(!config.allow_software_fallback());
+/// ```
 pub mod app;
+
+/// Foundational widgets (`Button`, `CheckBox`, `Container`, `Flex`, `Stack`, `Text`, `TextInput`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Button, Container, Text};
+///
+/// let btn = Button::new("Click me");
+/// assert_eq!(btn.label, "Click me");
+/// ```
 pub mod widgets;
 
 pub use martensite_access as access;
@@ -65,6 +88,8 @@ pub use martensite_wgpu as wgpu;
 pub use martensite_window as window;
 
 /// Convenience prelude re-exporting the most commonly used Martensite types.
+///
+/// # Examples
 ///
 /// ```rust
 /// use martensite::prelude::*;

@@ -1,81 +1,51 @@
 //! Transactional undo/redo ledger and branching LCA history tree.
+//!
+//! This crate provides a non-linear undo/redo system based on a directed
+//! history tree with parent pointers. When a user undoes and then makes a
+//! new edit, a new branch is created rather than discarding the redo
+//! history. Navigation between any two points in the tree uses a Lowest
+//! Common Ancestor (LCA) algorithm to revert and apply the minimal set
+//! of operations.
+//!
+//! # Architecture
+//!
+//! - [`HistoryTree`] stores the tree structure of [`HistoryNode`]s in a
+//!   [`slotmap::SlotMap`].
+//! - [`HistoryLedger`] wraps the tree with a generic state type `S` and
+//!   drives [`ChangeOp`] application/reversion.
+//! - The LCA algorithm walks parent pointers from two nodes to find their
+//!   lowest common ancestor, then reverts backward from the source and
+//!   applies forward to the destination.
+//! - Bounded depth pruning evicts the least-recently-used leaf nodes when
+//!   the node count exceeds the configured maximum.
+//!
+//! # Example
+//!
+//! ```
+//! use martensite_history::{HistoryLedger, ChangeOp};
+//!
+//! /// A simple reversible operation on a shared counter.
+//! struct AddOp { delta: i32 }
+//! impl ChangeOp<i32> for AddOp {
+//!     fn apply(&self, state: &mut i32) { *state += self.delta; }
+//!     fn revert(&self, state: &mut i32) { *state -= self.delta; }
+//! }
+//!
+//! let mut ledger = HistoryLedger::<i32>::new(0, 100);
+//! ledger.commit(Box::new(AddOp { delta: 5 }));
+//! ledger.commit(Box::new(AddOp { delta: 3 }));
+//! assert_eq!(*ledger.state(), 8);
+//! ledger.undo();
+//! assert_eq!(*ledger.state(), 5);
+//! ledger.commit(Box::new(AddOp { delta: 10 })); // new branch
+//! assert_eq!(*ledger.state(), 15);
+//! ```
+
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
-/// A reversible operation that can be applied to and reverted from the
-/// application state, forming the atomic unit of the undo/redo ledger.
-pub trait ChangeOp: Send + Sync + 'static {
-    /// Undo this operation, restoring the state to what it was before
-    /// [`ChangeOp::apply`] was called.
-    fn revert(&self);
-    /// Perform this operation, mutating the application state.
-    fn apply(&self);
-}
+pub mod lca;
+pub mod ledger;
 
-#[cfg(test)]
-mod tests {
-    use super::ChangeOp;
-    use std::sync::atomic::{AtomicI32, Ordering};
-
-    /// A reversible counter operation that adds/subtracts a delta to a shared atomic value.
-    struct CounterOp {
-        value: AtomicI32,
-        delta: i32,
-    }
-
-    impl CounterOp {
-        fn new(delta: i32) -> Self {
-            Self {
-                value: AtomicI32::new(0),
-                delta,
-            }
-        }
-
-        fn current(&self) -> i32 {
-            self.value.load(Ordering::SeqCst)
-        }
-    }
-
-    impl ChangeOp for CounterOp {
-        fn apply(&self) {
-            self.value.fetch_add(self.delta, Ordering::SeqCst);
-        }
-
-        fn revert(&self) {
-            self.value.fetch_sub(self.delta, Ordering::SeqCst);
-        }
-    }
-
-    #[test]
-    fn apply_mutates_state() {
-        let op = CounterOp::new(5);
-        assert_eq!(op.current(), 0);
-        op.apply();
-        assert_eq!(op.current(), 5);
-    }
-
-    #[test]
-    fn revert_restores_state() {
-        let op = CounterOp::new(5);
-        op.apply();
-        assert_eq!(op.current(), 5);
-        op.revert();
-        assert_eq!(op.current(), 0);
-    }
-
-    #[test]
-    fn multiple_apply_revert_cycles() {
-        let op = CounterOp::new(3);
-        op.apply();
-        assert_eq!(op.current(), 3);
-        op.apply();
-        assert_eq!(op.current(), 6);
-        op.revert();
-        assert_eq!(op.current(), 3);
-        op.apply();
-        assert_eq!(op.current(), 6);
-        op.revert();
-        assert_eq!(op.current(), 3);
-        op.revert();
-        assert_eq!(op.current(), 0);
-    }
-}
+pub use lca::{HistoryNode, HistoryTree, NodeId, NodeIdError};
+pub use ledger::{ChangeOp, HistoryLedger, LedgerError};

@@ -13,11 +13,33 @@
 //! - Whether to bypass the GPU entirely (`prefer_cpu`)
 //! - How long to wait before activating fallback (`fallback_timeout`)
 //!
+//! # Examples
+//!
+//! ```
+//! use martensite::app::App;
+//!
+//! let app = App::build()
+//!     .allow_software_fallback(true)
+//!     .build();
+//! assert!(app.allow_software_fallback());
+//! ```
+//!
 //! [`TinySkiaBackend`]: martensite_render::TinySkiaBackend
+//! [`AppBuilder`]: crate::app::AppBuilder
+//! [`AppConfig`]: crate::app::AppConfig
 
 use std::time::Duration;
 
 /// Default maximum time to wait for GPU recovery before switching to CPU fallback.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::app::DEFAULT_FALLBACK_TIMEOUT;
+/// use std::time::Duration;
+///
+/// assert_eq!(DEFAULT_FALLBACK_TIMEOUT, Duration::from_millis(32));
+/// ```
 pub const DEFAULT_FALLBACK_TIMEOUT: Duration = Duration::from_millis(32);
 
 /// Configuration for the Martensite application runtime.
@@ -25,6 +47,15 @@ pub const DEFAULT_FALLBACK_TIMEOUT: Duration = Duration::from_millis(32);
 /// Built via [`AppBuilder`] and consumed by the render pipeline to decide
 /// whether software fallback is permitted and how long to wait before
 /// activating it.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::app::{App, AppConfig};
+///
+/// let config = App::build().build();
+/// assert!(!config.allow_software_fallback());
+/// ```
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     /// Whether CPU software fallback via TinySkia is allowed.
@@ -42,6 +73,15 @@ impl AppConfig {
     /// [`TinySkiaBackend`] when the GPU device is lost or unavailable.
     ///
     /// [`TinySkiaBackend`]: martensite_render::TinySkiaBackend
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::app::App;
+    ///
+    /// let config = App::build().allow_software_fallback(true).build();
+    /// assert!(config.allow_software_fallback());
+    /// ```
     #[must_use]
     pub fn allow_software_fallback(&self) -> bool {
         self.allow_software_fallback
@@ -49,6 +89,15 @@ impl AppConfig {
 
     /// Returns the maximum time to wait for GPU recovery before switching
     /// to CPU fallback.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::app::{App, DEFAULT_FALLBACK_TIMEOUT};
+    ///
+    /// let config = App::build().build();
+    /// assert_eq!(config.fallback_timeout(), DEFAULT_FALLBACK_TIMEOUT);
+    /// ```
     #[must_use]
     pub fn fallback_timeout(&self) -> Duration {
         self.fallback_timeout
@@ -56,6 +105,15 @@ impl AppConfig {
 
     /// Returns whether the CPU backend is preferred even when a GPU is
     /// available. This is useful for headless CI and testing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::app::App;
+    ///
+    /// let config = App::build().prefer_cpu(true).build();
+    /// assert!(config.prefer_cpu());
+    /// ```
     #[must_use]
     pub fn prefer_cpu(&self) -> bool {
         self.prefer_cpu
@@ -85,7 +143,7 @@ impl From<AppConfig> for martensite_wgpu::OrchestratorConfig {
 ///
 /// Created via [`App::build()`].
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use martensite::app::App;
@@ -111,6 +169,15 @@ impl AppBuilder {
     /// presenting via `softbuffer` to the window surface.
     ///
     /// [`TinySkiaBackend`]: martensite_render::TinySkiaBackend
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::app::App;
+    ///
+    /// let builder = App::build().allow_software_fallback(true);
+    /// assert!(builder.build().allow_software_fallback());
+    /// ```
     #[must_use]
     pub fn allow_software_fallback(mut self, allow: bool) -> Self {
         self.config.allow_software_fallback = allow;
@@ -121,6 +188,16 @@ impl AppBuilder {
     /// to CPU fallback.
     ///
     /// Defaults to 32ms per the v0.2.0 milestone specification.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::app::App;
+    /// use std::time::Duration;
+    ///
+    /// let builder = App::build().fallback_timeout(Duration::from_millis(100));
+    /// assert_eq!(builder.build().fallback_timeout(), Duration::from_millis(100));
+    /// ```
     #[must_use]
     pub fn fallback_timeout(mut self, timeout: Duration) -> Self {
         self.config.fallback_timeout = timeout;
@@ -130,6 +207,15 @@ impl AppBuilder {
     /// Forces the CPU backend to be used even when a GPU is available.
     ///
     /// This is useful for headless CI environments and testing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::app::App;
+    ///
+    /// let builder = App::build().prefer_cpu(true);
+    /// assert!(builder.build().prefer_cpu());
+    /// ```
     #[must_use]
     pub fn prefer_cpu(mut self, prefer: bool) -> Self {
         self.config.prefer_cpu = prefer;
@@ -137,6 +223,15 @@ impl AppBuilder {
     }
 
     /// Builds the final [`AppConfig`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::app::App;
+    ///
+    /// let config = App::build().build();
+    /// assert!(!config.allow_software_fallback());
+    /// ```
     #[must_use]
     pub fn build(self) -> AppConfig {
         self.config
@@ -147,10 +242,28 @@ impl AppBuilder {
 ///
 /// Use [`App::build()`] to create an [`AppBuilder`] for configuring the
 /// application runtime.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::app::App;
+///
+/// let builder = App::build();
+/// let config = builder.build();
+/// assert!(!config.prefer_cpu());
+/// ```
 pub struct App;
 
 impl App {
     /// Creates a new [`AppBuilder`] for configuring the application.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::app::App;
+    ///
+    /// let builder = App::build();
+    /// ```
     #[must_use]
     pub fn build() -> AppBuilder {
         AppBuilder {

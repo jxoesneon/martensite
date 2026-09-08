@@ -3,6 +3,15 @@
 //! The `Button` widget exposes `Role::Button`, an accessible label, and
 //! the `Action::Click` and `Action::Focus` accessibility actions. It
 //! integrates with the focus system via `NodeFlags::FOCUSABLE`.
+//!
+//! # Examples
+//!
+//! ```
+//! use martensite::widgets::button::Button;
+//!
+//! let btn = Button::new("Click me");
+//! assert_eq!(btn.label, "Click me");
+//! ```
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
@@ -57,6 +66,15 @@ impl Button {
     }
 
     /// Sets whether the button is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// let btn = Button::new("Disabled").enabled(false);
+    /// assert!(!btn.enabled);
+    /// ```
     #[inline]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
@@ -64,6 +82,15 @@ impl Button {
     }
 
     /// Sets the tooltip text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// let btn = Button::new("Help").tooltip("Click for assistance");
+    /// assert_eq!(btn.tooltip.as_deref(), Some("Click for assistance"));
+    /// ```
     #[inline]
     pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
         self.tooltip = Some(tooltip.into());
@@ -71,6 +98,16 @@ impl Button {
     }
 
     /// Returns the cached bounds from the last layout pass.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// let btn = Button::new("Save");
+    /// let bounds = btn.cached_bounds();
+    /// assert_eq!(bounds.size.x, 0.0);
+    /// ```
     #[inline]
     pub fn cached_bounds(&self) -> Rect {
         self.cached_bounds

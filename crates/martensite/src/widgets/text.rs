@@ -4,6 +4,17 @@
 //! and measurement. It uses the [`InlineTextCache`] in `ColdNode` for
 //! fast flexbox constraint probing during two-pass layout, and the
 //! global `TextShapeCache` for full shaping results.
+//!
+//! # Examples
+//!
+//! ```
+//! use martensite::widgets::text::Text;
+//!
+//! let text = Text::new("Hello, Martensite!").font_size(16.0);
+//! assert_eq!(text.content, "Hello, Martensite!");
+//! ```
+//!
+//! [`InlineTextCache`]: martensite_core::InlineTextCache
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
@@ -94,6 +105,16 @@ impl Text {
     ///
     /// Use this instead of directly mutating `self.content` to ensure
     /// that cached measurements are cleared.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let mut t = Text::new("Initial");
+    /// t.set_content("Updated");
+    /// assert_eq!(t.content, "Updated");
+    /// ```
     #[inline]
     pub fn set_content(&mut self, content: impl Into<String>) {
         self.content = content.into();
@@ -104,6 +125,16 @@ impl Text {
     ///
     /// Call this after directly mutating `content`, `font_size`,
     /// `family`, `line_height`, or `rtl` fields.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let mut t = Text::new("Sample");
+    /// t.content = "Changed directly".to_string();
+    /// t.invalidate_cache();
+    /// ```
     #[inline]
     pub fn invalidate_cache(&mut self) {
         self.inline_cache.clear();
@@ -112,6 +143,15 @@ impl Text {
     /// Sets the font size.
     ///
     /// Clears the inline cache since the measurement inputs have changed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("Title").font_size(24.0);
+    /// assert_eq!(t.font_size, 24.0);
+    /// ```
     #[inline]
     pub fn font_size(mut self, size: f32) -> Self {
         self.font_size = size;
@@ -122,6 +162,15 @@ impl Text {
     /// Sets the line height.
     ///
     /// Clears the inline cache since the measurement inputs have changed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("Body").line_height(28.0);
+    /// assert_eq!(t.line_height, Some(28.0));
+    /// ```
     #[inline]
     pub fn line_height(mut self, height: f32) -> Self {
         self.line_height = Some(height);
@@ -132,6 +181,15 @@ impl Text {
     /// Sets the font family name.
     ///
     /// Clears the inline cache since the measurement inputs have changed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("Code").family("monospace");
+    /// assert_eq!(t.family, "monospace");
+    /// ```
     #[inline]
     pub fn family(mut self, family: impl Into<String>) -> Self {
         self.family = family.into();
@@ -140,6 +198,16 @@ impl Text {
     }
 
     /// Sets the text color.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    /// use martensite_theme::Oklab;
+    ///
+    /// let t = Text::new("Colored").color(Oklab { l: 0.5, a: 0.0, b: 0.0, alpha: 1.0 });
+    /// assert!(t.color.is_some());
+    /// ```
     #[inline]
     pub fn color(mut self, color: martensite_theme::Oklab) -> Self {
         self.color = Some(color);
@@ -149,6 +217,15 @@ impl Text {
     /// Sets the RTL direction.
     ///
     /// Clears the inline cache since the measurement inputs have changed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("مرحبا").rtl();
+    /// assert!(t.rtl);
+    /// ```
     #[inline]
     pub fn rtl(mut self) -> Self {
         self.rtl = true;
@@ -163,36 +240,96 @@ impl Text {
     }
 
     /// Returns the cached metrics from the last measure pass.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("Metrics");
+    /// let metrics = t.cached_metrics();
+    /// assert_eq!(metrics.width, 0.0);
+    /// ```
     #[inline]
     pub fn cached_metrics(&self) -> TextMetrics {
         self.cached_metrics
     }
 
     /// Returns the cached bounds from the last layout pass.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("Bounds");
+    /// let bounds = t.cached_bounds();
+    /// assert_eq!(bounds.size.x, 0.0);
+    /// ```
     #[inline]
     pub fn cached_bounds(&self) -> Rect {
         self.cached_bounds
     }
 
     /// Returns the inline text cache.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("Cached");
+    /// let cache = t.inline_cache();
+    /// assert!(cache.is_empty());
+    /// ```
     #[inline]
     pub fn inline_cache(&self) -> &InlineTextCache {
         &self.inline_cache
     }
 
     /// Returns a mutable reference to the inline text cache.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let mut t = Text::new("Cached");
+    /// let cache = t.inline_cache_mut();
+    /// cache.clear();
+    /// ```
     #[inline]
     pub fn inline_cache_mut(&mut self) -> &mut InlineTextCache {
         &mut self.inline_cache
     }
 
     /// Returns the Tier 2 shape cache.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("Shape");
+    /// let cache = t.shape_cache();
+    /// assert_eq!(cache.len(), 0);
+    /// ```
     #[inline]
     pub fn shape_cache(&self) -> &TextShapeCache {
         &self.shape_cache
     }
 
     /// Returns a mutable reference to the Tier 2 shape cache.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let mut t = Text::new("Shape");
+    /// let cache = t.shape_cache_mut();
+    /// assert_eq!(cache.len(), 0);
+    /// ```
     #[inline]
     pub fn shape_cache_mut(&mut self) -> &mut TextShapeCache {
         &mut self.shape_cache

@@ -27,6 +27,7 @@ martensite-dnd = { workspace = true }
 martensite-theme = { workspace = true }
 martensite-motion = { workspace = true }
 martensite-history = { workspace = true }
+martensite-assets = { workspace = true }
 martensite-l10n = { workspace = true }
 martensite-macros = { workspace = true }
 accesskit = { workspace = true }

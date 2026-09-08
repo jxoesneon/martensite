@@ -5,6 +5,28 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-08
+
+### Added
+
+- **History**: Transactional undo/redo ledger with Lowest Common Ancestor
+  (LCA) tree navigation for non-linear branching history. Bounded depth
+  pruning with LRU eviction of unreferenced branches. 10,000 randomized
+  rollback integrity gate.
+- **Assets**: Dual-mode Virtual File System with `VfsBackend::Disk` for
+  development hot-reloading via file watchers and `VfsBackend::Embedded`
+  for zero-copy release bundles. AOT WGSL shader validation via naga
+  with reflection metadata. Sub-10µs embedded VFS resolution gate.
+- **Localization**: Project Fluent bundle integration with locale
+  negotiation, script directionality resolution (LTR/RTL), and reactive
+  locale signal for invalidating text nodes without tree rebuilding.
+  1,000-node locale switch within 1 frame gate.
+
+### Changed
+
+- All workspace crates bumped from `0.6.0` to `0.7.0`.
+- Added `notify` 8.2, `naga` 30, and `fluent-langneg` 0.14 dependencies.
+
 ## [0.6.0] - 2026-09-07
 
 ### Added

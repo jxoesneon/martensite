@@ -3,6 +3,18 @@
 //! The `Stack` widget positions all children at the same bounds, with
 //! later children painted on top of earlier ones. This is useful for
 //! overlays, badges, and layered compositions.
+//!
+//! # Examples
+//!
+//! ```
+//! use martensite::widgets::stack::{Stack, StackAlignment};
+//! use martensite::widgets::text::Text;
+//!
+//! let stack = Stack::new()
+//!     .alignment(StackAlignment::Center)
+//!     .child(Text::new("Layer 1"));
+//! assert_eq!(stack.child_count(), 1);
+//! ```
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
@@ -10,6 +22,14 @@ use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
 use martensite_core::Rect;
 
 /// How to align children within the stack.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::stack::StackAlignment;
+///
+/// assert_eq!(StackAlignment::default(), StackAlignment::TopStart);
+/// ```
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum StackAlignment {
     /// Children are aligned to the top-left corner.
@@ -74,6 +94,16 @@ impl Stack {
     }
 
     /// Sets the alignment of children within the stack.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Stack;
+    /// use martensite::widgets::stack::StackAlignment;
+    ///
+    /// let s = Stack::new().alignment(StackAlignment::Center);
+    /// assert_eq!(s.alignment, StackAlignment::Center);
+    /// ```
     #[inline]
     pub fn alignment(mut self, alignment: StackAlignment) -> Self {
         self.alignment = alignment;
@@ -81,6 +111,15 @@ impl Stack {
     }
 
     /// Adds a child widget.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{Container, Stack};
+    ///
+    /// let s = Stack::new().child(Container::new());
+    /// assert_eq!(s.child_count(), 1);
+    /// ```
     #[inline]
     pub fn child(mut self, child: impl Widget + 'static) -> Self {
         self.children.push(Box::new(child));
@@ -88,6 +127,15 @@ impl Stack {
     }
 
     /// Returns the number of children.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Stack;
+    ///
+    /// let s = Stack::new();
+    /// assert_eq!(s.child_count(), 0);
+    /// ```
     #[inline]
     pub fn child_count(&self) -> usize {
         self.children.len()

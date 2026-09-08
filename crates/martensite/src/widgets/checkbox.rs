@@ -4,6 +4,15 @@
 //! the `Action::Click` and `Action::Focus` accessibility actions, and
 //! the `Toggled` state. It integrates with the focus system via
 //! `NodeFlags::FOCUSABLE`.
+//!
+//! # Examples
+//!
+//! ```
+//! use martensite::widgets::checkbox::CheckBox;
+//!
+//! let cb = CheckBox::new("Accept Terms").checked(true);
+//! assert!(cb.checked);
+//! ```
 
 use accesskit::{Node as AccessKitNode, Toggled};
 use glam::Vec2;
@@ -55,6 +64,15 @@ impl CheckBox {
     }
 
     /// Sets the checked state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CheckBox;
+    ///
+    /// let cb = CheckBox::new("Remember me").checked(true);
+    /// assert!(cb.checked);
+    /// ```
     #[inline]
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = checked;
@@ -62,6 +80,15 @@ impl CheckBox {
     }
 
     /// Sets whether the checkbox is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CheckBox;
+    ///
+    /// let cb = CheckBox::new("Remember me").enabled(false);
+    /// assert!(!cb.enabled);
+    /// ```
     #[inline]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
@@ -69,12 +96,33 @@ impl CheckBox {
     }
 
     /// Toggles the checked state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CheckBox;
+    ///
+    /// let mut cb = CheckBox::new("Toggle me");
+    /// assert!(!cb.checked);
+    /// cb.toggle();
+    /// assert!(cb.checked);
+    /// ```
     #[inline]
     pub fn toggle(&mut self) {
         self.checked = !self.checked;
     }
 
     /// Returns the cached bounds from the last layout pass.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CheckBox;
+    ///
+    /// let cb = CheckBox::new("Check");
+    /// let bounds = cb.cached_bounds();
+    /// assert_eq!(bounds.size.x, 0.0);
+    /// ```
     #[inline]
     pub fn cached_bounds(&self) -> Rect {
         self.cached_bounds

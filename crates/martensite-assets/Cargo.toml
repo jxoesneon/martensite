@@ -14,5 +14,17 @@ readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }
+naga = { workspace = true }
+# File watching for Disk backend (optional, only needed in debug/dev)
+notify = { workspace = true, optional = true }
+parking_lot = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = "3.27"
+
+[features]
+default = ["disk"]
+disk = ["dep:notify", "dep:parking_lot"]
+
 [lints]
 workspace = true

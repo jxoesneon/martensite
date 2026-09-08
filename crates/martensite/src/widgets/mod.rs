@@ -5,6 +5,15 @@
 //! trait and integrates with the arena, layout, text, and rendering
 //! pipelines.
 //!
+//! # Examples
+//!
+//! ```
+//! use martensite::widgets::{Button, Container, Text};
+//!
+//! let btn = Button::new("Click me");
+//! assert_eq!(btn.label, "Click me");
+//! ```
+//!
 //! ## Layout Architecture
 //!
 //! Martensite uses a **two-level layout architecture**:
@@ -31,12 +40,83 @@
 //! in the arena for Taffy-driven flexbox layout, but for v0.3.0 the
 //! widget-internal approach is used.
 
+/// Interactive button widget.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::button::Button;
+///
+/// let btn = Button::new("Click me");
+/// assert_eq!(btn.label, "Click me");
+/// ```
 pub mod button;
+
+/// Toggleable checkbox widget.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::checkbox::CheckBox;
+///
+/// let cb = CheckBox::new("Check");
+/// assert!(!cb.checked);
+/// ```
 pub mod checkbox;
+
+/// Box container layout primitive.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::container::Container;
+///
+/// let c = Container::new();
+/// ```
 pub mod container;
+
+/// Flexbox row and column layout.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::flex::Flex;
+///
+/// let row = Flex::row();
+/// ```
 pub mod flex;
+
+/// Z-ordered layering stack.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::stack::Stack;
+///
+/// let stack = Stack::new();
+/// ```
 pub mod stack;
+
+/// Shaped text display widget.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::text::Text;
+///
+/// let t = Text::new("Hello");
+/// ```
 pub mod text;
+
+/// Editable text input widget.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::text_input::TextInput;
+///
+/// let input = TextInput::new("Label");
+/// ```
 pub mod text_input;
 
 pub use button::Button;

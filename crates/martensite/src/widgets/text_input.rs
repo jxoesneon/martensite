@@ -4,6 +4,15 @@
 //! the `Action::Focus` and `Action::SetValue` accessibility actions, and
 //! the current value. It integrates with the focus system via
 //! `NodeFlags::FOCUSABLE`.
+//!
+//! # Examples
+//!
+//! ```
+//! use martensite::widgets::text_input::TextInput;
+//!
+//! let input = TextInput::new("Search").placeholder("Type here...");
+//! assert_eq!(input.label, "Search");
+//! ```
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
@@ -62,6 +71,15 @@ impl TextInput {
     }
 
     /// Sets the current text value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    ///
+    /// let input = TextInput::new("Username").value("alice");
+    /// assert_eq!(input.value, "alice");
+    /// ```
     #[inline]
     pub fn value(mut self, value: impl Into<String>) -> Self {
         self.value = value.into();
@@ -69,6 +87,15 @@ impl TextInput {
     }
 
     /// Sets the placeholder text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    ///
+    /// let input = TextInput::new("Search").placeholder("Type query...");
+    /// assert_eq!(input.placeholder, "Type query...");
+    /// ```
     #[inline]
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
@@ -76,6 +103,15 @@ impl TextInput {
     }
 
     /// Sets whether the text input is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    ///
+    /// let input = TextInput::new("Locked").enabled(false);
+    /// assert!(!input.enabled);
+    /// ```
     #[inline]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
@@ -83,6 +119,15 @@ impl TextInput {
     }
 
     /// Sets whether the text input is read-only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    ///
+    /// let input = TextInput::new("ID").read_only(true);
+    /// assert!(input.read_only);
+    /// ```
     #[inline]
     pub fn read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
@@ -90,12 +135,32 @@ impl TextInput {
     }
 
     /// Sets the value (mutable version for programmatic updates).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    ///
+    /// let mut input = TextInput::new("Name");
+    /// input.set_value("Bob");
+    /// assert_eq!(input.value, "Bob");
+    /// ```
     #[inline]
     pub fn set_value(&mut self, value: impl Into<String>) {
         self.value = value.into();
     }
 
     /// Returns the cached bounds from the last layout pass.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    ///
+    /// let input = TextInput::new("Address");
+    /// let bounds = input.cached_bounds();
+    /// assert_eq!(bounds.size.x, 0.0);
+    /// ```
     #[inline]
     pub fn cached_bounds(&self) -> Rect {
         self.cached_bounds
