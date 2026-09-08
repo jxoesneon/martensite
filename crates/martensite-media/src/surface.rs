@@ -783,10 +783,10 @@ mod tests {
         for i in 1..=60 {
             let pts = i * 16_666_667;
             let elapsed_nanos = surface.update_handle(HardwareHandle::Mock { id: i }, pts);
-            // On any modern desktop, an in-memory handle swap is << 10 microseconds.
+            // Milestone gate: dispatch must be < 0.10 ms (100,000 ns).
             assert!(
-                elapsed_nanos < 1_000_000,
-                "handle update took {elapsed_nanos}ns"
+                elapsed_nanos < 100_000,
+                "handle update took {elapsed_nanos}ns, must be < 0.10 ms"
             );
             assert_eq!(surface.fence_id(), i + 1);
         }
