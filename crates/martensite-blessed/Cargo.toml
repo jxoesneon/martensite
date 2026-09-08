@@ -18,5 +18,9 @@ martensite-core = { workspace = true }
 martensite-render = { workspace = true }
 martensite-text = { workspace = true }
 
+[dev-dependencies]
+martensite-plugin = { workspace = true }
+martensite-test = { workspace = true }
+
 [lints]
 workspace = true

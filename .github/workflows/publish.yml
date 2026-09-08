@@ -155,6 +155,7 @@ jobs:
             martensite-l10n
             martensite-assets
             martensite-devtools
+            martensite-plugin
             martensite
             martensite-blessed
           )
@@ -287,6 +288,7 @@ jobs:
             martensite-l10n
             martensite-assets
             martensite-devtools
+            martensite-plugin
             martensite
             martensite-blessed
           )
