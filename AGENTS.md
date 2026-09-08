@@ -160,3 +160,16 @@ Both must return PASS before proceeding. See the `santa-method` skill.
 - Avoid versions published less than 7 days ago.
 - Do not use floating ranges (`latest`, `*`, unbounded `>=`).
 - Run `cargo audit` and `cargo deny check` after upgrades.
+
+### crates.io rate limits
+
+The publish workflow implements the leaky bucket rate limits documented at
+<https://crates.io/docs/rate-limits>:
+
+- **New crates** (not yet on crates.io): burst of 5, then 1 per 600s (10 min)
+- **New versions** (existing crate): burst of 30, then 1 per 60s (1 min)
+
+The workflow tracks token buckets for each type, refills based on elapsed
+time, and sleeps only when the bucket is empty. A 10s index propagation
+delay is applied between all publishes. 429 responses are parsed for the
+next-allowed timestamp to compute the exact wait time.

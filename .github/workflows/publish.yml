@@ -169,6 +169,96 @@ jobs:
         run: |
           set -euo pipefail
 
+          # ──────────────────────────────────────────────────────────
+          # crates.io publishing rate limits (leaky bucket algorithm)
+          # Reference: https://crates.io/docs/rate-limits
+          #
+          #   New crates (brand new):       burst=5,   refill=1 per 600s
+          #   New versions (existing):      burst=30,  refill=1 per  60s
+          #
+          # 429 responses include a Retry-After header and a detail
+          # message with the next-allowed timestamp.
+          # ──────────────────────────────────────────────────────────
+
+          NEW_CRATE_BURST=5
+          NEW_CRATE_REFILL=600    # 10 minutes
+          NEW_VERSION_BURST=30
+          NEW_VERSION_REFILL=60   # 1 minute
+          INDEX_PROPAGATION_DELAY=10  # minimum delay for index propagation
+
+          # Leaky bucket state (token count + last refill epoch).
+          new_crate_tokens=$NEW_CRATE_BURST
+          new_version_tokens=$NEW_VERSION_BURST
+          new_crate_last_refill=$(TZ=UTC date +%s)
+          new_version_last_refill=$(TZ=UTC date +%s)
+
+          # Refill tokens based on elapsed time since last refill.
+          # Uses arithmetic on the captured-by-reference variables.
+          refill_tokens() {
+            local now elapsed new_added ver_added
+            now=$(TZ=UTC date +%s)
+
+            elapsed=$((now - new_crate_last_refill))
+            new_added=$((elapsed / NEW_CRATE_REFILL))
+            if [ "$new_added" -gt 0 ]; then
+              new_crate_tokens=$((new_crate_tokens + new_added))
+              if [ "$new_crate_tokens" -gt "$NEW_CRATE_BURST" ]; then
+                new_crate_tokens=$NEW_CRATE_BURST
+              fi
+              new_crate_last_refill=$((new_crate_last_refill + new_added * NEW_CRATE_REFILL))
+            fi
+
+            elapsed=$((now - new_version_last_refill))
+            ver_added=$((elapsed / NEW_VERSION_REFILL))
+            if [ "$ver_added" -gt 0 ]; then
+              new_version_tokens=$((new_version_tokens + ver_added))
+              if [ "$new_version_tokens" -gt "$NEW_VERSION_BURST" ]; then
+                new_version_tokens=$NEW_VERSION_BURST
+              fi
+              new_version_last_refill=$((new_version_last_refill + ver_added * NEW_VERSION_REFILL))
+            fi
+          }
+
+          # Consume a token for the given crate type and sleep if the
+          # bucket is empty. Returns the sleep duration via stdout.
+          consume_token() {
+            local is_new="$1"
+            refill_tokens
+            if [ "$is_new" = "1" ]; then
+              if [ "$new_crate_tokens" -gt 0 ]; then
+                new_crate_tokens=$((new_crate_tokens - 1))
+                echo 0
+              else
+                # Wait until the next token refills.
+                local now next_refill wait
+                now=$(TZ=UTC date +%s)
+                next_refill=$((new_crate_last_refill + NEW_CRATE_REFILL))
+                wait=$((next_refill - now + 5))
+                if [ "$wait" -lt 1 ]; then wait=1; fi
+                # After waiting, refill and consume.
+                sleep "$wait"
+                refill_tokens
+                new_crate_tokens=$((new_crate_tokens - 1))
+                echo "$wait"
+              fi
+            else
+              if [ "$new_version_tokens" -gt 0 ]; then
+                new_version_tokens=$((new_version_tokens - 1))
+                echo 0
+              else
+                local now next_refill wait
+                now=$(TZ=UTC date +%s)
+                next_refill=$((new_version_last_refill + NEW_VERSION_REFILL))
+                wait=$((next_refill - now + 5))
+                if [ "$wait" -lt 1 ]; then wait=1; fi
+                sleep "$wait"
+                refill_tokens
+                new_version_tokens=$((new_version_tokens - 1))
+                echo "$wait"
+              fi
+            fi
+          }
+
           # Target version is the workspace package version.
           WORKSPACE_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/^version *= *"\(.*\)".*/\1/')
           echo "[$(date -u +%H:%M:%S)] Workspace version: ${WORKSPACE_VERSION}"
@@ -201,7 +291,6 @@ jobs:
             martensite-blessed
           )
 
-          # Target version is the workspace package version.
           TARGET_VERSION="$WORKSPACE_VERSION"
 
           published=0
@@ -222,7 +311,24 @@ jobs:
               echo "[$(date -u +%H:%M:%S)] $crate ${TARGET_VERSION} already on crates.io; skipping."
               continue
             fi
-            echo "[$(date -u +%H:%M:%S)] $crate: latest=${existing:-none}, target=${TARGET_VERSION}; publishing..."
+
+            # Determine if this is a new crate or a new version of an
+            # existing crate. A crate is "new" if the API returns no
+            # max_stable_version (empty $existing means not on crates.io).
+            is_new_crate=0
+            if [ -z "$existing" ]; then
+              is_new_crate=1
+              echo "[$(date -u +%H:%M:%S)] $crate: NEW crate (not on crates.io), target=${TARGET_VERSION}; publishing..."
+            else
+              echo "[$(date -u +%H:%M:%S)] $crate: latest=${existing}, target=${TARGET_VERSION}; publishing..."
+            fi
+
+            # Consume a rate-limit token, sleeping if the bucket is empty.
+            waited=$(consume_token "$is_new_crate")
+            if [ "$waited" -gt 0 ]; then
+              echo "[$(date -u +%H:%M:%S)] Rate limit bucket empty; waited ${waited}s for token refill."
+            fi
+            echo "[$(date -u +%H:%M:%S)] Tokens remaining — new crates: ${new_crate_tokens}/${NEW_CRATE_BURST}, new versions: ${new_version_tokens}/${NEW_VERSION_BURST}"
 
             while true; do
               log="/tmp/publish_${crate}.log"
@@ -239,17 +345,35 @@ jobs:
                 break
               fi
               if grep -q "429 Too Many Requests" "$log"; then
+                # The 429 response includes a detail message with the
+                # next-allowed timestamp. Parse it to compute the exact
+                # wait time. Fall back to the appropriate refill interval.
                 reset=$(grep -oE '[A-Za-z]+, [0-9]{2} [A-Za-z]{3} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT' "$log" | head -1)
-                wait=600
-                if [ -n "$reset" ]; then
+                # Also try the ISO 8601 format (2024-01-01T00:00:00Z).
+                if [ -z "$reset" ]; then
+                  reset=$(grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' "$log" | head -1)
+                  if [ -n "$reset" ]; then
+                    reset_epoch=$(TZ=UTC date -d "$reset" +%s 2>/dev/null || echo "")
+                  fi
+                else
                   reset_epoch=$(TZ=UTC date -d "$reset" +%s 2>/dev/null || echo "")
+                fi
+                # Default wait based on crate type.
+                if [ "$is_new_crate" = "1" ]; then
+                  wait=$NEW_CRATE_REFILL
+                else
+                  wait=$NEW_VERSION_REFILL
+                fi
+                if [ -n "${reset_epoch:-}" ]; then
                   now=$(TZ=UTC date +%s)
-                  if [ -n "$reset_epoch" ] && [ "$((reset_epoch - now))" -gt 0 ]; then
-                    wait=$((reset_epoch - now + 60))
+                  if [ "$((reset_epoch - now))" -gt 0 ]; then
+                    wait=$((reset_epoch - now + 5))
                   fi
                 fi
-                echo "[$(date -u +%H:%M:%S)] Rate limited; waiting ${wait}s (reset: ${reset:-unknown})"
+                echo "[$(date -u +%H:%M:%S)] Rate limited (429); waiting ${wait}s (reset: ${reset:-unknown})"
                 sleep "$wait"
+                # Refill tokens after waiting.
+                refill_tokens
                 continue
               fi
               echo "[$(date -u +%H:%M:%S)] FAILED: $crate"
@@ -257,8 +381,9 @@ jobs:
               exit 1
             done
             published=$((published + 1))
-            # Wait between NEW publishes only, for crates.io index propagation.
-            sleep 180
+            # Minimum delay for crates.io index propagation between
+            # successive publishes. This is separate from rate limiting.
+            sleep "$INDEX_PROPAGATION_DELAY"
           done
           echo "[$(date -u +%H:%M:%S)] All crates processed. Newly published: ${published}."
 
