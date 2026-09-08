@@ -42,6 +42,7 @@ pub struct AccessibilityBuilder {
     expanded: Option<bool>,
     toggled: Option<Toggled>,
     clicked: bool,
+    live: Option<accesskit::Live>,
 }
 
 impl AccessibilityBuilder {
@@ -58,6 +59,7 @@ impl AccessibilityBuilder {
             expanded: None,
             toggled: None,
             clicked: false,
+            live: None,
         }
     }
 
@@ -115,6 +117,25 @@ impl AccessibilityBuilder {
         self
     }
 
+    /// Sets the live region attribute (e.g. for polite or assertive screen reader announcements).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_access::properties::AccessibilityBuilder;
+    /// use accesskit::{Live, Node, Role};
+    ///
+    /// let mut node = Node::new(Role::Alert);
+    /// AccessibilityBuilder::new(Role::Alert)
+    ///     .live(Live::Polite)
+    ///     .apply(&mut node);
+    /// assert_eq!(node.live(), Some(Live::Polite));
+    /// ```
+    pub fn live(mut self, live: accesskit::Live) -> Self {
+        self.live = Some(live);
+        self
+    }
+
     /// Applies all accumulated properties to the given [`Node`].
     pub fn apply(self, node: &mut Node) {
         node.set_role(self.role);
@@ -145,6 +166,9 @@ impl AccessibilityBuilder {
         }
         if self.clicked {
             node.add_action(accesskit::Action::Click);
+        }
+        if let Some(live) = self.live {
+            node.set_live(live);
         }
     }
 }
@@ -195,6 +219,23 @@ pub fn set_toggled(node: &mut Node, toggled: Toggled) {
 #[inline]
 pub fn set_clickable(node: &mut Node) {
     node.add_action(accesskit::Action::Click);
+}
+
+/// Sets the live region mode on a node.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_access::properties::set_live;
+/// use accesskit::{Live, Node, Role};
+///
+/// let mut node = Node::new(Role::Alert);
+/// set_live(&mut node, Live::Assertive);
+/// assert_eq!(node.live(), Some(Live::Assertive));
+/// ```
+#[inline]
+pub fn set_live(node: &mut Node, live: accesskit::Live) {
+    node.set_live(live);
 }
 
 /// Returns the appropriate AccessKit [`Role`] for a widget based on its
@@ -344,6 +385,22 @@ mod tests {
             .clickable()
             .apply(&mut node);
         assert!(node.supports_action(accesskit::Action::Click));
+    }
+
+    #[test]
+    fn builder_sets_live() {
+        let mut node = Node::new(Role::Alert);
+        AccessibilityBuilder::new(Role::Alert)
+            .live(accesskit::Live::Polite)
+            .apply(&mut node);
+        assert_eq!(node.live(), Some(accesskit::Live::Polite));
+    }
+
+    #[test]
+    fn helper_set_live() {
+        let mut node = Node::new(Role::Alert);
+        set_live(&mut node, accesskit::Live::Assertive);
+        assert_eq!(node.live(), Some(accesskit::Live::Assertive));
     }
 
     #[test]

@@ -20,11 +20,20 @@
 
 pub mod actions;
 pub mod adapter;
+/// Screen reader caret tracking and text selection updates.
+pub mod caret;
+/// Automated WCAG 2.2 AA/AAA accessibility evaluation and Section 508 VPAT verification.
+pub mod compliance;
 pub mod properties;
 pub mod winit;
 
 pub use accesskit::{Node, NodeId, Rect, Role, TreeUpdate};
 pub use adapter::AccessKitAdapter;
+pub use caret::{CaretTracker, TextAffinity, TextBoundary, TextSelection};
+pub use compliance::{
+    check_target_size, check_text_contrast, check_ui_component_contrast, contrast_ratio,
+    relative_luminance, ColorRgba, FocusAppearanceCheck, Section508VpatReport, TextSize, WcagLevel,
+};
 pub use properties::AccessibilityBuilder;
 
 /// Converts a [`martensite_core::WidgetId`] to an [`accesskit::NodeId`].

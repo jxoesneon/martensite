@@ -19,24 +19,41 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+/// Unicode Bidirectional Algorithm (UAX #9) and Kinsoku Shori line breaking (UAX #14).
+pub mod bidi;
 /// Two-tier text cache: `TextShapeCache`, `ShapeCacheKey`.
 pub mod cache;
+/// System font fallback cascade and script classification.
+pub mod cascade;
 /// Font system abstraction: `FontManager`, `FontId`, `FontSource`.
 pub mod font;
 /// Velocity-damped kinetic IME candidate positioning.
 pub mod ime;
 /// Complex text shaping: `Shaper`, `TextMetrics`, `ShapedLine`.
 pub mod shaping;
+/// Unicode vertical text layout (UAX #50) and coordinate transformation.
+pub mod vertical;
 
+pub use bidi::{
+    get_mirrored_char, is_prohibited_line_end, is_prohibited_line_start, mirror_text_in_rtl_runs,
+    BidiDirection, BidiParagraph, BidiRun,
+};
 pub use cache::{
     CachedShape, FontSizeBits, LineHeightBits, MaxWidthBits, ShapeCacheKey, TextHash,
     TextShapeCache, DEFAULT_MEMORY_BUDGET,
+};
+pub use cascade::{
+    classify_script, FontFallbackCache, FontFallbackChain, PlatformCascadeResolver, ScriptTag,
 };
 pub use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 pub use font::{FontFaceInfo, FontId, FontManager, FontSource, FontStyle};
 pub use ime::{ImePositioner, ScrollKinematics, Viewport};
 pub use shaping::{
     measure_text, measure_text_with_attrs, shape_text, ShapedGlyph, ShapedLine, Shaper, TextMetrics,
+};
+pub use vertical::{
+    classify_vertical_orientation, VerticalFeatureTags, VerticalGlyphTransform, VerticalMetrics,
+    VerticalOrientation,
 };
 
 #[cfg(test)]
