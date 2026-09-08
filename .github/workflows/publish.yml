@@ -138,6 +138,7 @@ jobs:
             martensite-macros
             martensite-core
             martensite-layout
+            martensite-media
             martensite-render
             martensite-wgpu
             martensite-cosmic-text
@@ -153,7 +154,6 @@ jobs:
             martensite-history
             martensite-l10n
             martensite-assets
-            martensite-media
             martensite-devtools
             martensite
             martensite-blessed
@@ -270,6 +270,7 @@ jobs:
             martensite-macros
             martensite-core
             martensite-layout
+            martensite-media
             martensite-render
             martensite-wgpu
             martensite-cosmic-text
@@ -285,7 +286,6 @@ jobs:
             martensite-history
             martensite-l10n
             martensite-assets
-            martensite-media
             martensite-devtools
             martensite
             martensite-blessed
