@@ -38,8 +38,6 @@ taffy = { workspace = true }
 [dev-dependencies]
 martensite-test = { workspace = true }
 martensite-devtools = { workspace = true }
-cargo-martensite = { workspace = true }
-tempfile = "3.27"
 parking_lot = { workspace = true }
 glam = { workspace = true }
 

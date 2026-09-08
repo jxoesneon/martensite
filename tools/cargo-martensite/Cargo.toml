@@ -15,6 +15,9 @@ publish = false
 
 [dependencies]
 
+[dev-dependencies]
+tempfile = "3.27"
+
 [lib]
 name = "cargo_martensite"
 path = "src/lib.rs"
