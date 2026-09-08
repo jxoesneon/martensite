@@ -5,6 +5,26 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-09-08
+
+### Added
+
+- **Plugin Runtime (`martensite-plugin`)**:
+  - Wasmtime sandboxed WebAssembly plugin runtime (`wasm32-wasip1`) with 5ms fuel/epoch-based interruption.
+  - `PluginRingBuffer` shared-memory circular command buffer for zero-overhead `PaintCmd` vector commands.
+  - Capability-based security model (`SignalRead`, `SignalWrite`, `FileRead`, `FileWrite`, `Network`) with explicit host grants.
+- **Blessed Widget Tier (`martensite-blessed`)**:
+  - Virtualized `DataTable` supporting 1,000,000 rows with O(1) visible-row memory and 60fps/120fps scrolling.
+  - GPU-accelerated `Chart` widget for 2D line, area, and scatter plots at 10,000 points / 60Hz.
+  - `CodeEditor` with syntax highlighting and multi-cursor support.
+  - `AudioWaveform` interactive viewport with real-time scrub head.
+- **Hardening & Fuzzing**:
+  - 48-hour continuous fuzzing harness targeting arena compaction, reactive DAG mutations, and event routing.
+
+### Changed
+
+- All workspace crates bumped from `0.9.0` to `0.10.0`.
+
 ## [0.9.0] - 2026-09-08
 
 ### Added

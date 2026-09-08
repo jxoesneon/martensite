@@ -44,11 +44,14 @@
 //! assert!(harness.compare_to_golden(&golden, 0.0));
 //! ```
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 pub mod dssim;
+pub mod fuzz;
 pub mod harness;
 pub mod virtual_clock;
 
 pub use dssim::{dssim, images_match, ImageBuffer};
+pub use fuzz::{run_fuzz_campaign, FuzzConfig, FuzzEngine, FuzzError, FuzzReport, FuzzTarget};
 pub use harness::{GoldenError, GoldenImages, HeadlessHarness};
 pub use virtual_clock::{VirtualClock, FRAME_120FPS, FRAME_30FPS, FRAME_60FPS};

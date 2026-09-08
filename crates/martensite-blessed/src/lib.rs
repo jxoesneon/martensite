@@ -1,31 +1,21 @@
-//! # Martensite Blessed
+//! Curated, production-oriented widgets for the Martensite GUI framework.
 //!
-//! `martensite-blessed` is a curated tier of blessed third-party ecosystem crates
-//! for the Martensite GUI framework.
-//!
-//! This crate serves as a meta-package or integration point for high-quality,
-//! widely-used widgets and extensions that are not part of the core engine,
-//! but are considered standard for complex applications.
-//!
-//! Expected future additions include:
-//! - Charts and data visualization
-//! - Advanced data tables
-//! - Date and time pickers
-//! - Color pickers
-//! - Rich text editors
-//! - Code editors
-//! - Virtualized lists
-//! - Tree views
-//!
-//! All blessed crates are held to the same rigorous quality bar as the core engine
-//! and adhere to Martensite's Core Architectural Principles.
+//! The crate provides virtualized tabular data, GPU-friendly chart and audio
+//! geometry, and a syntax-highlighted multi-cursor code editor.
 
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_compiles() {
-        // The crate compiling and this test running is the smoke test.
-    }
-}
+/// Interactive audio waveform model and geometry.
+pub mod audio_waveform;
+/// Two-dimensional chart series and auto-scaling.
+pub mod chart;
+/// Line-based syntax-highlighted editor.
+pub mod code_editor;
+/// Virtualized data table.
+pub mod data_table;
+
+pub use audio_waveform::AudioWaveform;
+pub use chart::{AreaSeries, Chart, ChartBounds, LineSeries, Point, ScatterSeries};
+pub use code_editor::{CodeEditor, Cursor, HighlightedSpan, TokenKind};
+pub use data_table::{DataTable, TableStorage};

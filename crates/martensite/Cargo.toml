@@ -38,6 +38,8 @@ taffy = { workspace = true }
 [dev-dependencies]
 martensite-test = { workspace = true }
 martensite-devtools = { workspace = true }
+martensite-plugin = { workspace = true }
+martensite-blessed = { workspace = true }
 parking_lot = { workspace = true }
 glam = { workspace = true }
 

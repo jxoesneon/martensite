@@ -444,11 +444,14 @@ mod tests {
 
     #[test]
     fn double_end_is_noop() {
+        use std::time::Duration;
+
         let name = "double_end_is_noop";
         let s = TracySpan::begin(name);
         s.end();
         let first = last_span_duration(name).unwrap();
         let s2 = TracySpan::begin(name);
+        std::thread::sleep(Duration::from_nanos(1_000));
         s2.end();
         // The second end of the first span does nothing; the second span's
         // value should be the latest recorded.

@@ -13,7 +13,17 @@ description = "Headless CI mock windowing, deterministic virtual clock, and perc
 readme = "README.md"
 
 [dependencies]
+glam = { workspace = true }
+martensite-clipboard = { workspace = true }
 martensite-core = { workspace = true }
+martensite-dnd = { workspace = true }
+martensite-focus = { workspace = true }
+martensite-reactive = { workspace = true }
+martensite-window = { workspace = true }
 tiny-skia = { workspace = true }
+
+[dev-dependencies]
+arbitrary = "1.4"
+
 [lints]
 workspace = true

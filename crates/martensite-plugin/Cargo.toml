@@ -1,5 +1,5 @@
 [package]
-name = "martensite-blessed"
+name = "martensite-plugin"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
@@ -9,14 +9,18 @@ repository.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Curated tier-1 ecosystem extensions for the Martensite GUI framework"
+description = "Wasmtime sandboxed plugin runtime for Martensite."
 readme = "README.md"
 
 [dependencies]
-martensite = { workspace = true }
+wasmtime = "36.0.14"
+wasmtime-wasi = "36.0.14"
 martensite-core = { workspace = true }
 martensite-render = { workspace = true }
-martensite-text = { workspace = true }
+martensite-reactive = { workspace = true }
+
+[dev-dependencies]
+wat = "1.219"
 
 [lints]
 workspace = true
