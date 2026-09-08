@@ -16,5 +16,9 @@ readme = "README.md"
 proc-macro = true
 
 [dependencies]
+
+[dev-dependencies]
+trybuild = "1.0"
+
 [lints]
 workspace = true

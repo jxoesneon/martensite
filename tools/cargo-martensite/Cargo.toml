@@ -14,7 +14,10 @@ readme = "README.md"
 publish = false
 
 [dependencies]
-martensite = { workspace = true }
+
+[lib]
+name = "cargo_martensite"
+path = "src/lib.rs"
 
 [lints]
 workspace = true

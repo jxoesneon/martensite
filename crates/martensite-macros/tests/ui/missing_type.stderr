@@ -1,0 +1,21 @@
+error: macros that expand to items must be delimited with braces or followed by a semicolon
+ --> tests/ui/missing_type.rs:6:15
+  |
+6 |         value = 0,
+  |               ^
+  |
+help: change the delimiters to curly braces
+  |
+6 -         value = 0,
+6 +         value {} 0,
+  |
+help: add a semicolon
+  |
+6 |         value =; 0,
+  |                +
+
+error: expected `:`
+ --> tests/ui/missing_type.rs:6:15
+  |
+6 |         value = 0,
+  |               ^

@@ -1,0 +1,21 @@
+error: macros that expand to items must be delimited with braces or followed by a semicolon
+ --> tests/ui/keyword_name.rs:4:9
+  |
+4 | widget!(struct);
+  |         ^^^^^^
+  |
+help: change the delimiters to curly braces
+  |
+4 - widget!(struct);
+4 + widget!({});
+  |
+help: add a semicolon
+  |
+4 | widget!(struct;);
+  |               +
+
+error: widget name cannot be a Rust keyword
+ --> tests/ui/keyword_name.rs:4:9
+  |
+4 | widget!(struct);
+  |         ^^^^^^

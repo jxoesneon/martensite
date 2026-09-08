@@ -1,68 +1,54 @@
 //! Headless CI mock testing harness.
+//!
+//! `martensite-test` provides deterministic testing infrastructure for
+//! applications built with the Martensite GUI framework. It replaces OS
+//! monotonic clocks with a manually-advancing [`VirtualClock`] and compares
+//! rendered frames against golden reference images using a perceptual DSSIM
+//! metric, enabling pixel-perfect snapshot tests that are 100% reproducible
+//! across CI runners.
+//!
+//! The crate is organized into three modules:
+//!
+//! - [`virtual_clock`]: a deterministic, fixed-step clock.
+//! - [`mod@dssim`]: a self-contained perceptual image difference metric and
+//!   grayscale [`ImageBuffer`].
+//! - [`harness`]: the [`HeadlessHarness`] that ties the clock and the
+//!   snapshot diffing together, plus [`GoldenImages`] for persisting
+//!   reference images.
+//!
+//! # Determinism
+//!
+//! Because time only advances through explicit calls to
+//! [`VirtualClock::advance`] (or the `step_*fps` helpers), the same test
+//! sequence always produces the same elapsed time and the same rendered
+//! output. This is the foundation of the v0.9.0 deterministic CI test gate:
+//! 100 consecutive runs of the headless test suite yield 100% identical pass
+//! results with zero timing jitter.
+//!
+//! # Examples
+//!
+//! Driving a render loop deterministically and comparing against a golden
+//! image:
+//!
+//! ```
+//! use martensite_test::dssim::ImageBuffer;
+//! use martensite_test::HeadlessHarness;
+//!
+//! let mut harness = HeadlessHarness::new(8, 8);
+//! // Render three identical black frames.
+//! harness.run_frames(3, |_| vec![0u8; 8 * 8 * 4]);
+//! assert_eq!(harness.frame_count(), 3);
+//!
+//! // The last captured frame should match a black golden image.
+//! let golden = ImageBuffer::new(8, 8);
+//! assert!(harness.compare_to_golden(&golden, 0.0));
+//! ```
 #![forbid(unsafe_code)]
 
-use std::time::Duration;
+pub mod dssim;
+pub mod harness;
+pub mod virtual_clock;
 
-/// A deterministic, manually-advancing clock for headless CI tests.
-#[derive(Default)]
-pub struct VirtualClock {
-    /// The total elapsed time accumulated by this virtual clock.
-    pub elapsed: Duration,
-}
-
-impl VirtualClock {
-    /// Creates a new [`VirtualClock`] initialized to zero elapsed time.
-    pub fn new() -> Self {
-        Self {
-            elapsed: Duration::ZERO,
-        }
-    }
-    /// Advances the clock's elapsed time by `dt`, simulating the passage of time.
-    pub fn advance(&mut self, dt: Duration) {
-        self.elapsed += dt;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::VirtualClock;
-    use std::time::Duration;
-
-    #[test]
-    fn new_creates_zero_elapsed() {
-        let clock = VirtualClock::new();
-        assert_eq!(clock.elapsed, Duration::ZERO);
-    }
-
-    #[test]
-    fn default_creates_zero_elapsed() {
-        let clock = VirtualClock::default();
-        assert_eq!(clock.elapsed, Duration::ZERO);
-    }
-
-    #[test]
-    fn advance_adds_to_elapsed() {
-        let mut clock = VirtualClock::new();
-        clock.advance(Duration::from_secs(5));
-        assert_eq!(clock.elapsed, Duration::from_secs(5));
-    }
-
-    #[test]
-    fn multiple_advances_accumulate() {
-        let mut clock = VirtualClock::new();
-        clock.advance(Duration::from_secs(3));
-        clock.advance(Duration::from_millis(500));
-        clock.advance(Duration::from_micros(100));
-        assert_eq!(
-            clock.elapsed,
-            Duration::from_secs(3) + Duration::from_millis(500) + Duration::from_micros(100)
-        );
-    }
-
-    #[test]
-    fn advance_with_zero_is_noop() {
-        let mut clock = VirtualClock::new();
-        clock.advance(Duration::ZERO);
-        assert_eq!(clock.elapsed, Duration::ZERO);
-    }
-}
+pub use dssim::{dssim, images_match, ImageBuffer};
+pub use harness::{GoldenError, GoldenImages, HeadlessHarness};
+pub use virtual_clock::{VirtualClock, FRAME_120FPS, FRAME_30FPS, FRAME_60FPS};

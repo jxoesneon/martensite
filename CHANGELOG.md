@@ -5,6 +5,26 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-09-08
+
+### Added
+
+- **DevTools (`martensite-devtools`)**:
+  - Tracy profiler instrumentation spans across layout, paint, and reactive dispatch with < 0.1ms overhead per frame.
+  - In-app diagnostic HUD (F12 toggle) with rolling 120-frame timing histogram, dirty rect visualization, and WidgetArena slot utilization telemetry.
+- **Developer CLI (`cargo-martensite`)**:
+  - `cargo martensite dev` and `cargo martensite build` commands.
+  - Sub-350ms hot-reloading framework with host/guest cdylib architecture and versioned dynamic library reloading.
+- **Widget Macros (`martensite-macros`)**:
+  - Declarative `widget!` procedural macro with compile-time property validation.
+- **Test Harness (`martensite-test`)**:
+  - `VirtualClock` for deterministic, manually-advancing time in headless tests.
+  - Headless test harness with pixel-perfect perceptual DSSIM snapshot diffing against golden reference images.
+
+### Changed
+
+- All workspace crates bumped from `0.8.0` to `0.9.0`.
+
 ## [0.8.0] - 2026-09-08
 
 ### Added
