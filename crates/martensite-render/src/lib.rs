@@ -21,7 +21,8 @@ pub mod tinyskia_backend;
 pub mod vello_backend;
 
 pub use paint::{
-    GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintCommand, PaintList, PathBuilder,
+    FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintCommand, PaintList,
+    PathBuilder,
 };
 pub use presentation::{
     nonzero as presentation_nonzero, present_rgba_to_softbuffer, rgba_to_softbuffer,

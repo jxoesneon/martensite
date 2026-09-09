@@ -14,7 +14,7 @@
 
 use crate::paint::PaintList;
 #[cfg(feature = "vello")]
-use crate::paint::{GlyphRun, PaintCommand};
+use crate::paint::{FontResource, GlyphRun, PaintCommand};
 use crate::RenderBackend;
 
 #[cfg(feature = "vello")]
@@ -22,15 +22,38 @@ use {
     kurbo::{Affine, Point as KurboPoint, Rect as KurboRect, RoundedRect, Stroke as KurboStroke},
     peniko::{
         color::{AlphaColor, DynamicColor, Srgb},
-        BlendMode, Color, ColorStop, ColorStops, Compose, Fill, Gradient, Mix,
+        Blob, BlendMode, Color, ColorStop, ColorStops, Compose, Fill, FontData, Gradient, Mix,
     },
-    vello::Scene,
+    vello::{
+        AaConfig, AaSupport, Glyph, RenderParams, Renderer as VelloGpuRenderer, RendererOptions,
+        Scene,
+    },
 };
 
 /// Converts a `[u8; 4]` RGBA color tuple into a peniko `Color` (sRGB AlphaColor).
 #[cfg(feature = "vello")]
 fn rgba_to_color(rgba: [u8; 4]) -> Color {
     AlphaColor::<Srgb>::from_rgba8(rgba[0], rgba[1], rgba[2], rgba[3])
+}
+
+/// Builds a shareable `peniko::FontData` from a [`FontResource`].
+///
+/// The font bytes are wrapped in a `peniko::Blob` (an `Arc`-backed shared
+/// handle) so Vello's glyph cache can retain a reference for the lifetime of
+/// the scene without copying the data. The collection index is forwarded
+/// unchanged.
+#[cfg(feature = "vello")]
+fn font_resource_to_peniko(font: &FontResource) -> FontData {
+    // `FontResource::data` is an `Arc<[u8]>`; `Blob::new` expects an
+    // `Arc<dyn AsRef<[u8]> + Send + Sync>`. We cannot coerce `Arc<[u8]>`
+    // directly (the trait object requires a `Sized` concrete type), so we wrap
+    // the shared slice in another `Arc`. `Arc<[u8]>: AsRef<[u8]>` and is
+    // `Send + Sync`, so this is zero-copy: no font bytes are copied, only a
+    // small `Arc` allocation is added.
+    let inner = std::sync::Arc::clone(font.data_arc());
+    let data: std::sync::Arc<dyn std::convert::AsRef<[u8]> + Send + Sync> =
+        std::sync::Arc::new(inner);
+    FontData::new(Blob::new(data), font.index())
 }
 
 /// Converts a peniko `Color` (AlphaColor<Srgb>) into a `DynamicColor`
@@ -75,6 +98,12 @@ pub struct VelloRenderer {
     /// accumulate for the remainder of the frame and reset each frame.
     #[cfg(feature = "vello")]
     clip_depth: u32,
+    /// The cached Vello GPU renderer, lazily created on the first
+    /// [`VelloRenderer::render_to_texture`] call and reused across frames.
+    /// Reusing the renderer avoids recompiling the Vello shader pipelines
+    /// every frame, which is essential for the 60fps/120fps targets.
+    #[cfg(feature = "vello")]
+    gpu_renderer: Option<VelloGpuRenderer>,
     last_command_count: usize,
 }
 
@@ -87,6 +116,8 @@ impl VelloRenderer {
             scene: Scene::new(),
             #[cfg(feature = "vello")]
             clip_depth: 0,
+            #[cfg(feature = "vello")]
+            gpu_renderer: None,
             last_command_count: 0,
         }
     }
@@ -126,6 +157,78 @@ impl VelloRenderer {
         self.last_command_count = 0;
     }
 
+    /// Dispatches the most recently built scene to the GPU via Vello's compute
+    /// pipeline, rendering it into `target`.
+    ///
+    /// This is the GPU compute dispatch path that was missing from the v0.2.0
+    /// render pipeline: it creates (and caches) a [`vello::Renderer`] bound to
+    /// `device`, then calls [`vello::Renderer::render_to_texture`] with the
+    /// scene, the `queue`, and the supplied target [`wgpu::TextureView`]. The
+    /// target texture must have been created with the
+    /// [`wgpu::TextureFormat::Rgba8Unorm`] format and the
+    /// [`wgpu::TextureUsages::STORAGE_BINDING`] flag, as required by Vello.
+    ///
+    /// The renderer is created once and reused across frames to avoid
+    /// recompiling the Vello shader pipelines every call. If renderer creation
+    /// or the render itself fails, the error is logged via `tracing` and the
+    /// method returns gracefully without panicking — the caller (typically the
+    /// `martensite-wgpu` orchestrator) is responsible for feeding the error
+    /// into the [`RecoveryMachine`] when appropriate.
+    ///
+    /// `width` and `height` are the dimensions of `target` in texels; they are
+    /// passed to Vello's [`RenderParams`] so the compute pipeline covers the
+    /// full target. A transparent base color is used so the existing target
+    /// contents show through where the scene draws nothing.
+    ///
+    /// Only available when the `vello` feature is enabled.
+    #[cfg(feature = "vello")]
+    pub fn render_to_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) {
+        // Lazily create the Vello GPU renderer, reusing it across frames.
+        if self.gpu_renderer.is_none() {
+            match VelloGpuRenderer::new(
+                device,
+                RendererOptions {
+                    use_cpu: false,
+                    antialiasing_support: AaSupport::all(),
+                    num_init_threads: None,
+                    pipeline_cache: None,
+                },
+            ) {
+                Ok(renderer) => self.gpu_renderer = Some(renderer),
+                Err(err) => {
+                    tracing::error!(
+                        error = %err,
+                        "vello renderer creation failed; GPU dispatch skipped"
+                    );
+                    return;
+                }
+            }
+        }
+        let Some(renderer) = self.gpu_renderer.as_mut() else {
+            // Unreachable: creation either succeeded above or returned early.
+            return;
+        };
+        let params = RenderParams {
+            base_color: Color::TRANSPARENT,
+            width,
+            height,
+            antialiasing_method: AaConfig::Area,
+        };
+        if let Err(err) = renderer.render_to_texture(device, queue, &self.scene, target, &params) {
+            tracing::warn!(
+                error = %err,
+                "vello render_to_texture failed; frame skipped"
+            );
+        }
+    }
+
     /// Translates a single paint command into Vello scene draw calls.
     ///
     /// This implements the full `PaintCommand` → `Scene` mapping:
@@ -134,8 +237,11 @@ impl VelloRenderer {
     /// - `FillLinearGradient` → `Scene::fill` with a linear `Gradient` brush
     /// - `FillRadialGradient` → `Scene::fill` with a radial `Gradient` brush
     /// - `ClipRect` / `ClipRoundedRect` → `Scene::push_layer` with a clip shape
-    /// - `DrawText` / `DrawGlyphRun` → approximated as filled rectangles
-    ///   (full glyph rasterization requires font atlas integration from v0.3.0)
+    /// - `DrawText` → approximated as filled rectangles (full shaping requires
+    ///   the text pipeline; use `DrawGlyphRun` with a `FontResource` for real
+    ///   glyph outlines)
+    /// - `DrawGlyphRun` → real glyph outlines via `Scene::draw_glyphs` when the
+    ///   run carries a `FontResource`, otherwise filled bounding-box rectangles
     #[cfg(feature = "vello")]
     fn render_command(&mut self, command: &PaintCommand) {
         match command {
@@ -244,14 +350,39 @@ impl VelloRenderer {
         }
     }
 
-    /// Renders a glyph run as filled rectangles using each glyph's dimensions.
+    /// Renders a glyph run.
     ///
-    /// Full Vello glyph rasterization via `Scene::draw_glyphs` requires a
-    /// `FontData` reference and resolved font atlas, which is deferred to
-    /// v0.3.0. This approximation produces visible output proportional to
-    /// each glyph's width and height.
+    /// When the run carries a [`FontResource`] (see [`GlyphRun::with_font`]),
+    /// the glyphs are rasterized from their real outlines using
+    /// `vello::Scene::draw_glyphs`: the font bytes are wrapped in a
+    /// `peniko::FontData`, the per-glyph positions are mapped to
+    /// `vello::Glyph` instances, and the run is drawn with the run color as a
+    /// solid brush under a `NonZero` fill.
+    ///
+    /// When no font is attached, the run falls back to drawing each glyph's
+    /// pre-measured bounding box as a filled rectangle — the v0.2.0
+    /// placeholder behavior — so existing callers without a font continue to
+    /// render visible output.
     #[cfg(feature = "vello")]
     fn render_glyph_run(&mut self, run: &GlyphRun) {
+        if let Some(font) = run.font.as_ref() {
+            let font_data = font_resource_to_peniko(font);
+            let color = rgba_to_color(run.color);
+            let glyphs = run
+                .glyphs
+                .iter()
+                .map(|g| Glyph {
+                    id: g.glyph_id,
+                    x: g.x,
+                    y: g.y,
+                });
+            self.scene
+                .draw_glyphs(&font_data)
+                .font_size(run.font_size)
+                .brush(color)
+                .draw(Fill::NonZero, glyphs);
+            return;
+        }
         let color = rgba_to_color(run.color);
         for glyph in &run.glyphs {
             let rect = KurboRect::new(

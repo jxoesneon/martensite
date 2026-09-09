@@ -6,6 +6,8 @@
 //! frames so that no per-frame heap traffic is required for steady-state
 //! rendering.
 
+use std::sync::Arc;
+
 use kurbo::{BezPath, Point, Rect};
 
 /// A single color stop within a gradient, defined by a normalized position in
@@ -61,6 +63,102 @@ impl GradientStops {
     }
 }
 
+/// A backend-agnostic handle to a raw font file and its collection index.
+///
+/// This is the font data carrier that lets a [`RenderBackend`] rasterize
+/// real glyph outlines from a [`GlyphRun`] without depending on any specific
+/// text-shaping stack. The bytes are shared via an [`Arc`] so cloning a
+/// `FontResource` is cheap and a single loaded font can be referenced by many
+/// glyph runs.
+///
+/// The `index` field selects a face within a TrueType/OpenType collection
+/// (`.ttc`); for a standalone `.ttf`/`.otf` file it is `0`.
+///
+/// Backends consume this as follows:
+/// - The Vello backend builds a `peniko::FontData` from the bytes and calls
+///   `vello::Scene::draw_glyphs`.
+/// - The TinySkia backend parses the bytes with `swash` and rasterizes the
+///   resulting Bézier outlines into its `Pixmap`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::FontResource;
+///
+/// // `index` is 0 for a standalone font file.
+/// let font = FontResource::new(b"raw font bytes".to_vec(), 0);
+/// assert_eq!(font.index(), 0);
+/// assert!(!font.data().is_empty());
+///
+/// // Cloning shares the underlying bytes (no copy).
+/// let cloned = font.clone();
+/// assert_eq!(font.data().as_ptr(), cloned.data().as_ptr());
+/// ```
+#[derive(Clone, Debug)]
+pub struct FontResource {
+    /// The raw font file bytes, shared via [`Arc`].
+    data: Arc<[u8]>,
+    /// The face index within a font collection (0 for standalone files).
+    index: u32,
+}
+
+impl FontResource {
+    /// Creates a new font resource from the given bytes and collection index.
+    ///
+    /// For a standalone `.ttf`/`.otf` file, pass `index = 0`.
+    #[must_use]
+    pub fn new(data: Vec<u8>, index: u32) -> Self {
+        Self {
+            data: Arc::from(data),
+            index,
+        }
+    }
+
+    /// Creates a new font resource from a static byte slice and collection
+    /// index.
+    ///
+    /// This avoids the allocation that [`FontResource::new`] performs when the
+    /// bytes already live in a `&'static [u8]` (e.g. from `include_bytes!`).
+    #[must_use]
+    pub fn from_static(data: &'static [u8], index: u32) -> Self {
+        Self {
+            data: Arc::from(data),
+            index,
+        }
+    }
+
+    /// Returns the raw font file bytes.
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Returns a reference to the shared byte buffer backing this resource.
+    ///
+    /// This is intended for backends (such as the Vello backend) that need to
+    /// wrap the bytes in their own `Arc`-backed shared handle without copying.
+    #[must_use]
+    pub fn data_arc(&self) -> &Arc<[u8]> {
+        &self.data
+    }
+
+    /// Returns the face index within a font collection.
+    #[must_use]
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+}
+
+impl PartialEq for FontResource {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare by pointer identity of the shared slice first (cheap), then
+        // fall back to a byte-wise comparison. Two resources built from the
+        // same `Arc` are equal without scanning the bytes.
+        Arc::ptr_eq(&self.data, &other.data) && self.index == other.index
+            || self.data.as_ref() == other.data.as_ref() && self.index == other.index
+    }
+}
+
 /// A single pre-resolved glyph instance ready for rasterization.
 ///
 /// Coordinates are in device pixels and the `glyph_id` is an index into the
@@ -102,7 +200,11 @@ impl GlyphInstance {
 /// A run of glyphs sharing a font, size, and color.
 ///
 /// All glyph positions are pre-resolved so the backend can blit them without
-/// performing any further shaping or layout work.
+/// performing any further shaping or layout work. When the optional
+/// [`FontResource`] is set via [`GlyphRun::with_font`], a backend that supports
+/// outline rasterization (Vello via `Scene::draw_glyphs`, TinySkia via
+/// `swash`) will render real glyph outlines; otherwise it falls back to
+/// drawing each glyph's pre-measured bounding box as a filled rectangle.
 #[derive(Clone, Debug, Default)]
 pub struct GlyphRun {
     /// The font size in device pixels.
@@ -111,6 +213,10 @@ pub struct GlyphRun {
     pub color: [u8; 4],
     /// The pre-resolved glyph instances.
     pub glyphs: Vec<GlyphInstance>,
+    /// The font data backing this run. When present, backends render real
+    /// glyph outlines; when absent, they fall back to bounding-box
+    /// rectangles.
+    pub font: Option<FontResource>,
 }
 
 impl GlyphRun {
@@ -120,7 +226,31 @@ impl GlyphRun {
             font_size,
             color,
             glyphs: Vec::new(),
+            font: None,
         }
+    }
+
+    /// Attaches a [`FontResource`] to this run, enabling real glyph-outline
+    /// rasterization in backends that support it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{FontResource, GlyphRun};
+    ///
+    /// let font = FontResource::new(b"font bytes".to_vec(), 0);
+    /// let run = GlyphRun::new(16.0, [0, 0, 0, 255]).with_font(font);
+    /// assert!(run.font.is_some());
+    /// ```
+    #[must_use]
+    pub fn with_font(mut self, font: FontResource) -> Self {
+        self.font = Some(font);
+        self
+    }
+
+    /// Attaches a [`FontResource`] to this run in place.
+    pub fn set_font(&mut self, font: FontResource) {
+        self.font = Some(font);
     }
 
     /// Appends a single glyph instance.

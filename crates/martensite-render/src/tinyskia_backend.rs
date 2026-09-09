@@ -6,9 +6,12 @@
 //! or inspected directly by tests. Because no GPU is required, this backend is
 //! the primary target for headless CI rendering tests.
 
-use crate::paint::{GlyphRun, GradientStops, PaintCommand, PaintList};
+use crate::paint::{FontResource, GlyphRun, GradientStops, PaintCommand, PaintList};
 use crate::RenderBackend;
 use kurbo::{BezPath, PathEl, Point, Rect};
+use swash::scale::ScaleContext;
+use swash::zeno::Verb;
+use swash::FontRef as SwashFontRef;
 use tiny_skia::{
     Color, FillRule, LinearGradient, Mask, Paint, PathBuilder as TsPathBuilder, Pixmap,
     RadialGradient, Rect as TsRect, SpreadMode, Stroke, Transform,
@@ -411,16 +414,26 @@ impl TinySkiaBackend {
         }
     }
 
-    /// Renders a [`GlyphRun`] by drawing a filled rectangle per glyph sized by
-    /// the glyph's pre-measured `width` and `height` fields.
+    /// Renders a [`GlyphRun`].
     ///
-    /// This is a real rasterization of each glyph's bounding box (not a
-    /// placeholder square of fixed size), so layout-driven rendering produces
-    /// correctly sized output that can be exercised by reftests. Full
-    /// glyph-outline rasterization from a font atlas is deferred to the text
-    /// pipeline (planned for v0.3.0).
+    /// When the run carries a [`FontResource`] (see [`GlyphRun::with_font`]),
+    /// each glyph is rasterized from its real Bézier outline using `swash`:
+    /// the font bytes are parsed, the glyph is scaled to `run.font_size`
+    /// pixels-per-em, and the resulting outline is converted to a
+    /// [`tiny_skia::Path`] and filled with the run color. The outline's
+    /// font-space y-up coordinate system is flipped to the backend's y-down
+    /// device space and translated to the glyph's pre-resolved origin
+    /// (`glyph.x`, `glyph.y`).
+    ///
+    /// When no font is attached, the run falls back to drawing each glyph's
+    /// pre-measured bounding box as a filled rectangle — the v0.2.0 placeholder
+    /// behavior — so existing callers without a font continue to render.
     fn render_glyph_run(&mut self, run: &GlyphRun) {
         if run.glyphs.is_empty() {
+            return;
+        }
+        if let Some(font) = run.font.as_ref() {
+            self.render_glyph_run_outlines(run, font);
             return;
         }
         let mut paint = Paint::default();
@@ -437,6 +450,139 @@ impl TinySkiaBackend {
                     .fill_rect(rect, &paint, Transform::identity(), clip);
             }
         }
+    }
+
+    /// Rasterizes a [`GlyphRun`] using real glyph outlines parsed from `font`
+    /// via `swash`.
+    ///
+    /// A fresh [`ScaleContext`] is created per call (it is not `Send` and so
+    /// cannot live in the backend struct, which must be `Send`). For each
+    /// glyph, the scaled outline is converted to a [`tiny_skia::Path`] with the
+    /// y-axis flipped from font-space (y-up) to device-space (y-down) and
+    /// translated to the glyph origin. The path is then filled with the run
+    /// color under the active clip.
+    ///
+    /// Malformed font data or missing glyphs are skipped silently so that a
+    /// single bad glyph never aborts the whole run; this mirrors the
+    /// `catch_unwind` robustness used by the text pipeline for font-data
+    /// access.
+    fn render_glyph_run_outlines(&mut self, run: &GlyphRun, font: &FontResource) {
+        let Some(font_ref) = SwashFontRef::from_index(font.data(), usize::try_from(font.index()).unwrap_or(0)) else {
+            // Not a valid font file / index: fall back to bounding boxes.
+            self.render_glyph_run_bounding_boxes(run);
+            return;
+        };
+        let mut ctx = ScaleContext::new();
+        let mut scaler = ctx.builder(font_ref).size(run.font_size).build();
+        let mut paint = Paint::default();
+        paint.set_color(Self::to_color(run.color));
+        paint.anti_alias = true;
+        for glyph in &run.glyphs {
+            let Some(outline) = scaler.scale_outline(u16::try_from(glyph.glyph_id).unwrap_or(0))
+            else {
+                continue;
+            };
+            if outline.is_empty() {
+                continue;
+            }
+            // A non-color font has a single outline layer; color fonts (COLR)
+            // are out of scope for v0.2.0 software rendering, so we rasterize
+            // only the first layer with the run color.
+            let Some(layer) = outline.get(0) else {
+                continue;
+            };
+            if let Some(path) = self.build_outline_path(layer.points(), layer.verbs(), glyph.x, glyph.y) {
+                // `self.clip_stack.last()` is evaluated as an argument to the
+                // `fill_path` call on `self.pixmap`; this is a disjoint
+                // two-field borrow and does not conflict with the mutable
+                // borrow of `self.pixmap`.
+                self.pixmap.fill_path(
+                    &path,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    self.clip_stack.last(),
+                );
+            }
+        }
+    }
+
+    /// Fallback that draws each glyph's bounding box as a filled rectangle.
+    /// Used when a [`FontResource`] is present but cannot be parsed.
+    fn render_glyph_run_bounding_boxes(&mut self, run: &GlyphRun) {
+        let mut paint = Paint::default();
+        paint.set_color(Self::to_color(run.color));
+        paint.anti_alias = false;
+        let clip = self.clip_stack.last();
+        for glyph in &run.glyphs {
+            let w = glyph.width.max(1.0);
+            let h = glyph.height.max(1.0);
+            if let Some(rect) = TsRect::from_xywh(glyph.x, glyph.y - h, w, h) {
+                self.pixmap
+                    .fill_rect(rect, &paint, Transform::identity(), clip);
+            }
+        }
+    }
+
+    /// Converts a `swash` glyph outline (points + verbs) into a
+    /// [`tiny_skia::Path`].
+    ///
+    /// The font-space y-up coordinate system is flipped to device-space y-down
+    /// and the whole outline is translated to the glyph origin `(ox, oy)`,
+    /// which is the baseline position in device pixels. The conversion reuses
+    /// the backend's owned [`TsPathBuilder`].
+    fn build_outline_path(
+        &mut self,
+        points: &[swash::zeno::Point],
+        verbs: &[Verb],
+        ox: f32,
+        oy: f32,
+    ) -> Option<tiny_skia::Path> {
+        self.path_builder.clear();
+        let mut idx = 0usize;
+        let to_device = |p: swash::zeno::Point| -> (f32, f32) {
+            // Flip y: device_y = baseline_y - font_y.
+            (ox + p.x, oy - p.y)
+        };
+        for verb in verbs {
+            match verb {
+                Verb::MoveTo => {
+                    let p = points.get(idx)?;
+                    idx += 1;
+                    let (x, y) = to_device(*p);
+                    self.path_builder.move_to(x, y);
+                }
+                Verb::LineTo => {
+                    let p = points.get(idx)?;
+                    idx += 1;
+                    let (x, y) = to_device(*p);
+                    self.path_builder.line_to(x, y);
+                }
+                Verb::QuadTo => {
+                    let c = points.get(idx)?;
+                    let p = points.get(idx + 1)?;
+                    idx += 2;
+                    let (cx, cy) = to_device(*c);
+                    let (x, y) = to_device(*p);
+                    self.path_builder.quad_to(cx, cy, x, y);
+                }
+                Verb::CurveTo => {
+                    let c1 = points.get(idx)?;
+                    let c2 = points.get(idx + 1)?;
+                    let p = points.get(idx + 2)?;
+                    idx += 3;
+                    let (c1x, c1y) = to_device(*c1);
+                    let (c2x, c2y) = to_device(*c2);
+                    let (x, y) = to_device(*p);
+                    self.path_builder.cubic_to(c1x, c1y, c2x, c2y, x, y);
+                }
+                Verb::Close => {
+                    self.path_builder.close();
+                }
+            }
+        }
+        let builder = core::mem::take(&mut self.path_builder);
+        builder.finish()
     }
 }
 
