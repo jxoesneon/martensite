@@ -31,6 +31,8 @@ martensite-assets = { workspace = true }
 martensite-l10n = { workspace = true }
 martensite-media = { workspace = true }
 martensite-macros = { workspace = true }
+# Optional: OS-native font fallback providers (DirectWrite, CoreText, Fontconfig).
+martensite-font-fallback = { workspace = true, optional = true }
 accesskit = { workspace = true }
 glam = { workspace = true }
 taffy = { workspace = true }
@@ -40,7 +42,6 @@ martensite-test = { workspace = true }
 martensite-devtools = { workspace = true }
 martensite-plugin = { workspace = true }
 parking_lot = { workspace = true }
-glam = { workspace = true }
 
 [features]
 default = []
@@ -49,6 +50,10 @@ docs-rs = [
     "martensite-text/docs-rs",
     "martensite-access/docs-rs",
 ]
+# Enable OS-native font fallback providers (DirectWrite on Windows,
+# CoreText on macOS, Fontconfig on Linux). When disabled, the static
+# PlatformCascadeResolver is used instead.
+native-fallback = ["dep:martensite-font-fallback"]
 
 [package.metadata.docs.rs]
 features = ["docs-rs"]

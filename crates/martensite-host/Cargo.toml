@@ -1,0 +1,32 @@
+[package]
+name = "martensite-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Lightweight host binary support for dynamically loading and hot-reloading Martensite guest cdylibs."
+readme = "README.md"
+
+[dependencies]
+libloading = { workspace = true }
+
+[features]
+default = []
+
+# This crate uses `#![allow(unsafe_code)]` at the crate level because dynamic
+# library loading (`dlopen`/`dlsym` on Unix, `LoadLibrary`/`GetProcAddress` on
+# Windows) is inherently unsafe. The workspace-level `unsafe_code = "deny"`
+# policy is preserved for all other crates; this is the narrowly scoped
+# audited exception described in the v0.9.0 host-binary boundary decision,
+# mirroring the policy used by `martensite-font-fallback`.
+
+[dev-dependencies]
+tempfile = "3.27"
+
+[lints]
+workspace = true

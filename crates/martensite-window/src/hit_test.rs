@@ -91,6 +91,32 @@ pub const SINGULAR_EPSILON: f32 = 1e-6;
 /// widget's [`AffineTransform`] (or unchanged if the widget has no transform).
 /// Renderers and event handlers can use it directly to answer questions like
 /// "which glyph did the user click?" without re-deriving the inverse.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, WidgetArena};
+/// use martensite_window::hit_test::{HitTester, HitTestResult};
+/// use glam::Vec2;
+///
+/// let mut arena = WidgetArena::new();
+/// let root = arena.insert(
+///     HotNode {
+///         bounds: Rect::new(10.0, 10.0, 110.0, 110.0),
+///         flags: NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED,
+///         ..HotNode::default()
+///     },
+///     ColdNode::default(),
+/// );
+///
+/// let tester = HitTester::new(&arena);
+/// let result: HitTestResult = tester
+///     .hit_test(root, Vec2::new(40.0, 40.0))
+///     .expect("point is inside the root");
+/// assert_eq!(result.widget_id, root);
+/// // With no transform applied, the local point equals the screen point.
+/// assert_eq!(result.local_point, Vec2::new(40.0, 40.0));
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HitTestResult {
     /// The widget handle that the pointer is hovering over.
@@ -251,6 +277,21 @@ impl From<Affine2> for AffineTransform {
 ///
 /// `radius` is the corner radius applied symmetrically to all four corners.
 /// A `radius` of `0.0` is equivalent to a plain [`Rect`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::Rect;
+/// use martensite_window::hit_test::{point_in_shape, ClipShape, RoundedRect};
+/// use glam::Vec2;
+///
+/// let rr = RoundedRect::new(Rect::new(0.0, 0.0, 20.0, 20.0), 5.0);
+/// // A radius of 0 behaves like a plain rectangle.
+/// let plain = RoundedRect::new(Rect::new(0.0, 0.0, 20.0, 20.0), 0.0);
+/// assert!(point_in_shape(&ClipShape::RoundedRect(plain), Vec2::new(1.0, 1.0)));
+/// // With a 5px radius, the corner (1, 1) is cut off.
+/// assert!(!point_in_shape(&ClipShape::RoundedRect(rr), Vec2::new(1.0, 1.0)));
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RoundedRect {
     /// The outer axis-aligned rectangle.
@@ -274,6 +315,29 @@ impl RoundedRect {
 /// Passed to [`HitTester::hit_test_with_clip`] as part of a per-widget map so
 /// that widgets with rounded corners or custom vector outlines can reject
 /// points that pass the AABB broad-phase but fall outside the true shape.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::Rect;
+/// use martensite_window::hit_test::{point_in_shape, ClipShape, RoundedRect};
+/// use glam::Vec2;
+///
+/// // A plain rectangle: the center is inside, a far-away point is not.
+/// let rect = ClipShape::Rect(Rect::new(0.0, 0.0, 10.0, 10.0));
+/// assert!(point_in_shape(&rect, Vec2::new(5.0, 5.0)));
+/// assert!(!point_in_shape(&rect, Vec2::new(20.0, 20.0)));
+///
+/// // A rounded rectangle rejects points in the cut-off corners.
+/// let rounded = ClipShape::RoundedRect(RoundedRect::new(
+///     Rect::new(0.0, 0.0, 10.0, 10.0),
+///     4.0,
+/// ));
+/// // The corner (1, 1) sits outside the 4px corner circle.
+/// assert!(!point_in_shape(&rounded, Vec2::new(1.0, 1.0)));
+/// // The center is still inside.
+/// assert!(point_in_shape(&rounded, Vec2::new(5.0, 5.0)));
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClipShape {
     /// A plain axis-aligned rectangle.
@@ -435,6 +499,31 @@ fn point_in_path(point: Vec2, pts: &[Vec2]) -> bool {
 /// docs. Cheap to construct: the tester is just a borrowed reference plus
 /// scratch bookkeeping, so callers may build one per input event without
 /// concern.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, WidgetArena};
+/// use martensite_window::hit_test::HitTester;
+/// use glam::Vec2;
+///
+/// let mut arena = WidgetArena::new();
+/// let root = arena.insert(
+///     HotNode {
+///         bounds: Rect::new(0.0, 0.0, 100.0, 100.0),
+///         flags: NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED,
+///         ..HotNode::default()
+///     },
+///     ColdNode::default(),
+/// );
+///
+/// let tester = HitTester::new(&arena);
+/// // A point inside the root hits it.
+/// let hit = tester.hit_test(root, Vec2::new(50.0, 50.0));
+/// assert_eq!(hit.map(|h| h.widget_id), Some(root));
+/// // A point outside misses every widget.
+/// assert!(tester.hit_test(root, Vec2::new(200.0, 200.0)).is_none());
+/// ```
 pub struct HitTester<'a> {
     /// The widget arena being tested.
     arena: &'a WidgetArena,

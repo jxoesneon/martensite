@@ -142,10 +142,48 @@ cargo bench -p bench_suite --bench bench_suite -- --test
 These are explicitly documented in code, not hidden:
 - `MinContent` → `0.0` in engine measure closure.
 - `compute_ime_bounds` uses fixed `2.0` pixel width.
-- `CachedShape` stores empty `lines` vec.
-- `FontId::dummy()` in Text widget cache path.
 - Performance tests are `#[ignore]` by default.
 - `Text::content` is public; call `invalidate_cache()` after direct mutation.
+
+### Font fallback architecture (v0.11.0)
+
+- `FontFallbackProvider` trait in `martensite-text::cascade` abstracts the
+  source of fallback families.
+- `PlatformCascadeResolver` (default) uses static per-OS family lists.
+- `martensite-font-fallback` crate implements native OS providers:
+  - `DirectWriteFontFallback` (Windows, `IDWriteFontFallback::MapCharacters`)
+  - `CoreTextFontFallback` (macOS, `CTFontCreateForStringWithLanguage`)
+  - `FontconfigFontFallback` (Linux, `FcFontSort`)
+- The following five crates use `#![allow(unsafe_code)]` for
+  platform-specific FFI or vendored upstream code. These are the ONLY
+  crates in the workspace that allow unsafe code; all other crates
+  maintain `unsafe_code = "deny"`.
+  - `martensite-font-fallback` — platform FFI (DirectWrite on Windows,
+    CoreText on macOS, Fontconfig on Linux).
+  - `martensite-clipboard-platform` — OS clipboard FFI (macOS
+    NSPasteboard, Windows Win32, X11).
+  - `martensite-media-platform` — hardware video surface import FFI
+    (IOSurface on macOS, DXGI on Windows, dmabuf on Linux).
+  - `martensite-host` — dynamic library loading (`libloading`/`dlopen`
+    on Unix, `LoadLibrary` on Windows).
+  - `martensite-cosmic-text` — vendored upstream fork (cosmic-text),
+    exempt with `#![allow(missing_docs)]` and `#![allow(clippy::all)]`.
+- `FallbackDecisionCache` caches resolved fallback chains keyed by
+  `(script, locale, primary_family)`, invalidated by a font-system
+  generation counter.
+- `Shaper::shape_with_options` is the single canonical shaping entry
+  point used by the production `Text` widget.
+- `swash`/`ttf-parser` font-data access is wrapped in `catch_unwind` to
+  guard against malformed-font panics.
+
+### Accessibility architecture (v0.11.0)
+
+- AccessKit's platform adapters handle live-region notifications
+  natively. The custom `LiveRegionMonitor` was removed.
+- `SemanticTreeSync` uses a hybrid strategy: dirty-flag early-exit
+  (fast path) + fingerprint validation (slow path).
+- `MartensiteAccessBridge` uses `parking_lot::Mutex` (poison-free).
+- `relative_luminance` sanitizes NaN/inf color channels before clamping.
 
 ## Workflow
 

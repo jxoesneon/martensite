@@ -15,5 +15,15 @@ readme = "README.md"
 [dependencies]
 martensite-core = { workspace = true }
 tracing = { workspace = true }
+martensite-render = { workspace = true, optional = true }
+kurbo = { workspace = true, optional = true }
+
+[features]
+default = []
+# Enables the `render_hud` method that emits paint commands into a
+# `martensite_render::PaintList`. Off by default to avoid pulling the
+# render crate into consumers that only want the data model.
+render = ["dep:martensite-render", "dep:kurbo"]
+
 [lints]
 workspace = true

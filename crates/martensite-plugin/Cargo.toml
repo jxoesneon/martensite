@@ -18,6 +18,7 @@ wasmtime-wasi = "36.0.14"
 martensite-core = { workspace = true }
 martensite-render = { workspace = true }
 martensite-reactive = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 wat = "1.219"

@@ -449,22 +449,49 @@ mod tests {
 
     #[test]
     fn double_end_is_noop() {
-        use std::time::Duration;
-
-        let name = "double_end_is_noop";
+        // This test verifies that calling `end()` twice on the same span
+        // is a no-op. We use `span_record_count()` to verify that the
+        // second `end()` call does not record an additional span.
+        let name = "double_end_is_noop_unique_4f7a";
+        let before = span_record_count();
         let s = TracySpan::begin(name);
         s.end();
-        let first = last_span_duration(name).unwrap();
+        let after_first = span_record_count();
+        // First end records exactly one span.
+        assert_eq!(after_first, before + 1, "first end should record one span");
+        // Second end is a no-op: start was already taken.
+        s.end();
+        let after_second = span_record_count();
+        assert_eq!(
+            after_second, after_first,
+            "second end should not record another span"
+        );
+        // The recorded span should be queryable.
+        let dur = last_span_duration(name);
+        assert!(dur.is_some(), "span should be recorded");
+
+        // Now verify that a second span with the same name records
+        // correctly and has a measurable duration.
         let s2 = TracySpan::begin(name);
-        // Sleep for a deterministic amount well above timer resolution so the
-        // second span's duration is always measurable, even on coarse clocks.
-        std::thread::sleep(Duration::from_millis(1));
+        // Busy-wait for a deterministic amount well above timer resolution.
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(2) {
+            std::hint::spin_loop();
+        }
         s2.end();
-        // The second end of the first span does nothing; the second span's
-        // value should be the latest recorded and positive.
-        let second = last_span_duration(name).unwrap();
-        assert!(second > 0, "second span duration should be positive");
-        let _ = first;
+        let after_third = span_record_count();
+        assert_eq!(
+            after_third,
+            after_second + 1,
+            "second span should record one span"
+        );
+        // Second end of s2 is a no-op.
+        s2.end();
+        assert_eq!(
+            span_record_count(),
+            after_third,
+            "second end of s2 should not record"
+        );
     }
 
     #[test]

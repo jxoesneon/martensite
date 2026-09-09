@@ -15,6 +15,23 @@
 //! while solid fills must match almost exactly.
 
 /// The result of a perceptual diff between two images.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::diff::{perceptual_diff, FILL_SSIM_THRESHOLD};
+///
+/// // Identical 4x4 grey images produce a perfect score.
+/// let mut grey = Vec::with_capacity(4 * 4 * 4);
+/// for _ in 0..(4 * 4) {
+///     grey.extend_from_slice(&[128, 128, 128, 255]);
+/// }
+/// let result = perceptual_diff(&grey, &grey, 4, 4);
+/// assert!(result.passed);
+/// // A solid fill has no edges, so the interior band is the one that matters.
+/// assert!(result.interior_ssim >= FILL_SSIM_THRESHOLD);
+/// assert_eq!(result.edge_ssim, 1.0);
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct DiffResult {
     /// The mean SSIM across all evaluated windows, in `[0.0, 1.0]` where `1.0`
@@ -146,6 +163,29 @@ fn ssim_block_sized(
 /// Both `expected` and `actual` must contain at least `width * height * 4`
 /// bytes. If either buffer is shorter, a failure [`DiffResult`] is returned
 /// without panicking.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::diff::perceptual_diff;
+///
+/// // Two identical 8x8 solid-red images must pass.
+/// let mut red = Vec::with_capacity(8 * 8 * 4);
+/// for _ in 0..(8 * 8) {
+///     red.extend_from_slice(&[255, 0, 0, 255]);
+/// }
+/// let result = perceptual_diff(&red, &red, 8, 8);
+/// assert!(result.passed);
+/// assert!(result.overall_ssim > 0.9999);
+///
+/// // A solid-red vs solid-blue image must fail the strict interior check.
+/// let mut blue = Vec::with_capacity(8 * 8 * 4);
+/// for _ in 0..(8 * 8) {
+///     blue.extend_from_slice(&[0, 0, 255, 255]);
+/// }
+/// let result = perceptual_diff(&red, &blue, 8, 8);
+/// assert!(!result.passed);
+/// ```
 pub fn perceptual_diff(expected: &[u8], actual: &[u8], width: u32, height: u32) -> DiffResult {
     let expected_len = (width as usize) * (height as usize) * 4;
     if expected.len() < expected_len || actual.len() < expected_len {

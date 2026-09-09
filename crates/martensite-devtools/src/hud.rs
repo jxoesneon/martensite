@@ -7,6 +7,10 @@
 //! - Real-time dirty rect visualization.
 //! - Live `WidgetArena` slot utilization and compaction telemetry.
 //!
+//! When the `render` feature is enabled, [`DiagnosticHud::render_hud`]
+//! encodes the overlay into a [`martensite_render::PaintList`] using simple
+//! fill, stroke, and text commands.
+//!
 //! # Example
 //!
 //! ```
@@ -25,6 +29,12 @@
 //!
 //! hud.add_dirty_rect(Rect::new(0, 0, 100, 100));
 //! ```
+
+#[cfg(feature = "render")]
+use kurbo::{Point, Rect as KurboRect};
+
+#[cfg(feature = "render")]
+use martensite_render::PaintList;
 
 /// Number of frames retained in the rolling histogram.
 const HISTOGRAM_SIZE: usize = 120;
@@ -687,7 +697,214 @@ impl DiagnosticHud {
     pub fn clear_dirty_rects(&mut self) {
         self.dirty_rects.clear();
     }
+
+    /// Renders the HUD overlay into the given [`PaintList`].
+    ///
+    /// This is only available when the `render` feature is enabled. The HUD
+    /// is positioned in the top-left corner and uses a semi-transparent
+    /// background for readability. It draws:
+    ///
+    /// - A frame timing histogram (one bar per recorded frame).
+    /// - Dirty rect visualization (outlined rectangles).
+    /// - Arena telemetry (text).
+    /// - Memory usage (text).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "render")]
+    /// # {
+    /// use martensite_devtools::hud::{DiagnosticHud, FrameTiming, Rect};
+    /// use martensite_render::PaintList;
+    ///
+    /// let mut hud = DiagnosticHud::new();
+    /// hud.toggle();
+    /// hud.record_frame(FrameTiming { total_time_ns: 16_000_000, ..Default::default() });
+    /// hud.add_dirty_rect(Rect::new(10, 10, 50, 50));
+    ///
+    /// let mut paint = PaintList::new();
+    /// hud.render_hud(&mut paint);
+    /// assert!(!paint.is_empty());
+    /// # }
+    /// ```
+    #[cfg(feature = "render")]
+    pub fn render_hud(&self, paint: &mut PaintList) {
+        // --- Semi-transparent background panel (top-left corner). ---
+        let bg = KurboRect::new(HUD_X, HUD_Y, HUD_X + HUD_WIDTH, HUD_Y + HUD_HEIGHT);
+        paint.push_fill_rect(bg, HUD_BG_COLOR);
+
+        // --- Frame timing histogram (bars). ---
+        let hist_origin_y = HUD_Y + HUD_PADDING + HUD_TITLE_SIZE as f64 + 4.0;
+        let hist_bottom = hist_origin_y + HUD_HISTOGRAM_HEIGHT;
+        let bar_area_width = HUD_WIDTH - 2.0 * HUD_PADDING;
+        let frames = self.histogram.frames();
+        let max_total = frames
+            .iter()
+            .map(|f| f.total_time_ns)
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let bar_width = if frames.is_empty() {
+            bar_area_width
+        } else {
+            (bar_area_width / frames.len() as f64).max(1.0)
+        };
+        for (i, frame) in frames.iter().enumerate() {
+            let bar_x = HUD_X + HUD_PADDING + i as f64 * bar_width;
+            let bar_h = (frame.total_time_ns as f64 / max_total as f64) * HUD_HISTOGRAM_HEIGHT;
+            let bar = KurboRect::new(bar_x, hist_bottom - bar_h, bar_x + bar_width, hist_bottom);
+            let color = if frame.total_time_ns > 16_666_666 {
+                HUD_BAR_COLOR_SLOW
+            } else {
+                HUD_BAR_COLOR_OK
+            };
+            paint.push_fill_rect(bar, color);
+        }
+
+        // Outline the histogram region.
+        let hist_outline = KurboRect::new(
+            HUD_X + HUD_PADDING,
+            hist_origin_y,
+            HUD_X + HUD_PADDING + bar_area_width,
+            hist_bottom,
+        );
+        paint.push_stroke_rect(hist_outline, 1.0, HUD_OUTLINE_COLOR);
+
+        // --- Text: title and averages. ---
+        let text_x = HUD_X + HUD_PADDING;
+        let mut text_y = hist_bottom + 16.0;
+        paint.push_text(
+            Point::new(text_x, HUD_Y + HUD_PADDING + HUD_TITLE_SIZE as f64),
+            "Martensite HUD".to_string(),
+            HUD_TITLE_SIZE,
+            HUD_TEXT_COLOR,
+        );
+
+        let avg = self.histogram.average();
+        let avg_ms = avg.total_time_ns as f64 / 1_000_000.0;
+        paint.push_text(
+            Point::new(text_x, text_y),
+            format!("avg frame: {avg_ms:.2} ms"),
+            HUD_TEXT_SIZE,
+            HUD_TEXT_COLOR,
+        );
+        text_y += HUD_LINE_HEIGHT;
+
+        let max = self.histogram.max();
+        let max_ms = max.total_time_ns as f64 / 1_000_000.0;
+        paint.push_text(
+            Point::new(text_x, text_y),
+            format!("max frame: {max_ms:.2} ms"),
+            HUD_TEXT_SIZE,
+            HUD_TEXT_COLOR,
+        );
+        text_y += HUD_LINE_HEIGHT;
+
+        // --- Arena telemetry (text). ---
+        let t = &self.arena_telemetry;
+        paint.push_text(
+            Point::new(text_x, text_y),
+            format!(
+                "arena: {}/{} slots ({:.1}%)",
+                t.used_slots, t.total_slots, t.utilization_pct
+            ),
+            HUD_TEXT_SIZE,
+            HUD_TEXT_COLOR,
+        );
+        text_y += HUD_LINE_HEIGHT;
+        paint.push_text(
+            Point::new(text_x, text_y),
+            format!("compactions: {}", t.compaction_count),
+            HUD_TEXT_SIZE,
+            HUD_TEXT_COLOR,
+        );
+        text_y += HUD_LINE_HEIGHT;
+
+        // --- Memory usage (text). ---
+        let mem_bytes = t.used_slots * 64; // approximate bytes per slot
+        paint.push_text(
+            Point::new(text_x, text_y),
+            format!("mem (est): {} KB", mem_bytes / 1024),
+            HUD_TEXT_SIZE,
+            HUD_TEXT_COLOR,
+        );
+
+        // --- Dirty rect visualization (outlined rectangles). ---
+        for rect in self.dirty_rects.rects() {
+            let dirty = KurboRect::new(
+                rect.x as f64,
+                rect.y as f64,
+                (rect.x + rect.width as i32) as f64,
+                (rect.y + rect.height as i32) as f64,
+            );
+            paint.push_stroke_rect(dirty, 2.0, HUD_DIRTY_COLOR);
+        }
+    }
+
+    /// Paints the HUD overlay into the given [`PaintList`].
+    ///
+    /// This is a convenience alias for [`DiagnosticHud::render_hud`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "render")]
+    /// # {
+    /// use martensite_devtools::hud::{DiagnosticHud, FrameTiming};
+    /// use martensite_render::PaintList;
+    ///
+    /// let mut hud = DiagnosticHud::new();
+    /// hud.toggle();
+    /// hud.record_frame(FrameTiming { total_time_ns: 16_000_000, ..Default::default() });
+    ///
+    /// let mut paint = PaintList::new();
+    /// hud.paint(&mut paint);
+    /// assert!(!paint.is_empty());
+    /// # }
+    /// ```
+    #[cfg(feature = "render")]
+    pub fn paint(&self, paint: &mut PaintList) {
+        self.render_hud(paint);
+    }
 }
+
+/// HUD layout and color constants (only compiled with the `render` feature).
+#[cfg(feature = "render")]
+mod hud_layout {
+    /// X offset of the HUD panel (pixels from left).
+    pub(super) const HUD_X: f64 = 8.0;
+    /// Y offset of the HUD panel (pixels from top).
+    pub(super) const HUD_Y: f64 = 8.0;
+    /// Width of the HUD panel.
+    pub(super) const HUD_WIDTH: f64 = 320.0;
+    /// Height of the HUD panel.
+    pub(super) const HUD_HEIGHT: f64 = 220.0;
+    /// Inner padding of the HUD panel.
+    pub(super) const HUD_PADDING: f64 = 8.0;
+    /// Font size of the HUD title.
+    pub(super) const HUD_TITLE_SIZE: f32 = 14.0;
+    /// Font size of HUD body text.
+    pub(super) const HUD_TEXT_SIZE: f32 = 12.0;
+    /// Line height for stacked text lines.
+    pub(super) const HUD_LINE_HEIGHT: f64 = 16.0;
+    /// Height of the histogram bar region.
+    pub(super) const HUD_HISTOGRAM_HEIGHT: f64 = 60.0;
+    /// Semi-transparent dark background color.
+    pub(super) const HUD_BG_COLOR: [u8; 4] = [20, 20, 30, 200];
+    /// Outline color for the histogram region.
+    pub(super) const HUD_OUTLINE_COLOR: [u8; 4] = [120, 120, 140, 255];
+    /// Bar color for frames within the 60 fps budget (green).
+    pub(super) const HUD_BAR_COLOR_OK: [u8; 4] = [80, 200, 120, 255];
+    /// Bar color for frames exceeding the 60 fps budget (red).
+    pub(super) const HUD_BAR_COLOR_SLOW: [u8; 4] = [220, 80, 80, 255];
+    /// Text color (light gray).
+    pub(super) const HUD_TEXT_COLOR: [u8; 4] = [230, 230, 230, 255];
+    /// Dirty rect outline color (cyan).
+    pub(super) const HUD_DIRTY_COLOR: [u8; 4] = [80, 200, 220, 255];
+}
+
+#[cfg(feature = "render")]
+use hud_layout::*;
 
 #[cfg(test)]
 mod tests {
@@ -890,5 +1107,119 @@ mod tests {
         let mut hud = DiagnosticHud::new();
         hud.update_arena_telemetry(ArenaTelemetry::from_slots(500, 250, 1));
         assert_eq!(hud.arena_telemetry().used_slots, 250);
+    }
+
+    #[cfg(feature = "render")]
+    #[test]
+    fn render_hud_emits_background_fill() {
+        let mut hud = DiagnosticHud::new();
+        hud.toggle();
+        let mut paint = PaintList::new();
+        hud.render_hud(&mut paint);
+        // The first command must be the semi-transparent background fill.
+        assert!(!paint.is_empty());
+        assert!(matches!(
+            paint.commands[0],
+            martensite_render::PaintCommand::FillRect(..)
+        ));
+    }
+
+    #[cfg(feature = "render")]
+    #[test]
+    fn render_hud_emits_histogram_bars_for_recorded_frames() {
+        let mut hud = DiagnosticHud::new();
+        hud.toggle();
+        hud.record_frame(FrameTiming {
+            total_time_ns: 16_000_000,
+            ..Default::default()
+        });
+        hud.record_frame(FrameTiming {
+            total_time_ns: 8_000_000,
+            ..Default::default()
+        });
+        let mut paint = PaintList::new();
+        hud.render_hud(&mut paint);
+        // Background + 2 bars + 1 outline = at least 4 fill/stroke rects.
+        let fills = paint
+            .commands
+            .iter()
+            .filter(|c| matches!(c, martensite_render::PaintCommand::FillRect(..)))
+            .count();
+        assert!(
+            fills >= 3,
+            "expected at least 3 FillRect commands, got {fills}"
+        );
+    }
+
+    #[cfg(feature = "render")]
+    #[test]
+    fn render_hud_emits_dirty_rect_strokes() {
+        let mut hud = DiagnosticHud::new();
+        hud.toggle();
+        hud.add_dirty_rect(Rect::new(10, 20, 30, 40));
+        let mut paint = PaintList::new();
+        hud.render_hud(&mut paint);
+        // At least one StrokeRect for the dirty rect visualization.
+        let strokes = paint
+            .commands
+            .iter()
+            .filter(|c| matches!(c, martensite_render::PaintCommand::StrokeRect(..)))
+            .count();
+        assert!(
+            strokes >= 2,
+            "expected at least 2 StrokeRect commands (outline + dirty rect), got {strokes}"
+        );
+    }
+
+    #[cfg(feature = "render")]
+    #[test]
+    fn render_hud_emits_text_commands() {
+        let mut hud = DiagnosticHud::new();
+        hud.toggle();
+        hud.update_arena_telemetry(ArenaTelemetry::from_slots(1000, 750, 2));
+        let mut paint = PaintList::new();
+        hud.render_hud(&mut paint);
+        let texts = paint
+            .commands
+            .iter()
+            .filter(|c| matches!(c, martensite_render::PaintCommand::DrawText(..)))
+            .count();
+        // Title + avg + max + arena + compactions + mem = 6 text lines.
+        assert!(
+            texts >= 6,
+            "expected at least 6 DrawText commands, got {texts}"
+        );
+        // Verify the arena telemetry text contains the slot count.
+        let has_arena_text = paint.commands.iter().any(|c| {
+            if let martensite_render::PaintCommand::DrawText(_, text, _, _) = c {
+                text.contains("arena")
+            } else {
+                false
+            }
+        });
+        assert!(has_arena_text, "expected an arena telemetry text line");
+    }
+
+    #[cfg(feature = "render")]
+    #[test]
+    fn render_hud_disabled_produces_commands_anyway() {
+        // render_hud always emits commands regardless of the enabled flag;
+        // the caller is responsible for gating on is_enabled().
+        let hud = DiagnosticHud::new();
+        assert!(!hud.is_enabled());
+        let mut paint = PaintList::new();
+        hud.render_hud(&mut paint);
+        assert!(!paint.is_empty());
+    }
+
+    #[cfg(feature = "render")]
+    #[test]
+    fn render_hud_empty_histogram_does_not_panic() {
+        let mut hud = DiagnosticHud::new();
+        hud.toggle();
+        let mut paint = PaintList::new();
+        // No frames recorded — must not divide by zero or panic.
+        hud.render_hud(&mut paint);
+        assert!(!paint.is_empty());
     }
 }

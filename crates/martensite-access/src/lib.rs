@@ -24,9 +24,9 @@ pub mod adapter;
 pub mod caret;
 /// Automated WCAG 2.2 AA/AAA accessibility evaluation and Section 508 VPAT verification.
 pub mod compliance;
-/// Live region change detection and announcement queue.
-pub mod live;
 pub mod properties;
+/// Asynchronous, batched accessibility event pump.
+pub mod pump;
 /// Incremental semantic tree synchronization.
 pub mod tree;
 pub mod winit;
@@ -40,8 +40,14 @@ pub use compliance::{
     FocusAreaCheck, Section508VpatReport, TextSize, VpatConformanceLevel, VpatCriterion,
     VpatReport, WcagLevel,
 };
-pub use live::{LiveAnnouncement, LiveRegionMonitor, POLITE_COALESCE_MS};
+// LiveRegionMonitor removed: AccessKit's platform adapters
+// (accesskit_windows, accesskit_macos, accesskit_atspi_common) emit
+// UIA_LiveRegionChanged / NSAccessibilityAnnouncementRequestedNotification /
+// AT-SPI Announcement events automatically when a node with `live` set
+// changes in a TreeUpdate. The monitor was redundant and is deleted to
+// avoid freezing an implementation detail before v1.0.
 pub use properties::AccessibilityBuilder;
+pub use pump::AsyncEventPump;
 pub use tree::{NodeFingerprint, SemanticTreeSync, TreeDiff};
 
 /// Converts a [`martensite_core::WidgetId`] to an [`accesskit::NodeId`].

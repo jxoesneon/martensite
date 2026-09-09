@@ -2,6 +2,20 @@ use crate::id::WidgetId;
 use glam::Vec2;
 
 /// Axis-aligned rectangle in 2D screen space.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::Rect;
+///
+/// let r = Rect::new(10.0, 20.0, 100.0, 50.0);
+/// assert_eq!(r.min_x(), 10.0);
+/// assert_eq!(r.min_y(), 20.0);
+/// assert_eq!(r.max_x(), 110.0);
+/// assert_eq!(r.max_y(), 70.0);
+/// assert_eq!(r.width(), 100.0);
+/// assert_eq!(r.height(), 50.0);
+/// ```
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Rect {
     /// Top-left corner position.
@@ -12,6 +26,16 @@ pub struct Rect {
 
 impl Rect {
     /// Create a rectangle from `(x, y, width, height)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::Rect;
+    ///
+    /// let r = Rect::new(0.0, 0.0, 200.0, 100.0);
+    /// assert_eq!(r.width(), 200.0);
+    /// assert_eq!(r.height(), 100.0);
+    /// ```
     #[inline(always)]
     pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
         Self {
@@ -53,6 +77,22 @@ impl Rect {
 
 bitflags::bitflags! {
     /// Bitflags tracking layout, paint, accessibility, and interaction state for a node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::NodeFlags;
+    ///
+    /// // Compose flags with bitwise-or and test membership with `contains`.
+    /// let flags = NodeFlags::VISIBLE | NodeFlags::FOCUSABLE | NodeFlags::DIRTY_LAYOUT;
+    /// assert!(flags.contains(NodeFlags::VISIBLE));
+    /// assert!(flags.contains(NodeFlags::FOCUSABLE));
+    /// assert!(!flags.contains(NodeFlags::HOVERED));
+    ///
+    /// // Flags round-trip through their bits.
+    /// let bits = flags.bits();
+    /// assert_eq!(NodeFlags::from_bits_truncate(bits), flags);
+    /// ```
     #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     pub struct NodeFlags: u32 {
         /// Layout needs recalculation.
@@ -82,6 +122,18 @@ bitflags::bitflags! {
 ///
 /// Stores the most frequently accessed fields for rendering and traversal,
 /// packed into exactly one 64-byte cache line on 64-bit platforms.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::HotNode;
+///
+/// let mut node = HotNode::new(taffy::NodeId::new(7));
+/// assert_eq!(node.depth_rank(), 0);
+/// node.set_depth_rank(3);
+/// assert_eq!(node.depth_rank(), 3);
+/// assert_eq!(node.layer_depth(), 3);
+/// ```
 #[repr(C, align(64))]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HotNode {
@@ -165,6 +217,28 @@ impl Default for HotNode {
 ///
 /// Packaged inside [`ColdNode`] to eliminate redundant text shaping passes
 /// during iterative flexbox layout probes in $O(1)$ time without locking or heap allocation.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::InlineTextCache;
+///
+/// let mut cache = InlineTextCache::new();
+/// assert!(cache.is_empty());
+///
+/// // Store a measured size for a given available width, then retrieve it.
+/// cache.put(100.0, 80.0, 20.0);
+/// assert_eq!(cache.len(), 1);
+/// assert_eq!(cache.get(100.0), Some((80.0, 20.0)));
+///
+/// // A near-miss within the 0.01px tolerance also hits the cache.
+/// assert_eq!(cache.get(100.005), Some((80.0, 20.0)));
+///
+/// // Clearing evicts all entries.
+/// cache.clear();
+/// assert!(cache.is_empty());
+/// assert_eq!(cache.get(100.0), None);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct InlineTextCache {
     /// Four inline constraint/size slots: `(width_constraint, measured_width, measured_height)`.
@@ -271,6 +345,25 @@ impl Default for InlineTextCache {
 /// Contains accessibility metadata, debug names, tooltips, and the
 /// boxed widget trait object. Stored separately from [`HotNode`] to
 /// preserve cache locality during rendering and traversal.
+///
+/// # Examples
+///
+/// ```
+/// use accesskit::Role;
+/// use martensite_core::{ColdNode, DummyWidget};
+///
+/// // Build a cold node with the builder-style `with_*` setters.
+/// let node = ColdNode::new(Box::new(DummyWidget))
+///     .with_name("counter")
+///     .with_role(Role::Label)
+///     .with_tooltip("counts clicks")
+///     .with_a11y_name("Counter");
+///
+/// assert_eq!(node.debug_name, Some("counter"));
+/// assert_eq!(node.a11y_role, Role::Label);
+/// assert_eq!(node.tooltip.as_deref(), Some("counts clicks"));
+/// assert_eq!(node.a11y_name.as_deref(), Some("Counter"));
+/// ```
 pub struct ColdNode {
     /// Optional debug name for diagnostics.
     pub debug_name: Option<&'static str>,

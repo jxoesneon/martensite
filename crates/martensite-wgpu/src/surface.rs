@@ -124,7 +124,12 @@ impl<'window> SurfaceWrapper<'window> {
         let present_mode = self.negotiate_present_mode(adapter);
 
         let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // `RENDER_ATTACHMENT` allows the surface to be used as a render
+            // pass target (e.g. by a blit pipeline). `COPY_DST` allows the CPU
+            // software rasterizer to upload its pixel buffer directly into the
+            // surface texture via `Queue::write_texture` (the TinySkia fallback
+            // path in `RenderOrchestrator::render_to_surface`).
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
             format,
             color_space: wgpu::SurfaceColorSpace::Auto,
             width,

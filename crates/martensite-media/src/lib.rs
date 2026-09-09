@@ -50,7 +50,10 @@ pub use color::{
 pub use surface::{
     ColorRange, HardwareHandle, MediaError, VideoFrameMetadata, VideoPixelFormat, VideoSurface,
 };
-pub use tonemap::{hable_tonemap_scalar, uchimura_tonemap_scalar, DisplayProfile, ToneMapOperator};
+pub use tonemap::{
+    hable_tonemap_scalar, uchimura_tonemap_scalar, DisplayCapabilities, DisplayProfile,
+    ToneMapOperator,
+};
 
 #[cfg(test)]
 mod tests {

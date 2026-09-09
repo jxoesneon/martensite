@@ -17,6 +17,11 @@ pub mod runtime;
 /// Capability-based security model and builder API.
 pub mod security;
 
-pub use ring_buffer::{PluginPaintCmd, PluginRingBuffer, RingBufferError, DEFAULT_CAPACITY};
-pub use runtime::{PluginError, PluginInstance, PluginRuntime, PluginState, DEFAULT_FUEL_BUDGET};
+pub use ring_buffer::{
+    PluginPaintCmd, PluginRingBuffer, RingBufferError, DEFAULT_CAPACITY, SHARED_HEADER_SIZE,
+};
+pub use runtime::{
+    PluginError, PluginInstance, PluginRuntime, PluginState, DEFAULT_FUEL_BUDGET,
+    RING_BUFFER_REGION_SIZE,
+};
 pub use security::{Capability, CapabilitySet, PluginBuilder};

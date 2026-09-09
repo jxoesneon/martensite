@@ -152,13 +152,16 @@ version = "0.5.8"
 [dependencies.unicode-segmentation]
 version = "1.12.0"
 
+# Dev-deps inherit the workspace-pinned versions (`criterion = "0.5"`,
+# `tiny-skia = "0.12"`) via `{ workspace = true }` to avoid pulling
+# duplicate copies into the lockfile. This crate ships no benches or
+# examples that exercise either crate directly, so the workspace feature
+# sets are sufficient.
 [dev-dependencies.criterion]
-version = "0.8.1"
-features = ["cargo_bench_support"]
-default-features = false
+workspace = true
 
 [dev-dependencies.tiny-skia]
-version = "0.11.4"
+workspace = true
 
 [lints]
 workspace = true

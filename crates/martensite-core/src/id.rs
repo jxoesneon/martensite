@@ -2,6 +2,25 @@ use std::num::NonZeroU64;
 
 /// A 64-bit copyable generational handle to a widget in the arena.
 /// Guaranteed 8-byte layout with niche optimization (`Option<WidgetId>` is 8 bytes).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::WidgetId;
+///
+/// // Pack a slot index and generation into a single 64-bit handle.
+/// let id = WidgetId::from_parts(42, 1);
+/// assert_eq!(id.slot_idx(), 42);
+/// assert_eq!(id.generation(), 1);
+///
+/// // The handle round-trips through a raw u64 and little-endian bytes.
+/// let raw = id.to_u64();
+/// assert_eq!(WidgetId::from_u64(raw), Some(id));
+/// assert_eq!(WidgetId::from_le_bytes(id.to_le_bytes()), Some(id));
+///
+/// // A zero generation is an invalid sentinel and cannot be constructed.
+/// assert_eq!(WidgetId::new(0, 0), None);
+/// ```
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WidgetId(NonZeroU64);

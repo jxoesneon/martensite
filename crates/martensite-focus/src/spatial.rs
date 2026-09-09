@@ -184,6 +184,22 @@ impl SpatialNavigator {
     ///
     /// Non-finite or negative weights are rejected; defaults are used
     /// instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::SpatialNavigator;
+    ///
+    /// // Custom weights favoring angular alignment over distance.
+    /// let nav = SpatialNavigator::with_weights(1.0, 500.0);
+    /// assert_eq!(nav.alpha(), 1.0);
+    /// assert_eq!(nav.beta(), 500.0);
+    ///
+    /// // Invalid (negative / non-finite) weights fall back to the defaults.
+    /// let bad = SpatialNavigator::with_weights(-1.0, f32::NAN);
+    /// assert_eq!(bad.alpha(), martensite_focus::DEFAULT_ALPHA);
+    /// assert_eq!(bad.beta(), martensite_focus::DEFAULT_BETA);
+    /// ```
     pub fn with_weights(alpha: f32, beta: f32) -> Self {
         let valid = |w: f32| w.is_finite() && w >= 0.0;
         Self {
@@ -806,5 +822,197 @@ mod tests {
             "angle should be ~80°, got {}",
             ang
         );
+    }
+
+    /// Irregular-grid spatial navigation: tests navigation in all 4
+    /// directions from every node of an irregular grid (varying sizes,
+    /// positions, gaps) and verifies the correct target is reached 100%
+    /// of the time. Includes edge cases: corner nodes, nodes with the
+    /// same Y but different X, and overlapping nodes.
+    #[test]
+    fn irregular_grid_all_directions_from_every_node() {
+        let mut arena = WidgetArena::new();
+
+        // Build an irregular 3x3 grid. Centers are aligned on a regular
+        // lattice (cx ∈ {50, 150, 250}, cy ∈ {50, 150, 250}) but each node
+        // has a different size, so the bounds are irregular. This makes
+        // Left/Right navigate within a row and Up/Down navigate within a
+        // column, while still exercising the scoring algorithm against
+        // off-axis candidates.
+        //
+        //  (cx, cy)  -> rect (x, y, w, h)
+        //  A(50,50,40,30)  B(150,50,30,40)  C(250,50,50,25)
+        //  D(50,150,35,45) E(150,150,45,35) F(250,150,25,50)
+        //  G(50,250,40,40) H(150,250,30,30) I(250,250,45,35)
+        let grid = [
+            // row 0
+            (50.0_f32, 50.0, 40.0, 30.0), // A
+            (150.0, 50.0, 30.0, 40.0),    // B
+            (250.0, 50.0, 50.0, 25.0),    // C
+            // row 1
+            (50.0, 150.0, 35.0, 45.0),  // D
+            (150.0, 150.0, 45.0, 35.0), // E
+            (250.0, 150.0, 25.0, 50.0), // F
+            // row 2
+            (50.0, 250.0, 40.0, 40.0),  // G
+            (150.0, 250.0, 30.0, 30.0), // H
+            (250.0, 250.0, 45.0, 35.0), // I
+        ];
+
+        let mut ids = Vec::new();
+        for &(cx, cy, w, h) in &grid {
+            let rect = Rect::new(cx - w * 0.5, cy - h * 0.5, w, h);
+            ids.push(make_focusable_node(&mut arena, rect));
+        }
+        // Index layout: ids[r*3 + c] for row r, col c.
+
+        // Add an overlapping node that shares bounds with E (center 150,150)
+        // to test the overlapping edge case. It is placed slightly offset so
+        // it has a distinct center.
+        let overlap = make_focusable_node(
+            &mut arena,
+            Rect::new(140.0, 140.0, 30.0, 30.0), // center (155, 155), overlaps E
+        );
+
+        let nav = SpatialNavigator::new();
+
+        // Helper: expected target index for (row, col, direction), or None.
+        // With aligned centers, Right/Left stay in the same row and Up/Down
+        // stay in the same column.
+        let expected = |row: usize, col: usize, dir: FocusDirection| -> Option<usize> {
+            match dir {
+                FocusDirection::Right => {
+                    if col < 2 {
+                        Some(row * 3 + col + 1)
+                    } else {
+                        None
+                    }
+                }
+                FocusDirection::Left => {
+                    if col > 0 {
+                        Some(row * 3 + col - 1)
+                    } else {
+                        None
+                    }
+                }
+                FocusDirection::Down => {
+                    if row < 2 {
+                        Some((row + 1) * 3 + col)
+                    } else {
+                        None
+                    }
+                }
+                FocusDirection::Up => {
+                    if row > 0 {
+                        Some((row - 1) * 3 + col)
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+
+        let directions = [
+            FocusDirection::Right,
+            FocusDirection::Left,
+            FocusDirection::Down,
+            FocusDirection::Up,
+        ];
+
+        let mut checked = 0usize;
+        for row in 0..3 {
+            for col in 0..3 {
+                let src = ids[row * 3 + col];
+                for &dir in &directions {
+                    let result = nav.navigate(&arena, src, dir);
+                    let want = expected(row, col, dir).map(|i| ids[i]);
+                    assert_eq!(
+                        result, want,
+                        "from grid[{}][{}] ({:?}) expected {:?}, got {:?}",
+                        row, col, dir, want, result
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        // 9 nodes × 4 directions = 36 navigation checks, all passing.
+        assert_eq!(
+            checked, 36,
+            "should have checked all 36 node-direction pairs"
+        );
+
+        // Edge case: corner nodes have no candidate in two directions.
+        // Top-left (A, row 0 col 0): Up and Left return None.
+        assert_eq!(nav.navigate(&arena, ids[0], FocusDirection::Up), None);
+        assert_eq!(nav.navigate(&arena, ids[0], FocusDirection::Left), None);
+        // Bottom-right (I, row 2 col 2): Down and Right return None.
+        assert_eq!(nav.navigate(&arena, ids[8], FocusDirection::Down), None);
+        assert_eq!(nav.navigate(&arena, ids[8], FocusDirection::Right), None);
+
+        // Edge case: nodes with the same Y but different X. From B
+        // (center 150,50), Right should reach C (center 250,50), not any
+        // node in another row, despite D/E/F having nearby X values.
+        assert_eq!(
+            nav.navigate(&arena, ids[1], FocusDirection::Right),
+            Some(ids[2])
+        );
+        // From B, Left should reach A (center 50,50).
+        assert_eq!(
+            nav.navigate(&arena, ids[1], FocusDirection::Left),
+            Some(ids[0])
+        );
+
+        // Edge case: overlapping node. From the overlap node (center
+        // 155,155), Down should reach H (center 150,250) — the most
+        // aligned downward candidate — not G or I which are farther off
+        // axis.
+        let down_from_overlap = nav.navigate(&arena, overlap, FocusDirection::Down);
+        assert_eq!(down_from_overlap, Some(ids[7])); // H
+                                                     // From the overlap, Up should reach B (center 150,50) — most
+                                                     // aligned upward.
+        let up_from_overlap = nav.navigate(&arena, overlap, FocusDirection::Up);
+        assert_eq!(up_from_overlap, Some(ids[1])); // B
+    }
+
+    /// Irregular grid with varying gaps: verifies navigation still picks
+    /// the geometrically correct target when horizontal and vertical gaps
+    /// differ between rows and columns.
+    #[test]
+    fn irregular_grid_varying_gaps() {
+        let mut arena = WidgetArena::new();
+
+        // Two rows with very different horizontal spacing. Row 0 has
+        // tight spacing (gap 30), row 1 has wide spacing (gap 120).
+        // Centers:
+        //   row 0: x=50, x=120  (gap 70 between centers)
+        //   row 1: x=50, x=250  (gap 200 between centers)
+        // Both rows at cy=50 and cy=200.
+        let a = make_focusable_node(&mut arena, Rect::new(30.0, 35.0, 40.0, 30.0)); // center (50,50)
+        let b = make_focusable_node(&mut arena, Rect::new(100.0, 35.0, 40.0, 30.0)); // center (120,50)
+        let c = make_focusable_node(&mut arena, Rect::new(30.0, 185.0, 40.0, 30.0)); // center (50,200)
+        let d = make_focusable_node(&mut arena, Rect::new(230.0, 185.0, 40.0, 30.0)); // center (250,200)
+
+        let nav = SpatialNavigator::new();
+
+        // From A, Right -> B (same row, closest to the right).
+        assert_eq!(nav.navigate(&arena, a, FocusDirection::Right), Some(b));
+        // From B, Left -> A.
+        assert_eq!(nav.navigate(&arena, b, FocusDirection::Left), Some(a));
+        // From A, Down -> C (directly below, 0° deviation).
+        assert_eq!(nav.navigate(&arena, a, FocusDirection::Down), Some(c));
+        // From B, Down -> C (center 50,200) is closer and more aligned than
+        // D (center 250,200). B center is (120,50). C center (50,200): delta
+        // (-70,150), angle from down (0,1) = atan2(70,150) ≈ 25°. D center
+        // (250,200): delta (130,150), angle from down = atan2(130,150) ≈ 41°.
+        // C is closer (dist ~165 vs ~197) and more aligned (25° vs 41°), so C
+        // wins.
+        assert_eq!(nav.navigate(&arena, b, FocusDirection::Down), Some(c));
+        // From C, Up -> A (directly above).
+        assert_eq!(nav.navigate(&arena, c, FocusDirection::Up), Some(a));
+        // From D, Up -> B (center 120,50) is more aligned than A (center
+        // 50,50). D center (250,200). B delta (-130,-150), angle from up
+        // (0,-1) = atan2(130,150) ≈ 41°. A delta (-200,-150), angle from up
+        // = atan2(200,150) ≈ 53°. B is closer and more aligned, so B wins.
+        assert_eq!(nav.navigate(&arena, d, FocusDirection::Up), Some(b));
     }
 }

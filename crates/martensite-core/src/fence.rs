@@ -19,6 +19,42 @@ pub const DEFAULT_LEASE_TIMEOUT: Duration = Duration::from_millis(500);
 ///
 /// Ensures worker threads reading immutable scene snapshots (e.g. `PaintList`) synchronize
 /// with the UI thread's memory compaction passes without blocking normal frame execution.
+///
+/// # Examples
+///
+/// Acquiring a reader lease increments the active reader count; dropping the guard
+/// decrements it back:
+///
+/// ```
+/// use martensite_core::FrameFence;
+///
+/// let fence = FrameFence::new();
+/// assert_eq!(fence.active_readers(), 0);
+/// assert_eq!(fence.epoch(), 1);
+///
+/// {
+///     let guard = fence.read();
+///     assert_eq!(fence.active_readers(), 1);
+///     assert!(guard.is_valid());
+///     assert_eq!(guard.epoch(), fence.epoch());
+/// } // guard dropped here
+///
+/// assert_eq!(fence.active_readers(), 0);
+/// ```
+///
+/// Marking compaction start/end toggles the compaction flag without affecting the epoch:
+///
+/// ```
+/// use martensite_core::FrameFence;
+///
+/// let fence = FrameFence::new();
+/// let epoch_before = fence.epoch();
+/// fence.mark_compaction_start();
+/// assert!(fence.is_compaction_in_progress());
+/// fence.mark_compaction_end();
+/// assert!(!fence.is_compaction_in_progress());
+/// assert_eq!(fence.epoch(), epoch_before);
+/// ```
 #[derive(Debug)]
 pub struct FrameFence {
     /// Combined state: high bit is the compaction-in-progress flag, low 63 bits are
@@ -228,6 +264,26 @@ impl FrameFence {
 }
 
 /// RAII reader guard ensuring reader lease registration is released upon drop.
+///
+/// # Examples
+///
+/// Disarming the guard prevents the reader count from being decremented on drop,
+/// which is useful when a compactor has already reclaimed the lease:
+///
+/// ```
+/// use martensite_core::FrameFence;
+///
+/// let fence = FrameFence::new();
+/// let mut guard = fence.read();
+/// assert_eq!(fence.active_readers(), 1);
+/// guard.dismiss();
+/// drop(guard);
+/// // `dismiss` prevented the drop handler from decrementing, so the
+/// // reader count is still 1 — the compactor is responsible for it.
+/// assert_eq!(fence.active_readers(), 1);
+/// fence.end_frame();
+/// assert_eq!(fence.active_readers(), 0);
+/// ```
 #[derive(Debug)]
 pub struct FrameGuard<'a> {
     fence: &'a FrameFence,

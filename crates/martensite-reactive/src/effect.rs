@@ -27,6 +27,36 @@ impl NodeEvaluator for EffectEvaluator {
 }
 
 /// A reactive side-effect that executes automatically whenever its tracked dependencies mutate.
+///
+/// An `Effect` runs its closure once on construction to establish its initial dependency
+/// set, then re-runs it whenever any of those dependencies change. Effects are the
+/// primary bridge between the reactive graph and the outside world (DOM updates,
+/// logging, network requests, etc.).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::{Signal, create_effect};
+/// use std::sync::atomic::{AtomicUsize, Ordering};
+/// use std::sync::Arc;
+///
+/// let count = Signal::new(0);
+/// let seen = Arc::new(AtomicUsize::new(0));
+///
+/// let seen_for_effect = seen.clone();
+/// create_effect({
+///     let count = count.clone();
+///     move || {
+///         let _ = count.get();
+///         seen_for_effect.fetch_add(1, Ordering::SeqCst);
+///     }
+/// });
+///
+/// // The effect runs once immediately on creation.
+/// assert_eq!(seen.load(Ordering::SeqCst), 1);
+/// count.set(1);
+/// assert_eq!(seen.load(Ordering::SeqCst), 2);
+/// ```
 #[derive(Clone)]
 pub struct Effect {
     /// Unique identifier for this effect node in the dependency graph.
@@ -37,12 +67,60 @@ pub struct Effect {
 
 impl Effect {
     /// Creates a new reactive side-effect in the ambient runtime and triggers initial execution.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{Effect, Signal};
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use std::sync::Arc;
+    ///
+    /// let value = Signal::new(0);
+    /// let runs = Arc::new(AtomicUsize::new(0));
+    /// let runs_for_effect = runs.clone();
+    /// let _effect = Effect::new({
+    ///     let value = value.clone();
+    ///     move || {
+    ///         let _ = value.get();
+    ///         runs_for_effect.fetch_add(1, Ordering::SeqCst);
+    ///     }
+    /// });
+    ///
+    /// assert_eq!(runs.load(Ordering::SeqCst), 1);
+    /// value.set(42);
+    /// assert_eq!(runs.load(Ordering::SeqCst), 2);
+    /// ```
     pub fn new(effect: impl FnMut() + Send + Sync + 'static) -> Self {
         let runtime = ReactiveRuntime::current();
         Self::new_with_runtime(effect, runtime)
     }
 
     /// Creates a new reactive side-effect bound explicitly to a specified runtime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{Effect, ReactiveRuntime, Signal};
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use std::sync::Arc;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let value = Signal::new_with_runtime(0, runtime.clone());
+    /// let runs = Arc::new(AtomicUsize::new(0));
+    /// let runs_for_effect = runs.clone();
+    /// let _effect = Effect::new_with_runtime(
+    ///     {
+    ///         let value = value.clone();
+    ///         move || {
+    ///             let _ = value.get();
+    ///             runs_for_effect.fetch_add(1, Ordering::SeqCst);
+    ///         }
+    ///     },
+    ///     runtime,
+    /// );
+    ///
+    /// assert_eq!(runs.load(Ordering::SeqCst), 1);
+    /// ```
     pub fn new_with_runtime(
         effect: impl FnMut() + Send + Sync + 'static,
         runtime: Arc<ReactiveRuntime>,
@@ -83,6 +161,29 @@ impl Effect {
     }
 
     /// Explicitly triggers immediate evaluation of the side-effect.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{Effect, Signal};
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use std::sync::Arc;
+    ///
+    /// let value = Signal::new(0);
+    /// let runs = Arc::new(AtomicUsize::new(0));
+    /// let runs_for_effect = runs.clone();
+    /// let effect = Effect::new({
+    ///     let value = value.clone();
+    ///     move || {
+    ///         let _ = value.get();
+    ///         runs_for_effect.fetch_add(1, Ordering::SeqCst);
+    ///     }
+    /// });
+    ///
+    /// assert_eq!(runs.load(Ordering::SeqCst), 1);
+    /// effect.run(); // manually re-run without changing a dependency
+    /// assert_eq!(runs.load(Ordering::SeqCst), 2);
+    /// ```
     pub fn run(&self) {
         if !self.is_disposed() {
             self.runtime.evaluate_node(self.id);
@@ -90,6 +191,31 @@ impl Effect {
     }
 
     /// Disposes of this effect, unlinking all dependency subscriptions and preventing future executions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{Effect, Signal};
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use std::sync::Arc;
+    ///
+    /// let value = Signal::new(0);
+    /// let runs = Arc::new(AtomicUsize::new(0));
+    /// let runs_for_effect = runs.clone();
+    /// let effect = Effect::new({
+    ///     let value = value.clone();
+    ///     move || {
+    ///         let _ = value.get();
+    ///         runs_for_effect.fetch_add(1, Ordering::SeqCst);
+    ///     }
+    /// });
+    ///
+    /// assert_eq!(runs.load(Ordering::SeqCst), 1);
+    /// effect.dispose();
+    /// assert!(effect.is_disposed());
+    /// value.set(99); // no further executions after disposal
+    /// assert_eq!(runs.load(Ordering::SeqCst), 1);
+    /// ```
     pub fn dispose(&self) {
         if !self.disposed.swap(true, Ordering::SeqCst) {
             self.runtime.unregister_node(self.id);
@@ -97,6 +223,17 @@ impl Effect {
     }
 
     /// Returns `true` if this effect has been cancelled or disposed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::Effect;
+    ///
+    /// let effect = Effect::new(|| {});
+    /// assert!(!effect.is_disposed());
+    /// effect.dispose();
+    /// assert!(effect.is_disposed());
+    /// ```
     #[inline(always)]
     pub fn is_disposed(&self) -> bool {
         self.disposed.load(Ordering::SeqCst)

@@ -10,13 +10,24 @@
 //! The [`session`] module provides [`DndSession`] and the process-wide
 //! [`DndSessionManager`]. The [`target`] module provides [`DropTarget`]
 //! registration, validation, and the drag-enter / drag-leave / drop lifecycle
-//! via [`DropTargetRegistry`].
+//! via [`DropTargetRegistry`]. The [`platform`] module provides the
+//! [`DndPlatform`] OS trait seam, capability detection,
+//! and the winit-backed backend plus an unsupported fallback. The [`bridge`]
+//! module wires incoming OS drag events to the internal model via
+//! [`DropBridge`].
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod bridge;
+pub mod platform;
 pub mod session;
 pub mod target;
 
+pub use bridge::{convert_winit_drop_event, DropBridge, DropInput, DropOutcome};
+pub use platform::{
+    DndCapabilities, DndPlatform, DndPlatformError, DragPayload, DropTypeHint, PlatformTransferId,
+    ProposedAction, UnsupportedDndPlatform, WinitDndPlatform,
+};
 pub use session::{DndSession, DndSessionManager, DndStatus, SessionId};
 pub use target::{DropEffectMask, DropTarget, DropTargetRegistry, DropTargetState, TargetId};
 

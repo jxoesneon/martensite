@@ -342,6 +342,401 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 }
 "#;
 
+/// Creates a [`wgpu::TextureView`] from an imported video texture suitable
+/// for binding in a compute or render pipeline.
+///
+/// The view covers the full mip and array range of the texture with the
+/// texture's native format.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_wgpu::interop::create_video_texture_view;
+/// use wgpu::Texture;
+///
+/// # fn example(texture: &Texture) {
+/// let view = create_video_texture_view(texture);
+/// # }
+/// ```
+#[must_use]
+pub fn create_video_texture_view(texture: &wgpu::Texture) -> wgpu::TextureView {
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// GPU compute pipeline for bi-planar YUV sampling, SMPTE ST 2084 PQ EOTF
+/// linearization, gamut conversion, and filmic tone mapping.
+///
+/// `VideoProcessor` wraps a [`wgpu::ComputePipeline`] compiled from
+/// [`MEDIA_YUV_EOTF_WGSL`] and the associated bind group layout. It provides
+/// zero-copy GPU-side color conversion for hardware-imported video surfaces.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_wgpu::interop::{VideoProcessor, VideoPipelineUniforms};
+/// use wgpu::Device;
+///
+/// # fn example(device: &Device) {
+/// let processor = VideoProcessor::new(device);
+/// assert!(processor.is_ok());
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct VideoProcessor {
+    /// The compiled compute pipeline.
+    pipeline: wgpu::ComputePipeline,
+    /// The bind group layout for the video processing dispatch.
+    bind_group_layout: wgpu::BindGroupLayout,
+}
+
+/// Errors that can occur while constructing a [`VideoProcessor`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VideoProcessorError {
+    /// The WGSL shader failed to compile on this device.
+    ShaderCompilationFailed(String),
+}
+
+impl std::fmt::Display for VideoProcessorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ShaderCompilationFailed(msg) => {
+                write!(f, "video shader compilation failed: {msg}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for VideoProcessorError {}
+
+impl VideoProcessor {
+    /// Creates a new `VideoProcessor` by compiling the YUV EOTF compute
+    /// shader and building the bind group layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VideoProcessorError::ShaderCompilationFailed`] if the WGSL
+    /// shader fails to compile on the given device.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::interop::VideoProcessor;
+    /// use wgpu::Device;
+    ///
+    /// # fn example(device: &Device) {
+    /// let processor = VideoProcessor::new(device);
+    /// assert!(processor.is_ok());
+    /// # }
+    /// ```
+    pub fn new(device: &wgpu::Device) -> Result<Self, VideoProcessorError> {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("martensite-media-yuv-eotf"),
+            source: wgpu::ShaderSource::Wgsl(MEDIA_YUV_EOTF_WGSL.into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("martensite-video-process-bgl"),
+            entries: &[
+                // binding 0: uniform buffer
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(std::num::NonZeroU64::new(256).unwrap()),
+                    },
+                    count: None,
+                },
+                // binding 1: luma texture (read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 2: chroma texture (read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 3: output storage texture (write-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("martensite-video-process-layout"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("martensite-video-process-pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
+        Ok(Self {
+            pipeline,
+            bind_group_layout,
+        })
+    }
+
+    /// Returns a reference to the bind group layout used by this processor.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::interop::VideoProcessor;
+    /// use wgpu::Device;
+    ///
+    /// # fn example(device: &Device) {
+    /// let processor = VideoProcessor::new(device).unwrap();
+    /// let bgl = processor.bind_group_layout();
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.bind_group_layout
+    }
+
+    /// Returns a reference to the compute pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::interop::VideoProcessor;
+    /// use wgpu::Device;
+    ///
+    /// # fn example(device: &Device) {
+    /// let processor = VideoProcessor::new(device).unwrap();
+    /// let _pipeline = processor.pipeline();
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.pipeline
+    }
+
+    /// Processes a video frame by dispatching the YUV EOTF compute shader.
+    ///
+    /// This method:
+    /// 1. Creates a bind group binding the Y and UV texture views, the
+    ///    uniform buffer, and the output storage texture.
+    /// 2. Records a compute pass dispatching the shader with 16×16 workgroups.
+    /// 3. Returns the output texture view.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The wgpu device used to create the bind group.
+    /// * `encoder` - The command encoder to record the compute pass into.
+    /// * `y_view` - The luma (Y) plane texture view.
+    /// * `uv_view` - The chroma (UV) plane texture view.
+    /// * `uniform_buffer` - The 256-byte aligned uniform buffer.
+    /// * `output_view` - The output storage texture view (Rgba16Float).
+    /// * `dimensions` - The video frame dimensions `(width, height)`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::interop::{VideoProcessor, VideoPipelineUniforms};
+    /// use wgpu::{Device, CommandEncoder, TextureView, Buffer};
+    ///
+    /// # fn example(
+    /// #     device: &Device,
+    /// #     encoder: &mut CommandEncoder,
+    /// #     y_view: &TextureView,
+    /// #     uv_view: &TextureView,
+    /// #     uniform_buffer: &Buffer,
+    /// #     output_view: &TextureView,
+    /// # ) {
+    /// let processor = VideoProcessor::new(device).unwrap();
+    /// processor.process_frame(
+    ///     device,
+    ///     encoder,
+    ///     y_view,
+    ///     uv_view,
+    ///     uniform_buffer,
+    ///     output_view,
+    ///     (1920, 1080),
+    /// );
+    /// # }
+    /// ```
+    #[allow(clippy::too_many_arguments)]
+    pub fn process_frame(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        y_view: &wgpu::TextureView,
+        uv_view: &wgpu::TextureView,
+        uniform_buffer: &wgpu::Buffer,
+        output_view: &wgpu::TextureView,
+        dimensions: (u32, u32),
+    ) {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("martensite-video-process-bg"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(y_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(uv_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(output_view),
+                },
+            ],
+        });
+
+        let (width, height) = dimensions;
+        let workgroup_x = width.div_ceil(16);
+        let workgroup_y = height.div_ceil(16);
+
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("martensite-video-process-pass"),
+            timestamp_writes: None,
+        });
+        compute_pass.set_pipeline(&self.pipeline);
+        compute_pass.set_bind_group(0, &bind_group, &[]);
+        compute_pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
+    }
+
+    /// Creates the output texture for a video frame of the given dimensions.
+    ///
+    /// The output texture is a `Rgba16Float` storage texture suitable for
+    /// the compute shader's `texture_storage_2d<rgba16float, write>` binding.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::interop::VideoProcessor;
+    /// use wgpu::Device;
+    ///
+    /// # fn example(device: &Device) {
+    /// let processor = VideoProcessor::new(device).unwrap();
+    /// let output = processor.create_output_texture(device, 1920, 1080);
+    /// let view = output.create_view(&wgpu::TextureViewDescriptor::default());
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn create_output_texture(
+        &self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("martensite-video-output"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+    }
+
+    /// Creates the uniform buffer for the given [`VideoPipelineUniforms`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::interop::{VideoProcessor, VideoPipelineUniforms};
+    /// use wgpu::Device;
+    ///
+    /// # fn example(device: &Device) {
+    /// let processor = VideoProcessor::new(device).unwrap();
+    /// let uniforms = VideoPipelineUniforms::new_bt709_sdr();
+    /// let buffer = processor.create_uniform_buffer(device, &uniforms);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn create_uniform_buffer(
+        &self,
+        device: &wgpu::Device,
+        uniforms: &VideoPipelineUniforms,
+    ) -> wgpu::Buffer {
+        wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("martensite-video-uniforms"),
+                contents: uniforms.as_bytes(),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            },
+        )
+    }
+}
+
+/// Re-exports from `martensite-media-platform` for external memory import.
+///
+/// These functions provide zero-copy hardware surface import on supported
+/// platforms. See the `martensite-media-platform` crate for details.
+pub mod platform_import {
+    /// Imports an external hardware surface handle into a `wgpu::Texture`.
+    ///
+    /// See [`martensite_media_platform::import_external_texture`] for details.
+    pub fn import_external_texture(
+        device: &wgpu::Device,
+        handle: &martensite_media::surface::HardwareHandle,
+        desc: &martensite_media_platform::ImportTextureDescriptor,
+    ) -> Result<wgpu::Texture, martensite_media::surface::MediaError> {
+        martensite_media_platform::import_external_texture(device, handle, desc)
+    }
+
+    /// Imports CPU memory plane data into a `wgpu::Texture` by uploading
+    /// through the device queue.
+    ///
+    /// See [`martensite_media_platform::import_cpu_memory`] for details.
+    pub fn import_cpu_memory(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        handle: &martensite_media::surface::HardwareHandle,
+        desc: &martensite_media_platform::ImportTextureDescriptor,
+    ) -> Result<wgpu::Texture, martensite_media::surface::MediaError> {
+        martensite_media_platform::import_cpu_memory(device, queue, handle, desc)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +759,39 @@ mod tests {
         let (y10, uv10) = FormatNegotiator::negotiate_plane_formats(VideoPixelFormat::P010);
         assert_eq!(y10, wgpu::TextureFormat::R16Unorm);
         assert_eq!(uv10, Some(wgpu::TextureFormat::Rg16Unorm));
+    }
+
+    #[test]
+    fn video_processor_error_display() {
+        let err = VideoProcessorError::ShaderCompilationFailed("test error".to_string());
+        assert!(err.to_string().contains("test error"));
+        assert!(err.to_string().contains("shader compilation failed"));
+    }
+
+    #[test]
+    fn wgsl_shader_contains_compute_entry() {
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("@compute"));
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("@workgroup_size(16, 16)"));
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("fn main("));
+    }
+
+    #[test]
+    fn wgsl_shader_has_all_bindings() {
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("@binding(0)"));
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("@binding(1)"));
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("@binding(2)"));
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("@binding(3)"));
+    }
+
+    #[test]
+    fn wgsl_shader_has_pq_eotf() {
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("fn pq_eotf"));
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("0.1593017578125"));
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("78.84375"));
+    }
+
+    #[test]
+    fn wgsl_shader_has_hable_tonemap() {
+        assert!(MEDIA_YUV_EOTF_WGSL.contains("fn hable_f"));
     }
 }

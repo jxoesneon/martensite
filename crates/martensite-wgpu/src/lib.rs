@@ -33,15 +33,24 @@ pub mod orchestrator;
 pub mod resilience;
 /// Surface and swapchain management.
 pub mod surface;
+/// GPU theme-transition render pipeline (compiles the theme WGSL shader).
+pub mod theme_transition;
 
 pub use device::{GpuContext, GpuContextError};
-pub use interop::{FormatNegotiator, VideoPipelineUniforms, MEDIA_YUV_EOTF_WGSL};
+pub use interop::{
+    create_video_texture_view, FormatNegotiator, VideoPipelineUniforms, VideoProcessor,
+    VideoProcessorError, MEDIA_YUV_EOTF_WGSL,
+};
 pub use orchestrator::{OrchestratorConfig, OrchestratorError, RenderMode, RenderOrchestrator};
 pub use resilience::{
-    backoff_duration, DeviceStatus, RecoveryMachine, SurfaceError, DEFAULT_FALLBACK_THRESHOLD,
-    DEFAULT_MAX_RETRIES, RECOVERY_BUDGET,
+    backoff_duration, DeviceStatus, RecoveryError, RecoveryHarness, RecoveryMachine,
+    RecoveryOutcome, SurfaceError, DEFAULT_FALLBACK_THRESHOLD, DEFAULT_MAX_RETRIES,
+    RECOVERY_BUDGET,
 };
 pub use surface::{SurfaceWrapper, SurfaceWrapperError};
+pub use theme_transition::{
+    render_theme_transition, ThemeTransitionError, ThemeTransitionPipeline, THEME_UNIFORM_SIZE,
+};
 pub use wgpu;
 
 #[cfg(test)]

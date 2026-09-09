@@ -27,6 +27,9 @@ pub mod cache;
 pub mod cascade;
 /// Font system abstraction: `FontManager`, `FontId`, `FontSource`.
 pub mod font;
+/// Grapheme cluster break evaluation (UAX #29) for cursor positioning
+/// and text selection.
+pub mod grapheme;
 /// Velocity-damped kinetic IME candidate positioning.
 pub mod ime;
 /// Unicode line breaking (UAX #14) and Kinsoku Shori.
@@ -42,11 +45,15 @@ pub use cache::{
     ShapeCacheKey, TextHash, TextShapeCache, WritingModeBits, DEFAULT_MEMORY_BUDGET,
 };
 pub use cascade::{
-    classify_script, FallbackKey, FontFallbackCache, FontFallbackChain,
-    InstalledFontFallbackResolver, PlatformCascadeResolver, ScriptTag,
+    classify_script, FallbackDecisionCache, FallbackKey, FontFallbackCache, FontFallbackChain,
+    FontFallbackProvider, InstalledFontFallbackResolver, PlatformCascadeResolver, ScriptTag,
 };
 pub use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 pub use font::{FontFaceInfo, FontId, FontManager, FontSource, FontStyle};
+pub use grapheme::{
+    grapheme_at, grapheme_boundary_before, grapheme_byte_offset, grapheme_clusters, grapheme_count,
+    next_grapheme_boundary, prev_grapheme_boundary, GraphemeBreaker,
+};
 pub use ime::{ImePositioner, ScrollKinematics, Viewport};
 pub use line_break::{BreakOpportunity, LineBreaker};
 pub use shaping::{

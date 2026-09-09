@@ -1,4 +1,21 @@
 //! Core memory arena, widget traits, and scene graph for Martensite.
+//!
+//! # Examples
+//!
+//! Building a small scene graph from hot/cold nodes and traversing it:
+//!
+//! ```
+//! use martensite_core::{ColdNode, DummyWidget, HotNode, WidgetArena};
+//!
+//! let mut arena = WidgetArena::new();
+//! let parent = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+//! let child = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+//! arena.append_child(parent, child).unwrap();
+//!
+//! assert_eq!(arena.len(), 2);
+//! assert!(arena.is_alive(parent));
+//! assert_eq!(arena.children(parent).count(), 1);
+//! ```
 #![forbid(unsafe_code)]
 
 /// Generational slot-map arena for widget storage.

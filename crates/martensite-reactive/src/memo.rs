@@ -33,6 +33,27 @@ impl<T: Send + Sync + 'static> NodeEvaluator for MemoEvaluator<T> {
 }
 
 /// A derived reactive node that lazily evaluates and caches a synchronous pure function.
+///
+/// A `Memo` re-runs its evaluator only when one of the signals it read during its last
+/// evaluation changes, and it caches the result so that repeated reads are cheap.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::{Signal, create_memo};
+///
+/// let width = Signal::new(4);
+/// let height = Signal::new(6);
+/// let area = create_memo({
+///     let width = width.clone();
+///     let height = height.clone();
+///     move || width.get() * height.get()
+/// });
+///
+/// assert_eq!(area.get(), 24);
+/// width.set(10);
+/// assert_eq!(area.get(), 60);
+/// ```
 pub struct Memo<T: 'static> {
     /// Unique identifier for this memo node in the dependency graph.
     pub id: SignalId,
@@ -54,12 +75,49 @@ impl<T: 'static> Clone for Memo<T> {
 
 impl<T: Send + Sync + 'static> Memo<T> {
     /// Creates a new `Memo` bound to the ambient reactive runtime and establishes initial dependencies.
+    ///
+    /// The evaluator runs once immediately to record its initial dependency set and cache
+    /// the first value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{Memo, Signal};
+    ///
+    /// let base = Signal::new(2i32);
+    /// let squared = Memo::new({
+    ///     let base = base.clone();
+    ///     move || base.get().pow(2)
+    /// });
+    ///
+    /// assert_eq!(squared.get(), 4);
+    /// base.set(9);
+    /// assert_eq!(squared.get(), 81);
+    /// ```
     pub fn new(eval: impl Fn() -> T + Send + Sync + 'static) -> Self {
         let runtime = ReactiveRuntime::current();
         Self::new_with_runtime(eval, runtime)
     }
 
     /// Creates a new `Memo` bound to a specified `ReactiveRuntime`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{Memo, ReactiveRuntime, Signal};
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let value = Signal::new_with_runtime(3, runtime.clone());
+    /// let doubled = Memo::new_with_runtime(
+    ///     {
+    ///         let value = value.clone();
+    ///         move || value.get() * 2
+    ///     },
+    ///     runtime,
+    /// );
+    ///
+    /// assert_eq!(doubled.get(), 6);
+    /// ```
     pub fn new_with_runtime(
         eval: impl Fn() -> T + Send + Sync + 'static,
         runtime: Arc<ReactiveRuntime>,
@@ -112,6 +170,24 @@ impl<T: Send + Sync + 'static> Memo<T> {
 impl<T: Clone + Send + Sync + 'static> Memo<T> {
     /// Reads the cached value, evaluating if dirty and registering this memo as a dependency
     /// to any actively evaluating ancestor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{Signal, create_memo};
+    ///
+    /// let a = Signal::new(1);
+    /// let b = Signal::new(2);
+    /// let total = create_memo({
+    ///     let a = a.clone();
+    ///     let b = b.clone();
+    ///     move || a.get() + b.get()
+    /// });
+    ///
+    /// assert_eq!(total.get(), 3);
+    /// a.set(10);
+    /// assert_eq!(total.get(), 12);
+    /// ```
     pub fn get(&self) -> T {
         self.runtime.track_read(self.id);
         self.ensure_clean();
@@ -124,6 +200,22 @@ impl<T: Clone + Send + Sync + 'static> Memo<T> {
     }
 
     /// Reads the cached value without registering a dependency edge.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{Signal, create_memo};
+    ///
+    /// let a = Signal::new(5);
+    /// let snapshot = create_memo({
+    ///     let a = a.clone();
+    ///     move || a.get()
+    /// });
+    ///
+    /// // Read the current cached value without subscribing.
+    /// let first = snapshot.get_untracked();
+    /// assert_eq!(first, 5);
+    /// ```
     pub fn get_untracked(&self) -> T {
         self.ensure_clean();
         let guard = self.inner.read();

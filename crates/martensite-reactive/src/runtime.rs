@@ -22,12 +22,49 @@ thread_local! {
 static GLOBAL_RUNTIME: OnceLock<Arc<ReactiveRuntime>> = OnceLock::new();
 
 /// Trait for dynamic reactive node evaluation.
+///
+/// Implementors are stored inside the scheduler as trait objects and invoked during
+/// Phase 2 topological evaluation. [`Memo`] and [`Effect`]
+/// provide their own implementations; custom reactive nodes can plug in here.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::{NodeEvaluator, ReactiveRuntime, SignalId};
+/// use std::sync::Arc;
+///
+/// struct Counter {
+///     count: std::sync::atomic::AtomicU32,
+/// }
+///
+/// impl NodeEvaluator for Counter {
+///     fn evaluate(&self) -> bool {
+///         let prev = self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+///         // Report "changed" whenever the counter actually advanced.
+///         prev != self.count.load(std::sync::atomic::Ordering::SeqCst)
+///     }
+/// }
+///
+/// let runtime = ReactiveRuntime::new();
+/// let id = SignalId::next();
+/// runtime.register_derived(id, Arc::new(Counter { count: 0.into() }));
+/// assert!(runtime.evaluate_node(id));
+/// ```
 pub trait NodeEvaluator: Send + Sync {
     /// Evaluates the node and returns `true` if the derived value changed.
     fn evaluate(&self) -> bool;
 }
 
 /// Runtime errors captured during signal DAG operations and cycle detection.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::{ReactiveError, SignalId};
+///
+/// let err = ReactiveError::PoisonedNode(SignalId::next());
+/// assert!(err.to_string().contains("poisoned"));
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReactiveError {
     /// A cyclic dependency was detected and isolated.
@@ -48,6 +85,28 @@ impl std::fmt::Display for ReactiveError {
 impl std::error::Error for ReactiveError {}
 
 /// Central reactive engine coordinating signal storage, topological scheduling, and transactional batches.
+///
+/// A `ReactiveRuntime` owns the scheduler DAG and the batch transaction depth. Most
+/// applications use the ambient runtime via [`Signal::new`](crate::Signal::new) and the
+/// `create_*` free functions, but constructing a dedicated runtime is useful for tests
+/// and for isolating independent reactive graphs.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::ReactiveRuntime;
+///
+/// let runtime = ReactiveRuntime::new();
+/// let count = runtime.create_signal(0);
+/// let doubled = runtime.create_memo({
+///     let count = count.clone();
+///     move || count.get() * 2
+/// });
+///
+/// assert_eq!(doubled.get(), 0);
+/// count.set(5);
+/// assert_eq!(doubled.get(), 10);
+/// ```
 pub struct ReactiveRuntime {
     state: Mutex<SchedulerState>,
     batch_depth: AtomicUsize,
@@ -64,11 +123,33 @@ impl Default for ReactiveRuntime {
 
 impl ReactiveRuntime {
     /// Creates a new, isolated reactive runtime wrapped in an `Arc`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let signal = runtime.create_signal(true);
+    /// assert_eq!(signal.get_untracked(), true);
+    /// ```
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
     /// Returns the current thread's ambient runtime, falling back to the global singleton.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    /// use std::sync::Arc;
+    ///
+    /// // The ambient runtime is lazily initialized on first access.
+    /// let a = ReactiveRuntime::current();
+    /// let b = ReactiveRuntime::current();
+    /// assert!(Arc::ptr_eq(&a, &b), "repeated calls return the same singleton");
+    /// ```
     pub fn current() -> Arc<Self> {
         AMBIENT_RUNTIME.with(|ambient| {
             if let Some(rt) = ambient.borrow().as_ref() {
@@ -79,6 +160,17 @@ impl ReactiveRuntime {
     }
 
     /// Overrides the thread-local ambient runtime with the specified instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    /// use std::sync::Arc;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// ReactiveRuntime::set_current(&runtime);
+    /// assert!(Arc::ptr_eq(&ReactiveRuntime::current(), &runtime));
+    /// ```
     pub fn set_current(runtime: &Arc<Self>) {
         AMBIENT_RUNTIME.with(|ambient| {
             *ambient.borrow_mut() = Some(Arc::clone(runtime));
@@ -86,6 +178,26 @@ impl ReactiveRuntime {
     }
 
     /// Executes a closure within the scope of a specified ambient runtime.
+    ///
+    /// The previous ambient runtime is restored when the closure returns or unwinds,
+    /// making this safe for nested scopes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{ReactiveRuntime, Signal};
+    ///
+    /// let isolated = ReactiveRuntime::new();
+    /// let outer = Signal::new(0);
+    ///
+    /// ReactiveRuntime::with_current(&isolated, || {
+    ///     let inner = Signal::new(99);
+    ///     assert_eq!(inner.get_untracked(), 99);
+    /// });
+    ///
+    /// // Back in the outer ambient runtime.
+    /// assert_eq!(outer.get_untracked(), 0);
+    /// ```
     pub fn with_current<R>(runtime: &Arc<Self>, f: impl FnOnce() -> R) -> R {
         let prev =
             AMBIENT_RUNTIME.with(|ambient| ambient.borrow_mut().replace(Arc::clone(runtime)));
@@ -102,11 +214,36 @@ impl ReactiveRuntime {
     }
 
     /// Creates a new state signal bound to this runtime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let greeting = runtime.create_signal(String::from("hi"));
+    /// assert_eq!(greeting.get_untracked(), "hi");
+    /// ```
     pub fn create_signal<T: Send + Sync + 'static>(self: &Arc<Self>, initial: T) -> Signal<T> {
         Signal::new_with_runtime(initial, Arc::clone(self))
     }
 
     /// Creates a new derived memo node bound to this runtime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let base = runtime.create_signal(3);
+    /// let next = runtime.create_memo({
+    ///     let base = base.clone();
+    ///     move || base.get() + 1
+    /// });
+    ///
+    /// assert_eq!(next.get(), 4);
+    /// ```
     pub fn create_memo<T: Send + Sync + 'static>(
         self: &Arc<Self>,
         eval: impl Fn() -> T + Send + Sync + 'static,
@@ -115,6 +252,28 @@ impl ReactiveRuntime {
     }
 
     /// Creates a new reactive side-effect bound to this runtime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use std::sync::Arc;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let value = runtime.create_signal(0);
+    /// let runs = Arc::new(AtomicUsize::new(0));
+    /// let runs_for_effect = runs.clone();
+    /// let _effect = runtime.create_effect({
+    ///     let value = value.clone();
+    ///     move || {
+    ///         let _ = value.get();
+    ///         runs_for_effect.fetch_add(1, Ordering::SeqCst);
+    ///     }
+    /// });
+    ///
+    /// assert_eq!(runs.load(Ordering::SeqCst), 1);
+    /// ```
     pub fn create_effect(self: &Arc<Self>, effect: impl FnMut() + Send + Sync + 'static) -> Effect {
         Effect::new_with_runtime(effect, Arc::clone(self))
     }
@@ -372,6 +531,38 @@ impl ReactiveRuntime {
     /// Coalesces dirty notifications across a transactional batch closure.
     ///
     /// Phase 2 topological evaluation executes exactly once when the outermost batch completes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use std::sync::Arc;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let a = runtime.create_signal(1);
+    /// let b = runtime.create_signal(1);
+    /// let runs = Arc::new(AtomicUsize::new(0));
+    /// let runs_for_effect = runs.clone();
+    /// runtime.create_effect({
+    ///     let a = a.clone();
+    ///     let b = b.clone();
+    ///     move || {
+    ///         let _ = (a.get(), b.get());
+    ///         runs_for_effect.fetch_add(1, Ordering::SeqCst);
+    ///     }
+    /// });
+    ///
+    /// let before = runs.load(Ordering::SeqCst);
+    /// runtime.batch(|| {
+    ///     a.set(10);
+    ///     b.set(20);
+    ///     // Effect has not run yet inside the batch.
+    ///     assert_eq!(runs.load(Ordering::SeqCst), before);
+    /// });
+    /// // A single coalesced execution after the batch completes.
+    /// assert_eq!(runs.load(Ordering::SeqCst), before + 1);
+    /// ```
     pub fn batch<R>(&self, f: impl FnOnce() -> R) -> R {
         self.begin_batch();
         struct BatchGuard<'a>(&'a ReactiveRuntime);
@@ -387,6 +578,35 @@ impl ReactiveRuntime {
     }
 
     /// Phase 2: Pull and evaluate all pending dirty nodes in strictly ascending topological depth rank order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use std::sync::Arc;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let value = runtime.create_signal(0);
+    /// let runs = Arc::new(AtomicUsize::new(0));
+    /// let runs_for_effect = runs.clone();
+    /// runtime.create_effect({
+    ///     let value = value.clone();
+    ///     move || {
+    ///         let _ = value.get();
+    ///         runs_for_effect.fetch_add(1, Ordering::SeqCst);
+    ///     }
+    /// });
+    ///
+    /// let before = runs.load(Ordering::SeqCst);
+    /// // Enter a batch so writes are deferred, then flush on exit.
+    /// runtime.batch(|| {
+    ///     value.set(7);
+    /// });
+    /// // The batch already flushed on exit; calling flush again is a no-op.
+    /// runtime.flush();
+    /// assert_eq!(runs.load(Ordering::SeqCst), before + 1);
+    /// ```
     pub fn flush(&self) {
         loop {
             let next = {
@@ -405,27 +625,94 @@ impl ReactiveRuntime {
     }
 
     /// Runs full 3-color DFS cycle detection over the reactive graph.
+    ///
+    /// Returns `Ok(())` when the graph is acyclic, or the first detected
+    /// [`CycleError`] otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let _signal = runtime.create_signal(1);
+    /// // An acyclic graph reports no cycles.
+    /// assert!(runtime.detect_cycles().is_ok());
+    /// ```
     pub fn detect_cycles(&self) -> Result<(), CycleError> {
         self.state.lock().detect_cycles()
     }
 
     /// Returns a copy of all accumulated errors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let _signal = runtime.create_signal(1);
+    /// // A healthy graph accumulates no errors.
+    /// assert!(runtime.errors().is_empty());
+    /// ```
     pub fn errors(&self) -> Vec<ReactiveError> {
         self.state.lock().errors.clone()
     }
 
     /// Clears the accumulated error log.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// runtime.clear_errors();
+    /// assert!(runtime.errors().is_empty());
+    /// ```
     pub fn clear_errors(&self) {
         self.state.lock().errors.clear();
     }
 }
 
 /// Creates a new state signal bound to the ambient runtime.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::{create_signal, create_memo};
+///
+/// let count = create_signal(0);
+/// let next = create_memo({
+///     let count = count.clone();
+///     move || count.get() + 1
+/// });
+///
+/// assert_eq!(next.get(), 1);
+/// count.set(9);
+/// assert_eq!(next.get(), 10);
+/// ```
 pub fn create_signal<T: Send + Sync + 'static>(initial: T) -> Signal<T> {
     ReactiveRuntime::current().create_signal(initial)
 }
 
 /// Creates a new derived memo bound to the ambient runtime.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::{create_memo, create_signal};
+///
+/// let a = create_signal(2);
+/// let b = create_signal(3);
+/// let sum = create_memo({
+///     let a = a.clone();
+///     let b = b.clone();
+///     move || a.get() + b.get()
+/// });
+///
+/// assert_eq!(sum.get(), 5);
+/// ```
 pub fn create_memo<T: Send + Sync + 'static>(
     eval: impl Fn() -> T + Send + Sync + 'static,
 ) -> Memo<T> {
@@ -433,16 +720,94 @@ pub fn create_memo<T: Send + Sync + 'static>(
 }
 
 /// Creates a new reactive side-effect bound to the ambient runtime.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::{create_effect, create_signal};
+/// use std::sync::atomic::{AtomicUsize, Ordering};
+/// use std::sync::Arc;
+///
+/// let value = create_signal(0);
+/// let runs = Arc::new(AtomicUsize::new(0));
+/// let runs_for_effect = runs.clone();
+/// create_effect({
+///     let value = value.clone();
+///     move || {
+///         let _ = value.get();
+///         runs_for_effect.fetch_add(1, Ordering::SeqCst);
+///     }
+/// });
+///
+/// assert_eq!(runs.load(Ordering::SeqCst), 1);
+/// value.set(1);
+/// assert_eq!(runs.load(Ordering::SeqCst), 2);
+/// ```
 pub fn create_effect(effect: impl FnMut() + Send + Sync + 'static) -> Effect {
     ReactiveRuntime::current().create_effect(effect)
 }
 
 /// Coalesces state updates across a transactional batch closure.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::{batch, create_effect, create_signal};
+/// use std::sync::atomic::{AtomicUsize, Ordering};
+/// use std::sync::Arc;
+///
+/// let a = create_signal(1);
+/// let b = create_signal(1);
+/// let runs = Arc::new(AtomicUsize::new(0));
+/// let runs_for_effect = runs.clone();
+/// create_effect({
+///     let a = a.clone();
+///     let b = b.clone();
+///     move || {
+///         let _ = (a.get(), b.get());
+///         runs_for_effect.fetch_add(1, Ordering::SeqCst);
+///     }
+/// });
+///
+/// let before = runs.load(Ordering::SeqCst);
+/// batch(|| {
+///     a.set(10);
+///     b.set(20);
+///     // No execution yet inside the batch.
+///     assert_eq!(runs.load(Ordering::SeqCst), before);
+/// });
+/// // Exactly one coalesced execution after the batch.
+/// assert_eq!(runs.load(Ordering::SeqCst), before + 1);
+/// ```
 pub fn batch<R>(f: impl FnOnce() -> R) -> R {
     ReactiveRuntime::current().batch(f)
 }
 
 /// Flushes all pending dirty nodes in the ambient runtime.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::{batch, create_effect, create_signal, flush};
+/// use std::sync::atomic::{AtomicUsize, Ordering};
+/// use std::sync::Arc;
+///
+/// let value = create_signal(0);
+/// let runs = Arc::new(AtomicUsize::new(0));
+/// let runs_for_effect = runs.clone();
+/// create_effect({
+///     let value = value.clone();
+///     move || {
+///         let _ = value.get();
+///         runs_for_effect.fetch_add(1, Ordering::SeqCst);
+///     }
+/// });
+///
+/// let before = runs.load(Ordering::SeqCst);
+/// batch(|| value.set(42));
+/// flush(); // no-op here, the batch already flushed on exit
+/// assert_eq!(runs.load(Ordering::SeqCst), before + 1);
+/// ```
 pub fn flush() {
     ReactiveRuntime::current().flush();
 }

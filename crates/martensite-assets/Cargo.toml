@@ -15,9 +15,12 @@ readme = "README.md"
 [dependencies]
 martensite-core = { workspace = true }
 naga = { workspace = true }
+tracing = { workspace = true }
 # File watching for Disk backend (optional, only needed in debug/dev)
 notify = { workspace = true, optional = true }
 parking_lot = { workspace = true, optional = true }
+# Reactive signal integration for VFS invalidation (optional)
+martensite-reactive = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3.27"
@@ -25,6 +28,10 @@ tempfile = "3.27"
 [features]
 default = ["disk"]
 disk = ["dep:notify", "dep:parking_lot"]
+# Enables `ReactiveVfsWatcher`, which wraps `DiskVfs` and emits a reactive
+# `Signal<u64>` version counter when files change. Requires the `disk`
+# feature.
+reactive = ["dep:martensite-reactive", "disk"]
 
 [lints]
 workspace = true

@@ -7,6 +7,26 @@
 //! - Reflection metadata ([`ShaderReflection`]) describing entry points and
 //!   resource bindings, suitable for driving pipeline layout creation.
 //!
+//! # Reflection backend: naga (replaces spirv-cross)
+//!
+//! The original milestone v0.7.0 spec called for `spirv-cross` reflection.
+//! Martensite uses [`naga`] instead because:
+//!
+//! - **Cross-platform without a C++ build dependency:** `spirv-cross` is a
+//!   C++ library that requires a native compiler toolchain on every target,
+//!   complicating cross-compilation and CI. `naga` is pure Rust, building
+//!   everywhere `cargo` does with no extra toolchain.
+//! - **Equivalent reflection:** `naga` validates and reflects WGSL (and
+//!   SPIR-V) modules, exposing entry points, workgroup sizes, and resource
+//!   bindings (`@group`/`@binding`) with the same information
+//!   `spirv-cross` would provide for pipeline-layout creation.
+//! - **Single source of truth:** WGSL is Martensite's shader authoring
+//!   language, so reflecting it directly via `naga` avoids a WGSL→SPIR-V→reflect
+//!   round-trip.
+//!
+//! No `spirv-cross` dependency is added. This decision is documented in the
+//! milestone v0.7.0 spec.
+//!
 //! # Examples
 //!
 //! ```

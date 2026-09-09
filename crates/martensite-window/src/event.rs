@@ -381,6 +381,18 @@ impl MouseTracker {
 ///   pointer missed every widget, or no widget is hovered for a scroll).
 /// - [`EventDispatchOutcome::Ignored`] — the event had no applicable target
 ///   (e.g. a keyboard event with no focused widget).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::WidgetId;
+/// use martensite_window::event::EventDispatchOutcome;
+///
+/// let widget = WidgetId::from_parts(1, 1);
+/// assert_eq!(EventDispatchOutcome::Handled(widget), EventDispatchOutcome::Handled(widget));
+/// assert_ne!(EventDispatchOutcome::Handled(widget), EventDispatchOutcome::Unhandled);
+/// assert_ne!(EventDispatchOutcome::Unhandled, EventDispatchOutcome::Ignored);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EventDispatchOutcome {
     /// The event was handled by the given widget.
@@ -692,6 +704,19 @@ pub fn convert_modifiers(modifiers: &winit::event::Modifiers) -> ModifierKeys {
 ///
 /// [`ModifiersState`]: winit::keyboard::ModifiersState
 /// [`Modifiers`]: winit::event::Modifiers
+///
+/// # Examples
+///
+/// ```
+/// use martensite_window::event::{convert_modifiers_state, ModifierKeys};
+/// use winit::keyboard::ModifiersState;
+///
+/// let state = ModifiersState::SHIFT | ModifiersState::ALT;
+/// let keys = convert_modifiers_state(&state);
+/// assert!(keys.contains(ModifierKeys::SHIFT));
+/// assert!(keys.contains(ModifierKeys::ALT));
+/// assert!(!keys.contains(ModifierKeys::CONTROL));
+/// ```
 #[must_use]
 pub fn convert_modifiers_state(state: &winit::keyboard::ModifiersState) -> ModifierKeys {
     let mut keys = ModifierKeys::empty();
@@ -790,6 +815,201 @@ pub fn convert_window_event(event: &WindowEvent, scale: &DpiScale) -> Option<Poi
             })
         }
         _ => None,
+    }
+}
+
+/// The OS-proposed action for an incoming drag, mapped onto the common
+/// [`DropAction`] set where possible.
+///
+/// `Ask` and `Private` have no [`DropAction`] equivalent (they are
+/// platform-specific) and are preserved verbatim so callers can round-trip
+/// them back to the OS.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_window::event::DropAction;
+///
+/// // `None` is the default when the OS proposes no action.
+/// assert_eq!(DropAction::default(), DropAction::None);
+/// assert_ne!(DropAction::Copy, DropAction::Move);
+/// assert_ne!(DropAction::Link, DropAction::Ask);
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum DropAction {
+    /// No action proposed by the OS.
+    #[default]
+    None,
+    /// Copy the data.
+    Copy,
+    /// Move the data.
+    Move,
+    /// Link the data.
+    Link,
+    /// Ask the user what to do (platform-specific).
+    Ask,
+    /// Private source/destination negotiation (macOS).
+    Private,
+}
+
+/// A normalized drag-and-drop event, independent of winit.
+///
+/// All positions are in **logical** coordinates (already divided by the
+/// window's DPI scale factor). This mirrors winit 0.31's `DragEntered` /
+/// `DragPosition` / `DragDropped` / `DragLeft` events, which replaced the
+/// legacy `DroppedFile` / `HoveredFile` / `HoveredFileCancelled` events from
+/// earlier winit versions.
+///
+/// `convert_drop_event` produces these from a winit `WindowEvent`. Note that
+/// winit's `DragEntered`/`DragPosition`/`DragDropped` events do **not** embed
+/// the list of MIME types advertised by the source; that must be fetched
+/// separately via the winit `ActiveEventLoop` data-transfer API (see the
+/// `martensite-dnd` `DndPlatform` seam). [`DropEvent`] therefore carries no
+/// type list — the caller correlates it with the platform-fetched types.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_window::dpi::DpiScale;
+/// use martensite_window::event::{convert_drop_event, DropEvent};
+/// use winit::data_transfer::DataTransferId;
+/// use winit::dpi::PhysicalPosition;
+/// use winit::event::WindowEvent;
+///
+/// let scale = DpiScale::new(2.0);
+/// let event = WindowEvent::DragPosition {
+///     id: DataTransferId::from_raw(7),
+///     position: PhysicalPosition::new(100.0, 200.0),
+///     proposed_action: None,
+/// };
+/// let drop = convert_drop_event(&event, &scale).expect("drag position converts");
+/// assert_eq!(drop.position(), Some(glam::Vec2::new(50.0, 100.0)));
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum DropEvent {
+    /// A drag operation entered the window. `position` may be `None` on
+    /// platforms that do not report it on enter.
+    Entered {
+        /// Logical position of the drag, if reported.
+        position: Option<Vec2>,
+        /// OS-proposed action (often `None` on enter).
+        action: DropAction,
+    },
+    /// The drag moved within the window.
+    Moved {
+        /// Logical position of the drag.
+        position: Vec2,
+        /// OS-proposed action.
+        action: DropAction,
+    },
+    /// The drag was dropped on the window. winit does not report a position
+    /// for the drop; use the last position from `Entered`/`Moved`.
+    Dropped {
+        /// OS-proposed action.
+        action: DropAction,
+    },
+    /// The drag left the window or was canceled.
+    Left,
+}
+
+impl DropEvent {
+    /// Returns the logical position carried by this event, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_window::event::{DropAction, DropEvent};
+    ///
+    /// let e = DropEvent::Moved {
+    ///     position: glam::Vec2::new(1.0, 2.0),
+    ///     action: DropAction::Copy,
+    /// };
+    /// assert_eq!(e.position(), Some(glam::Vec2::new(1.0, 2.0)));
+    /// assert!(DropEvent::Left.position().is_none());
+    /// ```
+    #[must_use]
+    pub fn position(&self) -> Option<Vec2> {
+        match self {
+            DropEvent::Entered { position, .. } => *position,
+            DropEvent::Moved { position, .. } => Some(*position),
+            DropEvent::Dropped { .. } | DropEvent::Left => None,
+        }
+    }
+}
+
+/// Converts a winit [`WindowEvent`] into a normalized [`DropEvent`].
+///
+/// The following winit variants produce a [`DropEvent`]:
+///
+/// - [`WindowEvent::DragEntered`] → [`DropEvent::Entered`]
+/// - [`WindowEvent::DragPosition`] → [`DropEvent::Moved`]
+/// - [`WindowEvent::DragDropped`] → [`DropEvent::Dropped`]
+/// - [`WindowEvent::DragLeft`] → [`DropEvent::Left`]
+///
+/// All other variants return `None`. Physical coordinates from winit are
+/// converted to logical coordinates using `scale`.
+///
+/// [`WindowEvent::DragEntered`]: winit::event::WindowEvent::DragEntered
+/// [`WindowEvent::DragPosition`]: winit::event::WindowEvent::DragPosition
+/// [`WindowEvent::DragDropped`]: winit::event::WindowEvent::DragDropped
+/// [`WindowEvent::DragLeft`]: winit::event::WindowEvent::DragLeft
+///
+/// # Examples
+///
+/// ```
+/// use martensite_window::dpi::DpiScale;
+/// use martensite_window::event::{convert_drop_event, DropAction, DropEvent};
+/// use winit::data_transfer::DataTransferId;
+/// use winit::event::WindowEvent;
+/// use winit::event_loop::DndAction;
+///
+/// let scale = DpiScale::new(1.0);
+/// let event = WindowEvent::DragDropped {
+///     id: DataTransferId::from_raw(1),
+///     proposed_action: Some(DndAction::Copy),
+/// };
+/// let drop = convert_drop_event(&event, &scale).expect("drag dropped converts");
+/// assert_eq!(drop, DropEvent::Dropped { action: DropAction::Copy });
+/// ```
+#[must_use]
+pub fn convert_drop_event(event: &WindowEvent, scale: &DpiScale) -> Option<DropEvent> {
+    use winit::event::WindowEvent;
+
+    match event {
+        WindowEvent::DragEntered { position, .. } => Some(DropEvent::Entered {
+            position: position.map(|p| physical_to_logical(p, scale)),
+            action: DropAction::default(),
+        }),
+        WindowEvent::DragPosition {
+            position,
+            proposed_action,
+            ..
+        } => Some(DropEvent::Moved {
+            position: physical_to_logical(*position, scale),
+            action: drop_action_from_winit(*proposed_action),
+        }),
+        WindowEvent::DragDropped {
+            proposed_action, ..
+        } => Some(DropEvent::Dropped {
+            action: drop_action_from_winit(*proposed_action),
+        }),
+        WindowEvent::DragLeft { .. } => Some(DropEvent::Left),
+        _ => None,
+    }
+}
+
+/// Maps a winit `DndAction` (or `None`) to a [`DropAction`].
+fn drop_action_from_winit(action: Option<winit::event_loop::DndAction>) -> DropAction {
+    use winit::event_loop::DndAction;
+    match action {
+        Some(DndAction::Copy) => DropAction::Copy,
+        Some(DndAction::Move) => DropAction::Move,
+        Some(DndAction::Link) => DropAction::Link,
+        Some(DndAction::Ask) => DropAction::Ask,
+        Some(DndAction::Private) => DropAction::Private,
+        // `DndAction` is `#[non_exhaustive]`; unknown variants map to `None`.
+        Some(_) | None => DropAction::None,
     }
 }
 
@@ -1439,6 +1659,154 @@ mod tests {
         let pe = convert_window_event(&event, &scale).expect("converts");
         // 150 / 1.5 = 100; 300 / 1.5 = 200.
         assert_eq!(pe.position, Vec2::new(100.0, 200.0));
+    }
+
+    // -----------------------------------------------------------------
+    // Drop events (winit 0.31 DragEntered/DragPosition/DragDropped/DragLeft)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn convert_drop_event_drag_entered() {
+        let scale = DpiScale::new(2.0);
+        let event = WindowEvent::DragEntered {
+            id: winit::data_transfer::DataTransferId::from_raw(1),
+            position: Some(PhysicalPosition::new(100.0, 200.0)),
+        };
+        let drop = convert_drop_event(&event, &scale).expect("entered converts");
+        match drop {
+            DropEvent::Entered { position, action } => {
+                assert_eq!(position, Some(Vec2::new(50.0, 100.0)));
+                assert_eq!(action, DropAction::None);
+            }
+            _ => panic!("expected Entered"),
+        }
+    }
+
+    #[test]
+    fn convert_drop_event_drag_entered_no_position() {
+        let scale = DpiScale::new(1.0);
+        let event = WindowEvent::DragEntered {
+            id: winit::data_transfer::DataTransferId::from_raw(1),
+            position: None,
+        };
+        let drop = convert_drop_event(&event, &scale).expect("entered converts");
+        assert!(matches!(drop, DropEvent::Entered { position: None, .. }));
+    }
+
+    #[test]
+    fn convert_drop_event_drag_position_maps_action() {
+        let scale = DpiScale::new(1.0);
+        let event = WindowEvent::DragPosition {
+            id: winit::data_transfer::DataTransferId::from_raw(1),
+            position: PhysicalPosition::new(10.0, 20.0),
+            proposed_action: Some(winit::event_loop::DndAction::Move),
+        };
+        let drop = convert_drop_event(&event, &scale).expect("moved converts");
+        assert_eq!(
+            drop,
+            DropEvent::Moved {
+                position: Vec2::new(10.0, 20.0),
+                action: DropAction::Move,
+            }
+        );
+    }
+
+    #[test]
+    fn convert_drop_event_drag_dropped() {
+        let scale = DpiScale::new(1.0);
+        let event = WindowEvent::DragDropped {
+            id: winit::data_transfer::DataTransferId::from_raw(1),
+            proposed_action: Some(winit::event_loop::DndAction::Copy),
+        };
+        let drop = convert_drop_event(&event, &scale).expect("dropped converts");
+        assert_eq!(
+            drop,
+            DropEvent::Dropped {
+                action: DropAction::Copy
+            }
+        );
+    }
+
+    #[test]
+    fn convert_drop_event_drag_left() {
+        let scale = DpiScale::new(1.0);
+        let event = WindowEvent::DragLeft {
+            id: winit::data_transfer::DataTransferId::from_raw(1),
+        };
+        let drop = convert_drop_event(&event, &scale).expect("left converts");
+        assert_eq!(drop, DropEvent::Left);
+    }
+
+    #[test]
+    fn convert_drop_event_non_drag_returns_none() {
+        let scale = DpiScale::new(1.0);
+        assert!(convert_drop_event(&WindowEvent::CloseRequested, &scale).is_none());
+        assert!(convert_drop_event(&WindowEvent::Destroyed, &scale).is_none());
+        assert!(convert_drop_event(&WindowEvent::RedrawRequested, &scale).is_none());
+    }
+
+    #[test]
+    fn convert_drop_event_scales_coordinates() {
+        let scale = DpiScale::new(4.0);
+        let event = WindowEvent::DragPosition {
+            id: winit::data_transfer::DataTransferId::from_raw(1),
+            position: PhysicalPosition::new(400.0, 800.0),
+            proposed_action: None,
+        };
+        let drop = convert_drop_event(&event, &scale).expect("converts");
+        assert_eq!(drop.position(), Some(Vec2::new(100.0, 200.0)));
+    }
+
+    #[test]
+    fn drop_event_position_accessor() {
+        let entered = DropEvent::Entered {
+            position: Some(Vec2::new(1.0, 2.0)),
+            action: DropAction::None,
+        };
+        assert_eq!(entered.position(), Some(Vec2::new(1.0, 2.0)));
+        let moved = DropEvent::Moved {
+            position: Vec2::new(3.0, 4.0),
+            action: DropAction::Copy,
+        };
+        assert_eq!(moved.position(), Some(Vec2::new(3.0, 4.0)));
+        let dropped = DropEvent::Dropped {
+            action: DropAction::Copy,
+        };
+        assert!(dropped.position().is_none());
+        assert!(DropEvent::Left.position().is_none());
+    }
+
+    #[test]
+    fn drop_action_default_is_none() {
+        assert_eq!(DropAction::default(), DropAction::None);
+    }
+
+    #[test]
+    fn drop_action_variants_distinct() {
+        assert_ne!(DropAction::None, DropAction::Copy);
+        assert_ne!(DropAction::Copy, DropAction::Move);
+        assert_ne!(DropAction::Move, DropAction::Link);
+        assert_ne!(DropAction::Link, DropAction::Ask);
+        assert_ne!(DropAction::Ask, DropAction::Private);
+    }
+
+    #[test]
+    fn drop_action_from_winit_unknown_maps_to_none() {
+        // `proposed_action: None` maps to `DropAction::None`.
+        let scale = DpiScale::new(1.0);
+        let event = WindowEvent::DragPosition {
+            id: winit::data_transfer::DataTransferId::from_raw(1),
+            position: PhysicalPosition::new(0.0, 0.0),
+            proposed_action: None,
+        };
+        let drop = convert_drop_event(&event, &scale).expect("converts");
+        assert_eq!(
+            drop,
+            DropEvent::Moved {
+                position: Vec2::ZERO,
+                action: DropAction::None,
+            }
+        );
     }
 
     // -----------------------------------------------------------------

@@ -1,0 +1,48 @@
+[package]
+name = "martensite-font-fallback"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "OS-native font fallback providers (DirectWrite, CoreText, Fontconfig) for martensite-text."
+readme = "README.md"
+
+[dependencies]
+martensite-text = { workspace = true }
+
+# Windows: DirectWrite via the `windows` crate.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Graphics_DirectWrite",
+    "Win32_Foundation",
+    "Win32_System_Com",
+] }
+
+# macOS: CoreText via `core-text` and `core-foundation`.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-text = "22.0"
+core-foundation = "0.10"
+
+# Linux: Fontconfig via the `fontconfig` crate.
+[target.'cfg(target_os = "linux")'.dependencies]
+fontconfig = "0.11"
+tracing = { workspace = true }
+
+[features]
+docs-rs = []
+
+[package.metadata.docs.rs]
+features = ["docs-rs"]
+
+# This crate uses `#![allow(unsafe_code)]` at the crate level because it
+# contains platform-specific FFI to DirectWrite (Windows COM), CoreText
+# (macOS), and Fontconfig (Linux). The workspace-level `unsafe_code =
+# "deny"` policy is preserved for all other crates; this is the narrowly
+# scoped audited exception described in the v0.11.0 boundary decision.
+[lints]
+workspace = true

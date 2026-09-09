@@ -7,8 +7,28 @@
 
 use std::fmt;
 
+use tracing::error;
+
 /// Default size of the shared linear memory ring buffer (256 KiB).
 pub const DEFAULT_CAPACITY: usize = 256 * 1024;
+
+/// Number of leading bytes reserved for the producer/consumer cursors in a
+/// shared ring region.
+///
+/// When the ring buffer lives inside the guest's linear memory, the first
+/// [`SHARED_HEADER_SIZE`] bytes hold the `head` (consumer cursor) and `tail`
+/// (producer cursor) as little-endian `u32` values so that both sides can
+/// observe the buffer state without a host call. The remaining bytes are the
+/// circular payload area.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_plugin::ring_buffer::SHARED_HEADER_SIZE;
+///
+/// assert_eq!(SHARED_HEADER_SIZE, 8);
+/// ```
+pub const SHARED_HEADER_SIZE: usize = 8;
 
 /// Fixed header size of a [`PluginPaintCmd`] in bytes.
 const CMD_SIZE: usize = std::mem::size_of::<PluginPaintCmd>();
@@ -146,6 +166,12 @@ impl std::error::Error for RingBufferError {}
 /// ```
 pub struct PluginRingBuffer<'a> {
     data: &'a mut [u8],
+    /// Optional leading cursor block when the buffer lives in shared memory.
+    ///
+    /// When present, `head` and `tail` are mirrored into this 8-byte
+    /// little-endian header after every mutation so the other side of the
+    /// shared region can observe the cursors without a host call.
+    header: Option<&'a mut [u8]>,
     head: u32,
     tail: u32,
 }
@@ -154,12 +180,76 @@ impl<'a> PluginRingBuffer<'a> {
     /// Creates a ring buffer over the supplied shared memory slice.
     ///
     /// The slice must be large enough for at least one command header plus a
-    /// small payload. The buffer starts empty.
+    /// small payload. The buffer starts empty and the cursors are held only
+    /// in this struct; use [`PluginRingBuffer::new_shared`] when the slice is
+    /// a region shared with another party (e.g. guest linear memory).
     pub fn new(data: &'a mut [u8]) -> Self {
         Self {
             data,
+            header: None,
             head: 0,
             tail: 0,
+        }
+    }
+
+    /// Creates a ring buffer over a shared memory region with a persisted
+    /// cursor header.
+    ///
+    /// The first [`SHARED_HEADER_SIZE`] bytes of `data` are interpreted as the
+    /// `head`/`tail` cursor block (little-endian `u32` each); the rest is the
+    /// circular payload area. Cursors are read on construction and written
+    /// back after every [`produce`](Self::produce)/[`consume`](Self::consume)
+    /// so a peer sharing the same region sees consistent state. Corrupt
+    /// out-of-range cursors reset the buffer to empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::ring_buffer::SHARED_HEADER_SIZE;
+    /// use martensite_plugin::{PluginPaintCmd, PluginRingBuffer};
+    ///
+    /// // 8-byte cursor header + 64 bytes of payload area.
+    /// let mut region = vec![0u8; SHARED_HEADER_SIZE + 64];
+    /// let mut rb = PluginRingBuffer::new_shared(&mut region);
+    /// let cmd = PluginPaintCmd {
+    ///     cmd_type: 1,
+    ///     flags: 0,
+    ///     data_len: 4,
+    ///     payload_offset: 0,
+    /// };
+    /// rb.produce(&cmd, &[1, 2, 3, 4]).unwrap();
+    /// // The peer can observe `tail` in the header.
+    /// assert_eq!(u32::from_le_bytes(region[4..8].try_into().unwrap()), 16);
+    /// ```
+    pub fn new_shared(data: &'a mut [u8]) -> Self {
+        if data.len() < SHARED_HEADER_SIZE {
+            return Self::new(data);
+        }
+        let (header, payload) = data.split_at_mut(SHARED_HEADER_SIZE);
+        let head = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+        let tail = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+        let capacity = payload.len() as u32;
+        // Reject corrupt cursors; an empty buffer is the safe fallback.
+        let (head, tail) = if head <= capacity && tail <= capacity {
+            (head, tail)
+        } else {
+            (0, 0)
+        };
+        let mut rb = Self {
+            data: payload,
+            header: Some(header),
+            head,
+            tail,
+        };
+        rb.sync_header();
+        rb
+    }
+
+    /// Mirrors the in-struct cursors into the shared header, if present.
+    fn sync_header(&mut self) {
+        if let Some(header) = self.header.as_deref_mut() {
+            header[0..4].copy_from_slice(&self.head.to_le_bytes());
+            header[4..8].copy_from_slice(&self.tail.to_le_bytes());
         }
     }
 
@@ -277,6 +367,7 @@ impl<'a> PluginRingBuffer<'a> {
         if self.tail >= cap_u32 {
             self.tail = 0;
         }
+        self.sync_header();
         Ok(())
     }
 
@@ -315,6 +406,7 @@ impl<'a> PluginRingBuffer<'a> {
         if self.head >= cap_u32 {
             self.head = 0;
             if self.is_empty() {
+                self.sync_header();
                 return None;
             }
         }
@@ -326,25 +418,63 @@ impl<'a> PluginRingBuffer<'a> {
             return self.consume();
         }
 
-        let cmd = PluginPaintCmd::read_from(&self.data[pos..])?;
+        let cmd = match PluginPaintCmd::read_from(&self.data[pos..]) {
+            Some(cmd) => cmd,
+            None => {
+                // Fatal corruption: the header could not be parsed. Reset the
+                // buffer so the consumer does not wedge on the same bad record
+                // forever.
+                error!(
+                    head = self.head,
+                    tail = self.tail,
+                    pos,
+                    "ring buffer: malformed command header; resetting cursors"
+                );
+                self.head = 0;
+                self.tail = 0;
+                self.sync_header();
+                return None;
+            }
+        };
         let payload_len = cmd.data_len as usize;
         let expected_payload_start = pos.saturating_add(CMD_SIZE);
         let expected_payload_end = expected_payload_start.saturating_add(payload_len);
 
         // The guest is untrusted; reject any record whose payload is not
-        // contiguously after the header within the buffer.
+        // contiguously after the header within the buffer. A malformed record
+        // is treated as fatal corruption: resetting the cursors prevents the
+        // consumer from spinning forever on the same record.
         if cmd.payload_offset as usize != expected_payload_start
             || expected_payload_end > self.data.len()
             || expected_payload_end < expected_payload_start
         {
+            error!(
+                head = self.head,
+                tail = self.tail,
+                pos,
+                payload_offset = cmd.payload_offset,
+                data_len = cmd.data_len,
+                expected_payload_start,
+                expected_payload_end,
+                buf_len = self.data.len(),
+                "ring buffer: malformed record (payload not contiguous); resetting cursors"
+            );
+            self.head = 0;
+            self.tail = 0;
+            self.sync_header();
             return None;
         }
 
-        let payload = &self.data[expected_payload_start..expected_payload_end];
         self.head = (expected_payload_end) as u32;
         if self.head >= cap_u32 {
             self.head = 0;
         }
+        // Write the cursors back before borrowing `data` for the payload.
+        if let Some(header) = self.header.as_deref_mut() {
+            header[0..4].copy_from_slice(&self.head.to_le_bytes());
+            header[4..8].copy_from_slice(&self.tail.to_le_bytes());
+        }
+        let payload = &self.data[expected_payload_start..expected_payload_end];
         Some((cmd, payload))
     }
 
@@ -538,5 +668,81 @@ mod tests {
         assert_eq!(read_cmd.flags, cmd.flags);
         assert_eq!(read_cmd.data_len, cmd.data_len);
         assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn malformed_record_resets_cursors_and_does_not_wedge() {
+        let mut data = vec![0u8; 64];
+
+        // Manually craft a record whose payload_offset does not match the
+        // expected position right after the header. Write it directly into the
+        // backing store before handing the slice to the ring buffer.
+        let bad = PluginPaintCmd {
+            cmd_type: 1,
+            flags: 0,
+            data_len: 4,
+            payload_offset: 0, // wrong: should be CMD_SIZE
+        };
+        bad.write_to(&mut data[0..]).unwrap();
+        // Fill the payload area with non-zero bytes so the record looks
+        // populated.
+        data[CMD_SIZE..CMD_SIZE + 4].fill(9);
+
+        let mut rb = PluginRingBuffer::new(&mut data);
+        rb.head = 0;
+        rb.tail = (CMD_SIZE + 4) as u32;
+
+        // First call detects corruption and returns None.
+        assert!(rb.consume().is_none());
+        // Cursors were reset, so the buffer is now empty and subsequent calls
+        // do not wedge on the same bad record.
+        assert!(rb.is_empty());
+        assert!(rb.consume().is_none());
+
+        // The buffer is usable again after the reset.
+        let cmd = PluginPaintCmd {
+            cmd_type: 2,
+            flags: 0,
+            data_len: 2,
+            payload_offset: 0,
+        };
+        rb.produce(&cmd, &[3, 4]).unwrap();
+        let (read_cmd, payload) = rb.consume().unwrap();
+        assert_eq!(read_cmd.cmd_type, 2);
+        assert_eq!(payload, &[3, 4]);
+    }
+
+    #[test]
+    fn malformed_record_resets_shared_header() {
+        use crate::ring_buffer::SHARED_HEADER_SIZE;
+        let mut region = vec![0u8; SHARED_HEADER_SIZE + 64];
+
+        // Write a valid record, then corrupt its payload_offset so the next
+        // consume treats it as malformed. The corruption is applied directly to
+        // the backing region before the ring buffer borrows it.
+        {
+            let mut rb = PluginRingBuffer::new_shared(&mut region);
+            let cmd = PluginPaintCmd {
+                cmd_type: 1,
+                flags: 0,
+                data_len: 4,
+                payload_offset: 0,
+            };
+            rb.produce(&cmd, &[1, 2, 3, 4]).unwrap();
+        }
+        // Corrupt the payload_offset field (bytes 8..12 of the payload area,
+        // i.e. region offset SHARED_HEADER_SIZE + 8).
+        let off = SHARED_HEADER_SIZE + 8;
+        region[off..off + 4].copy_from_slice(&99u32.to_le_bytes());
+
+        {
+            let mut rb = PluginRingBuffer::new_shared(&mut region);
+            assert!(rb.consume().is_none());
+        }
+        // The shared header must reflect the reset cursors (head == tail == 0).
+        let head = u32::from_le_bytes(region[0..4].try_into().unwrap());
+        let tail = u32::from_le_bytes(region[4..8].try_into().unwrap());
+        assert_eq!(head, 0);
+        assert_eq!(tail, 0);
     }
 }

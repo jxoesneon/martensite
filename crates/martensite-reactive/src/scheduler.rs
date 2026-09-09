@@ -45,6 +45,24 @@ pub struct NodeRecord {
 ///
 /// Used internally by the scheduler for hash maps with integer keys
 /// (SignalId), where cryptographic strength is unnecessary and speed matters.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::FastHasher;
+/// use std::hash::Hasher;
+///
+/// let mut hasher = FastHasher::default();
+/// hasher.write_u64(42);
+/// let h1 = hasher.finish();
+///
+/// let mut hasher = FastHasher::default();
+/// hasher.write_u64(42);
+/// let h2 = hasher.finish();
+///
+/// // The same input produces the same hash.
+/// assert_eq!(h1, h2);
+/// ```
 #[derive(Default, Clone, Copy)]
 pub struct FastHasher(u64);
 
@@ -71,6 +89,24 @@ impl std::hash::Hasher for FastHasher {
 pub type FastBuildHasher = std::hash::BuildHasherDefault<FastHasher>;
 
 /// Internal scheduler state managing DAG topologies, dirty bitsets, and evaluation priority queues.
+///
+/// `SchedulerState` is the raw, unsynchronized heart of the reactive engine. The
+/// [`ReactiveRuntime`](crate::ReactiveRuntime) wraps it in a `Mutex` and exposes a
+/// thread-safe API. Most users should prefer `ReactiveRuntime`, but `SchedulerState`
+/// is exported for advanced embedders that want to drive scheduling directly.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_reactive::{SchedulerState, SignalId};
+///
+/// let mut state = SchedulerState::new();
+/// let a = SignalId::next();
+/// let b = SignalId::next();
+/// state.register_source(a);
+/// state.register_source(b);
+/// assert_eq!(state.test_node_count(), 2);
+/// ```
 pub struct SchedulerState {
     /// Node map indexing all reactive records.
     pub(crate) nodes: HashMap<SignalId, NodeRecord, FastBuildHasher>,
@@ -92,6 +128,15 @@ impl Default for SchedulerState {
 
 impl SchedulerState {
     /// Creates a new, empty `SchedulerState` with pre-allocated queue capacities.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::SchedulerState;
+    ///
+    /// let state = SchedulerState::new();
+    /// assert_eq!(state.test_node_count(), 0);
+    /// ```
     pub fn new() -> Self {
         Self {
             nodes: HashMap::with_capacity_and_hasher(128, FastBuildHasher::default()),
@@ -243,6 +288,21 @@ impl SchedulerState {
     /// Registers a dependency edge from `dep` to `parent` ($dep \to parent$).
     ///
     /// Verifies acyclicity using 3-color reachability, updates `last_epoch`, and adjusts topological depth ranks.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{SchedulerState, SignalId};
+    ///
+    /// let mut state = SchedulerState::new();
+    /// let source = SignalId::next();
+    /// let derived = SignalId::next();
+    /// state.register_source(source);
+    /// state.register_source(derived);
+    ///
+    /// // Link `derived` -> `source` (derived depends on source).
+    /// assert!(state.add_dependency_link(derived, source).is_ok());
+    /// ```
     pub fn add_dependency_link(
         &mut self,
         parent: SignalId,
@@ -402,6 +462,22 @@ impl SchedulerState {
     }
 
     /// Executes full 3-color DFS cycle verification across all graph nodes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::{SchedulerState, SignalId};
+    ///
+    /// let mut state = SchedulerState::new();
+    /// let a = SignalId::next();
+    /// let b = SignalId::next();
+    /// state.register_source(a);
+    /// state.register_source(b);
+    /// state.add_dependency_link(b, a).unwrap();
+    ///
+    /// // The acyclic graph verifies cleanly.
+    /// assert!(state.detect_cycles().is_ok());
+    /// ```
     pub fn detect_cycles(&mut self) -> Result<(), CycleError> {
         for node in self.nodes.values_mut() {
             node.color = NodeColor::White;

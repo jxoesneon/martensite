@@ -10,24 +10,29 @@
 use std::time::Duration;
 
 /// Errors that can occur while constructing a [`GpuContext`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GpuContextError {
     /// No adapter matching the requested options could be found on the system.
-    NoAdapter,
+    /// The carried string preserves the original wgpu error message for
+    /// diagnostics.
+    NoAdapter(String),
     /// An adapter was selected, but the system refused to hand back a logical
-    /// device and queue.
-    DeviceRequestFailed,
+    /// device and queue. The carried string preserves the original wgpu error
+    /// message for diagnostics.
+    DeviceRequestFailed(String),
 }
 
 impl std::fmt::Display for GpuContextError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NoAdapter => {
-                f.write_str("no suitable GPU adapter was found for the requested options")
-            }
-            Self::DeviceRequestFailed => {
-                f.write_str("failed to request a logical device from the selected adapter")
-            }
+            Self::NoAdapter(msg) => write!(
+                f,
+                "no suitable GPU adapter was found for the requested options: {msg}"
+            ),
+            Self::DeviceRequestFailed(msg) => write!(
+                f,
+                "failed to request a logical device from the selected adapter: {msg}"
+            ),
         }
     }
 }
@@ -95,11 +100,11 @@ impl GpuContext {
             force_fallback_adapter: false,
             apply_limit_buckets: true,
         }))
-        .map_err(|_| GpuContextError::NoAdapter)?;
+        .map_err(|e| GpuContextError::NoAdapter(e.to_string()))?;
 
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-                .map_err(|_| GpuContextError::DeviceRequestFailed)?;
+                .map_err(|e| GpuContextError::DeviceRequestFailed(e.to_string()))?;
 
         let adapter_info = adapter.get_info();
 
@@ -110,6 +115,39 @@ impl GpuContext {
             queue,
             adapter_info,
         })
+    }
+
+    /// Recreates the logical device and command queue from the current adapter.
+    ///
+    /// This is the core of device-loss recovery: the adapter usually survives
+    /// a TDR or driver reset, so a new [`wgpu::Device`] and [`wgpu::Queue`]
+    /// can be requested without re-enumerating hardware. The old device and
+    /// queue fields are replaced in place.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuContextError::DeviceRequestFailed`] if the adapter refuses
+    /// to create a new logical device.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::device::GpuContext;
+    ///
+    /// # fn example(mut ctx: GpuContext) {
+    /// ctx.recreate_device_and_queue().expect("device recovered");
+    /// # }
+    /// ```
+    pub fn recreate_device_and_queue(&mut self) -> Result<(), GpuContextError> {
+        let (device, queue) = pollster::block_on(
+            self.adapter
+                .request_device(&wgpu::DeviceDescriptor::default()),
+        )
+        .map_err(|e| GpuContextError::DeviceRequestFailed(e.to_string()))?;
+
+        self.device = device;
+        self.queue = queue;
+        Ok(())
     }
 
     /// Enumerates every adapter currently visible to the instance, ordered by
@@ -216,7 +254,7 @@ mod tests {
                 assert!(ctx.supports_features(wgpu::Features::empty()));
                 assert!(ctx.meets_limits(&wgpu::Limits::downlevel_defaults()));
             }
-            Err(GpuContextError::NoAdapter | GpuContextError::DeviceRequestFailed) => {}
+            Err(GpuContextError::NoAdapter(_) | GpuContextError::DeviceRequestFailed(_)) => {}
         }
     }
 
@@ -249,5 +287,21 @@ mod tests {
     #[test]
     fn fallback_threshold_matches_milestone_specification() {
         assert_eq!(GpuContext::fallback_threshold(), Duration::from_millis(32));
+    }
+
+    #[test]
+    #[ignore = "requires a wgpu adapter and device"]
+    fn recreate_device_and_queue_after_destroy() {
+        // Simulate a TDR/driver reset by destroying the logical device, then
+        // verify the adapter can hand back a fresh device/queue pair.
+        let mut ctx = match GpuContext::new() {
+            Ok(ctx) => ctx,
+            Err(_) => return,
+        };
+        ctx.device.destroy();
+        ctx.recreate_device_and_queue()
+            .expect("recreate should succeed");
+        assert!(!ctx.adapter_info.name.is_empty());
+        assert!(ctx.supports_features(wgpu::Features::empty()));
     }
 }

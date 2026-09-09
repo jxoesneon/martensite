@@ -153,6 +153,10 @@ pub enum ReloadError {
     BuildFailed(String),
     /// A filesystem operation (stat, read) failed during change detection.
     IoFailed(String),
+    /// The built cdylib artifact could not be located in the target directory.
+    ArtifactNotFound(String),
+    /// The built artifact exists but is not a valid dynamic library.
+    ArtifactInvalid(String),
 }
 
 impl fmt::Display for ReloadError {
@@ -161,6 +165,12 @@ impl fmt::Display for ReloadError {
             ReloadError::InvalidConfig(msg) => write!(f, "invalid hot-reload config: {msg}"),
             ReloadError::BuildFailed(msg) => write!(f, "guest build failed: {msg}"),
             ReloadError::IoFailed(msg) => write!(f, "filesystem error: {msg}"),
+            ReloadError::ArtifactNotFound(msg) => {
+                write!(f, "cdylib artifact not found: {msg}")
+            }
+            ReloadError::ArtifactInvalid(msg) => {
+                write!(f, "cdylib artifact invalid: {msg}")
+            }
         }
     }
 }
@@ -368,21 +378,47 @@ pub(crate) fn versioned_library_path_with(
 
 /// Builds the guest crate as a cdylib, returning the versioned library path.
 ///
-/// Shells out to `cargo build` with the appropriate target-directory and
-/// versioned output expectations. The actual relocation/copy of the produced
-/// artifact to the versioned path is performed by the host binary; this
-/// function returns the *expected* versioned path so the host knows where to
-/// look. On build failure a [`ReloadError::BuildFailed`] is returned carrying
-/// the captured stderr.
+/// Shells out to `cargo build --lib` (or `cargo rustc --lib` when the guest
+/// crate does not declare `crate-type = ["cdylib"]` in its `Cargo.toml`) so
+/// that only the library target is compiled and the output is always a
+/// dynamic library. After a successful build the produced artifact is copied
+/// to the deterministic versioned path returned by
+/// [`versioned_library_path`], allowing the host to atomically re-link to a
+/// fresh symbol table.
+///
+/// On build failure a [`ReloadError::BuildFailed`] is returned carrying the
+/// captured stderr. If the artifact cannot be located or is not a valid
+/// dynamic library, [`ReloadError::ArtifactNotFound`] or
+/// [`ReloadError::ArtifactInvalid`] is returned respectively.
 pub fn build_guest_crate(config: &HotReloadConfig, version: u64) -> Result<PathBuf, ReloadError> {
     validate_config(config)?;
 
+    // Determine whether the guest crate already declares `crate-type =
+    // ["cdylib"]`. If it does, a plain `cargo build --lib` suffices. If not,
+    // we force cdylib output via `cargo rustc --lib -- --crate-type cdylib`
+    // (the trailing `--crate-type` flag overrides cargo's own `--crate-type`
+    // because rustc honors the last occurrence).
+    let force_cdylib = !guest_declares_cdylib(&config.guest_crate);
+
     let mut cmd = process::Command::new("cargo");
-    cmd.arg("build")
-        .arg("--package")
-        .arg(&config.guest_crate)
-        .arg("--target-dir")
-        .arg(&config.output_dir);
+    if force_cdylib {
+        cmd.arg("rustc")
+            .arg("--lib")
+            .arg("--package")
+            .arg(&config.guest_crate)
+            .arg("--target-dir")
+            .arg(&config.output_dir)
+            .arg("--")
+            .arg("--crate-type")
+            .arg("cdylib");
+    } else {
+        cmd.arg("build")
+            .arg("--lib")
+            .arg("--package")
+            .arg(&config.guest_crate)
+            .arg("--target-dir")
+            .arg(&config.output_dir);
+    }
 
     let output = cmd
         .output()
@@ -393,11 +429,38 @@ pub fn build_guest_crate(config: &HotReloadConfig, version: u64) -> Result<PathB
         return Err(ReloadError::BuildFailed(stderr));
     }
 
-    Ok(versioned_library_path(
-        &config.output_dir,
-        &config.guest_crate,
-        version,
-    ))
+    // Locate the freshly built artifact in the target directory. The dev
+    // profile (the default for hot-reload) emits into `<output_dir>/debug/`.
+    let artifact =
+        find_built_artifact(&config.output_dir, &config.guest_crate).ok_or_else(|| {
+            ReloadError::ArtifactNotFound(format!(
+                "no dynamic library for '{}' found under {}",
+                config.guest_crate,
+                config.output_dir.display()
+            ))
+        })?;
+
+    // Verify the artifact is a dynamic library by its file extension.
+    if !is_dynamic_library(&artifact) {
+        return Err(ReloadError::ArtifactInvalid(format!(
+            "built artifact {} is not a dynamic library (.so/.dylib/.dll)",
+            artifact.display()
+        )));
+    }
+
+    // Copy/rename the artifact to the deterministic versioned path so the
+    // host can re-link atomically without clobbering the in-use library.
+    let versioned = versioned_library_path(&config.output_dir, &config.guest_crate, version);
+    std::fs::copy(&artifact, &versioned).map_err(|e| {
+        ReloadError::IoFailed(format!(
+            "failed to copy {} to {}: {}",
+            artifact.display(),
+            versioned.display(),
+            e
+        ))
+    })?;
+
+    Ok(versioned)
 }
 
 /// Validates a [`HotReloadConfig`], returning `Ok(())` if it is usable.
@@ -413,6 +476,117 @@ fn validate_config(config: &HotReloadConfig) -> Result<(), ReloadError> {
         ));
     }
     Ok(())
+}
+
+/// Returns `true` if `path` has a dynamic-library file extension.
+fn is_dynamic_library(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    matches!(ext, "so" | "dylib" | "dll")
+}
+
+/// Locates the freshly built cdylib artifact inside `output_dir`.
+///
+/// The dev profile (default for hot-reload) emits into `<output_dir>/debug/`.
+/// The filename follows the platform convention:
+/// `lib{crate}.so` (Linux), `lib{crate}.dylib` (macOS), `{crate}.dll` (Windows).
+fn find_built_artifact(output_dir: &Path, crate_name: &str) -> Option<PathBuf> {
+    let profile_dir = output_dir.join("debug");
+    let prefix = std::env::consts::DLL_PREFIX;
+    let ext = std::env::consts::DLL_EXTENSION;
+    let candidate = profile_dir.join(format!("{prefix}{crate_name}.{ext}"));
+    if candidate.exists() {
+        return Some(candidate);
+    }
+    // Fallback: scan the profile directory for any file matching the
+    // crate name with a dynamic-library extension. This handles platforms
+    // where the prefix is empty (Windows) or where the extension differs.
+    let entries = std::fs::read_dir(&profile_dir).ok()?;
+    let mut best: Option<PathBuf> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.contains(crate_name) && is_dynamic_library(&path) {
+            best = Some(path);
+        }
+    }
+    best
+}
+
+/// Returns `true` if the guest crate declares `crate-type = ["cdylib"]` in
+/// its `Cargo.toml`.
+///
+/// Uses `cargo metadata --no-deps` to locate the manifest path for the named
+/// package, then reads the `[lib]` table for a `crate-type` entry containing
+/// `cdylib`. If the manifest cannot be located or read, this returns `false`
+/// (conservatively forcing cdylib output).
+fn guest_declares_cdylib(crate_name: &str) -> bool {
+    let Some(manifest) = find_guest_manifest(crate_name) else {
+        return false;
+    };
+    let Ok(contents) = std::fs::read_to_string(&manifest) else {
+        return false;
+    };
+    crate_toml_declares_cdylib(&contents)
+}
+
+/// Parses a `Cargo.toml` body and returns `true` if the `[lib]` section
+/// declares `crate-type` containing `cdylib`.
+fn crate_toml_declares_cdylib(toml: &str) -> bool {
+    // Minimal TOML scan: find the `[lib]` table and look for a `crate-type`
+    // line within it that mentions `cdylib`. This avoids pulling in a TOML
+    // parser dependency for a developer tool.
+    let mut in_lib_section = false;
+    for line in toml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_lib_section = trimmed == "[lib]";
+            continue;
+        }
+        if in_lib_section && trimmed.starts_with("crate-type") && trimmed.contains("cdylib") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Locates the `Cargo.toml` manifest path for the named workspace member
+/// using `cargo metadata --no-deps`.
+fn find_guest_manifest(crate_name: &str) -> Option<PathBuf> {
+    let output = process::Command::new("cargo")
+        .arg("metadata")
+        .arg("--no-deps")
+        .arg("--format-version")
+        .arg("1")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    extract_manifest_path(&stdout, crate_name)
+}
+
+/// Extracts the `manifest_path` for the package named `crate_name` from a
+/// `cargo metadata` JSON blob using a minimal string scan.
+fn extract_manifest_path(metadata_json: &str, crate_name: &str) -> Option<PathBuf> {
+    // The JSON contains objects like:
+    //   {"name":"<crate_name>","version":"...","id":"...","manifest_path":"..."}
+    // We search for `"name":"<crate_name>"` and then the next
+    // `"manifest_path":"..."` that follows it within the same package object.
+    let name_key = format!("\"name\":\"{crate_name}\"");
+    let name_pos = metadata_json.find(&name_key)?;
+    let after_name = &metadata_json[name_pos..];
+    let mp_key = "\"manifest_path\":\"";
+    let mp_start = after_name.find(mp_key)?;
+    let value_start = mp_start + mp_key.len();
+    let value_slice = &after_name[value_start..];
+    let value_end = value_slice.find('"')?;
+    let path_str = &value_slice[..value_end];
+    Some(PathBuf::from(path_str))
 }
 
 /// Coordinates a single hot-reload cycle: build the guest and measure elapsed
@@ -724,6 +898,68 @@ mod tests {
         assert_eq!(duration_to_ms(Duration::from_millis(0)), 0);
         assert_eq!(duration_to_ms(Duration::from_millis(123)), 123);
         assert_eq!(duration_to_ms(Duration::from_secs(1)), 1_000);
+    }
+
+    #[test]
+    fn reload_error_display_includes_new_variants() {
+        assert!(ReloadError::ArtifactNotFound("missing".into())
+            .to_string()
+            .contains("missing"));
+        assert!(ReloadError::ArtifactInvalid("bad".into())
+            .to_string()
+            .contains("bad"));
+    }
+
+    #[test]
+    fn is_dynamic_library_recognizes_extensions() {
+        assert!(is_dynamic_library(Path::new("libfoo.so")));
+        assert!(is_dynamic_library(Path::new("libfoo.dylib")));
+        assert!(is_dynamic_library(Path::new("foo.dll")));
+        assert!(!is_dynamic_library(Path::new("libfoo.rlib")));
+        assert!(!is_dynamic_library(Path::new("foo")));
+    }
+
+    #[test]
+    fn crate_toml_declares_cdylib_detects_lib_section() {
+        let toml = "[lib]\ncrate-type = [\"cdylib\"]\n";
+        assert!(crate_toml_declares_cdylib(toml));
+    }
+
+    #[test]
+    fn crate_toml_declares_cdylib_with_other_types() {
+        let toml = "[lib]\ncrate-type = [\"rlib\", \"cdylib\"]\n";
+        assert!(crate_toml_declares_cdylib(toml));
+    }
+
+    #[test]
+    fn crate_toml_declares_cdylib_without_cdylib() {
+        let toml = "[lib]\ncrate-type = [\"rlib\"]\n";
+        assert!(!crate_toml_declares_cdylib(toml));
+    }
+
+    #[test]
+    fn crate_toml_declares_cdylib_no_lib_section() {
+        let toml = "[package]\nname = \"foo\"\n";
+        assert!(!crate_toml_declares_cdylib(toml));
+    }
+
+    #[test]
+    fn crate_toml_declares_cdylib_ignores_bin_section() {
+        let toml = "[[bin]]\ncrate-type = [\"cdylib\"]\n";
+        assert!(!crate_toml_declares_cdylib(toml));
+    }
+
+    #[test]
+    fn extract_manifest_path_finds_package() {
+        let json = r#"{"packages":[{"name":"foo","manifest_path":"/a/Cargo.toml"},{"name":"bar","manifest_path":"/b/Cargo.toml"}]}"#;
+        let path = extract_manifest_path(json, "bar");
+        assert_eq!(path, Some(PathBuf::from("/b/Cargo.toml")));
+    }
+
+    #[test]
+    fn extract_manifest_path_missing_package() {
+        let json = r#"{"packages":[{"name":"foo","manifest_path":"/a/Cargo.toml"}]}"#;
+        assert!(extract_manifest_path(json, "missing").is_none());
     }
 
     /// Creates a unique temporary directory for a single test and returns its

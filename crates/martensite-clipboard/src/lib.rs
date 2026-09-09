@@ -96,6 +96,11 @@ mod tests {
     fn re_exported_default_platform_clipboard_is_stub_like() {
         let cb = default_platform_clipboard();
         assert!(!cb.platform_name().is_empty());
+        // Without the `platform` feature, all backends are stubs and
+        // always report empty types/contents. With the `platform` feature,
+        // the real OS clipboard may contain arbitrary data, so we only
+        // assert the stub-like behavior when the feature is disabled.
+        #[cfg(not(feature = "platform"))]
         assert!(cb.available_types().is_empty());
     }
 

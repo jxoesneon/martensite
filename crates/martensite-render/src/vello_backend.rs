@@ -89,6 +89,42 @@ fn gradient_stops_to_peniko(stops: &crate::paint::GradientStops) -> ColorStops {
 /// records the number of commands it received, which is useful for
 /// type-level compatibility in crates that depend on `martensite-render`
 /// without GPU support.
+///
+/// # Examples
+///
+/// Without the `vello` feature the renderer is a no-op stub that still
+/// counts processed commands, so it can be exercised headlessly:
+///
+/// ```
+/// use martensite_render::{PaintList, RenderBackend, VelloRenderer};
+/// use kurbo::Rect;
+///
+/// let mut renderer = VelloRenderer::new();
+/// assert_eq!(renderer.last_command_count(), 0);
+///
+/// let mut list = PaintList::new();
+/// list.push_fill_rect(Rect::new(0.0, 0.0, 10.0, 10.0), [255, 0, 0, 255]);
+/// list.push_fill_rect(Rect::new(10.0, 0.0, 20.0, 10.0), [0, 255, 0, 255]);
+///
+/// renderer.render(&list);
+/// assert_eq!(renderer.last_command_count(), 2);
+/// ```
+///
+/// Dispatching the built scene to the GPU requires the `vello` feature and
+/// a live `wgpu` device, so that path is not exercised here:
+///
+/// ```no_run
+/// # #[cfg(feature = "vello")] {
+/// use martensite_render::{PaintList, RenderBackend, VelloRenderer};
+/// use kurbo::Rect;
+///
+/// let mut renderer = VelloRenderer::new();
+/// let mut list = PaintList::new();
+/// list.push_fill_rect(Rect::new(0.0, 0.0, 100.0, 100.0), [255, 0, 0, 255]);
+/// renderer.render(&list);
+/// // The scene is now ready for `render_to_texture` with a wgpu device/queue.
+/// # }
+/// ```
 pub struct VelloRenderer {
     #[cfg(feature = "vello")]
     scene: Scene,
@@ -173,7 +209,7 @@ impl VelloRenderer {
     /// or the render itself fails, the error is logged via `tracing` and the
     /// method returns gracefully without panicking — the caller (typically the
     /// `martensite-wgpu` orchestrator) is responsible for feeding the error
-    /// into the [`RecoveryMachine`] when appropriate.
+    /// into the `RecoveryMachine` when appropriate.
     ///
     /// `width` and `height` are the dimensions of `target` in texels; they are
     /// passed to Vello's [`RenderParams`] so the compute pipeline covers the

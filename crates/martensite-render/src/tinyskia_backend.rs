@@ -24,6 +24,27 @@ use tiny_skia::{
 /// [`TinySkiaBackend::render`] clears the buffer to fully transparent,
 /// resets the active clip stack, and replays the supplied [`PaintList`] in
 /// order. The rendered pixels are available via [`TinySkiaBackend::pixels`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::{PaintList, RenderBackend, TinySkiaBackend};
+/// use kurbo::Rect;
+///
+/// // Create a 64x64 headless rasterizer (no GPU required).
+/// let mut backend = TinySkiaBackend::new(64, 64).expect("64x64 pixmap");
+/// assert_eq!(backend.width(), 64);
+/// assert_eq!(backend.height(), 64);
+///
+/// // Render a single red rectangle.
+/// let mut list = PaintList::new();
+/// list.push_fill_rect(Rect::new(0.0, 0.0, 32.0, 32.0), [255, 0, 0, 255]);
+/// backend.render(&list);
+///
+/// // The top-left pixel is now opaque red.
+/// let px = &backend.pixels()[..4];
+/// assert_eq!(px, [255, 0, 0, 255]);
+/// ```
 pub struct TinySkiaBackend {
     width: u32,
     height: u32,

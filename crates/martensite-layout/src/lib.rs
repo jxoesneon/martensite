@@ -15,6 +15,8 @@ pub use taffy::prelude::*;
 /// Re-exports the [`TaffyTree`] layout tree implementation from Taffy.
 pub use taffy::TaffyTree;
 
+/// BiDi-level-aware logical-to-physical coordinate mapping for RTL inline flow and selection geometry.
+pub mod bidi_rect;
 /// Two-pass layout engine.
 pub mod engine;
 /// Geometry primitives: `Point`, `Size`, `Constraints`, `EdgeInsets`.

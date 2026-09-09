@@ -5,6 +5,48 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-09-08
+
+### Added
+
+- **Advanced Typography**:
+  - Bidirectional text (BiDi) shaping via `Shaper::shape_with_options`.
+  - Vertical text layout support.
+  - UAX #29 grapheme cluster segmentation for caret movement and selection.
+  - OS-native font fallback via `martensite-font-fallback` (DirectWrite on
+    Windows, CoreText on macOS, Fontconfig on Linux) with
+    `FontFallbackProvider` trait and `FallbackDecisionCache`.
+- **Platform Accessibility**:
+  - AccessKit integration with `MartensiteAccessBridge` for `accesskit_winit`.
+  - Caret geometry computation for screen-reader text selection.
+  - WCAG 2.1 contrast compliance checks in the theme system.
+- **New Crates**:
+  - `martensite-font-fallback` — OS-native font fallback providers.
+  - `martensite-clipboard-platform` — OS-native clipboard backends
+    (NSPasteboard, Win32, X11).
+  - `martensite-media-platform` — hardware video surface import FFI
+    (IOSurface, DXGI, dmabuf).
+  - `martensite-host` — dynamic library loading for hot-reloadable guest
+    cdylibs.
+
+### Fixed
+
+- **Security**: Windows clipboard out-of-bounds read in `GetClipboardData`
+  path.
+- **Security**: Plugin `file_read` capability bounds check for path
+  traversal prevention.
+- **Correctness**: `swash`/`ttf-parser` font-data access wrapped in
+  `catch_unwind` to isolate malformed-font panics.
+- **Correctness**: Access bridge deadlock resolved by switching to
+  `parking_lot::Mutex` (poison-free).
+- **Correctness**: Cache bounds check in `TextShapeCache` eviction.
+- **Correctness**: Ring buffer corruption recovery in `PluginRingBuffer`.
+
+### Changed
+
+- All workspace crates bumped from `0.10.0` to `0.11.0`.
+  (`martensite-cosmic-text` retains its own `0.19.0-martensite.1` version.)
+
 ## [0.10.0] - 2026-09-08
 
 ### Added

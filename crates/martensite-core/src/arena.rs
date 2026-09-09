@@ -18,6 +18,28 @@ use crate::id::WidgetId;
 use crate::node::{ColdNode, HotNode};
 
 /// Error variants for arena tree operations and synchronization.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::{ArenaError, DummyWidget, HotNode, WidgetArena};
+///
+/// let mut arena = WidgetArena::new();
+/// let a = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+///
+/// // Self-parenting is rejected with `SelfParenting`.
+/// let err = arena.append_child(a, a).unwrap_err();
+/// assert_eq!(err, ArenaError::SelfParenting(a));
+///
+/// // A stale handle is rejected with `InvalidNode`.
+/// arena.remove(a);
+/// let err = arena.detach(a).unwrap_err();
+/// assert_eq!(err, ArenaError::InvalidNode(a));
+///
+/// // `ArenaError` implements `std::error::Error` and `Display`.
+/// let msg = format!("{}", ArenaError::CycleDetected);
+/// assert!(msg.contains("Cycle detected"));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArenaError {
     /// Provided widget handle is invalid or has expired generation.
@@ -83,6 +105,30 @@ pub(crate) struct Slot {
 }
 
 /// Generational slotmap arena maintaining packed 64-byte HotNode elements alongside ColdNode storage.
+///
+/// # Examples
+///
+/// Construct an arena, insert nodes, build a tree, and traverse it:
+///
+/// ```
+/// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+///
+/// let mut arena = WidgetArena::new();
+/// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// let a = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// let b = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// arena.append_child(root, a).unwrap();
+/// arena.append_child(root, b).unwrap();
+///
+/// // Pre-order subtree traversal visits root, then its children in order.
+/// let visited: Vec<_> = arena.iter_subtree(root).collect();
+/// assert_eq!(visited, vec![root, a, b]);
+///
+/// // Removing a node unparents its children and invalidates the handle.
+/// arena.remove(a);
+/// assert!(!arena.is_alive(a));
+/// assert_eq!(arena.children(root).count(), 1);
+/// ```
 pub struct WidgetArena {
     /// Sparse slot indirection table.
     slots: Vec<Slot>,
@@ -115,11 +161,32 @@ impl Default for WidgetArena {
 
 impl WidgetArena {
     /// Construct a new empty WidgetArena with default initial capacity (256 nodes).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::WidgetArena;
+    ///
+    /// let arena = WidgetArena::new();
+    /// assert!(arena.is_empty());
+    /// assert_eq!(arena.len(), 0);
+    /// assert!(arena.capacity() >= 256);
+    /// ```
     pub fn new() -> Self {
         Self::with_capacity(256)
     }
 
     /// Construct a new empty WidgetArena pre-allocated to the specified node capacity.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::WidgetArena;
+    ///
+    /// let arena = WidgetArena::with_capacity(1024);
+    /// assert!(arena.is_empty());
+    /// assert!(arena.capacity() >= 1024);
+    /// ```
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             slots: Vec::with_capacity(capacity),
@@ -298,6 +365,17 @@ impl WidgetArena {
     }
 
     /// Insert a new node wrapping a boxed widget implementation with default cold metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// assert!(arena.is_alive(id));
+    /// assert_eq!(arena.len(), 1);
+    /// ```
     pub fn insert_with_widget(
         &mut self,
         hot: HotNode,
@@ -495,6 +573,25 @@ impl WidgetArena {
     }
 
     /// Append a child node to the end of a parent's children list.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{ArenaError, DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let parent = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let a = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let b = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    ///
+    /// arena.append_child(parent, a).unwrap();
+    /// arena.append_child(parent, b).unwrap();
+    /// assert_eq!(arena.children(parent).collect::<Vec<_>>(), vec![a, b]);
+    /// assert_eq!(arena.parent(a), Some(parent));
+    ///
+    /// // Forming a cycle is rejected.
+    /// assert_eq!(arena.append_child(a, parent).unwrap_err(), ArenaError::CycleDetected);
+    /// ```
     pub fn append_child(&mut self, parent: WidgetId, child: WidgetId) -> Result<(), ArenaError> {
         if !self.is_alive(parent) {
             return Err(ArenaError::InvalidParent(parent));
@@ -717,6 +814,24 @@ impl WidgetArena {
     // --- Iterators ---
 
     /// Returns a zero-allocation iterator over the immediate children of `id`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let parent = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let a = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let b = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.append_child(parent, a).unwrap();
+    /// arena.append_child(parent, b).unwrap();
+    ///
+    /// // Forward iteration yields children in insertion order.
+    /// assert_eq!(arena.children(parent).collect::<Vec<_>>(), vec![a, b]);
+    /// // `Children` is a double-ended iterator.
+    /// assert_eq!(arena.children(parent).rev().collect::<Vec<_>>(), vec![b, a]);
+    /// ```
     pub fn children(&self, id: WidgetId) -> Children<'_> {
         let front = self.first_child(id);
         let back = self.last_child(id);
@@ -728,6 +843,28 @@ impl WidgetArena {
     }
 
     /// Returns a zero-allocation depth-first pre-order iterator over the subtree rooted at `id`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// // Build: root
+    /// //        ├── a
+    /// //        │   └── a1
+    /// //        └── b
+    /// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let a = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let a1 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let b = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.append_child(root, a).unwrap();
+    /// arena.append_child(a, a1).unwrap();
+    /// arena.append_child(root, b).unwrap();
+    ///
+    /// // Pre-order DFS visits parents before their children.
+    /// assert_eq!(arena.iter_subtree(root).collect::<Vec<_>>(), vec![root, a, a1, b]);
+    /// ```
     pub fn iter_subtree(&self, id: WidgetId) -> SubtreeIter<'_> {
         SubtreeIter {
             arena: self,
@@ -747,6 +884,28 @@ impl WidgetArena {
     }
 
     /// Returns a breadth-first iterator visiting all trees in the arena level-by-level.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// // Build: root
+    /// //        ├── a
+    /// //        │   └── a1
+    /// //        └── b
+    /// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let a = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let a1 = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let b = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.append_child(root, a).unwrap();
+    /// arena.append_child(a, a1).unwrap();
+    /// arena.append_child(root, b).unwrap();
+    ///
+    /// // BFS visits each level fully before descending: root, then a & b, then a1.
+    /// assert_eq!(arena.iter_breadth_first().collect::<Vec<_>>(), vec![root, a, b, a1]);
+    /// ```
     pub fn iter_breadth_first(&self) -> BreadthFirstIter<'_> {
         let mut queue = VecDeque::new();
         for i in 0..self.hot_nodes.len() {
@@ -821,6 +980,22 @@ impl WidgetArena {
 // --- Iterator Implementations ---
 
 /// Double-ended iterator over the direct children of a widget node.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+///
+/// let mut arena = WidgetArena::new();
+/// let parent = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// let a = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// let b = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// arena.append_child(parent, a).unwrap();
+/// arena.append_child(parent, b).unwrap();
+///
+/// let children = arena.children(parent);
+/// assert_eq!(children.count(), 2);
+/// ```
 #[derive(Clone, Debug)]
 pub struct Children<'a> {
     arena: &'a WidgetArena,
@@ -859,6 +1034,22 @@ impl<'a> DoubleEndedIterator for Children<'a> {
 impl<'a> FusedIterator for Children<'a> {}
 
 /// Zero-allocation pre-order depth-first traversal iterator over a node subtree.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+///
+/// let mut arena = WidgetArena::new();
+/// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// let child = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// arena.append_child(root, child).unwrap();
+///
+/// let mut it = arena.iter_subtree(root);
+/// assert_eq!(it.next(), Some(root));
+/// assert_eq!(it.next(), Some(child));
+/// assert_eq!(it.next(), None);
+/// ```
 #[derive(Clone, Debug)]
 pub struct SubtreeIter<'a> {
     arena: &'a WidgetArena,
@@ -914,6 +1105,20 @@ impl<'a> Iterator for SubtreeIter<'a> {
 impl<'a> FusedIterator for SubtreeIter<'a> {}
 
 /// Zero-allocation depth-first iterator traversing all trees in the arena.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+///
+/// let mut arena = WidgetArena::new();
+/// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// let child = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// arena.append_child(root, child).unwrap();
+///
+/// // Visits every tree in the arena in depth-first pre-order.
+/// assert_eq!(arena.iter_depth_first().collect::<Vec<_>>(), vec![root, child]);
+/// ```
 #[derive(Clone, Debug)]
 pub struct DepthFirstIter<'a> {
     arena: &'a WidgetArena,
@@ -956,6 +1161,20 @@ impl<'a> Iterator for DepthFirstIter<'a> {
 impl<'a> FusedIterator for DepthFirstIter<'a> {}
 
 /// Breadth-first iterator traversing trees level-by-level using a FIFO queue.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+///
+/// let mut arena = WidgetArena::new();
+/// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// let a = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+/// arena.append_child(root, a).unwrap();
+///
+/// // `iter_subtree_breadth_first` walks a single subtree level-by-level.
+/// assert_eq!(arena.iter_subtree_breadth_first(root).collect::<Vec<_>>(), vec![root, a]);
+/// ```
 #[derive(Clone, Debug)]
 pub struct BreadthFirstIter<'a> {
     arena: &'a WidgetArena,

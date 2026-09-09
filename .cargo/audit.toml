@@ -7,4 +7,5 @@ ignore = [
     "RUSTSEC-2025-0141", # bincode unmaintained (transitive via cosmic-text/syntect)
     "RUSTSEC-2024-0388", # derivative unmaintained (transitive via cosmic-text/syntect)
     "RUSTSEC-2024-0320", # yaml-rust unmaintained (transitive via cosmic-text/syntect)
+    "RUSTSEC-2025-0057", # fxhash unmaintained (transitive via wasmtime)
 ]

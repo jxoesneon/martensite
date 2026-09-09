@@ -393,27 +393,93 @@ pub fn default_platform_clipboard() -> Box<dyn PlatformClipboard> {
     cfg_default_platform_clipboard()
 }
 
-#[cfg(target_os = "windows")]
+// When the `platform` feature is enabled, delegate to the real OS clipboard
+// provided by `martensite-clipboard-platform`. This crate remains
+// `#![forbid(unsafe_code)]`; all FFI lives in the platform crate. The
+// platform crate defines its own `ClipboardBackend` trait (to avoid a cyclic
+// dependency); we adapt it to `PlatformClipboard` via the
+// `PlatformBackendAdapter` wrapper below.
+#[cfg(feature = "platform")]
+fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
+    if let Some(backend) = martensite_clipboard_platform::native_backend() {
+        return Box::new(PlatformBackendAdapter(backend));
+    }
+    // Fall back to the stub if no native backend is available (e.g. no X
+    // server on Linux).
+    Box::new(StubClipboard::new())
+}
+
+/// Adapter that wraps a `martensite_clipboard_platform::ClipboardBackend` as
+/// a [`PlatformClipboard`].
+///
+/// This is the bridge between the FFI-only `ClipboardBackend` trait (which
+/// lives in the platform crate to avoid a cyclic dependency) and the safe
+/// `ClipboardService` / `PlatformClipboard` traits defined in this crate.
+#[cfg(feature = "platform")]
+struct PlatformBackendAdapter(Box<dyn martensite_clipboard_platform::ClipboardBackend>);
+
+#[cfg(feature = "platform")]
+impl ClipboardService for PlatformBackendAdapter {
+    fn set_contents(&mut self, item: &ClipboardItem) {
+        // Clear first, then write each offered representation.
+        self.0.clear();
+        for (mime, payload) in item.iter() {
+            if let Some(bytes) = payload.with_deadline(crate::clipboard::DEFAULT_LAZY_DEADLINE) {
+                self.0.write(mime, &bytes);
+            }
+        }
+    }
+
+    fn get_contents(&self, mime: &str) -> Option<Vec<u8>> {
+        self.0.read(mime)
+    }
+
+    fn available_types(&self) -> Vec<String> {
+        self.0.available_types()
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
+#[cfg(feature = "platform")]
+impl PlatformClipboard for PlatformBackendAdapter {
+    fn platform_name(&self) -> &str {
+        self.0.platform_name()
+    }
+}
+
+#[cfg(all(not(feature = "platform"), target_os = "windows"))]
 fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
     Box::new(WindowsOleClipboard::new())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(not(feature = "platform"), target_os = "macos"))]
 fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
     Box::new(NsPasteboardClipboard::new())
 }
 
-#[cfg(all(target_os = "linux", feature = "wayland"))]
+#[cfg(all(
+    not(feature = "platform"),
+    all(target_os = "linux", feature = "wayland")
+))]
 fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
     Box::new(WaylandClipboard::new())
 }
 
-#[cfg(all(target_os = "linux", not(feature = "wayland")))]
+#[cfg(all(
+    not(feature = "platform"),
+    all(target_os = "linux", not(feature = "wayland"))
+))]
 fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
     Box::new(X11Clipboard::new())
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+#[cfg(all(
+    not(feature = "platform"),
+    not(any(target_os = "windows", target_os = "macos", target_os = "linux"))
+))]
 fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
     Box::new(StubClipboard::new())
 }
@@ -455,30 +521,55 @@ mod tests {
     fn default_platform_returns_usable_clipboard() {
         let cb = default_platform_clipboard();
         assert!(!cb.platform_name().is_empty());
-        // Reads are empty regardless of backend (all are stubs today).
-        assert!(cb.get_contents(MIME_TEXT_PLAIN).is_none());
-        assert!(cb.available_types().is_empty());
+        // When the `platform` feature is disabled, all backends are stubs
+        // and reads/types are empty. When it is enabled, the real OS
+        // clipboard may have arbitrary contents, so we only assert the
+        // stub behavior for the stub path.
+        #[cfg(not(feature = "platform"))]
+        {
+            assert!(cb.get_contents(MIME_TEXT_PLAIN).is_none());
+            assert!(cb.available_types().is_empty());
+        }
     }
 
     #[test]
     fn default_platform_name_matches_target() {
         let cb = default_platform_clipboard();
         let name = cb.platform_name();
-        #[cfg(target_os = "windows")]
+        // When the `platform` feature is enabled, the name comes from the
+        // real OS backend in `martensite-clipboard-platform`. When it is
+        // disabled, the name comes from the safe stub backends defined in
+        // this module.
+        #[cfg(all(not(feature = "platform"), target_os = "windows"))]
         assert_eq!(name, "windows-ole");
-        #[cfg(target_os = "macos")]
+        #[cfg(all(not(feature = "platform"), target_os = "macos"))]
         assert_eq!(name, "macos-nspasteboard");
-        #[cfg(all(target_os = "linux", feature = "wayland"))]
+        #[cfg(all(not(feature = "platform"), target_os = "linux", feature = "wayland"))]
         assert_eq!(name, "wayland");
-        #[cfg(all(target_os = "linux", not(feature = "wayland")))]
+        #[cfg(all(
+            not(feature = "platform"),
+            target_os = "linux",
+            not(feature = "wayland")
+        ))]
         assert_eq!(name, "x11");
-        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        #[cfg(all(
+            not(feature = "platform"),
+            not(any(target_os = "windows", target_os = "macos", target_os = "linux"))
+        ))]
         assert_eq!(name, "stub");
+        // With the `platform` feature, just assert a non-empty name — the
+        // real backend may not be available in all test environments.
+        #[cfg(feature = "platform")]
+        assert!(!name.is_empty());
     }
 
     #[test]
     fn platform_clipboard_is_object_safe_via_box() {
-        let mut cb: Box<dyn PlatformClipboard> = default_platform_clipboard();
+        // Use a StubClipboard so this test never touches the real OS
+        // clipboard. Object safety is a property of the trait, not the
+        // backend, so a stub is sufficient to verify `Box<dyn
+        // PlatformClipboard>` works.
+        let mut cb: Box<dyn PlatformClipboard> = Box::new(StubClipboard::new());
         cb.clear();
         let _name: &str = cb.platform_name();
         let _types: Vec<String> = cb.available_types();

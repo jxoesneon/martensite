@@ -16,12 +16,28 @@ readme = "README.md"
 martensite-core = { workspace = true }
 martensite-render = { workspace = true }
 martensite-media = { workspace = true }
+# Unconditional: `interop::platform_import` re-exports
+# `martensite_media_platform::{import_external_texture, import_cpu_memory,
+# ImportTextureDescriptor}` without any `cfg` gate, so the dependency
+# must always be present to keep the crate compiling on every target.
+martensite-media-platform = { workspace = true }
+martensite-theme = { workspace = true }
 wgpu = { workspace = true }
 vello = { workspace = true }
 pollster = { workspace = true }
 tracing = { workspace = true }
 bytemuck = { workspace = true }
 glam = { workspace = true }
+
+[features]
+default = []
+# Enables the Vello GPU compute dispatch path in `RenderOrchestrator`. When
+# disabled, the orchestrator's GPU mode builds the scene but the
+# `render_to_surface` Vello branch is compiled out (only the TinySkia CPU upload
+# path remains). This forwards to `martensite-render`'s `vello` feature, which
+# in turn enables vello's `wgpu` feature so that `vello::Renderer` is available
+# on the same wgpu 30 version as the rest of the workspace.
+vello = ["martensite-render/vello"]
 
 [lints]
 workspace = true

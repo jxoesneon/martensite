@@ -137,18 +137,22 @@ jobs:
             martensite-reactive
             martensite-macros
             martensite-core
+            martensite-host
             martensite-layout
             martensite-media
             martensite-render
+            martensite-theme
+            martensite-media-platform
             martensite-wgpu
             martensite-cosmic-text
             martensite-text
+            martensite-font-fallback
             martensite-access
             martensite-window
             martensite-focus
+            martensite-clipboard-platform
             martensite-clipboard
             martensite-dnd
-            martensite-theme
             martensite-test
             martensite-motion
             martensite-history
@@ -266,22 +270,30 @@ jobs:
 
           # Crates in topological dependency order.
           # martensite-cosmic-text must come before martensite-text.
+          # martensite-theme must come before martensite-wgpu.
+          # martensite-media-platform must come before martensite-wgpu.
+          # martensite-clipboard-platform must come before martensite-clipboard.
+          # martensite-font-fallback must come before martensite.
           CRATES=(
             martensite-reactive
             martensite-macros
             martensite-core
+            martensite-host
             martensite-layout
             martensite-media
             martensite-render
+            martensite-theme
+            martensite-media-platform
             martensite-wgpu
             martensite-cosmic-text
             martensite-text
+            martensite-font-fallback
             martensite-access
             martensite-window
             martensite-focus
+            martensite-clipboard-platform
             martensite-clipboard
             martensite-dnd
-            martensite-theme
             martensite-test
             martensite-motion
             martensite-history

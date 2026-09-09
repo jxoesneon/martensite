@@ -37,6 +37,28 @@
 /// Fractional scale factors such as `1.25`, `1.5` and `1.75` are fully
 /// supported — no integer rounding is applied, so callers retain full
 /// sub-pixel precision.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_window::dpi::DpiScale;
+///
+/// // A 2x Retina display: 1920 physical px = 960 logical px.
+/// let scale = DpiScale::new(2.0);
+/// assert_eq!(scale.scale_factor(), 2.0);
+/// assert_eq!(scale.to_logical(1920.0), 960.0);
+/// assert_eq!(scale.to_physical(960.0), 1920.0);
+///
+/// // Fractional 1.5x scaling keeps sub-pixel precision.
+/// let frac = DpiScale::new(1.5);
+/// assert_eq!(frac.to_physical(100.0), 150.0);
+/// assert_eq!(frac.to_logical(150.0), 100.0);
+///
+/// // `is_valid` guards against non-finite values from the platform.
+/// assert!(DpiScale::is_valid(1.25));
+/// assert!(!DpiScale::is_valid(0.0));
+/// assert!(!DpiScale::is_valid(f64::NAN));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DpiScale {
     /// The ratio of physical pixels to logical pixels.

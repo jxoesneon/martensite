@@ -8,10 +8,14 @@
 //! cosmic-text's `Shaping::Advanced` mode.
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::bidi::{BidiDirection, BidiMirrorMap, BidiResolved};
 use crate::cache::{CachedShape, ShapeCacheKey};
-use crate::cascade::{classify_script, FallbackKey, InstalledFontFallbackResolver, ScriptTag};
+use crate::cascade::{
+    classify_script, FallbackDecisionCache, FallbackKey, FontFallbackProvider,
+    InstalledFontFallbackResolver, ScriptTag,
+};
 use crate::font::{FontId, FontManager};
 use crate::vertical::{apply_vertical_features, WritingMode};
 
@@ -80,18 +84,43 @@ impl ShapingOptions {
     ///
     /// The script used for the platform cascade is taken from
     /// [`Self::fallback_key`] when set, otherwise it is detected from the
-    /// dominant script of `text`.
+    /// dominant script of `text`. When [`Self::fallback_key`] includes a
+    /// locale, it is passed to the [`crate::cascade::FontFallbackProvider`] for
+    /// locale-sensitive CJK and Indic variant selection.
     pub fn resolve_fallback_chain(
         &self,
         font_system: &FontSystem,
         text: &str,
         attrs: &Attrs,
     ) -> Vec<String> {
-        let resolver = InstalledFontFallbackResolver::new(font_system);
+        self.resolve_fallback_chain_with_provider(font_system, text, attrs, None)
+    }
+
+    /// Like [`resolve_fallback_chain`](Self::resolve_fallback_chain) but
+    /// uses the supplied [`FontFallbackProvider`] when `provider` is
+    /// `Some`, falling back to the default [`PlatformCascadeResolver`](crate::cascade::PlatformCascadeResolver)
+    /// when `None`.
+    ///
+    /// This is the entry point used by [`Shaper::shape_with_options`]
+    /// when an OS-native provider has been injected via
+    /// [`Shaper::set_fallback_provider`].
+    pub fn resolve_fallback_chain_with_provider(
+        &self,
+        font_system: &FontSystem,
+        text: &str,
+        attrs: &Attrs,
+        provider: Option<&dyn FontFallbackProvider>,
+    ) -> Vec<String> {
+        let resolver = match provider {
+            Some(p) => InstalledFontFallbackResolver::with_provider(font_system, p),
+            None => InstalledFontFallbackResolver::new(font_system),
+        };
         if let Some(key) = &self.fallback_key {
-            // Resolve against the culture-specific script from the key.
+            // Resolve against the culture-specific script from the key,
+            // passing the locale for locale-sensitive fallback ordering.
+            let locale = &key.locale;
             let mut chain = vec![Self::family_display_name(&attrs.family).to_string()];
-            for family in resolver.installed_fallbacks_for_script(key.script) {
+            for family in resolver.installed_fallbacks_for_script_with_locale(key.script, locale) {
                 if !chain.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
                     chain.push(family);
                 }
@@ -228,6 +257,24 @@ pub struct Shaper {
     applied_families: Vec<String>,
     /// Writing mode used for the current text.
     writing_mode: WritingMode,
+    /// Cache for resolved fallback chains, keyed by
+    /// `(FallbackKey, primary_family)` and invalidated by the
+    /// font-system generation counter. This avoids re-scanning the
+    /// font database on every shaping call for the same text and
+    /// family.
+    fallback_cache: FallbackDecisionCache,
+    /// The font-system generation counter last seen by the shaper.
+    /// When this differs from the value passed to
+    /// [`Self::set_font_generation`], the [`fallback_cache`](Self::fallback_cache)
+    /// is invalidated.
+    font_generation: u64,
+    /// Optional injected font fallback provider. When set, this is
+    /// used instead of the default [`PlatformCascadeResolver`](crate::cascade::PlatformCascadeResolver) for
+    /// fallback chain resolution. This is the seam through which
+    /// native OS providers (DirectWrite, CoreText, Fontconfig) are
+    /// plugged in by the `martensite` crate when the `native-fallback`
+    /// feature is enabled.
+    fallback_provider: Option<Box<dyn FontFallbackProvider>>,
 }
 
 impl Shaper {
@@ -241,6 +288,9 @@ impl Shaper {
             fallback_chain: Vec::new(),
             applied_families: Vec::new(),
             writing_mode: WritingMode::HorizontalTb,
+            fallback_cache: FallbackDecisionCache::new(),
+            font_generation: 0,
+            fallback_provider: None,
         }
     }
 
@@ -255,6 +305,9 @@ impl Shaper {
             fallback_chain: Vec::new(),
             applied_families: Vec::new(),
             writing_mode: WritingMode::HorizontalTb,
+            fallback_cache: FallbackDecisionCache::new(),
+            font_generation: 0,
+            fallback_provider: None,
         }
     }
 
@@ -292,6 +345,115 @@ impl Shaper {
         self.buffer.set_size(width, height);
     }
 
+    /// Sets the font-system generation counter used to invalidate the
+    /// internal [`FallbackDecisionCache`].
+    ///
+    /// Obtain this value from [`FontManager::generation`]. When the
+    /// generation changes (e.g. after loading a new font), all cached
+    /// fallback decisions are invalidated so the next shaping call
+    /// re-resolves against the updated font database.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::{FontManager, Metrics, Shaper};
+    ///
+    /// let mut mgr = FontManager::new();
+    /// let mut shaper = Shaper::new_empty(Metrics::new(16.0, 20.0));
+    /// shaper.set_font_generation(mgr.generation());
+    /// ```
+    #[inline]
+    pub fn set_font_generation(&mut self, generation: u64) {
+        self.font_generation = generation;
+    }
+
+    /// Injects a custom [`FontFallbackProvider`] to use for fallback
+    /// chain resolution.
+    ///
+    /// When set, this provider is used instead of the default
+    /// [`PlatformCascadeResolver`](crate::cascade::PlatformCascadeResolver). This is the seam through which
+    /// native OS providers (DirectWrite, CoreText, Fontconfig) are
+    /// plugged in by the `martensite` crate when the `native-fallback`
+    /// feature is enabled.
+    ///
+    /// Pass `None` to revert to the default platform resolver.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::{Metrics, Shaper};
+    /// use martensite_text::cascade::{FontFallbackProvider, PlatformCascadeResolver};
+    ///
+    /// let mut shaper = Shaper::new_empty(Metrics::new(16.0, 20.0));
+    /// shaper.set_fallback_provider(Some(Box::new(PlatformCascadeResolver)));
+    /// ```
+    #[inline]
+    pub fn set_fallback_provider(&mut self, provider: Option<Box<dyn FontFallbackProvider>>) {
+        self.fallback_provider = provider;
+        // Clear the cache so stale decisions from the previous provider
+        // are not reused.
+        self.fallback_cache.clear();
+    }
+
+    /// Resolves the fallback chain for `text` and `attrs` under
+    /// `options`, using the internal [`FallbackDecisionCache`] to
+    /// avoid re-scanning the font database on repeated calls for the
+    /// same `(FallbackKey, primary_family)` combination.
+    ///
+    /// The cache is keyed by `(FallbackKey, primary_family)` and
+    /// invalidated by the font-system generation counter set via
+    /// [`Self::set_font_generation`]. When a provider has been
+    /// injected via [`Self::set_fallback_provider`], it is used
+    /// instead of the default [`PlatformCascadeResolver`](crate::cascade::PlatformCascadeResolver).
+    ///
+    /// On a cache miss, the chain is resolved (delegating to
+    /// [`ShapingOptions::resolve_fallback_chain_with_provider`]) and
+    /// inserted into the cache. On a cache hit, the cached chain is
+    /// returned directly.
+    fn resolve_fallback_chain_cached(
+        &mut self,
+        font_system: &FontSystem,
+        text: &str,
+        attrs: &Attrs,
+        options: &ShapingOptions,
+    ) -> Vec<String> {
+        let primary_family = ShapingOptions::family_display_name(&attrs.family).to_string();
+
+        // Determine the FallbackKey for this resolution.
+        let key = match &options.fallback_key {
+            Some(k) => k.clone(),
+            None => {
+                let script = if text.is_empty() {
+                    ScriptTag::Latin
+                } else {
+                    crate::cascade::dominant_script(text)
+                };
+                FallbackKey::new(script, "")
+            }
+        };
+
+        // Check the cache first.
+        if let Some(cached) = self
+            .fallback_cache
+            .get(&key, &primary_family, self.font_generation)
+        {
+            return cached.clone();
+        }
+
+        // Cache miss: resolve the chain using the injected provider
+        // (if any) or the default platform resolver.
+        let chain = options.resolve_fallback_chain_with_provider(
+            font_system,
+            text,
+            attrs,
+            self.fallback_provider.as_deref(),
+        );
+
+        self.fallback_cache
+            .insert(&key, &primary_family, chain.clone(), self.font_generation);
+        chain
+    }
+
     /// Sets the text to be shaped with the given attributes.
     ///
     /// Uses `Shaping::Advanced` for full BiDi, fallback, and complex
@@ -310,8 +472,23 @@ impl Shaper {
     ///
     /// After calling this, [`Shaper::measure`] and [`Shaper::lines`]
     /// return the final results.
+    ///
+    /// The underlying cosmic-text shaping engine delegates to `swash`
+    /// for glyph parsing, which has known panic paths on malformed font
+    /// data (swash issues #123–#126). This call is wrapped in
+    /// [`catch_unwind`] so a corrupt or adversarial font cannot abort
+    /// the calling thread; on panic the buffer is left unshaped
+    /// (yielding zero metrics) and a warning is logged.
     pub fn shape(&mut self, font_system: &mut FontSystem) {
-        self.buffer.shape_until_scroll(font_system, false);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            self.buffer.shape_until_scroll(font_system, false);
+        }));
+        if result.is_err() {
+            tracing::warn!(
+                "swash shaping panicked on potentially malformed font data; \
+                 returning unshaped buffer"
+            );
+        }
     }
 
     /// Measures the shaped text, returning the total width, height,
@@ -507,7 +684,7 @@ impl Shaper {
         attrs: &Attrs,
         options: &ShapingOptions,
     ) {
-        self.fallback_chain = options.resolve_fallback_chain(font_system, text, attrs);
+        self.fallback_chain = self.resolve_fallback_chain_cached(font_system, text, attrs, options);
         self.resolve_bidi(text, options.direction);
         self.writing_mode = options.writing_mode;
         self.applied_families.clear();

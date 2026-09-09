@@ -7,6 +7,7 @@
 //! throughout the application lifetime, as system font discovery is
 //! expensive.
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -146,6 +147,10 @@ impl From<fontdb::Style> for FontStyle {
 /// ```
 pub struct FontManager {
     system: FontSystem,
+    /// Monotonically increasing generation counter, incremented whenever
+    /// the font database is modified (fonts added or removed). Used by
+    /// the fallback decision cache to invalidate stale entries.
+    generation: u64,
 }
 
 impl FontManager {
@@ -156,6 +161,7 @@ impl FontManager {
     pub fn new() -> Self {
         Self {
             system: FontSystem::new(),
+            generation: 0,
         }
     }
 
@@ -171,12 +177,16 @@ impl FontManager {
             .collect();
         Self {
             system: FontSystem::new_with_fonts(sources),
+            generation: 0,
         }
     }
 
     /// Creates a `FontManager` from an existing [`FontSystem`].
     pub fn from_system(system: FontSystem) -> Self {
-        Self { system }
+        Self {
+            system,
+            generation: 0,
+        }
     }
 
     /// Loads a custom font from a file path and registers it in the
@@ -202,10 +212,28 @@ impl FontManager {
         // Record face IDs before loading
         let before: std::collections::HashSet<fontdb::ID> =
             self.system.db().faces().map(|f| f.id).collect();
-        self.system.db_mut().load_font_file(&path).map_err(|e| {
-            // Convert fontdb error to io::Error
-            std::io::Error::other(format!("{e:?}"))
-        })?;
+        // fontdb's load_font_file parses font data via ttf-parser/swash,
+        // which have known panic paths on malformed font data (swash
+        // #123–#126, ttf-parser RUSTSEC-2026-0192). Wrap in catch_unwind
+        // so a corrupt font file cannot abort the calling thread.
+        let load_result = catch_unwind(AssertUnwindSafe(|| {
+            self.system.db_mut().load_font_file(&path)
+        }));
+        match load_result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                return Err(std::io::Error::other(format!("{e:?}")));
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "fontdb panicked while loading font file {:?}; skipping font",
+                    path
+                );
+                return Ok(Vec::new());
+            }
+        }
+        // Increment generation counter to invalidate fallback caches.
+        self.generation = self.generation.saturating_add(1);
         // Return only the newly added face IDs
         Ok(self
             .system
@@ -219,13 +247,32 @@ impl FontManager {
     /// Loads a custom font from in-memory binary data.
     ///
     /// Returns the IDs of the font faces that were loaded.
+    ///
+    /// The font data is parsed by fontdb via ttf-parser/swash, which
+    /// have known panic paths on malformed font data (swash #123–#126,
+    /// ttf-parser RUSTSEC-2026-0192). This call is wrapped in
+    /// [`catch_unwind`] so a corrupt or adversarial font cannot abort
+    /// the calling thread; on panic an empty vec is returned and a
+    /// warning is logged.
     pub fn load_font_data(
         &mut self,
         data: impl AsRef<[u8]> + Sync + Send + 'static,
     ) -> Vec<FontId> {
         let source = fontdb::Source::Binary(Arc::new(data));
-        let face_ids = self.system.db_mut().load_font_source(source);
-        face_ids.into_iter().map(FontId).collect()
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            self.system.db_mut().load_font_source(source)
+        }));
+        match result {
+            Ok(face_ids) => {
+                // Increment generation counter to invalidate fallback caches.
+                self.generation = self.generation.saturating_add(1);
+                face_ids.into_iter().map(FontId).collect()
+            }
+            Err(_) => {
+                tracing::warn!("fontdb panicked while loading in-memory font data; skipping font");
+                Vec::new()
+            }
+        }
     }
 
     /// Returns all discovered font faces.
@@ -258,6 +305,17 @@ impl FontManager {
     /// Returns the locale string used for font fallback.
     pub fn locale(&self) -> &str {
         self.system.locale()
+    }
+
+    /// Returns the current font database generation counter.
+    ///
+    /// This counter is incremented whenever the font database is
+    /// modified (fonts added or removed via [`load_font_file`](Self::load_font_file)
+    /// or [`load_font_data`](Self::load_font_data)). The fallback
+    /// decision cache uses this to invalidate stale entries.
+    #[inline]
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Borrows the underlying [`FontSystem`] for use with cosmic-text APIs.

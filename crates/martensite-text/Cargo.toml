@@ -21,8 +21,11 @@ fontdb = { workspace = true }
 unicode-bidi = { workspace = true }
 unicode-bidi-mirroring = "0.2"
 unicode-linebreak = "0.1.5"
+unicode-segmentation = { workspace = true }
 swash = "0.2"
 smallvec = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

@@ -50,6 +50,24 @@ new_key_type! {
 /// whether to tear down GPU surfaces, request application exit, or simply
 /// continue processing further events.
 ///
+/// # Examples
+///
+/// ```
+/// use martensite_window::WindowEventOutcome;
+///
+/// // `None` means no special action is required.
+/// assert_eq!(WindowEventOutcome::None, WindowEventOutcome::None);
+///
+/// // Scale-factor changes carry the new factor for surface reconfiguration.
+/// assert_ne!(
+///     WindowEventOutcome::ScaleFactorChanged(1.0),
+///     WindowEventOutcome::ScaleFactorChanged(2.0),
+/// );
+///
+/// // Occlusion reports let callers skip rendering while hidden.
+/// assert_ne!(WindowEventOutcome::Occluded(true), WindowEventOutcome::Occluded(false));
+/// ```
+///
 /// [`ApplicationHandler`]: winit::application::ApplicationHandler
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WindowEventOutcome {
@@ -72,6 +90,11 @@ pub enum WindowEventOutcome {
     /// A redraw was requested for the window. The caller should render and
     /// present a new frame.
     RedrawRequested,
+    /// The window's occlusion state changed. `true` means the window is fully
+    /// occluded (e.g. another window covers it); `false` means it is at least
+    /// partially visible. The caller can use this to skip rendering while
+    /// occluded to save power.
+    Occluded(bool),
 }
 
 /// A single tracked window and its associated per-window state.
@@ -107,6 +130,25 @@ impl WindowEntry {
 /// Storage is backed by a [`SlotMap`] keyed by [`WindowKey`], giving stable
 /// O(1) lookup, insertion, and removal even as windows are created and
 /// destroyed over the lifetime of the process.
+///
+/// # Examples
+///
+/// Creating windows requires a running winit event loop, but the manager's
+/// storage logic can be inspected headlessly:
+///
+/// ```
+/// use martensite_window::WindowManager;
+///
+/// let mgr = WindowManager::new();
+/// assert!(mgr.is_empty());
+/// assert_eq!(mgr.len(), 0);
+/// assert_eq!(mgr.window_count(), 0);
+/// ```
+///
+/// Driving a real event loop is shown in the crate-level example, which uses
+/// [`WindowManager::create_window`] inside an [`ApplicationHandler`].
+///
+/// [`ApplicationHandler`]: winit::application::ApplicationHandler
 #[derive(Debug)]
 pub struct WindowManager {
     /// Slotmap holding one [`WindowEntry`] per open window.
@@ -320,6 +362,7 @@ impl WindowManager {
                 WindowEventOutcome::ScaleFactorChanged(*scale_factor)
             }
             WindowEvent::RedrawRequested => WindowEventOutcome::RedrawRequested,
+            WindowEvent::Occluded(occluded) => WindowEventOutcome::Occluded(*occluded),
             _ => WindowEventOutcome::None,
         }
     }
@@ -537,6 +580,23 @@ mod tests {
         assert_eq!(
             WindowEventOutcome::RedrawRequested,
             WindowEventOutcome::RedrawRequested,
+        );
+    }
+
+    #[test]
+    fn window_event_outcome_occluded_distinct() {
+        assert_ne!(
+            WindowEventOutcome::Occluded(true),
+            WindowEventOutcome::Occluded(false),
+        );
+        assert_ne!(WindowEventOutcome::Occluded(true), WindowEventOutcome::None);
+        assert_ne!(
+            WindowEventOutcome::Occluded(false),
+            WindowEventOutcome::RedrawRequested,
+        );
+        assert_eq!(
+            WindowEventOutcome::Occluded(true),
+            WindowEventOutcome::Occluded(true),
         );
     }
 

@@ -14,12 +14,21 @@ readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }
+# Optional dependency on the OS-native clipboard backend crate. When the
+# `platform` feature is enabled, `default_platform_clipboard` returns a real
+# OS clipboard (NSPasteboard / Win32 / X11) instead of a stub. The platform
+# crate uses `#![allow(unsafe_code)]` for FFI; this crate remains
+# `#![forbid(unsafe_code)]`.
+martensite-clipboard-platform = { workspace = true, optional = true }
 
 [features]
 default = []
 # Enables Wayland data-device clipboard integration on Linux.
 # When disabled on Linux, the X11 stub is selected instead.
 wayland = []
+# Enables real OS clipboard integration via `martensite-clipboard-platform`.
+# When disabled, all platform backends fall back to safe stubs.
+platform = ["dep:martensite-clipboard-platform"]
 
 [lints]
 workspace = true

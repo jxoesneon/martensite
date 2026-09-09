@@ -1,0 +1,61 @@
+[package]
+name = "martensite-media-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Platform-specific zero-copy hardware video surface import (IOSurface, DXGI, dma-buf) for martensite-media."
+readme = "README.md"
+
+[dependencies]
+martensite-media = { workspace = true }
+wgpu = { workspace = true }
+
+# macOS: IOSurface + Metal interop via the objc2 ecosystem. The `metal`
+# feature on wgpu is enabled only here (target-gated) so non-Apple
+# targets don't pull in the Metal backend.
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { workspace = true, features = ["metal"] }
+objc2 = "0.6.3"
+objc2-metal = { version = "0.3.2", features = [
+    "std",
+    "MTLDevice",
+    "MTLTexture",
+    "MTLPixelFormat",
+    "MTLResource",
+    "MTLTypes",
+    "objc2-io-surface",
+] }
+objc2-io-surface = { version = "0.3.2", features = ["IOSurfaceRef", "objc2"] }
+
+# Windows: DXGI shared handle import (compiles only on Windows).
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Foundation",
+] }
+
+# Linux: dma-buf import (compiles only on Linux).
+[target.'cfg(target_os = "linux")'.dependencies]
+drm = "0.12"
+
+[features]
+docs-rs = []
+
+[package.metadata.docs.rs]
+features = ["docs-rs"]
+
+# This crate uses `#![allow(unsafe_code)]` at the crate level because it
+# contains platform-specific FFI to IOSurface/Metal (macOS), DXGI/D3D12
+# (Windows), and drm/dma-buf (Linux). The workspace-level `unsafe_code =
+# "deny"` policy is preserved for all other crates; this is the narrowly
+# scoped audited exception, following the same pattern as
+# `martensite-font-fallback`.
+[lints]
+workspace = true

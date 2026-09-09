@@ -135,8 +135,19 @@ impl ColorRgba {
 /// assert!((relative_luminance(black) - 0.0).abs() < 1e-4);
 /// ```
 pub fn relative_luminance(c: ColorRgba) -> f32 {
+    // Sanitize NaN/inf channels to 0.0 before clamping. Without this,
+    // NaN channels propagate through clamp and powf, causing
+    // check_text_contrast to silently return false for every check
+    // involving a NaN color (see rae::color.rs for the same pattern).
+    let sanitize = |val: f32| -> f32 {
+        if val.is_finite() {
+            val
+        } else {
+            0.0
+        }
+    };
     let linearize = |val: f32| -> f32 {
-        let clamped = val.clamp(0.0, 1.0);
+        let clamped = sanitize(val).clamp(0.0, 1.0);
         if clamped <= 0.04045 {
             clamped / 12.92
         } else {

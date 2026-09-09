@@ -16,8 +16,9 @@ readme = "README.md"
 martensite-core = { workspace = true }
 accesskit = { workspace = true }
 accesskit_winit = { workspace = true }
-winit = { workspace = true }
-unicode-segmentation = "1.12"
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+unicode-segmentation = { workspace = true }
 unicode-bidi = { workspace = true }
 
 [dev-dependencies]
@@ -25,7 +26,7 @@ glam = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 
 [features]
-docs-rs = ["winit/x11"]
+docs-rs = []
 
 [package.metadata.docs.rs]
 features = ["docs-rs"]

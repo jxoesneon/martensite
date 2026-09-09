@@ -36,6 +36,31 @@ pub use vello_backend::VelloRenderer;
 pub use kurbo::{BezPath, Point, Rect};
 
 /// Abstraction over the concrete rendering target that consumes a [`PaintList`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::{PaintList, RenderBackend};
+/// use kurbo::Rect;
+///
+/// // A mock backend that records how many commands it received.
+/// struct CountingBackend {
+///     received: usize,
+/// }
+///
+/// impl RenderBackend for CountingBackend {
+///     fn render(&mut self, paint_list: &PaintList) {
+///         self.received = paint_list.len();
+///     }
+/// }
+///
+/// let mut list = PaintList::new();
+/// list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+///
+/// let mut backend = CountingBackend { received: 0 };
+/// backend.render(&list);
+/// assert_eq!(backend.received, 1);
+/// ```
 pub trait RenderBackend: Send + 'static {
     /// Renders the given [`PaintList`] to this backend's output surface.
     fn render(&mut self, paint_list: &PaintList);

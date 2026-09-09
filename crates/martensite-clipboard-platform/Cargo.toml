@@ -1,0 +1,46 @@
+[package]
+name = "martensite-clipboard-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "OS-native clipboard backends (NSPasteboard, Win32, X11) for martensite-clipboard."
+readme = "README.md"
+
+[dependencies]
+# This crate intentionally does NOT depend on `martensite-clipboard` to avoid
+# a cyclic dependency. It defines its own `ClipboardBackend` trait and raw
+# FFI; `martensite-clipboard` wraps this crate's API behind its own
+# `PlatformClipboard` trait when the `platform` feature is enabled.
+
+# Windows: Win32 clipboard via the `windows` crate.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+] }
+
+# Linux: X11 clipboard via raw FFI to libX11 (linked as a system library).
+# No extra crate dependency is required; the FFI bindings are declared inline.
+
+[features]
+docs-rs = []
+
+[package.metadata.docs.rs]
+features = ["docs-rs"]
+
+# This crate uses `#![allow(unsafe_code)]` at the crate level because it
+# contains platform-specific FFI to NSPasteboard (macOS Objective-C runtime),
+# the Win32 clipboard API (Windows), and X11 selections (Linux). The
+# workspace-level `unsafe_code = "deny"` policy is preserved for all other
+# crates; this is the narrowly scoped audited exception, mirroring the
+# `martensite-font-fallback` crate's boundary decision.
+[lints]
+workspace = true

@@ -410,17 +410,73 @@ mod disk {
     use super::Vfs;
     use notify::{event::EventKind, RecommendedWatcher, RecursiveMode, Watcher};
     use parking_lot::Mutex;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::fmt;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
+    /// Maximum number of invalidation paths retained in the queue before
+    /// the oldest entries are dropped.
+    const MAX_INVALIDATIONS: usize = 1024;
+
+    /// A bounded, deduplicated queue of invalidated asset paths.
+    ///
+    /// The file watcher appends every event path here. Paths are
+    /// deduplicated so repeated events for the same file do not bloat
+    /// the queue, and the queue is capped at [`MAX_INVALIDATIONS`]
+    /// entries. When the cap is reached, the oldest entry is dropped
+    /// and the `dropped` counter is incremented.
+    struct InvalidationQueue {
+        paths: Vec<String>,
+        seen: HashSet<String>,
+        dropped: u64,
+    }
+
+    impl InvalidationQueue {
+        fn new() -> Self {
+            Self {
+                paths: Vec::new(),
+                seen: HashSet::new(),
+                dropped: 0,
+            }
+        }
+
+        /// Appends `path` to the queue if it is not already present.
+        /// When the queue is at capacity, the oldest entry is removed
+        /// (and its `seen` entry cleared) before the new one is added.
+        fn push(&mut self, path: String) {
+            if self.seen.contains(&path) {
+                return;
+            }
+            if self.paths.len() >= MAX_INVALIDATIONS {
+                if let Some(oldest) = self.paths.first().cloned() {
+                    self.paths.remove(0);
+                    self.seen.remove(&oldest);
+                    self.dropped += 1;
+                    tracing::warn!(
+                        path = %oldest,
+                        dropped_count = self.dropped,
+                        "DiskVfs invalidation queue full; dropping oldest entry"
+                    );
+                }
+            }
+            self.seen.insert(path.clone());
+            self.paths.push(path);
+        }
+
+        /// Drains and returns all queued paths, resetting the dedup set.
+        fn drain(&mut self) -> Vec<String> {
+            self.seen.clear();
+            core::mem::take(&mut self.paths)
+        }
+    }
+
     /// Internal state shared between the [`DiskVfs`] and its background watcher.
     struct WatchState {
         root: Arc<PathBuf>,
         version: Arc<AtomicU64>,
-        invalidated: Arc<Mutex<Vec<String>>>,
+        invalidated: Arc<Mutex<InvalidationQueue>>,
     }
 
     /// A filesystem-backed VFS for development builds.
@@ -453,7 +509,7 @@ mod disk {
         root: PathBuf,
         cache: HashMap<String, Box<[u8]>>,
         version: Arc<AtomicU64>,
-        invalidated: Arc<Mutex<Vec<String>>>,
+        invalidated: Arc<Mutex<InvalidationQueue>>,
         // The watcher must be kept alive for the lifetime of the VFS; dropping
         // it stops the background watch thread.
         _watcher: Option<RecommendedWatcher>,
@@ -484,7 +540,8 @@ mod disk {
             let root = root.as_ref().to_path_buf();
             let cache = load_directory(&root)?;
             let version = Arc::new(AtomicU64::new(0));
-            let invalidated: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+            let invalidated: Arc<Mutex<InvalidationQueue>> =
+                Arc::new(Mutex::new(InvalidationQueue::new()));
             let root_arc = Arc::new(root.clone());
 
             let watcher = {
@@ -529,7 +586,7 @@ mod disk {
                 root,
                 cache,
                 version: Arc::new(AtomicU64::new(0)),
-                invalidated: Arc::new(Mutex::new(Vec::new())),
+                invalidated: Arc::new(Mutex::new(InvalidationQueue::new())),
                 _watcher: None,
             })
         }
@@ -591,7 +648,30 @@ mod disk {
         /// # }
         /// ```
         pub fn take_invalidations(&self) -> Vec<String> {
-            core::mem::take(&mut *self.invalidated.lock())
+            self.invalidated.lock().drain()
+        }
+
+        /// Returns the number of invalidation entries that have been
+        /// dropped because the bounded queue reached its capacity.
+        ///
+        /// This counter is cumulative across all `take_invalidations`
+        /// calls and is only reset when the [`DiskVfs`] is dropped. A
+        /// non-zero value indicates the caller is not draining
+        /// invalidations fast enough.
+        ///
+        /// # Examples
+        ///
+        /// ```no_run
+        /// use martensite_assets::vfs::DiskVfs;
+        /// # fn main() -> std::io::Result<()> {
+        /// let dir = tempfile::tempdir()?;
+        /// let vfs = DiskVfs::without_watcher(dir.path()).unwrap();
+        /// assert_eq!(vfs.dropped_count(), 0);
+        /// # Ok(())
+        /// # }
+        /// ```
+        pub fn dropped_count(&self) -> u64 {
+            self.invalidated.lock().dropped
         }
 
         /// Returns the number of cached assets.
@@ -736,6 +816,268 @@ mod disk {
 
 #[cfg(feature = "disk")]
 pub use disk::DiskVfs;
+
+// ============================================================================
+// ReactiveVfsWatcher (behind the "reactive" feature)
+// ============================================================================
+
+#[cfg(feature = "reactive")]
+mod reactive {
+    use super::{DiskVfs, Vfs};
+    use martensite_reactive::Signal;
+
+    /// A wrapper around [`DiskVfs`] that emits a reactive [`Signal<u64>`]
+    /// version counter whenever the watched filesystem changes.
+    ///
+    /// The disk VFS's background file watcher bumps an internal
+    /// `AtomicU64` version counter on every create/modify/remove event.
+    /// [`ReactiveVfsWatcher::check_for_changes`] polls that counter and,
+    /// if it advanced since the last poll, updates the owned `Signal<u64>`
+    /// so downstream reactive consumers (memos, effects) are notified
+    /// that assets have changed and a reload is needed.
+    ///
+    /// The signal starts at `0` and is set to the disk VFS's current
+    /// version on each detected change. Call `check_for_changes` once per
+    /// frame (e.g. in the event loop) to bridge the push-based file
+    /// watcher into the pull-based reactive graph.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_assets::vfs::ReactiveVfsWatcher;
+    /// use martensite_assets::vfs::Vfs;
+    /// # fn main() -> std::io::Result<()> {
+    /// let dir = tempfile::tempdir()?;
+    /// std::fs::write(dir.path().join("a.txt"), b"a")?;
+    /// let watcher = ReactiveVfsWatcher::new(dir.path())?;
+    /// let signal = watcher.version_signal();
+    /// assert_eq!(signal.get_untracked(), 0);
+    /// // After a file changes and check_for_changes is called, the signal
+    /// // is updated to the new version.
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub struct ReactiveVfsWatcher {
+        vfs: DiskVfs,
+        signal: Signal<u64>,
+        last_seen: u64,
+    }
+
+    impl ReactiveVfsWatcher {
+        /// Creates a new watcher over `root`, eagerly loading all files and
+        /// starting a background file watcher (see [`DiskVfs::new`]).
+        ///
+        /// The reactive signal is initialized to `0`.
+        pub fn new(root: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
+            Self::from_disk(DiskVfs::new(root)?)
+        }
+
+        /// Creates a new watcher from an existing [`DiskVfs`] without
+        /// starting an additional background watcher.
+        ///
+        /// Useful in tests where file watching is unnecessary or would race
+        /// with assertions (see [`DiskVfs::without_watcher`]).
+        pub fn without_watcher(root: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
+            Self::from_disk(DiskVfs::without_watcher(root)?)
+        }
+
+        fn from_disk(vfs: DiskVfs) -> std::io::Result<Self> {
+            let last_seen = vfs.version();
+            Ok(Self {
+                vfs,
+                signal: Signal::new(0),
+                last_seen,
+            })
+        }
+
+        /// Returns a reference to the reactive version signal.
+        ///
+        /// The signal holds the last version counter observed by
+        /// [`Self::check_for_changes`]. Reading it (via
+        /// [`Signal::get`] / [`Signal::get_untracked`]) registers a
+        /// dependency edge when called within a reactive context.
+        pub fn version_signal(&self) -> &Signal<u64> {
+            &self.signal
+        }
+
+        /// Polls the underlying [`DiskVfs`] version counter and, if it
+        /// advanced since the last poll, updates the reactive signal and
+        /// drains the invalidation list.
+        ///
+        /// Returns `true` if a change was detected (and the signal was
+        /// updated), `false` otherwise. Call this once per frame from the
+        /// application's event loop to bridge the file watcher into the
+        /// reactive graph.
+        ///
+        /// # Examples
+        ///
+        /// ```no_run
+        /// use martensite_assets::vfs::ReactiveVfsWatcher;
+        /// # fn main() -> std::io::Result<()> {
+        /// let dir = tempfile::tempdir()?;
+        /// let mut watcher = ReactiveVfsWatcher::without_watcher(dir.path())?;
+        /// // No changes yet.
+        /// assert!(!watcher.check_for_changes());
+        /// # Ok(())
+        /// # }
+        /// ```
+        pub fn check_for_changes(&mut self) -> bool {
+            let current = self.vfs.version();
+            if current != self.last_seen {
+                self.last_seen = current;
+                // Drain the invalidation list so it doesn't grow unbounded.
+                let _ = self.vfs.take_invalidations();
+                self.signal.set(current);
+                true
+            } else {
+                false
+            }
+        }
+
+        /// Returns the last version observed by [`Self::check_for_changes`].
+        pub fn version(&self) -> u64 {
+            self.last_seen
+        }
+
+        /// Returns the list of asset paths invalidated since the last
+        /// [`Self::check_for_changes`] drain.
+        pub fn take_invalidations(&self) -> Vec<String> {
+            self.vfs.take_invalidations()
+        }
+    }
+
+    impl Vfs for ReactiveVfsWatcher {
+        fn resolve(&self, path: &str) -> Option<&[u8]> {
+            self.vfs.resolve(path)
+        }
+
+        fn exists(&self, path: &str) -> bool {
+            self.vfs.exists(path)
+        }
+
+        fn list(&self) -> Vec<String> {
+            self.vfs.list()
+        }
+    }
+
+    impl std::fmt::Debug for ReactiveVfsWatcher {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ReactiveVfsWatcher")
+                .field("version", &self.last_seen)
+                .field("signal", &self.signal.get_untracked())
+                .finish()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::io::Write;
+
+        #[test]
+        fn signal_starts_at_zero() {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("a.txt"), b"a").unwrap();
+            let watcher = ReactiveVfsWatcher::without_watcher(dir.path()).unwrap();
+            assert_eq!(watcher.version_signal().get_untracked(), 0);
+            assert_eq!(watcher.version(), 0);
+        }
+
+        #[test]
+        fn check_for_changes_returns_false_when_unchanged() {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("a.txt"), b"a").unwrap();
+            let mut watcher = ReactiveVfsWatcher::without_watcher(dir.path()).unwrap();
+            assert!(!watcher.check_for_changes());
+            assert_eq!(watcher.version_signal().get_untracked(), 0);
+        }
+
+        #[test]
+        fn signal_updates_when_file_changes() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("watched.txt");
+            std::fs::write(&path, b"v1").unwrap();
+            let mut watcher = ReactiveVfsWatcher::new(dir.path()).unwrap();
+
+            // Give the watcher a moment to register.
+            std::thread::sleep(std::time::Duration::from_millis(150));
+
+            // Modify the file.
+            let mut file = std::fs::File::create(&path).unwrap();
+            file.write_all(b"v2").unwrap();
+            drop(file);
+
+            // Poll for the change (best-effort timing).
+            let mut detected = false;
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                if watcher.check_for_changes() {
+                    detected = true;
+                    break;
+                }
+            }
+            assert!(detected, "watcher did not detect file change");
+            // The signal should now reflect the new version (> 0).
+            let v = watcher.version_signal().get_untracked();
+            assert!(v > 0, "signal should be > 0 after change, got {v}");
+            assert_eq!(v, watcher.version());
+        }
+
+        #[test]
+        fn check_for_changes_is_idempotent() {
+            // After detecting a change, a second call without a new change
+            // should return false and not re-update the signal.
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("f.txt");
+            std::fs::write(&path, b"v1").unwrap();
+            let mut watcher = ReactiveVfsWatcher::new(dir.path()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(150));
+
+            let mut file = std::fs::File::create(&path).unwrap();
+            file.write_all(b"v2").unwrap();
+            drop(file);
+
+            // Wait for the change to be detected.
+            let mut first_detected = false;
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                if watcher.check_for_changes() {
+                    first_detected = true;
+                    break;
+                }
+            }
+            assert!(first_detected);
+            let v_after = watcher.version_signal().get_untracked();
+
+            // No new changes — should return false and keep the same version.
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            assert!(!watcher.check_for_changes());
+            assert_eq!(watcher.version_signal().get_untracked(), v_after);
+        }
+
+        #[test]
+        fn delegates_vfs_operations() {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("a.txt"), b"alpha").unwrap();
+            let watcher = ReactiveVfsWatcher::without_watcher(dir.path()).unwrap();
+            assert!(watcher.exists("a.txt"));
+            assert_eq!(watcher.resolve("a.txt"), Some(&b"alpha"[..]));
+            assert_eq!(watcher.list().len(), 1);
+        }
+
+        #[test]
+        fn debug_format() {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("a.txt"), b"a").unwrap();
+            let watcher = ReactiveVfsWatcher::without_watcher(dir.path()).unwrap();
+            let s = format!("{:?}", watcher);
+            assert!(s.contains("ReactiveVfsWatcher"));
+        }
+    }
+}
+
+#[cfg(feature = "reactive")]
+pub use reactive::ReactiveVfsWatcher;
 
 // ============================================================================
 // VfsBackend

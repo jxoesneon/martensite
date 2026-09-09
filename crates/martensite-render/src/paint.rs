@@ -12,6 +12,16 @@ use kurbo::{BezPath, Point, Rect};
 
 /// A single color stop within a gradient, defined by a normalized position in
 /// `[0.0, 1.0]` and an RGBA color.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::GradientStop;
+///
+/// let stop = GradientStop::new(0.5, [255, 128, 0, 255]);
+/// assert_eq!(stop.position, 0.5);
+/// assert_eq!(stop.color, [255, 128, 0, 255]);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GradientStop {
     /// Normalized stop position in the range `[0.0, 1.0]`.
@@ -28,6 +38,27 @@ impl GradientStop {
 }
 
 /// An ordered collection of [`GradientStop`]s describing a color ramp.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::{GradientStop, GradientStops};
+///
+/// // Build a black-to-white ramp.
+/// let mut stops = GradientStops::new();
+/// assert!(stops.is_empty());
+/// stops.push(GradientStop::new(0.0, [0, 0, 0, 255]));
+/// stops.push(GradientStop::new(1.0, [255, 255, 255, 255]));
+/// assert_eq!(stops.len(), 2);
+/// assert!(!stops.is_empty());
+///
+/// // `from_slice` is convenient for static ramps.
+/// let ramp = GradientStops::from_slice(&[
+///     GradientStop::new(0.0, [255, 0, 0, 255]),
+///     GradientStop::new(1.0, [0, 0, 255, 255]),
+/// ]);
+/// assert_eq!(ramp.len(), 2);
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct GradientStops {
     /// The ordered stop list.
@@ -65,7 +96,7 @@ impl GradientStops {
 
 /// A backend-agnostic handle to a raw font file and its collection index.
 ///
-/// This is the font data carrier that lets a [`RenderBackend`] rasterize
+/// This is the font data carrier that lets a `RenderBackend` rasterize
 /// real glyph outlines from a [`GlyphRun`] without depending on any specific
 /// text-shaping stack. The bytes are shared via an [`Arc`] so cloning a
 /// `FontResource` is cheap and a single loaded font can be referenced by many
@@ -169,6 +200,20 @@ impl PartialEq for FontResource {
 /// in device pixels so that a backend can rasterize the glyph's footprint
 /// without consulting a font atlas. Full glyph-outline rasterization is
 /// deferred to the text pipeline (planned for v0.3.0).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::GlyphInstance;
+///
+/// // Place glyph id 36 at the baseline (0, 16) with a 9x16 px box.
+/// let glyph = GlyphInstance::new(0.0, 16.0, 36, 9.0, 16.0);
+/// assert_eq!(glyph.x, 0.0);
+/// assert_eq!(glyph.y, 16.0);
+/// assert_eq!(glyph.glyph_id, 36);
+/// assert_eq!(glyph.width, 9.0);
+/// assert_eq!(glyph.height, 16.0);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphInstance {
     /// The X coordinate of the glyph origin, in device pixels.
@@ -205,6 +250,21 @@ impl GlyphInstance {
 /// outline rasterization (Vello via `Scene::draw_glyphs`, TinySkia via
 /// `swash`) will render real glyph outlines; otherwise it falls back to
 /// drawing each glyph's pre-measured bounding box as a filled rectangle.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::{GlyphInstance, GlyphRun};
+///
+/// let mut run = GlyphRun::new(16.0, [0, 0, 0, 255]);
+/// assert!(run.is_empty());
+///
+/// // Append pre-resolved glyph instances (positions in device pixels).
+/// run.push(GlyphInstance::new(0.0, 16.0, 36, 9.0, 16.0));
+/// run.push(GlyphInstance::new(9.0, 16.0, 68, 9.0, 16.0));
+/// assert_eq!(run.glyphs.len(), 2);
+/// assert!(!run.is_empty());
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct GlyphRun {
     /// The font size in device pixels.
@@ -265,6 +325,36 @@ impl GlyphRun {
 }
 
 /// A single drawing operation emitted into a [`PaintList`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::{GlyphRun, PaintCommand, PaintList};
+/// use kurbo::Rect;
+///
+/// let mut list = PaintList::new();
+///
+/// // Fills and strokes are the most common commands.
+/// list.commands.push(PaintCommand::FillRect(
+///     Rect::new(0.0, 0.0, 50.0, 50.0),
+///     [255, 0, 0, 255],
+/// ));
+/// list.commands.push(PaintCommand::StrokeRect(
+///     Rect::new(0.0, 0.0, 50.0, 50.0),
+///     1.0,
+///     [0, 0, 0, 255],
+/// ));
+///
+/// // Pre-resolved glyph runs carry their own font and positions.
+/// list.commands.push(PaintCommand::DrawGlyphRun(GlyphRun::new(
+///     16.0,
+///     [0, 0, 0, 255],
+/// )));
+///
+/// assert_eq!(list.len(), 3);
+/// assert!(matches!(list.commands[0], PaintCommand::FillRect(..)));
+/// assert!(matches!(list.commands[2], PaintCommand::DrawGlyphRun(..)));
+/// ```
 #[derive(Clone, Debug)]
 pub enum PaintCommand {
     /// Fill a rectangle with a solid RGBA color.
@@ -295,6 +385,24 @@ pub enum PaintCommand {
 /// current subpath state and provides ergonomic builder methods. It is purely
 /// advisory — the underlying [`BezPath`] can always be extracted with
 /// [`PathBuilder::build`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::PathBuilder;
+/// use kurbo::Point;
+///
+/// let mut builder = PathBuilder::new();
+/// builder.move_to(Point::new(0.0, 0.0));
+/// builder.line_to(Point::new(10.0, 0.0));
+/// builder.quad_to(Point::new(15.0, 5.0), Point::new(10.0, 10.0));
+/// builder.line_to(Point::new(0.0, 10.0));
+/// builder.close_path();
+///
+/// let path = builder.build();
+/// // move + 2 lines + quad + close = 5 elements.
+/// assert_eq!(path.elements().len(), 5);
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct PathBuilder {
     path: BezPath,
@@ -347,6 +455,26 @@ impl PathBuilder {
 ///
 /// The list is designed for zero-allocation steady-state rendering: call
 /// [`PaintList::clear`] between frames to retain the underlying capacity.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::PaintList;
+/// use kurbo::Rect;
+///
+/// let mut list = PaintList::new();
+/// assert!(list.is_empty());
+///
+/// // Record a frame's worth of commands.
+/// list.push_fill_rect(Rect::new(0.0, 0.0, 100.0, 100.0), [255, 0, 0, 255]);
+/// list.push_stroke_rect(Rect::new(0.0, 0.0, 100.0, 100.0), 2.0, [0, 0, 0, 255]);
+/// assert_eq!(list.len(), 2);
+/// assert!(!list.is_empty());
+///
+/// // Reuse the allocation for the next frame.
+/// list.clear();
+/// assert!(list.is_empty());
+/// ```
 #[derive(Default)]
 pub struct PaintList {
     /// The ordered sequence of paint commands to render.

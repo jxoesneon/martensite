@@ -68,9 +68,9 @@ pub use winit::window::{Window, WindowAttributes, WindowId};
 
 pub use dpi::DpiScale;
 pub use event::{
-    convert_modifiers, convert_modifiers_state, convert_mouse_button, convert_window_event,
-    EventDispatchOutcome, EventRouter, ModifierKeys, MouseTracker, PointerCapture, PointerEvent,
-    PointerId, PointerState,
+    convert_drop_event, convert_modifiers, convert_modifiers_state, convert_mouse_button,
+    convert_window_event, DropAction, DropEvent, EventDispatchOutcome, EventRouter, ModifierKeys,
+    MouseTracker, PointerCapture, PointerEvent, PointerId, PointerState,
 };
 pub use hit_test::{AffineTransform, ClipShape, HitTestResult, HitTester, RoundedRect};
 pub use manager::{WindowEntry, WindowEventOutcome, WindowKey, WindowManager};

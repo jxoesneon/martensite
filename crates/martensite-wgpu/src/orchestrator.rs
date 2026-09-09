@@ -17,8 +17,10 @@
 //! [`crate::resilience::DeviceStatus::FallbackCpu`], the orchestrator
 //! falls back to the TinySkia CPU rasterizer.
 
-use crate::resilience::RecoveryMachine;
+use crate::resilience::{RecoveryMachine, SurfaceError};
+use crate::surface::SurfaceWrapper;
 use martensite_render::{PaintList, RenderBackend, TinySkiaBackend, VelloRenderer};
+use std::borrow::Cow;
 
 /// The rendering mode currently active in the orchestrator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +167,153 @@ impl RenderOrchestrator {
     pub fn force_cpu(&mut self, paint_list: &PaintList) {
         self.mode = RenderMode::Cpu;
         self.tinyskia.render(paint_list);
+    }
+
+    /// Renders the most recently built frame to a WGPU surface and presents it.
+    ///
+    /// This is the WGPU surface dispatch path that was missing from the v0.2.0
+    /// render pipeline. It must be called *after* [`RenderOrchestrator::render`]
+    /// (which builds the Vello scene or rasterizes the TinySkia pixel buffer).
+    /// It:
+    ///
+    /// 1. Acquires a frame from `surface` via [`SurfaceWrapper::acquire_frame`].
+    /// 2. If the GPU (Vello) mode is active, creates a view of the surface
+    ///    texture and dispatches the scene to the GPU compute pipeline via
+    ///    [`VelloRenderer::render_to_texture`].
+    /// 3. If the CPU (TinySkia) mode is active, uploads the rasterized RGBA8
+    ///    pixel buffer to the surface texture via [`wgpu::Queue::write_texture`]
+    ///    (which internally stages the data in a buffer), swizzling R/B channels
+    ///    when the surface format is `Bgra8Unorm`.
+    /// 4. Submits any queued work to `queue` and presents the frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SurfaceError`] when the surface frame could not be acquired
+    /// (e.g. `Lost`, `Outdated`, `Timeout`). The caller should feed this error
+    /// into the [`RecoveryMachine`] via [`RecoveryMachine::handle_surface_error`]
+    /// so the self-healing pipeline can react.
+    ///
+    /// # Note on the Vello path
+    ///
+    /// `vello::Renderer::render_to_texture` requires the target texture to use
+    /// the `Rgba8Unorm` format with the `STORAGE_BINDING` usage. The surface is
+    /// configured by [`SurfaceWrapper`] with the platform-preferred format
+    /// (commonly `Bgra8Unorm`) and `RENDER_ATTACHMENT | COPY_DST` usage, so a
+    /// direct dispatch to the surface texture may be rejected by Vello at
+    /// runtime; in that case the error is logged (see
+    /// [`VelloRenderer::render_to_texture`]) and the frame is still presented.
+    /// A production deployment that wants the Vello path should configure the
+    /// surface with `Rgba8Unorm` + `STORAGE_BINDING`, or render to an
+    /// intermediate texture and blit (deferred to a follow-up).
+    pub fn render_to_surface(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface: &mut SurfaceWrapper<'_>,
+    ) -> Result<(), SurfaceError> {
+        let current = surface.acquire_frame();
+        if let Some(err) = SurfaceError::from_current_texture(&current) {
+            return Err(err);
+        }
+        // `from_current_texture` returns `None` only for `Success`/`Suboptimal`,
+        // so the remaining variants are unreachable here.
+        let st = match current {
+            wgpu::CurrentSurfaceTexture::Success(st)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(st) => st,
+            _ => return Err(SurfaceError::Lost),
+        };
+
+        let (width, height, format) = surface
+            .configuration()
+            .map(|c| (c.width, c.height, c.format))
+            .ok_or(SurfaceError::Lost)?;
+
+        match self.mode {
+            RenderMode::Gpu => {
+                #[cfg(feature = "vello")]
+                {
+                    let view = st
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+                    self.vello
+                        .render_to_texture(device, queue, &view, width, height);
+                }
+                #[cfg(not(feature = "vello"))]
+                {
+                    let _ = (device, queue, width, height);
+                    tracing::warn!(
+                        "GPU render mode selected but the `vello` feature is disabled; \
+                         presenting an empty frame"
+                    );
+                }
+            }
+            RenderMode::Cpu => {
+                let pixels = self.tinyskia.pixels();
+                let expected = (width as usize)
+                    .checked_mul(height as usize)
+                    .and_then(|n| n.checked_mul(4));
+                if expected != Some(pixels.len()) {
+                    tracing::warn!(
+                        pixel_len = pixels.len(),
+                        expected = expected,
+                        width,
+                        height,
+                        "TinySkia pixel buffer size does not match the surface dimensions; \
+                         skipping CPU upload"
+                    );
+                } else {
+                    let bytes_per_row = width.checked_mul(4).ok_or(SurfaceError::Validation)?;
+                    // `Queue::write_texture` requires the data to match the
+                    // surface's texel format. TinySkia produces RGBA8, so
+                    // swizzle R<->B when the surface is BGRA8.
+                    let data: Cow<'_, [u8]> = match format {
+                        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => {
+                            Cow::Borrowed(pixels)
+                        }
+                        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => {
+                            let mut swizzled = pixels.to_vec();
+                            for chunk in swizzled.as_chunks_mut::<4>().0 {
+                                chunk.swap(0, 2);
+                            }
+                            Cow::Owned(swizzled)
+                        }
+                        _ => {
+                            tracing::warn!(
+                                ?format,
+                                "unsupported surface format for CPU pixel upload; \
+                                 writing RGBA8 data as-is"
+                            );
+                            Cow::Borrowed(pixels)
+                        }
+                    };
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &st.texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &data,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(bytes_per_row),
+                            rows_per_image: Some(height),
+                        },
+                        wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                    // Flush the queued `write_texture` transfer before
+                    // presenting so the uploaded pixels are visible this frame.
+                    queue.submit(std::iter::empty::<wgpu::CommandBuffer>());
+                }
+            }
+        }
+
+        queue.present(st);
+        Ok(())
     }
 
     /// Returns the current rendering mode.

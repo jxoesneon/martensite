@@ -6,10 +6,11 @@
 //! - Font family fallback chains (`FontFallbackChain`).
 //! - Thread-safe cached resolution for font fallback chains (`FontFallbackCache`).
 
-use std::collections::HashMap;
-use std::sync::RwLock;
+use std::collections::{HashMap, VecDeque};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use cosmic_text::FontSystem;
+use parking_lot::RwLock;
 
 /// Recognized typographic script category for font fallback cascade resolution.
 ///
@@ -158,6 +159,48 @@ pub fn dominant_script(text: &str) -> ScriptTag {
     order[best]
 }
 
+/// Abstract source of platform-specific font fallback cascades.
+///
+/// This trait is the seam between Martensite's text pipeline and the
+/// underlying operating-system font fallback mechanism. The default
+/// implementation ([`PlatformCascadeResolver`]) uses static per-OS
+/// family lists. Native providers implementing this trait can call
+/// DirectWrite `IDWriteFontFallback::MapCharacters` (Windows),
+/// CoreText `CTFontCreateForStringWithLanguage` (macOS), or
+/// Fontconfig `FcFontSort` (Linux) to deliver locale-aware, coverage-
+/// checked fallback that the static lists cannot match.
+///
+/// The trait is object-safe so providers can be used through
+/// `&dyn FontFallbackProvider` or `Arc<dyn FontFallbackProvider>`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cascade::{FontFallbackProvider, PlatformCascadeResolver, ScriptTag};
+///
+/// let provider = PlatformCascadeResolver;
+/// let fallbacks = provider.script_fallbacks(ScriptTag::Cjk, "zh-CN");
+/// assert!(!fallbacks.is_empty());
+/// ```
+pub trait FontFallbackProvider: Send + Sync {
+    /// Returns the common fallback families tried after all
+    /// script-specific lists are exhausted.
+    fn common_fallbacks(&self) -> Vec<String>;
+
+    /// Returns the script- and locale-specific fallback families
+    /// for the given [`ScriptTag`] and BCP-47 locale string.
+    ///
+    /// The locale (e.g. `"zh-cn"`, `"ja"`, `"en-us"`) may influence
+    /// CJK variant selection and other locale-sensitive ordering.
+    /// Providers that ignore locale should return the same list
+    /// regardless of the `locale` argument.
+    fn script_fallbacks(&self, script: ScriptTag, locale: &str) -> Vec<String>;
+
+    /// Returns families that must never be used as fallbacks
+    /// (e.g. symbol fonts that would produce tofu for normal text).
+    fn forbidden_fallbacks(&self) -> Vec<String>;
+}
+
 /// Resolves operating system platform-native font fallback cascades for each script.
 ///
 /// # Examples
@@ -294,6 +337,44 @@ impl PlatformCascadeResolver {
     }
 }
 
+impl FontFallbackProvider for PlatformCascadeResolver {
+    fn common_fallbacks(&self) -> Vec<String> {
+        // The last-resort families that cover the widest glyph range
+        // on the current platform. These are tried after every
+        // script-specific list has been exhausted.
+        #[cfg(target_os = "windows")]
+        {
+            vec!["Segoe UI".to_string(), "Arial".to_string()]
+        }
+        #[cfg(target_os = "macos")]
+        {
+            vec!["SF Pro".to_string(), "Helvetica Neue".to_string()]
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            vec!["Noto Sans".to_string(), "DejaVu Sans".to_string()]
+        }
+    }
+
+    fn script_fallbacks(&self, script: ScriptTag, _locale: &str) -> Vec<String> {
+        // The static resolver does not vary by locale; the locale
+        // parameter is accepted for trait conformance and will be
+        // used by native OS providers (DirectWrite, CoreText,
+        // Fontconfig) that can select CJK variants per locale.
+        Self::platform_fallbacks_for_script(script)
+            .iter()
+            .map(|&s| s.to_string())
+            .collect()
+    }
+
+    fn forbidden_fallbacks(&self) -> Vec<String> {
+        // Symbol-only fonts that would produce tofu for normal text.
+        // The static lists already avoid these, but native providers
+        // may return them and need filtering.
+        Vec::new()
+    }
+}
+
 /// An ordered sequence of font families consisting of a primary font and its fallbacks.
 ///
 /// # Examples
@@ -344,10 +425,8 @@ impl FontFallbackChain {
     /// assert!(!chain.fallbacks.is_empty());
     /// ```
     pub fn for_script(primary: impl Into<String>, script: ScriptTag) -> Self {
-        let fallbacks = PlatformCascadeResolver::platform_fallbacks_for_script(script)
-            .iter()
-            .map(|&s| s.to_string())
-            .collect();
+        let provider = PlatformCascadeResolver;
+        let fallbacks = provider.script_fallbacks(script, "");
         Self::new(primary, fallbacks)
     }
 
@@ -393,20 +472,48 @@ impl FallbackKey {
 ///
 /// This resolver uses [`fontdb`] (via the cosmic-text [`FontSystem`]) to find
 /// fonts that actually contain the required code points. It is pure safe Rust
-/// and works on all supported platforms. Platform-native APIs such as
-/// DirectWrite, CoreText, or Fontconfig are not called directly because doing
-/// so safely from `forbid(unsafe_code)` code would require additional binding
-/// crates; fontdb already queries the platform font directories and caches
-/// the results.
+/// and works on all supported platforms. The fallback family lists are
+/// supplied by a [`FontFallbackProvider`]; the default
+/// ([`PlatformCascadeResolver`]) uses static per-OS tables, while native
+/// providers (DirectWrite, CoreText, Fontconfig) can be plugged in to
+/// deliver locale-aware cascade selection.
+///
+/// # Safety of font parsing
+///
+/// The `swash` and `ttf-parser` crates used for `cmap` inspection have
+/// known panic paths on malformed font data (see swash issues #123–#126,
+/// ttf-parser RUSTSEC-2026-0192). All font-data access in this resolver is
+/// wrapped in [`std::panic::catch_unwind`] so a corrupt or adversarial font
+/// in the database cannot abort the calling thread; a panicking face is
+/// treated as not covering the queried character.
 pub struct InstalledFontFallbackResolver<'a> {
     font_system: &'a FontSystem,
+    provider: &'a dyn FontFallbackProvider,
 }
 
 impl<'a> InstalledFontFallbackResolver<'a> {
-    /// Creates a resolver bound to the given font system.
+    /// Creates a resolver bound to the given font system, using the
+    /// default [`PlatformCascadeResolver`] as the fallback provider.
     #[inline]
     pub fn new(font_system: &'a FontSystem) -> Self {
-        Self { font_system }
+        Self::with_provider(font_system, &PlatformCascadeResolver)
+    }
+
+    /// Creates a resolver bound to the given font system and an
+    /// arbitrary [`FontFallbackProvider`].
+    ///
+    /// This is the entry point for native OS providers
+    /// (DirectWrite, CoreText, Fontconfig) to supply locale-aware
+    /// fallback cascades.
+    #[inline]
+    pub fn with_provider(
+        font_system: &'a FontSystem,
+        provider: &'a dyn FontFallbackProvider,
+    ) -> Self {
+        Self {
+            font_system,
+            provider,
+        }
     }
 
     /// Returns the list of font families to try for `text`, in priority
@@ -414,14 +521,29 @@ impl<'a> InstalledFontFallbackResolver<'a> {
     ///
     /// The returned list always begins with `primary` so the shaping
     /// pipeline has a family to attempt first. It is followed by the
-    /// platform fallback families for every script present in `text`;
-    /// families that are actually installed *and* cover the relevant
-    /// characters are listed before the remaining platform candidates.
-    /// Candidate names are always appended, even when the font database
-    /// contains no faces for them, because the downstream shaper
-    /// performs its own resolution and generic fallbacks.
+    /// provider's fallback families for every script present in `text`,
+    /// filtered by the provider's locale if available; families that are
+    /// actually installed *and* cover the relevant characters are listed
+    /// before the remaining candidates. Candidate names are always
+    /// appended, even when the font database contains no faces for them,
+    /// because the downstream shaper performs its own resolution and
+    /// generic fallbacks.
     pub fn resolve_for_text(&self, text: &str, primary: &str) -> Vec<String> {
+        self.resolve_for_text_with_locale(text, primary, "")
+    }
+
+    /// Like [`resolve_for_text`](Self::resolve_for_text) but passes the
+    /// locale to the [`FontFallbackProvider`] for locale-sensitive CJK
+    /// and Indic variant selection.
+    pub fn resolve_for_text_with_locale(
+        &self,
+        text: &str,
+        primary: &str,
+        locale: &str,
+    ) -> Vec<String> {
         let mut chain: Vec<String> = vec![primary.to_string()];
+
+        let forbidden = self.provider.forbidden_fallbacks();
 
         // Collect the scripts present in the text, in order of first use.
         let mut scripts: Vec<ScriptTag> = Vec::new();
@@ -438,42 +560,69 @@ impl<'a> InstalledFontFallbackResolver<'a> {
             scripts.push(dominant_script(text));
         }
 
-        // Pass 1: installed platform candidates that actually cover the
+        // Pass 1: installed provider candidates that actually cover the
         // script's characters, so they are tried before nominal names.
         for &script in &scripts {
             let needed: String = text
                 .chars()
                 .filter(|ch| classify_script(*ch) == script)
                 .collect();
-            for &family in PlatformCascadeResolver::platform_fallbacks_for_script(script) {
-                if chain.iter().any(|f| f.eq_ignore_ascii_case(family)) {
+            for family in self.provider.script_fallbacks(script, locale) {
+                if chain.iter().any(|f| f.eq_ignore_ascii_case(&family))
+                    || forbidden.iter().any(|f| f.eq_ignore_ascii_case(&family))
+                {
                     continue;
                 }
-                if self.family_covers_text(family, &needed) {
-                    chain.push(family.to_string());
+                if self.family_covers_text(&family, &needed) {
+                    chain.push(family);
                 }
             }
         }
 
-        // Pass 2: the remaining platform cascade names as candidates.
+        // Pass 2: the remaining provider cascade names as candidates.
         for &script in &scripts {
-            for &family in PlatformCascadeResolver::platform_fallbacks_for_script(script) {
-                if !chain.iter().any(|f| f.eq_ignore_ascii_case(family)) {
-                    chain.push(family.to_string());
+            for family in self.provider.script_fallbacks(script, locale) {
+                if !chain.iter().any(|f| f.eq_ignore_ascii_case(&family))
+                    && !forbidden.iter().any(|f| f.eq_ignore_ascii_case(&family))
+                {
+                    chain.push(family);
                 }
+            }
+        }
+
+        // Pass 3: common fallbacks as a last resort.
+        for family in self.provider.common_fallbacks() {
+            if !chain.iter().any(|f| f.eq_ignore_ascii_case(&family))
+                && !forbidden.iter().any(|f| f.eq_ignore_ascii_case(&family))
+            {
+                chain.push(family);
             }
         }
 
         chain
     }
 
-    /// Returns the subset of platform fallback family names that are
+    /// Returns the subset of provider fallback family names that are
     /// actually installed in the font database.
     pub fn installed_fallbacks_for_script(&self, script: ScriptTag) -> Vec<String> {
-        PlatformCascadeResolver::platform_fallbacks_for_script(script)
-            .iter()
-            .filter(|family| self.family_installed(family))
-            .map(|&family| family.to_string())
+        self.installed_fallbacks_for_script_with_locale(script, "")
+    }
+
+    /// Like [`installed_fallbacks_for_script`](Self::installed_fallbacks_for_script)
+    /// but passes the locale to the provider.
+    pub fn installed_fallbacks_for_script_with_locale(
+        &self,
+        script: ScriptTag,
+        locale: &str,
+    ) -> Vec<String> {
+        let forbidden = self.provider.forbidden_fallbacks();
+        self.provider
+            .script_fallbacks(script, locale)
+            .into_iter()
+            .filter(|family| {
+                !forbidden.iter().any(|f| f.eq_ignore_ascii_case(family))
+                    && self.family_installed(family)
+            })
             .collect()
     }
 
@@ -482,13 +631,21 @@ impl<'a> InstalledFontFallbackResolver<'a> {
     ///
     /// The face's `cmap` is inspected by parsing the font data through
     /// `swash`'s character map; a glyph ID of `0` (`.notdef`) counts as
-    /// uncovered.
+    /// uncovered. The call is wrapped in [`catch_unwind`] because
+    /// `swash`/`ttf-parser` have known panic paths on malformed font
+    /// data (swash #123–#126, ttf-parser RUSTSEC-2026-0192). A panicking
+    /// face is treated as not covering `ch`.
     fn face_covers_char(&self, face_id: fontdb::ID, ch: char) -> bool {
         self.font_system
             .db()
             .with_face_data(face_id, |data, index| {
-                swash::FontRef::from_index(data, index as usize)
-                    .is_some_and(|font| font.charmap().map(ch) != 0)
+                // catch_unwind guards against malformed font data panics
+                // in swash's cmap parsing (swash issues #123–#126).
+                catch_unwind(AssertUnwindSafe(|| {
+                    swash::FontRef::from_index(data, index as usize)
+                        .is_some_and(|font| font.charmap().map(ch) != 0)
+                }))
+                .unwrap_or(false)
             })
             .unwrap_or(false)
     }
@@ -525,20 +682,22 @@ impl<'a> InstalledFontFallbackResolver<'a> {
     }
 }
 
-/// A thread-safe cache for resolved font fallback chains indexed by script.
+/// A thread-safe cache for resolved font fallback chains indexed by
+/// [`FallbackKey`] (script + locale).
 ///
 /// # Examples
 ///
 /// ```
-/// use martensite_text::cascade::{FontFallbackCache, ScriptTag};
+/// use martensite_text::cascade::{FontFallbackCache, FallbackKey, ScriptTag};
 ///
 /// let cache = FontFallbackCache::new();
-/// let fonts = cache.get_or_resolve(ScriptTag::Emoji);
+/// let key = FallbackKey::new(ScriptTag::Emoji, "en-us");
+/// let fonts = cache.get_or_resolve(&key);
 /// assert!(!fonts.is_empty());
 /// ```
 #[derive(Debug, Default)]
 pub struct FontFallbackCache {
-    cache: RwLock<HashMap<ScriptTag, Vec<String>>>,
+    cache: RwLock<HashMap<FallbackKey, Vec<String>>>,
 }
 
 impl FontFallbackCache {
@@ -557,64 +716,275 @@ impl FontFallbackCache {
         }
     }
 
-    /// Returns the cached font fallback families for the script, or resolves and caches them.
+    /// Returns the cached font fallback families for the key, or resolves
+    /// and caches them using the default [`PlatformCascadeResolver`].
     ///
     /// # Examples
     ///
     /// ```
-    /// use martensite_text::cascade::{FontFallbackCache, ScriptTag};
+    /// use martensite_text::cascade::{FontFallbackCache, FallbackKey, ScriptTag};
     ///
     /// let cache = FontFallbackCache::new();
-    /// let list = cache.get_or_resolve(ScriptTag::Latin);
+    /// let key = FallbackKey::new(ScriptTag::Latin, "en-us");
+    /// let list = cache.get_or_resolve(&key);
     /// assert!(!list.is_empty());
     /// ```
-    pub fn get_or_resolve(&self, script: ScriptTag) -> Vec<String> {
-        if let Ok(reader) = self.cache.read() {
-            if let Some(cached) = reader.get(&script) {
+    pub fn get_or_resolve(&self, key: &FallbackKey) -> Vec<String> {
+        {
+            let reader = self.cache.read();
+            if let Some(cached) = reader.get(key) {
                 return cached.clone();
             }
         }
 
-        let resolved: Vec<String> = PlatformCascadeResolver::platform_fallbacks_for_script(script)
-            .iter()
-            .map(|&s| s.to_string())
-            .collect();
+        let provider = PlatformCascadeResolver;
+        let resolved: Vec<String> = provider.script_fallbacks(key.script, &key.locale);
 
-        if let Ok(mut writer) = self.cache.write() {
-            writer.insert(script, resolved.clone());
-        }
+        let mut writer = self.cache.write();
+        writer.insert(key.clone(), resolved.clone());
 
         resolved
     }
 
-    /// Registers a custom font family at the front of the fallback cascade for the specified script.
+    /// Returns the cached font fallback families for the key, or resolves
+    /// and caches them using the provided [`FontFallbackProvider`].
     ///
     /// # Examples
     ///
     /// ```
-    /// use martensite_text::cascade::{FontFallbackCache, ScriptTag};
+    /// use martensite_text::cascade::{
+    ///     FontFallbackCache, FontFallbackProvider, FallbackKey,
+    ///     PlatformCascadeResolver, ScriptTag,
+    /// };
     ///
     /// let cache = FontFallbackCache::new();
-    /// cache.register_custom_fallback(ScriptTag::Cjk, "Source Han Sans");
-    /// let list = cache.get_or_resolve(ScriptTag::Cjk);
+    /// let provider = PlatformCascadeResolver;
+    /// let key = FallbackKey::new(ScriptTag::Cjk, "zh-cn");
+    /// let list = cache.get_or_resolve_with_provider(&key, &provider);
+    /// assert!(!list.is_empty());
+    /// ```
+    pub fn get_or_resolve_with_provider(
+        &self,
+        key: &FallbackKey,
+        provider: &dyn FontFallbackProvider,
+    ) -> Vec<String> {
+        {
+            let reader = self.cache.read();
+            if let Some(cached) = reader.get(key) {
+                return cached.clone();
+            }
+        }
+
+        let resolved: Vec<String> = provider.script_fallbacks(key.script, &key.locale);
+
+        let mut writer = self.cache.write();
+        writer.insert(key.clone(), resolved.clone());
+
+        resolved
+    }
+
+    /// Registers a custom font family at the front of the fallback cascade for the specified key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cascade::{FontFallbackCache, FallbackKey, ScriptTag};
+    ///
+    /// let cache = FontFallbackCache::new();
+    /// let key = FallbackKey::new(ScriptTag::Cjk, "zh-cn");
+    /// cache.register_custom_fallback(&key, "Source Han Sans");
+    /// let list = cache.get_or_resolve(&key);
     /// assert_eq!(list[0], "Source Han Sans");
     /// ```
-    pub fn register_custom_fallback(&self, script: ScriptTag, family: &str) {
-        let mut writer = match self.cache.write() {
-            Ok(w) => w,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+    pub fn register_custom_fallback(&self, key: &FallbackKey, family: &str) {
+        let mut writer = self.cache.write();
 
-        let entry = writer.entry(script).or_insert_with(|| {
-            PlatformCascadeResolver::platform_fallbacks_for_script(script)
-                .iter()
-                .map(|&s| s.to_string())
-                .collect()
-        });
+        let entry = writer
+            .entry(key.clone())
+            .or_insert_with(|| PlatformCascadeResolver.script_fallbacks(key.script, &key.locale));
 
         if !entry.iter().any(|f| f == family) {
             entry.insert(0, family.to_string());
         }
+    }
+
+    /// Clears all cached entries.
+    pub fn clear(&self) {
+        self.cache.write().clear();
+    }
+}
+
+/// A cache for resolved font fallback decisions, keyed by
+/// `(script, locale, primary_family)` and invalidated by a
+/// font-system generation counter.
+///
+/// Unlike [`FontFallbackCache`] (which caches per-script family lists
+/// from the provider), this cache stores the *resolved* fallback chain
+/// for a specific `(primary_family, text)` combination, including the
+/// installed-font coverage check. This avoids re-scanning the font
+/// database on every shaping call for the same text and family.
+///
+/// # Invalidation
+///
+/// The cache stores the font-system generation counter at insertion
+/// time. When [`get`](Self::get) is called with a different
+/// generation, all entries are invalidated and the cache returns
+/// `None`, forcing a re-resolution.
+///
+/// # Bounded capacity
+///
+/// Within a single font-system generation, the cache is bounded to
+/// [`FALLBACK_DECISION_CACHE_CAPACITY`] (256) entries. When the
+/// capacity is reached, the oldest inserted entry is evicted (FIFO
+/// eviction), preventing unbounded memory growth from unique
+/// `(script, locale, primary_family)` tuples.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cascade::{FallbackDecisionCache, FallbackKey, ScriptTag};
+///
+/// let mut cache = FallbackDecisionCache::new();
+/// let key = FallbackKey::new(ScriptTag::Latin, "en-us");
+/// // Cache miss on first call.
+/// assert!(cache.get(&key, "Inter", 0).is_none());
+/// // Insert a resolved chain.
+/// cache.insert(&key, "Inter", vec!["Inter".to_string(), "Arial".to_string()], 0);
+/// // Cache hit on second call with same generation.
+/// assert_eq!(
+///     cache.get(&key, "Inter", 0),
+///     Some(&vec!["Inter".to_string(), "Arial".to_string()])
+/// );
+/// // Cache miss when generation changes (font db was modified).
+/// assert!(cache.get(&key, "Inter", 1).is_none());
+/// ```
+#[derive(Debug)]
+pub struct FallbackDecisionCache {
+    /// Cached fallback chains keyed by (FallbackKey, primary_family).
+    entries: HashMap<(FallbackKey, String), Vec<String>>,
+    /// Insertion order of keys, oldest at the front. Used for FIFO
+    /// eviction when the cache reaches its capacity.
+    insertion_order: VecDeque<(FallbackKey, String)>,
+    /// The font-system generation when the cache was last populated.
+    /// When this differs from the current generation, all entries
+    /// are invalidated.
+    generation: u64,
+    /// Maximum number of entries retained within a single generation.
+    capacity: usize,
+}
+
+/// Default capacity for [`FallbackDecisionCache`].
+pub const FALLBACK_DECISION_CACHE_CAPACITY: usize = 256;
+
+impl Default for FallbackDecisionCache {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            insertion_order: VecDeque::new(),
+            generation: 0,
+            capacity: FALLBACK_DECISION_CACHE_CAPACITY,
+        }
+    }
+}
+
+impl FallbackDecisionCache {
+    /// Creates a new, empty `FallbackDecisionCache`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cascade::FallbackDecisionCache;
+    ///
+    /// let cache = FallbackDecisionCache::new();
+    /// ```
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the cached fallback chain for the given key and primary
+    /// family, or `None` if not cached or if the generation has changed.
+    ///
+    /// When the `current_generation` differs from the cache's
+    /// generation, all entries are invalidated (cleared) and `None` is
+    /// returned.
+    pub fn get(
+        &mut self,
+        key: &FallbackKey,
+        primary_family: &str,
+        current_generation: u64,
+    ) -> Option<&Vec<String>> {
+        if self.generation != current_generation {
+            self.entries.clear();
+            self.insertion_order.clear();
+            self.generation = current_generation;
+            return None;
+        }
+        self.entries.get(&(key.clone(), primary_family.to_string()))
+    }
+
+    /// Inserts a resolved fallback chain into the cache.
+    ///
+    /// The `current_generation` is stored as the cache's generation;
+    /// future [`get`](Self::get) calls with a different generation will
+    /// invalidate the cache. When the cache is at capacity, the oldest
+    /// inserted entry is evicted before the new entry is stored.
+    pub fn insert(
+        &mut self,
+        key: &FallbackKey,
+        primary_family: &str,
+        chain: Vec<String>,
+        current_generation: u64,
+    ) {
+        if self.generation != current_generation {
+            self.entries.clear();
+            self.insertion_order.clear();
+            self.generation = current_generation;
+        }
+        let cache_key = (key.clone(), primary_family.to_string());
+
+        // If this is an update to an existing entry, remove the old key
+        // from the insertion-order deque so it can be re-appended at the
+        // back (most recently inserted).
+        if self.entries.contains_key(&cache_key) {
+            self.insertion_order.retain(|k| k != &cache_key);
+        } else if self.entries.len() >= self.capacity {
+            // Evict the oldest entry (front of the deque). Skip any keys
+            // that are no longer in the map (stale deque entries from
+            // prior updates).
+            while let Some(old_key) = self.insertion_order.pop_front() {
+                if self.entries.remove(&old_key).is_some() {
+                    break;
+                }
+            }
+        }
+
+        self.insertion_order.push_back(cache_key.clone());
+        self.entries.insert(cache_key, chain);
+    }
+
+    /// Returns the number of cached entries.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns the maximum number of entries the cache retains within a
+    /// single generation.
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Returns `true` if the cache is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Clears all cached entries.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.insertion_order.clear();
     }
 }
 
@@ -670,11 +1040,12 @@ mod tests {
     #[test]
     fn test_font_fallback_cache() {
         let cache = FontFallbackCache::new();
-        let list1 = cache.get_or_resolve(ScriptTag::Devanagari);
+        let key = FallbackKey::new(ScriptTag::Devanagari, "en-us");
+        let list1 = cache.get_or_resolve(&key);
         assert!(!list1.is_empty());
 
-        cache.register_custom_fallback(ScriptTag::Devanagari, "CustomDevanagari");
-        let list2 = cache.get_or_resolve(ScriptTag::Devanagari);
+        cache.register_custom_fallback(&key, "CustomDevanagari");
+        let list2 = cache.get_or_resolve(&key);
         assert_eq!(list2[0], "CustomDevanagari");
     }
 

@@ -293,7 +293,52 @@ impl SemanticTreeSync {
     ///
     /// The diff's `added`/`removed`/`modified` vectors are sorted by
     /// `WidgetId` value for deterministic ordering.
+    ///
+    /// # Hybrid synchronization strategy
+    ///
+    /// This method uses a two-tier strategy to avoid the unconditional
+    /// `O(n)` fingerprint scan every frame:
+    ///
+    /// 1. **Fast path (dirty-flag early-exit):** If no node in the
+    ///    subtree has [`NodeFlags::DIRTY_A11Y`] set and the reachable
+    ///    node count matches the snapshot size, the diff is empty and
+    ///    no fingerprints are computed. This is `O(n)` in node count
+    ///    but with a very cheap per-node check (a flag read), avoiding
+    ///    the expensive `accesskit::Node` construction and double-hash
+    ///    in the private `fingerprint` helper.
+    ///
+    /// 2. **Slow path (fingerprint validation):** When dirty flags
+    ///    exist or the node count changed (indicating additions or
+    ///    removals that may not have set dirty flags on parents), the
+    ///    full fingerprint scan runs. This detects unflagged mutations,
+    ///    removals, and reparenting that the dirty-flag fast path
+    ///    cannot observe.
+    ///
+    /// The fingerprint computation is performed by the private
+    /// `fingerprint` helper, which builds an `accesskit::Node` from
+    /// the arena's hot and cold data and hashes it.
     pub fn sync(&mut self, arena: &WidgetArena) -> TreeDiff {
+        // Fast path: check for dirty flags and node count.
+        let mut dirty_count = 0usize;
+        let mut alive_count = 0usize;
+        for id in arena.iter_subtree(self.root) {
+            alive_count += 1;
+            if let Some(hot) = arena.get_hot(id) {
+                if hot.flags.contains(NodeFlags::DIRTY_A11Y) {
+                    dirty_count += 1;
+                }
+            }
+        }
+
+        // If no dirty flags and the node count matches the snapshot,
+        // we can skip fingerprinting entirely. A count mismatch
+        // indicates additions or removals that may not have set dirty
+        // flags on parents, so we fall through to the full scan.
+        if dirty_count == 0 && alive_count == self.snapshot.len() && self.initialized {
+            return TreeDiff::default();
+        }
+
+        // Slow path: full fingerprint scan.
         let mut current: HashMap<WidgetId, (NodeFingerprint, Option<WidgetId>)> = HashMap::new();
         for id in arena.iter_subtree(self.root) {
             if let Some(fp) = Self::fingerprint(arena, id) {
@@ -478,6 +523,12 @@ mod tests {
         if let Some(cold) = arena.get_cold_mut(root) {
             cold.a11y_name = Some("Renamed".to_string());
         }
+        // In production, mutations to accessibility-relevant state should
+        // set DIRTY_A11Y. The hybrid sync trusts dirty flags as the
+        // fast path, so we set the flag here to trigger the slow path.
+        if let Some(hot) = arena.get_hot_mut(root) {
+            hot.flags.insert(NodeFlags::DIRTY_A11Y);
+        }
         let diff = sync.sync(&arena);
         assert_eq!(diff.modified, vec![root]);
         assert!(diff.added.is_empty());
@@ -493,8 +544,69 @@ mod tests {
         if let Some(hot) = arena.get_hot_mut(root) {
             hot.bounds = martensite_core::Rect::new(1.0, 2.0, 10.0, 10.0);
         }
+        // Set dirty flag so the fast path triggers the slow path.
+        if let Some(hot) = arena.get_hot_mut(root) {
+            hot.flags.insert(NodeFlags::DIRTY_A11Y);
+        }
         let diff = sync.sync(&arena);
         assert_eq!(diff.modified, vec![root]);
+    }
+
+    #[test]
+    fn fast_path_skips_fingerprinting_when_clean() {
+        let (mut arena, root) = make_arena();
+        let child = arena.insert(HotNode::default(), ColdNode::default());
+        arena.append_child(root, child).unwrap();
+
+        let mut sync = SemanticTreeSync::new(root);
+        // First sync: full scan, reports all as added.
+        let diff = sync.sync(&arena);
+        assert_eq!(diff.added.len(), 2);
+
+        // Second sync: no dirty flags, same node count → fast path
+        // returns empty diff without computing fingerprints.
+        let diff = sync.sync(&arena);
+        assert!(diff.is_empty());
+
+        // Third sync: still clean, still fast path.
+        let diff = sync.sync(&arena);
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn fast_path_triggers_slow_path_on_dirty_flag() {
+        let (mut arena, root) = make_arena();
+        let mut sync = SemanticTreeSync::new(root);
+        sync.sync(&arena);
+
+        // Set dirty flag on root.
+        if let Some(hot) = arena.get_hot_mut(root) {
+            hot.flags.insert(NodeFlags::DIRTY_A11Y);
+        }
+        // Also change something so the fingerprint differs.
+        if let Some(cold) = arena.get_cold_mut(root) {
+            cold.a11y_name = Some("Changed".to_string());
+        }
+        let diff = sync.sync(&arena);
+        assert_eq!(diff.modified, vec![root]);
+    }
+
+    #[test]
+    fn fast_path_detects_removal_via_count_mismatch() {
+        let (mut arena, root) = make_arena();
+        let child = arena.insert(HotNode::default(), ColdNode::default());
+        arena.append_child(root, child).unwrap();
+
+        let mut sync = SemanticTreeSync::new(root);
+        sync.sync(&arena);
+
+        // Remove child WITHOUT setting dirty flag on root.
+        // The fast path detects this via node count mismatch
+        // (snapshot has 2 nodes, arena now has 1).
+        arena.remove(child);
+        let diff = sync.sync(&arena);
+        assert_eq!(diff.removed, vec![child]);
+        assert!(diff.modified.contains(&root));
     }
 
     #[test]

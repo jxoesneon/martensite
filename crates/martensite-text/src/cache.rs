@@ -323,8 +323,8 @@ pub struct CachedShape {
     pub lines: Vec<ShapedLine>,
     /// The measured metrics.
     pub metrics: TextMetrics,
-    /// Approximate memory size in bytes.
-    pub mem_size: usize,
+    /// Approximate memory size in bytes (u64 to prevent overflow).
+    pub mem_size: u64,
     /// Resolved base BiDi embedding level (even = LTR, odd = RTL).
     pub base_bidi_level: u8,
     /// Visual run order indices, if BiDi reordering was applied.
@@ -368,14 +368,21 @@ impl CachedShape {
     }
 
     /// Estimates the memory usage of the shaped lines in bytes.
-    fn estimate_mem_size(lines: &[ShapedLine]) -> usize {
+    ///
+    /// Uses `saturating_add` throughout to prevent overflow on very
+    /// large shaped texts (peer crates like moka and byte-lru-cache
+    /// use `u64` for the same reason).
+    fn estimate_mem_size(lines: &[ShapedLine]) -> u64 {
         // Base overhead: the CachedShape struct itself + TextMetrics
-        let mut total = std::mem::size_of::<TextMetrics>() + std::mem::size_of::<usize>();
+        let mut total = (std::mem::size_of::<TextMetrics>() + std::mem::size_of::<usize>()) as u64;
         // Each line's heap allocations
         for line in lines {
-            total += std::mem::size_of::<ShapedLine>();
-            total += line.text.capacity();
-            total += line.glyphs.len() * std::mem::size_of::<ShapedGlyph>();
+            total = total.saturating_add(std::mem::size_of::<ShapedLine>() as u64);
+            total = total.saturating_add(line.text.capacity() as u64);
+            total = total.saturating_add(
+                (line.glyphs.len() as u64)
+                    .saturating_mul(std::mem::size_of::<ShapedGlyph>() as u64),
+            );
         }
         total
     }
@@ -404,10 +411,10 @@ pub struct TextShapeCache {
     entries: HashMap<ShapeCacheKey, (u64, CachedShape)>,
     /// Current age counter; incremented on each access.
     age: u64,
-    /// Total estimated memory in bytes.
-    total_mem: usize,
-    /// Memory budget in bytes.
-    budget: usize,
+    /// Total estimated memory in bytes (u64 to prevent overflow).
+    total_mem: u64,
+    /// Memory budget in bytes (u64 to prevent overflow).
+    budget: u64,
     /// Number of cache hits.
     hits: u64,
     /// Number of cache misses.
@@ -416,13 +423,13 @@ pub struct TextShapeCache {
 
 impl Default for TextShapeCache {
     fn default() -> Self {
-        Self::new(DEFAULT_MEMORY_BUDGET)
+        Self::new(DEFAULT_MEMORY_BUDGET as u64)
     }
 }
 
 impl TextShapeCache {
     /// Creates a new cache with the given memory budget in bytes.
-    pub fn new(budget: usize) -> Self {
+    pub fn new(budget: u64) -> Self {
         Self {
             entries: HashMap::new(),
             age: 0,
@@ -453,13 +460,13 @@ impl TextShapeCache {
 
     /// Returns the total estimated memory usage in bytes.
     #[inline]
-    pub fn total_memory(&self) -> usize {
+    pub fn total_memory(&self) -> u64 {
         self.total_mem
     }
 
     /// Returns the memory budget in bytes.
     #[inline]
-    pub fn budget(&self) -> usize {
+    pub fn budget(&self) -> u64 {
         self.budget
     }
 
@@ -505,9 +512,21 @@ impl TextShapeCache {
     /// Inserts a shaped result into the cache.
     ///
     /// If the entry's memory pushes the total over budget, LRU
-    /// entries are evicted until the budget is satisfied.
-    pub fn insert(&mut self, key: ShapeCacheKey, shape: CachedShape) {
+    /// entries are evicted until the budget is satisfied. Returns
+    /// `true` if the entry was cached, or `false` if the entry was
+    /// rejected because its own memory size exceeds the budget (an
+    /// oversized entry can never fit even in an empty cache, so it
+    /// is dropped to avoid violating the memory invariant).
+    pub fn insert(&mut self, key: ShapeCacheKey, shape: CachedShape) -> bool {
         let mem_size = shape.mem_size;
+
+        // Reject entries that are individually larger than the budget.
+        // Even with an empty cache such an entry would exceed the limit,
+        // and the eviction loop below would exit immediately without
+        // making room, so we short-circuit here.
+        if mem_size > self.budget {
+            return false;
+        }
 
         // If updating an existing entry, subtract old size first.
         if let Some((_, old)) = self.entries.remove(&key) {
@@ -515,13 +534,14 @@ impl TextShapeCache {
         }
 
         // Evict LRU entries until we have room.
-        while self.total_mem + mem_size > self.budget && !self.entries.is_empty() {
+        while self.total_mem.saturating_add(mem_size) > self.budget && !self.entries.is_empty() {
             self.evict_oldest();
         }
 
-        self.total_mem += mem_size;
+        self.total_mem = self.total_mem.saturating_add(mem_size);
         self.entries.insert(key, (self.age, shape));
         self.age += 1;
+        true
     }
 
     /// Evicts the oldest (least-recently-used) entry.
@@ -551,7 +571,10 @@ impl TextShapeCache {
     pub fn trim(&mut self, keep_age: u64) {
         let current_age = self.age;
         self.entries.retain(|_, (age, shape)| {
-            if *age + keep_age >= current_age {
+            // Use saturating_sub so the age difference cannot overflow.
+            // An entry is kept if it was accessed within `keep_age` ticks
+            // of the current age (i.e. current_age - age <= keep_age).
+            if current_age.saturating_sub(*age) <= keep_age {
                 true
             } else {
                 self.total_mem = self.total_mem.saturating_sub(shape.mem_size);
@@ -588,7 +611,7 @@ impl TextShapeCache {
 
     /// Resizes the memory budget, evicting entries if the new budget
     /// is smaller than current usage.
-    pub fn resize(&mut self, new_budget: usize) {
+    pub fn resize(&mut self, new_budget: u64) {
         self.budget = new_budget;
         while self.total_mem > self.budget && !self.entries.is_empty() {
             self.evict_oldest();

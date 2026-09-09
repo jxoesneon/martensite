@@ -10,6 +10,14 @@ use crate::scope::FocusScopeStack;
 use crate::spatial::{FocusDirection, SpatialNavigator};
 
 /// Tab navigation direction.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_focus::TabNavigation;
+///
+/// assert_ne!(TabNavigation::Forward, TabNavigation::Reverse);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TabNavigation {
     /// Forward tab navigation (Tab key).
@@ -46,6 +54,10 @@ pub struct FocusManager {
     navigator: SpatialNavigator,
     /// The modal focus scope stack.
     scopes: FocusScopeStack,
+    /// The root container of the widget tree, used as the final fallback
+    /// when a modal scope is dismissed and no other focus target is
+    /// available. Set via [`FocusManager::set_root`].
+    root: Option<WidgetId>,
 }
 
 impl Default for FocusManager {
@@ -61,7 +73,25 @@ impl FocusManager {
             current_focus: None,
             navigator: SpatialNavigator::new(),
             scopes: FocusScopeStack::new(),
+            root: None,
         }
+    }
+
+    /// Sets the root container used as the final focus fallback when a
+    /// modal scope is dismissed and no other target (prior focus, sibling,
+    /// or in-scope focusable) is available.
+    ///
+    /// When [`Self::pop_scope`] exhausts all other fallbacks, it restores
+    /// focus to this root container (if it is a valid focus target) or to
+    /// the first focusable descendant of the root, rather than to an
+    /// arbitrary arena-first node.
+    pub fn set_root(&mut self, root: WidgetId) {
+        self.root = Some(root);
+    }
+
+    /// Returns the root container, if set.
+    pub fn root(&self) -> Option<WidgetId> {
+        self.root
     }
 
     /// Returns the currently focused widget ID, if any.
@@ -136,6 +166,36 @@ impl FocusManager {
     /// all focusable widgets in the arena are considered.
     ///
     /// Returns the newly focused widget ID, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::{FocusManager, TabNavigation};
+    /// use martensite_core::{ColdNode, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let make_focusable = |arena: &mut WidgetArena| {
+    ///     arena.insert(
+    ///         HotNode {
+    ///             flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+    ///             ..HotNode::default()
+    ///         },
+    ///         ColdNode::default(),
+    ///     )
+    /// };
+    /// let a = make_focusable(&mut arena);
+    /// let b = make_focusable(&mut arena);
+    /// let c = make_focusable(&mut arena);
+    ///
+    /// let mut manager = FocusManager::new();
+    /// // Forward tab cycles a -> b -> c -> a.
+    /// assert_eq!(manager.tab(&arena, TabNavigation::Forward), Some(a));
+    /// assert_eq!(manager.tab(&arena, TabNavigation::Forward), Some(b));
+    /// assert_eq!(manager.tab(&arena, TabNavigation::Forward), Some(c));
+    /// assert_eq!(manager.tab(&arena, TabNavigation::Forward), Some(a));
+    /// // Reverse tab wraps back to c.
+    /// assert_eq!(manager.tab(&arena, TabNavigation::Reverse), Some(c));
+    /// ```
     pub fn tab(&mut self, arena: &WidgetArena, direction: TabNavigation) -> Option<WidgetId> {
         let candidates = self.collect_tab_candidates(arena);
         if candidates.is_empty() {
@@ -174,6 +234,37 @@ impl FocusManager {
     /// focusable widgets within the scope. If the current focus is
     /// outside the active scope, navigation starts from the scope root
     /// instead, ensuring focus cannot drift into the modal from outside.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::{FocusDirection, FocusManager};
+    /// use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let src = arena.insert(
+    ///     HotNode {
+    ///         bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///         flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+    ///         ..HotNode::default()
+    ///     },
+    ///     ColdNode::default(),
+    /// );
+    /// let right = arena.insert(
+    ///     HotNode {
+    ///         bounds: Rect::new(100.0, 0.0, 10.0, 10.0),
+    ///         flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+    ///         ..HotNode::default()
+    ///     },
+    ///     ColdNode::default(),
+    /// );
+    ///
+    /// let mut manager = FocusManager::new();
+    /// manager.set_focus(&mut arena, src);
+    /// // Pressing "Right" moves focus to the node on the right.
+    /// assert_eq!(manager.navigate(&arena, FocusDirection::Right), Some(right));
+    /// assert_eq!(manager.current_focus(), Some(right));
+    /// ```
     pub fn navigate(&mut self, arena: &WidgetArena, direction: FocusDirection) -> Option<WidgetId> {
         let source = self.current_focus?;
 
@@ -209,6 +300,33 @@ impl FocusManager {
     ///
     /// Returns `false` if `scope_root` is not alive in the arena, in which
     /// case the scope is not pushed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    /// use martensite_core::{ColdNode, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let scope_root = arena.insert(
+    ///     HotNode {
+    ///         flags: NodeFlags::VISIBLE,
+    ///         ..HotNode::default()
+    ///     },
+    ///     ColdNode::default(),
+    /// );
+    ///
+    /// let mut manager = FocusManager::new();
+    /// assert!(!manager.has_active_scope());
+    ///
+    /// // Pushing a live scope root activates modal trapping.
+    /// assert!(manager.push_scope(&arena, scope_root));
+    /// assert!(manager.has_active_scope());
+    ///
+    /// // Pushing a fabricated (dead) id is rejected.
+    /// use martensite_core::WidgetId;
+    /// assert!(!manager.push_scope(&arena, WidgetId::from_parts(99, 99)));
+    /// ```
     pub fn push_scope(&mut self, arena: &WidgetArena, scope_root: WidgetId) -> bool {
         if !arena.is_alive(scope_root) {
             return false;
@@ -223,8 +341,41 @@ impl FocusManager {
     /// was pushed. If the restored widget is no longer alive, visible, or
     /// focusable, focus falls back to the nearest visible focusable
     /// sibling of the prior node, then to the nearest visible focusable
-    /// widget within the remaining active scope (if any), and finally to
-    /// the first visible focusable widget in the arena.
+    /// widget within the remaining active scope (if any), then to the
+    /// root container (or its first focusable descendant), and finally
+    /// to the first visible focusable widget in the arena.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    /// use martensite_core::{ColdNode, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let prior = arena.insert(
+    ///     HotNode {
+    ///         flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+    ///         ..HotNode::default()
+    ///     },
+    ///     ColdNode::default(),
+    /// );
+    /// let scope_root = arena.insert(
+    ///     HotNode {
+    ///         flags: NodeFlags::VISIBLE,
+    ///         ..HotNode::default()
+    ///     },
+    ///     ColdNode::default(),
+    /// );
+    ///
+    /// let mut manager = FocusManager::new();
+    /// manager.set_focus(&mut arena, prior);
+    /// manager.push_scope(&arena, scope_root);
+    /// assert!(manager.has_active_scope());
+    ///
+    /// // Popping restores the focus captured when the scope was pushed.
+    /// assert_eq!(manager.pop_scope(&arena), Some(prior));
+    /// assert!(!manager.has_active_scope());
+    /// ```
     pub fn pop_scope(&mut self, arena: &WidgetArena) -> Option<WidgetId> {
         let restored = self.scopes.pop();
         let Some(prior_focus) = restored else {
@@ -234,7 +385,7 @@ impl FocusManager {
             return None;
         };
 
-        // If the prior focus is still a valid target, restore it.
+        // Fallback 0: restore the prior focus if it is still a valid target.
         if self.is_focusable_target(arena, prior_focus) {
             self.current_focus = Some(prior_focus);
             return Some(prior_focus);
@@ -247,17 +398,40 @@ impl FocusManager {
         }
 
         // Fallback 2: first visible focusable widget in the remaining
-        // active scope (if any), else in the whole arena.
-        let search_root = self.scopes.current_scope_root();
-        let fallback = if let Some(scope) = search_root {
-            arena
+        // active scope (if any).
+        if let Some(scope) = self.scopes.current_scope_root() {
+            if let Some(fallback) = arena
                 .iter_subtree(scope)
                 .find(|id| self.is_focusable_target(arena, *id))
-        } else {
-            arena
-                .iter_depth_first()
+            {
+                self.current_focus = Some(fallback);
+                return Some(fallback);
+            }
+        }
+
+        // Fallback 3: the root container. If the root itself is a valid
+        // focus target, restore focus to it; otherwise restore to the
+        // first focusable descendant of the root. This ensures a
+        // dismissed modal returns focus to the application's root rather
+        // than to an arbitrary arena-first node.
+        if let Some(root) = self.root {
+            if self.is_focusable_target(arena, root) {
+                self.current_focus = Some(root);
+                return Some(root);
+            }
+            if let Some(fallback) = arena
+                .iter_subtree(root)
                 .find(|id| self.is_focusable_target(arena, *id))
-        };
+            {
+                self.current_focus = Some(fallback);
+                return Some(fallback);
+            }
+        }
+
+        // Fallback 4: first visible focusable widget in the whole arena.
+        let fallback = arena
+            .iter_depth_first()
+            .find(|id| self.is_focusable_target(arena, *id));
         self.current_focus = fallback;
         fallback
     }
@@ -759,5 +933,80 @@ mod tests {
         assert_eq!(next, Some(inside));
         // Focus should now be inside the scope.
         assert_eq!(manager.current_focus(), Some(inside));
+    }
+
+    #[test]
+    fn pop_scope_falls_back_to_root_container() {
+        // When the prior focus is dead, has no focusable siblings, and no
+        // remaining scope is active, pop_scope should fall back to the root
+        // container (set via set_root) rather than an arbitrary arena-first
+        // node.
+        let mut arena = WidgetArena::new();
+
+        // Tree structure:
+        //   root (focusable)
+        //   ├── prior (focusable, will be removed)
+        //   └── other (NOT focusable)
+        let root = make_focusable(&mut arena);
+        let prior = make_focusable(&mut arena);
+        let _other = arena.insert(HotNode::default(), ColdNode::default()); // not focusable
+        arena.append_child(root, prior).unwrap();
+        arena.append_child(root, _other).unwrap();
+
+        let mut manager = FocusManager::new();
+        manager.set_root(root);
+        manager.set_focus(&mut arena, prior);
+        assert!(manager.push_scope(&arena, root));
+
+        // Remove the prior focus target while the scope is active.
+        arena.remove(prior);
+
+        // Pop scope — prior is dead, no focusable siblings (other is not
+        // focusable), no remaining scope. Should fall back to root.
+        let restored = manager.pop_scope(&arena);
+        assert_eq!(restored, Some(root));
+        assert_eq!(manager.current_focus(), Some(root));
+    }
+
+    #[test]
+    fn pop_scope_falls_back_to_root_descendant_when_root_not_focusable() {
+        // When the root itself is not focusable, pop_scope should fall
+        // back to the first focusable descendant of the root.
+        let mut arena = WidgetArena::new();
+
+        // Tree structure:
+        //   root (NOT focusable)
+        //   ├── prior (focusable, will be removed)
+        //   └── child (focusable)
+        let root = arena.insert(HotNode::default(), ColdNode::default()); // not focusable
+        let prior = make_focusable(&mut arena);
+        let child = make_focusable(&mut arena);
+        arena.append_child(root, prior).unwrap();
+        arena.append_child(root, child).unwrap();
+
+        let mut manager = FocusManager::new();
+        manager.set_root(root);
+        manager.set_focus(&mut arena, prior);
+        assert!(manager.push_scope(&arena, root));
+
+        // Remove the prior focus target while the scope is active.
+        arena.remove(prior);
+
+        // Pop scope — prior is dead, no focusable siblings of prior (it was
+        // removed), no remaining scope. Root is not focusable, so fall back
+        // to the first focusable descendant of root, which is `child`.
+        let restored = manager.pop_scope(&arena);
+        assert_eq!(restored, Some(child));
+        assert_eq!(manager.current_focus(), Some(child));
+    }
+
+    #[test]
+    fn set_root_and_get_root() {
+        let mut arena = WidgetArena::new();
+        let root = make_focusable(&mut arena);
+        let mut manager = FocusManager::new();
+        assert!(manager.root().is_none());
+        manager.set_root(root);
+        assert_eq!(manager.root(), Some(root));
     }
 }
