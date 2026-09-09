@@ -22,7 +22,7 @@ use {
     kurbo::{Affine, Point as KurboPoint, Rect as KurboRect, RoundedRect, Stroke as KurboStroke},
     peniko::{
         color::{AlphaColor, DynamicColor, Srgb},
-        Blob, BlendMode, Color, ColorStop, ColorStops, Compose, Fill, FontData, Gradient, Mix,
+        BlendMode, Blob, Color, ColorStop, ColorStops, Compose, Fill, FontData, Gradient, Mix,
     },
     vello::{
         AaConfig, AaSupport, Glyph, RenderParams, Renderer as VelloGpuRenderer, RendererOptions,
@@ -368,14 +368,11 @@ impl VelloRenderer {
         if let Some(font) = run.font.as_ref() {
             let font_data = font_resource_to_peniko(font);
             let color = rgba_to_color(run.color);
-            let glyphs = run
-                .glyphs
-                .iter()
-                .map(|g| Glyph {
-                    id: g.glyph_id,
-                    x: g.x,
-                    y: g.y,
-                });
+            let glyphs = run.glyphs.iter().map(|g| Glyph {
+                id: g.glyph_id,
+                x: g.x,
+                y: g.y,
+            });
             self.scene
                 .draw_glyphs(&font_data)
                 .font_size(run.font_size)
@@ -431,7 +428,7 @@ mod tests {
     use kurbo::Rect;
 
     #[cfg(feature = "vello")]
-    use crate::paint::{GlyphInstance, GlyphRun, GradientStop, GradientStops};
+    use crate::paint::{FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops};
     #[cfg(feature = "vello")]
     use kurbo::Point;
 
@@ -596,5 +593,96 @@ mod tests {
     fn scene_mut_allows_mutable_access() {
         let mut renderer = VelloRenderer::new();
         let _scene: &mut Scene = renderer.scene_mut();
+    }
+
+    /// Bundled Fira Mono Regular font used to exercise the Vello glyph path.
+    #[cfg(feature = "vello")]
+    const FIRA_MONO: &[u8] = include_bytes!("../tests/assets/FiraMono-Medium.ttf");
+
+    /// GPU geometry test: a `DrawGlyphRun` carrying a `FontResource` must build
+    /// a real glyph run in the Vello scene encoding (exercising the
+    /// `Scene::draw_glyphs` path) rather than the bounding-box fallback.
+    #[cfg(feature = "vello")]
+    #[test]
+    fn glyph_run_with_font_builds_vello_glyph_run() {
+        let mut renderer = VelloRenderer::new();
+        let font = FontResource::from_static(FIRA_MONO, 0);
+        let mut run = GlyphRun::new(24.0, [0, 0, 0, 255]).with_font(font);
+        run.glyphs.push(GlyphInstance::new(0.0, 24.0, 36, 0.0, 0.0));
+        run.glyphs
+            .push(GlyphInstance::new(14.0, 24.0, 43, 0.0, 0.0));
+        let mut list = PaintList::new();
+        list.push_glyph_run(run);
+        renderer.render(&list);
+
+        let encoding = renderer.scene().encoding();
+        // The glyph run must be encoded into the scene's resource table.
+        assert!(
+            !encoding.resources.glyph_runs.is_empty(),
+            "a font-backed glyph run should encode a vello glyph run"
+        );
+        assert!(
+            !encoding.resources.glyphs.is_empty(),
+            "a font-backed glyph run should encode glyph instances"
+        );
+    }
+
+    /// A glyph run *without* a font must not produce a vello glyph run; it
+    /// falls back to filled rectangles (path segments), keeping the encoding's
+    /// glyph-run table empty.
+    #[cfg(feature = "vello")]
+    #[test]
+    fn glyph_run_without_font_uses_rectangle_fallback() {
+        let mut renderer = VelloRenderer::new();
+        let mut run = GlyphRun::new(16.0, [0, 0, 0, 255]);
+        run.glyphs.push(GlyphInstance::new(0.0, 0.0, 1, 10.0, 14.0));
+        let mut list = PaintList::new();
+        list.push_glyph_run(run);
+        renderer.render(&list);
+
+        let encoding = renderer.scene().encoding();
+        assert!(
+            encoding.resources.glyph_runs.is_empty(),
+            "a fontless glyph run should not encode a vello glyph run"
+        );
+        assert!(
+            encoding.n_path_segments > 0,
+            "a fontless glyph run should fall back to path segments"
+        );
+    }
+
+    /// Geometry test exercising the full vello scene build path across all
+    /// non-text command types plus a font-backed glyph run, asserting the
+    /// scene accumulates path segments and at least one glyph run.
+    #[cfg(feature = "vello")]
+    #[test]
+    fn full_scene_build_geometry() {
+        let mut renderer = VelloRenderer::new();
+        let mut list = PaintList::new();
+        list.push_fill_rect(Rect::new(0.0, 0.0, 50.0, 50.0), [255, 0, 0, 255]);
+        list.push_stroke_rect(Rect::new(10.0, 10.0, 40.0, 40.0), 2.0, [0, 0, 255, 255]);
+        let stops = GradientStops::from_slice(&[
+            GradientStop::new(0.0, [0, 0, 0, 255]),
+            GradientStop::new(1.0, [255, 255, 255, 255]),
+        ]);
+        list.push_linear_gradient(
+            Rect::new(0.0, 0.0, 64.0, 64.0),
+            stops,
+            [0.0, 0.0],
+            [64.0, 0.0],
+        );
+        list.push_clip(Rect::new(0.0, 0.0, 64.0, 64.0));
+        let font = FontResource::from_static(FIRA_MONO, 0);
+        let mut run = GlyphRun::new(20.0, [0, 0, 0, 255]).with_font(font);
+        run.glyphs.push(GlyphInstance::new(4.0, 20.0, 36, 0.0, 0.0));
+        list.push_glyph_run(run);
+        renderer.render(&list);
+
+        let encoding = renderer.scene().encoding();
+        assert!(encoding.n_path_segments > 0, "scene should have geometry");
+        assert!(
+            !encoding.resources.glyph_runs.is_empty(),
+            "scene should contain a glyph run"
+        );
     }
 }

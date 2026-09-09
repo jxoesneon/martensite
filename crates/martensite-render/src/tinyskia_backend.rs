@@ -467,7 +467,9 @@ impl TinySkiaBackend {
     /// `catch_unwind` robustness used by the text pipeline for font-data
     /// access.
     fn render_glyph_run_outlines(&mut self, run: &GlyphRun, font: &FontResource) {
-        let Some(font_ref) = SwashFontRef::from_index(font.data(), usize::try_from(font.index()).unwrap_or(0)) else {
+        let Some(font_ref) =
+            SwashFontRef::from_index(font.data(), usize::try_from(font.index()).unwrap_or(0))
+        else {
             // Not a valid font file / index: fall back to bounding boxes.
             self.render_glyph_run_bounding_boxes(run);
             return;
@@ -491,7 +493,9 @@ impl TinySkiaBackend {
             let Some(layer) = outline.get(0) else {
                 continue;
             };
-            if let Some(path) = self.build_outline_path(layer.points(), layer.verbs(), glyph.x, glyph.y) {
+            if let Some(path) =
+                self.build_outline_path(layer.points(), layer.verbs(), glyph.x, glyph.y)
+            {
                 // `self.clip_stack.last()` is evaluated as an argument to the
                 // `fill_path` call on `self.pixmap`; this is a disjoint
                 // two-field borrow and does not conflict with the mutable
@@ -602,8 +606,9 @@ impl RenderBackend for TinySkiaBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::paint::{GlyphInstance, GlyphRun, GradientStop, PaintList};
+    use crate::paint::{FontResource, GlyphInstance, GlyphRun, GradientStop, PaintList};
     use kurbo::Point;
+    use swash::{Charmap, FontRef as SwashFontRef};
 
     fn backend() -> TinySkiaBackend {
         TinySkiaBackend::new(64, 64).expect("64x64 pixmap should allocate")
@@ -925,5 +930,58 @@ mod tests {
         // A pixel well outside the box should be untouched.
         let outside = b.pixmap().pixel(50, 50).expect("pixel in range");
         assert_eq!(outside.alpha(), 0);
+    }
+
+    /// Bundled Fira Mono Regular font used to exercise real glyph outlines.
+    const FIRA_MONO: &[u8] = include_bytes!("../tests/assets/FiraMono-Medium.ttf");
+
+    #[test]
+    fn glyph_run_with_font_rasterizes_real_outlines() {
+        // Parse the bundled font and map 'H' to its glyph id.
+        let font_ref = SwashFontRef::from_index(FIRA_MONO, 0).expect("Fira Mono should parse");
+        let charmap = Charmap::from_font(&font_ref);
+        let glyph_id = charmap.map('H');
+        assert_ne!(glyph_id, 0, "'H' should map to a real glyph");
+
+        let mut b = TinySkiaBackend::new(128, 64).expect("128x64 pixmap should allocate");
+        let font = FontResource::from_static(FIRA_MONO, 0);
+        let mut run = GlyphRun::new(32.0, [0, 0, 0, 255]).with_font(font);
+        // Baseline at y=40 so the glyph ascender fits in the 64px-tall pixmap.
+        run.push(GlyphInstance::new(8.0, 40.0, u32::from(glyph_id), 0.0, 0.0));
+        let mut list = PaintList::new();
+        list.push_glyph_run(run);
+        b.render(&list);
+
+        assert!(
+            non_zero_pixels(&b) > 0,
+            "a real glyph outline should produce visible pixels"
+        );
+        // The glyph 'H' at 32px starting at x=8 should have ink around the
+        // left vertical stem. A pixel a few px in from the baseline should be
+        // dark (anti-aliased edges may not be fully opaque, so we check for
+        // significant ink rather than exactly 255).
+        let ink = b.pixmap().pixel(10, 30).expect("pixel in range");
+        assert!(
+            ink.alpha() > 128,
+            "glyph stem should have significant ink, got alpha={}",
+            ink.alpha()
+        );
+        assert_eq!(ink.red(), 0);
+        assert_eq!(ink.green(), 0);
+        assert_eq!(ink.blue(), 0);
+    }
+
+    #[test]
+    fn glyph_run_with_font_falls_back_on_garbage_data() {
+        // A FontResource built from non-font bytes must not panic; the backend
+        // falls back to bounding-box rectangles sized by the glyph's width/height.
+        let mut b = backend();
+        let font = FontResource::new(b"not a font".to_vec(), 0);
+        let mut run = GlyphRun::new(16.0, [255, 0, 0, 255]).with_font(font);
+        run.push(GlyphInstance::new(10.0, 32.0, 1, 20.0, 16.0));
+        let mut list = PaintList::new();
+        list.push_glyph_run(run);
+        b.render(&list);
+        assert!(non_zero_pixels(&b) > 0, "fallback bounding box should draw");
     }
 }
