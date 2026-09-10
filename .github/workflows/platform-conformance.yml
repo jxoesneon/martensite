@@ -257,8 +257,6 @@ jobs:
       - name: Install Xvfb and libX11
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libx11-dev
+          sudo apt-get install -y xvfb libx11-dev xclip
       - name: Run X11 clipboard round-trip tests under Xvfb
         run: xvfb-run -a cargo test -p martensite-clipboard-platform --lib x11
-        env:
-          DISPLAY: ":99"
