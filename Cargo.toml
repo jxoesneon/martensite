@@ -103,7 +103,7 @@ taffy = { version = "0.8", default-features = false, features = ["flexbox", "gri
 cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.1", path = "crates/martensite-cosmic-text", default-features = false, features = ["std", "swash"] }
 fontdb = { version = "0.24", default-features = false }
 accesskit = { version = "0.25" }
-accesskit_winit = { package = "martensite-accesskit-winit", path = "crates/martensite-accesskit-winit" }
+accesskit_winit = { package = "martensite-accesskit-winit", version = "0.11.0", path = "crates/martensite-accesskit-winit" }
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11"] }
 
 # Utility libraries

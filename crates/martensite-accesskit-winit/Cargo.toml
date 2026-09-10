@@ -7,10 +7,10 @@ description = "Vendored and patched AccessKit winit adapter for winit 0.31.0-bet
 categories.workspace = true
 keywords = ["gui", "ui", "accessibility", "winit"]
 repository.workspace = true
+homepage.workspace = true
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
-publish = false
 
 [lints]
 workspace = true
