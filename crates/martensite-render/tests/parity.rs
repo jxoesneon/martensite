@@ -334,6 +334,7 @@ mod gpu_cpu_parity {
     /// and gradient interpolation, so we require `SSIM > 0.98` (i.e.
     /// `DSSIM < 0.02`) rather than near-exact parity (`0.999`), which is not
     /// realistic between two independent rasterizers.
+    #[cfg(feature = "vello")]
     #[test]
     #[ignore = "requires a software Vulkan adapter (Lavapipe/llvmpipe)"]
     fn gpu_cpu_dssim_parity() {
