@@ -84,7 +84,11 @@ martensite-clipboard-platform = { version = "0.11.0", path = "crates/martensite-
 martensite-host = { version = "0.11.0", path = "crates/martensite-host" }
 
 # Core rendering stack — versions verified against crates.io on 2026-09-06
-wgpu = { version = "30", default-features = false, features = ["wgsl"] }
+# wgpu backends are enabled unconditionally; wgpu internally gates them by
+# target platform (vulkan on Linux/Android, metal on macOS/iOS, dx12 on
+# Windows, webgpu on wasm). Without at least one backend, Instance::default()
+# panics, which breaks ignored GPU tests in CI.
+wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12", "gles", "webgpu"] }
 # NOTE: official `vello` 0.10 depends on wgpu 29, which is incompatible with the
 # workspace's wgpu 30 (the two major versions cannot coexist as a single type).
 # `netrender-vello` is a byte-compatible republish of vello 0.10 built against

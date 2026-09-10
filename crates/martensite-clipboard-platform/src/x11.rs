@@ -95,21 +95,12 @@ extern "C" {
 
 /// Minimal X11 `XEvent` union (we only need the type field).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 struct XEvent {
     /// The event type discriminant.
     type_: c_int,
     /// Padding to make the union large enough (64 bytes is typical).
     padding: [c_long; 31],
-}
-
-impl Default for XEvent {
-    fn default() -> Self {
-        Self {
-            type_: 0,
-            padding: [0; 31],
-        }
-    }
 }
 
 /// X11 `SelectionNotify` event type code.
@@ -276,9 +267,7 @@ impl ClipboardBackend for X11Backend {
     }
 
     fn read(&self, mime: &str) -> Option<Vec<u8>> {
-        let Some(display) = self.display() else {
-            return None;
-        };
+        let display = self.display()?;
         let target = self.mime_to_target(mime);
         if target == 0 {
             return None;
