@@ -409,10 +409,10 @@ struct ThemeUniforms {
 // Blends the color token at `index` between the `from` and `to` palettes by
 // the transition parameter `t` (clamped to [0, 1]).
 fn theme_color(index: u32, t: f32) -> vec4<f32> {
-    let from = from_colors.colors[index];
-    let to = to_colors.colors[index];
+    let from_c = from_colors.colors[index];
+    let to_c = to_colors.colors[index];
     let s = clamp(t, 0.0, 1.0);
-    return mix(from, to, s);
+    return mix(from_c, to_c, s);
 }
 "#;
 
@@ -775,19 +775,108 @@ mod tests {
         assert!(!t.is_complete());
     }
 
+    /// Parse [`THEME_TRANSITION_WGSL`] into a naga module for structural
+    /// assertions. Unwraps the parse result so tests fail loudly on syntax
+    /// errors.
+    fn parse_theme_shader() -> naga::Module {
+        naga::front::wgsl::parse_str(THEME_TRANSITION_WGSL)
+            .expect("theme transition shader should parse")
+    }
+
     #[test]
     fn wgsl_shader_is_non_empty() {
         assert!(!THEME_TRANSITION_WGSL.is_empty());
     }
 
     #[test]
-    fn wgsl_shader_contains_expected_uniforms() {
-        assert!(THEME_TRANSITION_WGSL.contains("struct ThemeUniforms"));
-        assert!(THEME_TRANSITION_WGSL.contains("var<uniform> from_colors"));
-        assert!(THEME_TRANSITION_WGSL.contains("var<uniform> to_colors"));
-        assert!(THEME_TRANSITION_WGSL.contains("fn theme_color"));
-        assert!(THEME_TRANSITION_WGSL.contains("array<vec4<f32>, 15>"));
-        assert!(THEME_TRANSITION_WGSL.contains("color_count"));
+    fn wgsl_shader_has_theme_uniforms_struct() {
+        let module = parse_theme_shader();
+        // The `ThemeUniforms` struct must exist and contain the expected
+        // fields: `colors` (an array) and `color_count` (a scalar).
+        let ty = module
+            .types
+            .iter()
+            .find(|(_, t)| t.name.as_deref() == Some("ThemeUniforms"))
+            .map(|(_, t)| t)
+            .expect("struct `ThemeUniforms` should exist in the parsed module");
+        let members = match &ty.inner {
+            naga::TypeInner::Struct { members, .. } => members,
+            _ => panic!("`ThemeUniforms` should be a struct"),
+        };
+        let color_member = members
+            .iter()
+            .find(|m| m.name.as_deref() == Some("colors"))
+            .expect("struct should have a `colors` member");
+        // The `colors` field must be a fixed-size array (not dynamic).
+        match &module.types[color_member.ty].inner {
+            naga::TypeInner::Array { size, .. } => {
+                assert!(
+                    matches!(size, naga::ArraySize::Constant(_)),
+                    "`colors` should be a fixed-size array, got {size:?}"
+                );
+            }
+            _ => panic!("`colors` member should be an array type"),
+        }
+        assert!(
+            members
+                .iter()
+                .any(|m| m.name.as_deref() == Some("color_count")),
+            "struct should have a `color_count` member"
+        );
+    }
+
+    #[test]
+    fn wgsl_shader_has_uniform_bindings() {
+        let module = parse_theme_shader();
+        // `from_colors` must be at group 0, binding 0 in uniform space.
+        let from = module
+            .global_variables
+            .iter()
+            .find(|(_, v)| v.name.as_deref() == Some("from_colors"))
+            .map(|(_, v)| v)
+            .expect("global variable `from_colors` should exist");
+        assert_eq!(
+            from.space,
+            naga::AddressSpace::Uniform,
+            "`from_colors` should be in uniform address space"
+        );
+        let from_binding = from
+            .binding
+            .as_ref()
+            .expect("`from_colors` should have a resource binding");
+        assert_eq!(from_binding.group, 0);
+        assert_eq!(from_binding.binding, 0);
+
+        // `to_colors` must be at group 0, binding 1 in uniform space.
+        let to = module
+            .global_variables
+            .iter()
+            .find(|(_, v)| v.name.as_deref() == Some("to_colors"))
+            .map(|(_, v)| v)
+            .expect("global variable `to_colors` should exist");
+        assert_eq!(
+            to.space,
+            naga::AddressSpace::Uniform,
+            "`to_colors` should be in uniform address space"
+        );
+        let to_binding = to
+            .binding
+            .as_ref()
+            .expect("`to_colors` should have a resource binding");
+        assert_eq!(to_binding.group, 0);
+        assert_eq!(to_binding.binding, 1);
+    }
+
+    #[test]
+    fn wgsl_shader_has_theme_color_function() {
+        let module = parse_theme_shader();
+        assert!(
+            module
+                .functions
+                .iter()
+                .any(|(_, f)| f.name.as_deref() == Some("theme_color")),
+            "function `theme_color` should exist in the parsed module"
+        );
     }
 
     #[test]

@@ -496,7 +496,7 @@ mod tests {
             let actual_rgb = bt709_yuv_to_rgb(y, cb, cr);
             let de = delta_e_76(expected_rgb, actual_rgb);
             assert!(
-                de < 1.0,
+                de < 0.05,
                 "Color bar {name} failed Delta E check: de={de:.4}, expected={expected_rgb}, actual={actual_rgb}"
             );
         }
@@ -520,7 +520,7 @@ mod tests {
             let actual_rgb = bt2020_yuv_to_rgb(y, cb, cr);
             let de = delta_e_76(expected_rgb, actual_rgb);
             assert!(
-                de < 1.0,
+                de < 0.05,
                 "BT.2020 Color bar {name} failed Delta E check: de={de:.4}, expected={expected_rgb}, actual={actual_rgb}"
             );
         }

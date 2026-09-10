@@ -485,7 +485,7 @@ mod tests {
             position: Some(Vec2::new(200.0, 200.0)),
             action: ProposedAction::Copy,
         });
-        assert!(!bridge.current_target().is_some());
+        assert!(bridge.current_target().is_none());
         let outcome = bridge.handle(DropInput::Moved {
             position: Vec2::new(50.0, 50.0),
             action: ProposedAction::Copy,

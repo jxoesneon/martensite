@@ -1,0 +1,25 @@
+[package]
+name = "martensite-text-reference"
+version = "0.11.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+cairo-rs = { version = "0.18", features = ["png"] }
+pango = "0.18"
+pangocairo = "0.18"
+martensite-test = { path = "../martensite-test" }
+
+[dev-dependencies]
+martensite-text = { path = "../martensite-text" }
+martensite-render = { path = "../martensite-render" }
+cosmic-text = { workspace = true }
+swash = "0.2"
+kurbo = { workspace = true }
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

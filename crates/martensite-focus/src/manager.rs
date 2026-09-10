@@ -144,6 +144,40 @@ impl FocusManager {
         arena.iter_subtree(root).any(|w| w == id)
     }
 
+    /// Returns `true` if `id` lies within the current (top) modal scope's
+    /// subtree, inclusive of the scope root itself.
+    ///
+    /// When no modal scope is active, returns `true` for any widget (the
+    /// whole tree is considered in scope). This is the public boundary
+    /// check used by callers that need to verify a widget is reachable
+    /// under the current modal stack without mutating focus state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    /// use martensite_core::{WidgetArena, HotNode, ColdNode, NodeFlags};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE;
+    /// let id = arena.insert(hot, ColdNode::default());
+    ///
+    /// let mut manager = FocusManager::new();
+    /// // No active scope: every widget is in scope.
+    /// assert!(manager.is_in_current_scope(&arena, id));
+    ///
+    /// // Push a scope rooted at `id`; `id` is the scope root, so it is in scope.
+    /// manager.push_scope(&mut arena, id);
+    /// assert!(manager.is_in_current_scope(&arena, id));
+    /// ```
+    pub fn is_in_current_scope(&self, arena: &WidgetArena, id: WidgetId) -> bool {
+        match self.scopes.current_scope_root() {
+            Some(scope_root) => self.is_in_subtree(arena, scope_root, id),
+            None => true,
+        }
+    }
+
     /// Sets focus to the given widget unconditionally, bypassing the
     /// focusable check.
     ///

@@ -15,5 +15,8 @@ readme = "README.md"
 [dependencies]
 bytemuck = { workspace = true }
 
+[dev-dependencies]
+naga = { workspace = true }
+
 [lints]
 workspace = true

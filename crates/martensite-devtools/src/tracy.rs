@@ -413,19 +413,17 @@ pub fn frame_count() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn span_records_duration() {
         let name = "span_records_duration";
         {
             let _g = span(name);
-            // A tiny sleep is enough to ensure the span has measurable
-            // duration on any clock, without asserting a flaky lower bound.
-            std::thread::sleep(Duration::from_nanos(1));
         }
         let dur = last_span_duration(name);
         assert!(dur.is_some(), "span should be recorded");
+        // Duration is u64 so it is always non-negative; just sanity-check the
+        // upper bound.
         assert!(
             dur.unwrap() < 1_000_000_000,
             "duration should be under a generous 1s upper bound, got {}",

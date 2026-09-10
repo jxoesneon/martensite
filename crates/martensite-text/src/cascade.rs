@@ -480,9 +480,9 @@ impl FallbackKey {
 ///
 /// # Safety of font parsing
 ///
-/// The `swash` and `ttf-parser` crates used for `cmap` inspection have
-/// known panic paths on malformed font data (see swash issues #123–#126,
-/// ttf-parser RUSTSEC-2026-0192). All font-data access in this resolver is
+/// The `swash` crate used for `cmap` inspection has known panic paths on
+/// malformed font data (see swash issues #123–#126). All font-data access in
+/// this resolver is
 /// wrapped in [`std::panic::catch_unwind`] so a corrupt or adversarial font
 /// in the database cannot abort the calling thread; a panicking face is
 /// treated as not covering the queried character.
@@ -631,9 +631,8 @@ impl<'a> InstalledFontFallbackResolver<'a> {
     ///
     /// The face's `cmap` is inspected by parsing the font data through
     /// `swash`'s character map; a glyph ID of `0` (`.notdef`) counts as
-    /// uncovered. The call is wrapped in [`catch_unwind`] because
-    /// `swash`/`ttf-parser` have known panic paths on malformed font
-    /// data (swash #123–#126, ttf-parser RUSTSEC-2026-0192). A panicking
+    /// uncovered. The call is wrapped in [`catch_unwind`] because `swash` has
+    /// known panic paths on malformed font data (swash #123–#126). A panicking
     /// face is treated as not covering `ch`.
     fn face_covers_char(&self, face_id: fontdb::ID, ch: char) -> bool {
         self.font_system

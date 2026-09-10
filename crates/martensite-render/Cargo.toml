@@ -37,5 +37,10 @@ default = []
 # workspace (both vello and the workspace are unified on wgpu 30).
 vello = ["dep:vello", "dep:peniko", "dep:wgpu", "dep:tracing", "vello/wgpu"]
 
+[dev-dependencies]
+martensite-test = { workspace = true }
+martensite-wgpu = { workspace = true, features = ["vello"] }
+wgpu = { workspace = true }
+
 [lints]
 workspace = true

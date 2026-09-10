@@ -70,6 +70,7 @@ new_key_type! {
 ///
 /// [`ApplicationHandler`]: winit::application::ApplicationHandler
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum WindowEventOutcome {
     /// The event was observed but requires no special action from the
     /// caller.

@@ -336,10 +336,132 @@ impl ClipboardBackend for X11Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes tests that access the X11 clipboard to prevent
+    /// concurrent selection races.
+    static CLIPBOARD_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Helper that acquires the clipboard lock for the duration of a test.
+    fn clipboard_lock() -> std::sync::MutexGuard<'static, ()> {
+        CLIPBOARD_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    const TEXT_PLAIN: &str = "text/plain;charset=utf-8";
+
+    /// Returns early if no X display is available (no `DISPLAY` env var or
+    /// `XOpenDisplay` fails). This allows the tests to compile and run on
+    /// any Linux machine without an X server, skipping gracefully instead
+    /// of failing.
+    fn require_display() -> Option<X11Backend> {
+        if std::env::var("DISPLAY").is_err() {
+            return None;
+        }
+        let cb = X11Backend::new();
+        if cb.display.is_none() {
+            return None;
+        }
+        Some(cb)
+    }
 
     #[test]
     fn platform_name_is_x11() {
+        let _lock = clipboard_lock();
         let cb = X11Backend::new();
         assert_eq!(cb.platform_name(), "x11");
+    }
+
+    #[test]
+    fn text_round_trip_through_x11_clipboard() {
+        let _lock = clipboard_lock();
+        let Some(mut cb) = require_display() else {
+            eprintln!("skipping: no X display available");
+            return;
+        };
+        cb.write(TEXT_PLAIN, b"martensite-test-123");
+        let read = cb.read(TEXT_PLAIN);
+        assert_eq!(read, Some(b"martensite-test-123".to_vec()));
+    }
+
+    #[test]
+    fn clear_empties_text() {
+        let _lock = clipboard_lock();
+        let Some(mut cb) = require_display() else {
+            eprintln!("skipping: no X display available");
+            return;
+        };
+        cb.write(TEXT_PLAIN, b"to-be-cleared");
+        cb.clear();
+        // After clearing, we no longer own the selection, so available_types
+        // is empty and a read returns None.
+        assert!(cb.available_types().is_empty());
+    }
+
+    #[test]
+    fn available_types_includes_text_after_write() {
+        let _lock = clipboard_lock();
+        let Some(mut cb) = require_display() else {
+            eprintln!("skipping: no X display available");
+            return;
+        };
+        cb.write(TEXT_PLAIN, b"type-check");
+        let types = cb.available_types();
+        assert!(
+            types.iter().any(|t| t == TEXT_PLAIN),
+            "expected a text type in {types:?}"
+        );
+    }
+
+    #[test]
+    fn empty_text_write_is_safe() {
+        let _lock = clipboard_lock();
+        let Some(mut cb) = require_display() else {
+            eprintln!("skipping: no X display available");
+            return;
+        };
+        cb.write(TEXT_PLAIN, b"");
+        // Should not panic; the read may be None or empty.
+        let _ = cb.read(TEXT_PLAIN);
+    }
+
+    #[test]
+    fn unicode_text_round_trip() {
+        let _lock = clipboard_lock();
+        let Some(mut cb) = require_display() else {
+            eprintln!("skipping: no X display available");
+            return;
+        };
+        let text = "héllo 世界 🦀";
+        cb.write(TEXT_PLAIN, text.as_bytes());
+        let read = cb.read(TEXT_PLAIN);
+        assert_eq!(read, Some(text.as_bytes().to_vec()));
+    }
+
+    #[test]
+    fn multiple_writes_overwrite() {
+        let _lock = clipboard_lock();
+        let Some(mut cb) = require_display() else {
+            eprintln!("skipping: no X display available");
+            return;
+        };
+        cb.write(TEXT_PLAIN, b"first");
+        cb.write(TEXT_PLAIN, b"second");
+        let read = cb.read(TEXT_PLAIN);
+        assert_eq!(read, Some(b"second".to_vec()));
+    }
+
+    #[test]
+    fn large_text_round_trip() {
+        let _lock = clipboard_lock();
+        let Some(mut cb) = require_display() else {
+            eprintln!("skipping: no X display available");
+            return;
+        };
+        let text = "x".repeat(64 * 1024);
+        cb.write(TEXT_PLAIN, text.as_bytes());
+        let read = cb.read(TEXT_PLAIN);
+        assert_eq!(read, Some(text.into_bytes()));
     }
 }

@@ -29,7 +29,6 @@
 
 use std::fmt;
 use std::io::Read;
-use std::path::PathBuf;
 
 use wasmtime::{
     Caller, Config, Engine, Extern, ExternType, Instance, Linker, Memory, MemoryType, Module,
@@ -308,11 +307,13 @@ impl PluginRuntime {
                     .map_err(|_| wasmtime::Error::msg("invalid file read path"))?;
 
                 // Fail-closed: authorization is checked before touching the
-                // filesystem. The granted path must match exactly.
+                // filesystem. The granted path (file or directory) must
+                // canonically contain the requested path, defeating
+                // traversal attacks like `/assets/../etc/passwd`.
                 if !caller
                     .data()
                     .caps
-                    .contains(&Capability::FileRead(PathBuf::from(path)))
+                    .file_read_allowed(std::path::Path::new(path))
                 {
                     return Err(wasmtime::Error::msg("unauthorized file read"));
                 }
@@ -713,6 +714,7 @@ impl PluginInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn compile_wat(wat: &str) -> Vec<u8> {
         wat::parse_str(wat).expect("valid WAT")

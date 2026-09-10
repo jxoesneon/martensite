@@ -117,6 +117,46 @@ impl GpuContext {
         })
     }
 
+    /// Creates a new [`GpuContext`] forcing the CPU fallback adapter
+    /// (Lavapipe/llvmpipe on Linux, WARP on Windows, etc.).
+    ///
+    /// This requests a low-power adapter with `force_fallback_adapter: true`,
+    /// which selects the software/CPU rasterizer. It is intended for headless
+    /// testing and CI where no physical GPU is available, so that the Vello
+    /// compute pipeline can run on a deterministic software Vulkan device.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuContextError::NoAdapter`] if no fallback adapter could be
+    /// acquired (e.g. no software Vulkan driver installed), or
+    /// [`GpuContextError::DeviceRequestFailed`] if the adapter was found but
+    /// the device request failed.
+    pub fn with_cpu_fallback() -> Result<Self, GpuContextError> {
+        let instance = wgpu::Instance::default();
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+            apply_limit_buckets: true,
+        }))
+        .map_err(|e| GpuContextError::NoAdapter(e.to_string()))?;
+
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                .map_err(|e| GpuContextError::DeviceRequestFailed(e.to_string()))?;
+
+        let adapter_info = adapter.get_info();
+
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            adapter_info,
+        })
+    }
+
     /// Recreates the logical device and command queue from the current adapter.
     ///
     /// This is the core of device-loss recovery: the adapter usually survives
@@ -287,6 +327,21 @@ mod tests {
     #[test]
     fn fallback_threshold_matches_milestone_specification() {
         assert_eq!(GpuContext::fallback_threshold(), Duration::from_millis(32));
+    }
+
+    #[test]
+    #[ignore = "requires a software Vulkan adapter (Lavapipe/llvmpipe)"]
+    fn with_cpu_fallback_selects_fallback_adapter() {
+        // The fallback adapter may not be available on every system; we only
+        // verify that construction either yields a usable context or returns a
+        // structured error.
+        match GpuContext::with_cpu_fallback() {
+            Ok(ctx) => {
+                assert!(!ctx.adapter_info.name.is_empty());
+                assert!(ctx.supports_features(wgpu::Features::empty()));
+            }
+            Err(GpuContextError::NoAdapter(_) | GpuContextError::DeviceRequestFailed(_)) => {}
+        }
     }
 
     #[test]

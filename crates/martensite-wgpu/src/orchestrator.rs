@@ -38,6 +38,9 @@ pub enum OrchestratorError {
     NoBackend,
     /// The TinySkia backend failed to initialize.
     BackendInitFailed,
+    /// An offscreen GPU render or readback failed. The carried string
+    /// preserves the underlying wgpu error message for diagnostics.
+    GpuReadbackFailed(String),
 }
 
 impl std::fmt::Display for OrchestratorError {
@@ -45,6 +48,9 @@ impl std::fmt::Display for OrchestratorError {
         match self {
             Self::NoBackend => write!(f, "no rendering backend available"),
             Self::BackendInitFailed => write!(f, "rendering backend initialization failed"),
+            Self::GpuReadbackFailed(msg) => {
+                write!(f, "offscreen GPU render/readback failed: {msg}")
+            }
         }
     }
 }
@@ -314,6 +320,158 @@ impl RenderOrchestrator {
 
         queue.present(st);
         Ok(())
+    }
+
+    /// Renders the most recently built Vello scene to an offscreen texture
+    /// and reads back the pixels as premultiplied RGBA8.
+    ///
+    /// This is the headless GPU readback path: it creates an offscreen
+    /// [`wgpu::Texture`] with the [`wgpu::TextureFormat::Rgba8Unorm`] format
+    /// and `STORAGE_BINDING | COPY_SRC` usage, dispatches the Vello scene into
+    /// it, copies the texture to a staging buffer, maps the buffer, and returns
+    /// the RGBA8 bytes. The returned buffer matches the layout of
+    /// [`TinySkiaBackend::pixels`]: premultiplied RGBA8, row-major, tightly
+    /// packed (no row padding), `width * height * 4` bytes.
+    ///
+    /// `render_to_buffer` must be called *after* [`RenderOrchestrator::render`]
+    /// (which builds the Vello scene in GPU mode). The caller is responsible
+    /// for ensuring the GPU mode is active (e.g. via the default config or by
+    /// not forcing CPU).
+    ///
+    /// The readback is synchronous: it uses [`wgpu::Device::poll`] with
+    /// [`wgpu::PollType::Wait`] to block until the render and the buffer map
+    /// have completed. Row padding required by `wgpu`'s 256-byte
+    /// `COPY_BYTES_PER_ROW_ALIGNMENT` is stripped, so the returned buffer is
+    /// tightly packed regardless of `width`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OrchestratorError::GpuReadbackFailed`] if the offscreen
+    /// texture, the staging buffer, the Vello dispatch, or the buffer map
+    /// fails. This is expected on systems without a usable GPU adapter; the
+    /// parity test gates this behind `#[ignore]` and a Lavapipe CI job.
+    ///
+    /// Only available when the `vello` feature is enabled.
+    #[cfg(feature = "vello")]
+    pub fn render_to_buffer(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, OrchestratorError> {
+        use std::sync::mpsc;
+
+        if width == 0 || height == 0 {
+            return Err(OrchestratorError::GpuReadbackFailed(
+                "zero-sized offscreen target".to_string(),
+            ));
+        }
+
+        // 1. Offscreen render target: Rgba8Unorm, STORAGE_BINDING for the
+        //    Vello compute dispatch, COPY_SRC for the texture→buffer copy.
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("martensite-offscreen-render-target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // 2. Dispatch the Vello scene into the offscreen texture.
+        self.vello
+            .render_to_texture(device, queue, &view, width, height);
+
+        // 3. Staging buffer: MAP_READ | COPY_DST. `bytes_per_row` must be a
+        //    multiple of wgpu's COPY_BYTES_PER_ROW_ALIGNMENT (256), so the
+        //    buffer is padded per row; the padding is stripped on readback.
+        const ALIGNMENT: u32 = 256;
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width
+            .checked_mul(bytes_per_pixel)
+            .ok_or_else(|| OrchestratorError::GpuReadbackFailed("row overflow".to_string()))?;
+        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(ALIGNMENT) * ALIGNMENT;
+        let buffer_size = (padded_bytes_per_row as u64)
+            .checked_mul(height as u64)
+            .ok_or_else(|| OrchestratorError::GpuReadbackFailed("buffer overflow".to_string()))?;
+
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("martensite-offscreen-readback"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // 4. Encode the texture→buffer copy and submit.
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // 5. Map the staging buffer for read. The callback fires during the
+        //    blocking poll below; a channel bridges the async callback to the
+        //    synchronous caller.
+        let (tx, rx) = mpsc::channel();
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .map_err(|e| OrchestratorError::GpuReadbackFailed(e.to_string()))?;
+        rx.recv()
+            .map_err(|e| OrchestratorError::GpuReadbackFailed(e.to_string()))?
+            .map_err(|e| OrchestratorError::GpuReadbackFailed(e.to_string()))?;
+
+        // 6. Read the mapped range and strip per-row padding.
+        let pixels = {
+            let view = staging
+                .slice(..)
+                .get_mapped_range()
+                .map_err(|e| OrchestratorError::GpuReadbackFailed(e.to_string()))?;
+            let mut out =
+                Vec::with_capacity((width as usize) * (height as usize) * bytes_per_pixel as usize);
+            let row_bytes = unpadded_bytes_per_row as usize;
+            let padded = padded_bytes_per_row as usize;
+            for row in 0..height as usize {
+                let start = row * padded;
+                out.extend_from_slice(&view[start..start + row_bytes]);
+            }
+            out
+        };
+        staging.unmap();
+        Ok(pixels)
     }
 
     /// Returns the current rendering mode.

@@ -1,0 +1,264 @@
+name: Platform Conformance
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip-at-harness:
+        description: "Skip AT-harness jobs (NVDA/VoiceOver/Orca)"
+        type: boolean
+        default: false
+  schedule:
+    # Nightly at 04:00 UTC to catch regressions in long-running conformance.
+    - cron: "0 4 * * *"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ===========================================================================
+  # Item 1: Unicode BiDi conformance corpus (BidiTest.txt + BidiCharacterTest.txt)
+  # ===========================================================================
+  bidi-conformance:
+    name: Unicode BiDi Conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Download Unicode BiDi test corpora (UCD 17.0.0)
+        run: |
+          mkdir -p crates/martensite-text/tests/data
+          curl -sL -o crates/martensite-text/tests/data/BidiTest.txt \
+            "https://www.unicode.org/Public/17.0.0/ucd/BidiTest.txt"
+          curl -sL -o crates/martensite-text/tests/data/BidiCharacterTest.txt \
+            "https://www.unicode.org/Public/17.0.0/ucd/BidiCharacterTest.txt"
+      - name: Verify corpora downloaded
+        run: |
+          test -s crates/martensite-text/tests/data/BidiTest.txt
+          test -s crates/martensite-text/tests/data/BidiCharacterTest.txt
+      - name: Run BiDi conformance tests
+        run: cargo test -p martensite-text --test bidi_conformance -- --ignored
+
+  # ===========================================================================
+  # Item 3: Multilingual zero-tofu glyph coverage (platform matrix)
+  # ===========================================================================
+  multilingual-tofu:
+    name: Multilingual Zero-Tofu (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install CJK fonts (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk fonts-noto-cjk-extra
+      - name: Run multilingual fallback tests
+        run: cargo test -p martensite-text --test v0_11_conformance -- multilingual
+        env:
+          MARTENSITE_TOFU_CHECK: "1"
+
+  # ===========================================================================
+  # Item 4: AT-harness caret latency (NVDA / VoiceOver / Orca)
+  # ===========================================================================
+  at-harness-nvda:
+    name: AT-Harness NVDA (Windows)
+    if: github.event_name != 'workflow_dispatch' || !inputs.skip-at-harness
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install NVDA
+        run: npx @guidepup/setup --ci --screen-reader nvda
+      - name: Build Martensite test binary
+        run: cargo build -p martensite-access --tests
+      - name: Run caret latency test (NVDA)
+        run: cargo test -p martensite-access --test v0_11_conformance -- caret_synchronization --ignored
+        env:
+          MARTENSITE_AT_HARNESS: "nvda"
+          MARTENSITE_AT_LATENCY_BUDGET_MS: "16"
+
+  at-harness-voiceover:
+    name: AT-Harness VoiceOver (macOS)
+    if: github.event_name != 'workflow_dispatch' || !inputs.skip-at-harness
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Enable VoiceOver automation
+        run: |
+          # Grant accessibility permissions for the terminal.
+          sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR IGNORE INTO access VALUES ('kTCCServiceAccessibility','com.apple.Terminal',0,1,1,NULL,NULL,0,'UNUSED',NULL,0,1577993529);"
+      - name: Install Guidepup
+        run: npm install @guidepup/setup
+      - name: Build Martensite test binary
+        run: cargo build -p martensite-access --tests
+      - name: Run caret latency test (VoiceOver)
+        run: cargo test -p martensite-access --test v0_11_conformance -- caret_synchronization --ignored
+        env:
+          MARTENSITE_AT_HARNESS: "voiceover"
+          MARTENSITE_AT_LATENCY_BUDGET_MS: "16"
+
+  at-harness-orca:
+    name: AT-Harness Orca (Linux)
+    if: github.event_name != 'workflow_dispatch' || !inputs.skip-at-harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install AT-SPI2, Orca, and D-Bus
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y at-spi2-core orca python3-pyatspi2 \
+            xvfb dbus-x11
+      - name: Start virtual display and D-Bus
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 &
+          export DISPLAY=:99
+          eval $(dbus-launch --sh-syntax)
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+      - name: Start Orca
+        run: orca --disable braille --debug-file=/tmp/orca-log.txt &
+      - name: Build Martensite test binary
+        run: cargo build -p martensite-access --tests
+      - name: Run caret latency test (Orca)
+        run: cargo test -p martensite-access --test v0_11_conformance -- caret_synchronization --ignored
+        env:
+          MARTENSITE_AT_HARNESS: "orca"
+          MARTENSITE_AT_LATENCY_BUDGET_MS: "16"
+          MARTENSITE_ORCA_LOG: "/tmp/orca-log.txt"
+
+  # ===========================================================================
+  # Item 8: Plugin 5ms wall-clock budget (platform matrix)
+  # ===========================================================================
+  plugin-wall-clock:
+    name: Plugin 5ms Budget (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: macos-latest
+            arch: aarch64
+          - os: windows-latest
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run plugin wall-clock budget test
+        run: cargo test -p martensite-plugin --test wall_clock_budget -- --ignored
+        env:
+          MARTENSITE_PLUGIN_BUDGET_MS: "5"
+          MARTENSITE_PLUGIN_SAFETY_MARGIN: "2"
+
+  # ===========================================================================
+  # Item 6: Blessed widget WCAG AAA conformance
+  # ===========================================================================
+  blessed-wcag:
+    name: Blessed Widget WCAG AAA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run blessed widget WCAG conformance tests
+        run: cargo test -p martensite-blessed --test wcag_blessed_conformance
+
+  # ===========================================================================
+  # Item 2: Vertical CJK golden-frame conformance
+  # ===========================================================================
+  vertical-golden:
+    name: Vertical CJK Golden Frames
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install CJK fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Run vertical golden-frame conformance tests
+        run: cargo test -p martensite-text --test vertical_golden_conformance
+
+  # ===========================================================================
+  # Item 2: Pango/Cairo vertical-CJK reference renderer (external DSSIM)
+  # ===========================================================================
+  pango-vertical-reference:
+    name: Pango/Cairo Vertical Reference
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Pango/Cairo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
+            libglib2.0-dev pkg-config fonts-noto-cjk
+      - uses: Swatinem/rust-cache@v2
+      - name: Build reference crate
+        run: cargo build -p martensite-text-reference
+      - name: Run reference tests (including ignored DSSIM comparison)
+        run: cargo test -p martensite-text-reference -- --ignored
+
+  # ===========================================================================
+  # Item 1.4: Platform clipboard round-trip tests (Windows + X11/Linux)
+  # ===========================================================================
+  clipboard-windows:
+    name: Clipboard Round-Trip (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run Windows clipboard round-trip tests
+        run: cargo test -p martensite-clipboard-platform --lib windows
+
+  clipboard-x11:
+    name: Clipboard Round-Trip (X11/Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Xvfb and libX11
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libx11-dev
+      - name: Run X11 clipboard round-trip tests under Xvfb
+        run: xvfb-run -a cargo test -p martensite-clipboard-platform --lib x11
+        env:
+          DISPLAY: ":99"

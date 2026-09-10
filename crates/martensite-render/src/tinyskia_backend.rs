@@ -671,7 +671,24 @@ mod tests {
         let mut list = PaintList::new();
         list.push_fill_rect(Rect::new(10.0, 10.0, 40.0, 40.0), [255, 0, 0, 255]);
         b.render(&list);
-        assert!(non_zero_pixels(&b) > 0, "filled rect should produce pixels");
+        // Center pixel should be opaque red.
+        let px = b.pixmap().pixel(25, 25).expect("pixel in range");
+        assert_eq!(px.red(), 255);
+        assert_eq!(px.green(), 0);
+        assert_eq!(px.blue(), 0);
+        assert_eq!(px.alpha(), 255);
+        // A pixel outside the rect must remain transparent.
+        let outside = b.pixmap().pixel(0, 0).expect("pixel in range");
+        assert_eq!(
+            outside.alpha(),
+            0,
+            "pixel outside rect should be transparent"
+        );
+        // Secondary check: a 30x30 fill should produce well over a hundred pixels.
+        assert!(
+            non_zero_pixels(&b) > 100,
+            "filled rect should produce many pixels"
+        );
     }
 
     #[test]
@@ -695,9 +712,25 @@ mod tests {
         let mut list = PaintList::new();
         list.push_stroke_rect(Rect::new(10.0, 10.0, 40.0, 40.0), 2.0, [0, 255, 0, 255]);
         b.render(&list);
+        // A pixel on the left stroke edge should be opaque green.
+        let edge = b.pixmap().pixel(10, 25).expect("pixel in range");
+        assert_eq!(edge.green(), 255);
+        assert_eq!(edge.alpha(), 255);
+        // A pixel in the interior should be untouched.
+        let interior = b.pixmap().pixel(25, 25).expect("pixel in range");
+        assert_eq!(interior.alpha(), 0);
+        // A pixel in the corner outside the stroke should be transparent.
+        let corner = b.pixmap().pixel(0, 0).expect("pixel in range");
+        assert_eq!(
+            corner.alpha(),
+            0,
+            "pixel outside stroke should be transparent"
+        );
+        // Secondary check: a stroked 30x30 rect perimeter should produce well
+        // over fifty pixels.
         assert!(
-            non_zero_pixels(&b) > 0,
-            "stroked rect should produce pixels"
+            non_zero_pixels(&b) > 50,
+            "stroked rect should produce many pixels"
         );
     }
 
@@ -712,7 +745,25 @@ mod tests {
         builder.close_path();
         list.push_path(builder.build(), [0, 0, 255, 255]);
         b.render(&list);
-        assert!(non_zero_pixels(&b) > 0, "filled path should produce pixels");
+        // The triangle centroid is approximately (30, 23); a pixel there
+        // should be opaque blue.
+        let px = b.pixmap().pixel(30, 23).expect("pixel in range");
+        assert_eq!(px.red(), 0);
+        assert_eq!(px.green(), 0);
+        assert_eq!(px.blue(), 255);
+        assert_eq!(px.alpha(), 255);
+        // A pixel outside the triangle must remain transparent.
+        let outside = b.pixmap().pixel(0, 0).expect("pixel in range");
+        assert_eq!(
+            outside.alpha(),
+            0,
+            "pixel outside path should be transparent"
+        );
+        // Secondary check.
+        assert!(
+            non_zero_pixels(&b) > 100,
+            "filled path should produce many pixels"
+        );
     }
 
     #[test]
@@ -724,9 +775,23 @@ mod tests {
         builder.line_to(Point::new(59.0, 59.0));
         list.push_stroke_path(builder.build(), 3.0, [255, 255, 0, 255]);
         b.render(&list);
+        // A pixel on the diagonal line near the center should be opaque yellow.
+        let on_line = b.pixmap().pixel(32, 32).expect("pixel in range");
+        assert_eq!(on_line.red(), 255);
+        assert_eq!(on_line.green(), 255);
+        assert_eq!(on_line.blue(), 0);
+        assert_eq!(on_line.alpha(), 255);
+        // A pixel off the line must remain transparent.
+        let off = b.pixmap().pixel(0, 63).expect("pixel in range");
+        assert_eq!(
+            off.alpha(),
+            0,
+            "pixel off the stroke path should be transparent"
+        );
+        // Secondary check.
         assert!(
-            non_zero_pixels(&b) > 0,
-            "stroked path should produce pixels"
+            non_zero_pixels(&b) > 50,
+            "stroked path should produce many pixels"
         );
     }
 
@@ -745,9 +810,37 @@ mod tests {
             [64.0, 0.0],
         );
         b.render(&list);
+        // At the left edge (x=0) the gradient is at position 0.0 → black
+        // (anti-aliasing may introduce a tiny offset, so use a tolerance).
+        let left = b.pixmap().pixel(0, 32).expect("pixel in range");
         assert!(
-            non_zero_pixels(&b) > 0,
-            "linear gradient should produce pixels"
+            left.red() < 5,
+            "left edge should be near-black, got red={}",
+            left.red()
+        );
+        assert!(
+            left.green() < 5,
+            "left edge should be near-black, got green={}",
+            left.green()
+        );
+        assert!(
+            left.blue() < 5,
+            "left edge should be near-black, got blue={}",
+            left.blue()
+        );
+        assert_eq!(left.alpha(), 255);
+        // Near the right edge (x=63) the gradient is close to white.
+        let right = b.pixmap().pixel(63, 32).expect("pixel in range");
+        assert!(
+            right.red() > 240,
+            "right edge should be near-white, got red={}",
+            right.red()
+        );
+        assert_eq!(right.alpha(), 255);
+        // Secondary check.
+        assert!(
+            non_zero_pixels(&b) > 100,
+            "linear gradient should produce many pixels"
         );
     }
 
@@ -761,9 +854,22 @@ mod tests {
         ]);
         list.push_radial_gradient(Rect::new(0.0, 0.0, 64.0, 64.0), stops, [32.0, 32.0], 32.0);
         b.render(&list);
+        // At the center the gradient is at position 0.0 → white.
+        let center = b.pixmap().pixel(32, 32).expect("pixel in range");
+        assert_eq!(center.red(), 255);
+        assert_eq!(center.green(), 255);
+        assert_eq!(center.blue(), 255);
+        assert_eq!(center.alpha(), 255);
+        // The corner (0,0) is outside the radius (distance ~45 > 32) → black.
+        let corner = b.pixmap().pixel(0, 0).expect("pixel in range");
+        assert_eq!(corner.red(), 0);
+        assert_eq!(corner.green(), 0);
+        assert_eq!(corner.blue(), 0);
+        assert_eq!(corner.alpha(), 255);
+        // Secondary check.
         assert!(
-            non_zero_pixels(&b) > 0,
-            "radial gradient should produce pixels"
+            non_zero_pixels(&b) > 100,
+            "radial gradient should produce many pixels"
         );
     }
 
@@ -775,7 +881,25 @@ mod tests {
         run.push(GlyphInstance::new(32.0, 32.0, 0, 10.0, 16.0));
         list.push_glyph_run(run);
         b.render(&list);
-        assert!(non_zero_pixels(&b) > 0, "glyph run should produce pixels");
+        // The fontless fallback draws a bounding-box rectangle spanning
+        // x in [32, 42], y in [16, 32]. A pixel near the center should be red.
+        let inside = b.pixmap().pixel(37, 24).expect("pixel in range");
+        assert_eq!(inside.red(), 255);
+        assert_eq!(inside.green(), 0);
+        assert_eq!(inside.blue(), 0);
+        assert_eq!(inside.alpha(), 255);
+        // A pixel outside the box must remain transparent.
+        let outside = b.pixmap().pixel(0, 0).expect("pixel in range");
+        assert_eq!(
+            outside.alpha(),
+            0,
+            "pixel outside glyph box should be transparent"
+        );
+        // Secondary check.
+        assert!(
+            non_zero_pixels(&b) > 10,
+            "glyph run should produce many pixels"
+        );
     }
 
     #[test]
@@ -913,15 +1037,23 @@ mod tests {
             [255, 0, 0, 255],
         );
         b.render(&list);
-        assert!(
-            non_zero_pixels(&b) > 0,
-            "DrawText should produce visible output"
-        );
         // The first character's rectangle starts at x=8 and spans ~9.6px wide;
         // a pixel a few px in should be opaque red.
         let px = b.pixmap().pixel(12, 24).expect("pixel in range");
         assert_eq!(px.alpha(), 255);
         assert_eq!(px.red(), 255);
+        // A pixel far from any character rectangle must remain transparent.
+        let outside = b.pixmap().pixel(60, 5).expect("pixel in range");
+        assert_eq!(
+            outside.alpha(),
+            0,
+            "pixel outside text should be transparent"
+        );
+        // Secondary check.
+        assert!(
+            non_zero_pixels(&b) > 10,
+            "DrawText should produce visible output"
+        );
     }
 
     #[test]
@@ -973,10 +1105,6 @@ mod tests {
         list.push_glyph_run(run);
         b.render(&list);
 
-        assert!(
-            non_zero_pixels(&b) > 0,
-            "a real glyph outline should produce visible pixels"
-        );
         // The glyph 'H' at 32px starting at x=8 should have ink around the
         // left vertical stem. A pixel a few px in from the baseline should be
         // dark (anti-aliased edges may not be fully opaque, so we check for
@@ -990,6 +1118,18 @@ mod tests {
         assert_eq!(ink.red(), 0);
         assert_eq!(ink.green(), 0);
         assert_eq!(ink.blue(), 0);
+        // A pixel far from the glyph must remain transparent.
+        let outside = b.pixmap().pixel(120, 5).expect("pixel in range");
+        assert_eq!(
+            outside.alpha(),
+            0,
+            "pixel outside glyph should be transparent"
+        );
+        // Secondary check.
+        assert!(
+            non_zero_pixels(&b) > 10,
+            "a real glyph outline should produce visible pixels"
+        );
     }
 
     #[test]
@@ -1003,6 +1143,24 @@ mod tests {
         let mut list = PaintList::new();
         list.push_glyph_run(run);
         b.render(&list);
-        assert!(non_zero_pixels(&b) > 0, "fallback bounding box should draw");
+        // The fallback bounding box spans x in [10, 30], y in [16, 32].
+        // A pixel near the center should be opaque red.
+        let inside = b.pixmap().pixel(20, 24).expect("pixel in range");
+        assert_eq!(inside.red(), 255);
+        assert_eq!(inside.green(), 0);
+        assert_eq!(inside.blue(), 0);
+        assert_eq!(inside.alpha(), 255);
+        // A pixel outside the box must remain transparent.
+        let outside = b.pixmap().pixel(0, 0).expect("pixel in range");
+        assert_eq!(
+            outside.alpha(),
+            0,
+            "pixel outside fallback box should be transparent"
+        );
+        // Secondary check.
+        assert!(
+            non_zero_pixels(&b) > 10,
+            "fallback bounding box should draw"
+        );
     }
 }

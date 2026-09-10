@@ -14,6 +14,8 @@ on:
       - "v*.*.*"
   pull_request:
     branches: [main]
+  # Allow the publish workflow to reuse this pipeline without duplicating jobs.
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,6 +31,11 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Install Pango/Cairo (for martensite-text-reference)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
+            libglib2.0-dev pkg-config
       - name: Rustfmt Check
         run: cargo fmt --all -- --check
       - name: Clippy Lints (default features)
@@ -54,12 +61,42 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
+      - name: Install Pango/Cairo (for martensite-text-reference)
+        run: |
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
+            libglib2.0-dev pkg-config
       - name: Run Tests
         run: cargo test --workspace --bins --lib --tests
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
+      - name: Media interop (noop)
+        run: cargo test -p martensite-media --features test-noop --test interop
       - name: Run Doc Tests
         run: cargo test --doc --workspace --all-features
+
+  ignored-tests:
+    name: Ignored GPU / Hardware Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Mesa Lavapipe (Software Vulkan)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
+      - name: Install Pango/Cairo (for martensite-text-reference)
+        run: |
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
+            libglib2.0-dev pkg-config
+      - name: Run ignored tests
+        run: cargo test --workspace --ignored
+        env:
+          WGPU_ADAPTER_NAME: "llvmpipe"
+      - name: GPU/CPU parity (Lavapipe)
+        env:
+          WGPU_ADAPTER_NAME: "llvmpipe"
+        run: cargo test -p martensite-render --test parity --features vello -- --ignored
 
   audit:
     name: Security Audit
@@ -81,6 +118,11 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install Pango/Cairo (for martensite-text-reference)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
+            libglib2.0-dev pkg-config
       - name: Build Documentation
         run: cargo doc --workspace --no-deps --all-features
         env:
@@ -101,4 +143,27 @@ jobs:
         run: cargo doc -p bench_suite --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  performance-gates:
+    name: Performance Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Mesa Lavapipe (Software Vulkan)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
+      # Runs all #[ignore]-gated performance tests across the workspace in
+      # release mode with MARTENSITE_STRICT_BENCH=1. This enforces the
+      # regression-gate thresholds in the layout perf tests and the strict
+      # exit gates in bench_suite. Release mode is required because the
+      # layout perf thresholds are calibrated against optimized builds;
+      # debug-mode Taffy is ~10-50x slower and would false-fail.
+      - name: Performance gates
+        env:
+          MARTENSITE_STRICT_BENCH: "1"
+          WGPU_ADAPTER_NAME: "llvmpipe"
+        run: cargo test --release --workspace --benches -- --ignored
 

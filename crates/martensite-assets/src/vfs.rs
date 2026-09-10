@@ -974,6 +974,39 @@ mod reactive {
         use super::*;
         use std::io::Write;
 
+        /// Bounded settle wait using `park_timeout` instead of a fixed
+        /// `sleep`. The `notify` watcher registers asynchronously; this
+        /// waits in short increments so the test does not block longer than
+        /// necessary and avoids `std::thread::sleep`.
+        fn settle_wait(duration: std::time::Duration) {
+            let deadline = std::time::Instant::now() + duration;
+            while std::time::Instant::now() < deadline {
+                std::thread::park_timeout(std::time::Duration::from_millis(5));
+            }
+        }
+
+        /// Polls `check_for_changes` until it returns `true` or the total
+        /// elapsed time exceeds `timeout`.
+        ///
+        /// The `notify` watcher is callback-based and does not expose an event
+        /// channel, so we cannot block on a single notification. Instead we
+        /// poll at a short interval (10 ms) using `park_timeout` to keep
+        /// individual waits small while still allowing up to ~2 s for the OS
+        /// watcher to deliver the event. This is a pragmatic tradeoff: the
+        /// total wait is bounded but each iteration waits only 10 ms instead
+        /// of the previous 50 ms, reducing wasted wall-clock time on fast
+        /// machines.
+        fn wait_for_change(watcher: &mut ReactiveVfsWatcher, timeout: std::time::Duration) -> bool {
+            let start = std::time::Instant::now();
+            while start.elapsed() < timeout {
+                std::thread::park_timeout(std::time::Duration::from_millis(10));
+                if watcher.check_for_changes() {
+                    return true;
+                }
+            }
+            false
+        }
+
         #[test]
         fn signal_starts_at_zero() {
             let dir = tempfile::tempdir().unwrap();
@@ -999,23 +1032,18 @@ mod reactive {
             std::fs::write(&path, b"v1").unwrap();
             let mut watcher = ReactiveVfsWatcher::new(dir.path()).unwrap();
 
-            // Give the watcher a moment to register.
-            std::thread::sleep(std::time::Duration::from_millis(150));
+            // Give the watcher a moment to register. The `notify` watcher
+            // registers asynchronously; a short settle period avoids racing
+            // the modification before the watch is active.
+            settle_wait(std::time::Duration::from_millis(50));
 
             // Modify the file.
             let mut file = std::fs::File::create(&path).unwrap();
             file.write_all(b"v2").unwrap();
             drop(file);
 
-            // Poll for the change (best-effort timing).
-            let mut detected = false;
-            for _ in 0..20 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                if watcher.check_for_changes() {
-                    detected = true;
-                    break;
-                }
-            }
+            // Poll for the change with short intervals (see `wait_for_change`).
+            let detected = wait_for_change(&mut watcher, std::time::Duration::from_secs(2));
             assert!(detected, "watcher did not detect file change");
             // The signal should now reflect the new version (> 0).
             let v = watcher.version_signal().get_untracked();
@@ -1031,26 +1059,21 @@ mod reactive {
             let path = dir.path().join("f.txt");
             std::fs::write(&path, b"v1").unwrap();
             let mut watcher = ReactiveVfsWatcher::new(dir.path()).unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(150));
+            // Short settle period for the async `notify` watcher to register.
+            settle_wait(std::time::Duration::from_millis(50));
 
             let mut file = std::fs::File::create(&path).unwrap();
             file.write_all(b"v2").unwrap();
             drop(file);
 
-            // Wait for the change to be detected.
-            let mut first_detected = false;
-            for _ in 0..20 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                if watcher.check_for_changes() {
-                    first_detected = true;
-                    break;
-                }
-            }
+            // Wait for the change to be detected with short intervals.
+            let first_detected = wait_for_change(&mut watcher, std::time::Duration::from_secs(2));
             assert!(first_detected);
             let v_after = watcher.version_signal().get_untracked();
 
             // No new changes — should return false and keep the same version.
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            // A short wait ensures any pending OS events have been delivered.
+            settle_wait(std::time::Duration::from_millis(50));
             assert!(!watcher.check_for_changes());
             assert_eq!(watcher.version_signal().get_untracked(), v_after);
         }
@@ -1298,6 +1321,35 @@ mod tests {
             dir
         }
 
+        /// Bounded settle wait using `park_timeout` instead of a fixed
+        /// `sleep`. The `notify` watcher registers asynchronously; this
+        /// waits in short increments so the test does not block longer than
+        /// necessary and avoids `std::thread::sleep`.
+        fn settle_wait(duration: std::time::Duration) {
+            let deadline = std::time::Instant::now() + duration;
+            while std::time::Instant::now() < deadline {
+                std::thread::park_timeout(std::time::Duration::from_millis(5));
+            }
+        }
+
+        /// Polls `DiskVfs::version` until it exceeds `target` or the total
+        /// elapsed time exceeds `timeout`.
+        ///
+        /// The `notify` watcher is callback-based and does not expose an event
+        /// channel, so we poll at a short interval (10 ms) using `park_timeout`
+        /// to keep individual waits small while still allowing up to ~2 s for
+        /// the OS watcher to deliver the event.
+        fn wait_for_version(vfs: &DiskVfs, target: u64, timeout: std::time::Duration) -> bool {
+            let start = std::time::Instant::now();
+            while start.elapsed() < timeout {
+                std::thread::park_timeout(std::time::Duration::from_millis(10));
+                if vfs.version() > target {
+                    return true;
+                }
+            }
+            false
+        }
+
         #[test]
         fn disk_loads_files_recursively() {
             let dir = make_temp_tree();
@@ -1365,20 +1417,13 @@ mod tests {
             let path = dir.path().join("watched.txt");
             std::fs::write(&path, b"v1").unwrap();
             let vfs = DiskVfs::new(dir.path()).unwrap();
-            // Give the watcher a moment to register, then modify the file.
-            std::thread::sleep(std::time::Duration::from_millis(150));
+            // Short settle period for the async `notify` watcher to register.
+            settle_wait(std::time::Duration::from_millis(50));
             let mut file = std::fs::File::create(&path).unwrap();
             file.write_all(b"v2").unwrap();
             drop(file);
-            // Poll for the invalidation signal (best-effort timing).
-            let mut detected = false;
-            for _ in 0..20 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                if vfs.version() > 0 {
-                    detected = true;
-                    break;
-                }
-            }
+            // Poll for the invalidation signal with short intervals.
+            let detected = wait_for_version(&vfs, 0, std::time::Duration::from_secs(2));
             assert!(detected, "watcher did not bump version on modification");
             let invalidations = vfs.take_invalidations();
             // The exact path reported by the OS watcher may vary (some

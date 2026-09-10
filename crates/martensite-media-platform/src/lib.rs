@@ -146,6 +146,84 @@ pub fn chroma_texture_format(format: VideoPixelFormat) -> Option<wgpu::TextureFo
     }
 }
 
+/// Owns both planes of a bi-planar (NV12/P010) video texture upload.
+///
+/// The luma plane (`y`) is full-resolution `R8Unorm` (or `R16Unorm` for P010).
+/// The chroma plane (`uv`) is half-resolution `Rg8Unorm` (or `Rg16Unorm` for
+/// P010), or `None` if the source was monochrome.
+///
+/// [`import_cpu_memory`] returns this struct so that neither plane is
+/// discarded; both the luma and chroma textures remain owned by the caller
+/// and can be sampled or validated after upload.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_media::surface::{HardwareHandle, VideoPixelFormat};
+/// use martensite_media_platform::{import_cpu_memory, ImportTextureDescriptor};
+/// use wgpu::{Device, Queue};
+///
+/// # fn example(device: &Device, queue: &Queue) {
+/// let handle = HardwareHandle::CpuMemory {
+///     y_plane: vec![128u8; 1920 * 1080],
+///     uv_plane: vec![128u8; 1920 * 540],
+///     y_stride: 1920,
+///     uv_stride: 1920,
+/// };
+/// let desc = ImportTextureDescriptor::new(1920, 1080, VideoPixelFormat::Nv12);
+/// let video_texture = import_cpu_memory(device, queue, &handle, &desc).unwrap();
+///
+/// // Both planes are owned by the returned struct.
+/// let _luma_view = video_texture.luma_view();
+/// let _chroma_view = video_texture.chroma_view();
+/// assert_eq!(video_texture.width(), 1920);
+/// assert_eq!(video_texture.height(), 1080);
+/// assert!(video_texture.uv.is_some());
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct VideoTexture {
+    /// Luma plane (full resolution).
+    pub y: wgpu::Texture,
+    /// Chroma plane (half resolution), if present.
+    pub uv: Option<wgpu::Texture>,
+}
+
+impl VideoTexture {
+    /// Creates a luma view with the given dimension (mip 0, single layer).
+    #[must_use]
+    pub fn luma_view(&self) -> wgpu::TextureView {
+        self.y.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            ..Default::default()
+        })
+    }
+
+    /// Creates a chroma view with the given dimension (mip 0, single layer).
+    /// Returns `None` if there is no UV plane.
+    #[must_use]
+    pub fn chroma_view(&self) -> Option<wgpu::TextureView> {
+        self.uv.as_ref().map(|tex| {
+            tex.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                ..Default::default()
+            })
+        })
+    }
+
+    /// Width of the luma plane.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.y.width()
+    }
+
+    /// Height of the luma plane.
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.y.height()
+    }
+}
+
 /// Builds a [`wgpu::TextureDescriptor`] for the luma plane of an imported
 /// video surface.
 fn luma_texture_descriptor(desc: &ImportTextureDescriptor) -> wgpu::TextureDescriptor<'static> {
@@ -160,7 +238,12 @@ fn luma_texture_descriptor(desc: &ImportTextureDescriptor) -> wgpu::TextureDescr
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: luma_texture_format(desc.format),
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+        // `COPY_DST` is required for the `queue.write_texture` upload; `COPY_SRC`
+        // allows readback for validation; `TEXTURE_BINDING` allows sampling in
+        // the compute pipeline.
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     }
 }
@@ -263,9 +346,13 @@ pub fn import_external_texture(
     }
 }
 
-/// Imports CPU memory plane data into a [`wgpu::Texture`] by uploading
+/// Imports CPU memory plane data into a [`VideoTexture`] by uploading
 /// through the device queue. This is the fallback path when zero-copy
 /// hardware import is unavailable.
+///
+/// The returned [`VideoTexture`] owns both the luma (Y) and chroma (UV)
+/// planes so that neither is discarded. For single-plane formats
+/// (e.g. `Rgba8`) the chroma plane is `None`.
 ///
 /// # Errors
 ///
@@ -287,8 +374,8 @@ pub fn import_external_texture(
 ///     uv_stride: 1920,
 /// };
 /// let desc = ImportTextureDescriptor::new(1920, 1080, VideoPixelFormat::Nv12);
-/// let texture = import_cpu_memory(device, queue, &handle, &desc);
-/// assert!(texture.is_ok());
+/// let video_texture = import_cpu_memory(device, queue, &handle, &desc);
+/// assert!(video_texture.is_ok());
 /// # }
 /// ```
 pub fn import_cpu_memory(
@@ -296,7 +383,7 @@ pub fn import_cpu_memory(
     queue: &wgpu::Queue,
     handle: &HardwareHandle,
     desc: &ImportTextureDescriptor,
-) -> Result<Texture, MediaError> {
+) -> Result<VideoTexture, MediaError> {
     let HardwareHandle::CpuMemory {
         y_plane,
         uv_plane,
@@ -341,7 +428,7 @@ pub fn import_cpu_memory(
     );
 
     // Upload the chroma plane if present.
-    if let Some(_uv_fmt) = chroma_texture_format(desc.format) {
+    let uv_texture = chroma_texture_format(desc.format).map(|uv_fmt| {
         let uv_desc = wgpu::TextureDescriptor {
             label: Some("martensite-video-chroma"),
             size: wgpu::Extent3d {
@@ -352,14 +439,16 @@ pub fn import_cpu_memory(
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: chroma_texture_format(desc.format).unwrap(),
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            format: uv_fmt,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         };
-        let _uv_texture = device.create_texture(&uv_desc);
+        let uv_texture = device.create_texture(&uv_desc);
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: &_uv_texture,
+                texture: &uv_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -376,9 +465,13 @@ pub fn import_cpu_memory(
                 depth_or_array_layers: 1,
             },
         );
-    }
+        uv_texture
+    });
 
-    Ok(texture)
+    Ok(VideoTexture {
+        y: texture,
+        uv: uv_texture,
+    })
 }
 
 /// Creates a [`wgpu::TextureView`] from an imported video texture suitable

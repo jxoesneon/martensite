@@ -530,6 +530,7 @@ impl EventState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     #[test]
     fn quick_campaign_is_deterministic() {
@@ -572,5 +573,32 @@ mod tests {
         for report in reports {
             assert_eq!(report.iterations, 100);
         }
+    }
+
+    /// Long-running soak campaign driven by environment variables.
+    ///
+    /// `MARTENSITE_FUZZ_SEED` selects the deterministic seed (default 1).
+    /// `MARTENSITE_FUZZ_DURATION` sets the wall-clock budget in seconds
+    /// (default 172 800, i.e. 48 hours). The test is `#[ignore]` so it only
+    /// runs when explicitly requested via `--ignored`.
+    #[test]
+    #[ignore = "long-running soak campaign; run with --ignored"]
+    fn soak_campaign() {
+        let seed = env::var("MARTENSITE_FUZZ_SEED")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1);
+        let duration = env::var("MARTENSITE_FUZZ_DURATION")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| Duration::from_secs(48 * 60 * 60));
+        let config = FuzzConfig {
+            seed,
+            iterations: None,
+            duration: Some(duration),
+        };
+        let report = run_fuzz_campaign(config).expect("soak campaign invariant failure");
+        assert!(report.iterations > 0, "soak campaign ran zero iterations");
     }
 }

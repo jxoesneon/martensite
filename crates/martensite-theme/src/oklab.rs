@@ -875,7 +875,7 @@ mod tests {
         // Hue should be preserved (modulo wrap-around).
         let hue_diff = (original_lch.h - mapped_lch.h).abs();
         assert!(
-            hue_diff < 1e-3 || hue_diff > TAU - 1e-3,
+            !(1e-3..=TAU - 1e-3).contains(&hue_diff),
             "hue changed from {} to {}",
             original_lch.h,
             mapped_lch.h

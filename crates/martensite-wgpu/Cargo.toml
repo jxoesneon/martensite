@@ -29,6 +29,9 @@ tracing = { workspace = true }
 bytemuck = { workspace = true }
 glam = { workspace = true }
 
+[dev-dependencies]
+naga = { workspace = true }
+
 [features]
 default = []
 # Enables the Vello GPU compute dispatch path in `RenderOrchestrator`. When

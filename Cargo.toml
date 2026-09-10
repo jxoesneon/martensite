@@ -9,6 +9,7 @@ members = [
     "crates/martensite-render",
     "crates/martensite-text",
     "crates/martensite-access",
+    "crates/martensite-accesskit-winit",
     "crates/martensite-window",
     "crates/martensite-focus",
     "crates/martensite-clipboard",
@@ -29,10 +30,16 @@ members = [
     "crates/martensite-font-fallback",
     "crates/martensite-host",
     "crates/martensite-clipboard-platform",
+    "crates/martensite-text-reference",
     "tools/cargo-martensite",
     "examples/industrial_dashboard",
     "benches/bench_suite",
 ]
+
+# `stubs/martensite` and `stubs/martensite-ui` are NOT workspace members.
+# They are `0.0.1` namespace-reservation crates (`publish = false`) used to
+# hold the corresponding crates.io package names until the v1.0 release.
+# They are not built, tested, or published with the rest of the workspace.
 
 [workspace.package]
 version = "0.11.0"
@@ -90,7 +97,7 @@ taffy = { version = "0.8", default-features = false, features = ["flexbox", "gri
 cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.1", path = "crates/martensite-cosmic-text", default-features = false, features = ["std", "swash"] }
 fontdb = { version = "0.24", default-features = false }
 accesskit = { version = "0.25" }
-accesskit_winit = { version = "0.34" }
+accesskit_winit = { package = "martensite-accesskit-winit", path = "crates/martensite-accesskit-winit" }
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11"] }
 
 # Utility libraries

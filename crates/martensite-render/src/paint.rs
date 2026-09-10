@@ -185,8 +185,8 @@ impl PartialEq for FontResource {
         // Compare by pointer identity of the shared slice first (cheap), then
         // fall back to a byte-wise comparison. Two resources built from the
         // same `Arc` are equal without scanning the bytes.
-        Arc::ptr_eq(&self.data, &other.data) && self.index == other.index
-            || self.data.as_ref() == other.data.as_ref() && self.index == other.index
+        (Arc::ptr_eq(&self.data, &other.data) || self.data.as_ref() == other.data.as_ref())
+            && self.index == other.index
     }
 }
 

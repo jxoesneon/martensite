@@ -617,6 +617,17 @@ pub fn render_theme_transition(
 mod tests {
     use super::*;
 
+    /// Parse the combined theme library + render WGSL into a naga module.
+    ///
+    /// `THEME_TRANSITION_RENDER_WGSL` references `theme_color` from
+    /// [`THEME_TRANSITION_WGSL`], so the two must be concatenated before
+    /// parsing. This helper centralises that concatenation and unwraps the
+    /// parse result so every test fails loudly on a syntax error.
+    fn parse_combined_shader() -> naga::Module {
+        let source = format!("{THEME_TRANSITION_WGSL}\n{THEME_TRANSITION_RENDER_WGSL}");
+        naga::front::wgsl::parse_str(&source).expect("combined theme shader should parse")
+    }
+
     #[test]
     fn progress_uniform_clamps_nan_to_zero() {
         let u = ProgressUniform::new(f32::NAN);
@@ -659,25 +670,56 @@ mod tests {
 
     #[test]
     fn render_wgsl_contains_vertex_entry_point() {
-        assert!(THEME_TRANSITION_RENDER_WGSL.contains("@vertex"));
-        assert!(THEME_TRANSITION_RENDER_WGSL.contains("fn vs_main"));
+        let module = parse_combined_shader();
+        let entry = module
+            .entry_points
+            .iter()
+            .find(|e| e.stage == naga::ShaderStage::Vertex && e.name == "vs_main")
+            .expect("vertex entry point `vs_main` should exist");
+        // The vertex shader returns a position builtin.
+        assert!(entry.function.result.is_some());
     }
 
     #[test]
     fn render_wgsl_contains_fragment_entry_point() {
-        assert!(THEME_TRANSITION_RENDER_WGSL.contains("@fragment"));
-        assert!(THEME_TRANSITION_RENDER_WGSL.contains("fn fs_main"));
+        let module = parse_combined_shader();
+        let entry = module
+            .entry_points
+            .iter()
+            .find(|e| e.stage == naga::ShaderStage::Fragment && e.name == "fs_main")
+            .expect("fragment entry point `fs_main` should exist");
+        // The fragment shader writes to location 0.
+        assert!(entry.function.result.is_some());
     }
 
     #[test]
     fn render_wgsl_contains_oklab_to_linear_srgb() {
-        assert!(THEME_TRANSITION_RENDER_WGSL.contains("fn oklab_to_linear_srgb"));
+        let module = parse_combined_shader();
+        assert!(
+            module
+                .functions
+                .iter()
+                .any(|(_, f)| f.name.as_deref() == Some("oklab_to_linear_srgb")),
+            "function `oklab_to_linear_srgb` should exist in the parsed module"
+        );
     }
 
     #[test]
     fn render_wgsl_contains_progress_binding() {
-        assert!(THEME_TRANSITION_RENDER_WGSL.contains("@binding(2)"));
-        assert!(THEME_TRANSITION_RENDER_WGSL.contains("var<uniform> progress"));
+        let module = parse_combined_shader();
+        let progress = module
+            .global_variables
+            .iter()
+            .find(|(_, v)| v.name.as_deref() == Some("progress"))
+            .expect("uniform variable `progress` should exist");
+        assert_eq!(progress.1.space, naga::AddressSpace::Uniform);
+        let binding = progress
+            .1
+            .binding
+            .as_ref()
+            .expect("`progress` should have a resource binding");
+        assert_eq!(binding.group, 0);
+        assert_eq!(binding.binding, 2);
     }
 
     #[test]

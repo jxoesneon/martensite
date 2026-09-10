@@ -7,6 +7,10 @@ ignore = [
     "RUSTSEC-2024-0388", # derivative unmaintained (transitive via cosmic-text/syntect)
     "RUSTSEC-2024-0320", # yaml-rust unmaintained (transitive via cosmic-text/syntect)
     "RUSTSEC-2025-0057", # fxhash unmaintained (transitive via wasmtime/fxprof-processed-profile)
+    # proc-macro-error is unmaintained but is a transitive dependency of
+    # glib-macros 0.18 (gtk-rs-core 0.18), used by the Pango/Cairo reference
+    # renderer. No safe upgrade is available within the gtk-rs 0.18 series.
+    "RUSTSEC-2024-0370",
 ]
 
 [licenses]
@@ -37,13 +41,17 @@ deny = [
     { name = "freetype-sys" },
     { name = "fontconfig-sys" },
     { name = "shaderc-sys" },
-    { name = "glib-sys" },
-    { name = "gobject-sys" },
+    # `atk-sys` remains banned; only Pango/Cairo/GLib are needed for the
+    # `martensite-text-reference` external renderer.
     { name = "atk-sys" },
     { name = "zlib-sys" },
     { name = "libsqlite3-sys" },
 ]
 skip = [
+    # `netrender-vello` 0.10.0 -> `vello_shaders` 0.10.0 is pinned to `naga ^29.0.3`.
+    # `wgpu` 30.0.1 uses `naga` 30.0.1. Unification requires a new `netrender-vello`
+    # release or a fork of `vello_shaders`; this exemption documents the constraint.
+    { name = "naga", version = "29.0.4" },
     { name = "windows-sys" },
 ]
 

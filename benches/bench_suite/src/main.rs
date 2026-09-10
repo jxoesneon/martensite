@@ -113,6 +113,10 @@ fn setup_arena_tree() -> (WidgetArena, Vec<WidgetId>) {
 /// 2. Hierarchical 4-ary tree construction (depth-first pointers).
 /// 3. Zero-allocation depth-first tree traversal.
 /// 4. 1,000 removals with dense storage swap_remove compaction and FIFO free-list recycling.
+///
+/// Exit Gate: Full lifecycle completes in < 25ms on CI runners (reference
+/// target < 1.14ms on dedicated hardware). Enforced when
+/// `MARTENSITE_STRICT_BENCH=1`.
 fn bench_arena_operations_10k(c: &mut Criterion) {
     // Pre-verify complete lifecycle correctness before running benchmark loop.
     {
@@ -131,6 +135,46 @@ fn bench_arena_operations_10k(c: &mut Criterion) {
             assert!(removed.is_some());
         }
         assert_eq!(arena.len(), 9_000);
+    }
+
+    // Strict exit gate: median of 100 full-lifecycle runs must be < 25ms on
+    // CI runners. The reference target is < 1.14ms on dedicated hardware;
+    // the CI threshold is intentionally loose to absorb shared-runner
+    // variance while still catching gross regressions.
+    let strict = std::env::var("MARTENSITE_STRICT_BENCH")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    if strict {
+        let mut samples: Vec<Duration> = Vec::with_capacity(100);
+        for _ in 0..100 {
+            let start = Instant::now();
+            let (mut arena, ids) = setup_arena_tree();
+            for node_id in arena.iter_depth_first() {
+                black_box(node_id);
+            }
+            for i in (0..10_000).step_by(10) {
+                let removed = arena.remove(ids[i]);
+                black_box(removed);
+            }
+            black_box(arena.len());
+            samples.push(start.elapsed());
+        }
+        samples.sort();
+        let median = samples[samples.len() / 2];
+        assert!(
+            median < Duration::from_millis(25),
+            "Milestone arena exit gate failure: 10k lifecycle median {:?} (>= 25.0ms CI threshold; \
+             target is < 1.14ms on dedicated hardware)",
+            median
+        );
+        eprintln!(
+            "Arena operations 10k: median {:?} (PASSED strict gate; target < 1.14ms on dedicated hardware)",
+            median
+        );
+    } else {
+        eprintln!(
+            "Arena operations 10k: strict gate disabled; set MARTENSITE_STRICT_BENCH=1 to enforce"
+        );
     }
 
     let mut group = c.benchmark_group("arena_operations_10k");
@@ -268,6 +312,47 @@ fn bench_diamond_reactive_network(c: &mut Criterion) {
     });
     for d in &diamonds {
         assert_eq!(d.memo_d.get(), (100 * 3) + (100 + 7));
+    }
+
+    // Strict exit gate: median of 100 batch evaluations must be < 25ms on
+    // CI runners. There is no dedicated-hardware reference target for this
+    // workload; the CI threshold is intentionally loose to absorb
+    // shared-runner variance while catching gross regressions and
+    // verifying glitch-free topological evaluation.
+    let strict = std::env::var("MARTENSITE_STRICT_BENCH")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    if strict {
+        let mut samples: Vec<Duration> = Vec::with_capacity(100);
+        let mut counter = 100u64;
+        for _ in 0..100 {
+            counter = counter.wrapping_add(1);
+            let start = Instant::now();
+            runtime.batch(|| {
+                for d in &diamonds {
+                    d.root.set(counter);
+                }
+            });
+            for d in &diamonds {
+                black_box(d.memo_d.get());
+            }
+            samples.push(start.elapsed());
+        }
+        samples.sort();
+        let median = samples[samples.len() / 2];
+        assert!(
+            median < Duration::from_millis(25),
+            "Milestone diamond exit gate failure: 1k batch evaluation median {:?} (>= 25.0ms CI threshold)",
+            median
+        );
+        eprintln!(
+            "Diamond reactive network 1k: median {:?} (PASSED strict gate)",
+            median
+        );
+    } else {
+        eprintln!(
+            "Diamond reactive network 1k: strict gate disabled; set MARTENSITE_STRICT_BENCH=1 to enforce"
+        );
     }
 
     let mut counter = 100u64;

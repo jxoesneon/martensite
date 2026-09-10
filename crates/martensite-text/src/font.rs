@@ -212,9 +212,9 @@ impl FontManager {
         // Record face IDs before loading
         let before: std::collections::HashSet<fontdb::ID> =
             self.system.db().faces().map(|f| f.id).collect();
-        // fontdb's load_font_file parses font data via ttf-parser/swash,
-        // which have known panic paths on malformed font data (swash
-        // #123–#126, ttf-parser RUSTSEC-2026-0192). Wrap in catch_unwind
+        // fontdb's load_font_file parses font data via swash,
+        // which has known panic paths on malformed font data (swash
+        // #123–#126). Wrap in catch_unwind
         // so a corrupt font file cannot abort the calling thread.
         let load_result = catch_unwind(AssertUnwindSafe(|| {
             self.system.db_mut().load_font_file(&path)
@@ -248,9 +248,8 @@ impl FontManager {
     ///
     /// Returns the IDs of the font faces that were loaded.
     ///
-    /// The font data is parsed by fontdb via ttf-parser/swash, which
-    /// have known panic paths on malformed font data (swash #123–#126,
-    /// ttf-parser RUSTSEC-2026-0192). This call is wrapped in
+    /// The font data is parsed by fontdb via swash, which has known panic
+    /// paths on malformed font data (swash #123–#126). This call is wrapped in
     /// [`catch_unwind`] so a corrupt or adversarial font cannot abort
     /// the calling thread; on panic an empty vec is returned and a
     /// warning is logged.

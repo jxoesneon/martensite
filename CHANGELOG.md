@@ -28,6 +28,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (IOSurface, DXGI, dmabuf).
   - `martensite-host` — dynamic library loading for hot-reloadable guest
     cdylibs.
+  - `martensite-text-reference` — isolated Pango/Cairo reference renderer
+    for vertical CJK DSSIM comparison (native deps gated to CI).
+- **Media Interop**:
+  - `VideoTexture` struct owning both NV12 luma and chroma planes with
+    `luma_view()`, `chroma_view()`, `width()`, and `height()` accessors.
+    `import_cpu_memory` now preserves the UV plane instead of discarding it.
+- **BiDi Conformance**:
+  - Official Unicode `BidiTest.txt` (770,241 cases) and
+    `BidiCharacterTest.txt` (91,707 cases) corpora vendored under
+    `crates/martensite-text/tests/data/` (UCD 17.0.0, Unicode License v3).
+  - Conformance harness in `crates/martensite-text/tests/bidi_conformance.rs`
+    achieves 100% pass on both corpora.
+- **Vertical CJK Reference**:
+  - TinySkia-based vertical CJK rasterizer in
+    `crates/martensite-text-reference/tests/vertical_dssim.rs` using
+    cosmic-text shaping, swash glyph outlines, and TinySkia path filling.
+  - Pango/Cairo vertical reference renderer with `Gravity::East` and
+    `GravityHint::Strong` for cross-engine DSSIM comparison.
+- **Host Dynamic Loading**:
+  - `crates/martensite-host/tests/guest_lifecycle.rs` — builds a minimal C
+    cdylib at runtime and tests `GuestLibrary::load`, `get_symbol`,
+    `reload`, and `HostApp::tick` (success and failure paths).
+- **Clipboard Platform Tests**:
+  - Real Windows clipboard round-trip tests (write/read/clear/unicode/
+    large/overwrite) in `martensite-clipboard-platform/src/windows.rs`.
+  - Real X11 clipboard round-trip tests with runtime `DISPLAY` check in
+    `martensite-clipboard-platform/src/x11.rs`.
+  - Expanded in-memory mock tests (CJK, emoji, RTL, binary, large text).
+- **CI Infrastructure**:
+  - `platform-conformance.yml` workflow with jobs for BiDi conformance,
+    multilingual zero-tofu, AT-harness (NVDA/VoiceOver/Orca), plugin
+    wall-clock budget, blessed WCAG, vertical golden frames, Pango/Cairo
+    vertical reference, and clipboard round-trips (Windows + X11).
+  - `performance-gates` job in `ci.yml` enforcing layout milestone targets
+    (`<0.5 ms` full, `<0.05 ms` incremental) and bench_suite strict gates
+    with `MARTENSITE_STRICT_BENCH=1`.
 
 ### Fixed
 
@@ -41,11 +77,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `parking_lot::Mutex` (poison-free).
 - **Correctness**: Cache bounds check in `TextShapeCache` eviction.
 - **Correctness**: Ring buffer corruption recovery in `PluginRingBuffer`.
+- **Correctness**: BiDi conformance harness fixed — AL representative
+  character changed from U+0607 to U+0627 (ARABIC LETTER ALEF);
+  paragraph-split level concatenation; strict X9-aware reorder
+  comparison. Pass rate improved from 90.29% to 100% on BidiTest.txt.
+- **Correctness**: `import_cpu_memory` no longer discards the NV12 UV
+  texture during CPU-memory media import.
+- **Test Quality**: Shader tests in `gpu_transition.rs` now use `naga`
+  structural parsing instead of `string.contains()` substring matching.
+- **Test Quality**: Rendering tests in `parity.rs` and
+  `tinyskia_backend.rs` now assert exact pixel colors at known
+  coordinates instead of `non_zero_pixels > N` heuristics.
+- **Test Quality**: VFS watcher tests in `vfs.rs` now use bounded
+  `park_timeout`-based polling loops with deadlines instead of fixed
+  `std::thread::sleep` calls.
 
 ### Changed
 
 - All workspace crates bumped from `0.10.0` to `0.11.0`.
   (`martensite-cosmic-text` retains its own `0.19.0-martensite.1` version.)
+- Layout performance gates now enforce milestone targets (`<0.5 ms` full,
+  `<0.05 ms` incremental) calibrated for CI runners (ubuntu-latest),
+  replacing the previous loose regression thresholds.
+- `import_cpu_memory` return type changed from `wgpu::Texture` to
+  `VideoTexture` to preserve both NV12 planes.
+- `publish.yml` now invokes `ci.yml` as a prerequisite and validates
+  crate metadata before publishing.
 
 ## [0.10.0] - 2026-09-08
 

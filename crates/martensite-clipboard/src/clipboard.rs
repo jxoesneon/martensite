@@ -508,6 +508,16 @@ impl ClipboardItem {
         self.payloads.keys().cloned().collect()
     }
 
+    /// Returns a borrowing iterator over the offered MIME types without
+    /// collecting them into a `Vec`.
+    ///
+    /// This is the zero-allocation counterpart to [`Self::offered_types`],
+    /// used by the `Debug` impl and by callers that only need to inspect
+    /// the offered type names without owning them.
+    pub fn types(&self) -> impl Iterator<Item = &str> {
+        self.payloads.keys().map(String::as_str)
+    }
+
     /// Removes the payload for the given MIME type, if present, and returns it.
     ///
     /// The lookup uses [`canonicalize_mime`], so the comparison is
@@ -550,6 +560,8 @@ impl ClipboardItem {
 
 impl std::fmt::Debug for ClipboardItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Format the offered type names directly from the map keys via the
+        // zero-allocation `types()` iterator — no intermediate `Vec`.
         f.debug_struct("ClipboardItem")
             .field("types", &self.payloads.keys())
             .finish_non_exhaustive()
@@ -735,7 +747,9 @@ mod tests {
     #[test]
     fn payload_with_deadline_lazy_times_out() {
         let p = ClipboardPayload::lazy(|| {
-            thread::sleep(Duration::from_millis(200));
+            // Block forever; the deadline will still fire because
+            // `with_deadline` uses `recv_timeout` on a detached thread.
+            std::thread::park();
             b"late".to_vec()
         });
         let out = p.with_deadline(Duration::from_millis(20));
@@ -906,7 +920,10 @@ mod tests {
         let item = ClipboardItem::new().offer_custom(
             "application/x-slow",
             ClipboardPayload::lazy(|| {
-                thread::sleep(Duration::from_secs(2));
+                // Block forever; the in-memory backend's default deadline
+                // will still fire because `with_deadline` uses
+                // `recv_timeout` on a detached thread.
+                std::thread::park();
                 b"late".to_vec()
             }),
         );

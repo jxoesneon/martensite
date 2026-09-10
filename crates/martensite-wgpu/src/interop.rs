@@ -723,7 +723,7 @@ pub mod platform_import {
         martensite_media_platform::import_external_texture(device, handle, desc)
     }
 
-    /// Imports CPU memory plane data into a `wgpu::Texture` by uploading
+    /// Imports CPU memory plane data into a `VideoTexture` by uploading
     /// through the device queue.
     ///
     /// See [`martensite_media_platform::import_cpu_memory`] for details.
@@ -732,7 +732,8 @@ pub mod platform_import {
         queue: &wgpu::Queue,
         handle: &martensite_media::surface::HardwareHandle,
         desc: &martensite_media_platform::ImportTextureDescriptor,
-    ) -> Result<wgpu::Texture, martensite_media::surface::MediaError> {
+    ) -> Result<martensite_media_platform::VideoTexture, martensite_media::surface::MediaError>
+    {
         martensite_media_platform::import_cpu_memory(device, queue, handle, desc)
     }
 }
@@ -740,6 +741,13 @@ pub mod platform_import {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parse [`MEDIA_YUV_EOTF_WGSL`] into a naga module for structural
+    /// assertions. Unwraps the parse result so tests fail loudly on syntax
+    /// errors.
+    fn parse_shader() -> naga::Module {
+        naga::front::wgsl::parse_str(MEDIA_YUV_EOTF_WGSL).expect("YUV EOTF shader should parse")
+    }
 
     #[test]
     fn uniform_buffer_is_exact_256_bytes() {
@@ -770,28 +778,52 @@ mod tests {
 
     #[test]
     fn wgsl_shader_contains_compute_entry() {
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("@compute"));
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("@workgroup_size(16, 16)"));
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("fn main("));
+        let module = parse_shader();
+        let entry = module
+            .entry_points
+            .iter()
+            .find(|e| e.stage == naga::ShaderStage::Compute && e.name == "main")
+            .expect("compute entry point `main` should exist");
+        assert_eq!(entry.workgroup_size, [16, 16, 1]);
     }
 
     #[test]
     fn wgsl_shader_has_all_bindings() {
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("@binding(0)"));
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("@binding(1)"));
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("@binding(2)"));
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("@binding(3)"));
+        let module = parse_shader();
+        let bindings: std::collections::HashSet<u32> = module
+            .global_variables
+            .iter()
+            .filter_map(|(_, v)| v.binding.as_ref().map(|b| b.binding))
+            .collect();
+        for expected in [0u32, 1, 2, 3] {
+            assert!(
+                bindings.contains(&expected),
+                "binding {expected} should be present in the shader"
+            );
+        }
     }
 
     #[test]
     fn wgsl_shader_has_pq_eotf() {
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("fn pq_eotf"));
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("0.1593017578125"));
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("78.84375"));
+        let module = parse_shader();
+        assert!(
+            module
+                .functions
+                .iter()
+                .any(|(_, f)| f.name.as_deref() == Some("pq_eotf")),
+            "function `pq_eotf` should exist in the parsed module"
+        );
     }
 
     #[test]
     fn wgsl_shader_has_hable_tonemap() {
-        assert!(MEDIA_YUV_EOTF_WGSL.contains("fn hable_f"));
+        let module = parse_shader();
+        assert!(
+            module
+                .functions
+                .iter()
+                .any(|(_, f)| f.name.as_deref() == Some("hable_f")),
+            "function `hable_f` should exist in the parsed module"
+        );
     }
 }

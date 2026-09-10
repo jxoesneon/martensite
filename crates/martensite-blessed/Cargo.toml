@@ -13,12 +13,12 @@ description = "Curated tier-1 ecosystem extensions for the Martensite GUI framew
 readme = "README.md"
 
 [dependencies]
-martensite = { workspace = true }
 martensite-core = { workspace = true }
 martensite-render = { workspace = true }
 martensite-text = { workspace = true }
 
 [dev-dependencies]
+martensite-access = { workspace = true }
 martensite-plugin = { workspace = true }
 martensite-test = { workspace = true }
 

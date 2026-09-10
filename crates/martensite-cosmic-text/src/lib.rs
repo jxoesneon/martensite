@@ -108,8 +108,6 @@
 #![allow(clippy::manual_unwrap_or)]
 #![allow(clippy::unnecessary_lazy_evaluations)]
 #![allow(clippy::redundant_closure)]
-#![allow(clippy::map_or_identity)]
-#![allow(clippy::useless_borrows_in_formatting)]
 #![allow(clippy::needless_range_loop)]
 #![allow(unused_imports)]
 #![cfg_attr(not(feature = "std"), no_std)]

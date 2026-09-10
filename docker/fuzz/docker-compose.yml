@@ -1,0 +1,13 @@
+services:
+  fuzz:
+    build:
+      context: ../..
+      dockerfile: docker/fuzz/Dockerfile
+    environment:
+      - MARTENSITE_FUZZ_SEED=${MARTENSITE_FUZZ_SEED:-1}
+      - MARTENSITE_FUZZ_DURATION=${MARTENSITE_FUZZ_DURATION:-172800}
+      - MARTENSITE_FUZZ_RELEASE=${MARTENSITE_FUZZ_RELEASE:-1}
+      - MARTENSITE_FUZZ_RESULTS_DIR=/tmp/fuzz-results
+    volumes:
+      - ./results:/tmp/fuzz-results
+    restart: "no"

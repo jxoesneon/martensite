@@ -1,18 +1,16 @@
 //! Build script for `martensite-clipboard-platform`.
 //!
-//! On macOS, links the Objective-C runtime (`libobjc`) and the AppKit
-//! framework so that `NSPasteboard` is available. On other platforms this
+//! Links the Objective-C runtime (`libobjc`) and the AppKit framework on
+//! macOS, and `libX11` on Linux. On Windows (or any other platform) this
 //! build script is a no-op.
 
 fn main() {
-    #[cfg(target_os = "macos")]
-    {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if target.contains("darwin") || target.contains("apple") {
         println!("cargo:rustc-link-lib=dylib=objc");
         println!("cargo:rustc-link-lib=framework=AppKit");
         println!("cargo:rustc-link-lib=framework=Foundation");
-    }
-    #[cfg(target_os = "linux")]
-    {
+    } else if target.contains("linux") {
         println!("cargo:rustc-link-lib=dylib=X11");
     }
 }
