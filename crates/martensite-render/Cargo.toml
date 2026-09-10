@@ -38,8 +38,6 @@ default = []
 vello = ["dep:vello", "dep:peniko", "dep:wgpu", "dep:tracing", "vello/wgpu"]
 
 [dev-dependencies]
-martensite-test = { workspace = true }
-martensite-wgpu = { workspace = true, features = ["vello"] }
 wgpu = { workspace = true }
 
 [lints]

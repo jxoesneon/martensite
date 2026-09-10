@@ -70,7 +70,7 @@ jobs:
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
       - name: Media interop (noop)
-        run: cargo test -p martensite-media --features test-noop --test interop
+        run: cargo test -p martensite-media-test --features test-noop --test interop
       - name: Run Doc Tests
         run: cargo test --doc --workspace --all-features
 
@@ -98,7 +98,7 @@ jobs:
       - name: GPU/CPU parity (Lavapipe)
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
-        run: cargo test -p martensite-render --test parity --features vello -- --ignored
+        run: cargo test -p martensite-render-test --test parity -- --ignored
 
   audit:
     name: Security Audit

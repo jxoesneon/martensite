@@ -31,6 +31,8 @@ members = [
     "crates/martensite-host",
     "crates/martensite-clipboard-platform",
     "crates/martensite-text-reference",
+    "crates/martensite-render-test",
+    "crates/martensite-media-test",
     "tools/cargo-martensite",
     "examples/industrial_dashboard",
     "benches/bench_suite",

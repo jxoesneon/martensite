@@ -19,13 +19,11 @@ wgpu = { workspace = true }
 glam = { workspace = true }
 bytemuck = { workspace = true }
 
-# `martensite-wgpu` depends on this crate as a regular dependency, while
-# this crate pulls it in as a dev-dependency for the interop integration
-# tests. Cargo permits cycles through dev-dependencies, so the interop
-# tests can exercise `VideoProcessor` and the platform import functions
-# without adding a regular (non-cyclic) dependency edge.
+# `martensite-wgpu` depends on this crate as a regular dependency.
+# The interop integration tests that previously used `martensite-wgpu`
+# have been moved to the `martensite-media-test` crate to avoid a
+# circular dev-dependency that prevents crates.io publishing.
 [dev-dependencies]
-martensite-wgpu = { workspace = true }
 
 [features]
 # Enables `wgpu`'s `noop` backend so the interop tests can construct a

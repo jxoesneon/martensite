@@ -1,0 +1,30 @@
+[package]
+name = "martensite-render-test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Integration tests for martensite-render that require martensite-wgpu and martensite-test (not published)."
+publish = false
+
+[dependencies]
+martensite-render = { workspace = true, features = ["vello"] }
+
+[dev-dependencies]
+kurbo = { workspace = true }
+martensite-test = { workspace = true }
+martensite-wgpu = { workspace = true, features = ["vello"] }
+wgpu = { workspace = true }
+
+[features]
+# The vello feature is always enabled via the `martensite-render` dependency,
+# but we declare it here as a default so `#[cfg(feature = "vello")]` gates in
+# the parity test resolve correctly.
+default = ["vello"]
+vello = []
+
+[lints]
+workspace = true
