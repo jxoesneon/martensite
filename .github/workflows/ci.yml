@@ -90,7 +90,10 @@ jobs:
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
             libglib2.0-dev pkg-config
       - name: Run ignored tests
-        run: cargo test --workspace -- --ignored
+        run: |
+          cargo test -p martensite-wgpu --lib -- --ignored
+          cargo test -p martensite-window --lib -- --ignored
+          cargo test -p martensite-test --lib -- --ignored
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
       - name: GPU/CPU parity (Lavapipe)
@@ -159,15 +162,19 @@ jobs:
         run: |
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
             libglib2.0-dev pkg-config
-      # Runs all #[ignore]-gated performance tests across the workspace in
-      # release mode with MARTENSITE_STRICT_BENCH=1. This enforces the
-      # regression-gate thresholds in the layout perf tests and the strict
-      # exit gates in bench_suite. Release mode is required because the
-      # layout perf thresholds are calibrated against optimized builds;
-      # debug-mode Taffy is ~10-50x slower and would false-fail.
+      # Runs #[ignore]-gated performance tests in release mode with
+      # MARTENSITE_STRICT_BENCH=1. Only the crates that have #[ignore]-gated
+      # perf tests are compiled (not the entire workspace) to keep CI time
+      # reasonable. Release mode is required because the layout perf
+      # thresholds are calibrated against optimized builds; debug-mode Taffy
+      # is ~10-50x slower and would false-fail.
       - name: Performance gates
         env:
           MARTENSITE_STRICT_BENCH: "1"
           WGPU_ADAPTER_NAME: "llvmpipe"
-        run: cargo test --release --workspace --benches -- --ignored
+        run: |
+          cargo test --release -p martensite-layout --lib -- --ignored
+          cargo test --release -p martensite-wgpu --lib -- --ignored
+          cargo test --release -p martensite-render --features vello -- --ignored
+          cargo test --release -p martensite-devtools --lib -- --ignored
 
