@@ -658,10 +658,12 @@ mod tests {
             }
         }
 
-        let event_loop = match EventLoop::new() {
-            Ok(el) => el,
-            Err(_) => {
-                // No display server available (headless CI). Skip gracefully.
+        // winit's Linux backend panics inside `EventLoop::new()` when no
+        // display server is available (headless CI), so `catch_unwind` is
+        // required — the `Result` is never returned.
+        let event_loop = match std::panic::catch_unwind(EventLoop::new) {
+            Ok(Ok(el)) => el,
+            _ => {
                 eprintln!("skipping: no display server available for winit EventLoop");
                 return;
             }

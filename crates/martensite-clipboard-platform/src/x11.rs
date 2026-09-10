@@ -363,9 +363,8 @@ mod tests {
             return None;
         }
         let cb = X11Backend::new();
-        if cb.display.is_none() {
-            return None;
-        }
+        // `display` is a raw pointer (Copy); `?` returns None if absent.
+        cb.display?;
         Some(cb)
     }
 
