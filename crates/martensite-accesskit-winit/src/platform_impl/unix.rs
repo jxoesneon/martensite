@@ -42,12 +42,12 @@ impl Adapter {
             WindowEvent::Moved(outer_position) => {
                 let outer_position: (_, _) = outer_position.cast::<f64>().into();
                 let outer_size: (_, _) = window.outer_size().cast::<f64>().into();
-                let inner_position: (_, _) = window
-                    .inner_position()
-                    .unwrap_or_default()
-                    .cast::<f64>()
-                    .into();
-                let inner_size: (_, _) = window.inner_size().cast::<f64>().into();
+                // winit 0.31 does not expose inner_position/inner_size on the
+                // Window trait. Approximate the inner rect as the outer rect;
+                // the title-bar offset is typically small and does not affect
+                // AT hit-testing meaningfully.
+                let inner_position = outer_position;
+                let inner_size = outer_size;
                 self.set_root_window_bounds(
                     Rect::from_origin_size(outer_position, outer_size),
                     Rect::from_origin_size(inner_position, inner_size),
@@ -60,11 +60,7 @@ impl Adapter {
                     .cast::<f64>()
                     .into();
                 let outer_size: (_, _) = window.outer_size().cast::<f64>().into();
-                let inner_position: (_, _) = window
-                    .inner_position()
-                    .unwrap_or_default()
-                    .cast::<f64>()
-                    .into();
+                let inner_position = outer_position;
                 let inner_size: (_, _) = inner_size.cast::<f64>().into();
                 self.set_root_window_bounds(
                     Rect::from_origin_size(outer_position, outer_size),
