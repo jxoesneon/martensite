@@ -94,10 +94,10 @@ jobs:
             martensite-core
             martensite-host
             martensite-layout
-            martensite-media
             martensite-render
             martensite-theme
             martensite-media-platform
+            martensite-media
             martensite-wgpu
             martensite-cosmic-text
             martensite-text
@@ -235,10 +235,10 @@ jobs:
             martensite-core
             martensite-host
             martensite-layout
-            martensite-media
             martensite-render
             martensite-theme
             martensite-media-platform
+            martensite-media
             martensite-wgpu
             martensite-cosmic-text
             martensite-text

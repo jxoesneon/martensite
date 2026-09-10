@@ -13,7 +13,6 @@ description = "Platform-specific zero-copy hardware video surface import (IOSurf
 readme = "README.md"
 
 [dependencies]
-martensite-media = { workspace = true }
 wgpu = { workspace = true }
 
 # macOS: IOSurface + Metal interop via the objc2 ecosystem. The `metal`

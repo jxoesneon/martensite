@@ -8,7 +8,7 @@
 //! - `ID3D12Device::OpenSharedHandle`:
 //!   <https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-opensharedhandle>
 
-use martensite_media::surface::MediaError;
+use crate::surface::MediaError;
 
 use crate::ImportTextureDescriptor;
 

@@ -8,7 +8,7 @@
 //! - `vkGetMemoryFdPropertiesKHR`:
 //!   <https://registry.khronos.org/vulkan/specs/latest/man/html/vkGetMemoryFdPropertiesKHR.html>
 
-use martensite_media::surface::MediaError;
+use crate::surface::MediaError;
 
 use crate::ImportTextureDescriptor;
 

@@ -38,8 +38,9 @@
 // `martensite-font-fallback` and `martensite-clipboard-platform`.
 #![allow(rustdoc::broken_intra_doc_links)]
 
-use martensite_media::surface::{HardwareHandle, MediaError, VideoPixelFormat};
 use wgpu::Texture;
+
+pub mod surface;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -49,6 +50,10 @@ mod windows;
 
 #[cfg(target_os = "linux")]
 mod linux;
+
+/// Re-export of the shared surface types so downstream crates can use them
+/// without depending on `martensite-media`.
+pub use surface::{HardwareHandle, MediaError, VideoPixelFormat};
 
 /// Re-export of the hal API types for downstream crates that need to
 /// interact with the platform-specific backend.
@@ -60,7 +65,7 @@ pub use wgpu::hal;
 /// # Examples
 ///
 /// ```
-/// use martensite_media::surface::VideoPixelFormat;
+/// use martensite_media_platform::surface::VideoPixelFormat;
 /// use martensite_media_platform::ImportTextureDescriptor;
 ///
 /// let desc = ImportTextureDescriptor::new(1920, 1080, VideoPixelFormat::Nv12);
@@ -86,7 +91,7 @@ impl ImportTextureDescriptor {
     /// # Examples
     ///
     /// ```
-    /// use martensite_media::surface::VideoPixelFormat;
+    /// use martensite_media_platform::surface::VideoPixelFormat;
     /// use martensite_media_platform::ImportTextureDescriptor;
     ///
     /// let desc = ImportTextureDescriptor::new(3840, 2160, VideoPixelFormat::P010);
@@ -110,7 +115,7 @@ impl ImportTextureDescriptor {
 /// # Examples
 ///
 /// ```
-/// use martensite_media::surface::VideoPixelFormat;
+/// use martensite_media_platform::surface::VideoPixelFormat;
 /// use martensite_media_platform::luma_texture_format;
 ///
 /// assert_eq!(luma_texture_format(VideoPixelFormat::Nv12), wgpu::TextureFormat::R8Unorm);
@@ -131,7 +136,7 @@ pub fn luma_texture_format(format: VideoPixelFormat) -> wgpu::TextureFormat {
 /// # Examples
 ///
 /// ```
-/// use martensite_media::surface::VideoPixelFormat;
+/// use martensite_media_platform::surface::VideoPixelFormat;
 /// use martensite_media_platform::chroma_texture_format;
 ///
 /// assert_eq!(chroma_texture_format(VideoPixelFormat::Nv12), Some(wgpu::TextureFormat::Rg8Unorm));
@@ -159,7 +164,7 @@ pub fn chroma_texture_format(format: VideoPixelFormat) -> Option<wgpu::TextureFo
 /// # Examples
 ///
 /// ```no_run
-/// use martensite_media::surface::{HardwareHandle, VideoPixelFormat};
+/// use martensite_media_platform::surface::{HardwareHandle, VideoPixelFormat};
 /// use martensite_media_platform::{import_cpu_memory, ImportTextureDescriptor};
 /// use wgpu::{Device, Queue};
 ///
@@ -270,7 +275,7 @@ fn luma_texture_descriptor(desc: &ImportTextureDescriptor) -> wgpu::TextureDescr
 /// # Examples
 ///
 /// ```no_run
-/// use martensite_media::surface::{HardwareHandle, VideoPixelFormat};
+/// use martensite_media_platform::surface::{HardwareHandle, VideoPixelFormat};
 /// use martensite_media_platform::{import_external_texture, ImportTextureDescriptor};
 /// use wgpu::Device;
 ///
@@ -362,7 +367,7 @@ pub fn import_external_texture(
 /// # Examples
 ///
 /// ```no_run
-/// use martensite_media::surface::{HardwareHandle, VideoPixelFormat};
+/// use martensite_media_platform::surface::{HardwareHandle, VideoPixelFormat};
 /// use martensite_media_platform::{import_cpu_memory, ImportTextureDescriptor};
 /// use wgpu::{Device, Queue};
 ///

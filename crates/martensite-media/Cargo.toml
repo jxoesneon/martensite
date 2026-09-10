@@ -14,19 +14,18 @@ readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }
+martensite-media-platform = { workspace = true }
 wgpu = { workspace = true }
 glam = { workspace = true }
 bytemuck = { workspace = true }
 
-# Dev-dependencies form a cycle: `martensite-wgpu` and
-# `martensite-media-platform` both depend on this crate as a regular
-# dependency, while this crate pulls them in as dev-dependencies for the
-# interop integration tests. Cargo permits cycles through dev-dependencies,
-# so the interop tests can exercise `VideoProcessor` and the platform import
-# functions without adding a regular (non-cyclic) dependency edge.
+# `martensite-wgpu` depends on this crate as a regular dependency, while
+# this crate pulls it in as a dev-dependency for the interop integration
+# tests. Cargo permits cycles through dev-dependencies, so the interop
+# tests can exercise `VideoProcessor` and the platform import functions
+# without adding a regular (non-cyclic) dependency edge.
 [dev-dependencies]
 martensite-wgpu = { workspace = true }
-martensite-media-platform = { workspace = true }
 
 [features]
 # Enables `wgpu`'s `noop` backend so the interop tests can construct a

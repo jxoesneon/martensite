@@ -15,7 +15,7 @@
 
 use std::ffi::c_void;
 
-use martensite_media::surface::{MediaError, VideoPixelFormat};
+use crate::surface::{MediaError, VideoPixelFormat};
 use objc2::ffi::NSUInteger;
 use objc2::rc::autoreleasepool;
 use objc2_io_surface::IOSurfaceRef;
