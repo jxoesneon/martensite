@@ -143,7 +143,7 @@ impl FontconfigFontFallback {
             Ok(p) => p,
             Err(_) => return Vec::new(),
         };
-        if let Err(_) = pattern.add_charset(charset) {
+        if pattern.add_charset(charset).is_err() {
             return Vec::new();
         }
 
