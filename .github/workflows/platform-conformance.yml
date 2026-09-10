@@ -84,66 +84,94 @@ jobs:
     name: AT-Harness NVDA (Windows)
     if: github.event_name != 'workflow_dispatch' || !inputs.skip-at-harness
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "18"
       - name: Install NVDA
+        id: nvda-setup
+        continue-on-error: true
         run: npx @guidepup/setup --ci --screen-reader nvda
       - name: Build Martensite test binary
+        if: steps.nvda-setup.outcome == 'success'
         run: cargo build -p martensite-access --tests
       - name: Run caret latency test (NVDA)
+        if: steps.nvda-setup.outcome == 'success'
         run: cargo test -p martensite-access --test v0_11_conformance -- caret_synchronization --ignored
         env:
           MARTENSITE_AT_HARNESS: "nvda"
           MARTENSITE_AT_LATENCY_BUDGET_MS: "16"
+      - name: Skip (NVDA setup unavailable)
+        if: steps.nvda-setup.outcome != 'success'
+        run: echo "NVDA setup failed — external infrastructure unavailable. Skipping."
 
   at-harness-voiceover:
     name: AT-Harness VoiceOver (macOS)
     if: github.event_name != 'workflow_dispatch' || !inputs.skip-at-harness
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "18"
       - name: Enable VoiceOver automation
+        id: vo-tcc
+        continue-on-error: true
         run: |
           # Grant accessibility permissions for the terminal.
-          sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR IGNORE INTO access VALUES ('kTCCServiceAccessibility','com.apple.Terminal',0,1,1,NULL,NULL,0,'UNUSED',NULL,0,1577993529);"
+          # The TCC.db access table schema varies across macOS versions.
+          # Try the macOS 26 (17-column) schema first, fall back to the
+          # legacy 12-column schema.
+          TCC_DB="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+          if ! sqlite3 "$TCC_DB" \
+            "INSERT OR IGNORE INTO access VALUES ('kTCCServiceAccessibility','com.apple.Terminal',0,1,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0,0,1577993529,0);" 2>/dev/null; then
+            echo "macOS 26 schema failed, trying legacy 12-column schema…"
+            sqlite3 "$TCC_DB" \
+              "INSERT OR IGNORE INTO access VALUES ('kTCCServiceAccessibility','com.apple.Terminal',0,1,1,NULL,NULL,0,'UNUSED',NULL,0,1577993529);" 2>/dev/null || true
+          fi
       - name: Install Guidepup
+        id: vo-guidepup
+        continue-on-error: true
         run: npm install @guidepup/setup
       - name: Build Martensite test binary
+        if: steps.vo-guidepup.outcome == 'success'
         run: cargo build -p martensite-access --tests
       - name: Run caret latency test (VoiceOver)
+        if: steps.vo-guidepup.outcome == 'success'
         run: cargo test -p martensite-access --test v0_11_conformance -- caret_synchronization --ignored
         env:
           MARTENSITE_AT_HARNESS: "voiceover"
           MARTENSITE_AT_LATENCY_BUDGET_MS: "16"
+      - name: Skip (VoiceOver setup unavailable)
+        if: steps.vo-guidepup.outcome != 'success'
+        run: echo "VoiceOver setup failed — external infrastructure unavailable. Skipping."
 
   at-harness-orca:
     name: AT-Harness Orca (Linux)
     if: github.event_name != 'workflow_dispatch' || !inputs.skip-at-harness
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install AT-SPI2, Orca, and D-Bus
+        id: orca-deps
+        continue-on-error: true
         run: |
           sudo apt-get update
-          sudo apt-get install -y at-spi2-core orca python3-atspi \
+          # python3-atspi was removed from Ubuntu 24.04; the AT-SPI2
+          # Python bindings are now provided by gir1.2-atspi-2.0 +
+          # python3-gi. at-spi2-core provides the bus and registry.
+          sudo apt-get install -y at-spi2-core orca \
+            gir1.2-atspi-2.0 python3-gi \
             xvfb dbus-x11
       - name: Start virtual display and D-Bus
+        if: steps.orca-deps.outcome == 'success'
         run: |
           Xvfb :99 -screen 0 1280x1024x24 &
           export DISPLAY=:99
@@ -151,15 +179,21 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
           echo "DISPLAY=:99" >> $GITHUB_ENV
       - name: Start Orca
+        if: steps.orca-deps.outcome == 'success'
         run: orca --disable braille --debug-file=/tmp/orca-log.txt &
       - name: Build Martensite test binary
+        if: steps.orca-deps.outcome == 'success'
         run: cargo build -p martensite-access --tests
       - name: Run caret latency test (Orca)
+        if: steps.orca-deps.outcome == 'success'
         run: cargo test -p martensite-access --test v0_11_conformance -- caret_synchronization --ignored
         env:
           MARTENSITE_AT_HARNESS: "orca"
           MARTENSITE_AT_LATENCY_BUDGET_MS: "16"
           MARTENSITE_ORCA_LOG: "/tmp/orca-log.txt"
+      - name: Skip (Orca setup unavailable)
+        if: steps.orca-deps.outcome != 'success'
+        run: echo "Orca setup failed — external infrastructure unavailable. Skipping."
 
   # ===========================================================================
   # Item 8: Plugin 5ms wall-clock budget (platform matrix)
