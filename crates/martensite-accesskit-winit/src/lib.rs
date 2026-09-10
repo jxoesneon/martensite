@@ -19,26 +19,9 @@
         target_os = "netbsd",
         target_os = "openbsd"
     ),
-    not(feature = "async-io"),
-    not(feature = "tokio")
+    not(feature = "async-io")
 ))]
-compile_error!("Either \"async-io\" (default) or \"tokio\" feature must be enabled.");
-
-#[cfg(all(
-    feature = "accesskit_unix",
-    any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
-    ),
-    feature = "async-io",
-    feature = "tokio"
-))]
-compile_error!(
-    "Both \"async-io\" (default) and \"tokio\" features cannot be enabled at the same time."
-);
+compile_error!("The \"async-io\" feature must be enabled for Unix AccessKit support.");
 
 use accesskit::{ActionHandler, ActivationHandler, DeactivationHandler, TreeUpdate};
 use raw_window_handle::HasWindowHandle;

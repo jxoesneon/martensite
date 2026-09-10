@@ -195,6 +195,39 @@ impl X11Backend {
         };
         unsafe { XInternAtom(display, name.as_ptr(), FALSE) }
     }
+
+    /// Reads and deletes a property from our window, returning the bytes.
+    /// Returns `None` if the property is empty or the read fails.
+    fn read_property(&self, display: Display, prop_atom: Atom) -> Option<Vec<u8>> {
+        let mut actual_type: Atom = 0;
+        let mut actual_format: c_int = 0;
+        let mut nitems: c_ulong = 0;
+        let mut bytes_after: c_ulong = 0;
+        let mut prop_data: *mut c_char = ptr::null_mut();
+        let status = unsafe {
+            XGetWindowProperty(
+                display,
+                self.window,
+                prop_atom,
+                0,
+                c_long::MAX / 4,
+                DELETE_PROP,
+                ANY_PROPERTY_TYPE,
+                &mut actual_type,
+                &mut actual_format,
+                &mut nitems,
+                &mut bytes_after,
+                &mut prop_data,
+            )
+        };
+        if status != 0 || prop_data.is_null() || nitems == 0 {
+            return None;
+        }
+        let slice = unsafe { std::slice::from_raw_parts(prop_data as *const u8, nitems as usize) };
+        let result = slice.to_vec();
+        unsafe { XFree(prop_data as *mut c_void) };
+        Some(result)
+    }
 }
 
 impl Default for X11Backend {
@@ -250,6 +283,15 @@ impl ClipboardBackend for X11Backend {
         if target == 0 {
             return None;
         }
+
+        // If we are the selection owner, read the property we set in write()
+        // directly. XConvertSelection would send a SelectionRequest to us,
+        // but we don't serve those events, so the conversion would time out.
+        let owner = unsafe { XGetSelectionOwner(display, self.clipboard_atom) };
+        if owner == self.window {
+            return self.read_property(display, target);
+        }
+
         // Request the selection conversion into a property on our window.
         let prop_name = CString::new("MARTENSITE_CLIP").unwrap();
         let prop_atom = unsafe { XInternAtom(display, prop_name.as_ptr(), FALSE) };
@@ -275,35 +317,7 @@ impl ClipboardBackend for X11Backend {
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        // Read the property.
-        let mut actual_type: Atom = 0;
-        let mut actual_format: c_int = 0;
-        let mut nitems: c_ulong = 0;
-        let mut bytes_after: c_ulong = 0;
-        let mut prop_data: *mut c_char = ptr::null_mut();
-        let status = unsafe {
-            XGetWindowProperty(
-                display,
-                self.window,
-                prop_atom,
-                0,
-                c_long::MAX / 4,
-                DELETE_PROP,
-                ANY_PROPERTY_TYPE,
-                &mut actual_type,
-                &mut actual_format,
-                &mut nitems,
-                &mut bytes_after,
-                &mut prop_data,
-            )
-        };
-        if status != 0 || prop_data.is_null() {
-            return None;
-        }
-        let slice = unsafe { std::slice::from_raw_parts(prop_data as *const u8, nitems as usize) };
-        let result = slice.to_vec();
-        unsafe { XFree(prop_data as *mut c_void) };
-        Some(result)
+        self.read_property(display, prop_atom)
     }
 
     fn available_types(&self) -> Vec<String> {

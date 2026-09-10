@@ -90,7 +90,7 @@ jobs:
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
             libglib2.0-dev pkg-config
       - name: Run ignored tests
-        run: cargo test --workspace --ignored
+        run: cargo test --workspace -- --ignored
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
       - name: GPU/CPU parity (Lavapipe)
