@@ -183,6 +183,31 @@ impl<'window> SurfaceWrapper<'window> {
         self.config.as_ref()
     }
 
+    /// Returns the backdrop mode applied by the most recent
+    /// [`configure`](Self::configure) call.
+    ///
+    /// This is the source of truth for the surface's current alpha mode
+    /// (Opaque vs PreMultiplied). Recovery code and other internal
+    /// callers should use this rather than hard-coding
+    /// [`BackdropMode::Opaque`] when reconfiguring after device loss.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::surface::{BackdropMode, SurfaceWrapper};
+    /// # use wgpu::Instance;
+    /// #
+    /// # let instance = Instance::new(&wgpu::InstanceDescriptor::default());
+    /// # let surface = instance.create_surface(&wgpu::SurfaceTarget::Other).unwrap();
+    /// # let wrapper = SurfaceWrapper::new(surface);
+    /// // Before any configure call, the default is Opaque.
+    /// assert_eq!(wrapper.backdrop_mode(), BackdropMode::Opaque);
+    /// ```
+    #[must_use]
+    pub fn backdrop_mode(&self) -> BackdropMode {
+        self.backdrop_mode
+    }
+
     /// Negotiates the best present mode supported by `adapter` for this surface.
     ///
     /// The selection tries `Mailbox`, then `FifoRelaxed`, and always falls back

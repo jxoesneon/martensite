@@ -247,12 +247,24 @@ impl RenderOrchestrator {
     pub fn render(&mut self, paint_list: &PaintList, recovery: &RecoveryMachine) {
         let use_cpu = self.config.prefer_cpu
             || (self.config.allow_software_fallback && recovery.is_fallback_cpu());
+        // Derive the clear mode from the active backdrop mode so the
+        // renderer clears to transparent black when a system material
+        // (Mica/Acrylic/vibrancy) is active, or to opaque black when no
+        // system material is in use. This makes `RenderOrchestrator::
+        // backdrop_mode` actually drive rendering behavior rather than
+        // being advisory-only.
+        let clear_mode = match self.backdrop_mode {
+            crate::surface::BackdropMode::Opaque => {
+                martensite_render::ClearMode::Opaque([0.0, 0.0, 0.0, 1.0])
+            }
+            crate::surface::BackdropMode::Transparent => martensite_render::ClearMode::Transparent,
+        };
         if use_cpu {
             self.mode = RenderMode::Cpu;
-            self.tinyskia.render(paint_list);
+            self.tinyskia.render_with_clear(paint_list, clear_mode);
         } else {
             self.mode = RenderMode::Gpu;
-            self.vello.render(paint_list);
+            self.vello.render_with_clear(paint_list, clear_mode);
         }
     }
 
@@ -310,10 +322,17 @@ impl RenderOrchestrator {
     /// Sets the active backdrop mode.
     ///
     /// This should be called whenever the system backdrop material
-    /// changes (e.g. via the shell's `BackdropController::mode`).
-    /// The orchestrator stores the mode and exposes it via
-    /// [`backdrop_mode`](Self::backdrop_mode) so the application can
-    /// decide whether to paint a background fill rect.
+    /// changes (e.g. via the shell's `BackdropController::mode`). The
+    /// orchestrator uses the active mode to choose the clear color for
+    /// the next frame: [`crate::surface::BackdropMode::Transparent`]
+    /// clears to transparent black so system materials show through;
+    /// [`crate::surface::BackdropMode::Opaque`] clears to opaque black.
+    ///
+    /// To keep the wgpu surface's `alpha_mode` in sync with this mode,
+    /// prefer [`configure_surface`](Self::configure_surface) over
+    /// calling this method and
+    /// [`SurfaceWrapper::configure`](crate::surface::SurfaceWrapper::configure)
+    /// separately.
     ///
     /// # Examples
     ///
@@ -328,6 +347,51 @@ impl RenderOrchestrator {
     /// ```
     pub fn set_backdrop_mode(&mut self, mode: crate::surface::BackdropMode) {
         self.backdrop_mode = mode;
+    }
+
+    /// Configures the wgpu surface and updates the orchestrator's
+    /// backdrop mode in a single call.
+    ///
+    /// This is the preferred way to apply a backdrop change: it sets
+    /// [`set_backdrop_mode`](Self::set_backdrop_mode) so the next
+    /// [`render`](Self::render) clears with the right color, *and*
+    /// reconfigures the [`SurfaceWrapper`] so the swapchain uses the
+    /// matching `CompositeAlphaMode` (Opaque vs PreMultiplied). Calling
+    /// the two separately risks a frame where the clear color and the
+    /// surface alpha mode disagree.
+    ///
+    /// # Errors
+    ///
+    /// Forwards [`SurfaceWrapper::configure`](crate::surface::SurfaceWrapper::configure)
+    /// errors.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// use martensite_wgpu::surface::{BackdropMode, SurfaceWrapper};
+    /// # use wgpu::Instance;
+    /// # fn example(
+    /// #     orchestrator: &mut RenderOrchestrator,
+    /// #     device: &wgpu::Device,
+    /// #     adapter: &wgpu::Adapter,
+    /// #     surface: &mut SurfaceWrapper<'_>,
+    /// # ) {
+    /// orchestrator.configure_surface(device, adapter, surface, 800, 600, BackdropMode::Transparent);
+    /// assert_eq!(orchestrator.backdrop_mode(), BackdropMode::Transparent);
+    /// # }
+    /// ```
+    pub fn configure_surface(
+        &mut self,
+        device: &wgpu::Device,
+        adapter: &wgpu::Adapter,
+        surface: &mut crate::surface::SurfaceWrapper<'_>,
+        width: u32,
+        height: u32,
+        mode: crate::surface::BackdropMode,
+    ) -> Result<(), crate::surface::SurfaceWrapperError> {
+        self.backdrop_mode = mode;
+        surface.configure(device, adapter, width, height, mode)
     }
 
     /// Renders the most recently built frame to a WGPU surface and presents it.

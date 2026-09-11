@@ -180,16 +180,61 @@ unsafe fn ns_string_equals(ns_str: &Retained<AnyObject>, target: &core::ffi::CSt
 /// let mut controller = MacosBackdropController::new();
 /// controller.set_material(&W, BackdropMaterial::Vibrancy(VibrancyMaterial::Sidebar));
 /// ```
+/// Identifies which AppKit effect-view class backs a controller's
+/// `effect_view` pointer.
+///
+/// `NSGlassEffectView` (macOS 26+) and `NSVisualEffectView` (macOS 10.10+)
+/// expose **different** configuration APIs: `NSVisualEffectView` uses
+/// `setMaterial:` / `setBlendingMode:` / `setState:`, while
+/// `NSGlassEffectView` uses `setStyle:` / `setCornerRadius:` /
+/// `setTintColor:` and does **not** respond to `setMaterial:`. The
+/// controller branches on this tag so it only sends selectors the
+/// underlying class actually implements.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_shell::platform_impl::macos::EffectViewKind;
+///
+/// assert_eq!(EffectViewKind::default(), EffectViewKind::None);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EffectViewKind {
+    /// No effect view has been created yet.
+    #[default]
+    None,
+    /// `NSVisualEffectView` (macOS 10.10+).
+    VisualEffect,
+    /// `NSGlassEffectView` (macOS 26+).
+    Glass,
+}
+
+/// macOS backdrop controller using `NSVisualEffectView` and Liquid Glass.
+///
+/// On macOS 14 and earlier, uses `NSVisualEffectView` with the
+/// `setMaterial:` API. On macOS 26+, when the `NSGlassEffectView` class
+/// is registered (see
+/// [`detect_glass_effect_view_class`](Self::detect_glass_effect_view_class)),
+/// the controller creates a glass view instead and configures it via
+/// `setStyle:` / `setCornerRadius:` rather than `setMaterial:`.
+///
+/// The controller tracks which AppKit class backs its `effect_view`
+/// pointer (see [`EffectViewKind`]) so `set_material` only sends
+/// selectors the underlying class actually implements.
 pub struct MacosBackdropController {
     /// The most recently requested material.
     material: BackdropMaterial,
     /// Whether the platform supports system materials (always `true` on
     /// macOS 10.10+, where `NSVisualEffectView` is available).
     supported: bool,
-    /// The owned `NSVisualEffectView` instance, or `None` when no material
-    /// is currently applied. Stored as a raw `+1`-retained pointer; released
+    /// The owned effect-view instance (`NSVisualEffectView` or, on
+    /// macOS 26+, `NSGlassEffectView`), or `None` when no material is
+    /// currently applied. Stored as a raw `+1`-retained pointer; released
     /// in [`Drop`].
     effect_view: Option<*mut AnyObject>,
+    /// Which AppKit class `effect_view` points to, so `set_material`
+    /// only sends selectors the class implements.
+    effect_view_kind: EffectViewKind,
 }
 
 impl MacosBackdropController {
@@ -213,6 +258,7 @@ impl MacosBackdropController {
             material: BackdropMaterial::None,
             supported: true, // macOS always supports at least NSVisualEffectView
             effect_view: None,
+            effect_view_kind: EffectViewKind::None,
         }
     }
 
@@ -341,20 +387,33 @@ impl MacosBackdropController {
     /// is effectively a no-op for the glass view. On older macOS versions,
     /// this falls back to `NSVisualEffectView`.
     ///
+    /// Returns the raw `+1`-retained view pointer **and** the
+    /// [`EffectViewKind`] identifying which AppKit class was instantiated,
+    /// so the caller can branch on the class when sending configuration
+    /// selectors (the two classes expose different APIs).
+    ///
     /// # Safety
     ///
     /// Must be called on the main thread (AppKit requirement). The returned
     /// pointer is `+1`-retained and must be released (e.g. via
     /// `Retained::from_raw`).
-    unsafe fn create_effect_view() -> Option<*mut AnyObject> {
+    unsafe fn create_effect_view() -> Option<(*mut AnyObject, EffectViewKind)> {
         // Prefer `NSGlassEffectView` (macOS 26+) when the class is
         // registered; fall back to `NSVisualEffectView` otherwise.
-        let cls = class(c"NSGlassEffectView").or_else(|| class(c"NSVisualEffectView"))?;
-        // SAFETY: `new` is equivalent to `alloc] init]` and returns a +1
-        // retained instance. `NSVisualEffectView` is available on macOS
-        // 10.10+; `NSGlassEffectView` is available on macOS 26+.
-        let view: Retained<AnyObject> = unsafe { msg_send![cls, new] };
-        Some(Retained::into_raw(view))
+        if let Some(cls) = class(c"NSGlassEffectView") {
+            // SAFETY: `new` is equivalent to `alloc] init]` and returns a
+            // +1 retained instance. `NSGlassEffectView` is available on
+            // macOS 26+.
+            let view: Retained<AnyObject> = unsafe { msg_send![cls, new] };
+            Some((Retained::into_raw(view), EffectViewKind::Glass))
+        } else if let Some(cls) = class(c"NSVisualEffectView") {
+            // SAFETY: as above; `NSVisualEffectView` is available on macOS
+            // 10.10+.
+            let view: Retained<AnyObject> = unsafe { msg_send![cls, new] };
+            Some((Retained::into_raw(view), EffectViewKind::VisualEffect))
+        } else {
+            None
+        }
     }
 
     /// Attaches the effect view as the backmost subview of the window's
@@ -405,6 +464,47 @@ impl MacosBackdropController {
                 let _: () = msg_send![effect_view, removeFromSuperview];
                 let _ = Retained::from_raw(effect_view);
             }
+        }
+        self.effect_view_kind = EffectViewKind::None;
+    }
+
+    /// Returns `true` if the user has enabled "Reduce Transparency" in
+    /// System Settings → Accessibility → Display.
+    ///
+    /// When Reduce Transparency is on, AppKit does not automatically
+    /// degrade `NSGlassEffectView` (it has no opacity control), so the
+    /// controller should fall back to `NSVisualEffectView` or an opaque
+    /// background. Callers should check this before creating a glass
+    /// effect view and before each material change.
+    ///
+    /// The check queries `NSWorkspace.sharedWorkspace
+    /// .accessibilityDisplayOptions`, a bitmask whose bit 0
+    /// (`NSWorkspaceAccessibilityDisplayOptionsReduceTransparency`)
+    /// indicates Reduce Transparency.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_shell::platform_impl::macos::MacosBackdropController;
+    ///
+    /// let _ = MacosBackdropController::reduce_transparency_enabled();
+    /// ```
+    #[must_use]
+    pub fn reduce_transparency_enabled() -> bool {
+        unsafe {
+            let Some(cls) = class(c"NSWorkspace") else {
+                return false;
+            };
+            // `sharedWorkspace` returns the shared `NSWorkspace` singleton.
+            let workspace: Option<Retained<AnyObject>> = msg_send![cls, sharedWorkspace];
+            let Some(workspace) = workspace else {
+                return false;
+            };
+            // `accessibilityDisplayOptions` returns an
+            // `NSWorkspaceAccessibilityDisplayOptions` bitmask (NSUInteger).
+            let options: u64 = msg_send![&workspace, accessibilityDisplayOptions];
+            // Bit 0: NSWorkspaceAccessibilityDisplayOptionsReduceTransparency.
+            (options & 1) != 0
         }
     }
 }
@@ -474,37 +574,67 @@ impl BackdropController for MacosBackdropController {
 
         let ns_material = Self::vibrancy_to_ns_material(vibrancy) as i64;
 
-        // Lazily create and attach the `NSVisualEffectView` on first use.
+        // Lazily create and attach the effect view on first use.
         // Only commit state on success.
         if self.effect_view.is_none() {
             // SAFETY: `set_material` is invoked from the window integration
             // layer on the main thread.
             let view = unsafe { Self::create_effect_view() };
-            let Some(view) = view else {
+            let Some((view, kind)) = view else {
                 self.remove_effect_view();
                 self.material = BackdropMaterial::None;
                 self.supported = false;
                 return;
             };
             self.effect_view = Some(view);
+            self.effect_view_kind = kind;
             // SAFETY: `ns_window` is a valid `NSWindow*` and `view` is a
-            // freshly allocated `NSVisualEffectView*`.
+            // freshly allocated effect view of the kind recorded above.
             unsafe {
                 Self::attach_effect_view(ns_window, view);
             }
         }
 
         if let Some(effect_view) = self.effect_view {
-            // SAFETY: `effect_view` is a valid `NSVisualEffectView*`. All
-            // three setters take an `NSInteger` enum argument and return
-            // `void`.
+            // SAFETY: `effect_view` is a valid effect-view pointer of the
+            // class recorded in `self.effect_view_kind`. We branch on the
+            // kind so we only send selectors the underlying class actually
+            // implements.
             unsafe {
-                let _: () = msg_send![effect_view, setMaterial: ns_material];
-                let _: () = msg_send![
-                    effect_view,
-                    setBlendingMode: NS_VISUAL_EFFECT_BLENDING_MODE_BEHIND_WINDOW
-                ];
-                let _: () = msg_send![effect_view, setState: NS_VISUAL_EFFECT_STATE_ACTIVE];
+                match self.effect_view_kind {
+                    EffectViewKind::VisualEffect => {
+                        // `NSVisualEffectView` (macOS 10.10+) is configured
+                        // via `setMaterial:` / `setBlendingMode:` /
+                        // `setState:`. All three take an `NSInteger` enum
+                        // argument and return `void`.
+                        let _: () = msg_send![effect_view, setMaterial: ns_material];
+                        let _: () = msg_send![
+                            effect_view,
+                            setBlendingMode: NS_VISUAL_EFFECT_BLENDING_MODE_BEHIND_WINDOW
+                        ];
+                        let _: () = msg_send![effect_view, setState: NS_VISUAL_EFFECT_STATE_ACTIVE];
+                    }
+                    EffectViewKind::Glass => {
+                        // `NSGlassEffectView` (macOS 26+) does **not**
+                        // implement `setMaterial:` / `setBlendingMode:` /
+                        // `setState:`. It exposes `setStyle:` (Regular = 0,
+                        // Clear = 1), `setCornerRadius:`, and an optional
+                        // `setTintColor:`. For a full-window backdrop we
+                        // use `Regular` style and a 0 corner radius; the
+                        // glass view provides the Liquid Glass material
+                        // natively, so no material value is sent.
+                        let style: i64 = 0; // NSGlassEffectViewStyleRegular
+                        let _: () = msg_send![effect_view, setStyle: style];
+                        let corner_radius: f64 = 0.0;
+                        let _: () = msg_send![effect_view, setCornerRadius: corner_radius];
+                    }
+                    EffectViewKind::None => {
+                        // Unreachable: `effect_view.is_some()` above
+                        // guarantees a kind was set when the view was
+                        // created.
+                        debug_assert!(false, "effect_view_kind is None while effect_view is Some");
+                    }
+                }
             }
             // Commit state only after the view is configured successfully.
             self.material = material;
@@ -808,5 +938,137 @@ impl Default for AppearanceObserver {
 impl Drop for AppearanceObserver {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backdrop::VibrancyMaterial;
+
+    /// A null `Window` handle used to exercise the controller's null-handle
+    /// and unsupported-material paths without requiring a real `NSWindow`.
+    struct NullWindow;
+    impl Window for NullWindow {
+        unsafe fn raw_handle(&self) -> *mut core::ffi::c_void {
+            core::ptr::null_mut()
+        }
+    }
+
+    #[test]
+    fn vibrancy_material_mapping_is_stable() {
+        // The numeric values are the `NSVisualEffectMaterial` enum values
+        // from Apple's AppKit headers. They must not change between
+        // releases without an explicit migration.
+        assert_eq!(
+            MacosBackdropController::vibrancy_to_ns_material(VibrancyMaterial::Sidebar),
+            7
+        );
+        assert_eq!(
+            MacosBackdropController::vibrancy_to_ns_material(VibrancyMaterial::HudWindow),
+            13
+        );
+        assert_eq!(
+            MacosBackdropController::vibrancy_to_ns_material(VibrancyMaterial::FullScreenUI),
+            15
+        );
+        assert_eq!(
+            MacosBackdropController::vibrancy_to_ns_material(VibrancyMaterial::Sheet),
+            11
+        );
+        assert_eq!(
+            MacosBackdropController::vibrancy_to_ns_material(VibrancyMaterial::Titlebar),
+            3
+        );
+        assert_eq!(
+            MacosBackdropController::vibrancy_to_ns_material(VibrancyMaterial::Menu),
+            5
+        );
+        assert_eq!(
+            MacosBackdropController::vibrancy_to_ns_material(VibrancyMaterial::Popover),
+            6
+        );
+        assert_eq!(
+            MacosBackdropController::vibrancy_to_ns_material(VibrancyMaterial::Tooltip),
+            17
+        );
+        // LiquidGlass falls back to HudWindow (13) on NSVisualEffectView.
+        assert_eq!(
+            MacosBackdropController::vibrancy_to_ns_material(VibrancyMaterial::LiquidGlass),
+            13
+        );
+    }
+
+    #[test]
+    fn supports_liquid_glass_returns_bool_without_panic() {
+        // We cannot control the OS version from a test, but the call must
+        // not panic and must return a `bool`.
+        let _ = MacosBackdropController::supports_liquid_glass();
+    }
+
+    #[test]
+    fn detect_glass_effect_view_class_returns_bool_without_panic() {
+        let _ = MacosBackdropController::detect_glass_effect_view_class();
+    }
+
+    #[test]
+    fn reduce_transparency_enabled_returns_bool_without_panic() {
+        let _ = MacosBackdropController::reduce_transparency_enabled();
+    }
+
+    #[test]
+    fn new_controller_starts_with_none_material() {
+        let ctrl = MacosBackdropController::new();
+        assert_eq!(ctrl.current_material(), BackdropMaterial::None);
+        assert!(ctrl.supported);
+        assert_eq!(ctrl.effect_view_kind, EffectViewKind::None);
+    }
+
+    #[test]
+    fn set_material_null_window_marks_unsupported() {
+        let mut ctrl = MacosBackdropController::new();
+        ctrl.set_material(
+            &NullWindow,
+            BackdropMaterial::Vibrancy(VibrancyMaterial::LiquidGlass),
+        );
+        // A null window handle means no effect view could be attached, so
+        // the controller reports the material as not currently applied.
+        assert_eq!(ctrl.current_material(), BackdropMaterial::None);
+        assert!(!ctrl.supported);
+        // `supports_material` is a *static capability* check (macOS always
+        // *can* apply vibrancy), so it remains true even when the runtime
+        // application failed. This matches the Windows controller, where
+        // `supports_material` checks the DWM API availability rather than
+        // the per-call success.
+        assert!(ctrl.supports_material(BackdropMaterial::Vibrancy(VibrancyMaterial::LiquidGlass)));
+    }
+
+    #[test]
+    fn windows_only_materials_are_unsupported_on_macos() {
+        let mut ctrl = MacosBackdropController::new();
+        for m in [
+            BackdropMaterial::Mica,
+            BackdropMaterial::MicaAlt,
+            BackdropMaterial::Transient,
+        ] {
+            ctrl.set_material(&NullWindow, m);
+            assert!(!ctrl.supports_material(m));
+            assert_eq!(ctrl.current_material(), BackdropMaterial::None);
+        }
+    }
+
+    #[test]
+    fn set_material_none_is_supported_and_tears_down_view() {
+        let mut ctrl = MacosBackdropController::new();
+        ctrl.set_material(&NullWindow, BackdropMaterial::None);
+        assert!(ctrl.supported);
+        assert_eq!(ctrl.current_material(), BackdropMaterial::None);
+        assert!(ctrl.effect_view.is_none());
+        assert_eq!(ctrl.effect_view_kind, EffectViewKind::None);
+    }
+
+    #[test]
+    fn effect_view_kind_default_is_none() {
+        assert_eq!(EffectViewKind::default(), EffectViewKind::None);
     }
 }

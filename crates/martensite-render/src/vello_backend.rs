@@ -494,48 +494,50 @@ impl VelloRenderer {
         }
     }
 
-    /// Renders a [`PaintCommand::BlurredRect`] as a Vello scene contribution.
+    /// Renders a [`PaintCommand::BlurredRect`] as a Vello scene contribution
+    /// using a real GPU Gaussian-blur rounded-rect primitive.
     ///
-    /// Vello does not currently expose a direct blur primitive or an easy
-    /// offscreen render target within the scene API, so this path renders a
-    /// semi-transparent filled rect as a placeholder. The alpha is scaled by
-    /// the blur radius so that larger blurs produce softer (more transparent)
-    /// shadows, approximating the visual falloff of a Gaussian blur without
-    /// the actual convolution.
+    /// Vello's `Scene::draw_blurred_rounded_rect` dispatches an analytical
+    /// Gaussian-blur shader on the GPU. Passing `radius: 0.0` produces sharp
+    /// corners (a plain rectangular shadow), and `std_dev` controls the blur
+    /// standard deviation. The shape is automatically inflated by
+    /// `2.5 * std_dev` on every side to cover the Gaussian's impulse
+    /// response, so callers do not need to pad `rect` themselves.
     ///
-    /// TODO: once Vello supports offscreen render targets or an image-blur
-    /// shader, replace this stub with a real two-pass Gaussian blur rendered
-    /// to an intermediate buffer and composited back into the scene.
+    /// The blur radius from the paint command is converted to a standard
+    /// deviation using the same `σ = r / 3` relationship the TinySkia CPU
+    /// backend uses for its box-blur approximation, keeping the two paths
+    /// visually consistent.
     #[cfg(feature = "vello")]
     fn render_blurred_rect(&mut self, rect: [f32; 4], blur_radius: f32, color: [f32; 4]) {
         let [x, y, w, h] = rect;
         if w <= 0.0 || h <= 0.0 {
             return;
         }
-        // Scale the source alpha down as the blur radius grows so that the
-        // placeholder shadow softens with larger radii. The factor is clamped
-        // so it never exceeds the original alpha.
-        let falloff = 1.0 / (1.0 + blur_radius * 0.05);
-        let a = color[3].clamp(0.0, 1.0) * falloff;
-        let placeholder = AlphaColor::<Srgb>::from_rgba8(
-            (color[0].clamp(0.0, 1.0) * 255.0).round() as u8,
-            (color[1].clamp(0.0, 1.0) * 255.0).round() as u8,
-            (color[2].clamp(0.0, 1.0) * 255.0).round() as u8,
-            (a * 255.0).round() as u8,
-        );
-        let blur_rect = KurboRect::new(
+        // Clamp color channels to [0, 1] before constructing the peniko
+        // `Color` (an `AlphaColor<Srgb>`).
+        let brush = AlphaColor::<Srgb>::new([
+            color[0].clamp(0.0, 1.0),
+            color[1].clamp(0.0, 1.0),
+            color[2].clamp(0.0, 1.0),
+            color[3].clamp(0.0, 1.0),
+        ]);
+        let kurbo_rect = KurboRect::new(
             f64::from(x),
             f64::from(y),
             f64::from(x + w),
             f64::from(y + h),
         );
-        self.scene.fill(
-            Fill::EvenOdd,
-            Affine::IDENTITY,
-            placeholder,
-            None,
-            &blur_rect,
-        );
+        // Convert the blur radius to a Gaussian standard deviation. The
+        // three-pass box-blur CPU path in `tinyskia_backend` approximates a
+        // Gaussian with `σ ≈ r / 3`, so we use the same mapping here to keep
+        // the GPU and CPU shadows visually consistent.
+        let std_dev = f64::from(blur_radius.max(0.0)) / 3.0;
+        // `radius: 0.0` -> sharp corners (plain rectangular shadow). When
+        // CSD corner rounding is wired in, this can be replaced with the
+        // window's corner radius.
+        self.scene
+            .draw_blurred_rounded_rect(Affine::IDENTITY, kurbo_rect, brush, 0.0, std_dev);
     }
 
     /// Renders a glyph run.

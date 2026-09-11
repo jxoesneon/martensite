@@ -1031,17 +1031,15 @@ impl RecoveryHarness {
 
         // Reconfigure the surface against the new device. If the surface was
         // previously configured, use `resize` to preserve format/present-mode;
-        // otherwise use `configure` for the initial setup.
+        // otherwise use `configure` for the initial setup. We preserve the
+        // surface's existing backdrop mode (Opaque vs Transparent) rather
+        // than hard-coding Opaque, so a transparent system-material backdrop
+        // survives device loss.
+        let backdrop = surface.backdrop_mode();
         let reconfigure_result = if surface.configuration().is_some() {
             surface.resize(&ctx.device, width, height)
         } else {
-            surface.configure(
-                &ctx.device,
-                &ctx.adapter,
-                width,
-                height,
-                crate::surface::BackdropMode::Opaque,
-            )
+            surface.configure(&ctx.device, &ctx.adapter, width, height, backdrop)
         };
 
         match reconfigure_result {
@@ -1057,13 +1055,7 @@ impl RecoveryHarness {
                 // `resize` returned NotConfigured, which shouldn't happen since
                 // we checked above, but fall back to a full configure.
                 surface
-                    .configure(
-                        &ctx.device,
-                        &ctx.adapter,
-                        width,
-                        height,
-                        crate::surface::BackdropMode::Opaque,
-                    )
+                    .configure(&ctx.device, &ctx.adapter, width, height, backdrop)
                     .map(|_| {
                         self.machine.restore_completed();
                         RecoveryOutcome::Restored
