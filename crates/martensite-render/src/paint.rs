@@ -548,6 +548,18 @@ pub enum PaintCommand {
     DrawText(Point, String, f32, [u8; 4]),
     /// Draw a pre-resolved [`GlyphRun`].
     DrawGlyphRun(GlyphRun),
+    /// A blurred filled rectangle, used for CSD shadows and backdrop blur effects.
+    ///
+    /// The blur is a two-pass Gaussian (horizontal + vertical) applied to a
+    /// solid-color rect. The blur radius is in physical pixels.
+    BlurredRect {
+        /// The rectangle bounds (`x`, `y`, `w`, `h`).
+        rect: [f32; 4],
+        /// The blur radius in physical pixels.
+        blur_radius: f32,
+        /// The fill color (R, G, B, A), each channel in `0.0..=1.0`.
+        color: [f32; 4],
+    },
 }
 
 /// A helper for incrementally constructing a [`kurbo::BezPath`].
@@ -994,6 +1006,31 @@ impl PaintList {
     /// ```
     pub fn push_glyph_run(&mut self, run: GlyphRun) {
         self.commands.push(PaintCommand::DrawGlyphRun(run));
+    }
+
+    /// Pushes a [`PaintCommand::BlurredRect`].
+    ///
+    /// The blur is a two-pass Gaussian applied at physical resolution to
+    /// avoid upscaling artifacts at fractional DPI. `rect` is `[x, y, w, h]`
+    /// in physical pixels, `blur_radius` is the blur radius in physical
+    /// pixels, and `color` is `[R, G, B, A]` with each channel in `0.0..=1.0`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintCommand, PaintList};
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_blurred_rect([0.0, 0.0, 100.0, 100.0], 20.0, [0.0, 0.0, 0.0, 0.3]);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::BlurredRect { .. }));
+    /// ```
+    pub fn push_blurred_rect(&mut self, rect: [f32; 4], blur_radius: f32, color: [f32; 4]) {
+        self.commands.push(PaintCommand::BlurredRect {
+            rect,
+            blur_radius,
+            color,
+        });
     }
 
     /// Returns the number of commands currently in the list.

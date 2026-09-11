@@ -287,6 +287,14 @@ criteria = "safe-to-deploy"
 version = "0.10.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.block-sys]]
+version = "0.2.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.block2]]
+version = "0.4.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.block2]]
 version = "0.5.1"
 criteria = "safe-to-deploy"
@@ -333,6 +341,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.calloop]]
 version = "0.14.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.calloop-wayland-source]]
+version = "0.4.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.cap-fs-ext]]
@@ -959,6 +971,10 @@ criteria = "safe-to-deploy"
 version = "0.1.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.icrate]]
+version = "0.1.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.icu_collections]]
 version = "2.3.0"
 criteria = "safe-to-deploy"
@@ -1191,32 +1207,64 @@ criteria = "safe-to-deploy"
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-access]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-access]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-accesskit-winit]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-accesskit-winit]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-assets]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-assets]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-blessed]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-blessed]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-clipboard]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-clipboard]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-clipboard-platform]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-clipboard-platform]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-core]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-core]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-cosmic-text]]
@@ -1227,80 +1275,164 @@ criteria = "safe-to-deploy"
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-devtools]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-dnd]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-dnd]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-focus]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-focus]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-font-fallback]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-font-fallback]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-history]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-history]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-host]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-host]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-l10n]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-l10n]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-layout]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-layout]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-macros]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-macros]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-media]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-media]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-media-platform]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-media-platform]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-motion]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-motion]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-plugin]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-plugin]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-reactive]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-reactive]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-render]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-render]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-shell]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-test]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-test]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-text]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-text]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-theme]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-theme]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.martensite-wgpu]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.martensite-wgpu]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.martensite-window]]
 version = "0.11.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.martensite-window]]
+version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.maybe-owned]]
@@ -1979,6 +2111,10 @@ criteria = "safe-to-deploy"
 version = "1.16.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.smithay-client-toolkit]]
+version = "0.21.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.smol_str]]
 version = "0.3.6"
 criteria = "safe-to-deploy"
@@ -2407,6 +2543,34 @@ criteria = "safe-to-deploy"
 version = "0.31.15"
 criteria = "safe-to-deploy"
 
+[[exemptions.wayland-csd-frame]]
+version = "0.3.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.wayland-cursor]]
+version = "0.31.14"
+criteria = "safe-to-deploy"
+
+[[exemptions.wayland-protocols]]
+version = "0.32.13"
+criteria = "safe-to-deploy"
+
+[[exemptions.wayland-protocols-experimental]]
+version = "20251230.0.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.wayland-protocols-misc]]
+version = "0.3.12"
+criteria = "safe-to-deploy"
+
+[[exemptions.wayland-protocols-plasma]]
+version = "0.3.12"
+criteria = "safe-to-deploy"
+
+[[exemptions.wayland-protocols-wlr]]
+version = "0.3.12"
+criteria = "safe-to-deploy"
+
 [[exemptions.wayland-scanner]]
 version = "0.31.11"
 criteria = "safe-to-deploy"
@@ -2712,6 +2876,10 @@ version = "0.31.0-beta.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.winit-uikit]]
+version = "0.31.0-beta.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.winit-wayland]]
 version = "0.31.0-beta.3"
 criteria = "safe-to-deploy"
 

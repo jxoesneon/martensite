@@ -1035,7 +1035,13 @@ impl RecoveryHarness {
         let reconfigure_result = if surface.configuration().is_some() {
             surface.resize(&ctx.device, width, height)
         } else {
-            surface.configure(&ctx.device, &ctx.adapter, width, height)
+            surface.configure(
+                &ctx.device,
+                &ctx.adapter,
+                width,
+                height,
+                crate::surface::BackdropMode::Opaque,
+            )
         };
 
         match reconfigure_result {
@@ -1051,7 +1057,13 @@ impl RecoveryHarness {
                 // `resize` returned NotConfigured, which shouldn't happen since
                 // we checked above, but fall back to a full configure.
                 surface
-                    .configure(&ctx.device, &ctx.adapter, width, height)
+                    .configure(
+                        &ctx.device,
+                        &ctx.adapter,
+                        width,
+                        height,
+                        crate::surface::BackdropMode::Opaque,
+                    )
                     .map(|_| {
                         self.machine.restore_completed();
                         RecoveryOutcome::Restored

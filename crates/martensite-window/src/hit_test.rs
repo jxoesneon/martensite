@@ -50,6 +50,23 @@
 //! double-counting adjacent tiles and matches the common `[min, max)` interval
 //! semantics used throughout layout.
 //!
+//! # Relationship to client-side decorations (CSD)
+//!
+//! This module resolves *which widget* sits beneath a pointer inside the
+//! client content area. On Wayland, where the application draws its own
+//! title bar and window buttons (client-side decorations), the shell's
+//! `csd_hit_test` function runs **first** to classify the pointer into a
+//! decoration region (title bar, button, resize border, or client content).
+//! Only points classified as client content are forwarded to the
+//! [`HitTester`] here. The window-layer [`CsdController`](crate::csd::CsdController)
+//! stores the geometry (title-bar height, button radius, shadow blur) that
+//! the shell uses for that classification; see the [`csd`] module for the
+//! window-layer integration and the [`csd_region_for_point`] helper for a
+//! platform-agnostic fallback.
+//!
+//! [`csd`]: crate::csd
+//! [`csd_region_for_point`]: crate::csd::csd_region_for_point
+//!
 //! # Example
 //!
 //! ```

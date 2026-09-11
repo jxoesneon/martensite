@@ -38,6 +38,54 @@ impl std::fmt::Display for SurfaceWrapperError {
 
 impl std::error::Error for SurfaceWrapperError {}
 
+/// Surface alpha mode for backdrop-aware swapchain configuration.
+///
+/// When a system backdrop material (Mica, Acrylic, Vibrancy) is active,
+/// the surface must be configured with `PreMultiplied` alpha so the
+/// compositor can show the system material through the window. When no
+/// system material is active, `Opaque` is preferred for performance.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::surface::BackdropMode;
+///
+/// let opaque = BackdropMode::Opaque;
+/// let transparent = BackdropMode::Transparent;
+/// assert_ne!(opaque, transparent);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum BackdropMode {
+    /// Opaque surface — solid background. Uses `CompositeAlphaMode::Opaque`.
+    #[default]
+    Opaque,
+    /// Transparent surface — system material shows through. Uses
+    /// `CompositeAlphaMode::PreMultiplied`.
+    Transparent,
+}
+
+impl BackdropMode {
+    /// Converts to the corresponding `wgpu::CompositeAlphaMode`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::surface::BackdropMode;
+    /// use wgpu::CompositeAlphaMode;
+    ///
+    /// assert_eq!(BackdropMode::Opaque.to_alpha_mode(), CompositeAlphaMode::Opaque);
+    /// assert_eq!(BackdropMode::Transparent.to_alpha_mode(), CompositeAlphaMode::PreMultiplied);
+    /// ```
+    #[must_use]
+    pub fn to_alpha_mode(self) -> wgpu::CompositeAlphaMode {
+        match self {
+            Self::Opaque => wgpu::CompositeAlphaMode::Opaque,
+            Self::Transparent => wgpu::CompositeAlphaMode::PreMultiplied,
+        }
+    }
+}
+
 /// The present-mode preference order used during negotiation.
 ///
 /// The wrapper tries each mode in turn and selects the first one advertised by
@@ -71,6 +119,9 @@ pub struct SurfaceWrapper<'window> {
     surface: wgpu::Surface<'window>,
     /// The most recently applied configuration, if any.
     config: Option<wgpu::SurfaceConfiguration>,
+    /// The backdrop mode applied by the most recent `configure` call, reused
+    /// by `resize` so the alpha mode is preserved across reconfigurations.
+    backdrop_mode: BackdropMode,
 }
 
 impl<'window> SurfaceWrapper<'window> {
@@ -95,6 +146,7 @@ impl<'window> SurfaceWrapper<'window> {
         Self {
             surface,
             config: None,
+            backdrop_mode: BackdropMode::Opaque,
         }
     }
 
@@ -171,7 +223,9 @@ impl<'window> SurfaceWrapper<'window> {
     /// The texture format is taken from the surface's preferred format (the
     /// first entry of [`wgpu::SurfaceCapabilities::formats`]), the present mode
     /// is negotiated via [`SurfaceWrapper::negotiate_present_mode`], and the
-    /// alpha mode is set to [`wgpu::CompositeAlphaMode::Auto`].
+    /// alpha mode is derived from `backdrop` via [`BackdropMode::to_alpha_mode`].
+    /// The supplied `backdrop` is stored so that a subsequent
+    /// [`SurfaceWrapper::resize`] reuses the same alpha mode.
     ///
     /// # Errors
     ///
@@ -180,11 +234,11 @@ impl<'window> SurfaceWrapper<'window> {
     /// # Examples
     ///
     /// ```no_run
-    /// use martensite_wgpu::surface::SurfaceWrapper;
+    /// use martensite_wgpu::surface::{BackdropMode, SurfaceWrapper};
     ///
     /// # fn example(wrapper: &mut SurfaceWrapper<'_>, device: &wgpu::Device, adapter: &wgpu::Adapter) {
     /// // Zero dimensions are rejected.
-    /// assert!(wrapper.configure(device, adapter, 0, 100).is_err());
+    /// assert!(wrapper.configure(device, adapter, 0, 100, BackdropMode::Opaque).is_err());
     /// # }
     /// ```
     pub fn configure(
@@ -193,6 +247,7 @@ impl<'window> SurfaceWrapper<'window> {
         adapter: &wgpu::Adapter,
         width: u32,
         height: u32,
+        backdrop: BackdropMode,
     ) -> Result<(), SurfaceWrapperError> {
         if width == 0 || height == 0 {
             return Err(SurfaceWrapperError::InvalidDimensions);
@@ -219,20 +274,50 @@ impl<'window> SurfaceWrapper<'window> {
             height,
             present_mode,
             desired_maximum_frame_latency: 2,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            alpha_mode: backdrop.to_alpha_mode(),
             view_formats: Vec::new(),
         };
 
         self.surface.configure(device, &config);
         self.config = Some(config);
+        self.backdrop_mode = backdrop;
         Ok(())
     }
 
+    /// Configures the surface with an opaque backdrop (solid background).
+    ///
+    /// This is equivalent to `configure(device, adapter, width, height, BackdropMode::Opaque)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SurfaceWrapperError::InvalidDimensions`] if either dimension is zero.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::surface::SurfaceWrapper;
+    ///
+    /// # fn example(wrapper: &mut SurfaceWrapper<'_>, device: &wgpu::Device, adapter: &wgpu::Adapter) {
+    /// assert!(wrapper.configure_opaque(device, adapter, 0, 100).is_err());
+    /// # }
+    /// ```
+    pub fn configure_opaque(
+        &mut self,
+        device: &wgpu::Device,
+        adapter: &wgpu::Adapter,
+        width: u32,
+        height: u32,
+    ) -> Result<(), SurfaceWrapperError> {
+        self.configure(device, adapter, width, height, BackdropMode::Opaque)
+    }
+
     /// Reconfigures the surface for a new `width` x `height`, preserving the
-    /// previously negotiated format and present mode.
+    /// previously negotiated format, present mode, and backdrop alpha mode.
     ///
     /// This is the resize re-creation path: it updates the stored configuration
-    /// in place and re-issues [`wgpu::Surface::configure`].
+    /// in place and re-issues [`wgpu::Surface::configure`]. The alpha mode set
+    /// by the most recent [`SurfaceWrapper::configure`] (via the supplied
+    /// [`BackdropMode`]) is carried over unchanged.
     ///
     /// # Errors
     ///

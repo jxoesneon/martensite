@@ -15,7 +15,7 @@
 use crate::paint::PaintList;
 #[cfg(feature = "vello")]
 use crate::paint::{FontResource, GlyphRun, PaintCommand};
-use crate::RenderBackend;
+use crate::{ClearMode, RenderBackend};
 
 #[cfg(feature = "vello")]
 use {
@@ -140,6 +140,11 @@ pub struct VelloRenderer {
     /// every frame, which is essential for the 60fps/120fps targets.
     #[cfg(feature = "vello")]
     gpu_renderer: Option<VelloGpuRenderer>,
+    /// The [`ClearMode`] requested for the most recent frame. This is applied
+    /// as the `base_color` during [`VelloRenderer::render_to_texture`] so that
+    /// a [`ClearMode::Transparent`] request produces a transparent surface
+    /// for system backdrop compositing (CSD shadows / Liquid Glass).
+    clear_mode: ClearMode,
     last_command_count: usize,
 }
 
@@ -163,6 +168,7 @@ impl VelloRenderer {
             clip_depth: 0,
             #[cfg(feature = "vello")]
             gpu_renderer: None,
+            clear_mode: ClearMode::default(),
             last_command_count: 0,
         }
     }
@@ -258,6 +264,7 @@ impl VelloRenderer {
     pub fn reset(&mut self) {
         self.scene.reset();
         self.clip_depth = 0;
+        self.clear_mode = ClearMode::default();
         self.last_command_count = 0;
     }
 
@@ -336,8 +343,17 @@ impl VelloRenderer {
             // Unreachable: creation either succeeded above or returned early.
             return;
         };
+        let base_color = match self.clear_mode {
+            ClearMode::Opaque(c) => AlphaColor::<Srgb>::from_rgba8(
+                (c[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (c[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (c[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (c[3].clamp(0.0, 1.0) * 255.0).round() as u8,
+            ),
+            ClearMode::Transparent => Color::TRANSPARENT,
+        };
         let params = RenderParams {
-            base_color: Color::TRANSPARENT,
+            base_color,
             width,
             height,
             antialiasing_method: AaConfig::Area,
@@ -468,7 +484,58 @@ impl VelloRenderer {
             PaintCommand::DrawGlyphRun(run) => {
                 self.render_glyph_run(run);
             }
+            PaintCommand::BlurredRect {
+                rect,
+                blur_radius,
+                color,
+            } => {
+                self.render_blurred_rect(*rect, *blur_radius, *color);
+            }
         }
+    }
+
+    /// Renders a [`PaintCommand::BlurredRect`] as a Vello scene contribution.
+    ///
+    /// Vello does not currently expose a direct blur primitive or an easy
+    /// offscreen render target within the scene API, so this path renders a
+    /// semi-transparent filled rect as a placeholder. The alpha is scaled by
+    /// the blur radius so that larger blurs produce softer (more transparent)
+    /// shadows, approximating the visual falloff of a Gaussian blur without
+    /// the actual convolution.
+    ///
+    /// TODO: once Vello supports offscreen render targets or an image-blur
+    /// shader, replace this stub with a real two-pass Gaussian blur rendered
+    /// to an intermediate buffer and composited back into the scene.
+    #[cfg(feature = "vello")]
+    fn render_blurred_rect(&mut self, rect: [f32; 4], blur_radius: f32, color: [f32; 4]) {
+        let [x, y, w, h] = rect;
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        // Scale the source alpha down as the blur radius grows so that the
+        // placeholder shadow softens with larger radii. The factor is clamped
+        // so it never exceeds the original alpha.
+        let falloff = 1.0 / (1.0 + blur_radius * 0.05);
+        let a = color[3].clamp(0.0, 1.0) * falloff;
+        let placeholder = AlphaColor::<Srgb>::from_rgba8(
+            (color[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (color[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (color[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (a * 255.0).round() as u8,
+        );
+        let blur_rect = KurboRect::new(
+            f64::from(x),
+            f64::from(y),
+            f64::from(x + w),
+            f64::from(y + h),
+        );
+        self.scene.fill(
+            Fill::EvenOdd,
+            Affine::IDENTITY,
+            placeholder,
+            None,
+            &blur_rect,
+        );
     }
 
     /// Renders a glyph run.
@@ -522,8 +589,9 @@ impl Default for VelloRenderer {
 }
 
 impl RenderBackend for VelloRenderer {
-    fn render(&mut self, paint_list: &PaintList) {
+    fn render_with_clear(&mut self, paint_list: &PaintList, clear_mode: ClearMode) {
         self.last_command_count = paint_list.commands.len();
+        self.clear_mode = clear_mode;
         #[cfg(feature = "vello")]
         {
             self.scene.reset();

@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-11
+
+### Added — v0.13.0: Modern Shell & Platform
+
+- **New `martensite-shell` crate** with cross-platform backdrop
+  abstraction:
+  - `BackdropMaterial` enum (None, Mica, MicaAlt, Acrylic, Transient,
+    Vibrancy).
+  - `BackdropController` trait with `StubBackdropController` for
+    platforms without system material support.
+  - `BackdropMode` for surface alpha negotiation (Opaque vs
+    Transparent).
+  - `VibrancyMaterial` enum for macOS-specific material selection.
+  - `SnapLayout` cross-platform snap layout abstraction.
+- **Windows 11 backend** (`platform_impl/windows`):
+  - DWM Mica/Acrylic/MicaAlt/Transient via `DwmSetWindowAttribute`.
+  - `WindowsBackdropController` implementing `BackdropController`.
+  - `WindowsSnapLayout` for Win11 Snap Layouts integration.
+- **macOS backend** (`platform_impl/macos`):
+  - `MacosBackdropController` with NSVisualEffectView and Liquid
+    Glass support.
+  - `vibrancy_to_ns_material` mapping for all vibrancy material types.
+  - `AppearanceObserver` for NSAppearance change notifications.
+- **Wayland backend** (`platform_impl/wayland`):
+  - `WaylandBackdropController` (stub — Wayland has no system blur).
+  - `FractionalScale` for `wp_fractional_scale_v1` (1.5x DPI).
+  - `CsdConfig` + `DesktopEnvironment` for CSD styling per DE.
+  - `CsdHitTest` enum + `csd_hit_test()` function for CSD hit-testing.
+  - `StatusNotifierItem` stub for system tray registration.
+- **Theme system extensions** (`martensite-theme`):
+  - 8 new `TokenKey` variants: `BackdropMaterial`,
+    `BackdropTintOpacity`, `BackdropFallbackColor`, `CsdTitleBarHeight`,
+    `CsdButtonRadius`, `CsdShadowBlur`, `CsdShadowColor`,
+    `VibrancyMaterial`.
+  - Default values for light and dark themes.
+- **Surface alpha negotiation** (`martensite-wgpu`):
+  - `BackdropMode` enum in `surface` module.
+  - `SurfaceWrapper::configure` now accepts `BackdropMode` parameter.
+  - `configure_opaque` convenience method for backward compatibility.
+- **Render pipeline** (`martensite-render`):
+  - `ClearMode` enum (Opaque, Transparent) for backdrop-aware clears.
+  - `RenderBackend::render_with_clear` method with `ClearMode`.
+  - `PaintList::push_blurred_rect` for CSD shadows and blur effects.
+  - `PaintCommand::BlurredRect` variant.
+  - CPU fallback (tinyskia) box-blur implementation.
+  - Vello GPU backend blur fallback.
+- **Window crate extensions** (`martensite-window`):
+  - `CsdController` for per-window CSD configuration.
+  - `WindowEventOutcome::FractionalScaleChanged` for Wayland DPI.
+  - `WindowEventOutcome::ThemeAppearanceChanged` for macOS.
+- **winit** now enables the `wayland` feature alongside `x11`.
+
+### Changed
+- `martensite-wgpu` `SurfaceWrapper::configure` signature changed to
+  accept `BackdropMode` (use `configure_opaque` for backward compat).
+- `martensite-render` `RenderBackend` trait gains
+  `render_with_clear` (old `render` method remains as default impl).
+- `martensite-theme` `TokenKey` is now `#[non_exhaustive]` and gains 8
+  new variants (existing match arms are unaffected).
+- `martensite-shell` `BackdropMode` and `SnapLayout` are now
+  `#[non_exhaustive]` for forward compatibility.
+- `martensite-window` `WindowEntry::dpi()` no longer panics on
+  adversarial input — falls back to 1.0 scale if the stored value is
+  invalid.
+- `martensite-window` `WindowManager::handle_window_event` now returns
+  the validated/stored scale factor for `ScaleFactorChanged` events,
+  not the raw platform value.
+
 ## [0.12.0] - 2026-09-10
 
 ### Added — v0.12.0: Blessed Widgets & Kinematics

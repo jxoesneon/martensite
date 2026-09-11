@@ -3,8 +3,61 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.12.0 Blessed Widgets & Kinematics implementation
-(post-v0.11.0 audit remediation + v0.12.0 feature delivery).
+Last updated: v0.13.0 Modern Shell & Platform implementation
+(post-v0.12.0 Blessed Widgets & Kinematics delivery).
+
+## v0.13.0 — Modern Shell & Platform (IMPLEMENTED, PENDING VERIFICATION)
+
+All v0.13.0 deliverables are implemented and pending verification:
+
+### 1. New `martensite-shell` crate
+- `BackdropMaterial` enum, `BackdropController` trait,
+  `StubBackdropController`, `BackdropMode`, `VibrancyMaterial`,
+  `SnapLayout`.
+- Windows 11 backend (DWM Mica/Acrylic/MicaAlt/Transient,
+  `WindowsBackdropController`, `WindowsSnapLayout`).
+- macOS backend (`MacosBackdropController`, NSVisualEffectView /
+  Liquid Glass, `vibrancy_to_ns_material`, `AppearanceObserver`).
+- Wayland backend (`WaylandBackdropController` stub,
+  `FractionalScale`, `CsdConfig`/`DesktopEnvironment`, `CsdHitTest`,
+  `StatusNotifierItem` stub).
+
+### 2. Theme system extensions (`martensite-theme`)
+- 8 new `TokenKey` variants with light/dark defaults.
+
+### 3. Surface alpha negotiation (`martensite-wgpu`)
+- `BackdropMode` enum, `SurfaceWrapper::configure` accepts
+  `BackdropMode`, `configure_opaque` convenience method.
+
+### 4. Render pipeline (`martensite-render`)
+- `ClearMode` enum, `RenderBackend::render_with_clear`,
+  `PaintList::push_blurred_rect`, `PaintCommand::BlurredRect`,
+  CPU (tinyskia) and Vello GPU blur fallbacks.
+
+### 5. Window crate extensions (`martensite-window`)
+- `CsdController`, `WindowEventOutcome::FractionalScaleChanged`,
+  `WindowEventOutcome::ThemeAppearanceChanged`.
+
+### 6. winit feature change
+- Root `Cargo.toml` now enables `wayland` alongside `x11`.
+
+### 7. zbus dependency
+- `zbus` 5.x added as a workspace dependency (optional,
+  cfg-gated to Linux, behind `wayland-backend` feature).
+
+### Verification Status
+- `cargo check --workspace`: pending (critical gate — verifies the
+  winit feature change and zbus dependency don't break the build).
+- `cargo fmt --all -- --check`: pending.
+- Full CI gate suite (clippy, tests, doctests, docs, audit, deny):
+  pending.
+
+### Remaining (CI-only verification)
+- No new release tag or crates.io publish until CI confirms all gates.
+- Platform-specific backends (Windows DWM, macOS NSVisualEffectView)
+  require platform CI runners to exercise the FFI paths.
+
+---
 
 ## v0.12.0 — Blessed Widgets & Kinematics (IMPLEMENTED)
 

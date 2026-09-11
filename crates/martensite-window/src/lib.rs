@@ -56,6 +56,7 @@
 //! ```
 #![forbid(unsafe_code)]
 
+pub mod csd;
 pub mod dpi;
 pub mod event;
 pub mod hit_test;
@@ -67,6 +68,7 @@ pub use winit::event::WindowEvent;
 pub use winit::event_loop::ActiveEventLoop;
 pub use winit::window::{Window, WindowAttributes, WindowId};
 
+pub use csd::{csd_region_for_point, CsdController, CsdHitRegion};
 pub use dpi::DpiScale;
 pub use event::{
     convert_drop_event, convert_modifiers, convert_modifiers_state, convert_mouse_button,

@@ -47,7 +47,7 @@ pub use resilience::{
     RecoveryOutcome, SurfaceError, DEFAULT_FALLBACK_THRESHOLD, DEFAULT_MAX_RETRIES,
     RECOVERY_BUDGET,
 };
-pub use surface::{SurfaceWrapper, SurfaceWrapperError};
+pub use surface::{BackdropMode, SurfaceWrapper, SurfaceWrapperError};
 pub use theme_transition::{
     render_theme_transition, ThemeTransitionError, ThemeTransitionPipeline, THEME_UNIFORM_SIZE,
 };

@@ -38,6 +38,7 @@ pub enum ThemeToken {
 /// can be passed around freely, and `Eq + Hash` so it can be used as a
 /// [`HashMap`] key.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TokenKey {
     /// The base page background color.
     BackgroundColor,
@@ -89,6 +90,22 @@ pub enum TokenKey {
     AnimationDuration,
     /// The default animation easing parameter.
     AnimationEasing,
+    /// The system backdrop material type (Mica, Acrylic, Vibrancy, etc.).
+    BackdropMaterial,
+    /// The opacity tint applied over the system backdrop (0.0–1.0).
+    BackdropTintOpacity,
+    /// The fallback background color when the platform does not support system materials.
+    BackdropFallbackColor,
+    /// The CSD title bar height in physical pixels.
+    CsdTitleBarHeight,
+    /// The CSD window button corner radius in physical pixels.
+    CsdButtonRadius,
+    /// The CSD shadow blur radius in physical pixels.
+    CsdShadowBlur,
+    /// The CSD shadow color.
+    CsdShadowColor,
+    /// The macOS-specific vibrancy material selection.
+    VibrancyMaterial,
 }
 
 /// A collection of design tokens describing a complete theme.
@@ -450,6 +467,35 @@ pub fn default_light() -> Theme {
     theme.set(TokenKey::AnimationDuration, ThemeToken::Duration(150.0));
     theme.set(TokenKey::AnimationEasing, ThemeToken::Easing(0.25));
 
+    // --- Platform shell (v0.13.0) -----------------------------------------
+    // Backdrop material: 0 = None (no system material). The shell layer
+    // interprets this dimension value (1 = Mica, 2 = MicaAlt, 3 = Acrylic,
+    // 4 = Transient, 5 = Vibrancy).
+    theme.set(TokenKey::BackdropMaterial, ThemeToken::Dimension(0.0));
+    theme.set(TokenKey::BackdropTintOpacity, ThemeToken::Dimension(0.0));
+    theme.set(
+        TokenKey::BackdropFallbackColor,
+        ThemeToken::Color(Oklab {
+            l: 0.96,
+            a: 0.0,
+            b: 0.0,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(TokenKey::CsdTitleBarHeight, ThemeToken::Dimension(32.0));
+    theme.set(TokenKey::CsdButtonRadius, ThemeToken::Dimension(6.0));
+    theme.set(TokenKey::CsdShadowBlur, ThemeToken::Dimension(20.0));
+    theme.set(
+        TokenKey::CsdShadowColor,
+        ThemeToken::Color(Oklab {
+            l: 0.0,
+            a: 0.0,
+            b: 0.0,
+            alpha: 0.3,
+        }),
+    );
+    theme.set(TokenKey::VibrancyMaterial, ThemeToken::Dimension(0.0));
+
     theme
 }
 
@@ -605,6 +651,35 @@ pub fn default_dark() -> Theme {
     // --- Motion -----------------------------------------------------------
     theme.set(TokenKey::AnimationDuration, ThemeToken::Duration(150.0));
     theme.set(TokenKey::AnimationEasing, ThemeToken::Easing(0.25));
+
+    // --- Platform shell (v0.13.0) -----------------------------------------
+    // Backdrop material: 0 = None (no system material). The shell layer
+    // interprets this dimension value (1 = Mica, 2 = MicaAlt, 3 = Acrylic,
+    // 4 = Transient, 5 = Vibrancy).
+    theme.set(TokenKey::BackdropMaterial, ThemeToken::Dimension(0.0));
+    theme.set(TokenKey::BackdropTintOpacity, ThemeToken::Dimension(0.0));
+    theme.set(
+        TokenKey::BackdropFallbackColor,
+        ThemeToken::Color(Oklab {
+            l: 0.20,
+            a: 0.0,
+            b: 0.0,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(TokenKey::CsdTitleBarHeight, ThemeToken::Dimension(32.0));
+    theme.set(TokenKey::CsdButtonRadius, ThemeToken::Dimension(6.0));
+    theme.set(TokenKey::CsdShadowBlur, ThemeToken::Dimension(20.0));
+    theme.set(
+        TokenKey::CsdShadowColor,
+        ThemeToken::Color(Oklab {
+            l: 0.0,
+            a: 0.0,
+            b: 0.0,
+            alpha: 0.3,
+        }),
+    );
+    theme.set(TokenKey::VibrancyMaterial, ThemeToken::Dimension(0.0));
 
     theme
 }

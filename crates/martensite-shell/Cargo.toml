@@ -1,0 +1,37 @@
+[package]
+name = "martensite-shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Cross-platform shell integration: system backdrops, snap layouts, CSD, and system tray."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+windows-backend = ["dep:windows"]
+macos-backend = ["dep:objc2", "dep:icrate"]
+wayland-backend = ["dep:zbus"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true, optional = true }
+icrate = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Win32/COM FFI for DWM system materials and Snap Layouts. Only pulled in
+# when the `windows-backend` feature is enabled and the target is Windows.
+windows = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# D-Bus IPC for StatusNotifierItem system tray registration. Only pulled
+# in when the `wayland-backend` feature is enabled and the target is Linux.
+zbus = { workspace = true, optional = true }
+
+[dependencies]
+# Platform-specific, optional

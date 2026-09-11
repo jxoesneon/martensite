@@ -96,6 +96,38 @@ pub enum WindowEventOutcome {
     /// partially visible. The caller can use this to skip rendering while
     /// occluded to save power.
     Occluded(bool),
+    /// The window's fractional scale factor changed (Wayland
+    /// `wp_fractional_scale_v1`). The value is a fractional scale
+    /// factor (e.g. 1.5 for 150% DPI). The caller should reconfigure
+    /// the surface at the new physical resolution.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_window::WindowEventOutcome;
+    ///
+    /// // Fractional scale changes carry the new factor.
+    /// assert_ne!(
+    ///     WindowEventOutcome::FractionalScaleChanged(1.0),
+    ///     WindowEventOutcome::FractionalScaleChanged(1.5),
+    /// );
+    /// ```
+    FractionalScaleChanged(f64),
+    /// The system theme appearance changed (macOS `NSAppearance`
+    /// notification). The caller should trigger a theme transition.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_window::WindowEventOutcome;
+    ///
+    /// // Theme appearance changes carry no payload.
+    /// assert_eq!(
+    ///     WindowEventOutcome::ThemeAppearanceChanged,
+    ///     WindowEventOutcome::ThemeAppearanceChanged,
+    /// );
+    /// ```
+    ThemeAppearanceChanged,
 }
 
 /// A single tracked window and its associated per-window state.
@@ -119,10 +151,16 @@ impl WindowEntry {
     ///
     /// This is a convenience for callers that want the full
     /// physical↔logical conversion API without having to construct a
-    /// [`DpiScale`] themselves.
+    /// [`DpiScale`] themselves. If the stored scale factor is invalid
+    /// (non-finite or non-positive), falls back to a default 1.0 scale
+    /// rather than panicking.
     #[must_use]
     pub fn dpi(&self) -> DpiScale {
-        DpiScale::new(self.dpi_scale)
+        if DpiScale::is_valid(self.dpi_scale) {
+            DpiScale::new(self.dpi_scale)
+        } else {
+            DpiScale::new(1.0)
+        }
     }
 }
 
@@ -351,7 +389,7 @@ impl WindowManager {
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let Some(entry) = self.window_mut(key) {
-                    // Validate through DpiScale::new so non-finite or
+                    // Validate through DpiScale::is_valid so non-finite or
                     // non-positive scale factors cannot be stored and
                     // later panic when WindowEntry::dpi() is called.
                     // If the platform delivers an invalid scale factor,
@@ -360,7 +398,14 @@ impl WindowManager {
                         entry.dpi_scale = *scale_factor;
                     }
                 }
-                WindowEventOutcome::ScaleFactorChanged(*scale_factor)
+                // Return the validated/stored scale factor, not the raw
+                // platform value, so callers never receive an invalid
+                // factor that would panic DpiScale::new.
+                let stored = self
+                    .window(key)
+                    .map(|e| e.dpi_scale)
+                    .unwrap_or(*scale_factor);
+                WindowEventOutcome::ScaleFactorChanged(stored)
             }
             WindowEvent::RedrawRequested => WindowEventOutcome::RedrawRequested,
             WindowEvent::Occluded(occluded) => WindowEventOutcome::Occluded(*occluded),

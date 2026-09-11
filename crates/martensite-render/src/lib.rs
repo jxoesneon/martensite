@@ -35,12 +35,66 @@ pub use vello_backend::VelloRenderer;
 // downstream convenience.
 pub use kurbo::{BezPath, Point, Rect};
 
-/// Abstraction over the concrete rendering target that consumes a [`PaintList`].
+/// Controls how the render target is cleared at the start of a frame.
+///
+/// `ClearMode::Opaque` clears with a solid color (preserving the historical
+/// opaque-black behavior), while `ClearMode::Transparent` clears with fully
+/// transparent black so the system compositor's backdrop shows through — this
+/// is required for CSD window shadows and the Liquid Glass backdrop blur on
+/// Linux where the surface itself must be transparent.
 ///
 /// # Examples
 ///
 /// ```
-/// use martensite_render::{PaintList, RenderBackend};
+/// use martensite_render::ClearMode;
+///
+/// let opaque = ClearMode::Opaque([0.0, 0.0, 0.0, 1.0]);
+/// let transparent = ClearMode::Transparent;
+/// assert_ne!(opaque, transparent);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ClearMode {
+    /// Clear with an opaque solid color (R, G, B, A=1.0).
+    Opaque([f32; 4]),
+    /// Clear with transparent black (0, 0, 0, 0) for system backdrop compositing.
+    Transparent,
+}
+
+impl Default for ClearMode {
+    /// The default clear mode is transparent black, preserving the
+    /// historical behavior of both backends (TinySkia's `clear()` and
+    /// Vello's `base_color` both cleared to fully transparent) so that
+    /// existing callers of [`RenderBackend::render`] see no behavior change.
+    /// Use [`ClearMode::Opaque`] explicitly via
+    /// [`RenderBackend::render_with_clear`] when an opaque backdrop is
+    /// desired.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::ClearMode;
+    ///
+    /// let mode = ClearMode::default();
+    /// assert_eq!(mode, ClearMode::Transparent);
+    /// ```
+    fn default() -> Self {
+        Self::Transparent
+    }
+}
+
+/// Abstraction over the concrete rendering target that consumes a [`PaintList`].
+///
+/// The primary entry point is [`RenderBackend::render_with_clear`], which
+/// accepts a [`ClearMode`] controlling how the target is cleared at the start
+/// of a frame. The convenience method [`RenderBackend::render`] is a thin
+/// wrapper that forwards to `render_with_clear` with [`ClearMode::default`]
+/// (transparent black), preserving the historical behavior of the pipeline
+/// before opaque backdrops were introduced.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::{ClearMode, PaintList, RenderBackend};
 /// use kurbo::Rect;
 ///
 /// // A mock backend that records how many commands it received.
@@ -49,7 +103,7 @@ pub use kurbo::{BezPath, Point, Rect};
 /// }
 ///
 /// impl RenderBackend for CountingBackend {
-///     fn render(&mut self, paint_list: &PaintList) {
+///     fn render_with_clear(&mut self, paint_list: &PaintList, _clear_mode: ClearMode) {
 ///         self.received = paint_list.len();
 ///     }
 /// }
@@ -62,7 +116,42 @@ pub use kurbo::{BezPath, Point, Rect};
 /// assert_eq!(backend.received, 1);
 /// ```
 pub trait RenderBackend: Send + 'static {
-    /// Renders the given [`PaintList`] to this backend's output surface.
+    /// Renders the given [`PaintList`] to this backend's output surface,
+    /// clearing the target according to `clear_mode` first.
+    ///
+    /// Implementors should perform the clear, reset any per-frame state
+    /// (such as clip stacks), and replay the supplied commands in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{ClearMode, PaintList, RenderBackend};
+    /// use kurbo::Rect;
+    ///
+    /// struct Recorder { count: usize }
+    /// impl RenderBackend for Recorder {
+    ///     fn render_with_clear(&mut self, paint_list: &PaintList, _clear_mode: ClearMode) {
+    ///         self.count = paint_list.len();
+    ///     }
+    /// }
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+    ///
+    /// let mut backend = Recorder { count: 0 };
+    /// backend.render_with_clear(&list, ClearMode::Transparent);
+    /// assert_eq!(backend.count, 1);
+    /// ```
+    fn render_with_clear(&mut self, paint_list: &PaintList, clear_mode: ClearMode);
+
+    /// Renders the given [`PaintList`] using the default [`ClearMode`]
+    /// (transparent black), preserving the historical behavior of the render
+    /// pipeline where both backends cleared to fully transparent.
+    ///
+    /// This is a convenience wrapper around [`RenderBackend::render_with_clear`];
+    /// callers that need a transparent backdrop (for CSD shadows or Liquid
+    /// Glass compositing) should call `render_with_clear` directly with
+    /// [`ClearMode::Transparent`].
     ///
     /// # Examples
     ///
@@ -72,7 +161,7 @@ pub trait RenderBackend: Send + 'static {
     ///
     /// struct Recorder { count: usize }
     /// impl RenderBackend for Recorder {
-    ///     fn render(&mut self, paint_list: &PaintList) {
+    ///     fn render_with_clear(&mut self, paint_list: &PaintList, _clear_mode: martensite_render::ClearMode) {
     ///         self.count = paint_list.len();
     ///     }
     /// }
@@ -84,12 +173,14 @@ pub trait RenderBackend: Send + 'static {
     /// backend.render(&list);
     /// assert_eq!(backend.count, 1);
     /// ```
-    fn render(&mut self, paint_list: &PaintList);
+    fn render(&mut self, paint_list: &PaintList) {
+        self.render_with_clear(paint_list, ClearMode::default());
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PaintCommand, PaintList, RenderBackend};
+    use super::{ClearMode, PaintCommand, PaintList, RenderBackend};
     use kurbo::{Point, Rect};
 
     /// A mock backend that records the number of commands it received.
@@ -104,7 +195,7 @@ mod tests {
     }
 
     impl RenderBackend for MockBackend {
-        fn render(&mut self, paint_list: &PaintList) {
+        fn render_with_clear(&mut self, paint_list: &PaintList, _clear_mode: ClearMode) {
             self.received_count = paint_list.commands.len();
         }
     }

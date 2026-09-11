@@ -177,6 +177,9 @@ These are explicitly documented in code, not hidden:
   - `martensite-accesskit-winit` — vendored upstream fork of
     `accesskit_winit` 0.34.0 patched for winit 0.31.0-beta.3. Temporary;
     remove once upstream supports winit 0.31.
+  - `martensite-shell` — platform FFI for system backdrops (DWM on
+    Windows, NSVisualEffectView/Liquid Glass on macOS). Wayland CSD
+    is safe Rust.
 - `FallbackDecisionCache` caches resolved fallback chains keyed by
   `(script, locale, primary_family)`, invalidated by a font-system
   generation counter.

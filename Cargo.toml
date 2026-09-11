@@ -29,6 +29,7 @@ members = [
     "crates/martensite-cosmic-text",
     "crates/martensite-font-fallback",
     "crates/martensite-host",
+    "crates/martensite-shell",
     "crates/martensite-clipboard-platform",
     "crates/martensite-text-reference",
     "crates/martensite-render-test",
@@ -84,6 +85,7 @@ martensite-cosmic-text = { version = "0.19.0-martensite.1", path = "crates/marte
 martensite-font-fallback = { version = "0.13.0", path = "crates/martensite-font-fallback" }
 martensite-clipboard-platform = { version = "0.13.0", path = "crates/martensite-clipboard-platform" }
 martensite-host = { version = "0.13.0", path = "crates/martensite-host" }
+martensite-shell = { version = "0.13.0", path = "crates/martensite-shell" }
 
 # Core rendering stack — versions verified against crates.io on 2026-09-06
 # wgpu backends are enabled unconditionally; wgpu internally gates them by
@@ -104,7 +106,14 @@ cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite
 fontdb = { version = "0.24", default-features = false }
 accesskit = { version = "0.25" }
 accesskit_winit = { package = "martensite-accesskit-winit", version = "0.13.0", path = "crates/martensite-accesskit-winit" }
-winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11"] }
+winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }
+# Win32/COM FFI for DWM system materials and Snap Layouts (martensite-shell).
+# Version 0.61.3 was published 2025-06-12 (well over 7 days ago).
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 # Utility libraries
 slab = "0.4"
@@ -132,6 +141,18 @@ serde = { version = "1.0", features = ["derive"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.6"
 unicode-bidi = "0.3"
+# Objective-C runtime FFI for the macOS shell backend (NSVisualEffectView
+# vibrancy, Liquid Glass). Used by `martensite-shell` under the
+# `macos-backend` feature. `objc2` 0.6.4 was published 2025-04-10 (well over
+# 7 days ago). `icrate` 0.1.2 is the final published version (the crate is
+# deprecated in favor of the split `objc2-*` framework crates); it is the
+# latest available on crates.io.
+objc2 = "0.6"
+icrate = "0.1.2"
+# D-Bus IPC for the Wayland shell backend (StatusNotifierItem system tray
+# registration). Used by `martensite-shell` under the `wayland-backend` feature,
+# cfg-gated to Linux. `zbus` 5.x was published well over 7 days ago.
+zbus = { version = "5", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

@@ -7,7 +7,7 @@
 //! the primary target for headless CI rendering tests.
 
 use crate::paint::{FontResource, GlyphRun, GradientStops, PaintCommand, PaintList};
-use crate::RenderBackend;
+use crate::{ClearMode, RenderBackend};
 use kurbo::{BezPath, PathEl, Point, Rect};
 use swash::scale::ScaleContext;
 use swash::zeno::Verb;
@@ -475,6 +475,13 @@ impl TinySkiaBackend {
             PaintCommand::DrawGlyphRun(run) => {
                 self.render_glyph_run(run);
             }
+            PaintCommand::BlurredRect {
+                rect,
+                blur_radius,
+                color,
+            } => {
+                self.render_blurred_rect(*rect, *blur_radius, *color);
+            }
         }
     }
 
@@ -683,17 +690,212 @@ impl TinySkiaBackend {
         let builder = core::mem::take(&mut self.path_builder);
         builder.finish()
     }
+
+    /// Renders a [`PaintCommand::BlurredRect`] using a three-pass separable
+    /// box-blur approximation of a Gaussian.
+    ///
+    /// The rect is rasterized into a small offscreen [`Pixmap`] padded by the
+    /// blur radius on all sides (clamped to the backend bounds). The pixmap is
+    /// stored in premultiplied linear form, blurred three times with a
+    /// separable horizontal+vertical box kernel, and then composited back onto
+    /// the main pixmap under the active clip via [`Pixmap::draw_pixmap`].
+    ///
+    /// This is the CPU fallback path: it is correct but not GPU-fast, which is
+    /// acceptable for headless CI and software rendering. A zero or negative
+    /// `blur_radius` degrades to a plain solid fill.
+    fn render_blurred_rect(&mut self, rect: [f32; 4], blur_radius: f32, color: [f32; 4]) {
+        let [x, y, w, h] = rect;
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        // Clamp color channels to [0, 1].
+        let color = color.map(|c| c.clamp(0.0, 1.0));
+
+        if blur_radius <= 0.0 {
+            // Degenerate to a solid fill.
+            let mut paint = Paint::default();
+            paint.set_color(Self::to_color([
+                (color[0] * 255.0).round() as u8,
+                (color[1] * 255.0).round() as u8,
+                (color[2] * 255.0).round() as u8,
+                (color[3] * 255.0).round() as u8,
+            ]));
+            paint.anti_alias = true;
+            if let Some(ts_rect) = TsRect::from_xywh(x, y, w, h) {
+                self.pixmap.fill_rect(
+                    ts_rect,
+                    &paint,
+                    Transform::identity(),
+                    self.clip_stack.last(),
+                );
+            }
+            return;
+        }
+
+        // Padded bounds, clamped to the pixmap. The blur kernel spreads the
+        // solid rect by `blur_radius` pixels in every direction.
+        let pad = blur_radius.ceil() as i32;
+        let x0 = (x.floor() as i32 - pad).max(0);
+        let y0 = (y.floor() as i32 - pad).max(0);
+        let x1 = ((x + w).ceil() as i32 + pad).min(self.width as i32);
+        let y1 = ((y + h).ceil() as i32 + pad).min(self.height as i32);
+        let tw = u32::try_from(x1 - x0).unwrap_or(0);
+        let th = u32::try_from(y1 - y0).unwrap_or(0);
+        if tw == 0 || th == 0 {
+            return;
+        }
+        let Some(mut temp) = Pixmap::new(tw, th) else {
+            return;
+        };
+
+        // Fill the solid rect region inside the temp pixmap. The rect's
+        // origin is offset by (x0, y0) to map into temp-local coordinates.
+        let rx = x - x0 as f32;
+        let ry = y - y0 as f32;
+        let mut paint = Paint::default();
+        paint.set_color(Self::to_color([
+            (color[0] * 255.0).round() as u8,
+            (color[1] * 255.0).round() as u8,
+            (color[2] * 255.0).round() as u8,
+            (color[3] * 255.0).round() as u8,
+        ]));
+        paint.anti_alias = false;
+        if let Some(ts_rect) = TsRect::from_xywh(rx, ry, w, h) {
+            temp.fill_rect(ts_rect, &paint, Transform::identity(), None);
+        }
+
+        // Extract premultiplied linear float channels and run a three-pass
+        // separable box blur (each pass = horizontal + vertical).
+        let mut data = pixmap_to_linear_premul(&temp, tw as usize, th as usize);
+        let radius = blur_radius.round().max(1.0) as usize;
+        for _ in 0..3 {
+            box_blur_separable(&mut data, tw as usize, th as usize, radius);
+        }
+        linear_premul_to_pixmap(&data, &mut temp, tw as usize, th as usize);
+
+        // Composite the blurred temp pixmap onto the main pixmap under the
+        // active clip. `draw_pixmap` performs source-over compositing.
+        let clip_mask = self.clip_stack.last();
+        self.pixmap.draw_pixmap(
+            x0,
+            y0,
+            temp.as_ref(),
+            &tiny_skia::PixmapPaint::default(),
+            Transform::identity(),
+            clip_mask,
+        );
+    }
 }
 
 impl RenderBackend for TinySkiaBackend {
-    fn render(&mut self, paint_list: &PaintList) {
-        self.clear();
+    fn render_with_clear(&mut self, paint_list: &PaintList, clear_mode: ClearMode) {
+        match clear_mode {
+            ClearMode::Opaque(color) => {
+                let r = (color[0].clamp(0.0, 1.0) * 255.0).round() as u8;
+                let g = (color[1].clamp(0.0, 1.0) * 255.0).round() as u8;
+                let b = (color[2].clamp(0.0, 1.0) * 255.0).round() as u8;
+                let a = (color[3].clamp(0.0, 1.0) * 255.0).round() as u8;
+                self.pixmap.fill(Color::from_rgba8(r, g, b, a));
+            }
+            ClearMode::Transparent => {
+                self.pixmap.fill(Color::TRANSPARENT);
+            }
+        }
         // Reset the clip stack at the start of each frame. The current
         // `PaintCommand` set has no explicit "pop clip" variant, so clips do
         // not persist across frames and nesting resets per render pass.
         self.clip_stack.clear();
         for command in &paint_list.commands {
             self.render_command(command);
+        }
+    }
+}
+
+/// Converts a tiny-skia [`Pixmap`] into a flat vector of premultiplied linear
+/// RGBA channels (each in `0.0..=1.0`).
+///
+/// tiny-skia stores pixels as premultiplied RGBA8 in sRGB-ish encoding; for
+/// the purposes of the box-blur fallback we treat the byte values as linear
+/// premultiplied samples, which is a faithful approximation for the shadow
+/// compositing use case.
+fn pixmap_to_linear_premul(pixmap: &Pixmap, width: usize, height: usize) -> Vec<[f32; 4]> {
+    let mut out = vec![[0.0_f32; 4]; width * height];
+    let data = pixmap.data();
+    for (i, px) in data.as_chunks::<4>().0.iter().enumerate() {
+        out[i] = [
+            f32::from(px[0]) / 255.0,
+            f32::from(px[1]) / 255.0,
+            f32::from(px[2]) / 255.0,
+            f32::from(px[3]) / 255.0,
+        ];
+    }
+    out
+}
+
+/// Writes premultiplied linear float channels back into a [`Pixmap`] as
+/// premultiplied RGBA8 bytes, clamping each channel to `0..=255`.
+fn linear_premul_to_pixmap(data: &[[f32; 4]], pixmap: &mut Pixmap, width: usize, height: usize) {
+    let bytes = pixmap.data_mut();
+    for (i, px) in data.iter().enumerate() {
+        let r = (px[0].clamp(0.0, 1.0) * 255.0).round() as u8;
+        let g = (px[1].clamp(0.0, 1.0) * 255.0).round() as u8;
+        let b = (px[2].clamp(0.0, 1.0) * 255.0).round() as u8;
+        let a = (px[3].clamp(0.0, 1.0) * 255.0).round() as u8;
+        let off = i * 4;
+        bytes[off] = r;
+        bytes[off + 1] = g;
+        bytes[off + 2] = b;
+        bytes[off + 3] = a;
+    }
+    // Dimensions are only used to bound the loop; the pixmap width/height
+    // match by construction so the byte count is exact.
+    let _ = (width, height);
+}
+
+/// Applies one separable box-blur pass (horizontal then vertical) with the
+/// given `radius` to a premultiplied linear RGBA buffer of size `width * height`.
+///
+/// Each output sample is the average of the `2 * radius + 1` neighbouring
+/// samples along the axis, with edge clamping. This is the building block of
+/// the three-pass Gaussian approximation used by [`TinySkiaBackend`].
+fn box_blur_separable(data: &mut [[f32; 4]], width: usize, height: usize, radius: usize) {
+    if width == 0 || height == 0 || radius == 0 {
+        return;
+    }
+    let mut temp = vec![[0.0_f32; 4]; width * height];
+
+    // Horizontal pass.
+    let inv = 1.0 / ((2 * radius + 1) as f32);
+    for y in 0..height {
+        let row = y * width;
+        for x in 0..width {
+            let mut sum = [0.0_f32; 4];
+            for dx in 0..=(2 * radius) {
+                let sx = (x + dx).saturating_sub(radius).min(width - 1);
+                let p = data[row + sx];
+                sum[0] += p[0];
+                sum[1] += p[1];
+                sum[2] += p[2];
+                sum[3] += p[3];
+            }
+            temp[row + x] = [sum[0] * inv, sum[1] * inv, sum[2] * inv, sum[3] * inv];
+        }
+    }
+
+    // Vertical pass (read from `temp`, write back into `data`).
+    let inv = 1.0 / ((2 * radius + 1) as f32);
+    for x in 0..width {
+        for y in 0..height {
+            let mut sum = [0.0_f32; 4];
+            for dy in 0..=(2 * radius) {
+                let sy = (y + dy).saturating_sub(radius).min(height - 1);
+                let p = temp[sy * width + x];
+                sum[0] += p[0];
+                sum[1] += p[1];
+                sum[2] += p[2];
+                sum[3] += p[3];
+            }
+            data[y * width + x] = [sum[0] * inv, sum[1] * inv, sum[2] * inv, sum[3] * inv];
         }
     }
 }
