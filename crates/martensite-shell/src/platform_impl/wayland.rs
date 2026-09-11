@@ -1,13 +1,17 @@
-//! Wayland client-side decorations, fractional-scale, and system tray.
+//! Wayland client-side decorations and fractional-scale.
 //!
 //! Unlike Windows and macOS backends, the Wayland backend does NOT use
 //! system materials (there is no Wayland protocol for compositor-side
 //! blur). Instead, CSD (client-side decorations) are rendered by the
 //! application itself through the normal paint pipeline.
 //!
+//! StatusNotifierItem system tray registration has been moved to the
+//! dedicated [`crate::status_notifier`] module.
+//!
 //! This module is entirely safe Rust — no `unsafe` code is needed.
 
-use crate::backdrop::{BackdropController, BackdropMaterial, BackdropMode};
+use crate::backdrop::{BackdropController, BackdropMaterial, BackdropMode, Window};
+use crate::event::{ShellEvent, ShellEventQueue};
 
 /// Wayland backdrop controller — always returns `None` (no system materials).
 ///
@@ -19,7 +23,13 @@ use crate::backdrop::{BackdropController, BackdropMaterial, BackdropMode};
 ///
 /// ```
 /// use martensite_shell::platform_impl::wayland::WaylandBackdropController;
-/// use martensite_shell::{BackdropController, BackdropMaterial};
+/// use martensite_shell::{BackdropController, BackdropMaterial, Window};
+/// use core::ffi::c_void;
+///
+/// # struct W;
+/// # impl Window for W {
+/// #     unsafe fn raw_handle(&self) -> *mut c_void { core::ptr::null_mut() }
+/// # }
 ///
 /// let controller = WaylandBackdropController::new();
 /// assert_eq!(controller.current_material(), BackdropMaterial::None);
@@ -42,7 +52,7 @@ impl Default for WaylandBackdropController {
 }
 
 impl BackdropController for WaylandBackdropController {
-    fn set_material(&mut self, _material: BackdropMaterial) {
+    fn set_material(&mut self, _window: &dyn Window, _material: BackdropMaterial) {
         // No-op: Wayland has no system material protocol.
     }
     fn current_material(&self) -> BackdropMaterial {
@@ -51,8 +61,10 @@ impl BackdropController for WaylandBackdropController {
     fn mode(&self) -> BackdropMode {
         BackdropMode::Opaque
     }
-    fn supports_material(&self, _material: BackdropMaterial) -> bool {
-        false
+    fn supports_material(&self, material: BackdropMaterial) -> bool {
+        // Wayland has no system material protocol, but `None` (solid opaque
+        // fallback) is always supported.
+        material == BackdropMaterial::None
     }
 }
 
@@ -125,7 +137,10 @@ impl FractionalScale {
     /// ```
     #[must_use]
     pub fn to_physical(&self, logical: u32) -> u32 {
-        ((logical as f64) * self.scale).round() as u32
+        let physical = ((logical as f64) * self.scale).round();
+        // Clamp to a sane maximum to avoid silent saturation to u32::MAX.
+        let clamped = physical.clamp(0.0, u32::MAX as f64 - 1.0);
+        clamped as u32
     }
 
     /// Converts physical pixels (buffer) to logical pixels.
@@ -141,8 +156,198 @@ impl FractionalScale {
     /// ```
     #[must_use]
     pub fn to_logical(&self, physical: u32) -> u32 {
-        ((physical as f64) / self.scale).round() as u32
+        let logical = ((physical as f64) / self.scale).round();
+        // Clamp to a sane maximum to avoid silent saturation to u32::MAX.
+        let clamped = logical.clamp(0.0, u32::MAX as f64 - 1.0);
+        clamped as u32
     }
+}
+
+/// Mutable tracker for the fractional scale of a Wayland surface.
+///
+/// The compositor sends `wp_fractional_scale_v1::preferred_scale` events
+/// whenever the preferred scale for a surface changes (e.g. when the
+/// window is dragged between outputs with different DPRs). This type
+/// holds the most recent value, validated through [`FractionalScale::new`]
+/// so that unreasonable or non-finite compositor values can never reach
+/// the rendering pipeline.
+///
+/// When a [`ShellEventQueue`] is attached via
+/// [`with_event_queue`](Self::with_event_queue), each scale change also
+/// pushes a [`ShellEvent::FractionalScaleChanged`] onto the queue so the
+/// window manager can emit
+/// `WindowEventOutcome::FractionalScaleChanged`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_shell::platform_impl::wayland::FractionalScaleTracker;
+/// use martensite_shell::ShellEventQueue;
+///
+/// let queue = ShellEventQueue::new();
+/// let mut tracker = FractionalScaleTracker::with_event_queue(queue.clone());
+/// assert_eq!(tracker.current().scale(), 1.0);
+/// tracker.update(1.5);
+/// assert_eq!(tracker.current().scale(), 1.5);
+/// // The event was pushed to the queue.
+/// let events = queue.drain();
+/// assert_eq!(events.len(), 1);
+/// // NaN and infinity are rejected, falling back to 1.0.
+/// tracker.update(f64::NAN);
+/// assert_eq!(tracker.current().scale(), 1.0);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct FractionalScaleTracker {
+    scale: FractionalScale,
+    event_queue: Option<ShellEventQueue>,
+}
+
+impl FractionalScaleTracker {
+    /// Creates a new tracker starting at the default scale of `1.0`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_shell::platform_impl::wayland::FractionalScaleTracker;
+    ///
+    /// let tracker = FractionalScaleTracker::new();
+    /// assert_eq!(tracker.current().scale(), 1.0);
+    /// ```
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            scale: FractionalScale::new(1.0),
+            event_queue: None,
+        }
+    }
+
+    /// Creates a new tracker with a [`ShellEventQueue`] attached.
+    ///
+    /// Each call to [`update`](Self::update) that changes the scale
+    /// pushes a [`ShellEvent::FractionalScaleChanged`] onto the queue.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_shell::platform_impl::wayland::FractionalScaleTracker;
+    /// use martensite_shell::{ShellEvent, ShellEventQueue};
+    ///
+    /// let queue = ShellEventQueue::new();
+    /// let mut tracker = FractionalScaleTracker::with_event_queue(queue.clone());
+    /// tracker.update(2.0);
+    /// assert_eq!(queue.drain(), vec![ShellEvent::FractionalScaleChanged(2.0)]);
+    /// ```
+    #[must_use]
+    pub fn with_event_queue(queue: ShellEventQueue) -> Self {
+        Self {
+            scale: FractionalScale::new(1.0),
+            event_queue: Some(queue),
+        }
+    }
+
+    /// Attaches or replaces the [`ShellEventQueue`] for event emission.
+    ///
+    /// After calling this, subsequent [`update`](Self::update) calls
+    /// will push `FractionalScaleChanged` events onto the queue.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_shell::platform_impl::wayland::FractionalScaleTracker;
+    /// use martensite_shell::{ShellEvent, ShellEventQueue};
+    ///
+    /// let queue = ShellEventQueue::new();
+    /// let mut tracker = FractionalScaleTracker::new();
+    /// tracker.set_event_queue(queue.clone());
+    /// tracker.update(1.5);
+    /// assert_eq!(queue.drain(), vec![ShellEvent::FractionalScaleChanged(1.5)]);
+    /// ```
+    pub fn set_event_queue(&mut self, queue: ShellEventQueue) {
+        self.event_queue = Some(queue);
+    }
+
+    /// Updates the tracked scale with a new compositor value.
+    ///
+    /// The value is validated through [`FractionalScale::new`], so NaN,
+    /// infinity, and out-of-range values are clamped/rejected before
+    /// being stored. If the validated scale differs from the previous
+    /// value and an event queue is attached, a
+    /// [`ShellEvent::FractionalScaleChanged`] is pushed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_shell::platform_impl::wayland::FractionalScaleTracker;
+    ///
+    /// let mut tracker = FractionalScaleTracker::new();
+    /// tracker.update(2.0);
+    /// assert_eq!(tracker.current().scale(), 2.0);
+    /// ```
+    pub fn update(&mut self, scale: f64) {
+        let new_scale = FractionalScale::new(scale);
+        let changed = new_scale != self.scale;
+        self.scale = new_scale;
+        if changed {
+            if let Some(queue) = &self.event_queue {
+                queue.push(ShellEvent::FractionalScaleChanged(new_scale.scale()));
+            }
+        }
+    }
+
+    /// Returns the current validated fractional scale.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_shell::platform_impl::wayland::FractionalScaleTracker;
+    ///
+    /// let tracker = FractionalScaleTracker::new();
+    /// let scale = tracker.current();
+    /// assert_eq!(scale.scale(), 1.0);
+    /// ```
+    #[must_use]
+    pub fn current(&self) -> FractionalScale {
+        self.scale
+    }
+}
+
+impl Default for FractionalScaleTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Computes the physical buffer size for a surface from its logical size
+/// and fractional scale.
+///
+/// Given a logical (surface) width and height in device-independent
+/// pixels and a [`FractionalScale`], this returns the physical buffer
+/// dimensions the compositor expects, by applying
+/// [`FractionalScale::to_physical`] to each axis independently.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_shell::platform_impl::wayland::{physical_buffer_size, FractionalScale};
+///
+/// // 800x600 logical at 1.5x -> 1200x900 physical.
+/// let (w, h) = physical_buffer_size(800, 600, FractionalScale::new(1.5));
+/// assert_eq!((w, h), (1200, 900));
+///
+/// // 100x100 logical at 1.25x -> 125x125 physical.
+/// let (w, h) = physical_buffer_size(100, 100, FractionalScale::new(1.25));
+/// assert_eq!((w, h), (125, 125));
+/// ```
+#[must_use]
+pub fn physical_buffer_size(
+    logical_width: u32,
+    logical_height: u32,
+    scale: FractionalScale,
+) -> (u32, u32) {
+    (
+        scale.to_physical(logical_width),
+        scale.to_physical(logical_height),
+    )
 }
 
 /// CSD (client-side decoration) configuration.
@@ -376,7 +581,10 @@ impl CsdHitTest {
 /// The hit-test regions are:
 /// - Title bar: top `title_bar_height` pixels, excluding button regions.
 /// - Resize edges: 8px border around the window.
-/// - Buttons: 14x14px squares in the top-right (GNOME) or top-left (KDE).
+/// - Buttons: 14x14px squares, positioned per desktop environment:
+///   - GNOME: top-right (close/min/max, right-to-left).
+///   - KDE: top-right (close/min/max, right-to-left, tighter spacing).
+///   - wlroots/Unknown: top-right (minimal, close only).
 ///
 /// # Examples
 ///
@@ -395,7 +603,6 @@ impl CsdHitTest {
 pub fn csd_hit_test(x: u32, y: u32, width: u32, height: u32, config: &CsdConfig) -> CsdHitTest {
     const RESIZE_BORDER: u32 = 8;
     const BUTTON_SIZE: u32 = 14;
-    const BUTTON_PADDING: u32 = 8;
 
     let title_h = config.title_bar_height();
 
@@ -419,150 +626,41 @@ pub fn csd_hit_test(x: u32, y: u32, width: u32, height: u32, config: &CsdConfig)
 
     // Check title bar
     if y < title_h {
-        // Check window buttons (GNOME: top-right, KDE: top-left)
-        match config.environment() {
-            DesktopEnvironment::Gnome
-            | DesktopEnvironment::Wlroots
-            | DesktopEnvironment::Unknown => {
-                // Close button at top-right
-                let close_x = width.saturating_sub(BUTTON_PADDING + BUTTON_SIZE);
-                let close_y = (title_h - BUTTON_SIZE) / 2;
-                if x >= close_x
-                    && x < close_x + BUTTON_SIZE
-                    && y >= close_y
-                    && y < close_y + BUTTON_SIZE
-                {
-                    return CsdHitTest::CloseButton;
-                }
-                // Minimize button
-                let min_x = close_x.saturating_sub(BUTTON_PADDING + BUTTON_SIZE);
-                if x >= min_x
-                    && x < min_x + BUTTON_SIZE
-                    && y >= close_y
-                    && y < close_y + BUTTON_SIZE
-                {
-                    return CsdHitTest::MinimizeButton;
-                }
-                // Maximize button
-                let max_x = min_x.saturating_sub(BUTTON_PADDING + BUTTON_SIZE);
-                if x >= max_x
-                    && x < max_x + BUTTON_SIZE
-                    && y >= close_y
-                    && y < close_y + BUTTON_SIZE
-                {
-                    return CsdHitTest::MaximizeButton;
-                }
+        let button_y = (title_h - BUTTON_SIZE) / 2;
+
+        // Button positions vary by desktop environment per the v0.13.0
+        // spec: GNOME uses 8px padding, KDE uses 4px (tighter), and
+        // wlroots/Unknown expose only a close button (minimal).
+        let (padding, has_min_max) = match config.environment() {
+            DesktopEnvironment::Gnome => (8, true),
+            DesktopEnvironment::Kde => (4, true),
+            DesktopEnvironment::Wlroots | DesktopEnvironment::Unknown => (6, false),
+        };
+
+        // Close button at top-right.
+        let close_x = width.saturating_sub(padding + BUTTON_SIZE);
+        if x >= close_x && x < close_x + BUTTON_SIZE && y >= button_y && y < button_y + BUTTON_SIZE
+        {
+            return CsdHitTest::CloseButton;
+        }
+
+        if has_min_max {
+            // Minimize button to the left of close.
+            let min_x = close_x.saturating_sub(padding + BUTTON_SIZE);
+            if x >= min_x && x < min_x + BUTTON_SIZE && y >= button_y && y < button_y + BUTTON_SIZE
+            {
+                return CsdHitTest::MinimizeButton;
             }
-            DesktopEnvironment::Kde => {
-                // KDE: buttons at top-right (same layout as GNOME).
-                let close_x = width.saturating_sub(BUTTON_PADDING + BUTTON_SIZE);
-                let close_y = (title_h - BUTTON_SIZE) / 2;
-                if x >= close_x
-                    && x < close_x + BUTTON_SIZE
-                    && y >= close_y
-                    && y < close_y + BUTTON_SIZE
-                {
-                    return CsdHitTest::CloseButton;
-                }
-                // Minimize button
-                let min_x = close_x.saturating_sub(BUTTON_PADDING + BUTTON_SIZE);
-                if x >= min_x
-                    && x < min_x + BUTTON_SIZE
-                    && y >= close_y
-                    && y < close_y + BUTTON_SIZE
-                {
-                    return CsdHitTest::MinimizeButton;
-                }
-                // Maximize button
-                let max_x = min_x.saturating_sub(BUTTON_PADDING + BUTTON_SIZE);
-                if x >= max_x
-                    && x < max_x + BUTTON_SIZE
-                    && y >= close_y
-                    && y < close_y + BUTTON_SIZE
-                {
-                    return CsdHitTest::MaximizeButton;
-                }
+            // Maximize button to the left of minimize.
+            let max_x = min_x.saturating_sub(padding + BUTTON_SIZE);
+            if x >= max_x && x < max_x + BUTTON_SIZE && y >= button_y && y < button_y + BUTTON_SIZE
+            {
+                return CsdHitTest::MaximizeButton;
             }
         }
+
         return CsdHitTest::TitleBar;
     }
 
     CsdHitTest::Client
-}
-
-/// StatusNotifierItem system tray registration.
-///
-/// Implements the `org.kde.StatusNotifierItem` D-Bus protocol for
-/// registering an application icon on the system tray. This is a
-/// stub implementation — the actual D-Bus connection requires the
-/// `zbus` crate (added in Phase 4 wiring).
-///
-/// # Examples
-///
-/// ```
-/// use martensite_shell::platform_impl::wayland::StatusNotifierItem;
-///
-/// let item = StatusNotifierItem::new("my-app", "My Application");
-/// assert_eq!(item.id(), "my-app");
-/// assert_eq!(item.title(), "My Application");
-/// assert!(!item.is_registered());
-/// ```
-#[derive(Debug, Clone)]
-pub struct StatusNotifierItem {
-    id: String,
-    title: String,
-    registered: bool,
-}
-
-impl StatusNotifierItem {
-    /// Creates a new StatusNotifierItem with the given D-Bus ID and title.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use martensite_shell::platform_impl::wayland::StatusNotifierItem;
-    ///
-    /// let item = StatusNotifierItem::new("my-app", "My Application");
-    /// assert_eq!(item.id(), "my-app");
-    /// ```
-    #[must_use]
-    pub fn new(id: &str, title: &str) -> Self {
-        Self {
-            id: id.to_string(),
-            title: title.to_string(),
-            registered: false,
-        }
-    }
-
-    /// Returns the D-Bus ID of the item.
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    /// Returns the display title of the item.
-    #[must_use]
-    pub fn title(&self) -> &str {
-        &self.title
-    }
-
-    /// Returns true if the item is registered on the session bus.
-    #[must_use]
-    pub fn is_registered(&self) -> bool {
-        self.registered
-    }
-
-    /// Registers the item on the D-Bus session bus.
-    ///
-    /// In this stub implementation, this just sets `registered` to `true`.
-    /// The real implementation will use `zbus` to connect to the session
-    /// bus and register the `org.kde.StatusNotifierItem` interface.
-    pub fn register(&mut self) {
-        self.registered = true;
-    }
-
-    /// Unregisters the item from the D-Bus session bus.
-    pub fn unregister(&mut self) {
-        self.registered = false;
-    }
 }

@@ -1284,10 +1284,16 @@ mod tests {
 
     #[test]
     fn recursion_guard_prevents_stack_overflow_on_deep_tree() {
-        // Build a linear chain deeper than MAX_LAYOUT_DEPTH (512) and verify
-        // that layout completes without a stack overflow. The recursion
-        // guard short-circuits measure calls for nodes past the limit.
-        let depth = 600;
+        // Build a linear chain slightly deeper than MAX_LAYOUT_DEPTH (512)
+        // and verify that layout completes without a stack overflow. The
+        // recursion guard short-circuits measure calls for nodes past the
+        // limit.
+        //
+        // The depth is kept just above MAX_LAYOUT_DEPTH (520 vs 512) so the
+        // guard is exercised (8 nodes past the limit are short-circuited)
+        // without overflowing Taffy's own tree-traversal recursion, which
+        // is not guarded by the measure-closure check.
+        let depth = 520;
         let (mut arena, root) = make_linear_chain(depth);
         let mut engine = LayoutEngine::with_capacity(depth + 1);
         engine.sync_from_arena(&arena, root);

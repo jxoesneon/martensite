@@ -15,27 +15,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   abstraction:
   - `BackdropMaterial` enum (None, Mica, MicaAlt, Acrylic, Transient,
     Vibrancy).
-  - `BackdropController` trait with `StubBackdropController` for
-    platforms without system material support.
+  - `BackdropController` trait with `Window` trait for raw window
+    handle access. `set_material` now accepts `&dyn Window`.
+  - `StubBackdropController` for platforms without system material
+    support.
   - `BackdropMode` for surface alpha negotiation (Opaque vs
     Transparent).
   - `VibrancyMaterial` enum for macOS-specific material selection.
   - `SnapLayout` cross-platform snap layout abstraction.
 - **Windows 11 backend** (`platform_impl/windows`):
-  - DWM Mica/Acrylic/MicaAlt/Transient via `DwmSetWindowAttribute`.
-  - `WindowsBackdropController` implementing `BackdropController`.
-  - `WindowsSnapLayout` for Win11 Snap Layouts integration.
+  - Real DWM FFI: `DwmSetWindowAttribute` with
+    `DWMWA_SYSTEMBACKDROP_TYPE` for Mica/MicaAlt/Acrylic/Transient.
+  - `WindowsBackdropController` implementing `BackdropController` with
+    real `HWND` from `Window::raw_handle()`.
+  - `WindowsSnapLayout` reports snap-layout availability; support can be
+    toggled externally based on DWM backdrop capability. A native
+    `ISnapLayouts`/`IInspectable` probe requires the Windows App SDK and
+    is deferred to a future milestone.
+  - Falls back to `BackdropMaterial::None` on pre-Win11.
 - **macOS backend** (`platform_impl/macos`):
-  - `MacosBackdropController` with NSVisualEffectView and Liquid
-    Glass support.
+  - Real `NSVisualEffectView` creation via `objc2` `msg_send!` FFI.
+  - `MacosBackdropController` creates and configures
+    `NSVisualEffectView` (material, blending mode, state) and adds it
+    as a subview of the window's content view.
   - `vibrancy_to_ns_material` mapping for all vibrancy material types.
-  - `AppearanceObserver` for NSAppearance change notifications.
+  - `AppearanceObserver` registers real
+    `AppleInterfaceThemeChangedNotification` observer via
+    `NSDistributedNotificationCenter` with `block2` callback.
+  - `supports_liquid_glass()` checks OS version via
+    `NSProcessInfo.operatingSystemVersion` (macOS 26+).
 - **Wayland backend** (`platform_impl/wayland`):
-  - `WaylandBackdropController` (stub — Wayland has no system blur).
+  - `WaylandBackdropController` (no system blur on Wayland).
   - `FractionalScale` for `wp_fractional_scale_v1` (1.5x DPI).
+  - `FractionalScaleTracker` for compositor scale updates.
+  - `physical_buffer_size()` for fractional-scaled buffer dimensions.
   - `CsdConfig` + `DesktopEnvironment` for CSD styling per DE.
   - `CsdHitTest` enum + `csd_hit_test()` function for CSD hit-testing.
-  - `StatusNotifierItem` stub for system tray registration.
+  - `StatusNotifierItem` with real `zbus` D-Bus registration:
+    `org.kde.StatusNotifierItem` interface, session bus connection,
+    `RegisterStatusNotifierItem` call to `StatusNotifierWatcher`.
 - **Theme system extensions** (`martensite-theme`):
   - 8 new `TokenKey` variants: `BackdropMaterial`,
     `BackdropTintOpacity`, `BackdropFallbackColor`, `CsdTitleBarHeight`,

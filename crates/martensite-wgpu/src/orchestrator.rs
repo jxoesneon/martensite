@@ -150,6 +150,13 @@ pub struct RenderOrchestrator {
     mode: RenderMode,
     /// The application configuration.
     config: OrchestratorConfig,
+    /// The current backdrop mode, used to determine whether the
+    /// renderer should clear to transparent (for system materials)
+    /// or opaque (for solid backgrounds). The render backend already
+    /// clears to transparent black by default; this field lets the
+    /// orchestrator expose the active mode to the application so it
+    /// can skip the background fill rect when `Transparent`.
+    backdrop_mode: crate::surface::BackdropMode,
 }
 
 impl RenderOrchestrator {
@@ -189,6 +196,7 @@ impl RenderOrchestrator {
             tinyskia,
             mode: initial_mode,
             config,
+            backdrop_mode: crate::surface::BackdropMode::Opaque,
         })
     }
 
@@ -266,6 +274,60 @@ impl RenderOrchestrator {
     pub fn force_cpu(&mut self, paint_list: &PaintList) {
         self.mode = RenderMode::Cpu;
         self.tinyskia.render(paint_list);
+    }
+
+    /// Returns the active backdrop mode.
+    ///
+    /// The backdrop mode determines whether the renderer clears to
+    /// transparent (for system materials like Mica/Acrylic/vibrancy)
+    /// or opaque (for solid backgrounds). The render backend already
+    /// clears to transparent black by default; this field lets the
+    /// application query the active mode and decide whether to paint
+    /// a background fill rect.
+    ///
+    /// When [`crate::surface::BackdropMode::Transparent`], the application should
+    /// skip its background fill rect so the system material shows
+    /// through. When [`crate::surface::BackdropMode::Opaque`], the application
+    /// should paint a solid background.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// use martensite_wgpu::surface::BackdropMode;
+    ///
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// assert_eq!(orchestrator.backdrop_mode(), BackdropMode::Opaque);
+    /// orchestrator.set_backdrop_mode(BackdropMode::Transparent);
+    /// assert_eq!(orchestrator.backdrop_mode(), BackdropMode::Transparent);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn backdrop_mode(&self) -> crate::surface::BackdropMode {
+        self.backdrop_mode
+    }
+
+    /// Sets the active backdrop mode.
+    ///
+    /// This should be called whenever the system backdrop material
+    /// changes (e.g. via the shell's `BackdropController::mode`).
+    /// The orchestrator stores the mode and exposes it via
+    /// [`backdrop_mode`](Self::backdrop_mode) so the application can
+    /// decide whether to paint a background fill rect.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// use martensite_wgpu::surface::BackdropMode;
+    ///
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// orchestrator.set_backdrop_mode(BackdropMode::Transparent);
+    /// assert_eq!(orchestrator.backdrop_mode(), BackdropMode::Transparent);
+    /// # }
+    /// ```
+    pub fn set_backdrop_mode(&mut self, mode: crate::surface::BackdropMode) {
+        self.backdrop_mode = mode;
     }
 
     /// Renders the most recently built frame to a WGPU surface and presents it.

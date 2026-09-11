@@ -112,7 +112,6 @@ winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
-    "Win32_UI_WindowsAndMessaging",
 ] }
 
 # Utility libraries
@@ -144,11 +143,8 @@ unicode-bidi = "0.3"
 # Objective-C runtime FFI for the macOS shell backend (NSVisualEffectView
 # vibrancy, Liquid Glass). Used by `martensite-shell` under the
 # `macos-backend` feature. `objc2` 0.6.4 was published 2025-04-10 (well over
-# 7 days ago). `icrate` 0.1.2 is the final published version (the crate is
-# deprecated in favor of the split `objc2-*` framework crates); it is the
-# latest available on crates.io.
+# 7 days ago).
 objc2 = "0.6"
-icrate = "0.1.2"
 # D-Bus IPC for the Wayland shell backend (StatusNotifierItem system tray
 # registration). Used by `martensite-shell` under the `wayland-backend` feature,
 # cfg-gated to Linux. `zbus` 5.x was published well over 7 days ago.

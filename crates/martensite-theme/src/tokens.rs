@@ -468,9 +468,18 @@ pub fn default_light() -> Theme {
     theme.set(TokenKey::AnimationEasing, ThemeToken::Easing(0.25));
 
     // --- Platform shell (v0.13.0) -----------------------------------------
-    // Backdrop material: 0 = None (no system material). The shell layer
-    // interprets this dimension value (1 = Mica, 2 = MicaAlt, 3 = Acrylic,
-    // 4 = Transient, 5 = Vibrancy).
+    // Backdrop material: platform-conditional defaults.
+    //   Windows  → Mica (1) with solid fallback on pre-Win11.
+    //   macOS    → Vibrancy (5) with solid fallback on pre-10.10.
+    //   Linux    → None (0) — no system material protocol.
+    // The shell layer interprets this dimension value:
+    // 0 = None, 1 = Mica, 2 = MicaAlt, 3 = Acrylic, 4 = Transient,
+    // 5 = Vibrancy.
+    #[cfg(target_os = "windows")]
+    theme.set(TokenKey::BackdropMaterial, ThemeToken::Dimension(1.0));
+    #[cfg(target_os = "macos")]
+    theme.set(TokenKey::BackdropMaterial, ThemeToken::Dimension(5.0));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     theme.set(TokenKey::BackdropMaterial, ThemeToken::Dimension(0.0));
     theme.set(TokenKey::BackdropTintOpacity, ThemeToken::Dimension(0.0));
     theme.set(
@@ -494,6 +503,8 @@ pub fn default_light() -> Theme {
             alpha: 0.3,
         }),
     );
+    // VibrancyMaterial: 0 = Sidebar (default on macOS). Not used on
+    // Windows/Linux.
     theme.set(TokenKey::VibrancyMaterial, ThemeToken::Dimension(0.0));
 
     theme
@@ -653,9 +664,13 @@ pub fn default_dark() -> Theme {
     theme.set(TokenKey::AnimationEasing, ThemeToken::Easing(0.25));
 
     // --- Platform shell (v0.13.0) -----------------------------------------
-    // Backdrop material: 0 = None (no system material). The shell layer
-    // interprets this dimension value (1 = Mica, 2 = MicaAlt, 3 = Acrylic,
-    // 4 = Transient, 5 = Vibrancy).
+    // Backdrop material: platform-conditional defaults (same mapping
+    // as the light theme).
+    #[cfg(target_os = "windows")]
+    theme.set(TokenKey::BackdropMaterial, ThemeToken::Dimension(1.0));
+    #[cfg(target_os = "macos")]
+    theme.set(TokenKey::BackdropMaterial, ThemeToken::Dimension(5.0));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     theme.set(TokenKey::BackdropMaterial, ThemeToken::Dimension(0.0));
     theme.set(TokenKey::BackdropTintOpacity, ThemeToken::Dimension(0.0));
     theme.set(

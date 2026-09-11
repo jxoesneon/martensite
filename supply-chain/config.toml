@@ -971,10 +971,6 @@ criteria = "safe-to-deploy"
 version = "0.1.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.icrate]]
-version = "0.1.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.icu_collections]]
 version = "2.3.0"
 criteria = "safe-to-deploy"

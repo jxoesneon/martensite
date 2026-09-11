@@ -14,6 +14,7 @@ readme = "README.md"
 
 [dependencies]
 martensite-core = { workspace = true }
+martensite-shell = { workspace = true }
 winit = { workspace = true }
 slotmap = { workspace = true }
 glam = { workspace = true }

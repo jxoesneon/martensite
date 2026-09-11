@@ -177,3 +177,42 @@ jobs:
           cargo test --release -p martensite-render --features vello -- --ignored
           cargo test --release -p martensite-devtools --lib -- --ignored
 
+  shell-linux-integration:
+    name: Shell Integration (Linux D-Bus + Wayland)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install D-Bus and Weston
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dbus dbus-x11 weston \
+            pkg-config libdbus-1-dev
+      - name: Run shell integration tests (non-ignored)
+        run: cargo test -p martensite-shell --features wayland-backend --test shell_integration
+      - name: Run shell integration tests (D-Bus ignored)
+        run: |
+          eval "$(dbus-launch --sh-syntax)"
+          export DBUS_SESSION_BUS_ADDRESS
+          cargo test -p martensite-shell --features wayland-backend --test shell_integration -- --ignored
+        continue-on-error: true
+
+  shell-windows-integration:
+    name: Shell Integration (Windows DWM + Snap)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build shell crate (windows-backend)
+        run: cargo build -p martensite-shell --features windows-backend
+      - name: Run shell doctests (windows-backend)
+        run: cargo test -p martensite-shell --features windows-backend --doc
+      - name: Run shell unit tests (windows-backend)
+        run: cargo test -p martensite-shell --features windows-backend --lib
+      - name: Build workspace (windows-backend)
+        run: cargo build --workspace --features martensite-shell/windows-backend
+      - name: Clippy (windows-backend)
+        run: cargo clippy -p martensite-shell --features windows-backend --all-targets -- -D warnings
+

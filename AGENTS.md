@@ -160,7 +160,7 @@ These are explicitly documented in code, not hidden:
   - `DirectWriteFontFallback` (Windows, `IDWriteFontFallback::MapCharacters`)
   - `CoreTextFontFallback` (macOS, `CTFontCreateForStringWithLanguage`)
   - `FontconfigFontFallback` (Linux, `FcFontSort`)
-- The following six crates use `#![allow(unsafe_code)]` for
+- The following seven crates use `#![allow(unsafe_code)]` for
   platform-specific FFI or vendored upstream code. These are the ONLY
   crates in the workspace that allow unsafe code; all other crates
   maintain `unsafe_code = "deny"`.

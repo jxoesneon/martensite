@@ -28,6 +28,8 @@
 
 use slotmap::{new_key_type, SlotMap};
 
+use martensite_shell::{ShellEvent, ShellEventQueue};
+
 use crate::dpi::DpiScale;
 use crate::{Window, WindowId};
 
@@ -192,6 +194,10 @@ impl WindowEntry {
 pub struct WindowManager {
     /// Slotmap holding one [`WindowEntry`] per open window.
     windows: SlotMap<WindowKey, WindowEntry>,
+    /// Queue for asynchronous shell events (appearance changes,
+    /// fractional scale changes) emitted by platform backends.
+    /// Drained via [`drain_shell_events`](Self::drain_shell_events).
+    shell_events: ShellEventQueue,
 }
 
 impl WindowManager {
@@ -200,7 +206,71 @@ impl WindowManager {
     pub fn new() -> Self {
         Self {
             windows: SlotMap::with_key(),
+            shell_events: ShellEventQueue::new(),
         }
+    }
+
+    /// Returns a clone of the shell event queue.
+    ///
+    /// Platform backends (macOS `AppearanceObserver`, Wayland
+    /// `FractionalScaleTracker`) hold a clone of this queue and push
+    /// [`ShellEvent`]s onto it when system-level changes occur. The
+    /// window manager drains the queue via
+    /// [`drain_shell_events`](Self::drain_shell_events) and translates
+    /// the events into [`WindowEventOutcome`]s.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_window::WindowManager;
+    /// use martensite_shell::{ShellEvent, ShellEventQueue};
+    ///
+    /// let manager = WindowManager::new();
+    /// let queue = manager.shell_event_queue();
+    /// queue.push(ShellEvent::ThemeAppearanceChanged);
+    /// assert!(manager.drain_shell_events().len() == 1);
+    /// ```
+    #[must_use]
+    pub fn shell_event_queue(&self) -> ShellEventQueue {
+        self.shell_events.clone()
+    }
+
+    /// Drains all pending shell events and translates them to
+    /// [`WindowEventOutcome`]s.
+    ///
+    /// This method should be called regularly (e.g. in the
+    /// `about_to_wait` phase of the event loop) to poll for
+    /// asynchronous shell events that arrive outside the normal
+    /// winit event stream — specifically:
+    ///
+    /// - macOS `NSAppearance` changes → [`WindowEventOutcome::ThemeAppearanceChanged`]
+    /// - Wayland `wp_fractional_scale_v1` changes → [`WindowEventOutcome::FractionalScaleChanged`]
+    ///
+    /// After draining, the queue is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_window::WindowManager;
+    /// use martensite_shell::ShellEvent;
+    ///
+    /// let manager = WindowManager::new();
+    /// // No events pending.
+    /// assert!(manager.drain_shell_events().is_empty());
+    /// ```
+    #[must_use]
+    pub fn drain_shell_events(&self) -> Vec<WindowEventOutcome> {
+        self.shell_events
+            .drain()
+            .into_iter()
+            .map(|event| match event {
+                ShellEvent::ThemeAppearanceChanged => WindowEventOutcome::ThemeAppearanceChanged,
+                ShellEvent::FractionalScaleChanged(scale) => {
+                    WindowEventOutcome::FractionalScaleChanged(scale)
+                }
+                _ => WindowEventOutcome::None,
+            })
+            .collect()
     }
 
     /// Creates and registers a new window.

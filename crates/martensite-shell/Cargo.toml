@@ -16,12 +16,16 @@ workspace = true
 [features]
 default = []
 windows-backend = ["dep:windows"]
-macos-backend = ["dep:objc2", "dep:icrate"]
+macos-backend = ["dep:objc2", "dep:block2"]
 wayland-backend = ["dep:zbus"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { workspace = true, optional = true }
-icrate = { workspace = true, optional = true }
+# Objective-C block support for `NSDistributedNotificationCenter`
+# observer callbacks. Part of the `objc2` ecosystem; `block2` 0.6.x is
+# compatible with `objc2` 0.6.x. Only pulled in when the
+# `macos-backend` feature is enabled and the target is macOS.
+block2 = { version = "0.6", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # Win32/COM FFI for DWM system materials and Snap Layouts. Only pulled in
@@ -31,7 +35,17 @@ windows = { workspace = true, optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 # D-Bus IPC for StatusNotifierItem system tray registration. Only pulled
 # in when the `wayland-backend` feature is enabled and the target is Linux.
-zbus = { workspace = true, optional = true }
+# `blocking-api` enables the synchronous `zbus::blocking` wrapper used by
+# `StatusNotifierItem::register`; `async-io` provides the underlying async
+# executor that the blocking connection drives (zbus ships with
+# `default-features = false` in the workspace manifest, so both must be
+# turned on explicitly here).
+zbus = { workspace = true, optional = true, features = ["blocking-api", "async-io"] }
 
 [dependencies]
-# Platform-specific, optional
+# Theme token resolution for backdrop/CSD material selection.
+# Used by the theme resolver in `backdrop.rs` to read the 8 v0.13.0
+# shell-related theme tokens (`BackdropMaterial`, `VibrancyMaterial`,
+# `BackdropTintOpacity`, `BackdropFallbackColor`, `CsdTitleBarHeight`,
+# `CsdButtonRadius`, `CsdShadowBlur`, `CsdShadowColor`).
+martensite-theme = { workspace = true }

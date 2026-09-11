@@ -20,3 +20,4 @@ tests/snapshots/diffs/
 
 # Local cache
 .fastembed_cache/
+.ciel/
