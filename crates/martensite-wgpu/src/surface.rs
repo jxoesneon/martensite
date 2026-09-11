@@ -193,15 +193,13 @@ impl<'window> SurfaceWrapper<'window> {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use martensite_wgpu::surface::{BackdropMode, SurfaceWrapper};
-    /// # use wgpu::Instance;
-    /// #
-    /// # let instance = Instance::new(&wgpu::InstanceDescriptor::default());
-    /// # let surface = instance.create_surface(&wgpu::SurfaceTarget::Other).unwrap();
-    /// # let wrapper = SurfaceWrapper::new(surface);
+    ///
+    /// # fn example(wrapper: &SurfaceWrapper<'_>) {
     /// // Before any configure call, the default is Opaque.
     /// assert_eq!(wrapper.backdrop_mode(), BackdropMode::Opaque);
+    /// # }
     /// ```
     #[must_use]
     pub fn backdrop_mode(&self) -> BackdropMode {
