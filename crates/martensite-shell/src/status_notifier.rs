@@ -173,7 +173,7 @@ impl StatusNotifierItemIface {
 /// registering an application icon on the system tray. Registration
 /// connects to the D-Bus session bus, exports the
 /// `org.kde.StatusNotifierItem` interface at
-/// [`SNI_OBJECT_PATH`] (`/StatusNotifierItem`),
+/// `/StatusNotifierItem`,
 /// requests the well-known name
 /// `org.freedesktop.StatusNotifierItem-<pid>-<id>`, and notifies the
 /// `org.kde.StatusNotifierWatcher` service by calling its
