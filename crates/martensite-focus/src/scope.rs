@@ -38,17 +38,52 @@ pub struct FocusScope {
 
 impl FocusScope {
     /// Creates a new focus scope with the given root and prior focus.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScope;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let root = WidgetId::from_parts(0, 1);
+    /// let prior = WidgetId::from_parts(1, 1);
+    /// let scope = FocusScope::new(root, Some(prior));
+    /// assert_eq!(scope.root(), root);
+    /// assert_eq!(scope.prior_focus(), Some(prior));
+    /// ```
     pub fn new(root: WidgetId, prior_focus: Option<WidgetId>) -> Self {
         Self { root, prior_focus }
     }
 
     /// Returns the root widget ID of this scope.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScope;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let root = WidgetId::from_parts(0, 1);
+    /// let scope = FocusScope::new(root, None);
+    /// assert_eq!(scope.root(), root);
+    /// ```
     #[inline]
     pub fn root(&self) -> WidgetId {
         self.root
     }
 
     /// Returns the widget that was focused before this scope was pushed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScope;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let prior = WidgetId::from_parts(1, 1);
+    /// let scope = FocusScope::new(WidgetId::from_parts(0, 1), Some(prior));
+    /// assert_eq!(scope.prior_focus(), Some(prior));
+    /// ```
     #[inline]
     pub fn prior_focus(&self) -> Option<WidgetId> {
         self.prior_focus
@@ -93,6 +128,15 @@ impl Default for FocusScopeStack {
 
 impl FocusScopeStack {
     /// Creates a new empty focus scope stack.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    ///
+    /// let stack = FocusScopeStack::new();
+    /// assert!(stack.is_empty());
+    /// ```
     pub fn new() -> Self {
         Self { stack: Vec::new() }
     }
@@ -101,6 +145,17 @@ impl FocusScopeStack {
     ///
     /// `prior_focus` should be the currently focused widget ID, which
     /// will be restored when this scope is popped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let mut stack = FocusScopeStack::new();
+    /// stack.push(WidgetId::from_parts(0, 1), None);
+    /// assert_eq!(stack.len(), 1);
+    /// ```
     pub fn push(&mut self, root: WidgetId, prior_focus: Option<WidgetId>) {
         self.stack.push(FocusScope::new(root, prior_focus));
     }
@@ -109,39 +164,118 @@ impl FocusScopeStack {
     ///
     /// Returns the prior focus that was captured when this scope was
     /// pushed, or `None` if the stack was empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let mut stack = FocusScopeStack::new();
+    /// let prior = WidgetId::from_parts(1, 1);
+    /// stack.push(WidgetId::from_parts(0, 1), Some(prior));
+    /// assert_eq!(stack.pop(), Some(prior));
+    /// assert!(stack.is_empty());
+    /// ```
     pub fn pop(&mut self) -> Option<WidgetId> {
         self.stack.pop().and_then(|scope| scope.prior_focus)
     }
 
     /// Returns the root widget ID of the current (top) scope, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let mut stack = FocusScopeStack::new();
+    /// let root = WidgetId::from_parts(0, 1);
+    /// stack.push(root, None);
+    /// assert_eq!(stack.current_scope_root(), Some(root));
+    /// ```
     pub fn current_scope_root(&self) -> Option<WidgetId> {
         self.stack.last().map(|scope| scope.root)
     }
 
     /// Returns a reference to the current (top) scope, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let mut stack = FocusScopeStack::new();
+    /// let root = WidgetId::from_parts(0, 1);
+    /// stack.push(root, None);
+    /// assert_eq!(stack.current_scope().unwrap().root(), root);
+    /// ```
     pub fn current_scope(&self) -> Option<&FocusScope> {
         self.stack.last()
     }
 
     /// Returns `true` if there is at least one active scope on the stack.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    ///
+    /// let stack = FocusScopeStack::new();
+    /// assert!(!stack.has_active_scope());
+    /// ```
     #[inline]
     pub fn has_active_scope(&self) -> bool {
         !self.stack.is_empty()
     }
 
     /// Returns the number of scopes on the stack.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let mut stack = FocusScopeStack::new();
+    /// assert_eq!(stack.len(), 0);
+    /// stack.push(WidgetId::from_parts(0, 1), None);
+    /// assert_eq!(stack.len(), 1);
+    /// ```
     #[inline]
     pub fn len(&self) -> usize {
         self.stack.len()
     }
 
     /// Returns `true` if the stack is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    ///
+    /// let stack = FocusScopeStack::new();
+    /// assert!(stack.is_empty());
+    /// ```
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.stack.is_empty()
     }
 
     /// Returns an iterator over the scopes, from bottom to top.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let mut stack = FocusScopeStack::new();
+    /// stack.push(WidgetId::from_parts(0, 1), None);
+    /// stack.push(WidgetId::from_parts(1, 1), None);
+    /// assert_eq!(stack.iter().count(), 2);
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = &FocusScope> {
         self.stack.iter()
     }
@@ -151,6 +285,18 @@ impl FocusScopeStack {
     /// This is useful when the entire modal stack is dismissed at once
     /// (e.g., when switching views). The caller is responsible for
     /// setting focus to an appropriate widget afterwards.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let mut stack = FocusScopeStack::new();
+    /// stack.push(WidgetId::from_parts(0, 1), None);
+    /// stack.clear();
+    /// assert!(stack.is_empty());
+    /// ```
     pub fn clear(&mut self) {
         self.stack.clear();
     }
@@ -161,6 +307,19 @@ impl FocusScopeStack {
     /// This only checks equality with the scope root. For a full subtree
     /// membership test, walk the arena hierarchy via
     /// `WidgetArena::parent` or use `WidgetArena::iter_subtree`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::scope::FocusScopeStack;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let mut stack = FocusScopeStack::new();
+    /// let root = WidgetId::from_parts(0, 1);
+    /// stack.push(root, None);
+    /// assert!(stack.is_current_scope_root(root));
+    /// assert!(!stack.is_current_scope_root(WidgetId::from_parts(1, 1)));
+    /// ```
     pub fn is_current_scope_root(&self, id: WidgetId) -> bool {
         self.current_scope_root().is_some_and(|root| root == id)
     }

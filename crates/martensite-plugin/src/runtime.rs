@@ -47,6 +47,14 @@ use martensite_reactive::SignalId;
 /// time measurement. Wasmtime fuel costs are instruction-relative, so hosts
 /// must calibrate this value for each target architecture and workload. Rogue
 /// or stuck plugins are terminated when fuel is exhausted.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_plugin::DEFAULT_FUEL_BUDGET;
+///
+/// assert_eq!(DEFAULT_FUEL_BUDGET, 200_000);
+/// ```
 pub const DEFAULT_FUEL_BUDGET: u64 = 200_000;
 
 /// Namespace used for Martensite-specific host functions exposed to plugins.
@@ -92,6 +100,17 @@ enum RingLocation {
 ///
 /// Contains the WASIp1 context, the capability grants, and the shared ring
 /// buffer location for the current plugin instance.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_plugin::{CapabilitySet, PluginRuntime};
+///
+/// let runtime = PluginRuntime::new().unwrap();
+/// // `PluginState` is created internally during `load` and holds the
+/// // capability set granted to the plugin instance.
+/// let _ = runtime.load(b"\0asm\x01\0\0\0", CapabilitySet::empty());
+/// ```
 pub struct PluginState {
     wasi: WasiP1Ctx,
     caps: CapabilitySet,
@@ -108,12 +127,36 @@ impl fmt::Debug for PluginState {
 
 impl PluginState {
     /// Returns a reference to the capability set for this instance.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_plugin::{Capability, CapabilitySet, PluginRuntime};
+    ///
+    /// let wasm_bytes: &[u8] = b"";
+    /// let caps = CapabilitySet::builder().grant(Capability::Network).build();
+    /// let runtime = PluginRuntime::new().unwrap();
+    /// let plugin = runtime.load(wasm_bytes, caps).unwrap();
+    /// assert!(plugin.capabilities().contains(&Capability::Network));
+    /// ```
     pub fn capabilities(&self) -> &CapabilitySet {
         &self.caps
     }
 }
 
 /// Errors that can occur while configuring or running a plugin.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_plugin::PluginError;
+///
+/// let err = PluginError::MissingExport("run".to_string());
+/// assert_eq!(err.to_string(), "missing export: run");
+///
+/// let fuel = PluginError::OutOfFuel;
+/// assert_eq!(fuel.to_string(), "plugin ran out of fuel");
+/// ```
 #[derive(Debug)]
 pub enum PluginError {
     /// An underlying Wasmtime error.
@@ -190,6 +233,14 @@ impl PluginRuntime {
     /// # Errors
     ///
     /// Returns an error if the Wasmtime engine cannot be initialized.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::PluginRuntime;
+    ///
+    /// let runtime = PluginRuntime::new().unwrap();
+    /// ```
     pub fn new() -> Result<Self, PluginError> {
         Self::with_fuel_budget(DEFAULT_FUEL_BUDGET)
     }
@@ -199,6 +250,14 @@ impl PluginRuntime {
     /// # Errors
     ///
     /// Returns an error if the Wasmtime engine cannot be initialized.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::PluginRuntime;
+    ///
+    /// let runtime = PluginRuntime::with_fuel_budget(50_000).unwrap();
+    /// ```
     pub fn with_fuel_budget(fuel_budget: u64) -> Result<Self, PluginError> {
         let mut config = Config::new();
         config.consume_fuel(true);
@@ -553,6 +612,15 @@ impl PluginRuntime {
     /// Epoch interruption is configured for every plugin store. The host must
     /// call [`Engine::increment_epoch`] on this engine on a 5 ms cadence to
     /// enforce the wall-clock deadline in addition to the fuel budget.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::PluginRuntime;
+    ///
+    /// let runtime = PluginRuntime::new().unwrap();
+    /// let _engine = runtime.engine();
+    /// ```
     pub fn engine(&self) -> &Engine {
         &self.engine
     }
@@ -565,6 +633,16 @@ impl PluginRuntime {
     /// # Errors
     ///
     /// Returns an error if compilation, instantiation, or fuel setup fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{CapabilitySet, PluginRuntime};
+    ///
+    /// let runtime = PluginRuntime::new().unwrap();
+    /// // Loading invalid bytes returns an error.
+    /// assert!(runtime.load(b"not wasm", CapabilitySet::empty()).is_err());
+    /// ```
     pub fn load(
         &self,
         wasm_bytes: &[u8],
@@ -630,6 +708,17 @@ impl PluginRuntime {
 ///
 /// Holds the Wasmtime [`Store`] and [`Instance`] for a single plugin. All
 /// calls happen in the context of this instance and consume its fuel budget.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_plugin::{CapabilitySet, PluginRuntime};
+///
+/// let wasm_bytes: &[u8] = b"";
+/// let runtime = PluginRuntime::new().unwrap();
+/// let mut plugin = runtime.load(wasm_bytes, CapabilitySet::empty()).unwrap();
+/// plugin.invoke("run").unwrap();
+/// ```
 pub struct PluginInstance {
     store: Store<PluginState>,
     instance: Instance,
@@ -665,6 +754,18 @@ impl PluginInstance {
     /// Returns [`PluginError::MissingExport`] if the export does not exist or
     /// has a signature different from `Args -> Rets`, or any execution error
     /// produced by the plugin.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_plugin::{CapabilitySet, PluginRuntime};
+    ///
+    /// let wasm_bytes: &[u8] = b"";
+    /// let runtime = PluginRuntime::new().unwrap();
+    /// let mut plugin = runtime.load(wasm_bytes, CapabilitySet::empty()).unwrap();
+    /// let result: i32 = plugin.invoke_typed("add_one", 41).unwrap();
+    /// assert_eq!(result, 42);
+    /// ```
     pub fn invoke_typed<Args, Rets>(&mut self, name: &str, args: Args) -> Result<Rets, PluginError>
     where
         Args: WasmParams,
@@ -685,6 +786,19 @@ impl PluginInstance {
     /// `PluginPaintCmd` records plus the `head`/`tail` cursor header directly;
     /// this call consumes and clears them. Does nothing when the plugin has no
     /// ring region.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_plugin::{CapabilitySet, PluginRuntime};
+    ///
+    /// let wasm_bytes: &[u8] = b"";
+    /// let runtime = PluginRuntime::new().unwrap();
+    /// let mut plugin = runtime.load(wasm_bytes, CapabilitySet::empty()).unwrap();
+    /// plugin.drain_paint_commands(|cmd, payload| {
+    ///     println!("cmd_type={}, {} bytes", cmd.cmd_type, payload.len());
+    /// });
+    /// ```
     pub fn drain_paint_commands(&mut self, f: impl FnMut(&PluginPaintCmd, &[u8])) {
         let (memory, base) = match self.store.data().ring {
             Some(RingLocation::GuestMemory { base }) => {
@@ -706,6 +820,18 @@ impl PluginInstance {
     }
 
     /// Returns a reference to the capability set active for this instance.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_plugin::{Capability, CapabilitySet, PluginRuntime};
+    ///
+    /// let wasm_bytes: &[u8] = b"";
+    /// let caps = CapabilitySet::builder().grant(Capability::Network).build();
+    /// let runtime = PluginRuntime::new().unwrap();
+    /// let plugin = runtime.load(wasm_bytes, caps).unwrap();
+    /// assert!(plugin.capabilities().contains(&Capability::Network));
+    /// ```
     pub fn capabilities(&self) -> &CapabilitySet {
         self.store.data().capabilities()
     }

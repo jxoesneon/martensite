@@ -8,6 +8,17 @@
 //! acquisition of the current frame texture for rendering.
 
 /// Errors produced by [`SurfaceWrapper`] operations.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::surface::SurfaceWrapperError;
+/// use std::error::Error;
+///
+/// let err = SurfaceWrapperError::NotConfigured;
+/// assert!(err.to_string().contains("not been configured"));
+/// assert!(err.source().is_none());
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceWrapperError {
     /// The wrapper has not yet been configured with a surface and configuration.
@@ -44,6 +55,17 @@ const PRESENT_MODE_PREFERENCE: &[wgpu::PresentMode] = &[
 /// that resize and re-configuration can be performed without the caller having
 /// to track either. Present-mode negotiation is performed once at
 /// configuration time and re-evaluated whenever the surface is reconfigured.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_wgpu::surface::SurfaceWrapper;
+///
+/// # fn example(surface: wgpu::Surface<'_>) {
+/// let wrapper = SurfaceWrapper::new(surface);
+/// assert!(wrapper.configuration().is_none());
+/// # }
+/// ```
 pub struct SurfaceWrapper<'window> {
     /// The owned presentation surface.
     surface: wgpu::Surface<'window>,
@@ -56,6 +78,18 @@ impl<'window> SurfaceWrapper<'window> {
     ///
     /// The surface is not configured; call [`SurfaceWrapper::configure`] before
     /// acquiring frames.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::surface::SurfaceWrapper;
+    ///
+    /// # fn example(surface: wgpu::Surface<'_>) {
+    /// let wrapper = SurfaceWrapper::new(surface);
+    /// // A fresh wrapper has no configuration yet.
+    /// assert!(wrapper.configuration().is_none());
+    /// # }
+    /// ```
     #[must_use]
     pub fn new(surface: wgpu::Surface<'window>) -> Self {
         Self {
@@ -65,12 +99,33 @@ impl<'window> SurfaceWrapper<'window> {
     }
 
     /// Returns a reference to the inner surface.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::surface::SurfaceWrapper;
+    ///
+    /// # fn example(wrapper: &SurfaceWrapper<'_>) {
+    /// let _surface = wrapper.surface();
+    /// # }
+    /// ```
     #[must_use]
     pub fn surface(&self) -> &wgpu::Surface<'window> {
         &self.surface
     }
 
     /// Returns the active configuration, if the surface has been configured.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::surface::SurfaceWrapper;
+    ///
+    /// # fn example(wrapper: &SurfaceWrapper<'_>) {
+    /// // Before `configure` is called, the configuration is `None`.
+    /// assert!(wrapper.configuration().is_none());
+    /// # }
+    /// ```
     #[must_use]
     pub fn configuration(&self) -> Option<&wgpu::SurfaceConfiguration> {
         self.config.as_ref()
@@ -81,6 +136,23 @@ impl<'window> SurfaceWrapper<'window> {
     /// The selection tries `Mailbox`, then `FifoRelaxed`, and always falls back
     /// to [`wgpu::PresentMode::Fifo`], which is guaranteed to be supported on
     /// every backend.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::surface::SurfaceWrapper;
+    ///
+    /// # fn example(wrapper: &SurfaceWrapper<'_>, adapter: &wgpu::Adapter) {
+    /// let mode = wrapper.negotiate_present_mode(adapter);
+    /// // `Fifo` is always supported, so the result is never an invalid mode.
+    /// assert!(matches!(
+    ///     mode,
+    ///     wgpu::PresentMode::Mailbox
+    ///         | wgpu::PresentMode::FifoRelaxed
+    ///         | wgpu::PresentMode::Fifo
+    /// ));
+    /// # }
+    /// ```
     #[must_use]
     pub fn negotiate_present_mode(&self, adapter: &wgpu::Adapter) -> wgpu::PresentMode {
         let caps = self.surface.get_capabilities(adapter);
@@ -104,6 +176,17 @@ impl<'window> SurfaceWrapper<'window> {
     /// # Errors
     ///
     /// Returns [`SurfaceWrapperError::InvalidDimensions`] if either dimension is zero.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::surface::SurfaceWrapper;
+    ///
+    /// # fn example(wrapper: &mut SurfaceWrapper<'_>, device: &wgpu::Device, adapter: &wgpu::Adapter) {
+    /// // Zero dimensions are rejected.
+    /// assert!(wrapper.configure(device, adapter, 0, 100).is_err());
+    /// # }
+    /// ```
     pub fn configure(
         &mut self,
         device: &wgpu::Device,
@@ -156,6 +239,17 @@ impl<'window> SurfaceWrapper<'window> {
     /// Returns [`SurfaceWrapperError::NotConfigured`] if the surface has not been
     /// configured yet, or [`SurfaceWrapperError::InvalidDimensions`] if either
     /// dimension is zero.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::surface::SurfaceWrapper;
+    ///
+    /// # fn example(wrapper: &mut SurfaceWrapper<'_>, device: &wgpu::Device) {
+    /// // Zero dimensions are rejected.
+    /// assert!(wrapper.resize(device, 0, 100).is_err());
+    /// # }
+    /// ```
     pub fn resize(
         &mut self,
         device: &wgpu::Device,
@@ -182,6 +276,18 @@ impl<'window> SurfaceWrapper<'window> {
     /// the caller is responsible for presenting the texture and for handling
     /// the [`wgpu::CurrentSurfaceTexture`] variants (e.g. `Outdated` should
     /// trigger a [`SurfaceWrapper::resize`] or reconfigure).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::surface::SurfaceWrapper;
+    ///
+    /// # fn example(wrapper: &SurfaceWrapper<'_>) {
+    /// let frame = wrapper.acquire_frame();
+    /// // The caller must handle the `CurrentSurfaceTexture` variants.
+    /// let _ = frame;
+    /// # }
+    /// ```
     #[must_use]
     pub fn acquire_frame(&self) -> wgpu::CurrentSurfaceTexture {
         self.surface.get_current_texture()

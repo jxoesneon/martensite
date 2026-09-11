@@ -49,10 +49,31 @@ use crate::clipboard::{ClipboardItem, ClipboardService};
 ///
 /// Implementations identify themselves via [`platform_name`](PlatformClipboard::platform_name)
 /// so that callers and diagnostics can report which backend is active.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_clipboard::{ClipboardItem, ClipboardService, PlatformClipboard,
+///     StubClipboard};
+///
+/// let mut cb = StubClipboard::new();
+/// assert_eq!(cb.platform_name(), "stub");
+/// cb.set_contents(&ClipboardItem::new().offer_text("ignored"));
+/// assert!(cb.available_types().is_empty());
+/// ```
 pub trait PlatformClipboard: ClipboardService {
     /// Returns a human-readable name for the platform backend, e.g.
     /// `"windows-ole"`, `"macos-nspasteboard"`, `"wayland"`, `"x11"` or
     /// `"stub"`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::{PlatformClipboard, StubClipboard};
+    ///
+    /// let cb = StubClipboard::new();
+    /// assert_eq!(cb.platform_name(), "stub");
+    /// ```
     fn platform_name(&self) -> &str;
 }
 
@@ -80,6 +101,16 @@ pub struct StubClipboard;
 
 impl StubClipboard {
     /// Creates a new [`StubClipboard`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::{ClipboardService, PlatformClipboard, StubClipboard};
+    ///
+    /// let cb = StubClipboard::new();
+    /// assert_eq!(cb.platform_name(), "stub");
+    /// assert!(cb.available_types().is_empty());
+    /// ```
     #[inline]
     pub fn new() -> Self {
         Self
@@ -137,6 +168,19 @@ impl PlatformClipboard for StubClipboard {
 /// platform-agnostic fallback). This is a deliberate design decision, not a
 /// missing feature — see the [module docs](crate::platform) for the full
 /// rationale.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_clipboard::{ClipboardItem, ClipboardService, PlatformClipboard,
+///     platform::WindowsOleClipboard};
+///
+/// let mut cb = WindowsOleClipboard::new();
+/// assert_eq!(cb.platform_name(), "windows-ole");
+/// cb.set_contents(&ClipboardItem::new().offer_text("hello"));
+/// // Stubs discard writes, so reads return None.
+/// assert!(cb.get_contents("text/plain;charset=utf-8").is_none());
+/// ```
 #[cfg(target_os = "windows")]
 #[derive(Default, Clone, Debug)]
 pub struct WindowsOleClipboard(StubClipboard);
@@ -144,6 +188,16 @@ pub struct WindowsOleClipboard(StubClipboard);
 #[cfg(target_os = "windows")]
 impl WindowsOleClipboard {
     /// Creates a new [`WindowsOleClipboard`] stub.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard::platform::WindowsOleClipboard;
+    /// use martensite_clipboard::PlatformClipboard;
+    ///
+    /// let cb = WindowsOleClipboard::new();
+    /// assert_eq!(cb.platform_name(), "windows-ole");
+    /// ```
     #[inline]
     pub fn new() -> Self {
         Self(StubClipboard)
@@ -195,6 +249,19 @@ impl PlatformClipboard for WindowsOleClipboard {
 /// platform-agnostic fallback). This is a deliberate design decision, not a
 /// missing feature — see the [module docs](crate::platform) for the full
 /// rationale.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_clipboard::{ClipboardItem, ClipboardService, PlatformClipboard,
+///     platform::NsPasteboardClipboard};
+///
+/// let mut cb = NsPasteboardClipboard::new();
+/// assert_eq!(cb.platform_name(), "macos-nspasteboard");
+/// cb.set_contents(&ClipboardItem::new().offer_text("hello"));
+/// // Stubs discard writes, so reads return None.
+/// assert!(cb.get_contents("text/plain;charset=utf-8").is_none());
+/// ```
 #[cfg(target_os = "macos")]
 #[derive(Default, Clone, Debug)]
 pub struct NsPasteboardClipboard(StubClipboard);
@@ -202,6 +269,16 @@ pub struct NsPasteboardClipboard(StubClipboard);
 #[cfg(target_os = "macos")]
 impl NsPasteboardClipboard {
     /// Creates a new [`NsPasteboardClipboard`] stub.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard::platform::NsPasteboardClipboard;
+    /// use martensite_clipboard::PlatformClipboard;
+    ///
+    /// let cb = NsPasteboardClipboard::new();
+    /// assert_eq!(cb.platform_name(), "macos-nspasteboard");
+    /// ```
     #[inline]
     pub fn new() -> Self {
         Self(StubClipboard)
@@ -255,6 +332,19 @@ impl PlatformClipboard for NsPasteboardClipboard {
 /// rationale.
 ///
 /// Enabled only on Linux when the `wayland` feature is active.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_clipboard::{ClipboardItem, ClipboardService, PlatformClipboard,
+///     platform::WaylandClipboard};
+///
+/// let mut cb = WaylandClipboard::new();
+/// assert_eq!(cb.platform_name(), "wayland");
+/// cb.set_contents(&ClipboardItem::new().offer_text("hello"));
+/// // Stubs discard writes, so reads return None.
+/// assert!(cb.get_contents("text/plain;charset=utf-8").is_none());
+/// ```
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 #[derive(Default, Clone, Debug)]
 pub struct WaylandClipboard(StubClipboard);
@@ -262,6 +352,16 @@ pub struct WaylandClipboard(StubClipboard);
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 impl WaylandClipboard {
     /// Creates a new [`WaylandClipboard`] stub.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard::platform::WaylandClipboard;
+    /// use martensite_clipboard::PlatformClipboard;
+    ///
+    /// let cb = WaylandClipboard::new();
+    /// assert_eq!(cb.platform_name(), "wayland");
+    /// ```
     #[inline]
     pub fn new() -> Self {
         Self(StubClipboard)
@@ -316,6 +416,19 @@ impl PlatformClipboard for WaylandClipboard {
 /// rationale.
 ///
 /// Selected on Linux when the `wayland` feature is **not** active.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_clipboard::{ClipboardItem, ClipboardService, PlatformClipboard,
+///     platform::X11Clipboard};
+///
+/// let mut cb = X11Clipboard::new();
+/// assert_eq!(cb.platform_name(), "x11");
+/// cb.set_contents(&ClipboardItem::new().offer_text("hello"));
+/// // Stubs discard writes, so reads return None.
+/// assert!(cb.get_contents("text/plain;charset=utf-8").is_none());
+/// ```
 #[cfg(all(target_os = "linux", not(feature = "wayland")))]
 #[derive(Default, Clone, Debug)]
 pub struct X11Clipboard(StubClipboard);
@@ -323,6 +436,16 @@ pub struct X11Clipboard(StubClipboard);
 #[cfg(all(target_os = "linux", not(feature = "wayland")))]
 impl X11Clipboard {
     /// Creates a new [`X11Clipboard`] stub.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard::platform::X11Clipboard;
+    /// use martensite_clipboard::PlatformClipboard;
+    ///
+    /// let cb = X11Clipboard::new();
+    /// assert_eq!(cb.platform_name(), "x11");
+    /// ```
     #[inline]
     pub fn new() -> Self {
         Self(StubClipboard)

@@ -10,6 +10,14 @@ use std::fmt;
 use tracing::error;
 
 /// Default size of the shared linear memory ring buffer (256 KiB).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_plugin::DEFAULT_CAPACITY;
+///
+/// assert_eq!(DEFAULT_CAPACITY, 256 * 1024);
+/// ```
 pub const DEFAULT_CAPACITY: usize = 256 * 1024;
 
 /// Number of leading bytes reserved for the producer/consumer cursors in a
@@ -67,6 +75,14 @@ pub struct PluginPaintCmd {
 
 impl PluginPaintCmd {
     /// Returns the number of bytes occupied by the command header.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::PluginPaintCmd;
+    ///
+    /// assert_eq!(PluginPaintCmd::header_size(), 12);
+    /// ```
     #[inline]
     pub const fn header_size() -> usize {
         CMD_SIZE
@@ -111,6 +127,15 @@ impl PluginPaintCmd {
 }
 
 /// Errors that can occur while writing into a [`PluginRingBuffer`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_plugin::RingBufferError;
+///
+/// let err = RingBufferError::BufferFull;
+/// assert_eq!(err.to_string(), "ring buffer is full");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RingBufferError {
     /// The ring buffer does not have enough contiguous free space for the
@@ -183,6 +208,16 @@ impl<'a> PluginRingBuffer<'a> {
     /// small payload. The buffer starts empty and the cursors are held only
     /// in this struct; use [`PluginRingBuffer::new_shared`] when the slice is
     /// a region shared with another party (e.g. guest linear memory).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{PluginRingBuffer, DEFAULT_CAPACITY};
+    ///
+    /// let mut backing = vec![0u8; DEFAULT_CAPACITY];
+    /// let rb = PluginRingBuffer::new(&mut backing);
+    /// assert!(rb.is_empty());
+    /// ```
     pub fn new(data: &'a mut [u8]) -> Self {
         Self {
             data,
@@ -254,6 +289,16 @@ impl<'a> PluginRingBuffer<'a> {
     }
 
     /// Returns the total capacity of the buffer in bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{PluginRingBuffer, DEFAULT_CAPACITY};
+    ///
+    /// let mut backing = vec![0u8; DEFAULT_CAPACITY];
+    /// let rb = PluginRingBuffer::new(&mut backing);
+    /// assert_eq!(rb.capacity(), DEFAULT_CAPACITY);
+    /// ```
     pub fn capacity(&self) -> usize {
         self.data.len()
     }
@@ -263,6 +308,20 @@ impl<'a> PluginRingBuffer<'a> {
     }
 
     /// Returns the number of bytes currently stored in the buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{PluginPaintCmd, PluginRingBuffer, DEFAULT_CAPACITY};
+    ///
+    /// let mut backing = vec![0u8; DEFAULT_CAPACITY];
+    /// let mut rb = PluginRingBuffer::new(&mut backing);
+    /// assert_eq!(rb.len(), 0);
+    ///
+    /// let cmd = PluginPaintCmd { cmd_type: 1, flags: 0, data_len: 0, payload_offset: 0 };
+    /// rb.produce(&cmd, &[]).unwrap();
+    /// assert_eq!(rb.len(), PluginPaintCmd::header_size());
+    /// ```
     pub fn len(&self) -> usize {
         let cap = self.capacity_u32();
         if self.head == self.tail {
@@ -275,6 +334,16 @@ impl<'a> PluginRingBuffer<'a> {
     }
 
     /// Returns `true` if the buffer contains no commands.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{PluginRingBuffer, DEFAULT_CAPACITY};
+    ///
+    /// let mut backing = vec![0u8; DEFAULT_CAPACITY];
+    /// let rb = PluginRingBuffer::new(&mut backing);
+    /// assert!(rb.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.head == self.tail
     }

@@ -19,7 +19,7 @@
 //! # Safety
 //!
 //! This crate contains no `unsafe` code (`#![forbid(unsafe_code)]`).
-
+#![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
 /// GPU device context: adapter enumeration, feature selection, device/queue

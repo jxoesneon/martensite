@@ -27,6 +27,14 @@ use martensite_theme::THEME_TRANSITION_WGSL;
 ///
 /// This matches `ThemeUniforms::as_bytes().len()` (256 bytes) and is used to
 /// validate the byte slices passed to [`render_theme_transition`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::theme_transition::THEME_UNIFORM_SIZE;
+///
+/// assert_eq!(THEME_UNIFORM_SIZE, 256);
+/// ```
 pub const THEME_UNIFORM_SIZE: u64 = 256;
 
 /// The minimum binding size for each theme uniform buffer.
@@ -133,6 +141,18 @@ fn fs_main() -> @location(0) vec4<f32> {
 "#;
 
 /// Errors that can occur while constructing a [`ThemeTransitionPipeline`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::theme_transition::ThemeTransitionError;
+/// use std::error::Error;
+///
+/// let err = ThemeTransitionError::ShaderCompilationFailed("bad shader".to_string());
+/// assert!(err.to_string().contains("shader compilation failed"));
+/// assert!(err.to_string().contains("bad shader"));
+/// assert!(err.source().is_none());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThemeTransitionError {
     /// The WGSL shader failed to compile on this device.

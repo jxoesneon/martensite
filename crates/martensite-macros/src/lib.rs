@@ -38,6 +38,7 @@
 //! present. Invalid input produces a clear `compile_error!` diagnostic.
 
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 
@@ -47,6 +48,18 @@ use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenSt
 
 /// Declares a Martensite widget, expanding to a struct that implements
 /// [`Default`] together with convenience accessor methods.
+///
+/// # Examples
+///
+/// The simplest invocation generates a unit struct deriving [`Default`]:
+///
+/// ```
+/// use martensite_macros::widget;
+///
+/// widget!(MyButton);
+///
+/// let b = MyButton::default();
+/// ```
 ///
 /// # Simple form
 ///

@@ -32,6 +32,16 @@ pub struct GradientStop {
 
 impl GradientStop {
     /// Creates a new gradient stop.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::GradientStop;
+    ///
+    /// let stop = GradientStop::new(0.25, [10, 20, 30, 255]);
+    /// assert_eq!(stop.position, 0.25);
+    /// assert_eq!(stop.color, [10, 20, 30, 255]);
+    /// ```
     pub const fn new(position: f32, color: [u8; 4]) -> Self {
         Self { position, color }
     }
@@ -67,11 +77,33 @@ pub struct GradientStops {
 
 impl GradientStops {
     /// Creates an empty stop list.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::GradientStops;
+    ///
+    /// let stops = GradientStops::new();
+    /// assert!(stops.is_empty());
+    /// assert_eq!(stops.len(), 0);
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Creates a stop list from the given slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{GradientStop, GradientStops};
+    ///
+    /// let stops = GradientStops::from_slice(&[
+    ///     GradientStop::new(0.0, [0, 0, 0, 255]),
+    ///     GradientStop::new(1.0, [255, 255, 255, 255]),
+    /// ]);
+    /// assert_eq!(stops.len(), 2);
+    /// ```
     pub fn from_slice(stops: &[GradientStop]) -> Self {
         Self {
             stops: stops.to_vec(),
@@ -79,16 +111,50 @@ impl GradientStops {
     }
 
     /// Appends a single stop.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{GradientStop, GradientStops};
+    ///
+    /// let mut stops = GradientStops::new();
+    /// stops.push(GradientStop::new(0.0, [255, 0, 0, 255]));
+    /// stops.push(GradientStop::new(1.0, [0, 0, 255, 255]));
+    /// assert_eq!(stops.len(), 2);
+    /// ```
     pub fn push(&mut self, stop: GradientStop) {
         self.stops.push(stop);
     }
 
     /// Returns `true` when the stop list contains no entries.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{GradientStop, GradientStops};
+    ///
+    /// let mut stops = GradientStops::new();
+    /// assert!(stops.is_empty());
+    /// stops.push(GradientStop::new(0.0, [0, 0, 0, 255]));
+    /// assert!(!stops.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.stops.is_empty()
     }
 
     /// Returns the number of stops.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{GradientStop, GradientStops};
+    ///
+    /// let stops = GradientStops::from_slice(&[
+    ///     GradientStop::new(0.0, [0, 0, 0, 255]),
+    ///     GradientStop::new(1.0, [255, 255, 255, 255]),
+    /// ]);
+    /// assert_eq!(stops.len(), 2);
+    /// ```
     pub fn len(&self) -> usize {
         self.stops.len()
     }
@@ -137,6 +203,16 @@ impl FontResource {
     /// Creates a new font resource from the given bytes and collection index.
     ///
     /// For a standalone `.ttf`/`.otf` file, pass `index = 0`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::FontResource;
+    ///
+    /// let font = FontResource::new(b"font bytes".to_vec(), 0);
+    /// assert_eq!(font.index(), 0);
+    /// assert!(!font.data().is_empty());
+    /// ```
     #[must_use]
     pub fn new(data: Vec<u8>, index: u32) -> Self {
         Self {
@@ -150,6 +226,17 @@ impl FontResource {
     ///
     /// This avoids the allocation that [`FontResource::new`] performs when the
     /// bytes already live in a `&'static [u8]` (e.g. from `include_bytes!`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::FontResource;
+    ///
+    /// static BYTES: &[u8] = b"static font bytes";
+    /// let font = FontResource::from_static(BYTES, 0);
+    /// assert_eq!(font.index(), 0);
+    /// assert_eq!(font.data(), BYTES);
+    /// ```
     #[must_use]
     pub fn from_static(data: &'static [u8], index: u32) -> Self {
         Self {
@@ -159,6 +246,15 @@ impl FontResource {
     }
 
     /// Returns the raw font file bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::FontResource;
+    ///
+    /// let font = FontResource::new(b"hello".to_vec(), 0);
+    /// assert_eq!(font.data(), b"hello");
+    /// ```
     #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
@@ -168,12 +264,31 @@ impl FontResource {
     ///
     /// This is intended for backends (such as the Vello backend) that need to
     /// wrap the bytes in their own `Arc`-backed shared handle without copying.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::FontResource;
+    ///
+    /// let font = FontResource::new(b"hello".to_vec(), 0);
+    /// let arc = font.data_arc();
+    /// assert_eq!(arc.as_ref(), b"hello");
+    /// ```
     #[must_use]
     pub fn data_arc(&self) -> &Arc<[u8]> {
         &self.data
     }
 
     /// Returns the face index within a font collection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::FontResource;
+    ///
+    /// let font = FontResource::new(b"font".to_vec(), 2);
+    /// assert_eq!(font.index(), 2);
+    /// ```
     #[must_use]
     pub fn index(&self) -> u32 {
         self.index
@@ -231,6 +346,19 @@ pub struct GlyphInstance {
 impl GlyphInstance {
     /// Creates a new glyph instance with the given origin, identifier, and
     /// pre-measured bounding-box dimensions (in device pixels).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::GlyphInstance;
+    ///
+    /// let glyph = GlyphInstance::new(10.0, 20.0, 42, 12.0, 16.0);
+    /// assert_eq!(glyph.x, 10.0);
+    /// assert_eq!(glyph.y, 20.0);
+    /// assert_eq!(glyph.glyph_id, 42);
+    /// assert_eq!(glyph.width, 12.0);
+    /// assert_eq!(glyph.height, 16.0);
+    /// ```
     pub fn new(x: f32, y: f32, glyph_id: u32, width: f32, height: f32) -> Self {
         Self {
             x,
@@ -281,6 +409,17 @@ pub struct GlyphRun {
 
 impl GlyphRun {
     /// Creates an empty glyph run.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::GlyphRun;
+    ///
+    /// let run = GlyphRun::new(16.0, [0, 0, 0, 255]);
+    /// assert!(run.is_empty());
+    /// assert_eq!(run.font_size, 16.0);
+    /// assert_eq!(run.color, [0, 0, 0, 255]);
+    /// ```
     pub fn new(font_size: f32, color: [u8; 4]) -> Self {
         Self {
             font_size,
@@ -309,16 +448,48 @@ impl GlyphRun {
     }
 
     /// Attaches a [`FontResource`] to this run in place.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{FontResource, GlyphRun};
+    ///
+    /// let mut run = GlyphRun::new(16.0, [0, 0, 0, 255]);
+    /// assert!(run.font.is_none());
+    /// run.set_font(FontResource::new(b"font".to_vec(), 0));
+    /// assert!(run.font.is_some());
+    /// ```
     pub fn set_font(&mut self, font: FontResource) {
         self.font = Some(font);
     }
 
     /// Appends a single glyph instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{GlyphInstance, GlyphRun};
+    ///
+    /// let mut run = GlyphRun::new(16.0, [0, 0, 0, 255]);
+    /// run.push(GlyphInstance::new(0.0, 16.0, 36, 9.0, 16.0));
+    /// assert_eq!(run.glyphs.len(), 1);
+    /// ```
     pub fn push(&mut self, glyph: GlyphInstance) {
         self.glyphs.push(glyph);
     }
 
     /// Returns `true` when the run contains no glyphs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{GlyphInstance, GlyphRun};
+    ///
+    /// let mut run = GlyphRun::new(16.0, [0, 0, 0, 255]);
+    /// assert!(run.is_empty());
+    /// run.push(GlyphInstance::new(0.0, 0.0, 1, 8.0, 16.0));
+    /// assert!(!run.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.glyphs.is_empty()
     }
@@ -410,41 +581,143 @@ pub struct PathBuilder {
 
 impl PathBuilder {
     /// Creates a new, empty path builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PathBuilder;
+    ///
+    /// let builder = PathBuilder::new();
+    /// assert!(builder.elements().is_empty());
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Begins a new subpath at `p`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PathBuilder;
+    /// use kurbo::Point;
+    ///
+    /// let mut builder = PathBuilder::new();
+    /// builder.move_to(Point::new(5.0, 5.0));
+    /// assert_eq!(builder.elements().len(), 1);
+    /// ```
     pub fn move_to(&mut self, p: Point) {
         self.path.move_to(p);
     }
 
     /// Adds a line segment to `p`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PathBuilder;
+    /// use kurbo::Point;
+    ///
+    /// let mut builder = PathBuilder::new();
+    /// builder.move_to(Point::new(0.0, 0.0));
+    /// builder.line_to(Point::new(10.0, 0.0));
+    /// assert_eq!(builder.elements().len(), 2);
+    /// ```
     pub fn line_to(&mut self, p: Point) {
         self.path.line_to(p);
     }
 
     /// Adds a quadratic Bézier segment with control point `p1` and end `p2`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PathBuilder;
+    /// use kurbo::Point;
+    ///
+    /// let mut builder = PathBuilder::new();
+    /// builder.move_to(Point::new(0.0, 0.0));
+    /// builder.quad_to(Point::new(5.0, 5.0), Point::new(10.0, 0.0));
+    /// assert_eq!(builder.elements().len(), 2);
+    /// ```
     pub fn quad_to(&mut self, p1: Point, p2: Point) {
         self.path.quad_to(p1, p2);
     }
 
     /// Adds a cubic Bézier segment with control points `p1`, `p2` and end `p3`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PathBuilder;
+    /// use kurbo::Point;
+    ///
+    /// let mut builder = PathBuilder::new();
+    /// builder.move_to(Point::new(0.0, 0.0));
+    /// builder.curve_to(
+    ///     Point::new(5.0, 0.0),
+    ///     Point::new(10.0, 5.0),
+    ///     Point::new(15.0, 0.0),
+    /// );
+    /// assert_eq!(builder.elements().len(), 2);
+    /// ```
     pub fn curve_to(&mut self, p1: Point, p2: Point, p3: Point) {
         self.path.curve_to(p1, p2, p3);
     }
 
     /// Closes the current subpath.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PathBuilder;
+    /// use kurbo::Point;
+    ///
+    /// let mut builder = PathBuilder::new();
+    /// builder.move_to(Point::new(0.0, 0.0));
+    /// builder.line_to(Point::new(10.0, 0.0));
+    /// builder.close_path();
+    /// // move + line + close = 3 elements
+    /// assert_eq!(builder.elements().len(), 3);
+    /// ```
     pub fn close_path(&mut self) {
         self.path.close_path();
     }
 
     /// Returns a reference to the underlying path elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PathBuilder;
+    /// use kurbo::Point;
+    ///
+    /// let mut builder = PathBuilder::new();
+    /// builder.move_to(Point::new(0.0, 0.0));
+    /// builder.line_to(Point::new(10.0, 0.0));
+    /// let elements = builder.elements();
+    /// assert_eq!(elements.len(), 2);
+    /// ```
     pub fn elements(&self) -> &[kurbo::PathEl] {
         self.path.elements()
     }
 
     /// Finalizes the builder and returns the constructed [`BezPath`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PathBuilder;
+    /// use kurbo::Point;
+    ///
+    /// let mut builder = PathBuilder::new();
+    /// builder.move_to(Point::new(0.0, 0.0));
+    /// builder.line_to(Point::new(10.0, 0.0));
+    /// builder.close_path();
+    /// let path = builder.build();
+    /// // move + line + close = 3 elements
+    /// assert_eq!(path.elements().len(), 3);
+    /// ```
     pub fn build(self) -> BezPath {
         self.path
     }
@@ -483,39 +756,135 @@ pub struct PaintList {
 
 impl PaintList {
     /// Creates a new, empty `PaintList`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PaintList;
+    ///
+    /// let list = PaintList::new();
+    /// assert!(list.is_empty());
+    /// assert_eq!(list.len(), 0);
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Removes all commands from the list, leaving it empty but preserving the
     /// allocated capacity for reuse on subsequent frames.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PaintList;
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+    /// assert!(!list.is_empty());
+    /// list.clear();
+    /// assert!(list.is_empty());
+    /// ```
     pub fn clear(&mut self) {
         self.commands.clear();
     }
 
     /// Pushes a [`PaintCommand::FillRect`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintCommand, PaintList};
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::new(0.0, 0.0, 50.0, 50.0), [255, 0, 0, 255]);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::FillRect(..)));
+    /// ```
     pub fn push_fill_rect(&mut self, rect: Rect, color: [u8; 4]) {
         self.commands.push(PaintCommand::FillRect(rect, color));
     }
 
     /// Pushes a [`PaintCommand::StrokeRect`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintCommand, PaintList};
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_stroke_rect(Rect::new(0.0, 0.0, 50.0, 50.0), 2.0, [0, 0, 0, 255]);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::StrokeRect(..)));
+    /// ```
     pub fn push_stroke_rect(&mut self, rect: Rect, width: f32, color: [u8; 4]) {
         self.commands
             .push(PaintCommand::StrokeRect(rect, width, color));
     }
 
     /// Pushes a [`PaintCommand::FillPath`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintCommand, PaintList, PathBuilder};
+    /// use kurbo::Point;
+    ///
+    /// let mut builder = PathBuilder::new();
+    /// builder.move_to(Point::new(0.0, 0.0));
+    /// builder.line_to(Point::new(10.0, 10.0));
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_path(builder.build(), [0, 0, 255, 255]);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::FillPath(..)));
+    /// ```
     pub fn push_path(&mut self, path: BezPath, color: [u8; 4]) {
         self.commands.push(PaintCommand::FillPath(path, color));
     }
 
     /// Pushes a [`PaintCommand::StrokePath`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintCommand, PaintList, PathBuilder};
+    /// use kurbo::Point;
+    ///
+    /// let mut builder = PathBuilder::new();
+    /// builder.move_to(Point::new(0.0, 0.0));
+    /// builder.line_to(Point::new(10.0, 10.0));
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_stroke_path(builder.build(), 1.5, [0, 0, 255, 255]);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::StrokePath(..)));
+    /// ```
     pub fn push_stroke_path(&mut self, path: BezPath, width: f32, color: [u8; 4]) {
         self.commands
             .push(PaintCommand::StrokePath(path, width, color));
     }
 
     /// Pushes a [`PaintCommand::FillLinearGradient`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{GradientStop, GradientStops, PaintCommand, PaintList};
+    /// use kurbo::Rect;
+    ///
+    /// let stops = GradientStops::from_slice(&[
+    ///     GradientStop::new(0.0, [0, 0, 0, 255]),
+    ///     GradientStop::new(1.0, [255, 255, 255, 255]),
+    /// ]);
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_linear_gradient(Rect::new(0.0, 0.0, 100.0, 100.0), stops, [0.0, 0.0], [100.0, 0.0]);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::FillLinearGradient(..)));
+    /// ```
     pub fn push_linear_gradient(
         &mut self,
         rect: Rect,
@@ -528,6 +897,23 @@ impl PaintList {
     }
 
     /// Pushes a [`PaintCommand::FillRadialGradient`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{GradientStop, GradientStops, PaintCommand, PaintList};
+    /// use kurbo::Rect;
+    ///
+    /// let stops = GradientStops::from_slice(&[
+    ///     GradientStop::new(0.0, [255, 255, 255, 255]),
+    ///     GradientStop::new(1.0, [0, 0, 0, 255]),
+    /// ]);
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_radial_gradient(Rect::new(0.0, 0.0, 100.0, 100.0), stops, [50.0, 50.0], 50.0);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::FillRadialGradient(..)));
+    /// ```
     pub fn push_radial_gradient(
         &mut self,
         rect: Rect,
@@ -541,33 +927,105 @@ impl PaintList {
     }
 
     /// Pushes a [`PaintCommand::ClipRect`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintCommand, PaintList};
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_clip(Rect::new(0.0, 0.0, 100.0, 100.0));
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::ClipRect(..)));
+    /// ```
     pub fn push_clip(&mut self, rect: Rect) {
         self.commands.push(PaintCommand::ClipRect(rect));
     }
 
     /// Pushes a [`PaintCommand::ClipRoundedRect`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintCommand, PaintList};
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_clip_rounded(Rect::new(0.0, 0.0, 100.0, 100.0), 8.0);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::ClipRoundedRect(..)));
+    /// ```
     pub fn push_clip_rounded(&mut self, rect: Rect, radius: f32) {
         self.commands
             .push(PaintCommand::ClipRoundedRect(rect, radius));
     }
 
     /// Pushes a [`PaintCommand::DrawText`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintCommand, PaintList};
+    /// use kurbo::Point;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_text(Point::new(10.0, 20.0), "hi".to_string(), 16.0, [0, 0, 0, 255]);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::DrawText(..)));
+    /// ```
     pub fn push_text(&mut self, origin: Point, text: String, size: f32, color: [u8; 4]) {
         self.commands
             .push(PaintCommand::DrawText(origin, text, size, color));
     }
 
     /// Pushes a [`PaintCommand::DrawGlyphRun`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{GlyphRun, PaintCommand, PaintList};
+    ///
+    /// let mut list = PaintList::new();
+    /// let run = GlyphRun::new(16.0, [0, 0, 0, 255]);
+    /// list.push_glyph_run(run);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::DrawGlyphRun(..)));
+    /// ```
     pub fn push_glyph_run(&mut self, run: GlyphRun) {
         self.commands.push(PaintCommand::DrawGlyphRun(run));
     }
 
     /// Returns the number of commands currently in the list.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PaintList;
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// assert_eq!(list.len(), 0);
+    /// list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+    /// assert_eq!(list.len(), 1);
+    /// ```
     pub fn len(&self) -> usize {
         self.commands.len()
     }
 
     /// Returns `true` when the list contains no commands.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PaintList;
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// assert!(list.is_empty());
+    /// list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+    /// assert!(!list.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
     }

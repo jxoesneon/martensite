@@ -31,22 +31,57 @@ use crate::shaping::{ShapedGlyph, ShapedLine, TextMetrics};
 use crate::vertical::WritingMode;
 
 /// Default memory budget for the Tier 2 cache: 16 MB.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cache::DEFAULT_MEMORY_BUDGET;
+///
+/// assert_eq!(DEFAULT_MEMORY_BUDGET, 16 * 1024 * 1024);
+/// ```
 pub const DEFAULT_MEMORY_BUDGET: usize = 16 * 1024 * 1024;
 
 /// Quantized font size for cache keying.
 ///
 /// We use the raw `f32` bits to ensure stable, exact matching.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cache::FontSizeBits;
+///
+/// let bits = FontSizeBits::from_f32(16.0);
+/// assert_eq!(bits.to_f32(), 16.0);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FontSizeBits(pub u32);
 
 impl FontSizeBits {
     /// Creates a `FontSizeBits` from an `f32` font size.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cache::FontSizeBits;
+    ///
+    /// let bits = FontSizeBits::from_f32(12.0);
+    /// assert_eq!(bits.to_f32(), 12.0);
+    /// ```
     #[inline(always)]
     pub fn from_f32(size: f32) -> Self {
         Self(size.to_bits())
     }
 
     /// Converts back to `f32`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cache::FontSizeBits;
+    ///
+    /// let bits = FontSizeBits::from_f32(20.0);
+    /// assert_eq!(bits.to_f32(), 20.0);
+    /// ```
     #[inline(always)]
     pub fn to_f32(self) -> f32 {
         f32::from_bits(self.0)
@@ -57,11 +92,30 @@ impl FontSizeBits {
 ///
 /// Uses a simple FxHash-style accumulator. This is NOT cryptographically
 /// secure but is fast and sufficient for cache keying.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cache::TextHash;
+///
+/// let a = TextHash::from_string("hello");
+/// let b = TextHash::from_string("hello");
+/// assert_eq!(a, b);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TextHash(pub u64);
 
 impl TextHash {
     /// Computes a hash from a byte slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cache::TextHash;
+    ///
+    /// let h = TextHash::from_bytes(b"abc");
+    /// assert_ne!(h, TextHash::from_bytes(b"xyz"));
+    /// ```
     pub fn from_bytes(bytes: &[u8]) -> Self {
         // FxHash variant
         let mut hash = 0xcbf29ce484222325u64;
@@ -72,6 +126,15 @@ impl TextHash {
     }
 
     /// Computes a hash from a string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cache::TextHash;
+    ///
+    /// let h = TextHash::from_string("hello");
+    /// assert_eq!(h, TextHash::from_bytes(b"hello"));
+    /// ```
     #[inline]
     pub fn from_string(text: &str) -> Self {
         Self::from_bytes(text.as_bytes())
@@ -79,6 +142,16 @@ impl TextHash {
 }
 
 /// Cache key for the Tier 2 shaping cache.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cache::ShapeCacheKey;
+/// use martensite_text::font::FontId;
+///
+/// let key = ShapeCacheKey::new(FontId::dummy(), 16.0, "hello");
+/// assert_eq!(key.font_size_bits.to_f32(), 16.0);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ShapeCacheKey {
     /// Font face identifier.
@@ -104,6 +177,15 @@ pub struct ShapeCacheKey {
 
 /// Quantized max width for cache keying.
 /// `u32::MAX` represents unbounded (no wrapping).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cache::MaxWidthBits;
+///
+/// let bits = MaxWidthBits::from_opt(Some(200.0));
+/// assert_eq!(bits.to_opt(), Some(200.0));
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MaxWidthBits(pub u32);
 
@@ -111,6 +193,16 @@ impl MaxWidthBits {
     /// Creates a `MaxWidthBits` from an optional `f32` width.
     /// `None` maps to `u32::MAX` (unbounded).
     /// `Some(0.0)` or negative maps to `0` (zero width).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cache::MaxWidthBits;
+    ///
+    /// assert_eq!(MaxWidthBits::from_opt(None).to_opt(), None);
+    /// assert_eq!(MaxWidthBits::from_opt(Some(0.0)).to_opt(), Some(0.0));
+    /// assert_eq!(MaxWidthBits::from_opt(Some(100.0)).to_opt(), Some(100.0));
+    /// ```
     #[inline]
     pub fn from_opt(width: Option<f32>) -> Self {
         match width {
@@ -123,6 +215,15 @@ impl MaxWidthBits {
     /// Converts back to `Option<f32>`.
     /// `u32::MAX` represents unbounded (None).
     /// `0` represents zero width (Some(0.0)).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cache::MaxWidthBits;
+    ///
+    /// let bits = MaxWidthBits::from_opt(Some(50.0));
+    /// assert_eq!(bits.to_opt(), Some(50.0));
+    /// ```
     #[inline]
     pub fn to_opt(self) -> Option<f32> {
         if self.0 == u32::MAX {
@@ -136,10 +237,28 @@ impl MaxWidthBits {
 }
 
 /// Quantized line height for cache keying.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cache::LineHeightBits;
+///
+/// let bits = LineHeightBits::from_f32(24.0);
+/// assert_eq!(bits.to_f32(), 24.0);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LineHeightBits(pub u32);
 
 /// Quantized BiDi direction for cache keying.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cache::DirectionBits;
+///
+/// let bits = DirectionBits::default();
+/// assert_eq!(bits, DirectionBits::Ltr);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub enum DirectionBits {
     /// Left-to-right base direction.

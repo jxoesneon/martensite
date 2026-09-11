@@ -60,6 +60,7 @@ pub mod dpi;
 pub mod event;
 pub mod hit_test;
 pub mod manager;
+pub mod stylus;
 
 pub use winit::error::RequestError;
 pub use winit::event::WindowEvent;

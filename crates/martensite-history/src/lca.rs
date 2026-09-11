@@ -10,10 +10,30 @@ use std::collections::HashSet;
 
 new_key_type! {
     /// Opaque identifier for a [`HistoryNode`] within a [`HistoryTree`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::{HistoryTree, NodeId};
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// let root: NodeId = tree.root();
+    /// assert_eq!(tree.current(), root);
+    /// ```
     pub struct NodeId;
 }
 
 /// Error returned when a [`NodeId`] does not exist in the history tree.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_history::{HistoryTree, NodeId, NodeIdError};
+///
+/// let mut tree = HistoryTree::new(100);
+/// let invalid = NodeId::default();
+/// assert_eq!(tree.set_current(invalid).unwrap_err(), NodeIdError);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NodeIdError;
 
@@ -30,6 +50,18 @@ impl std::error::Error for NodeIdError {}
 /// Each node records its parent (except the root), its children for
 /// branching navigation, and metadata used by the LCA algorithm and
 /// bounded-depth pruning.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_history::HistoryTree;
+///
+/// let mut tree = HistoryTree::new(100);
+/// let root = tree.root();
+/// let node = tree.node(root).unwrap();
+/// assert_eq!(node.depth(), 0);
+/// assert!(node.parent().is_none());
+/// ```
 #[derive(Debug)]
 pub struct HistoryNode {
     /// Parent node, or `None` for the root.
@@ -44,18 +76,52 @@ pub struct HistoryNode {
 
 impl HistoryNode {
     /// Returns the parent of this node, or `None` if this is the root.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// let root = tree.root();
+    /// let node = tree.node(root).unwrap();
+    /// assert!(node.parent().is_none());
+    /// ```
     #[inline]
     pub fn parent(&self) -> Option<NodeId> {
         self.parent
     }
 
     /// Returns the depth of this node (root = 0).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// let child = tree.append_child();
+    /// let node = tree.node(child).unwrap();
+    /// assert_eq!(node.depth(), 1);
+    /// ```
     #[inline]
     pub fn depth(&self) -> u32 {
         self.depth
     }
 
     /// Returns the children of this node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// let root = tree.root();
+    /// tree.append_child();
+    /// let node = tree.node(root).unwrap();
+    /// assert_eq!(node.children().len(), 1);
+    /// ```
     #[inline]
     pub fn children(&self) -> &[NodeId] {
         &self.children
@@ -67,6 +133,17 @@ impl HistoryNode {
 /// The tree stores nodes in a [`SlotMap`] for stable IDs and O(1)
 /// insertion/removal. The root node is created at construction time
 /// and represents the initial state before any operations.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_history::HistoryTree;
+///
+/// let mut tree = HistoryTree::new(100);
+/// assert_eq!(tree.node_count(), 1);
+/// tree.append_child();
+/// assert_eq!(tree.node_count(), 2);
+/// ```
 ///
 /// # Node ID Invalidation
 ///
@@ -127,24 +204,65 @@ impl HistoryTree {
     }
 
     /// Returns the root node ID.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let tree = HistoryTree::new(100);
+    /// let root = tree.root();
+    /// assert_eq!(tree.current(), root);
+    /// ```
     #[inline]
     pub fn root(&self) -> NodeId {
         self.root
     }
 
     /// Returns the current node ID.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let tree = HistoryTree::new(100);
+    /// assert_eq!(tree.current(), tree.root());
+    /// ```
     #[inline]
     pub fn current(&self) -> NodeId {
         self.current
     }
 
     /// Returns the total number of nodes in the tree.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// assert_eq!(tree.node_count(), 1);
+    /// tree.append_child();
+    /// assert_eq!(tree.node_count(), 2);
+    /// ```
     #[inline]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
     /// Returns the depth of the current node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// assert_eq!(tree.current_depth(), 0);
+    /// tree.append_child();
+    /// assert_eq!(tree.current_depth(), 1);
+    /// ```
     #[inline]
     pub fn current_depth(&self) -> u32 {
         self.nodes[self.current].depth
@@ -153,6 +271,16 @@ impl HistoryTree {
     /// Returns a reference to the node at the given ID.
     ///
     /// Returns `None` if the ID is no longer valid (pruned).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let tree = HistoryTree::new(100);
+    /// let root = tree.root();
+    /// assert!(tree.node(root).is_some());
+    /// ```
     #[inline]
     pub fn node(&self, id: NodeId) -> Option<&HistoryNode> {
         self.nodes.get(id)
@@ -226,6 +354,18 @@ impl HistoryTree {
     /// Moves the current pointer to a specific child of the current node.
     ///
     /// Returns `true` if the child was found and the move succeeded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// let child = tree.append_child();
+    /// tree.move_to_parent();
+    /// assert!(tree.move_to_child(child));
+    /// assert_eq!(tree.current(), child);
+    /// ```
     pub fn move_to_child(&mut self, child: NodeId) -> bool {
         let visit = self.next_visit;
         self.next_visit += 1;
@@ -400,6 +540,17 @@ impl HistoryTree {
     ///
     /// Returns the IDs of all removed nodes so callers can clean up
     /// associated data (e.g., operation entries in a ledger).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// // Pruning is a no-op when the tree is under the node limit.
+    /// let removed = tree.prune();
+    /// assert!(removed.is_empty());
+    /// ```
     pub fn prune(&mut self) -> Vec<NodeId> {
         let mut removed = Vec::new();
         if self.nodes.len() <= self.max_nodes {
@@ -532,17 +683,49 @@ impl HistoryTree {
     }
 
     /// Returns an iterator over all node IDs in the tree.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// tree.append_child();
+    /// assert_eq!(tree.node_ids().count(), 2);
+    /// ```
     pub fn node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.nodes.keys()
     }
 
     /// Returns the number of children of the current node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// tree.append_child();
+    /// tree.move_to_parent();
+    /// assert_eq!(tree.current_child_count(), 1);
+    /// ```
     #[inline]
     pub fn current_child_count(&self) -> usize {
         self.nodes[self.current].children.len()
     }
 
     /// Returns the children of the current node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// let mut tree = HistoryTree::new(100);
+    /// let child = tree.append_child();
+    /// tree.move_to_parent();
+    /// assert_eq!(tree.current_children(), &[child]);
+    /// ```
     #[inline]
     pub fn current_children(&self) -> &[NodeId] {
         &self.nodes[self.current].children
@@ -554,6 +737,21 @@ impl HistoryTree {
 /// Produced by [`HistoryTree::path_to`], this describes the minimal
 /// set of operations to revert and apply when navigating from one
 /// history node to another.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_history::lca::NavPath;
+/// use martensite_history::HistoryTree;
+///
+/// let mut tree = HistoryTree::new(100);
+/// let root = tree.root();
+/// let child = tree.append_child();
+/// let nav = tree.path_to(root, child).unwrap();
+/// assert_eq!(nav.lca, root);
+/// assert!(nav.revert.is_empty());
+/// assert_eq!(nav.apply, vec![child]);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavPath {
     /// The Lowest Common Ancestor of the source and target.

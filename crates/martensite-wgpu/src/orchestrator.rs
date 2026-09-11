@@ -23,6 +23,14 @@ use martensite_render::{PaintList, RenderBackend, TinySkiaBackend, VelloRenderer
 use std::borrow::Cow;
 
 /// The rendering mode currently active in the orchestrator.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::orchestrator::RenderMode;
+///
+/// assert_ne!(RenderMode::Gpu, RenderMode::Cpu);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderMode {
     /// GPU rendering via Vello compute pipeline.
@@ -32,6 +40,17 @@ pub enum RenderMode {
 }
 
 /// Error returned by orchestrator operations.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::orchestrator::OrchestratorError;
+/// use std::error::Error;
+///
+/// let err = OrchestratorError::NoBackend;
+/// assert_eq!(err.to_string(), "no rendering backend available");
+/// assert!(err.source().is_none());
+/// ```
 #[derive(Debug)]
 pub enum OrchestratorError {
     /// The GPU context is not available and CPU fallback is disabled.
@@ -63,6 +82,16 @@ impl std::error::Error for OrchestratorError {}
 /// in `martensite-wgpu` to avoid a circular dependency. The umbrella
 /// crate's `AppConfig` is converted into this struct before being
 /// passed to the orchestrator.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::orchestrator::OrchestratorConfig;
+///
+/// let config = OrchestratorConfig::new(true, false);
+/// assert!(config.allow_software_fallback);
+/// assert!(!config.prefer_cpu);
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct OrchestratorConfig {
     /// Whether CPU software fallback is allowed.
@@ -73,6 +102,16 @@ pub struct OrchestratorConfig {
 
 impl OrchestratorConfig {
     /// Creates a new config with the given settings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::orchestrator::OrchestratorConfig;
+    ///
+    /// let config = OrchestratorConfig::new(false, true);
+    /// assert!(!config.allow_software_fallback);
+    /// assert!(config.prefer_cpu);
+    /// ```
     #[must_use]
     pub fn new(allow_software_fallback: bool, prefer_cpu: bool) -> Self {
         Self {
@@ -93,6 +132,15 @@ impl OrchestratorConfig {
 /// used. When `allow_software_fallback` is set and the recovery machine
 /// is in `FallbackCpu` state, the CPU backend is used. Otherwise, the
 /// Vello GPU backend is used.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_wgpu::orchestrator::{OrchestratorConfig, RenderOrchestrator};
+///
+/// let orchestrator = RenderOrchestrator::new(100, 100, OrchestratorConfig::default());
+/// assert!(orchestrator.is_ok());
+/// ```
 pub struct RenderOrchestrator {
     /// The Vello GPU renderer (scene builder).
     vello: VelloRenderer,
@@ -115,6 +163,15 @@ impl RenderOrchestrator {
     ///
     /// Returns [`OrchestratorError::BackendInitFailed`] if the TinySkia
     /// backend cannot be initialized (e.g. zero dimensions).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::{OrchestratorConfig, RenderOrchestrator};
+    ///
+    /// let orchestrator = RenderOrchestrator::new(100, 100, OrchestratorConfig::default());
+    /// assert!(orchestrator.is_ok());
+    /// ```
     pub fn new(
         width: u32,
         height: u32,
@@ -141,6 +198,15 @@ impl RenderOrchestrator {
     ///
     /// Returns [`OrchestratorError::BackendInitFailed`] if the TinySkia
     /// backend cannot be initialized.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    ///
+    /// let orchestrator = RenderOrchestrator::with_default_config(100, 100);
+    /// assert!(orchestrator.is_ok());
+    /// ```
     pub fn with_default_config(width: u32, height: u32) -> Result<Self, OrchestratorError> {
         Self::new(width, height, OrchestratorConfig::default())
     }
@@ -156,6 +222,20 @@ impl RenderOrchestrator {
     ///
     /// The built Vello scene is available via [`vello`](Self::vello) for
     /// the WGPU surface dispatch code to submit to `vello::Renderer`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// use martensite_wgpu::resilience::RecoveryMachine;
+    /// use martensite_render::PaintList;
+    ///
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// let recovery = RecoveryMachine::new();
+    /// let list = PaintList::new();
+    /// orchestrator.render(&list, &recovery);
+    /// # }
+    /// ```
     pub fn render(&mut self, paint_list: &PaintList, recovery: &RecoveryMachine) {
         let use_cpu = self.config.prefer_cpu
             || (self.config.allow_software_fallback && recovery.is_fallback_cpu());
@@ -170,6 +250,19 @@ impl RenderOrchestrator {
 
     /// Forces the CPU backend for the next frame, regardless of config
     /// or recovery state.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// use martensite_render::PaintList;
+    ///
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// let list = PaintList::new();
+    /// orchestrator.force_cpu(&list);
+    /// assert_eq!(orchestrator.mode(), martensite_wgpu::orchestrator::RenderMode::Cpu);
+    /// # }
+    /// ```
     pub fn force_cpu(&mut self, paint_list: &PaintList) {
         self.mode = RenderMode::Cpu;
         self.tinyskia.render(paint_list);
@@ -211,6 +304,22 @@ impl RenderOrchestrator {
     /// A production deployment that wants the Vello path should configure the
     /// surface with `Rgba8Unorm` + `STORAGE_BINDING`, or render to an
     /// intermediate texture and blit (deferred to a follow-up).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// use martensite_wgpu::surface::SurfaceWrapper;
+    ///
+    /// # fn example(
+    /// #     orchestrator: &mut RenderOrchestrator,
+    /// #     device: &wgpu::Device,
+    /// #     queue: &wgpu::Queue,
+    /// #     surface: &mut SurfaceWrapper<'_>,
+    /// # ) {
+    /// orchestrator.render_to_surface(device, queue, surface).expect("frame presented");
+    /// # }
+    /// ```
     pub fn render_to_surface(
         &mut self,
         device: &wgpu::Device,

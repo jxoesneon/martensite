@@ -9,6 +9,16 @@
 use martensite_core::Rect;
 
 /// Direction of text flow for the purposes of layout and shaping.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::vertical::WritingMode;
+///
+/// assert!(WritingMode::HorizontalTb.is_horizontal());
+/// assert!(WritingMode::VerticalRl.is_vertical());
+/// assert!(WritingMode::VerticalLr.is_vertical());
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum WritingMode {
     /// Standard horizontal top-to-bottom, left-to-right text.
@@ -22,12 +32,32 @@ pub enum WritingMode {
 
 impl WritingMode {
     /// Returns `true` if the writing mode is vertical.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::vertical::WritingMode;
+    ///
+    /// assert!(!WritingMode::HorizontalTb.is_vertical());
+    /// assert!(WritingMode::VerticalRl.is_vertical());
+    /// assert!(WritingMode::VerticalLr.is_vertical());
+    /// ```
     #[inline]
     pub const fn is_vertical(&self) -> bool {
         matches!(self, Self::VerticalRl | Self::VerticalLr)
     }
 
     /// Returns `true` if the writing mode is horizontal.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::vertical::WritingMode;
+    ///
+    /// assert!(WritingMode::HorizontalTb.is_horizontal());
+    /// assert!(!WritingMode::VerticalRl.is_horizontal());
+    /// assert!(!WritingMode::VerticalLr.is_horizontal());
+    /// ```
     #[inline]
     pub const fn is_horizontal(&self) -> bool {
         matches!(self, Self::HorizontalTb)
@@ -297,6 +327,15 @@ pub struct VerticalRun {
 
 impl VerticalRun {
     /// Creates a new `VerticalRun`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::vertical::{VerticalOrientation, VerticalRun};
+    ///
+    /// let run = VerticalRun::new(0, 6, VerticalOrientation::Upright);
+    /// assert_eq!(run.len(), 6);
+    /// ```
     #[inline]
     pub const fn new(start: usize, end: usize, orientation: VerticalOrientation) -> Self {
         Self {
@@ -307,12 +346,33 @@ impl VerticalRun {
     }
 
     /// Returns the length of this run in bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::vertical::{VerticalOrientation, VerticalRun};
+    ///
+    /// let run = VerticalRun::new(2, 8, VerticalOrientation::Rotated);
+    /// assert_eq!(run.len(), 6);
+    /// ```
     #[inline]
     pub const fn len(&self) -> usize {
         self.end.saturating_sub(self.start)
     }
 
     /// Returns `true` if this run covers no bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::vertical::{VerticalOrientation, VerticalRun};
+    ///
+    /// let empty = VerticalRun::new(0, 0, VerticalOrientation::Upright);
+    /// assert!(empty.is_empty());
+    ///
+    /// let nonempty = VerticalRun::new(0, 1, VerticalOrientation::Upright);
+    /// assert!(!nonempty.is_empty());
+    /// ```
     #[inline]
     pub const fn is_empty(&self) -> bool {
         self.start >= self.end
@@ -367,16 +427,40 @@ impl VerticalFeatureTags {
     ///
     /// Substitutes horizontal glyph forms with vertical forms (e.g. rotated punctuation,
     /// centered vertical commas, colon repositioning).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::vertical::VerticalFeatureTags;
+    ///
+    /// assert_eq!(VerticalFeatureTags::VERT, "vert");
+    /// ```
     pub const VERT: &'static str = "vert";
 
     /// OpenType vertical alternation for dual-orientation glyphs (`vrt2`).
     ///
     /// Replaces roman/latin characters with rotated forms while preserving upright CJK ideographs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::vertical::VerticalFeatureTags;
+    ///
+    /// assert_eq!(VerticalFeatureTags::VRT2, "vrt2");
+    /// ```
     pub const VRT2: &'static str = "vrt2";
 
     /// OpenType vertical kerning feature tag (`vkrn`).
     ///
     /// Adjusts inter-glyph spacing along the vertical baseline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::vertical::VerticalFeatureTags;
+    ///
+    /// assert_eq!(VerticalFeatureTags::VKRN, "vkrn");
+    /// ```
     pub const VKRN: &'static str = "vkrn";
 
     /// Returns the standard list of OpenType vertical feature tags.

@@ -65,20 +65,70 @@ pub trait ClipboardBackend {
     ///
     /// `mime` is the canonical MIME type (e.g. `text/plain;charset=utf-8`).
     /// `bytes` is the materialized payload.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard_platform::ClipboardBackend;
+    ///
+    /// if let Some(mut backend) = martensite_clipboard_platform::native_backend() {
+    ///     backend.write("text/plain;charset=utf-8", b"hello");
+    /// }
+    /// ```
     fn write(&mut self, mime: &str, bytes: &[u8]);
 
     /// Reads the bytes for the requested MIME type from the OS clipboard,
     /// or `None` if unavailable.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard_platform::ClipboardBackend;
+    ///
+    /// if let Some(backend) = martensite_clipboard_platform::native_backend() {
+    ///     let _ = backend.read("text/plain;charset=utf-8");
+    /// }
+    /// ```
     fn read(&self, mime: &str) -> Option<Vec<u8>>;
 
     /// Returns the list of MIME types currently available on the clipboard.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard_platform::ClipboardBackend;
+    ///
+    /// if let Some(backend) = martensite_clipboard_platform::native_backend() {
+    ///     let _ = backend.available_types();
+    /// }
+    /// ```
     fn available_types(&self) -> Vec<String>;
 
     /// Clears the clipboard contents.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard_platform::ClipboardBackend;
+    ///
+    /// if let Some(mut backend) = martensite_clipboard_platform::native_backend() {
+    ///     backend.clear();
+    /// }
+    /// ```
     fn clear(&mut self);
 
     /// Returns a human-readable name for the platform backend, e.g.
     /// `"macos-nspasteboard"`, `"windows-ole"`, `"x11"`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard_platform::ClipboardBackend;
+    ///
+    /// if let Some(backend) = martensite_clipboard_platform::native_backend() {
+    ///     assert!(!backend.platform_name().is_empty());
+    /// }
+    /// ```
     fn platform_name(&self) -> &str;
 }
 

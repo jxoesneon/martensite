@@ -449,6 +449,16 @@ impl FontFallbackChain {
 /// Key for a culture-specific fallback resolution.
 ///
 /// The locale is normalized to lowercase for stable cache lookup.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cascade::{FallbackKey, ScriptTag};
+///
+/// let key = FallbackKey::new(ScriptTag::Cjk, "zh-CN");
+/// assert_eq!(key.script, ScriptTag::Cjk);
+/// assert_eq!(key.locale, "zh-cn");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FallbackKey {
     /// Typographic script tag.
@@ -459,6 +469,15 @@ pub struct FallbackKey {
 
 impl FallbackKey {
     /// Creates a new key from a script tag and a locale.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cascade::{FallbackKey, ScriptTag};
+    ///
+    /// let key = FallbackKey::new(ScriptTag::Latin, "en-US");
+    /// assert_eq!(key.locale, "en-us");
+    /// ```
     #[inline]
     pub fn new(script: ScriptTag, locale: impl Into<String>) -> Self {
         Self {
@@ -486,6 +505,18 @@ impl FallbackKey {
 /// wrapped in [`std::panic::catch_unwind`] so a corrupt or adversarial font
 /// in the database cannot abort the calling thread; a panicking face is
 /// treated as not covering the queried character.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::FontManager;
+/// use martensite_text::cascade::InstalledFontFallbackResolver;
+///
+/// let manager = FontManager::with_fonts(std::iter::empty());
+/// let resolver = InstalledFontFallbackResolver::new(manager.system());
+/// let chain = resolver.resolve_for_text("hello", "Arial");
+/// assert!(!chain.is_empty());
+/// ```
 pub struct InstalledFontFallbackResolver<'a> {
     font_system: &'a FontSystem,
     provider: &'a dyn FontFallbackProvider,
@@ -494,6 +525,18 @@ pub struct InstalledFontFallbackResolver<'a> {
 impl<'a> InstalledFontFallbackResolver<'a> {
     /// Creates a resolver bound to the given font system, using the
     /// default [`PlatformCascadeResolver`] as the fallback provider.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    /// use martensite_text::cascade::InstalledFontFallbackResolver;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let resolver = InstalledFontFallbackResolver::new(manager.system());
+    /// let chain = resolver.resolve_for_text("hello", "Arial");
+    /// assert!(!chain.is_empty());
+    /// ```
     #[inline]
     pub fn new(font_system: &'a FontSystem) -> Self {
         Self::with_provider(font_system, &PlatformCascadeResolver)
@@ -505,6 +548,22 @@ impl<'a> InstalledFontFallbackResolver<'a> {
     /// This is the entry point for native OS providers
     /// (DirectWrite, CoreText, Fontconfig) to supply locale-aware
     /// fallback cascades.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    /// use martensite_text::cascade::{
+    ///     InstalledFontFallbackResolver, PlatformCascadeResolver,
+    /// };
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let provider = PlatformCascadeResolver;
+    /// let resolver =
+    ///     InstalledFontFallbackResolver::with_provider(manager.system(), &provider);
+    /// let chain = resolver.resolve_for_text("hello", "Arial");
+    /// assert!(!chain.is_empty());
+    /// ```
     #[inline]
     pub fn with_provider(
         font_system: &'a FontSystem,
@@ -528,6 +587,19 @@ impl<'a> InstalledFontFallbackResolver<'a> {
     /// appended, even when the font database contains no faces for them,
     /// because the downstream shaper performs its own resolution and
     /// generic fallbacks.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    /// use martensite_text::cascade::InstalledFontFallbackResolver;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let resolver = InstalledFontFallbackResolver::new(manager.system());
+    /// let chain = resolver.resolve_for_text("hello", "Arial");
+    /// assert!(!chain.is_empty());
+    /// assert_eq!(chain[0], "Arial");
+    /// ```
     pub fn resolve_for_text(&self, text: &str, primary: &str) -> Vec<String> {
         self.resolve_for_text_with_locale(text, primary, "")
     }
@@ -535,6 +607,18 @@ impl<'a> InstalledFontFallbackResolver<'a> {
     /// Like [`resolve_for_text`](Self::resolve_for_text) but passes the
     /// locale to the [`FontFallbackProvider`] for locale-sensitive CJK
     /// and Indic variant selection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    /// use martensite_text::cascade::InstalledFontFallbackResolver;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let resolver = InstalledFontFallbackResolver::new(manager.system());
+    /// let chain = resolver.resolve_for_text_with_locale("漢字", "NotoSans", "ja");
+    /// assert!(!chain.is_empty());
+    /// ```
     pub fn resolve_for_text_with_locale(
         &self,
         text: &str,
@@ -604,12 +688,38 @@ impl<'a> InstalledFontFallbackResolver<'a> {
 
     /// Returns the subset of provider fallback family names that are
     /// actually installed in the font database.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    /// use martensite_text::cascade::{InstalledFontFallbackResolver, ScriptTag};
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let resolver = InstalledFontFallbackResolver::new(manager.system());
+    /// let installed = resolver.installed_fallbacks_for_script(ScriptTag::Latin);
+    /// // Without system fonts this may be empty, but the API returns a Vec.
+    /// let _ = installed;
+    /// ```
     pub fn installed_fallbacks_for_script(&self, script: ScriptTag) -> Vec<String> {
         self.installed_fallbacks_for_script_with_locale(script, "")
     }
 
     /// Like [`installed_fallbacks_for_script`](Self::installed_fallbacks_for_script)
     /// but passes the locale to the provider.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    /// use martensite_text::cascade::{InstalledFontFallbackResolver, ScriptTag};
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let resolver = InstalledFontFallbackResolver::new(manager.system());
+    /// let installed =
+    ///     resolver.installed_fallbacks_for_script_with_locale(ScriptTag::Cjk, "ja");
+    /// let _ = installed;
+    /// ```
     pub fn installed_fallbacks_for_script_with_locale(
         &self,
         script: ScriptTag,
@@ -668,6 +778,18 @@ impl<'a> InstalledFontFallbackResolver<'a> {
     /// cover the entire text, so families split across faces (e.g. a
     /// family whose faces cover complementary codepoint ranges, or
     /// per-script faces of a multi-script family) still qualify.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    /// use martensite_text::cascade::InstalledFontFallbackResolver;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let resolver = InstalledFontFallbackResolver::new(manager.system());
+    /// // With no fonts installed, no family covers any text.
+    /// assert!(!resolver.family_covers_text("NonExistent", "abc"));
+    /// ```
     pub fn family_covers_text(&self, family: &str, text: &str) -> bool {
         text.chars().all(|ch| {
             ch.is_control()
@@ -808,6 +930,17 @@ impl FontFallbackCache {
     }
 
     /// Clears all cached entries.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cascade::{FontFallbackCache, FallbackKey, ScriptTag};
+    ///
+    /// let cache = FontFallbackCache::new();
+    /// let key = FallbackKey::new(ScriptTag::Latin, "en-us");
+    /// let _ = cache.get_or_resolve(&key);
+    /// cache.clear();
+    /// ```
     pub fn clear(&self) {
         self.cache.write().clear();
     }

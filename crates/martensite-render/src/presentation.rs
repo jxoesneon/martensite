@@ -11,6 +11,22 @@
 use std::num::NonZeroU32;
 
 /// Error returned by [`SoftbufferPresenter`] operations.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::PresentationError;
+///
+/// // Each variant describes a distinct presentation failure mode.
+/// let err = PresentationError::NotConfigured;
+/// assert_eq!(format!("{err}"), "surface has not been configured");
+///
+/// let err = PresentationError::EmptyBuffer;
+/// assert_eq!(format!("{err}"), "pixel buffer is empty");
+///
+/// let err = PresentationError::ZeroDimension;
+/// assert_eq!(format!("{err}"), "surface width or height is zero");
+/// ```
 #[derive(Debug)]
 pub enum PresentationError {
     /// The surface has not been configured yet.
@@ -66,6 +82,20 @@ impl std::error::Error for PresentationError {}
 /// # Errors
 ///
 /// Returns [`PresentationError::EmptyBuffer`] if the input buffer is empty.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::rgba_to_softbuffer;
+///
+/// // Red, green, and blue pixels are packed as 0x00RRGGBB u32 values.
+/// let rgba = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255];
+/// let pixels = rgba_to_softbuffer(&rgba).expect("non-empty buffer");
+/// assert_eq!(pixels.len(), 3);
+/// assert_eq!(pixels[0], 0x00FF_0000);
+/// assert_eq!(pixels[1], 0x0000_FF00);
+/// assert_eq!(pixels[2], 0x0000_00FF);
+/// ```
 pub fn rgba_to_softbuffer(rgba: &[u8]) -> Result<Vec<u32>, PresentationError> {
     if rgba.is_empty() {
         return Err(PresentationError::EmptyBuffer);
@@ -103,6 +133,21 @@ pub fn rgba_to_softbuffer(rgba: &[u8]) -> Result<Vec<u32>, PresentationError> {
 /// Returns [`PresentationError`] if the buffer is empty, dimensions are
 /// zero, or the buffer length does not match `width * height * 4`.
 ///
+/// # Examples
+///
+/// ```
+/// use martensite_render::present_rgba_to_softbuffer;
+///
+/// // A 2x2 buffer of opaque grey pixels converts successfully.
+/// let rgba = vec![128u8; 2 * 2 * 4];
+/// let pixels = present_rgba_to_softbuffer(&rgba, 2, 2).expect("valid buffer");
+/// assert_eq!(pixels.len(), 4);
+///
+/// // A zero-width request is rejected.
+/// let err = present_rgba_to_softbuffer(&rgba, 0, 2).unwrap_err();
+/// assert!(format!("{err}").contains("zero"));
+/// ```
+///
 /// [`TinySkiaBackend::pixels()`]: crate::tinyskia_backend::TinySkiaBackend::pixels
 pub fn present_rgba_to_softbuffer(
     rgba_buffer: &[u8],
@@ -134,6 +179,22 @@ pub fn present_rgba_to_softbuffer(
 /// # Errors
 ///
 /// Returns `err` if `value` is zero.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::presentation::nonzero;
+/// use martensite_render::PresentationError;
+/// use std::num::NonZeroU32;
+///
+/// // A non-zero value produces a valid NonZeroU32.
+/// let ok = nonzero(42, PresentationError::NotConfigured);
+/// assert_eq!(ok.expect("non-zero").get(), 42);
+///
+/// // A zero value returns the supplied error.
+/// let err = nonzero(0, PresentationError::NotConfigured);
+/// assert!(err.is_err());
+/// ```
 pub fn nonzero(value: u32, err: PresentationError) -> Result<NonZeroU32, PresentationError> {
     NonZeroU32::new(value).ok_or(err)
 }
@@ -149,6 +210,27 @@ pub fn nonzero(value: u32, err: PresentationError) -> Result<NonZeroU32, Present
 ///
 /// * `D` — The display handle type (implements `HasDisplayHandle`).
 /// * `W` — The window handle type (implements `HasWindowHandle`).
+///
+/// # Examples
+///
+/// Creating a presenter requires a `softbuffer::Context` and a window handle,
+/// so construction is shown with `no_run`:
+///
+/// ```no_run
+/// use martensite_render::SoftbufferPresenter;
+/// # use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+/// # fn example<D, W>(context: &softbuffer::Context<D>, window: W)
+/// #     -> Result<(), Box<dyn std::error::Error>>
+/// # where
+/// #     D: HasDisplayHandle,
+/// #     W: HasWindowHandle,
+/// # {
+/// let presenter = SoftbufferPresenter::new(context, window)?;
+/// assert_eq!(presenter.width(), 0);
+/// assert_eq!(presenter.height(), 0);
+/// # Ok(())
+/// # }
+/// ```
 pub struct SoftbufferPresenter<D, W> {
     surface: softbuffer::Surface<D, W>,
     width: u32,
@@ -169,6 +251,23 @@ where
     ///
     /// Returns [`PresentationError::Softbuffer`] if the surface cannot be
     /// created.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_render::SoftbufferPresenter;
+    /// # use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+    /// # fn example<D, W>(context: &softbuffer::Context<D>, window: W)
+    /// #     -> Result<(), Box<dyn std::error::Error>>
+    /// # where
+    /// #     D: HasDisplayHandle,
+    /// #     W: HasWindowHandle,
+    /// # {
+    /// let presenter = SoftbufferPresenter::new(context, window)?;
+    /// assert_eq!(presenter.width(), 0);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new(context: &softbuffer::Context<D>, window: W) -> Result<Self, PresentationError> {
         let surface = softbuffer::Surface::new(context, window)
             .map_err(|e| PresentationError::Softbuffer(e.to_string()))?;
@@ -183,6 +282,22 @@ where
     ///
     /// This is useful when the caller wants to manage surface creation
     /// themselves (e.g. for testing or custom window integration).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_render::SoftbufferPresenter;
+    /// # use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+    /// # fn example<D, W>(surface: softbuffer::Surface<D, W>)
+    /// # where
+    /// #     D: HasDisplayHandle,
+    /// #     W: HasWindowHandle,
+    /// # {
+    /// let presenter = SoftbufferPresenter::from_surface(surface);
+    /// assert_eq!(presenter.width(), 0);
+    /// assert_eq!(presenter.height(), 0);
+    /// # }
+    /// ```
     #[must_use]
     pub fn from_surface(surface: softbuffer::Surface<D, W>) -> Self {
         Self {
@@ -195,6 +310,22 @@ where
     /// Configures the surface dimensions for presentation.
     ///
     /// This should be called whenever the window is resized.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_render::SoftbufferPresenter;
+    /// # use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+    /// # fn example<D, W>(mut presenter: SoftbufferPresenter<D, W>)
+    /// # where
+    /// #     D: HasDisplayHandle,
+    /// #     W: HasWindowHandle,
+    /// # {
+    /// presenter.resize(800, 600);
+    /// assert_eq!(presenter.width(), 800);
+    /// assert_eq!(presenter.height(), 600);
+    /// # }
+    /// ```
     pub fn resize(&mut self, width: u32, height: u32) {
         self.width = width;
         self.height = height;
@@ -209,6 +340,23 @@ where
     ///
     /// Returns [`PresentationError`] if the buffer is malformed or the
     /// softbuffer surface operation fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_render::SoftbufferPresenter;
+    /// # use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+    /// # fn example<D, W>(mut presenter: SoftbufferPresenter<D, W>)
+    /// # where
+    /// #     D: HasDisplayHandle,
+    /// #     W: HasWindowHandle,
+    /// # {
+    /// presenter.resize(2, 2);
+    /// // Present a 2x2 grey RGBA buffer.
+    /// let rgba = vec![128u8; 2 * 2 * 4];
+    /// presenter.present(&rgba).expect("presentation succeeds");
+    /// # }
+    /// ```
     pub fn present(&mut self, rgba_buffer: &[u8]) -> Result<(), PresentationError> {
         if self.width == 0 || self.height == 0 {
             return Err(PresentationError::NotConfigured);
@@ -232,12 +380,42 @@ where
     }
 
     /// Returns the current configured surface width.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_render::SoftbufferPresenter;
+    /// # use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+    /// # fn example<D, W>(mut presenter: SoftbufferPresenter<D, W>)
+    /// # where
+    /// #     D: HasDisplayHandle,
+    /// #     W: HasWindowHandle,
+    /// # {
+    /// presenter.resize(640, 480);
+    /// assert_eq!(presenter.width(), 640);
+    /// # }
+    /// ```
     #[must_use]
     pub fn width(&self) -> u32 {
         self.width
     }
 
     /// Returns the current configured surface height.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_render::SoftbufferPresenter;
+    /// # use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+    /// # fn example<D, W>(mut presenter: SoftbufferPresenter<D, W>)
+    /// # where
+    /// #     D: HasDisplayHandle,
+    /// #     W: HasWindowHandle,
+    /// # {
+    /// presenter.resize(640, 480);
+    /// assert_eq!(presenter.height(), 480);
+    /// # }
+    /// ```
     #[must_use]
     pub fn height(&self) -> u32 {
         self.height

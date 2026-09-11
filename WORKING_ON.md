@@ -3,8 +3,55 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.0.0–v0.11.0 exhaustive audit remediation cycle
-(post-§1.3/§1.4/§1.6/§11.6 remediation).
+Last updated: v0.12.0 Blessed Widgets & Kinematics implementation
+(post-v0.11.0 audit remediation + v0.12.0 feature delivery).
+
+## v0.12.0 — Blessed Widgets & Kinematics (IMPLEMENTED)
+
+All four v0.12.0 deliverables are implemented and verified:
+
+### 1. 1M-Row Virtualized DataGrid (`martensite-blessed::data_table`)
+- Column sorting (`ColumnSort`), filtering (`RowFilter`), range selection
+  (`SelectionModel` with `SmallVec`), keyboard navigation (`KeyAction`),
+  column configuration (`ColumnConfig`).
+- Zero-allocation scroll path; 1M-row `visible_rows()` < 8.3ms (120fps).
+- `#[ignore]`-gated steady-state scroll test; CI is gate of record.
+
+### 2. BSP Docking Tree (`martensite-blessed::docking`)
+- `DockTree` with `Slab`-backed arena, zero-alloc `split_leaf`/`merge`
+  within capacity.
+- Multi-swapchain panel surfaces, drag-and-drop docking (`DockDragSession`,
+  `DockDropZone`), iterative `panel_rects`, serialization.
+- `#[ignore]`-gated zero-alloc test (10,000 split/merge cycles, 0 allocations).
+
+### 3. 0.55 Rubber-Band Overscroll (`martensite-motion::rubber_band`)
+- `RUBBER_BAND_COEFFICIENT = 0.55`, `RubberBandScroller` (1D) and
+  `RubberBandScroller2D` (2D with directional axis lock).
+- Spring-back via critically-damped `SpringSolver` (~300ms settle).
+- O(1) `visible_offset`/`update` with zero allocation (verified).
+
+### 4. 6-DoF Kalman Stylus (`martensite-window::stylus`)
+- 12-dimensional Kalman state (position, velocity, orientation, angular
+  velocity) with hand-rolled 12×12 matrix math, no external deps.
+- Separate 2-state pressure Kalman filter.
+- `KalmanStylus::update` < 2.0ms per event (~7µs locally); CI is gate of record.
+
+### Verification Status
+- `cargo fmt --check`: clean
+- `cargo clippy` (default + all-features): 0 errors
+- `cargo test` (default + all-features): all pass
+- `cargo test --doc` (all-features): all pass
+- `RUSTDOCFLAGS="-D warnings" cargo doc`: clean
+- `cargo audit`: 2 allowed warnings, 0 errors
+- `cargo deny check`: advisories/bans/licenses/sources ok
+- `cargo vet`: Vetting Succeeded (703 exempted)
+
+### Remaining (CI-only verification)
+- Timing gates (DataGrid 120fps, Kalman <2ms, docking zero-alloc) are
+  `#[ignore]`-gated and must be validated on CI reference runners.
+- No new release tag or crates.io publish until CI confirms all gates.
+
+---
 
 ## Summary of Resolved Items
 

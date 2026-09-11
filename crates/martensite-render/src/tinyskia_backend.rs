@@ -73,6 +73,19 @@ impl TinySkiaBackend {
     ///
     /// Returns `None` when the requested dimensions are zero or exceed the
     /// internal allocation limits of [`tiny_skia`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::TinySkiaBackend;
+    ///
+    /// let backend = TinySkiaBackend::new(64, 64).expect("64x64 pixmap");
+    /// assert_eq!(backend.width(), 64);
+    /// assert_eq!(backend.height(), 64);
+    ///
+    /// // Zero dimensions return `None`.
+    /// assert!(TinySkiaBackend::new(0, 0).is_none());
+    /// ```
     pub fn new(width: u32, height: u32) -> Option<Self> {
         let pixmap = Pixmap::new(width, height)?;
         Some(Self {
@@ -86,26 +99,87 @@ impl TinySkiaBackend {
     }
 
     /// Returns the width of the backing pixel buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::TinySkiaBackend;
+    ///
+    /// let backend = TinySkiaBackend::new(128, 64).expect("128x64 pixmap");
+    /// assert_eq!(backend.width(), 128);
+    /// ```
     pub fn width(&self) -> u32 {
         self.width
     }
 
     /// Returns the height of the backing pixel buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::TinySkiaBackend;
+    ///
+    /// let backend = TinySkiaBackend::new(128, 64).expect("128x64 pixmap");
+    /// assert_eq!(backend.height(), 64);
+    /// ```
     pub fn height(&self) -> u32 {
         self.height
     }
 
     /// Returns the rendered pixels as a premultiplied RGBA byte slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintList, RenderBackend, TinySkiaBackend};
+    /// use kurbo::Rect;
+    ///
+    /// let mut backend = TinySkiaBackend::new(32, 32).expect("32x32 pixmap");
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::new(0.0, 0.0, 16.0, 16.0), [255, 0, 0, 255]);
+    /// backend.render(&list);
+    ///
+    /// // The pixel buffer has 32 * 32 * 4 bytes.
+    /// assert_eq!(backend.pixels().len(), 32 * 32 * 4);
+    /// ```
     pub fn pixels(&self) -> &[u8] {
         self.pixmap.data()
     }
 
     /// Returns a reference to the underlying [`Pixmap`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::TinySkiaBackend;
+    ///
+    /// let backend = TinySkiaBackend::new(32, 32).expect("32x32 pixmap");
+    /// let pixmap = backend.pixmap();
+    /// assert_eq!(pixmap.width(), 32);
+    /// assert_eq!(pixmap.height(), 32);
+    /// ```
     pub fn pixmap(&self) -> &Pixmap {
         &self.pixmap
     }
 
     /// Clears the backing buffer to fully transparent black.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintList, RenderBackend, TinySkiaBackend};
+    /// use kurbo::Rect;
+    ///
+    /// let mut backend = TinySkiaBackend::new(32, 32).expect("32x32 pixmap");
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::new(0.0, 0.0, 16.0, 16.0), [255, 0, 0, 255]);
+    /// backend.render(&list);
+    ///
+    /// // After clearing, every pixel is transparent.
+    /// backend.clear();
+    /// let px = &backend.pixels()[..4];
+    /// assert_eq!(px, [0, 0, 0, 0]);
+    /// ```
     pub fn clear(&mut self) {
         self.pixmap.fill(Color::TRANSPARENT);
     }

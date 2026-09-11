@@ -17,11 +17,31 @@ use cosmic_text::{Attrs, FontSystem};
 ///
 /// Wraps `fontdb::ID` to provide a Martensite-native type that is
 /// `Copy`, `Hash`, and `Eq`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::font::FontId;
+///
+/// let id = FontId::dummy();
+/// let other = FontId::dummy();
+/// assert_eq!(id, other);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FontId(pub fontdb::ID);
 
 impl FontId {
     /// Create a new `FontId` from a raw `fontdb::ID`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::font::FontId;
+    ///
+    /// let raw = fontdb::ID::dummy();
+    /// let id = FontId::new(raw);
+    /// assert_eq!(id.raw(), raw);
+    /// ```
     #[inline(always)]
     pub fn new(id: fontdb::ID) -> Self {
         Self(id)
@@ -29,12 +49,32 @@ impl FontId {
 
     /// Creates a dummy font identifier for use as a placeholder cache key
     /// when the actual font ID is not yet known.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::font::FontId;
+    ///
+    /// let id = FontId::dummy();
+    /// // Two dummies are equal.
+    /// assert_eq!(id, FontId::dummy());
+    /// ```
     #[inline(always)]
     pub fn dummy() -> Self {
         Self(fontdb::ID::dummy())
     }
 
     /// Returns the raw `fontdb::ID`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::font::FontId;
+    ///
+    /// let raw = fontdb::ID::dummy();
+    /// let id = FontId::new(raw);
+    /// assert_eq!(id.raw(), raw);
+    /// ```
     #[inline(always)]
     pub fn raw(self) -> fontdb::ID {
         self.0
@@ -56,6 +96,18 @@ impl From<FontId> for fontdb::ID {
 }
 
 /// A loaded font asset, either from a file path or in-memory binary data.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::font::FontSource;
+///
+/// let file_src = FontSource::file("/tmp/font.ttf");
+/// assert!(matches!(file_src, FontSource::File(_)));
+///
+/// let bin_src = FontSource::binary(vec![0u8, 1, 2, 3]);
+/// assert!(matches!(bin_src, FontSource::Binary(_)));
+/// ```
 #[derive(Clone, Debug)]
 pub enum FontSource {
     /// A font loaded from a file on disk.
@@ -66,12 +118,30 @@ pub enum FontSource {
 
 impl FontSource {
     /// Creates a `FontSource::File` from a path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::font::FontSource;
+    ///
+    /// let src = FontSource::file("/tmp/font.ttf");
+    /// assert!(matches!(src, FontSource::File(_)));
+    /// ```
     #[inline(always)]
     pub fn file(path: impl Into<PathBuf>) -> Self {
         Self::File(path.into())
     }
 
     /// Creates a `FontSource::Binary` from raw font data.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::font::FontSource;
+    ///
+    /// let src = FontSource::binary(vec![0u8, 1, 2, 3]);
+    /// assert!(matches!(src, FontSource::Binary(_)));
+    /// ```
     #[inline(always)]
     pub fn binary(data: impl Into<Vec<u8>>) -> Self {
         Self::Binary(Arc::new(data.into()))
@@ -93,6 +163,17 @@ impl From<Vec<u8>> for FontSource {
 }
 
 /// Information about a discovered font face.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::FontManager;
+///
+/// let manager = FontManager::with_fonts(std::iter::empty());
+/// for face in manager.faces() {
+///     let _ = &face.family;
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct FontFaceInfo {
     /// The font's unique identifier in the database.
@@ -108,6 +189,16 @@ pub struct FontFaceInfo {
 }
 
 /// The style of a font face.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::font::FontStyle;
+///
+/// assert_eq!(FontStyle::Normal, FontStyle::from(fontdb::Style::Normal));
+/// assert_eq!(FontStyle::Italic, FontStyle::from(fontdb::Style::Italic));
+/// assert_eq!(FontStyle::Oblique, FontStyle::from(fontdb::Style::Oblique));
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FontStyle {
     /// Normal (upright) style.
@@ -158,6 +249,15 @@ impl FontManager {
     ///
     /// This is an expensive operation (up to ~1s on release builds)
     /// and should be called once at startup.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let manager = FontManager::new();
+    /// let _faces = manager.faces();
+    /// ```
     pub fn new() -> Self {
         Self {
             system: FontSystem::new(),
@@ -167,6 +267,15 @@ impl FontManager {
 
     /// Creates a new `FontManager` with only the specified custom fonts,
     /// without loading any system fonts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let _faces = manager.faces();
+    /// ```
     pub fn with_fonts(fonts: impl IntoIterator<Item = FontSource>) -> Self {
         let sources: Vec<fontdb::Source> = fonts
             .into_iter()
@@ -182,6 +291,17 @@ impl FontManager {
     }
 
     /// Creates a `FontManager` from an existing [`FontSystem`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let manager = FontManager::new();
+    /// let system = manager.into_system();
+    /// let manager2 = FontManager::from_system(system);
+    /// let _faces = manager2.faces();
+    /// ```
     pub fn from_system(system: FontSystem) -> Self {
         Self {
             system,
@@ -195,6 +315,17 @@ impl FontManager {
     /// Returns the IDs of the font faces that were loaded from the file.
     /// A single font file may contain multiple faces. Returns an empty
     /// vec if the file could not be loaded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let mut manager = FontManager::with_fonts(std::iter::empty());
+    /// // A nonexistent file returns an empty vec.
+    /// let ids = manager.load_font_file("/tmp/nonexistent_font.ttf");
+    /// assert!(ids.is_empty());
+    /// ```
     pub fn load_font_file(&mut self, path: impl Into<PathBuf>) -> Vec<FontId> {
         self.load_font_file_result(path).unwrap_or_default()
     }
@@ -204,6 +335,17 @@ impl FontManager {
     ///
     /// Returns the IDs of the font faces that were loaded from the file.
     /// A single font file may contain multiple faces.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let mut manager = FontManager::with_fonts(std::iter::empty());
+    /// // A nonexistent file returns an error.
+    /// let result = manager.load_font_file_result("/tmp/nonexistent_font.ttf");
+    /// assert!(result.is_err());
+    /// ```
     pub fn load_font_file_result(
         &mut self,
         path: impl Into<PathBuf>,
@@ -253,6 +395,17 @@ impl FontManager {
     /// [`catch_unwind`] so a corrupt or adversarial font cannot abort
     /// the calling thread; on panic an empty vec is returned and a
     /// warning is logged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let mut manager = FontManager::with_fonts(std::iter::empty());
+    /// // Malformed data returns an empty vec rather than panicking.
+    /// let ids = manager.load_font_data(vec![0u8; 16]);
+    /// assert!(ids.is_empty());
+    /// ```
     pub fn load_font_data(
         &mut self,
         data: impl AsRef<[u8]> + Sync + Send + 'static,
@@ -275,6 +428,17 @@ impl FontManager {
     }
 
     /// Returns all discovered font faces.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let faces = manager.faces();
+    /// // With no custom or system fonts, the list may be empty.
+    /// let _ = faces.len();
+    /// ```
     pub fn faces(&self) -> Vec<FontFaceInfo> {
         self.system
             .db()
@@ -294,6 +458,16 @@ impl FontManager {
     }
 
     /// Finds font faces matching the given family name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let results = manager.find_by_family("NonExistentFont12345");
+    /// assert!(results.is_empty());
+    /// ```
     pub fn find_by_family(&self, family: &str) -> Vec<FontFaceInfo> {
         self.faces()
             .into_iter()
@@ -302,6 +476,15 @@ impl FontManager {
     }
 
     /// Returns the locale string used for font fallback.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let _locale = manager.locale();
+    /// ```
     pub fn locale(&self) -> &str {
         self.system.locale()
     }
@@ -312,30 +495,76 @@ impl FontManager {
     /// modified (fonts added or removed via [`load_font_file`](Self::load_font_file)
     /// or [`load_font_data`](Self::load_font_data)). The fallback
     /// decision cache uses this to invalidate stale entries.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// assert_eq!(manager.generation(), 0);
+    /// ```
     #[inline]
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
     /// Borrows the underlying [`FontSystem`] for use with cosmic-text APIs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let _system = manager.system();
+    /// ```
     #[inline(always)]
     pub fn system(&self) -> &FontSystem {
         &self.system
     }
 
     /// Mutably borrows the underlying [`FontSystem`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let mut manager = FontManager::with_fonts(std::iter::empty());
+    /// let _system = manager.system_mut();
+    /// ```
     #[inline(always)]
     pub fn system_mut(&mut self) -> &mut FontSystem {
         &mut self.system
     }
 
     /// Consumes the manager and returns the underlying [`FontSystem`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let _system = manager.into_system();
+    /// ```
     #[inline(always)]
     pub fn into_system(self) -> FontSystem {
         self.system
     }
 
     /// Creates default attrs for a text run with the given family name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let attrs = manager.attrs_for_family("Helvetica");
+    /// let _ = attrs;
+    /// ```
     pub fn attrs_for_family<'a>(&self, family: &'a str) -> Attrs<'a> {
         Attrs::new().family(cosmic_text::Family::Name(family))
     }

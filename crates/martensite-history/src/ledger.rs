@@ -28,14 +28,57 @@ use std::collections::HashMap;
 /// ```
 pub trait ChangeOp<S>: Send + Sync + 'static {
     /// Apply this operation, mutating the state.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use martensite_history::ChangeOp;
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, state: &mut i32) { *state += self.0; }
+    ///     fn revert(&self, state: &mut i32) { *state -= self.0; }
+    /// }
+    ///
+    /// let op = AddOp(5);
+    /// let mut value = 0;
+    /// op.apply(&mut value);
+    /// assert_eq!(value, 5);
+    /// ```
     fn apply(&self, state: &mut S);
 
     /// Revert this operation, restoring the state to what it was before
     /// [`ChangeOp::apply`] was called.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use martensite_history::ChangeOp;
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, state: &mut i32) { *state += self.0; }
+    ///     fn revert(&self, state: &mut i32) { *state -= self.0; }
+    /// }
+    ///
+    /// let op = AddOp(5);
+    /// let mut value = 5;
+    /// op.revert(&mut value);
+    /// assert_eq!(value, 0);
+    /// ```
     fn revert(&self, state: &mut S);
 }
 
 /// Errors that can occur during ledger operations.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_history::LedgerError;
+///
+/// assert_eq!(LedgerError::NoUndo.to_string(), "nothing to undo");
+/// assert_eq!(LedgerError::NoRedo.to_string(), "nothing to redo");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LedgerError {
     /// The requested node ID does not exist in the history tree.
@@ -136,6 +179,15 @@ impl<S: 'static> HistoryLedger<S> {
     }
 
     /// Returns a reference to the current state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryLedger;
+    ///
+    /// let ledger = HistoryLedger::<i32>::new(42, 100);
+    /// assert_eq!(*ledger.state(), 42);
+    /// ```
     #[inline]
     pub fn state(&self) -> &S {
         &self.state
@@ -145,30 +197,101 @@ impl<S: 'static> HistoryLedger<S> {
     ///
     /// **Warning**: Direct mutation bypasses the history system. Use
     /// [`commit`](Self::commit) for tracked changes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryLedger;
+    ///
+    /// let mut ledger = HistoryLedger::<i32>::new(0, 100);
+    /// *ledger.state_mut() = 10;
+    /// assert_eq!(*ledger.state(), 10);
+    /// ```
     #[inline]
     pub fn state_mut(&mut self) -> &mut S {
         &mut self.state
     }
 
     /// Returns the current node ID in the history tree.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::{ChangeOp, HistoryLedger};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// let root = ledger.root_node();
+    /// ledger.commit(Box::new(AddOp(5)));
+    /// assert_ne!(ledger.current_node(), root);
+    /// ```
     #[inline]
     pub fn current_node(&self) -> NodeId {
         self.tree.current()
     }
 
     /// Returns the root node ID.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryLedger;
+    ///
+    /// let ledger = HistoryLedger::<i32>::new(0, 100);
+    /// let root = ledger.root_node();
+    /// assert_eq!(ledger.current_node(), root);
+    /// ```
     #[inline]
     pub fn root_node(&self) -> NodeId {
         self.tree.root()
     }
 
     /// Returns the total number of nodes in the history tree.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::{ChangeOp, HistoryLedger};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// assert_eq!(ledger.node_count(), 1);
+    /// ledger.commit(Box::new(AddOp(5)));
+    /// assert_eq!(ledger.node_count(), 2);
+    /// ```
     #[inline]
     pub fn node_count(&self) -> usize {
         self.tree.node_count()
     }
 
     /// Returns the depth of the current node (root = 0).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::{ChangeOp, HistoryLedger};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// assert_eq!(ledger.current_depth(), 0);
+    /// ledger.commit(Box::new(AddOp(5)));
+    /// assert_eq!(ledger.current_depth(), 1);
+    /// ```
     #[inline]
     pub fn current_depth(&self) -> u32 {
         self.tree.current_depth()
@@ -357,24 +480,85 @@ impl<S: 'static> HistoryLedger<S> {
     }
 
     /// Returns the children of the current node (available redo branches).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::{ChangeOp, HistoryLedger};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// ledger.commit(Box::new(AddOp(5)));
+    /// ledger.undo().unwrap();
+    /// assert_eq!(ledger.redo_branches().len(), 1);
+    /// ```
     #[inline]
     pub fn redo_branches(&self) -> &[NodeId] {
         self.tree.current_children()
     }
 
     /// Returns the maximum number of nodes the ledger will retain.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryLedger;
+    ///
+    /// let ledger = HistoryLedger::<i32>::new(0, 500);
+    /// assert_eq!(ledger.max_nodes(), 500);
+    /// ```
     #[inline]
     pub fn max_nodes(&self) -> usize {
         self.tree.max_nodes
     }
 
     /// Returns whether the ledger can undo (current node is not root).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::{ChangeOp, HistoryLedger};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// assert!(!ledger.can_undo());
+    /// ledger.commit(Box::new(AddOp(5)));
+    /// assert!(ledger.can_undo());
+    /// ```
     #[inline]
     pub fn can_undo(&self) -> bool {
         self.tree.current_depth() > 0
     }
 
     /// Returns whether the ledger can redo (current node has children).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::{ChangeOp, HistoryLedger};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// assert!(!ledger.can_redo());
+    /// ledger.commit(Box::new(AddOp(5)));
+    /// ledger.undo().unwrap();
+    /// assert!(ledger.can_redo());
+    /// ```
     #[inline]
     pub fn can_redo(&self) -> bool {
         !self.tree.current_children().is_empty()

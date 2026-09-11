@@ -17,6 +17,7 @@
 //! assert_eq!(arena.children(parent).count(), 1);
 //! ```
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 /// Generational slot-map arena for widget storage.
 pub mod arena;
@@ -30,7 +31,7 @@ pub mod node;
 pub mod widget;
 
 pub use arena::{ArenaError, BreadthFirstIter, Children, DepthFirstIter, SubtreeIter, WidgetArena};
-pub use fence::{FrameFence, FrameGuard};
+pub use fence::{FrameFence, FrameGuard, DEFAULT_LEASE_TIMEOUT};
 pub use id::WidgetId;
 pub use node::{ColdNode, HotNode, InlineTextCache, NodeFlags, Rect};
 pub use widget::{

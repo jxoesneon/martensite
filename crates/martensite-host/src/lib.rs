@@ -52,6 +52,17 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 /// Errors produced while loading or reloading a guest cdylib.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_host::HostError;
+/// use std::error::Error;
+///
+/// let err = HostError::SymbolNotFound("missing_fn".to_string());
+/// assert!(err.to_string().contains("symbol not found"));
+/// assert!(err.source().is_none());
+/// ```
 #[derive(Debug)]
 pub enum HostError {
     /// The dynamic library could not be opened (`dlopen`/`LoadLibrary` failed).
@@ -87,6 +98,14 @@ impl std::error::Error for HostError {}
 ///
 /// Guest cdylibs must export a function with this name (and C ABI) that the
 /// host calls once per frame to drive component layout and paint encoding.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_host::RENDER_SYMBOL_NAME;
+///
+/// assert_eq!(RENDER_SYMBOL_NAME, "martensite_render");
+/// ```
 pub const RENDER_SYMBOL_NAME: &str = "martensite_render";
 
 /// A handle to a dynamically loaded guest cdylib.
@@ -145,6 +164,17 @@ impl GuestLibrary {
     }
 
     /// Returns the filesystem path this library was loaded from.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_host::GuestLibrary;
+    /// use std::path::Path;
+    ///
+    /// let lib = GuestLibrary::load(Path::new("libguest.so"))?;
+    /// assert_eq!(lib.path(), Path::new("libguest.so"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -254,6 +284,18 @@ impl HostApp {
     }
 
     /// Returns a reference to the currently loaded guest library.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_host::{GuestLibrary, HostApp};
+    /// use std::path::Path;
+    ///
+    /// let lib = GuestLibrary::load(Path::new("libguest.so"))?;
+    /// let app = HostApp::new(lib);
+    /// assert_eq!(app.guest().path(), Path::new("libguest.so"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn guest(&self) -> &GuestLibrary {
         &self.guest
     }

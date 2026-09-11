@@ -33,16 +33,42 @@ use crate::surface::SurfaceWrapperError;
 
 /// The maximum number of recovery attempts before the machine gives up and
 /// falls back to the CPU rasterizer, regardless of elapsed time.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::resilience::DEFAULT_MAX_RETRIES;
+///
+/// assert_eq!(DEFAULT_MAX_RETRIES, 8);
+/// ```
 pub const DEFAULT_MAX_RETRIES: u32 = 8;
 
 /// The cumulative time the machine is allowed to spend in the
 /// [`DeviceStatus::SuspendedWithRetry`] state before falling back to the CPU
 /// rasterizer. Matches the milestone specification of 32 milliseconds.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::resilience::DEFAULT_FALLBACK_THRESHOLD;
+/// use std::time::Duration;
+///
+/// assert_eq!(DEFAULT_FALLBACK_THRESHOLD, Duration::from_millis(32));
+/// ```
 pub const DEFAULT_FALLBACK_THRESHOLD: Duration = Duration::from_millis(32);
 
 /// The recovery budget: the total time from device loss to a successful
 /// repaint must be below this duration to satisfy the exit gate. Matches the
 /// milestone specification of 16.6 milliseconds (one 60 Hz frame).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::resilience::RECOVERY_BUDGET;
+/// use std::time::Duration;
+///
+/// assert_eq!(RECOVERY_BUDGET, Duration::from_nanos(16_600_000));
+/// ```
 pub const RECOVERY_BUDGET: Duration = Duration::from_nanos(16_600_000);
 
 /// The initial exponential-backoff delay, applied before the first retry.
@@ -55,6 +81,19 @@ const INITIAL_BACKOFF: Duration = Duration::from_millis(1);
 /// indicate the device itself is gone (`Lost`, `DeviceRemoved`) trigger full
 /// device recovery; transient modes (`Outdated`, `Timeout`) trigger a
 /// reconfigure-only path.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::resilience::SurfaceError;
+/// use std::error::Error;
+///
+/// let err = SurfaceError::Lost;
+/// assert!(err.is_device_loss());
+/// assert!(!err.is_transient());
+/// assert!(err.to_string().contains("surface lost"));
+/// assert!(err.source().is_none());
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceError {
     /// The surface has been lost and needs to be recreated.
@@ -79,6 +118,22 @@ impl SurfaceError {
     /// This is the production entry point: the render loop calls
     /// `get_current_texture`, maps the result through this function, and feeds
     /// any `Some(error)` into [`RecoveryMachine::handle_surface_error`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::SurfaceError;
+    ///
+    /// // The failure variants are unit-like and can be constructed without a GPU.
+    /// assert_eq!(
+    ///     SurfaceError::from_current_texture(&wgpu::CurrentSurfaceTexture::Lost),
+    ///     Some(SurfaceError::Lost)
+    /// );
+    /// assert_eq!(
+    ///     SurfaceError::from_current_texture(&wgpu::CurrentSurfaceTexture::Outdated),
+    ///     Some(SurfaceError::Outdated)
+    /// );
+    /// ```
     #[must_use]
     pub fn from_current_texture(result: &wgpu::CurrentSurfaceTexture) -> Option<Self> {
         match result {
@@ -94,6 +149,17 @@ impl SurfaceError {
 
     /// Returns `true` when this error indicates the logical device itself is
     /// gone and must be recreated, rather than merely the surface.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::SurfaceError;
+    ///
+    /// assert!(SurfaceError::Lost.is_device_loss());
+    /// assert!(SurfaceError::DeviceRemoved.is_device_loss());
+    /// assert!(!SurfaceError::Outdated.is_device_loss());
+    /// assert!(!SurfaceError::Timeout.is_device_loss());
+    /// ```
     #[must_use]
     pub fn is_device_loss(self) -> bool {
         matches!(self, Self::Lost | Self::DeviceRemoved)
@@ -107,6 +173,18 @@ impl SurfaceError {
     /// reconfiguration after resize) and [`SurfaceError::Timeout`] (temporary
     /// acquire failure). These do not require adapter re-enumeration or
     /// device recreation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::SurfaceError;
+    ///
+    /// assert!(SurfaceError::Outdated.is_transient());
+    /// assert!(SurfaceError::Timeout.is_transient());
+    /// assert!(SurfaceError::Occluded.is_transient());
+    /// assert!(!SurfaceError::Lost.is_transient());
+    /// assert!(!SurfaceError::DeviceRemoved.is_transient());
+    /// ```
     #[must_use]
     pub fn is_transient(self) -> bool {
         matches!(self, Self::Outdated | Self::Timeout | Self::Occluded)
@@ -134,6 +212,16 @@ impl std::error::Error for SurfaceError {}
 /// The variants and their fields follow the v0.2.0 milestone specification,
 /// with the addition of [`DeviceStatus::FallbackCpu`] required by the state
 /// diagram for the "retry exceeded" transition.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::resilience::DeviceStatus;
+///
+/// let status = DeviceStatus::Active;
+/// assert!(status.is_active());
+/// assert!(!status.is_fallback_cpu());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceStatus {
     /// The device is healthy and rendering normally.
@@ -168,6 +256,15 @@ pub enum DeviceStatus {
 impl DeviceStatus {
     /// Returns `true` when the machine is in the [`DeviceStatus::Active`]
     /// state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::DeviceStatus;
+    ///
+    /// assert!(DeviceStatus::Active.is_active());
+    /// assert!(!DeviceStatus::Recreated.is_active());
+    /// ```
     #[must_use]
     pub fn is_active(&self) -> bool {
         matches!(self, Self::Active)
@@ -175,6 +272,15 @@ impl DeviceStatus {
 
     /// Returns `true` when the machine is in the [`DeviceStatus::FallbackCpu`]
     /// state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::DeviceStatus;
+    ///
+    /// assert!(DeviceStatus::FallbackCpu.is_fallback_cpu());
+    /// assert!(!DeviceStatus::Active.is_fallback_cpu());
+    /// ```
     #[must_use]
     pub fn is_fallback_cpu(&self) -> bool {
         matches!(self, Self::FallbackCpu)
@@ -188,6 +294,20 @@ impl DeviceStatus {
 ///
 /// `attempt` is clamped to a minimum of 1 so that `backoff_duration(0)` returns
 /// the initial delay rather than a zero duration.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::resilience::backoff_duration;
+/// use std::time::Duration;
+///
+/// assert_eq!(backoff_duration(1), Duration::from_millis(1));
+/// assert_eq!(backoff_duration(2), Duration::from_millis(2));
+/// assert_eq!(backoff_duration(3), Duration::from_millis(4));
+/// assert_eq!(backoff_duration(4), Duration::from_millis(8));
+/// // `attempt` is clamped to a minimum of 1.
+/// assert_eq!(backoff_duration(0), Duration::from_millis(1));
+/// ```
 #[must_use]
 pub fn backoff_duration(attempt: u32) -> Duration {
     let n = attempt.max(1) - 1;
@@ -203,6 +323,15 @@ pub fn backoff_duration(attempt: u32) -> Duration {
 /// the transition methods that drive it through the recovery sequence. All
 /// time-sensitive transitions have `_at` variants that accept an explicit
 /// [`Instant`] clock, enabling deterministic unit testing without real sleeps.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::resilience::RecoveryMachine;
+///
+/// let machine = RecoveryMachine::new();
+/// assert!(machine.is_active());
+/// ```
 pub struct RecoveryMachine {
     /// The current state of the machine.
     status: DeviceStatus,
@@ -224,6 +353,15 @@ pub struct RecoveryMachine {
 impl RecoveryMachine {
     /// Creates a new recovery machine starting in the [`DeviceStatus::Active`]
     /// state with the default policy parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::RecoveryMachine;
+    ///
+    /// let machine = RecoveryMachine::new();
+    /// assert!(machine.is_active());
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self::with_policy(DEFAULT_MAX_RETRIES, DEFAULT_FALLBACK_THRESHOLD)
@@ -234,6 +372,16 @@ impl RecoveryMachine {
     /// `max_retries` caps the number of retry attempts; `fallback_threshold` is
     /// the cumulative time allowed in the suspended state before falling back
     /// to the CPU rasterizer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::RecoveryMachine;
+    /// use std::time::Duration;
+    ///
+    /// let machine = RecoveryMachine::with_policy(4, Duration::from_millis(100));
+    /// assert!(machine.is_active());
+    /// ```
     #[must_use]
     pub fn with_policy(max_retries: u32, fallback_threshold: Duration) -> Self {
         Self {
@@ -247,6 +395,15 @@ impl RecoveryMachine {
     }
 
     /// Returns a reference to the current [`DeviceStatus`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{DeviceStatus, RecoveryMachine};
+    ///
+    /// let machine = RecoveryMachine::new();
+    /// assert_eq!(machine.status(), &DeviceStatus::Active);
+    /// ```
     #[must_use]
     pub fn status(&self) -> &DeviceStatus {
         &self.status
@@ -254,6 +411,15 @@ impl RecoveryMachine {
 
     /// Returns `true` when the machine is in the [`DeviceStatus::Active`]
     /// state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::RecoveryMachine;
+    ///
+    /// let machine = RecoveryMachine::new();
+    /// assert!(machine.is_active());
+    /// ```
     #[must_use]
     pub fn is_active(&self) -> bool {
         self.status.is_active()
@@ -261,6 +427,15 @@ impl RecoveryMachine {
 
     /// Returns `true` when the machine is in the [`DeviceStatus::FallbackCpu`]
     /// state and the CPU software rasterizer should be used.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::RecoveryMachine;
+    ///
+    /// let machine = RecoveryMachine::new();
+    /// assert!(!machine.is_fallback_cpu());
+    /// ```
     #[must_use]
     pub fn is_fallback_cpu(&self) -> bool {
         self.status.is_fallback_cpu()
@@ -270,6 +445,15 @@ impl RecoveryMachine {
     ///
     /// A recovery is "completed" when the machine transitions back to
     /// [`DeviceStatus::Active`] via [`RecoveryMachine::repaint_completed`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::RecoveryMachine;
+    ///
+    /// let machine = RecoveryMachine::new();
+    /// assert_eq!(machine.last_recovery_duration(), None);
+    /// ```
     #[must_use]
     pub fn last_recovery_duration(&self) -> Option<Duration> {
         self.last_recovery_duration
@@ -279,6 +463,16 @@ impl RecoveryMachine {
     /// [`RECOVERY_BUDGET`] (16.6 milliseconds), satisfying the exit gate.
     ///
     /// Returns `true` when no recovery has occurred yet.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::RecoveryMachine;
+    ///
+    /// let machine = RecoveryMachine::new();
+    /// // No recovery has occurred yet, so the budget is satisfied.
+    /// assert!(machine.last_recovery_within_budget());
+    /// ```
     #[must_use]
     pub fn last_recovery_within_budget(&self) -> bool {
         self.last_recovery_duration
@@ -304,12 +498,37 @@ impl RecoveryMachine {
     /// Returns `true` if the error was transient and the caller should
     /// reconfigure the surface without entering recovery; returns `false`
     /// if the machine entered the recovery path or was already in one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{RecoveryMachine, SurfaceError};
+    ///
+    /// let mut machine = RecoveryMachine::new();
+    /// // A transient error does not trigger recovery.
+    /// let transient = machine.handle_surface_error(SurfaceError::Outdated);
+    /// assert!(transient);
+    /// assert!(machine.is_active());
+    /// ```
     pub fn handle_surface_error(&mut self, error: SurfaceError) -> bool {
         self.handle_surface_error_at(error, Instant::now())
     }
 
     /// [`RecoveryMachine::handle_surface_error`] with an explicit clock for
     /// deterministic testing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{RecoveryMachine, SurfaceError};
+    /// use std::time::Instant;
+    ///
+    /// let mut machine = RecoveryMachine::new();
+    /// let now = Instant::now();
+    /// // A device-loss error transitions to DeviceLost.
+    /// machine.handle_surface_error_at(SurfaceError::Lost, now);
+    /// assert!(!machine.is_active());
+    /// ```
     pub fn handle_surface_error_at(&mut self, error: SurfaceError, now: Instant) -> bool {
         if self.status.is_active() {
             if error.is_transient() {
@@ -334,12 +553,43 @@ impl RecoveryMachine {
     /// Transitions [`DeviceStatus::DeviceLost`] →
     /// [`DeviceStatus::SuspendedWithRetry`] with `attempts = 1` and
     /// `next_retry = now + backoff_duration(1)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{DeviceStatus, RecoveryMachine, SurfaceError};
+    /// use std::time::Instant;
+    ///
+    /// let mut machine = RecoveryMachine::new();
+    /// let now = Instant::now();
+    /// machine.handle_surface_error_at(SurfaceError::Lost, now);
+    /// machine.begin_retry_at(now);
+    /// assert!(matches!(machine.status(), DeviceStatus::SuspendedWithRetry { .. }));
+    /// ```
     pub fn begin_retry(&mut self) {
         self.begin_retry_at(Instant::now());
     }
 
     /// [`RecoveryMachine::begin_retry`] with an explicit clock for
     /// deterministic testing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{DeviceStatus, RecoveryMachine, SurfaceError};
+    /// use std::time::{Duration, Instant};
+    ///
+    /// let mut machine = RecoveryMachine::new();
+    /// let now = Instant::now();
+    /// machine.handle_surface_error_at(SurfaceError::Lost, now);
+    /// machine.begin_retry_at(now);
+    /// match machine.status() {
+    ///     DeviceStatus::SuspendedWithRetry { next_retry, .. } => {
+    ///         assert_eq!(*next_retry, now + Duration::from_millis(1));
+    ///     }
+    ///     _ => panic!("expected SuspendedWithRetry"),
+    /// }
+    /// ```
     pub fn begin_retry_at(&mut self, now: Instant) {
         if matches!(self.status, DeviceStatus::DeviceLost { .. }) {
             self.suspended_since = Some(now);
@@ -355,6 +605,20 @@ impl RecoveryMachine {
     ///
     /// Transitions [`DeviceStatus::SuspendedWithRetry`] →
     /// [`DeviceStatus::Recreated`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{DeviceStatus, RecoveryMachine, SurfaceError};
+    /// use std::time::Instant;
+    ///
+    /// let mut machine = RecoveryMachine::new();
+    /// let now = Instant::now();
+    /// machine.handle_surface_error_at(SurfaceError::Lost, now);
+    /// machine.begin_retry_at(now);
+    /// machine.retry_succeeded();
+    /// assert_eq!(machine.status(), &DeviceStatus::Recreated);
+    /// ```
     pub fn retry_succeeded(&mut self) {
         if matches!(self.status, DeviceStatus::SuspendedWithRetry { .. }) {
             self.status = DeviceStatus::Recreated;
@@ -368,12 +632,44 @@ impl RecoveryMachine {
     /// `max_retries`, the machine transitions to [`DeviceStatus::FallbackCpu`].
     /// Otherwise it schedules the next attempt with an exponentially increasing
     /// backoff.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{RecoveryMachine, SurfaceError};
+    /// use std::time::Instant;
+    ///
+    /// let mut machine = RecoveryMachine::with_policy(1, std::time::Duration::from_secs(60));
+    /// let now = Instant::now();
+    /// machine.handle_surface_error_at(SurfaceError::Lost, now);
+    /// machine.begin_retry_at(now);
+    /// machine.retry_failed_at(now);
+    /// // With max_retries == 1, the first failure exhausts the budget.
+    /// assert!(machine.is_fallback_cpu());
+    /// ```
     pub fn retry_failed(&mut self) {
         self.retry_failed_at(Instant::now());
     }
 
     /// [`RecoveryMachine::retry_failed`] with an explicit clock for
     /// deterministic testing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{DeviceStatus, RecoveryMachine, SurfaceError};
+    /// use std::time::{Duration, Instant};
+    ///
+    /// let mut machine = RecoveryMachine::with_policy(8, Duration::from_secs(60));
+    /// let now = Instant::now();
+    /// machine.handle_surface_error_at(SurfaceError::Lost, now);
+    /// machine.begin_retry_at(now);
+    /// machine.retry_failed_at(now);
+    /// match machine.status() {
+    ///     DeviceStatus::SuspendedWithRetry { attempts, .. } => assert_eq!(*attempts, 2),
+    ///     _ => panic!("expected SuspendedWithRetry"),
+    /// }
+    /// ```
     pub fn retry_failed_at(&mut self, now: Instant) {
         let DeviceStatus::SuspendedWithRetry { attempts, .. } = &self.status else {
             return;
@@ -401,6 +697,21 @@ impl RecoveryMachine {
     /// Reports that the Vello pipelines have been rebuilt and textures rebound.
     ///
     /// Transitions [`DeviceStatus::Recreated`] → [`DeviceStatus::Restored`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{DeviceStatus, RecoveryMachine, SurfaceError};
+    /// use std::time::Instant;
+    ///
+    /// let mut machine = RecoveryMachine::new();
+    /// let now = Instant::now();
+    /// machine.handle_surface_error_at(SurfaceError::Lost, now);
+    /// machine.begin_retry_at(now);
+    /// machine.retry_succeeded();
+    /// machine.restore_completed();
+    /// assert_eq!(machine.status(), &DeviceStatus::Restored);
+    /// ```
     pub fn restore_completed(&mut self) {
         if matches!(self.status, DeviceStatus::Recreated) {
             self.status = DeviceStatus::Restored;
@@ -414,12 +725,47 @@ impl RecoveryMachine {
     /// [`DeviceStatus::FallbackCpu`], the machine returns to
     /// [`DeviceStatus::Active`] without recording a recovery duration (the GPU
     /// was not actually recovered within budget).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{RecoveryMachine, SurfaceError};
+    /// use std::time::{Duration, Instant};
+    ///
+    /// let mut machine = RecoveryMachine::new();
+    /// let now = Instant::now();
+    /// machine.handle_surface_error_at(SurfaceError::Lost, now);
+    /// machine.begin_retry_at(now);
+    /// machine.retry_succeeded();
+    /// machine.restore_completed();
+    /// machine.repaint_completed_at(now + Duration::from_millis(10));
+    /// assert!(machine.is_active());
+    /// assert!(machine.last_recovery_within_budget());
+    /// ```
     pub fn repaint_completed(&mut self) {
         self.repaint_completed_at(Instant::now());
     }
 
     /// [`RecoveryMachine::repaint_completed`] with an explicit clock for
     /// deterministic testing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::resilience::{RecoveryMachine, SurfaceError};
+    /// use std::time::{Duration, Instant};
+    ///
+    /// let mut machine = RecoveryMachine::new();
+    /// let now = Instant::now();
+    /// machine.handle_surface_error_at(SurfaceError::Lost, now);
+    /// machine.begin_retry_at(now);
+    /// machine.retry_succeeded();
+    /// machine.restore_completed();
+    /// // Repaint 20 ms later: exceeds the 16.6 ms budget.
+    /// machine.repaint_completed_at(now + Duration::from_millis(20));
+    /// assert!(machine.is_active());
+    /// assert!(!machine.last_recovery_within_budget());
+    /// ```
     pub fn repaint_completed_at(&mut self, now: Instant) {
         match self.status {
             DeviceStatus::Restored => {

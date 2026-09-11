@@ -143,6 +143,16 @@ pub struct X11Backend {
 impl X11Backend {
     /// Creates a new [`X11Backend`], opening a connection to the X11
     /// display. If no display is available, the backend is a no-op.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard_platform::x11::X11Backend;
+    /// use martensite_clipboard_platform::ClipboardBackend;
+    ///
+    /// let cb = X11Backend::new();
+    /// assert_eq!(cb.platform_name(), "x11");
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         let display = unsafe { XOpenDisplay(ptr::null()) };

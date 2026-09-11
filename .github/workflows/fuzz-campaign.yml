@@ -1,0 +1,84 @@
+name: Fuzz Campaign
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Campaign duration in seconds (default: 172800 = 48h)"
+        required: false
+        default: "172800"
+      seed:
+        description: "Random seed (default: 1)"
+        required: false
+        default: "1"
+  schedule:
+    # Weekly 48-hour campaign: starts every Sunday at 00:00 UTC
+    - cron: "0 0 * * 0"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-smoke:
+    name: Fuzz Smoke Test (5 min)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Pango/Cairo (for martensite-text-reference)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
+            libglib2.0-dev pkg-config
+      - name: Run fuzz smoke (5 min, seed 1)
+        run: |
+          cargo test --release -p martensite-test --lib soak_campaign -- --ignored --nocapture
+        env:
+          MARTENSITE_FUZZ_DURATION: "300"
+          MARTENSITE_FUZZ_SEED: "1"
+          MARTENSITE_FUZZ_RELEASE: "1"
+      - name: Upload fuzz results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-smoke-results
+          path: /tmp/fuzz-results/
+          retention-days: 7
+
+  fuzz-soak:
+    name: Fuzz Soak Campaign (${{ github.event.inputs.duration || '172800' }}s)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 2880
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Pango/Cairo (for martensite-text-reference)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
+            libglib2.0-dev pkg-config
+      - name: Build fuzz test binary
+        run: cargo test --release -p martensite-test --lib --no-run
+      - name: Run soak campaign
+        run: |
+          mkdir -p /tmp/fuzz-results
+          cargo test --release -p martensite-test --lib soak_campaign -- --ignored --nocapture 2>&1 | tee /tmp/fuzz-results/fuzz-results.txt
+        env:
+          MARTENSITE_FUZZ_DURATION: ${{ github.event.inputs.duration || '172800' }}
+          MARTENSITE_FUZZ_SEED: ${{ github.event.inputs.seed || '1' }}
+          MARTENSITE_FUZZ_RELEASE: "1"
+          MARTENSITE_FUZZ_RESULTS_DIR: "/tmp/fuzz-results"
+      - name: Upload fuzz campaign results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-soak-results-${{ github.run_id }}
+          path: /tmp/fuzz-results/
+          retention-days: 90

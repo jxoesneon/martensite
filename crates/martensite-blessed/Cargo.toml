@@ -16,6 +16,12 @@ readme = "README.md"
 martensite-core = { workspace = true }
 martensite-render = { workspace = true }
 martensite-text = { workspace = true }
+smallvec = { workspace = true }
+slab = { workspace = true }
+serde = { workspace = true, optional = true }
+
+[features]
+serde = ["dep:serde"]
 
 [dev-dependencies]
 martensite-access = { workspace = true }

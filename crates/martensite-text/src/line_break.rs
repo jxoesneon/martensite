@@ -6,6 +6,15 @@
 
 /// Classification of a line-break opportunity between two adjacent
 /// characters.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::line_break::BreakOpportunity;
+///
+/// assert_ne!(BreakOpportunity::Allowed, BreakOpportunity::Mandatory);
+/// assert_ne!(BreakOpportunity::Allowed, BreakOpportunity::Prohibited);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BreakOpportunity {
     /// A line break is allowed at this position.
@@ -30,6 +39,17 @@ pub enum BreakOpportunity {
 /// - **Keep-all CJK**: breaks between two adjacent CJK characters are
 ///   suppressed so that ideographic words stay together (equivalent to
 ///   CSS `word-break: keep-all`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::line_break::{LineBreaker, BreakOpportunity};
+///
+/// let ops = LineBreaker::opportunities("hello world");
+/// assert_eq!(ops.len(), "hello world".len() + 1);
+/// let space = "hello world".find(' ').unwrap();
+/// assert_eq!(ops[space + 1], BreakOpportunity::Allowed);
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LineBreaker;
 
@@ -39,6 +59,17 @@ impl LineBreaker {
     /// The returned vector has length `text.len() + 1`. Index `i`
     /// describes the break opportunity *before* byte `i` (or after the
     /// final byte for the last entry).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::line_break::{LineBreaker, BreakOpportunity};
+    ///
+    /// let ops = LineBreaker::opportunities("hello world");
+    /// assert_eq!(ops.len(), "hello world".len() + 1);
+    /// let space = "hello world".find(' ').unwrap();
+    /// assert_eq!(ops[space + 1], BreakOpportunity::Allowed);
+    /// ```
     pub fn opportunities(text: &str) -> Vec<BreakOpportunity> {
         let mut ops = vec![BreakOpportunity::Prohibited; text.len() + 1];
 
@@ -96,6 +127,15 @@ impl LineBreaker {
     /// The returned offsets are in strictly increasing order. Offset `0`
     /// is never included; the end of text is included when the UAX #14
     /// tail break is present.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::line_break::LineBreaker;
+    ///
+    /// let points = LineBreaker::break_points("hello world");
+    /// assert!(points.contains(&6)); // break after "hello"
+    /// ```
     pub fn break_points(text: &str) -> Vec<usize> {
         Self::opportunities(text)
             .iter()
@@ -115,6 +155,16 @@ impl LineBreaker {
     ///
     /// Covers closing punctuation, iteration/prolonged-sound marks, small
     /// kana, and sentence punctuation per JIS X 4051 / Kinsoku Shori.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::line_break::LineBreaker;
+    ///
+    /// assert!(LineBreaker::is_kinsoku_start(')'));
+    /// assert!(LineBreaker::is_kinsoku_start('。'));
+    /// assert!(!LineBreaker::is_kinsoku_start('A'));
+    /// ```
     pub fn is_kinsoku_start(ch: char) -> bool {
         matches!(
             ch,
@@ -192,6 +242,17 @@ impl LineBreaker {
     ///
     /// Covers opening brackets/quotes and currency symbols per
     /// JIS X 4051 / Kinsoku Shori.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::line_break::LineBreaker;
+    ///
+    /// assert!(LineBreaker::is_kinsoku_end('('));
+    /// assert!(LineBreaker::is_kinsoku_end('「'));
+    /// assert!(LineBreaker::is_kinsoku_end('$'));
+    /// assert!(!LineBreaker::is_kinsoku_end('Z'));
+    /// ```
     pub fn is_kinsoku_end(ch: char) -> bool {
         matches!(
             ch,

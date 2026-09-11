@@ -390,6 +390,18 @@ pub struct VideoProcessor {
 }
 
 /// Errors that can occur while constructing a [`VideoProcessor`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::interop::VideoProcessorError;
+/// use std::error::Error;
+///
+/// let err = VideoProcessorError::ShaderCompilationFailed("bad shader".to_string());
+/// assert!(err.to_string().contains("shader compilation failed"));
+/// assert!(err.to_string().contains("bad shader"));
+/// assert!(err.source().is_none());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VideoProcessorError {
     /// The WGSL shader failed to compile on this device.

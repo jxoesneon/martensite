@@ -68,6 +68,15 @@ impl Default for FocusManager {
 
 impl FocusManager {
     /// Creates a new `FocusManager` with no widget currently focused.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    ///
+    /// let manager = FocusManager::new();
+    /// assert_eq!(manager.current_focus(), None);
+    /// ```
     pub fn new() -> Self {
         Self {
             current_focus: None,
@@ -85,16 +94,57 @@ impl FocusManager {
     /// focus to this root container (if it is a valid focus target) or to
     /// the first focusable descendant of the root, rather than to an
     /// arbitrary arena-first node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    /// use martensite_core::{WidgetArena, HotNode, ColdNode, NodeFlags};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE;
+    /// let id = arena.insert(hot, ColdNode::default());
+    ///
+    /// let mut manager = FocusManager::new();
+    /// manager.set_root(id);
+    /// assert_eq!(manager.root(), Some(id));
+    /// ```
     pub fn set_root(&mut self, root: WidgetId) {
         self.root = Some(root);
     }
 
     /// Returns the root container, if set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    ///
+    /// let manager = FocusManager::new();
+    /// assert_eq!(manager.root(), None);
+    /// ```
     pub fn root(&self) -> Option<WidgetId> {
         self.root
     }
 
     /// Returns the currently focused widget ID, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    /// use martensite_core::{WidgetArena, HotNode, ColdNode, NodeFlags};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE;
+    /// let id = arena.insert(hot, ColdNode::default());
+    ///
+    /// let mut manager = FocusManager::new();
+    /// manager.set_focus(&mut arena, id);
+    /// assert_eq!(manager.current_focus(), Some(id));
+    /// ```
     #[inline]
     pub fn current_focus(&self) -> Option<WidgetId> {
         self.current_focus
@@ -105,6 +155,22 @@ impl FocusManager {
     /// The widget must be alive, visible, focusable, and not inert. If a
     /// modal scope is active, the widget must also be within the active
     /// scope's subtree; otherwise focus is not changed (modal trapping).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    /// use martensite_core::{WidgetArena, HotNode, ColdNode, NodeFlags};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE;
+    /// let id = arena.insert(hot, ColdNode::default());
+    ///
+    /// let mut manager = FocusManager::new();
+    /// manager.set_focus(&mut arena, id);
+    /// assert_eq!(manager.current_focus(), Some(id));
+    /// ```
     pub fn set_focus(&mut self, arena: &mut WidgetArena, id: WidgetId) {
         if !self.is_focusable_target(arena, id) {
             return;
@@ -184,11 +250,35 @@ impl FocusManager {
     /// This is useful for programmatic focus assignment (e.g., from
     /// accessibility actions) where the caller has already verified
     /// the target is valid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let mut manager = FocusManager::new();
+    /// let id = WidgetId::from_parts(0, 1);
+    /// manager.set_focus_unchecked(id);
+    /// assert_eq!(manager.current_focus(), Some(id));
+    /// ```
     pub fn set_focus_unchecked(&mut self, id: WidgetId) {
         self.current_focus = Some(id);
     }
 
     /// Clears the current focus.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    /// use martensite_core::WidgetId;
+    ///
+    /// let mut manager = FocusManager::new();
+    /// manager.set_focus_unchecked(WidgetId::from_parts(0, 1));
+    /// manager.clear_focus();
+    /// assert_eq!(manager.current_focus(), None);
+    /// ```
     pub fn clear_focus(&mut self) {
         self.current_focus = None;
     }
@@ -496,11 +586,29 @@ impl FocusManager {
     }
 
     /// Returns the current scope stack for inspection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    ///
+    /// let manager = FocusManager::new();
+    /// assert!(manager.scopes().is_empty());
+    /// ```
     pub fn scopes(&self) -> &FocusScopeStack {
         &self.scopes
     }
 
     /// Returns `true` if a modal focus scope is currently active.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    ///
+    /// let manager = FocusManager::new();
+    /// assert!(!manager.has_active_scope());
+    /// ```
     pub fn has_active_scope(&self) -> bool {
         self.scopes.has_active_scope()
     }

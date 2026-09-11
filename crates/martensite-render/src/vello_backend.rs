@@ -145,6 +145,15 @@ pub struct VelloRenderer {
 
 impl VelloRenderer {
     /// Creates a new renderer with an empty scene.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::VelloRenderer;
+    ///
+    /// let renderer = VelloRenderer::new();
+    /// assert_eq!(renderer.last_command_count(), 0);
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -160,6 +169,19 @@ impl VelloRenderer {
 
     /// Returns the number of commands processed by the most recent
     /// [`RenderBackend::render`] call.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintList, RenderBackend, VelloRenderer};
+    /// use kurbo::Rect;
+    ///
+    /// let mut renderer = VelloRenderer::new();
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+    /// renderer.render(&list);
+    /// assert_eq!(renderer.last_command_count(), 1);
+    /// ```
     #[must_use]
     pub fn last_command_count(&self) -> usize {
         self.last_command_count
@@ -168,6 +190,21 @@ impl VelloRenderer {
     /// Returns a reference to the most recently built Vello scene.
     ///
     /// Only available when the `vello` feature is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "vello")] {
+    /// use martensite_render::{PaintList, RenderBackend, VelloRenderer};
+    /// use kurbo::Rect;
+    ///
+    /// let mut renderer = VelloRenderer::new();
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::new(0.0, 0.0, 50.0, 50.0), [255, 0, 0, 255]);
+    /// renderer.render(&list);
+    /// let _scene = renderer.scene();
+    /// # }
+    /// ```
     #[cfg(feature = "vello")]
     #[must_use]
     pub fn scene(&self) -> &Scene {
@@ -179,6 +216,19 @@ impl VelloRenderer {
     /// Only available when the `vello` feature is enabled. This allows the
     /// `martensite-wgpu` orchestrator to take ownership of the scene for
     /// GPU dispatch.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "vello")] {
+    /// use martensite_render::VelloRenderer;
+    ///
+    /// let mut renderer = VelloRenderer::new();
+    /// let scene = renderer.scene_mut();
+    /// // The scene can be mutated before GPU dispatch.
+    /// let _ = scene;
+    /// # }
+    /// ```
     #[cfg(feature = "vello")]
     #[must_use]
     pub fn scene_mut(&mut self) -> &mut Scene {
@@ -186,6 +236,24 @@ impl VelloRenderer {
     }
 
     /// Resets the internal scene, discarding any previously recorded commands.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "vello")] {
+    /// use martensite_render::{PaintList, RenderBackend, VelloRenderer};
+    /// use kurbo::Rect;
+    ///
+    /// let mut renderer = VelloRenderer::new();
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+    /// renderer.render(&list);
+    /// assert_eq!(renderer.last_command_count(), 1);
+    ///
+    /// renderer.reset();
+    /// assert_eq!(renderer.last_command_count(), 0);
+    /// # }
+    /// ```
     #[cfg(feature = "vello")]
     pub fn reset(&mut self) {
         self.scene.reset();
@@ -217,6 +285,23 @@ impl VelloRenderer {
     /// contents show through where the scene draws nothing.
     ///
     /// Only available when the `vello` feature is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "vello")] {
+    /// use martensite_render::{PaintList, RenderBackend, VelloRenderer};
+    /// use kurbo::Rect;
+    ///
+    /// # async fn example(device: wgpu::Device, queue: wgpu::Queue, view: wgpu::TextureView) {
+    /// let mut renderer = VelloRenderer::new();
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::new(0.0, 0.0, 100.0, 100.0), [255, 0, 0, 255]);
+    /// renderer.render(&list);
+    /// renderer.render_to_texture(&device, &queue, &view, 100, 100);
+    /// # }
+    /// # }
+    /// ```
     #[cfg(feature = "vello")]
     pub fn render_to_texture(
         &mut self,

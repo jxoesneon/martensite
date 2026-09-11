@@ -31,18 +31,50 @@ use winit::dpi::{LogicalPosition, LogicalSize};
 /// A value of `5.0` produces a fast settle: at `Δt = 1s` the exponential
 /// term has decayed to `e^-5 ≈ 0.0067`, so the projected offset is
 /// negligible while still tracking the caret smoothly for short deltas.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::ime::DEFAULT_DAMPING_FACTOR;
+///
+/// assert_eq!(DEFAULT_DAMPING_FACTOR, 5.0);
+/// ```
 pub const DEFAULT_DAMPING_FACTOR: f32 = 5.0;
 
 /// Velocity magnitude (px/s) below which the container is considered
 /// stationary for [`ScrollKinematics::is_scrolling`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::ime::SCROLL_VELOCITY_THRESHOLD;
+///
+/// assert_eq!(SCROLL_VELOCITY_THRESHOLD, 1.0);
+/// ```
 pub const SCROLL_VELOCITY_THRESHOLD: f32 = 1.0;
 
 /// Default exponential moving average smoothing factor used by
 /// [`ScrollKinematics`]. Higher values weight recent input more heavily.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::ime::DEFAULT_EMA_ALPHA;
+///
+/// assert_eq!(DEFAULT_EMA_ALPHA, 0.5);
+/// ```
 pub const DEFAULT_EMA_ALPHA: f32 = 0.5;
 
 /// Default deceleration (px/s²) applied by [`ScrollKinematics::decay`]
 /// when no new scroll input arrives.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::ime::DEFAULT_DECELERATION;
+///
+/// assert_eq!(DEFAULT_DECELERATION, 2000.0);
+/// ```
 pub const DEFAULT_DECELERATION: f32 = 2000.0;
 
 /// Returns `true` if `v` is a finite, usable scalar.
@@ -78,6 +110,16 @@ fn duration_to_secs(delta_time: Duration) -> f32 {
 /// in the same coordinate space as the caret. IME candidate positions are
 /// clamped to this region before emission so the candidate window never
 /// detaches from the visible text area.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::Rect;
+/// use martensite_text::ime::Viewport;
+///
+/// let vp = Viewport::new(Rect::new(0.0, 0.0, 800.0, 600.0));
+/// assert_eq!(vp.rect.origin.x, 0.0);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Viewport {
     /// The visible rectangle.

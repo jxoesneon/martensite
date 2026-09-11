@@ -28,7 +28,8 @@ The framework provides direct GPU compute rendering via WGPU, a fine-grained pus
 7. **Two-Pass Layout Geometry**: Intrinsic measurement is decoupled from placement, preventing single-frame layout oscillations.
 8. **Integrated Accessibility**: Day-one native screen-reader synchronization through AccessKit.
 9. **Comprehensive Typography**: HarfBuzz shaping, bidirectional text (Unicode UAX #9), and font fallback via `cosmic-text`.
-10. **Permissive Open-Source Licensing**: Dual-licensed under MIT and Apache 2.0.
+10. **Production Blessed Widgets**: Virtualized 1M-row DataGrid (120fps), BSP docking tree, iOS-style rubber-band scroll, and 6-DoF Kalman stylus input.
+11. **Permissive Open-Source Licensing**: Dual-licensed under MIT and Apache 2.0.
 
 ---
 
@@ -36,7 +37,7 @@ The framework provides direct GPU compute rendering via WGPU, a fine-grained pus
 
 Martensite is engineered for predictable throughput, zero quiescent idle power, and instant reactivity.
 
-| Capability / Benchmark | Martensite (v0.11.0) | egui (v0.29) | Iced (v0.13) | Slint (v1.8) | GPUI (Zed 2026) |
+| Capability / Benchmark | Martensite (v0.12.0) | egui (v0.29) | Iced (v0.13) | Slint (v1.8) | GPUI (Zed 2026) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Vector Renderer** | **Vello (Compute Shaders)** | Triangles (Immediate) | wgpu / TinySkia | Software / FemtoVG | Metal / Vulkan Direct |
 | **Quiescent Idle CPU** | **† 0.00% (Kernel Sleep)** (event-driven target) | ~15–30% (Continuous Poll) | 0.00% (Event-driven) | 0.00% (Event-driven) | 0.00% (Event-driven) |

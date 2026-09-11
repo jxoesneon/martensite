@@ -5,6 +5,55 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.12.0] - 2026-09-10
+
+### Added — v0.12.0: Blessed Widgets & Kinematics
+
+- **1M-Row Virtualized DataGrid** (`martensite-blessed::data_table`):
+  - Column sorting with `ColumnSort` (ascending/descending/none) and
+    index-based `sort_by` that rebuilds only on sort change.
+  - Row filtering with closure-based `RowFilter` predicates.
+  - Range selection with `SelectionModel` (`SmallVec`-backed for inline
+    small selections).
+  - Keyboard navigation (`KeyAction` for arrows, PageUp/Down, Home/End,
+    Shift+arrow range selection).
+  - Column configuration (`ColumnConfig` with width, visibility,
+    sortable, resizable).
+  - Zero-allocation steady-state scroll path; 1M-row `visible_rows()`
+    < 8.3 ms (120 fps) on CI reference runners.
+- **BSP Docking Tree** (`martensite-blessed::docking`):
+  - `DockTree` with `Slab`-backed arena and pre-allocated capacity.
+  - Zero-allocation `split_leaf` and `merge` within slab capacity.
+  - Multi-swapchain panel surfaces (`DockPanel::surface_handle`).
+  - Drag-and-drop docking with `DockDragSession` and `DockDropZone`.
+  - Iterative `panel_rects` computation (stack-based, no recursion).
+  - Serialization via `to_layout` / `from_layout`.
+- **0.55 Rubber-Band Overscroll** (`martensite-motion::rubber_band`):
+  - `RUBBER_BAND_COEFFICIENT = 0.55` stretch coefficient.
+  - `RubberBandScroller` (1D) and `RubberBandScroller2D` (2D with
+    directional axis lock).
+  - Spring-back release using critically-damped `SpringSolver` (~300 ms
+    settle).
+  - Velocity handoff on fling release.
+  - O(1) `visible_offset` and `update` with zero allocation.
+- **6-DoF Kalman Stylus** (`martensite-window::stylus`):
+  - 12-dimensional Kalman state (position, velocity, orientation,
+    angular velocity) with hand-rolled 12×12 matrix math.
+  - Separate 2-state Kalman for pressure smoothing.
+  - `KalmanStylus::update` with < 2.0 ms per-event latency on CI
+    reference runners.
+  - `FilteredStylusState` output consumed by drawing widgets.
+
+### Changed
+- `martensite-blessed` now depends on `smallvec` and `slab`.
+- `martensite-motion` now exports `rubber_band` module and re-exports
+  `AxisLock`, `RubberBandScroller`, `RubberBandScroller2D`,
+  `RUBBER_BAND_COEFFICIENT`.
+- `martensite-window` now exports `stylus` module with `KalmanStylus`,
+  `StylusState`, `FilteredStylusState`.
+
 ## [0.11.0] - 2026-09-08
 
 ### Added

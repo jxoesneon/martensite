@@ -63,6 +63,27 @@ pub use kurbo::{BezPath, Point, Rect};
 /// ```
 pub trait RenderBackend: Send + 'static {
     /// Renders the given [`PaintList`] to this backend's output surface.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintList, RenderBackend};
+    /// use kurbo::Rect;
+    ///
+    /// struct Recorder { count: usize }
+    /// impl RenderBackend for Recorder {
+    ///     fn render(&mut self, paint_list: &PaintList) {
+    ///         self.count = paint_list.len();
+    ///     }
+    /// }
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+    ///
+    /// let mut backend = Recorder { count: 0 };
+    /// backend.render(&list);
+    /// assert_eq!(backend.count, 1);
+    /// ```
     fn render(&mut self, paint_list: &PaintList);
 }
 

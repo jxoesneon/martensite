@@ -20,13 +20,37 @@ use glam::Vec2;
 use martensite_core::{NodeFlags, Rect, WidgetArena, WidgetId};
 
 /// Default weight for the distance component of the spatial score.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_focus::DEFAULT_ALPHA;
+///
+/// assert_eq!(DEFAULT_ALPHA, 1.0);
+/// ```
 pub const DEFAULT_ALPHA: f32 = 1.0;
 
 /// Default weight for the angular deviation component of the spatial score.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_focus::DEFAULT_BETA;
+///
+/// assert_eq!(DEFAULT_BETA, 100.0);
+/// ```
 pub const DEFAULT_BETA: f32 = 100.0;
 
 /// Half-angle of the forward cone in degrees. Candidates outside this
 /// cone (measured from the navigation direction vector) are rejected.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_focus::FORWARD_CONE_DEGREES;
+///
+/// assert_eq!(FORWARD_CONE_DEGREES, 80.0);
+/// ```
 pub const FORWARD_CONE_DEGREES: f32 = 80.0;
 
 /// A cardinal direction in which focus may be projected within the 2D
@@ -54,6 +78,15 @@ pub enum FocusDirection {
 
 impl FocusDirection {
     /// Returns the unit direction vector for this focus direction.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusDirection;
+    ///
+    /// assert_eq!(FocusDirection::Up.vector(), glam::Vec2::new(0.0, -1.0));
+    /// assert_eq!(FocusDirection::Right.vector(), glam::Vec2::new(1.0, 0.0));
+    /// ```
     #[inline]
     pub fn vector(self) -> Vec2 {
         match self {
@@ -169,6 +202,16 @@ impl Default for SpatialNavigator {
 
 impl SpatialNavigator {
     /// Creates a new navigator with default scoring weights.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::SpatialNavigator;
+    ///
+    /// let nav = SpatialNavigator::new();
+    /// assert_eq!(nav.alpha(), martensite_focus::DEFAULT_ALPHA);
+    /// assert_eq!(nav.beta(), martensite_focus::DEFAULT_BETA);
+    /// ```
     pub fn new() -> Self {
         Self {
             alpha: DEFAULT_ALPHA,
@@ -219,6 +262,34 @@ impl SpatialNavigator {
     ///    cone.
     /// 4. Returns the candidate with the minimum score.
     /// 5. Ties are broken by layout tree (depth-first) order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::{FocusDirection, SpatialNavigator};
+    /// use martensite_core::{WidgetArena, HotNode, ColdNode, NodeFlags, Rect};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let src = arena.insert(
+    ///     HotNode {
+    ///         bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///         flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+    ///         ..HotNode::default()
+    ///     },
+    ///     ColdNode::default(),
+    /// );
+    /// let right = arena.insert(
+    ///     HotNode {
+    ///         bounds: Rect::new(100.0, 0.0, 10.0, 10.0),
+    ///         flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+    ///         ..HotNode::default()
+    ///     },
+    ///     ColdNode::default(),
+    /// );
+    ///
+    /// let nav = SpatialNavigator::new();
+    /// assert_eq!(nav.navigate(&arena, src, FocusDirection::Right), Some(right));
+    /// ```
     pub fn navigate(
         &self,
         arena: &WidgetArena,
@@ -290,6 +361,38 @@ impl SpatialNavigator {
     ///
     /// This is used for modal focus trapping: only widgets that are
     /// descendants of (or equal to) `scope_root` are considered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::{FocusDirection, SpatialNavigator};
+    /// use martensite_core::{WidgetArena, HotNode, ColdNode, NodeFlags, Rect};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert(
+    ///     HotNode {
+    ///         bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///         flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+    ///         ..HotNode::default()
+    ///     },
+    ///     ColdNode::default(),
+    /// );
+    /// let child = arena.insert(
+    ///     HotNode {
+    ///         bounds: Rect::new(100.0, 0.0, 10.0, 10.0),
+    ///         flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+    ///         ..HotNode::default()
+    ///     },
+    ///     ColdNode::default(),
+    /// );
+    /// arena.append_child(root, child).unwrap();
+    ///
+    /// let nav = SpatialNavigator::new();
+    /// assert_eq!(
+    ///     nav.navigate_within_scope(&arena, root, FocusDirection::Right, root),
+    ///     Some(child)
+    /// );
+    /// ```
     pub fn navigate_within_scope(
         &self,
         arena: &WidgetArena,
@@ -355,11 +458,29 @@ impl SpatialNavigator {
     }
 
     /// Returns the alpha (distance) weight.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::SpatialNavigator;
+    ///
+    /// let nav = SpatialNavigator::new();
+    /// assert_eq!(nav.alpha(), 1.0);
+    /// ```
     pub fn alpha(&self) -> f32 {
         self.alpha
     }
 
     /// Returns the beta (angular deviation) weight.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::SpatialNavigator;
+    ///
+    /// let nav = SpatialNavigator::new();
+    /// assert_eq!(nav.beta(), 100.0);
+    /// ```
     pub fn beta(&self) -> f32 {
         self.beta
     }

@@ -20,6 +20,15 @@ use crate::font::{FontId, FontManager};
 use crate::vertical::{apply_vertical_features, WritingMode};
 
 /// The result of measuring shaped text.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::shaping::TextMetrics;
+///
+/// let m = TextMetrics::zero();
+/// assert!(m.is_empty());
+/// ```
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct TextMetrics {
     /// The total width of the shaped text in logical pixels.
@@ -31,6 +40,18 @@ pub struct TextMetrics {
 }
 
 /// Direction and writing-mode options that affect shaping results.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::shaping::ShapingOptions;
+/// use martensite_text::bidi::BidiDirection;
+/// use martensite_text::vertical::WritingMode;
+///
+/// let opts = ShapingOptions::default();
+/// assert_eq!(opts.direction, BidiDirection::Ltr);
+/// assert_eq!(opts.writing_mode, WritingMode::HorizontalTb);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ShapingOptions {
     /// Base paragraph direction for BiDi resolution.
@@ -45,6 +66,18 @@ pub struct ShapingOptions {
 
 impl ShapingOptions {
     /// Default horizontal LTR shaping options.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::shaping::ShapingOptions;
+    /// use martensite_text::bidi::BidiDirection;
+    /// use martensite_text::vertical::WritingMode;
+    ///
+    /// let opts = ShapingOptions::default();
+    /// assert_eq!(opts.direction, BidiDirection::Ltr);
+    /// assert_eq!(opts.writing_mode, WritingMode::HorizontalTb);
+    /// ```
     #[inline]
     pub const fn default() -> Self {
         Self {
@@ -56,6 +89,17 @@ impl ShapingOptions {
     }
 
     /// Shaping options for a vertical right-to-left flow.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::shaping::ShapingOptions;
+    /// use martensite_text::vertical::WritingMode;
+    ///
+    /// let opts = ShapingOptions::vertical_rl();
+    /// assert_eq!(opts.writing_mode, WritingMode::VerticalRl);
+    /// assert!(opts.enable_vertical_features);
+    /// ```
     #[inline]
     pub const fn vertical_rl() -> Self {
         Self {
@@ -87,6 +131,20 @@ impl ShapingOptions {
     /// dominant script of `text`. When [`Self::fallback_key`] includes a
     /// locale, it is passed to the [`crate::cascade::FontFallbackProvider`] for
     /// locale-sensitive CJK and Indic variant selection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    /// use martensite_text::shaping::ShapingOptions;
+    /// use cosmic_text::{Attrs, Family};
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let opts = ShapingOptions::default();
+    /// let attrs = Attrs::new().family(Family::SansSerif);
+    /// let chain = opts.resolve_fallback_chain(manager.system(), "hello", &attrs);
+    /// assert!(!chain.is_empty());
+    /// ```
     pub fn resolve_fallback_chain(
         &self,
         font_system: &FontSystem,
@@ -104,6 +162,22 @@ impl ShapingOptions {
     /// This is the entry point used by [`Shaper::shape_with_options`]
     /// when an OS-native provider has been injected via
     /// [`Shaper::set_fallback_provider`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    /// use martensite_text::shaping::ShapingOptions;
+    /// use cosmic_text::{Attrs, Family};
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let opts = ShapingOptions::default();
+    /// let attrs = Attrs::new().family(Family::SansSerif);
+    /// let chain = opts.resolve_fallback_chain_with_provider(
+    ///     manager.system(), "hello", &attrs, None,
+    /// );
+    /// assert!(!chain.is_empty());
+    /// ```
     pub fn resolve_fallback_chain_with_provider(
         &self,
         font_system: &FontSystem,
@@ -135,6 +209,29 @@ impl ShapingOptions {
     /// The key incorporates the base BiDi direction, writing mode, and a
     /// hash of the resolved fallback chain so that shaped results are
     /// never conflated across typographic configurations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::FontManager;
+    /// use martensite_text::shaping::ShapingOptions;
+    /// use cosmic_text::{Attrs, Family};
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// let opts = ShapingOptions::default();
+    /// let attrs = Attrs::new().family(Family::SansSerif);
+    /// let key = opts.cache_key(
+    ///     manager.system(),
+    ///     martensite_text::font::FontId::dummy(),
+    ///     16.0,
+    ///     "hi",
+    ///     None,
+    ///     "sans-serif",
+    ///     20.0,
+    ///     &attrs,
+    /// );
+    /// let _ = key;
+    /// ```
     #[allow(clippy::too_many_arguments)]
     pub fn cache_key(
         &self,
@@ -165,6 +262,17 @@ impl ShapingOptions {
 
 impl TextMetrics {
     /// Creates zero metrics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::shaping::TextMetrics;
+    ///
+    /// let m = TextMetrics::zero();
+    /// assert_eq!(m.width, 0.0);
+    /// assert_eq!(m.height, 0.0);
+    /// assert_eq!(m.line_count, 0);
+    /// ```
     #[inline(always)]
     pub fn zero() -> Self {
         Self::default()
@@ -173,6 +281,18 @@ impl TextMetrics {
     /// Returns `true` if either dimension is zero or negative.
     ///
     /// This is consistent with `martensite_layout::geometry::Size::is_empty`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::shaping::TextMetrics;
+    ///
+    /// let zero = TextMetrics::zero();
+    /// assert!(zero.is_empty());
+    ///
+    /// let nonzero = TextMetrics { width: 10.0, height: 20.0, line_count: 1 };
+    /// assert!(!nonzero.is_empty());
+    /// ```
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.width <= 0.0 || self.height <= 0.0
@@ -180,6 +300,26 @@ impl TextMetrics {
 }
 
 /// A shaped glyph ready for rendering.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::font::FontId;
+/// use martensite_text::shaping::ShapedGlyph;
+///
+/// let glyph = ShapedGlyph {
+///     start: 0,
+///     end: 1,
+///     font_id: FontId::dummy(),
+///     glyph_id: 42,
+///     x: 0.0,
+///     y: 0.0,
+///     w: 10.0,
+///     font_size: 16.0,
+///     bidi_level: 0,
+/// };
+/// assert_eq!(glyph.glyph_id, 42);
+/// ```
 #[derive(Copy, Clone, Debug)]
 pub struct ShapedGlyph {
     /// Start index in the original text.

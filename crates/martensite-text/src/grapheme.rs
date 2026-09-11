@@ -70,11 +70,30 @@ impl<'a> GraphemeBreaker<'a> {
     }
 
     /// Returns the underlying text slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::grapheme::GraphemeBreaker;
+    ///
+    /// let breaker = GraphemeBreaker::new("hello");
+    /// assert_eq!(breaker.text(), "hello");
+    /// ```
     pub fn text(&self) -> &'a str {
         self.text
     }
 
     /// Returns a mutable reference to the underlying grapheme iterator.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::grapheme::GraphemeBreaker;
+    ///
+    /// let mut breaker = GraphemeBreaker::new("ab");
+    /// let iter = breaker.iter();
+    /// assert_eq!(iter.next(), Some("a"));
+    /// ```
     pub fn iter(&mut self) -> &mut Graphemes<'a> {
         &mut self.graphemes
     }
@@ -82,11 +101,29 @@ impl<'a> GraphemeBreaker<'a> {
     /// Splits the text into grapheme clusters, borrowing from the source.
     ///
     /// This is the owned-breaker equivalent of [`grapheme_clusters`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::grapheme::GraphemeBreaker;
+    ///
+    /// let mut breaker = GraphemeBreaker::new("e\u{0301}x");
+    /// assert_eq!(breaker.clusters(), ["e\u{0301}", "x"]);
+    /// ```
     pub fn clusters(&mut self) -> Vec<&'a str> {
         self.graphemes.clone().collect()
     }
 
     /// Counts the grapheme clusters in the text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::grapheme::GraphemeBreaker;
+    ///
+    /// let breaker = GraphemeBreaker::new("e\u{0301}x");
+    /// assert_eq!(breaker.count(), 2);
+    /// ```
     pub fn count(&self) -> usize {
         self.text.graphemes(true).count()
     }

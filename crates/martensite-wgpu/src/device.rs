@@ -10,6 +10,17 @@
 use std::time::Duration;
 
 /// Errors that can occur while constructing a [`GpuContext`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::device::GpuContextError;
+/// use std::error::Error;
+///
+/// let err = GpuContextError::NoAdapter("no adapters".to_string());
+/// assert!(err.to_string().contains("no suitable GPU adapter"));
+/// assert!(err.source().is_none());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GpuContextError {
     /// No adapter matching the requested options could be found on the system.
@@ -51,6 +62,15 @@ impl std::error::Error for GpuContextError {}
 ///
 /// It is constructed via [`GpuContext::new`] (default high-performance
 /// selection) or [`GpuContext::with_power_preference`] for explicit control.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_wgpu::device::GpuContext;
+///
+/// let ctx = GpuContext::new().expect("GPU available");
+/// assert!(!ctx.adapter_info.name.is_empty());
+/// ```
 pub struct GpuContext {
     /// The `wgpu` instance used to enumerate and create adapters and surfaces.
     pub instance: wgpu::Instance,
@@ -77,6 +97,15 @@ impl GpuContext {
     /// Returns [`GpuContextError::NoAdapter`] if no suitable adapter could be
     /// acquired, or [`GpuContextError::DeviceRequestFailed`] if the adapter
     /// was found but the device request failed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::device::GpuContext;
+    ///
+    /// let ctx = GpuContext::new();
+    /// assert!(ctx.is_ok() || ctx.is_err());
+    /// ```
     pub fn new() -> Result<Self, GpuContextError> {
         Self::with_power_preference(wgpu::PowerPreference::HighPerformance)
     }
@@ -89,6 +118,15 @@ impl GpuContext {
     /// Returns [`GpuContextError::NoAdapter`] if no suitable adapter could be
     /// acquired, or [`GpuContextError::DeviceRequestFailed`] if the adapter
     /// was found but the device request failed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::device::GpuContext;
+    ///
+    /// let ctx = GpuContext::with_power_preference(wgpu::PowerPreference::LowPower);
+    /// assert!(ctx.is_ok() || ctx.is_err());
+    /// ```
     pub fn with_power_preference(
         power_preference: wgpu::PowerPreference,
     ) -> Result<Self, GpuContextError> {
@@ -131,6 +169,15 @@ impl GpuContext {
     /// acquired (e.g. no software Vulkan driver installed), or
     /// [`GpuContextError::DeviceRequestFailed`] if the adapter was found but
     /// the device request failed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::device::GpuContext;
+    ///
+    /// let ctx = GpuContext::with_cpu_fallback();
+    /// assert!(ctx.is_ok() || ctx.is_err());
+    /// ```
     pub fn with_cpu_fallback() -> Result<Self, GpuContextError> {
         let instance = wgpu::Instance::default();
 
@@ -197,6 +244,17 @@ impl GpuContext {
     /// requested power preference appear first. This is useful for diagnostic
     /// UI and for the recovery FSM, which must re-enumerate adapters after a
     /// device loss.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::device::GpuContext;
+    ///
+    /// let instance = wgpu::Instance::default();
+    /// let adapters = GpuContext::enumerate_adapters(&instance, wgpu::PowerPreference::HighPerformance);
+    /// // The list may be empty in headless environments without a GPU.
+    /// println!("found {} adapter(s)", adapters.len());
+    /// ```
     #[must_use]
     pub fn enumerate_adapters(
         instance: &wgpu::Instance,
@@ -219,6 +277,17 @@ impl GpuContext {
     ///
     /// Use this for feature selection before allocating resources that depend
     /// on optional capabilities.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::device::GpuContext;
+    ///
+    /// # fn example(ctx: &GpuContext) {
+    /// // Every device supports the empty feature set.
+    /// assert!(ctx.supports_features(wgpu::Features::empty()));
+    /// # }
+    /// ```
     #[must_use]
     pub fn supports_features(&self, required: wgpu::Features) -> bool {
         self.device.features().contains(required)
@@ -231,6 +300,17 @@ impl GpuContext {
     /// correctly treats "higher is better" limits (e.g. max texture
     /// dimensions) and "lower is better" alignment limits (e.g.
     /// `min_uniform_buffer_offset_alignment`) with the appropriate ordering.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::device::GpuContext;
+    ///
+    /// # fn example(ctx: &GpuContext) {
+    /// // The device always meets the downlevel defaults it was created with.
+    /// assert!(ctx.meets_limits(&wgpu::Limits::downlevel_defaults()));
+    /// # }
+    /// ```
     #[must_use]
     pub fn meets_limits(&self, required: &wgpu::Limits) -> bool {
         required.check_limits(&self.device.limits())
@@ -242,6 +322,15 @@ impl GpuContext {
     ///
     /// The default is 32 milliseconds, matching the v0.2.0 milestone
     /// specification.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::device::GpuContext;
+    /// use std::time::Duration;
+    ///
+    /// assert_eq!(GpuContext::fallback_threshold(), Duration::from_millis(32));
+    /// ```
     #[must_use]
     pub fn fallback_threshold() -> Duration {
         Duration::from_millis(32)

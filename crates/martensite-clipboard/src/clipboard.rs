@@ -44,15 +44,56 @@ use std::time::Duration;
 /// The default deadline applied to lazy payload evaluation when no explicit
 /// deadline is supplied. This mitigates the risk of an unresponsive
 /// clipboard IPC producer blocking the UI thread indefinitely.
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Duration;
+/// use martensite_clipboard::DEFAULT_LAZY_DEADLINE;
+///
+/// assert_eq!(DEFAULT_LAZY_DEADLINE, Duration::from_millis(500));
+/// ```
 pub const DEFAULT_LAZY_DEADLINE: Duration = Duration::from_millis(500);
 
 /// Common MIME type for UTF-8 plain text.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_clipboard::clipboard::MIME_TEXT_PLAIN;
+///
+/// assert_eq!(MIME_TEXT_PLAIN, "text/plain;charset=utf-8");
+/// ```
 pub const MIME_TEXT_PLAIN: &str = "text/plain;charset=utf-8";
 /// Common MIME type for HTML text.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_clipboard::clipboard::MIME_TEXT_HTML;
+///
+/// assert_eq!(MIME_TEXT_HTML, "text/html");
+/// ```
 pub const MIME_TEXT_HTML: &str = "text/html";
 /// Common MIME type for Rich Text Format.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_clipboard::clipboard::MIME_TEXT_RTF;
+///
+/// assert_eq!(MIME_TEXT_RTF, "application/rtf");
+/// ```
 pub const MIME_TEXT_RTF: &str = "application/rtf";
 /// Common MIME type for PNG image data.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_clipboard::clipboard::MIME_IMAGE_PNG;
+///
+/// assert_eq!(MIME_IMAGE_PNG, "image/png");
+/// ```
 pub const MIME_IMAGE_PNG: &str = "image/png";
 
 /// A MIME type string.
@@ -73,18 +114,45 @@ pub struct Mime(String);
 
 impl Mime {
     /// Creates a new [`Mime`] from anything convertible into [`String`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::clipboard::Mime;
+    ///
+    /// let mime = Mime::new("image/png");
+    /// assert_eq!(mime.as_str(), "image/png");
+    /// ```
     #[inline]
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
     /// Returns the MIME type as a string slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::clipboard::Mime;
+    ///
+    /// let mime = Mime::new("text/plain;charset=utf-8");
+    /// assert_eq!(mime.as_str(), "text/plain;charset=utf-8");
+    /// ```
     #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Consumes the [`Mime`] and returns the inner [`String`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::clipboard::Mime;
+    ///
+    /// let mime = Mime::new("image/png");
+    /// assert_eq!(mime.into_inner(), "image/png");
+    /// ```
     #[inline]
     pub fn into_inner(self) -> String {
         self.0
@@ -133,6 +201,15 @@ impl std::fmt::Display for Mime {
 /// Cloning a [`LazyPayload`] clones the [`Arc`], not the closure. The first
 /// caller that materializes the payload consumes the closure; subsequent
 /// materializations of clones return [`None`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_clipboard::LazyPayload;
+///
+/// let payload = LazyPayload::new(|| b"deferred".to_vec());
+/// assert!(payload.is_pending());
+/// ```
 #[derive(Clone)]
 pub struct LazyPayload {
     inner: Arc<Mutex<Option<BoxedProducer>>>,
@@ -143,6 +220,15 @@ type BoxedProducer = Box<dyn FnOnce() -> Vec<u8> + Send>;
 
 impl LazyPayload {
     /// Creates a new [`LazyPayload`] wrapping the given closure.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::LazyPayload;
+    ///
+    /// let payload = LazyPayload::new(|| b"deferred".to_vec());
+    /// assert!(payload.is_pending());
+    /// ```
     #[inline]
     pub fn new<F>(f: F) -> Self
     where
@@ -159,6 +245,17 @@ impl LazyPayload {
     /// holding this mutex, the inner value is still recovered via
     /// [`std::sync::PoisonError::into_inner`] so that a producer panic cannot cascade
     /// into every subsequent clipboard read.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::LazyPayload;
+    ///
+    /// let payload = LazyPayload::new(|| b"deferred".to_vec());
+    /// assert!(payload.is_pending());
+    /// let _ = payload.take();
+    /// assert!(!payload.is_pending());
+    /// ```
     pub fn is_pending(&self) -> bool {
         self.inner
             .lock()
@@ -173,6 +270,18 @@ impl LazyPayload {
     /// holding this mutex, the inner value is still recovered via
     /// [`std::sync::PoisonError::into_inner`] so that a producer panic cannot cascade
     /// into every subsequent clipboard read.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::LazyPayload;
+    ///
+    /// let payload = LazyPayload::new(|| b"deferred".to_vec());
+    /// let closure = payload.take();
+    /// assert!(closure.is_some());
+    /// // A second take returns None.
+    /// assert!(payload.take().is_none());
+    /// ```
     pub fn take(&self) -> Option<Box<dyn FnOnce() -> Vec<u8> + Send>> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
@@ -228,18 +337,45 @@ pub enum ClipboardPayload {
 impl ClipboardPayload {
     /// Creates a [`ClipboardPayload::Text`] from anything convertible into
     /// [`String`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardPayload;
+    ///
+    /// let payload = ClipboardPayload::text("hello");
+    /// assert_eq!(payload.materialize(), Some(b"hello".to_vec()));
+    /// ```
     #[inline]
     pub fn text(value: impl Into<String>) -> Self {
         Self::Text(value.into())
     }
 
     /// Creates a [`ClipboardPayload::Bytes`] from a byte vector.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardPayload;
+    ///
+    /// let payload = ClipboardPayload::bytes(vec![0x89, 0x50]);
+    /// assert_eq!(payload.materialize(), Some(vec![0x89, 0x50]));
+    /// ```
     #[inline]
     pub fn bytes(value: Vec<u8>) -> Self {
         Self::Bytes(value)
     }
 
     /// Creates a [`ClipboardPayload::Lazy`] from a closure.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardPayload;
+    ///
+    /// let payload = ClipboardPayload::lazy(|| b"deferred".to_vec());
+    /// assert!(payload.is_lazy_pending());
+    /// ```
     #[inline]
     pub fn lazy<F>(f: F) -> Self
     where
@@ -250,6 +386,18 @@ impl ClipboardPayload {
 
     /// Returns `true` if this payload is a lazy one that has not yet been
     /// consumed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardPayload;
+    ///
+    /// let eager = ClipboardPayload::text("hi");
+    /// assert!(!eager.is_lazy_pending());
+    ///
+    /// let lazy = ClipboardPayload::lazy(|| b"deferred".to_vec());
+    /// assert!(lazy.is_lazy_pending());
+    /// ```
     pub fn is_lazy_pending(&self) -> bool {
         match self {
             Self::Lazy(l) => l.is_pending(),
@@ -267,6 +415,18 @@ impl ClipboardPayload {
     /// This method has **no deadline**: a panicking or long-running lazy
     /// producer will block the caller. Use [`ClipboardPayload::with_deadline`]
     /// when an unresponsive producer is a possibility.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardPayload;
+    ///
+    /// let text = ClipboardPayload::text("hello");
+    /// assert_eq!(text.materialize(), Some(b"hello".to_vec()));
+    ///
+    /// let bytes = ClipboardPayload::bytes(vec![1, 2, 3]);
+    /// assert_eq!(bytes.materialize(), Some(vec![1, 2, 3]));
+    /// ```
     pub fn materialize(&self) -> Option<Vec<u8>> {
         match self {
             Self::Text(s) => Some(s.as_bytes().to_vec()),
@@ -304,6 +464,19 @@ impl ClipboardPayload {
     /// Callers that require hard cancellation of the producer must arrange
     /// for that inside the closure itself (e.g. via a shared `AtomicBool`
     /// flag), since safe Rust offers no thread-cancellation primitive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardPayload;
+    /// use std::time::Duration;
+    ///
+    /// let text = ClipboardPayload::text("fast");
+    /// assert_eq!(
+    ///     text.with_deadline(Duration::from_millis(10)),
+    ///     Some(b"fast".to_vec())
+    /// );
+    /// ```
     pub fn with_deadline(&self, deadline: Duration) -> Option<Vec<u8>> {
         match self {
             Self::Text(s) => Some(s.as_bytes().to_vec()),
@@ -433,6 +606,15 @@ pub struct ClipboardItem {
 
 impl ClipboardItem {
     /// Creates a new empty [`ClipboardItem`] with no payloads.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new();
+    /// assert!(item.is_empty());
+    /// ```
     #[inline]
     pub fn new() -> Self {
         Self::default()
@@ -440,6 +622,15 @@ impl ClipboardItem {
 
     /// Offers a plain-text representation under
     /// [`MIME_TEXT_PLAIN`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_text("hello");
+    /// assert!(item.has("text/plain;charset=utf-8"));
+    /// ```
     #[inline]
     pub fn offer_text(mut self, text: impl Into<String>) -> Self {
         self.payloads
@@ -449,6 +640,15 @@ impl ClipboardItem {
 
     /// Offers an HTML representation under
     /// [`MIME_TEXT_HTML`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_html("<b>hello</b>");
+    /// assert!(item.has("text/html"));
+    /// ```
     #[inline]
     pub fn offer_html(mut self, html: impl Into<String>) -> Self {
         self.payloads
@@ -458,6 +658,15 @@ impl ClipboardItem {
 
     /// Offers an RTF representation under
     /// [`MIME_TEXT_RTF`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_rtf("{\\rtf1}");
+    /// assert!(item.has("application/rtf"));
+    /// ```
     #[inline]
     pub fn offer_rtf(mut self, rtf: impl Into<String>) -> Self {
         self.payloads
@@ -467,6 +676,15 @@ impl ClipboardItem {
 
     /// Offers a PNG image representation under
     /// [`MIME_IMAGE_PNG`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_png(vec![0x89, 0x50]);
+    /// assert!(item.has("image/png"));
+    /// ```
     #[inline]
     pub fn offer_png(mut self, png: Vec<u8>) -> Self {
         self.payloads
@@ -481,6 +699,15 @@ impl ClipboardItem {
     /// parameter-order-independent (see that function's docs).
     ///
     /// The payload may be any [`ClipboardPayload`], including a lazy one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_custom("application/x-custom", vec![1, 2, 3]);
+    /// assert!(item.has("application/x-custom"));
+    /// ```
     #[inline]
     pub fn offer_custom(
         mut self,
@@ -496,6 +723,16 @@ impl ClipboardItem {
     ///
     /// The lookup uses [`canonicalize_mime`], so the comparison is
     /// case-insensitive and parameter-order-independent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_text("hello");
+    /// assert!(item.has("text/plain;charset=utf-8"));
+    /// assert!(!item.has("text/html"));
+    /// ```
     #[inline]
     pub fn has(&self, mime: &str) -> bool {
         self.payloads.contains_key(&canonicalize_mime(mime))
@@ -504,6 +741,17 @@ impl ClipboardItem {
     /// Returns the list of offered MIME types, in unspecified order.
     ///
     /// The returned strings are in canonical form (see [`canonicalize_mime`]).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_text("a").offer_html("b");
+    /// let mut types = item.offered_types();
+    /// types.sort();
+    /// assert_eq!(types.len(), 2);
+    /// ```
     pub fn offered_types(&self) -> Vec<String> {
         self.payloads.keys().cloned().collect()
     }
@@ -514,6 +762,16 @@ impl ClipboardItem {
     /// This is the zero-allocation counterpart to [`Self::offered_types`],
     /// used by the `Debug` impl and by callers that only need to inspect
     /// the offered type names without owning them.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_text("a");
+    /// let types: Vec<&str> = item.types().collect();
+    /// assert_eq!(types.len(), 1);
+    /// ```
     pub fn types(&self) -> impl Iterator<Item = &str> {
         self.payloads.keys().map(String::as_str)
     }
@@ -522,6 +780,16 @@ impl ClipboardItem {
     ///
     /// The lookup uses [`canonicalize_mime`], so the comparison is
     /// case-insensitive and parameter-order-independent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let mut item = ClipboardItem::new().offer_text("hello");
+    /// assert!(item.remove("text/plain;charset=utf-8").is_some());
+    /// assert!(!item.has("text/plain;charset=utf-8"));
+    /// ```
     pub fn remove(&mut self, mime: &str) -> Option<ClipboardPayload> {
         self.payloads.remove(&canonicalize_mime(mime))
     }
@@ -530,29 +798,76 @@ impl ClipboardItem {
     ///
     /// The lookup uses [`canonicalize_mime`], so the comparison is
     /// case-insensitive and parameter-order-independent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_text("hello");
+    /// assert!(item.get("text/plain;charset=utf-8").is_some());
+    /// assert!(item.get("text/html").is_none());
+    /// ```
     #[inline]
     pub fn get(&self, mime: &str) -> Option<&ClipboardPayload> {
         self.payloads.get(&canonicalize_mime(mime))
     }
 
     /// Returns the number of offered representations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_text("a").offer_html("b");
+    /// assert_eq!(item.len(), 2);
+    /// ```
     #[inline]
     pub fn len(&self) -> usize {
         self.payloads.len()
     }
 
     /// Returns `true` if no representations are offered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new();
+    /// assert!(item.is_empty());
+    /// ```
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.payloads.is_empty()
     }
 
     /// Returns an iterator over the offered `(mime, payload)` pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_text("a").offer_html("b");
+    /// assert_eq!(item.iter().count(), 2);
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = (&String, &ClipboardPayload)> {
         self.payloads.iter()
     }
 
     /// Consumes the item and returns the underlying payload map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::ClipboardItem;
+    ///
+    /// let item = ClipboardItem::new().offer_text("hello");
+    /// let map = item.into_payloads();
+    /// assert!(map.contains_key("text/plain;charset=utf-8"));
+    /// ```
     pub fn into_payloads(self) -> HashMap<String, ClipboardPayload> {
         self.payloads
     }
@@ -572,12 +887,35 @@ impl std::fmt::Debug for ClipboardItem {
 ///
 /// Platform backends implement this trait; [`InMemoryClipboard`] provides a
 /// pure-Rust implementation suitable for tests and headless environments.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_clipboard::{ClipboardItem, ClipboardService, InMemoryClipboard};
+///
+/// let mut cb = InMemoryClipboard::new();
+/// cb.set_contents(&ClipboardItem::new().offer_text("hi"));
+/// assert_eq!(
+///     cb.get_contents("text/plain;charset=utf-8"),
+///     Some(b"hi".to_vec())
+/// );
+/// ```
 pub trait ClipboardService {
     /// Sets the clipboard contents, replacing any previous contents.
     ///
     /// Implementations retain the offered payloads. Lazy payloads are
     /// evaluated when [`ClipboardService::get_contents`] is called, subject
     /// to the backend's deadline policy.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::{ClipboardItem, ClipboardService, InMemoryClipboard};
+    ///
+    /// let mut cb = InMemoryClipboard::new();
+    /// cb.set_contents(&ClipboardItem::new().offer_text("hello"));
+    /// assert_eq!(cb.available_types().len(), 1);
+    /// ```
     fn set_contents(&mut self, item: &ClipboardItem);
 
     /// Returns the bytes for the requested MIME type, or [`None`] if it is
@@ -586,12 +924,46 @@ pub trait ClipboardService {
     /// For lazy payloads this invokes the producer closure (at most once).
     /// Implementations apply a deadline so an unresponsive producer cannot
     /// block indefinitely.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::{ClipboardItem, ClipboardService, InMemoryClipboard};
+    ///
+    /// let mut cb = InMemoryClipboard::new();
+    /// cb.set_contents(&ClipboardItem::new().offer_text("hello"));
+    /// assert_eq!(
+    ///     cb.get_contents("text/plain;charset=utf-8"),
+    ///     Some(b"hello".to_vec())
+    /// );
+    /// ```
     fn get_contents(&self, mime: &str) -> Option<Vec<u8>>;
 
     /// Returns the list of MIME types currently available on the clipboard.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::{ClipboardItem, ClipboardService, InMemoryClipboard};
+    ///
+    /// let mut cb = InMemoryClipboard::new();
+    /// cb.set_contents(&ClipboardItem::new().offer_text("a").offer_html("b"));
+    /// assert_eq!(cb.available_types().len(), 2);
+    /// ```
     fn available_types(&self) -> Vec<String>;
 
     /// Clears the clipboard contents.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::{ClipboardItem, ClipboardService, InMemoryClipboard};
+    ///
+    /// let mut cb = InMemoryClipboard::new();
+    /// cb.set_contents(&ClipboardItem::new().offer_text("a"));
+    /// cb.clear();
+    /// assert!(cb.available_types().is_empty());
+    /// ```
     fn clear(&mut self);
 }
 
@@ -620,18 +992,48 @@ pub struct InMemoryClipboard {
 
 impl InMemoryClipboard {
     /// Creates a new empty in-memory clipboard.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::{ClipboardService, InMemoryClipboard};
+    ///
+    /// let cb = InMemoryClipboard::new();
+    /// assert!(cb.available_types().is_empty());
+    /// ```
     #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Returns the number of representations currently stored.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::{ClipboardItem, ClipboardService, InMemoryClipboard};
+    ///
+    /// let mut cb = InMemoryClipboard::new();
+    /// cb.set_contents(&ClipboardItem::new().offer_text("a").offer_html("b"));
+    /// assert_eq!(cb.len(), 2);
+    /// ```
     #[inline]
     pub fn len(&self) -> usize {
         self.contents.len()
     }
 
     /// Returns `true` if the clipboard holds no representations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_clipboard::{ClipboardItem, ClipboardService, InMemoryClipboard};
+    ///
+    /// let mut cb = InMemoryClipboard::new();
+    /// assert!(cb.is_empty());
+    /// cb.set_contents(&ClipboardItem::new().offer_text("a"));
+    /// assert!(!cb.is_empty());
+    /// ```
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.contents.is_empty()

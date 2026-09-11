@@ -58,8 +58,26 @@ pub struct DiffResult {
 }
 
 /// The minimum SSIM required for edge-masked (high-frequency) regions.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::diff::EDGE_SSIM_THRESHOLD;
+///
+/// // Edge windows use a relaxed threshold that allows minor anti-aliasing drift.
+/// assert_eq!(EDGE_SSIM_THRESHOLD, 0.995);
+/// ```
 pub const EDGE_SSIM_THRESHOLD: f64 = 0.995;
 /// The minimum SSIM required for strict fill-interior matching.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::diff::FILL_SSIM_THRESHOLD;
+///
+/// // Interior (solid-fill) windows use a strict threshold.
+/// assert_eq!(FILL_SSIM_THRESHOLD, 0.9999);
+/// ```
 pub const FILL_SSIM_THRESHOLD: f64 = 0.9999;
 
 /// The window side length (in pixels) used for SSIM block evaluation.

@@ -60,36 +60,105 @@ pub struct CapabilitySet(HashSet<Capability>);
 
 impl CapabilitySet {
     /// Creates an empty capability set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::CapabilitySet;
+    ///
+    /// let caps = CapabilitySet::empty();
+    /// assert!(caps.is_empty());
+    /// ```
     pub fn empty() -> Self {
         Self(HashSet::new())
     }
 
     /// Returns a builder for constructing a capability set fluently.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{Capability, CapabilitySet};
+    ///
+    /// let caps = CapabilitySet::builder().grant(Capability::Network).build();
+    /// assert!(caps.contains(&Capability::Network));
+    /// ```
     pub fn builder() -> PluginBuilder {
         PluginBuilder::new()
     }
 
     /// Returns the number of distinct capabilities in the set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{Capability, CapabilitySet};
+    ///
+    /// let mut caps = CapabilitySet::empty();
+    /// assert_eq!(caps.len(), 0);
+    /// caps.grant(Capability::Network);
+    /// assert_eq!(caps.len(), 1);
+    /// ```
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
     /// Returns `true` if no capabilities have been granted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::CapabilitySet;
+    ///
+    /// let caps = CapabilitySet::empty();
+    /// assert!(caps.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
     /// Grants a capability, returning `true` if it was newly inserted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{Capability, CapabilitySet};
+    ///
+    /// let mut caps = CapabilitySet::empty();
+    /// assert!(caps.grant(Capability::Network));
+    /// assert!(!caps.grant(Capability::Network)); // already granted
+    /// ```
     pub fn grant(&mut self, cap: Capability) -> bool {
         self.0.insert(cap)
     }
 
     /// Revokes a capability, returning `true` if it was present.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{Capability, CapabilitySet};
+    ///
+    /// let mut caps = CapabilitySet::empty();
+    /// caps.grant(Capability::Network);
+    /// assert!(caps.revoke(&Capability::Network));
+    /// assert!(!caps.revoke(&Capability::Network)); // already revoked
+    /// ```
     pub fn revoke(&mut self, cap: &Capability) -> bool {
         self.0.remove(cap)
     }
 
     /// Returns `true` if the capability is currently granted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{Capability, CapabilitySet};
+    ///
+    /// let mut caps = CapabilitySet::empty();
+    /// caps.grant(Capability::Network);
+    /// assert!(caps.contains(&Capability::Network));
+    /// ```
     pub fn contains(&self, cap: &Capability) -> bool {
         self.0.contains(cap)
     }
@@ -115,6 +184,18 @@ impl CapabilitySet {
     /// Granting a directory (e.g. `FileRead("/assets")`) authorizes
     /// reads of any file beneath it (e.g. `/assets/textures/foo.png`).
     /// Granting a file authorizes only that exact file.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{Capability, CapabilitySet};
+    /// use std::path::Path;
+    ///
+    /// let mut caps = CapabilitySet::empty();
+    /// caps.grant(Capability::FileRead("/assets".into()));
+    /// assert!(caps.file_read_allowed(Path::new("/assets/foo.txt")));
+    /// assert!(!caps.file_read_allowed(Path::new("/etc/passwd")));
+    /// ```
     pub fn file_read_allowed(&self, requested_path: &std::path::Path) -> bool {
         self.file_path_allowed(requested_path, true)
     }
@@ -122,6 +203,18 @@ impl CapabilitySet {
     /// Returns `true` if a `file_write` request for `requested_path` is
     /// authorized by any granted [`Capability::FileWrite`] entry.
     /// See [`Self::file_read_allowed`] for canonicalization semantics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{Capability, CapabilitySet};
+    /// use std::path::Path;
+    ///
+    /// let mut caps = CapabilitySet::empty();
+    /// caps.grant(Capability::FileWrite("/tmp/log".into()));
+    /// assert!(caps.file_write_allowed(Path::new("/tmp/log")));
+    /// assert!(!caps.file_write_allowed(Path::new("/etc/passwd")));
+    /// ```
     pub fn file_write_allowed(&self, requested_path: &std::path::Path) -> bool {
         self.file_path_allowed(requested_path, false)
     }
@@ -216,6 +309,16 @@ pub struct PluginBuilder {
 
 impl PluginBuilder {
     /// Creates a new builder with no capabilities granted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::PluginBuilder;
+    ///
+    /// let builder = PluginBuilder::new();
+    /// let caps = builder.build();
+    /// assert!(caps.is_empty());
+    /// ```
     pub fn new() -> Self {
         Self {
             caps: CapabilitySet::empty(),
@@ -223,18 +326,48 @@ impl PluginBuilder {
     }
 
     /// Grants the given capability and returns the builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{Capability, PluginBuilder};
+    ///
+    /// let caps = PluginBuilder::new().grant(Capability::Network).build();
+    /// assert!(caps.contains(&Capability::Network));
+    /// ```
     pub fn grant(mut self, cap: Capability) -> Self {
         self.caps.grant(cap);
         self
     }
 
     /// Revokes the given capability and returns the builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{Capability, PluginBuilder};
+    ///
+    /// let caps = PluginBuilder::new()
+    ///     .grant(Capability::Network)
+    ///     .revoke(Capability::Network)
+    ///     .build();
+    /// assert!(!caps.contains(&Capability::Network));
+    /// ```
     pub fn revoke(mut self, cap: Capability) -> Self {
         self.caps.revoke(&cap);
         self
     }
 
     /// Finalizes the builder into an immutable capability set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_plugin::{Capability, PluginBuilder};
+    ///
+    /// let caps = PluginBuilder::new().grant(Capability::Network).build();
+    /// assert!(caps.contains(&Capability::Network));
+    /// ```
     pub fn build(self) -> CapabilitySet {
         self.caps
     }

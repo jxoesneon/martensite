@@ -44,6 +44,16 @@ pub struct Win32Backend;
 
 impl Win32Backend {
     /// Creates a new [`Win32Backend`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_clipboard_platform::windows::Win32Backend;
+    /// use martensite_clipboard_platform::ClipboardBackend;
+    ///
+    /// let cb = Win32Backend::new();
+    /// assert_eq!(cb.platform_name(), "windows-ole");
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self
