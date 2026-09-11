@@ -28,9 +28,7 @@ pub(crate) fn import_dxgi_texture(
     // Obtain the raw D3D12 device from the wgpu hal backend.
     // SAFETY: `as_hal` is unsafe because it exposes the raw hal device,
     // but we only use the guard to check backend availability.
-    let _hal_device_guard = unsafe {
-        device.as_hal::<wgpu::hal::api::Dx12>()
-    };
+    let _hal_device_guard = unsafe { device.as_hal::<wgpu::hal::api::Dx12>() };
 
     // The full implementation would:
     // 1. Open the shared handle as an ID3D12Resource via
