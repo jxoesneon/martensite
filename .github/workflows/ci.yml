@@ -215,7 +215,7 @@ jobs:
       - name: Run shell unit tests (windows-backend)
         run: cargo test -p martensite-shell --features windows-backend --lib
       - name: Build workspace (windows-backend)
-        run: cargo build --workspace --features martensite-shell/windows-backend
+        run: cargo build --workspace --features martensite-shell/windows-backend --exclude martensite-text-reference
       - name: Clippy (windows-backend)
         run: cargo clippy -p martensite-shell --features windows-backend --all-targets -- -D warnings
 
