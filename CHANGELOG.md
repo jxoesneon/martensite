@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-12
+
 ### Roadmap re-scope (post-v0.13.0 competitive analysis)
 
 - The v0.14.0 "Engine Embedding & Media" milestone was split into four
@@ -157,6 +159,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `examples/engine_embed` end-to-end demonstration of the
     producer→ring→composite loop (drive_frame → ready events →
     request_redraw → pre_present_notify → present).
+
+### Published Crates
+
+31 crates published to crates.io in dependency order, including the
+new `martensite-engine-bridge` (external-surface producer/consumer
+protocol) plus `martensite-core`, `martensite-reactive`,
+`martensite-macros`, `martensite-host`, `martensite-layout`,
+`martensite-render`, `martensite-theme`, `martensite-media-platform`,
+`martensite-media`, `martensite-wgpu`, `martensite-cosmic-text`,
+`martensite-text`, `martensite-font-fallback`,
+`martensite-accesskit-winit`, `martensite-access`, `martensite-shell`,
+`martensite-window`, `martensite-focus`, `martensite-clipboard-platform`,
+`martensite-clipboard`, `martensite-dnd`, `martensite-test`,
+`martensite-motion`, `martensite-history`, `martensite-l10n`,
+`martensite-assets`, `martensite-devtools`, `martensite-plugin`,
+`martensite`, and `martensite-blessed`.
 
 ## [0.13.0] - 2026-09-11
 

@@ -3,10 +3,10 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.14.0 foundation implementation (external surface
-compositing) — offscreen-segment architecture after adversarial review.
-Workspace is versioned 0.14.0 (local commits `a11fccd`,
-`6516479`; not pushed).
+Last updated: v0.14.0 release — external-surface foundation shipped,
+`examples/engine_embed` end-to-end demonstration landed, publish
+pipeline updated for `martensite-engine-bridge`. Tagged `v0.14.0` and
+pushed; `publish.yml` runs all gates then publishes 31 crates.
 
 ## Active Milestone Plan (v0.14.0 → v0.17.0 → v1.0.0)
 

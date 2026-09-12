@@ -47,7 +47,7 @@ Martensite is engineered for predictable throughput, zero quiescent idle power, 
 | **Multilingual IME & BiDi** | **Full BiDi + native OS font fallback** | No BiDi (Issue #1016) | Yes (cosmic-text) | Yes (Parley) | In-house editor |
 | **Zero-Copy 4K HDR Video** | **† DXGI/IOSurface/dma-buf import (decode pipeline in v0.16.0)** | Third-party (lumina-video) | Third-party (gstreamer) | Examples only | Third-party |
 | **Native Shell (Mica/Liquid Glass/Snap/Tray)** | **Built-in** | Third-party | Third-party | Tray only | Third-party |
-| **External Engine Viewport** | **† v0.14.0–v0.15.0 (in progress)** | `PaintCallback` + `bevy_egui` | `widget::shader` | `Image::try_from(wgpu::Texture)` | Canvas / fork |
+| **External Engine Viewport** | **Zero-copy `wgpu::Texture` composite (v0.14.0); engine adapters v0.15.0** | `PaintCallback` + `bevy_egui` | `widget::shader` | `Image::try_from(wgpu::Texture)` | Canvas / fork |
 | **Hot Reload Turnaround** | **† < 350 ms (cdylib split)** | Third-party | Experimental (cargo-hot) | Live preview (DSL) | Third-party |
 | **Time-Travel Debugging** | † v0.17.0 (planned) | No | `comet` (0.14) | No | No |
 

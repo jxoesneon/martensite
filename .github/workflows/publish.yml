@@ -98,6 +98,7 @@ jobs:
             martensite-theme
             martensite-media-platform
             martensite-media
+            martensite-engine-bridge
             martensite-wgpu
             martensite-cosmic-text
             martensite-text
@@ -242,6 +243,7 @@ jobs:
             martensite-theme
             martensite-media-platform
             martensite-media
+            martensite-engine-bridge
             martensite-wgpu
             martensite-cosmic-text
             martensite-text
