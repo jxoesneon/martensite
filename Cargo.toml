@@ -36,6 +36,7 @@ members = [
     "crates/martensite-media-test",
     "crates/martensite-engine-bridge",
     "tools/cargo-martensite",
+    "examples/engine_embed",
     "examples/industrial_dashboard",
     "benches/bench_suite",
 ]

@@ -175,6 +175,25 @@ impl ExternalEngine {
         self
     }
 
+    /// Updates the scale factor at runtime — call on
+    /// `WindowEvent::ScaleFactorChanged`. The next `layout` re-pushes
+    /// the viewport to the bridge at the new DPI.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngine;
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// let mut widget = ExternalEngine::new(handle, surface);
+    /// widget.set_scale_factor(2.0);
+    /// ```
+    pub fn set_scale_factor(&mut self, scale_factor: f64) {
+        self.scale_factor = scale_factor;
+    }
+
     /// Sets the content-fit mode (letterbox, crop, stretch, or native
     /// size). Reuses [`VideoFit`] — the semantics are identical.
     ///

@@ -154,6 +154,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     examples; `VkSemaphoreFd` gained a `stage` field for the HAL wait
     signature; `CompositeTarget`, `TakenFrame`, and
     `PresentModePreference` re-exported at the `martensite-wgpu` root.
+  - `examples/engine_embed` end-to-end demonstration of the
+    producer→ring→composite loop (drive_frame → ready events →
+    request_redraw → pre_present_notify → present).
 
 ## [0.13.0] - 2026-09-11
 

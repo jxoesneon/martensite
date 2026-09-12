@@ -1325,8 +1325,13 @@ impl RenderOrchestrator {
                     } else {
                         wgpu::TextureFormat::Rgba8Unorm
                     };
+                    // `usage: TEXTURE_BINDING` — without it the view
+                    // inherits the texture's STORAGE_BINDING and wgpu
+                    // rejects Rgba8UnormSrgb as storage-bindable (panic
+                    // on every sRGB surface frame).
                     let sample_view = entry.texture.create_view(&wgpu::TextureViewDescriptor {
                         format: Some(sample_format),
+                        usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
                         ..Default::default()
                     });
                     let bind_group = self
@@ -1670,5 +1675,382 @@ mod tests {
         let config = OrchestratorConfig::default();
         assert!(!config.allow_software_fallback);
         assert!(!config.prefer_cpu);
+    }
+
+    /// Tests for the segmented-compositing `seg_pool` cache —
+    /// `ensure_segment`, the sRGB-keyed `sample` view + bind-group
+    /// cache, `ensure_host`'s pool invalidation, and
+    /// `dispatch_pending`'s lazy cache fill. These need `wgpu`'s
+    /// `noop` backend (`Device::noop` requires `test-noop`) and the
+    /// `vello` feature (every tested item is `#[cfg(feature = "vello")]`).
+    #[cfg(all(feature = "test-noop", feature = "vello"))]
+    mod noop {
+        use super::super::*;
+
+        fn noop_device() -> (wgpu::Device, wgpu::Queue) {
+            wgpu::Device::noop(&wgpu::DeviceDescriptor::default())
+        }
+
+        /// A 64×64 `RENDER_ATTACHMENT` view in `format` — the frame
+        /// target `dispatch_pending` composites into.
+        fn make_target_view(
+            device: &wgpu::Device,
+            format: wgpu::TextureFormat,
+        ) -> wgpu::TextureView {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("test-composite-target"),
+                size: wgpu::Extent3d {
+                    width: 64,
+                    height: 64,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            texture.create_view(&wgpu::TextureViewDescriptor::default())
+        }
+
+        /// A `DispatchTarget` over `view` in `format` at 64×64, always
+        /// taking the offscreen-segment path (`vello_direct: false`).
+        fn dispatch_target<'a>(
+            view: &'a wgpu::TextureView,
+            format: wgpu::TextureFormat,
+        ) -> DispatchTarget<'a> {
+            DispatchTarget {
+                view,
+                format,
+                width: 64,
+                height: 64,
+                vello_direct: false,
+            }
+        }
+
+        /// Seeds `seg_pool[i].sample` with a marker entry, as the
+        /// dispatch path would after filling the cache.
+        fn poison_sample(
+            orch: &mut RenderOrchestrator,
+            device: &wgpu::Device,
+            i: usize,
+            srgb: bool,
+        ) {
+            let host = crate::external::WgpuHost::new(device, wgpu::TextureFormat::Bgra8UnormSrgb);
+            let entry = orch.seg_pool[i].as_ref().expect("entry exists");
+            let sample_view = entry
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            let bind_group = host.segment_bind_group(device, &sample_view);
+            orch.seg_pool[i].as_mut().unwrap().sample = Some((srgb, sample_view, bind_group));
+        }
+
+        #[test]
+        fn ensure_segment_creates_entry_once_and_reuses_same_size() {
+            let (device, _queue) = noop_device();
+            let mut orch = RenderOrchestrator::with_default_config(64, 64).expect("init");
+
+            orch.ensure_segment(&device, 0, 64, 64);
+            assert_eq!(orch.seg_pool.len(), 1);
+            {
+                let entry = orch.seg_pool[0].as_ref().expect("entry created");
+                assert_eq!((entry.texture.width(), entry.texture.height()), (64, 64));
+                assert!(entry.sample.is_none());
+            }
+            let texture = orch.seg_pool[0].as_ref().unwrap().texture.clone();
+            let storage_view = orch.seg_pool[0].as_ref().unwrap().storage_view.clone();
+
+            // Poison the sample cache: if `ensure_segment` recreated
+            // the entry, the poison would be dropped with it.
+            poison_sample(&mut orch, &device, 0, true);
+
+            // Same size — texture, storage view, and sample cache must
+            // all survive untouched.
+            orch.ensure_segment(&device, 0, 64, 64);
+            assert_eq!(orch.seg_pool.len(), 1);
+            let entry = orch.seg_pool[0].as_ref().expect("entry preserved");
+            assert_eq!(entry.texture, texture, "texture must not be recreated");
+            assert_eq!(
+                entry.storage_view, storage_view,
+                "storage view must not be recreated"
+            );
+            assert!(
+                matches!(&entry.sample, Some((true, _, _))),
+                "cached sample must survive a same-size ensure_segment"
+            );
+        }
+
+        #[test]
+        fn ensure_segment_grows_pool_with_sparse_slots() {
+            let (device, _queue) = noop_device();
+            let mut orch = RenderOrchestrator::with_default_config(64, 64).expect("init");
+            orch.ensure_segment(&device, 2, 32, 32);
+            assert_eq!(orch.seg_pool.len(), 3);
+            assert!(orch.seg_pool[0].is_none(), "earlier slots stay vacant");
+            assert!(orch.seg_pool[1].is_none(), "earlier slots stay vacant");
+            let entry = orch.seg_pool[2].as_ref().expect("slot 2 filled");
+            assert_eq!((entry.texture.width(), entry.texture.height()), (32, 32));
+        }
+
+        #[test]
+        fn ensure_segment_recreates_on_resize_and_drops_sample() {
+            let (device, _queue) = noop_device();
+            let mut orch = RenderOrchestrator::with_default_config(64, 64).expect("init");
+            orch.ensure_segment(&device, 0, 64, 64);
+            poison_sample(&mut orch, &device, 0, true);
+            let old_texture = orch.seg_pool[0].as_ref().unwrap().texture.clone();
+
+            // Both dims change — entry recreated, stale cache dropped.
+            orch.ensure_segment(&device, 0, 128, 32);
+            {
+                let entry = orch.seg_pool[0].as_ref().expect("entry recreated");
+                assert_eq!((entry.texture.width(), entry.texture.height()), (128, 32));
+                assert_ne!(
+                    entry.texture, old_texture,
+                    "resize must allocate a fresh texture"
+                );
+                assert!(
+                    entry.sample.is_none(),
+                    "stale sample cache must be dropped with the entry"
+                );
+            }
+
+            // A height-only change must also trigger recreation.
+            let texture_after_resize = orch.seg_pool[0].as_ref().unwrap().texture.clone();
+            orch.ensure_segment(&device, 0, 128, 64);
+            let entry = orch.seg_pool[0].as_ref().expect("entry recreated again");
+            assert_eq!((entry.texture.width(), entry.texture.height()), (128, 64));
+            assert_ne!(entry.texture, texture_after_resize);
+        }
+
+        #[test]
+        fn dispatch_pending_populates_and_reuses_sample_cache() {
+            let (device, queue) = noop_device();
+            let mut orch = RenderOrchestrator::with_default_config(64, 64).expect("init");
+            let view = make_target_view(&device, wgpu::TextureFormat::Bgra8Unorm);
+
+            // `pending` is empty, so this is the `single_scene` path —
+            // it still pools segment 0 and fills its sample cache.
+            orch.dispatch_pending(
+                &device,
+                &queue,
+                dispatch_target(&view, wgpu::TextureFormat::Bgra8Unorm),
+            );
+            let (is_srgb, sample_view, bind_group) = orch.seg_pool[0]
+                .as_ref()
+                .and_then(|e| e.sample.clone())
+                .expect("sample cache populated");
+            assert!(!is_srgb, "Bgra8Unorm target must key the cache as non-sRGB");
+
+            // Second dispatch to a same-format target: the cached view
+            // and bind group must be reused, not rebuilt.
+            orch.dispatch_pending(
+                &device,
+                &queue,
+                dispatch_target(&view, wgpu::TextureFormat::Bgra8Unorm),
+            );
+            let (is_srgb2, sample_view2, bind_group2) = orch.seg_pool[0]
+                .as_ref()
+                .and_then(|e| e.sample.clone())
+                .expect("sample cache still present");
+            assert!(!is_srgb2);
+            assert_eq!(sample_view, sample_view2, "sample view must be reused");
+            assert_eq!(bind_group, bind_group2, "bind group must be reused");
+        }
+
+        #[test]
+        fn dispatch_pending_rebuilds_sample_on_srgb_key_mismatch() {
+            let (device, queue) = noop_device();
+            let mut orch = RenderOrchestrator::with_default_config(64, 64).expect("init");
+            let view = make_target_view(&device, wgpu::TextureFormat::Bgra8Unorm);
+
+            orch.dispatch_pending(
+                &device,
+                &queue,
+                dispatch_target(&view, wgpu::TextureFormat::Bgra8Unorm),
+            );
+            let (_, _, old_bind_group) = orch.seg_pool[0]
+                .as_ref()
+                .and_then(|e| e.sample.clone())
+                .expect("sample cache populated");
+
+            // Corrupt only the key — pretend the cache was built for an
+            // sRGB target while the host and pool entry stay alive.
+            // This isolates the `sample.0 != target_is_srgb` rebuild
+            // branch, which the normal flow cannot reach (a real
+            // format change clears the whole pool via `ensure_host`).
+            {
+                let entry = orch.seg_pool[0].as_mut().unwrap();
+                let (_, v, bg) = entry.sample.take().unwrap();
+                entry.sample = Some((true, v, bg));
+            }
+
+            orch.dispatch_pending(
+                &device,
+                &queue,
+                dispatch_target(&view, wgpu::TextureFormat::Bgra8Unorm),
+            );
+            let (is_srgb, _view, bind_group) = orch.seg_pool[0]
+                .as_ref()
+                .and_then(|e| e.sample.clone())
+                .expect("sample cache repopulated");
+            assert!(!is_srgb, "key must be corrected to the target's sRGB-ness");
+            assert_ne!(
+                bind_group, old_bind_group,
+                "bind group must be rebuilt on key mismatch"
+            );
+        }
+
+        #[test]
+        fn dispatch_pending_rekeys_sample_after_host_recreation() {
+            let (device, queue) = noop_device();
+            let mut orch = RenderOrchestrator::with_default_config(64, 64).expect("init");
+            let unorm_view = make_target_view(&device, wgpu::TextureFormat::Bgra8Unorm);
+            let unorm_view2 = make_target_view(&device, wgpu::TextureFormat::Rgba8Unorm);
+
+            orch.dispatch_pending(
+                &device,
+                &queue,
+                dispatch_target(&unorm_view, wgpu::TextureFormat::Bgra8Unorm),
+            );
+            let first = orch.seg_pool[0]
+                .as_ref()
+                .and_then(|e| e.sample.clone())
+                .expect("sample cache populated");
+            assert!(!first.0, "non-sRGB target must key the cache as non-sRGB");
+
+            // A format change recreates the host (and clears the pool),
+            // so the rebuilt cache must key on the new target — here a
+            // different but still non-sRGB format.
+            orch.dispatch_pending(
+                &device,
+                &queue,
+                dispatch_target(&unorm_view2, wgpu::TextureFormat::Rgba8Unorm),
+            );
+            let second = orch.seg_pool[0]
+                .as_ref()
+                .and_then(|e| e.sample.clone())
+                .expect("sample cache repopulated");
+            assert!(!second.0);
+            assert_ne!(
+                second.2, first.2,
+                "host recreation must rebuild the cached bind group"
+            );
+        }
+
+        /// Regression test for a production bug found while writing this
+        /// suite: `dispatch_pending` builds the sRGB `sample_view` with
+        /// `TextureViewDescriptor::default()`, so the view inherits the
+        /// segment texture's `STORAGE_BINDING` usage — and wgpu rejects
+        /// Regression: the sRGB sample view previously inherited the
+        /// segment texture's `STORAGE_BINDING` usage — wgpu rejects
+        /// `Rgba8UnormSrgb` as a storage-bindable format, so any sRGB
+        /// frame target (the common surface format) panicked in
+        /// `create_view`. The fix pins
+        /// `usage: Some(wgpu::TextureUsages::TEXTURE_BINDING)` on the
+        /// sample view.
+        #[test]
+        fn dispatch_pending_populates_srgb_sample_for_srgb_target() {
+            let (device, queue) = noop_device();
+            let mut orch = RenderOrchestrator::with_default_config(64, 64).expect("init");
+            let view = make_target_view(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+
+            orch.dispatch_pending(
+                &device,
+                &queue,
+                dispatch_target(&view, wgpu::TextureFormat::Bgra8UnormSrgb),
+            );
+            let (is_srgb, _, _) = orch.seg_pool[0]
+                .as_ref()
+                .and_then(|e| e.sample.clone())
+                .expect("sample cache populated");
+            assert!(is_srgb, "sRGB target must produce an sRGB-keyed sample");
+        }
+
+        #[test]
+        fn dispatch_pending_caches_sample_per_segment() {
+            let (device, queue) = noop_device();
+            let mut orch = RenderOrchestrator::with_default_config(64, 64).expect("init");
+            let view = make_target_view(&device, wgpu::TextureFormat::Bgra8Unorm);
+
+            // Commands / External / Commands — two pooled segments with
+            // an external marker between them. The marker has no
+            // registered surface, so `host.composite` logs + skips it.
+            orch.pending = vec![
+                PendingSegment::Commands(PaintList::new()),
+                PendingSegment::External {
+                    surface_id: martensite_core::SurfaceId(9),
+                    rect: [0.0, 0.0, 64.0, 64.0],
+                    clip: [0.0, 0.0, 64.0, 64.0],
+                },
+                PendingSegment::Commands(PaintList::new()),
+            ];
+            orch.dispatch_pending(
+                &device,
+                &queue,
+                dispatch_target(&view, wgpu::TextureFormat::Bgra8Unorm),
+            );
+
+            assert_eq!(orch.seg_pool.len(), 2, "one pool entry per command segment");
+            for slot in &orch.seg_pool {
+                let entry = slot.as_ref().expect("each command segment pooled");
+                assert!(
+                    matches!(&entry.sample, Some((false, _, _))),
+                    "each segment gets its own cached sample"
+                );
+            }
+            let bg0 = orch.seg_pool[0]
+                .as_ref()
+                .unwrap()
+                .sample
+                .as_ref()
+                .unwrap()
+                .2
+                .clone();
+            let bg1 = orch.seg_pool[1]
+                .as_ref()
+                .unwrap()
+                .sample
+                .as_ref()
+                .unwrap()
+                .2
+                .clone();
+            assert_ne!(bg0, bg1, "segments must not share bind groups");
+        }
+
+        #[test]
+        fn ensure_host_clears_seg_pool_on_format_change() {
+            let (device, _queue) = noop_device();
+            let mut orch = RenderOrchestrator::with_default_config(64, 64).expect("init");
+
+            orch.ensure_host(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+            orch.ensure_segment(&device, 0, 64, 64);
+            assert!(orch.seg_pool[0].is_some());
+            let texture = orch.seg_pool[0].as_ref().unwrap().texture.clone();
+
+            // Same format: host kept, pool untouched.
+            orch.ensure_host(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+            assert_eq!(
+                orch.seg_pool[0].as_ref().unwrap().texture,
+                texture,
+                "same-format ensure_host must not touch the pool"
+            );
+
+            // Format change — even to another sRGB format — recreates
+            // the host, and cached bind groups reference the old host's
+            // bind-group layout, so the pool must be cleared.
+            orch.ensure_host(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+            assert!(
+                orch.seg_pool.is_empty(),
+                "seg_pool must be cleared when the host is recreated"
+            );
+            assert_eq!(
+                orch.external_host()
+                    .expect("host installed")
+                    .target_format(),
+                wgpu::TextureFormat::Rgba8UnormSrgb
+            );
+        }
     }
 }

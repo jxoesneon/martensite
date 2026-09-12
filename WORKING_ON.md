@@ -85,6 +85,15 @@ see ADR-0033.
   `record_paint` marker emission, `Role::Image` accessibility;
   exported via `widgets::external` and the prelude.
 
+### 6. `examples/engine_embed` — end-to-end demonstration
+- Winit 0.31 `ApplicationHandler` driving the full loop:
+  `drive_frame` → ready-event `request_redraw` → `poll_frame` →
+  `record_paint` (`PaintCommand::External`) → segmented orchestrator
+  `render_to_surface` (`take_front` → `composite_front` → release →
+  `pre_present_notify` → `present`) → `drain_released`.
+- `MockEngine` producer + `ExternalEngine` widget + `SurfaceWrapper`
+  low-latency pacing; TinySkia CPU fallback via `cpu_frame_for`.
+
 ### Verification Status
 - `cargo fmt --all -- --check`: pass.
 - `cargo check --workspace` (default + all-features): pass.

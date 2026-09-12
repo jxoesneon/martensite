@@ -1,0 +1,29 @@
+[package]
+name = "engine_embed"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "External engine embed example — drives the v0.14.0 producer → ring → composite loop."
+publish = false
+readme = "README.md"
+
+[dependencies]
+martensite = { workspace = true }
+martensite-engine-bridge = { workspace = true }
+martensite-render = { workspace = true }
+# `vello` enables the segmented GPU dispatch in `RenderOrchestrator`:
+# without it the GPU mode presents cleared frames only (the TinySkia
+# fallback path still works).
+martensite-wgpu = { workspace = true, features = ["vello"] }
+winit = { workspace = true }
+wgpu = { workspace = true }
+pollster = { workspace = true }
+
+[lints]
+workspace = true

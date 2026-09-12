@@ -55,6 +55,12 @@ docs-rs = [
 # CoreText on macOS, Fontconfig on Linux). When disabled, the static
 # PlatformCascadeResolver is used instead.
 native-fallback = ["dep:martensite-font-fallback"]
+# Headless `wgpu::Device::noop` for tests exercising Engine::render /
+# ExternalEngines::render_frame without a real GPU.
+test-noop = [
+    "martensite-engine-bridge/test-noop",
+    "martensite-wgpu/test-noop",
+]
 
 [package.metadata.docs.rs]
 features = ["docs-rs"]

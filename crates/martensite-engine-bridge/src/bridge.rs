@@ -536,7 +536,9 @@ impl SurfaceRing {
     /// ```
     pub fn set_cpu_frame(&mut self, slot: u8, frame: CpuFrame) -> Result<(), BridgeError> {
         let expected = frame.width as usize * frame.height as usize * 4;
-        if frame.width > crate::MAX_FRAME_DIM
+        if frame.width == 0
+            || frame.height == 0
+            || frame.width > crate::MAX_FRAME_DIM
             || frame.height > crate::MAX_FRAME_DIM
             || frame.pixels.len() != expected
         {
@@ -1025,6 +1027,25 @@ impl BridgeRegistry {
     ) -> Result<(), BridgeError> {
         if usize::from(slot) >= 2 {
             return Err(BridgeError::InvalidSlot(slot));
+        }
+        // Validate both payloads before storing either — a failing
+        // CpuFrame must not leave a half-applied frame in the slot.
+        if let Some(c) = &cpu {
+            let expected = c.width as usize * c.height as usize * 4;
+            if c.width == 0
+                || c.height == 0
+                || c.width > crate::MAX_FRAME_DIM
+                || c.height > crate::MAX_FRAME_DIM
+                || c.pixels.len() != expected
+            {
+                return Err(BridgeError::InvalidPayload);
+            }
+        }
+        if let Some(f) = &frame {
+            let (w, h) = f.size();
+            if w > crate::MAX_FRAME_DIM || h > crate::MAX_FRAME_DIM {
+                return Err(BridgeError::InvalidPayload);
+            }
         }
         let ring = self
             .rings
