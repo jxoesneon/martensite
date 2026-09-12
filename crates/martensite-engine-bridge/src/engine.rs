@@ -2,9 +2,13 @@
 //!
 //! An `Engine` is anything that renders frames Martensite can composite:
 //! a headless Bevy app, a hardware video decoder, an offscreen web
-//! compositor. The host calls [`Engine::render`] once per frame (or when
-//! the producer signals new content) and hands the returned
-//! [`Frame`] to the composite pass.
+//! compositor. The engine's [`Engine::render`] implementation renders a
+//! frame and **publishes it into its ring slot** via
+//! [`BridgeRegistry::mark_ready_full`](crate::BridgeRegistry::mark_ready_full)
+//! (or a sibling `mark_ready_*` call). The composite pass samples the
+//! ring's copy; the returned [`Frame`] is the same frame as a cheap
+//! handle for inspection/accounting — `None` when nothing new was
+//! produced (the host keeps the last ready frame).
 
 use crate::frame::{CpuFrame, Frame, FrameToken};
 
@@ -69,12 +73,15 @@ pub struct EngineContext<'a> {
 ///
 /// # Contract
 ///
-/// - `render` is called at most once per produced frame. It may return
-///   `None` when the producer has nothing new (the host keeps the last
-///   ready frame).
-/// - `release` is called by the host after a token's texture has been
-///   composited exactly once — the producer may then recycle the slot.
-///   Implementations that manage their own ring may ignore it.
+/// - `render` renders one frame and **publishes it into the ring** via
+///   `acquire` → render into the slot texture → `mark_ready_*`. The
+///   returned `Frame` is the same frame as a cheap handle for
+///   inspection; the composite pass reads the ring's copy. `None` means
+///   "nothing new" — the host keeps the last ready frame.
+/// - `release` is called after the host finished compositing `token` —
+///   the producer may then recycle the underlying texture (e.g. move it
+///   back to a free pool). Implementations that manage their own
+///   lifetime may ignore it.
 /// - `to_pixmap` is the CPU-fallback contract: return an RGBA8 raster of
 ///   the given frame if the producer can rasterize without the GPU.
 ///

@@ -7,7 +7,7 @@
 
 use crate::bridge::{BridgeHandle, SurfaceId};
 use crate::engine::{Engine, EngineContext, Viewport};
-use crate::frame::{CpuFrame, Frame, FrameToken, TextureFrame};
+use crate::frame::{CpuFrame, Frame, FrameToken, SharedTexture, TextureFrame};
 
 /// A deterministic same-device producer for tests and examples.
 ///
@@ -43,6 +43,12 @@ pub struct MockEngine {
     base_color: [u8; 4],
     frame_count: u64,
     released: Vec<FrameToken>,
+    /// Textures retained per published token — keeps each frame's
+    /// `wgpu::Texture` alive until the host releases the token, and
+    /// recycles them for reuse on `release`.
+    pending: std::collections::HashMap<FrameToken, SharedTexture>,
+    /// Freed textures available for reuse.
+    pool: Vec<SharedTexture>,
 }
 
 impl MockEngine {
@@ -67,6 +73,8 @@ impl MockEngine {
             base_color,
             frame_count: 0,
             released: Vec::new(),
+            pending: std::collections::HashMap::new(),
+            pool: Vec::new(),
         }
     }
 
@@ -104,13 +112,67 @@ impl MockEngine {
         self.surface
     }
 
-    /// Creates the slot texture for `size` on `device`.
-    fn make_texture(&self, device: &wgpu::Device, size: (u32, u32)) -> wgpu::Texture {
-        device.create_texture(&wgpu::TextureDescriptor {
+    /// Tokens the host has released to this engine (via
+    /// [`MockEngine::drain_released`]) — test accounting for the
+    /// "release exactly once per composited token" gate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::testing::MockEngine;
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// let engine = MockEngine::new(handle, surface, [0, 0, 0, 255]);
+    /// assert!(engine.released_tokens().is_empty());
+    /// ```
+    pub fn released_tokens(&self) -> &[FrameToken] {
+        &self.released
+    }
+
+    /// Drains the bridge's released-token queue for this engine's
+    /// surface and calls [`Engine::release`] for each — the producer
+    /// half of the recycling contract. Call once per host frame.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::testing::MockEngine;
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// let mut engine = MockEngine::new(handle, surface, [0, 0, 0, 255]);
+    /// engine.drain_released();
+    /// ```
+    pub fn drain_released(&mut self) {
+        let tokens = self
+            .handle
+            .lock()
+            .drain_released(self.surface)
+            .unwrap_or_default();
+        for token in tokens {
+            self.release(token);
+        }
+    }
+
+    /// Creates the slot texture for `size` on `device`, reusing a
+    /// recycled texture when one of matching size is pooled.
+    fn make_texture(&mut self, device: &wgpu::Device, size: (u32, u32)) -> SharedTexture {
+        let size = (size.0.max(1), size.1.max(1));
+        if let Some(pos) = self
+            .pool
+            .iter()
+            .rposition(|t| t.width() == size.0 && t.height() == size.1)
+        {
+            return self.pool.remove(pos);
+        }
+        std::sync::Arc::new(device.create_texture(&wgpu::TextureDescriptor {
             label: Some("mock-engine-frame"),
             size: wgpu::Extent3d {
-                width: size.0.max(1),
-                height: size.1.max(1),
+                width: size.0,
+                height: size.1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -121,7 +183,7 @@ impl MockEngine {
                 | wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
-        })
+        }))
     }
 }
 
@@ -141,7 +203,7 @@ impl Engine for MockEngine {
         }
         ctx.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: &texture,
+                texture: texture.as_ref(),
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -158,17 +220,43 @@ impl Engine for MockEngine {
                 depth_or_array_layers: 1,
             },
         );
+        // Flush the write before publishing: same-queue ordering then
+        // guarantees the host's composite sees the populated texture.
+        ctx.queue.submit([]);
 
+        // Publish the frame into the ring so the host consumes it via
+        // `composite_front`; the CPU raster rides along for the
+        // TinySkia fallback path. The engine retains the texture in
+        // `pending` until `release` — the ring's drop must not be the
+        // last owner.
+        self.pending.insert(token, std::sync::Arc::clone(&texture));
+        let cpu = self.to_pixmap(token);
         self.handle
             .lock()
-            .mark_ready_sized(self.surface, slot, viewport.size)
+            .mark_ready_full(
+                self.surface,
+                slot,
+                Some(Box::new(TextureFrame::new(
+                    token,
+                    (*texture).clone(),
+                    viewport.size,
+                ))),
+                cpu,
+            )
             .ok()?;
         self.frame_count += 1;
-        Some(Box::new(TextureFrame::new(token, texture, viewport.size)))
+        Some(Box::new(TextureFrame::new(
+            token,
+            (*texture).clone(),
+            viewport.size,
+        )))
     }
 
     fn release(&mut self, token: FrameToken) {
         self.released.push(token);
+        if let Some(tex) = self.pending.remove(&token) {
+            self.pool.push(tex);
+        }
     }
 
     fn to_pixmap(&self, _token: FrameToken) -> Option<CpuFrame> {
@@ -234,6 +322,48 @@ mod tests {
             ring.acquire(),
             Err(crate::BridgeError::RingExhausted)
         ));
+    }
+
+    #[test]
+    fn release_fires_exactly_once_per_composited_token() {
+        // The host composites a frame by take_front → composite →
+        // release; the producer drains released tokens → Engine::release.
+        let mut registry = BridgeRegistry::new();
+        let id = registry.register();
+        let (s0, t0) = registry.acquire(id).unwrap();
+        registry.mark_ready(id, s0).unwrap();
+        let (slot, token) = registry.take_front(id).unwrap().unwrap();
+        assert_eq!(token, t0);
+        registry.release(id, slot).unwrap();
+        // Producer recycles.
+        let mut seen = Vec::new();
+        for tok in registry.drain_released(id).unwrap() {
+            seen.push(tok);
+        }
+        assert_eq!(seen, vec![t0]);
+        // No double-release: a second drain is empty.
+        assert!(registry.drain_released(id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn mark_ready_full_publishes_frame_and_cpu_payload() {
+        let handle = BridgeHandle::new();
+        let surface = handle.lock().register();
+        {
+            let mut reg = handle.lock();
+            let (slot, _token) = reg.acquire(surface).unwrap();
+            reg.mark_ready_full(
+                surface,
+                slot,
+                None,
+                Some(CpuFrame::new(2, 2, vec![9u8; 16])),
+            )
+            .unwrap();
+        }
+        let reg = handle.lock();
+        let cpu = reg.front_cpu_frame(surface).unwrap().unwrap();
+        assert_eq!((cpu.width, cpu.height), (2, 2));
+        assert_eq!(reg.front_size(surface).unwrap(), Some((2, 2)));
     }
 
     #[test]

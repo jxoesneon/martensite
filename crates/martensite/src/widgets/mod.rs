@@ -144,7 +144,7 @@ pub mod media;
 pub use button::Button;
 pub use checkbox::CheckBox;
 pub use container::Container;
-pub use external::{ExternalEngine, FramePoll};
+pub use external::{ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use media::{MediaView, VideoFit};
 pub use stack::Stack;

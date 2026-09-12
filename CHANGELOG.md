@@ -44,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     atomic snapshot accessor.
   - `MockEngine` + `CpuFrame`/`TextureFrame`/`NativeFrame` test
     utilities; zero unsafe code.
+  - Per-slot frame payloads: `mark_ready_frame`/`mark_ready_full`/
+    `mark_ready_cpu` publish `Frame` + optional `CpuFrame` into the
+    ring; `front_frame`/`front_cpu_frame` accessors;
+    `set_viewport`/`viewport` for widget→producer sizing.
 - **`PaintCommand::External`** in `martensite-render` — ordered
   external-surface marker carrying `surface_id`, destination rect, and
   clip rect; `PaintList::segments()`/`has_external()`/`push_external()`
@@ -58,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - sRGB-aware pipelines: pass-through on `*Srgb`/float targets,
     in-shader `linear_to_srgb` on unorm non-sRGB targets; straight- and
     premultiplied-alpha entry points.
+  - `composite_front` consumes the bridge ring end-to-end:
+    `take_front` → sample the published frame's texture → caller
+    releases the slot after `queue.submit` — the two-slot mailbox is
+    enforced so producers never write the texture being sampled.
 - **Segmented `RenderOrchestrator` dispatch** — each command span
   renders to its own offscreen `Rgba8Unorm` texture; a single ordered
   encoder clears the frame and composites all segment blits and
@@ -69,6 +77,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   damage signaling, `VideoFit`-compatible scaling, `record_paint`
   marker emission, and `Role::Image` accessibility; exported via
   `widgets::external` and the prelude.
+- **`ExternalEngines`** — the app-loop integration point: binds
+  `(BridgeHandle, SurfaceId, Engine)` triples; `render_frame` drives
+  pull engines at the stored `Viewport`, `drain_ready` reports surfaces
+  needing redraw, `drain_released` calls `Engine::release` per
+  composited token.
+- **CPU fallback wired** — the orchestrator's CPU path composites the
+  ring's `CpuFrame` over the placeholder via
+  `TinySkiaBackend::composite_rgba_frame` (nearest-neighbor source-over
+  blit), and still takes/releases the slot so the producer's ring keeps
+  cycling.
 - **Fixed (pre-existing)**: the GPU `render_to_surface` path no longer
   dispatches Vello directly into the surface texture — typical
   surfaces are `*Srgb` and lack `STORAGE_BINDING`, so the direct

@@ -13,7 +13,7 @@
 //! workspace convention.
 
 use crate::error::BridgeError;
-use crate::frame::FrameToken;
+use crate::frame::{CpuFrame, Frame, FrameToken};
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -68,12 +68,32 @@ enum SlotState {
     Compositing,
 }
 
+/// One ring slot: state machine, assigned token, and the published
+/// frame payload (when the producer uses
+/// [`BridgeRegistry::mark_ready_frame`]).
+struct Slot {
+    state: SlotState,
+    token: FrameToken,
+    /// The published frame, retained while `Ready`/`Compositing` so the
+    /// host can sample its texture under the registry lock. Producers
+    /// that want to recycle the underlying texture should wrap it in
+    /// [`crate::SharedTexture`] — dropping the frame on `release` then
+    /// leaves the producer's `Arc` alive.
+    frame: Option<Box<dyn Frame>>,
+    /// The CPU raster published alongside the frame (or standalone via
+    /// [`BridgeRegistry::mark_ready_cpu`]) for the TinySkia fallback
+    /// path.
+    cpu_frame: Option<CpuFrame>,
+}
+
 /// A two-slot mailbox ring for one external surface.
 ///
-/// The ring carries tokens, not textures: the producer and the
-/// `WgpuHost` map slot indices to their own texture objects. Keeping the
-/// ring GPU-agnostic makes the full state machine testable without a
-/// device.
+/// The ring carries tokens and, optionally, the published [`Frame`]
+/// payload per slot: producers that want the host to consume the ring
+/// end-to-end publish the frame with
+/// [`BridgeRegistry::mark_ready_frame`]; producers managing their own
+/// texture table can keep using [`mark_ready`](SurfaceRing::mark_ready)
+/// and register textures with the host directly.
 ///
 /// # Examples
 ///
@@ -89,7 +109,7 @@ enum SlotState {
 /// assert_eq!(ring.drain_released(), vec![token]);
 /// ```
 pub struct SurfaceRing {
-    slots: [(SlotState, FrameToken); 2],
+    slots: [Slot; 2],
     next_token: u64,
     /// Index of the ready slot the host should composite next (newest).
     front: Option<u8>,
@@ -99,6 +119,9 @@ pub struct SurfaceRing {
     front_size: Option<(u32, u32)>,
     /// Tokens the host has released, awaiting producer recycling.
     released: Vec<FrameToken>,
+    /// The viewport the widget last laid out — producers read it to
+    /// size their renders to the widget's physical bounds and DPI.
+    viewport: Option<crate::Viewport>,
 }
 
 impl SurfaceRing {
@@ -115,13 +138,24 @@ impl SurfaceRing {
     pub fn new() -> Self {
         Self {
             slots: [
-                (SlotState::Free, FrameToken(0)),
-                (SlotState::Free, FrameToken(0)),
+                Slot {
+                    state: SlotState::Free,
+                    token: FrameToken(0),
+                    frame: None,
+                    cpu_frame: None,
+                },
+                Slot {
+                    state: SlotState::Free,
+                    token: FrameToken(0),
+                    frame: None,
+                    cpu_frame: None,
+                },
             ],
             next_token: 1,
             front: None,
             front_size: None,
             released: Vec::new(),
+            viewport: None,
         }
     }
 
@@ -143,12 +177,12 @@ impl SurfaceRing {
     /// assert!(slot < 2);
     /// ```
     pub fn acquire(&mut self) -> Result<(u8, FrameToken), BridgeError> {
-        for (i, (state, _)) in self.slots.iter_mut().enumerate() {
-            if *state == SlotState::Free {
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            if slot.state == SlotState::Free {
                 let token = FrameToken(self.next_token);
                 self.next_token += 1;
-                *state = SlotState::Writing;
-                self.slots[i].1 = token;
+                slot.state = SlotState::Writing;
+                slot.token = token;
                 return Ok((i as u8, token));
             }
         }
@@ -180,17 +214,19 @@ impl SurfaceRing {
         if idx >= 2 {
             return Err(BridgeError::InvalidSlot(slot));
         }
-        if self.slots[idx].0 != SlotState::Writing {
+        if self.slots[idx].state != SlotState::Writing {
             return Err(BridgeError::InvalidTransition);
         }
         // Free a stale ready slot: the mailbox keeps only the newest frame.
         if let Some(old_front) = self.front {
             let old = usize::from(old_front);
-            if old != idx && self.slots[old].0 == SlotState::Ready {
-                self.slots[old].0 = SlotState::Free;
+            if old != idx && self.slots[old].state == SlotState::Ready {
+                self.slots[old].state = SlotState::Free;
+                self.slots[old].frame = None;
+                self.slots[old].cpu_frame = None;
             }
         }
-        self.slots[idx].0 = SlotState::Ready;
+        self.slots[idx].state = SlotState::Ready;
         self.front = Some(slot);
         Ok(())
     }
@@ -208,11 +244,11 @@ impl SurfaceRing {
     /// ```
     pub fn take_front(&mut self) -> Option<(u8, FrameToken)> {
         let idx = usize::from(self.front?);
-        if self.slots[idx].0 != SlotState::Ready {
+        if self.slots[idx].state != SlotState::Ready {
             return None;
         }
-        self.slots[idx].0 = SlotState::Compositing;
-        Some((idx as u8, self.slots[idx].1))
+        self.slots[idx].state = SlotState::Compositing;
+        Some((idx as u8, self.slots[idx].token))
     }
 
     /// Releases a `Compositing` slot back to `Free` and queues its token
@@ -238,11 +274,13 @@ impl SurfaceRing {
         if idx >= 2 {
             return Err(BridgeError::InvalidSlot(slot));
         }
-        if self.slots[idx].0 != SlotState::Compositing {
+        if self.slots[idx].state != SlotState::Compositing {
             return Err(BridgeError::InvalidTransition);
         }
-        let token = self.slots[idx].1;
-        self.slots[idx].0 = SlotState::Free;
+        let token = self.slots[idx].token;
+        self.slots[idx].state = SlotState::Free;
+        self.slots[idx].frame = None;
+        self.slots[idx].cpu_frame = None;
         if self.front == Some(slot) {
             self.front = None;
         }
@@ -263,6 +301,100 @@ impl SurfaceRing {
     /// ```
     pub fn drain_released(&mut self) -> Vec<FrameToken> {
         std::mem::take(&mut self.released)
+    }
+
+    /// The [`Frame`] published into the front slot, if the producer
+    /// used [`BridgeRegistry::mark_ready_frame`]. Borrows the ring —
+    /// usable only while the registry lock is held.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::SurfaceRing;
+    ///
+    /// let ring = SurfaceRing::new();
+    /// assert!(ring.front_frame().is_none());
+    /// ```
+    pub fn front_frame(&self) -> Option<&dyn Frame> {
+        let idx = usize::from(self.front?);
+        self.slots[idx].frame.as_deref()
+    }
+
+    /// The [`CpuFrame`] published for the front slot, if any — the
+    /// TinySkia fallback payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::SurfaceRing;
+    ///
+    /// let ring = SurfaceRing::new();
+    /// assert!(ring.front_cpu_frame().is_none());
+    /// ```
+    pub fn front_cpu_frame(&self) -> Option<&CpuFrame> {
+        let idx = usize::from(self.front?);
+        self.slots[idx].cpu_frame.as_ref()
+    }
+
+    /// Stores the [`Frame`] for a `Writing` slot without marking it
+    /// ready — call before [`SurfaceRing::mark_ready`].
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::InvalidSlot`] for slot indices ≥ 2, and
+    /// [`BridgeError::InvalidTransition`] if the slot is not `Writing`.
+    pub fn set_frame(&mut self, slot: u8, frame: Box<dyn Frame>) -> Result<(), BridgeError> {
+        let idx = usize::from(slot);
+        if idx >= 2 {
+            return Err(BridgeError::InvalidSlot(slot));
+        }
+        if self.slots[idx].state != SlotState::Writing {
+            return Err(BridgeError::InvalidTransition);
+        }
+        self.slots[idx].frame = Some(frame);
+        Ok(())
+    }
+
+    /// Stores the [`CpuFrame`] for a `Writing` slot — call before
+    /// [`SurfaceRing::mark_ready`].
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::InvalidSlot`] for slot indices ≥ 2, and
+    /// [`BridgeError::InvalidTransition`] if the slot is not `Writing`.
+    pub fn set_cpu_frame(&mut self, slot: u8, frame: CpuFrame) -> Result<(), BridgeError> {
+        let idx = usize::from(slot);
+        if idx >= 2 {
+            return Err(BridgeError::InvalidSlot(slot));
+        }
+        if self.slots[idx].state != SlotState::Writing {
+            return Err(BridgeError::InvalidTransition);
+        }
+        self.slots[idx].cpu_frame = Some(frame);
+        Ok(())
+    }
+
+    /// Records the viewport the widget last laid out into.
+    ///
+    /// The widget pushes this on every `layout`; producers read
+    /// [`SurfaceRing::viewport`] to render at the widget's physical
+    /// bounds and DPI scale.
+    pub fn set_viewport(&mut self, viewport: crate::Viewport) {
+        self.viewport = Some(viewport);
+    }
+
+    /// The viewport last pushed by the widget, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::SurfaceRing;
+    ///
+    /// let ring = SurfaceRing::new();
+    /// assert!(ring.viewport().is_none());
+    /// ```
+    pub fn viewport(&self) -> Option<crate::Viewport> {
+        self.viewport
     }
 
     /// The slot index the host would composite next, if any.
@@ -467,6 +599,240 @@ impl BridgeRegistry {
             .drain_released())
     }
 
+    /// The [`Frame`] published into `id`'s front slot, if any. Borrows
+    /// the registry — call under the `BridgeHandle` lock.
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    pub fn front_frame(&self, id: SurfaceId) -> Result<Option<&dyn Frame>, BridgeError> {
+        Ok(self
+            .rings
+            .get(&id)
+            .ok_or(BridgeError::UnknownSurface(id))?
+            .front_frame())
+    }
+
+    /// The [`CpuFrame`] published for `id`'s front slot — the TinySkia
+    /// fallback payload set by [`mark_ready_cpu`](Self::mark_ready_cpu).
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    pub fn front_cpu_frame(&self, id: SurfaceId) -> Result<Option<&CpuFrame>, BridgeError> {
+        Ok(self
+            .rings
+            .get(&id)
+            .ok_or(BridgeError::UnknownSurface(id))?
+            .front_cpu_frame())
+    }
+
+    /// Publishes a produced [`Frame`] into `id`'s slot `slot`, marks it
+    /// ready, records its size, and queues a ready event — one call for
+    /// the full producer→host handoff.
+    ///
+    /// The frame is retained while the slot is `Ready`/`Compositing` and
+    /// dropped on `release`; producers recycling the texture should wrap
+    /// it in [`crate::SharedTexture`].
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::UnknownSurface`], [`BridgeError::InvalidSlot`], or
+    /// [`BridgeError::InvalidTransition`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{
+    ///     BridgeRegistry, Frame, FrameSync, FrameToken, SourceAlpha,
+    /// };
+    ///
+    /// struct Solid;
+    /// impl Frame for Solid {
+    ///     fn token(&self) -> FrameToken { FrameToken(0) }
+    ///     fn same_device_texture(&self) -> Option<&wgpu::Texture> { None }
+    ///     fn native_handle(&self) -> Option<martensite_engine_bridge::NativeFrame> { None }
+    ///     fn sync(&self) -> FrameSync { FrameSync::None }
+    ///     fn size(&self) -> (u32, u32) { (64, 64) }
+    ///     fn alpha_mode(&self) -> SourceAlpha { SourceAlpha::Premultiplied }
+    /// }
+    ///
+    /// let mut reg = BridgeRegistry::new();
+    /// let id = reg.register();
+    /// let (slot, _) = reg.acquire(id).unwrap();
+    /// reg.mark_ready_frame(id, slot, Box::new(Solid)).unwrap();
+    /// assert!(reg.front_frame(id).unwrap().is_some());
+    /// ```
+    pub fn mark_ready_frame(
+        &mut self,
+        id: SurfaceId,
+        slot: u8,
+        frame: Box<dyn Frame>,
+    ) -> Result<(), BridgeError> {
+        self.mark_ready_full(id, slot, Some(frame), None)
+    }
+
+    /// Publishes a produced [`Frame`] plus an optional [`CpuFrame`]
+    /// fallback into `id`'s slot `slot`, marks it ready, records the
+    /// frame's size, and queues a ready event.
+    ///
+    /// The frame is retained while the slot is `Ready`/`Compositing` and
+    /// dropped on `release`; producers recycling the texture should wrap
+    /// it in [`crate::SharedTexture`].
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::UnknownSurface`], [`BridgeError::InvalidSlot`], or
+    /// [`BridgeError::InvalidTransition`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{
+    ///     BridgeRegistry, CpuFrame, Frame, FrameSync, FrameToken, SourceAlpha,
+    /// };
+    ///
+    /// struct Solid;
+    /// impl Frame for Solid {
+    ///     fn token(&self) -> FrameToken { FrameToken(0) }
+    ///     fn same_device_texture(&self) -> Option<&wgpu::Texture> { None }
+    ///     fn native_handle(&self) -> Option<martensite_engine_bridge::NativeFrame> { None }
+    ///     fn sync(&self) -> FrameSync { FrameSync::None }
+    ///     fn size(&self) -> (u32, u32) { (64, 64) }
+    ///     fn alpha_mode(&self) -> SourceAlpha { SourceAlpha::Premultiplied }
+    /// }
+    ///
+    /// let mut reg = BridgeRegistry::new();
+    /// let id = reg.register();
+    /// let (slot, _) = reg.acquire(id).unwrap();
+    /// let frame: Box<dyn Frame> = Box::new(Solid);
+    /// reg.mark_ready_full(id, slot, Some(frame), Some(CpuFrame::new(1, 1, vec![0, 0, 0, 255])))
+    ///     .unwrap();
+    /// assert!(reg.front_cpu_frame(id).unwrap().is_some());
+    /// ```
+    pub fn mark_ready_full(
+        &mut self,
+        id: SurfaceId,
+        slot: u8,
+        frame: Option<Box<dyn Frame>>,
+        cpu: Option<CpuFrame>,
+    ) -> Result<(), BridgeError> {
+        if usize::from(slot) >= 2 {
+            return Err(BridgeError::InvalidSlot(slot));
+        }
+        let ring = self
+            .rings
+            .get_mut(&id)
+            .ok_or(BridgeError::UnknownSurface(id))?;
+        if let Some(f) = frame {
+            ring.set_frame(slot, f)?;
+        }
+        if let Some(c) = cpu {
+            ring.set_cpu_frame(slot, c)?;
+        }
+        let size = ring.slots[usize::from(slot)]
+            .frame
+            .as_ref()
+            .map(|f| f.size())
+            .or_else(|| {
+                ring.slots[usize::from(slot)]
+                    .cpu_frame
+                    .as_ref()
+                    .map(|c| (c.width, c.height))
+            });
+        ring.mark_ready(slot)?;
+        if let Some(s) = size {
+            ring.set_front_size(s);
+        }
+        if self.ready_events.back() != Some(&id) {
+            self.ready_events.push_back(id);
+        }
+        Ok(())
+    }
+
+    /// Publishes a [`CpuFrame`] for `id`'s slot `slot` and marks it
+    /// ready — the TinySkia fallback payload. The frame's dimensions
+    /// become the front size so `poll_frame` reports `Resized`.
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::UnknownSurface`], [`BridgeError::InvalidSlot`], or
+    /// [`BridgeError::InvalidTransition`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{BridgeRegistry, CpuFrame};
+    ///
+    /// let mut reg = BridgeRegistry::new();
+    /// let id = reg.register();
+    /// let (slot, _) = reg.acquire(id).unwrap();
+    /// reg.mark_ready_cpu(id, slot, CpuFrame::new(2, 2, vec![255u8; 16]))
+    ///     .unwrap();
+    /// assert_eq!(reg.front_size(id).unwrap(), Some((2, 2)));
+    /// ```
+    pub fn mark_ready_cpu(
+        &mut self,
+        id: SurfaceId,
+        slot: u8,
+        cpu_frame: CpuFrame,
+    ) -> Result<(), BridgeError> {
+        let ring = self
+            .rings
+            .get_mut(&id)
+            .ok_or(BridgeError::UnknownSurface(id))?;
+        let size = (cpu_frame.width, cpu_frame.height);
+        ring.set_cpu_frame(slot, cpu_frame)?;
+        ring.mark_ready(slot)?;
+        ring.set_front_size(size);
+        if self.ready_events.back() != Some(&id) {
+            self.ready_events.push_back(id);
+        }
+        Ok(())
+    }
+
+    /// Records the viewport `id`'s widget last laid out into — producers
+    /// read it via [`viewport`](Self::viewport) to size renders.
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{BridgeRegistry, Viewport};
+    ///
+    /// let mut reg = BridgeRegistry::new();
+    /// let id = reg.register();
+    /// reg.set_viewport(id, Viewport::new(800, 600, 2.0)).unwrap();
+    /// assert_eq!(reg.viewport(id).unwrap().unwrap().size, (800, 600));
+    /// ```
+    pub fn set_viewport(
+        &mut self,
+        id: SurfaceId,
+        viewport: crate::Viewport,
+    ) -> Result<(), BridgeError> {
+        self.rings
+            .get_mut(&id)
+            .ok_or(BridgeError::UnknownSurface(id))?
+            .set_viewport(viewport);
+        Ok(())
+    }
+
+    /// The viewport last pushed for `id`, if any.
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    pub fn viewport(&self, id: SurfaceId) -> Result<Option<crate::Viewport>, BridgeError> {
+        Ok(self
+            .rings
+            .get(&id)
+            .ok_or(BridgeError::UnknownSurface(id))?
+            .viewport())
+    }
+
     /// Drains the ready-event queue. Each event means "this surface has a
     /// newer frame than the host last composited" — the widget layer
     /// turns it into a dirty flag + `request_redraw`.
@@ -487,6 +853,44 @@ impl BridgeRegistry {
         self.ready_events.drain(..).collect()
     }
 
+    /// Drains only the ready events for surfaces matching `keep`;
+    /// non-matching events stay queued for other consumers.
+    ///
+    /// `SurfaceId`s are unique per registry, so events for surfaces a
+    /// caller doesn't own must be preserved — `ExternalEngines` uses
+    /// this to avoid consuming a widget-only surface's redraw signal.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut reg = BridgeRegistry::new();
+    /// let a = reg.register();
+    /// let b = reg.register();
+    /// for s in [a, b] {
+    ///     let (slot, _) = reg.acquire(s).unwrap();
+    ///     reg.mark_ready(s, slot).unwrap();
+    /// }
+    /// assert_eq!(reg.drain_ready_matching(|s| s == a), vec![a]);
+    /// // `b`'s event survives for its own consumer.
+    /// assert_eq!(reg.drain_ready_matching(|s| s == b), vec![b]);
+    /// ```
+    pub fn drain_ready_matching(&mut self, keep: impl Fn(SurfaceId) -> bool) -> Vec<SurfaceId> {
+        let mut matched = Vec::new();
+        self.ready_events.retain(|id| {
+            if keep(*id) {
+                if !matched.contains(id) {
+                    matched.push(*id);
+                }
+                false
+            } else {
+                true
+            }
+        });
+        matched
+    }
+
     /// Marks a writing slot ready and records the frame's size in one
     /// call. See [`SurfaceRing::mark_ready`] and
     /// [`SurfaceRing::set_front_size`].
@@ -495,6 +899,18 @@ impl BridgeRegistry {
     ///
     /// [`BridgeError::UnknownSurface`], [`BridgeError::InvalidSlot`], or
     /// [`BridgeError::InvalidTransition`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut reg = BridgeRegistry::new();
+    /// let id = reg.register();
+    /// let (slot, _) = reg.acquire(id).unwrap();
+    /// reg.mark_ready_sized(id, slot, (320, 240)).unwrap();
+    /// assert_eq!(reg.front_size(id).unwrap(), Some((320, 240)));
+    /// ```
     pub fn mark_ready_sized(
         &mut self,
         id: SurfaceId,
@@ -569,7 +985,7 @@ impl BridgeRegistry {
         let ring = self.rings.get(&id).ok_or(BridgeError::UnknownSurface(id))?;
         Ok(ring.front().map(|slot| FrontFrame {
             slot,
-            token: ring.slots[usize::from(slot)].1,
+            token: ring.slots[usize::from(slot)].token,
             size: ring.front_size(),
         }))
     }
@@ -664,6 +1080,28 @@ impl BridgeHandle {
     /// ```
     pub fn lock(&self) -> parking_lot::MutexGuard<'_, BridgeRegistry> {
         self.inner.lock()
+    }
+
+    /// Whether `self` and `other` share the same underlying registry.
+    ///
+    /// Several `ExternalEngines` bindings may attach to the same
+    /// registry through different handles — callers deduplicating
+    /// registry-level queues (like `drain_ready`) use this to drain
+    /// each registry once.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let a = BridgeHandle::new();
+    /// let b = a.clone();
+    /// let c = BridgeHandle::new();
+    /// assert!(a.same_registry(&b));
+    /// assert!(!a.same_registry(&c));
+    /// ```
+    pub fn same_registry(&self, other: &BridgeHandle) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
 

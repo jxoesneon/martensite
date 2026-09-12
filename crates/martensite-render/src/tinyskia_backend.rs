@@ -492,10 +492,11 @@ impl TinySkiaBackend {
     /// 8-px two-tone checkerboard filling `rect ∩ clip` with a dark
     /// border — the TinySkia stand-in for GPU content it cannot sample.
     ///
-    /// The real external texture is composited by `martensite-wgpu`'s
-    /// `WgpuHost` on the GPU path; producers that support CPU rasterization
-    /// expose it via `Engine::to_pixmap`, which the host resolves into
-    /// ordinary fill commands before this backend runs.
+    /// On the GPU path `martensite-wgpu`'s `WgpuHost` composites the real
+    /// texture. When a bridge is installed and the producer published a
+    /// [`CpuFrame`](martensite_engine_bridge::CpuFrame) (via
+    /// `Engine::to_pixmap`), the orchestrator composites it over this
+    /// placeholder with [`TinySkiaBackend::composite_rgba_frame`].
     fn render_external_placeholder(&mut self, rect: [f32; 4], clip: [f32; 4]) {
         // Intersect destination with the command's clip (backend clip stack
         // applies on top via `fill_rect`'s mask argument).
@@ -873,6 +874,84 @@ impl TinySkiaBackend {
             Transform::identity(),
             clip_mask,
         );
+    }
+
+    /// Composites a producer's CPU frame (straight-alpha RGBA8) into the
+    /// pixmap at `rect`, clipped to `clip` — the `to_pixmap` fallback for
+    /// [`PaintCommand::External`].
+    ///
+    /// Called by the orchestrator after `render_with_clear` for each
+    /// external marker whose bridge ring carries a CPU frame; the marker
+    /// itself already drew the checkerboard placeholder, so this draws
+    /// over it. Nearest-neighbor sampling, source-over blend.
+    ///
+    /// `pixels` must be `frame_width * frame_height * 4` tightly packed
+    /// RGBA8. Returns without drawing when the geometry or buffer is
+    /// degenerate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::tinyskia_backend::TinySkiaBackend;
+    ///
+    /// let mut backend = TinySkiaBackend::new(64, 64).unwrap();
+    /// let red = vec![255u8, 0, 0, 255].repeat(4 * 4);
+    /// backend.composite_rgba_frame(&red, 4, 4, [0.0, 0.0, 4.0, 4.0], [0.0, 0.0, 64.0, 64.0]);
+    /// assert_eq!(backend.pixels()[0..4], [255, 0, 0, 255]);
+    /// ```
+    pub fn composite_rgba_frame(
+        &mut self,
+        pixels: &[u8],
+        frame_width: u32,
+        frame_height: u32,
+        rect: [f32; 4],
+        clip: [f32; 4],
+    ) {
+        if frame_width == 0 || frame_height == 0 {
+            return;
+        }
+        let expected = (frame_width as usize)
+            .checked_mul(frame_height as usize)
+            .and_then(|n| n.checked_mul(4));
+        if expected.is_none_or(|n| pixels.len() < n) {
+            return;
+        }
+        // Dest pixel bounds = rect ∩ clip ∩ pixmap.
+        let pw = self.pixmap.width() as f32;
+        let ph = self.pixmap.height() as f32;
+        let x0 = rect[0].max(clip[0]).max(0.0);
+        let y0 = rect[1].max(clip[1]).max(0.0);
+        let x1 = (rect[0] + rect[2]).min(clip[0] + clip[2]).min(pw);
+        let y1 = (rect[1] + rect[3]).min(clip[1] + clip[3]).min(ph);
+        if x1 <= x0 || y1 <= y0 || rect[2] <= 0.0 || rect[3] <= 0.0 {
+            return;
+        }
+        let pw_i = self.pixmap.width() as usize;
+        let data = self.pixmap.data_mut();
+        for dy in (y0 as u32)..(y1 as u32) {
+            // Nearest-neighbor source row.
+            let v = (dy as f32 + 0.5 - rect[1]) / rect[3];
+            let sy = (v * frame_height as f32).clamp(0.0, frame_height as f32 - 1.0) as usize;
+            for dx in (x0 as u32)..(x1 as u32) {
+                let u = (dx as f32 + 0.5 - rect[0]) / rect[2];
+                let sx = (u * frame_width as f32).clamp(0.0, frame_width as f32 - 1.0) as usize;
+                let s = (sy * frame_width as usize + sx) * 4;
+                let (sr, sg, sb, sa) = (
+                    pixels[s] as u32,
+                    pixels[s + 1] as u32,
+                    pixels[s + 2] as u32,
+                    pixels[s + 3] as u32,
+                );
+                // Source-over with a straight-alpha source into the
+                // premultiplied pixmap: out = s*a + d*(1-a).
+                let d = (dy as usize * pw_i + dx as usize) * 4;
+                let inv = 255 - sa;
+                data[d] = ((sr * sa + data[d] as u32 * inv + 127) / 255) as u8;
+                data[d + 1] = ((sg * sa + data[d + 1] as u32 * inv + 127) / 255) as u8;
+                data[d + 2] = ((sb * sa + data[d + 2] as u32 * inv + 127) / 255) as u8;
+                data[d + 3] = (sa + (data[d + 3] as u32 * inv + 127) / 255) as u8;
+            }
+        }
     }
 }
 
@@ -1564,5 +1643,62 @@ mod tests {
         // it's inside the destination rect.
         let outside_clip = b.pixmap().pixel(32, 16).expect("pixel in range");
         assert_eq!(outside_clip.alpha(), 0);
+    }
+
+    #[test]
+    fn composite_rgba_frame_blits_over_placeholder() {
+        let mut b = backend();
+        let mut list = PaintList::new();
+        list.push_external(1, [8.0, 8.0, 32.0, 32.0], [8.0, 8.0, 32.0, 32.0]);
+        b.render(&list);
+        // A producer's straight-alpha CpuFrame composites over the
+        // checkerboard placeholder.
+        let green = [0u8, 255, 0, 255].repeat(4 * 4);
+        b.composite_rgba_frame(&green, 4, 4, [8.0, 8.0, 32.0, 32.0], [8.0, 8.0, 32.0, 32.0]);
+        let px = b.pixmap().pixel(20, 20).expect("pixel in range");
+        assert_eq!(
+            (px.red(), px.green(), px.blue(), px.alpha()),
+            (0, 255, 0, 255)
+        );
+        // Nearest-neighbor upscale covers the whole rect.
+        let corner = b.pixmap().pixel(39, 39).expect("pixel in range");
+        assert_eq!((corner.red(), corner.green(), corner.blue()), (0, 255, 0));
+    }
+
+    #[test]
+    fn composite_rgba_frame_blends_half_alpha() {
+        let mut b = backend();
+        let mut list = PaintList::new();
+        list.push_fill_rect(Rect::new(0.0, 0.0, 64.0, 64.0), [0, 0, 255, 255]);
+        b.render(&list);
+        // 50% white over opaque blue → (127,127,255)±1.
+        let half = [255u8, 255, 255, 128].repeat(4 * 4);
+        b.composite_rgba_frame(&half, 4, 4, [0.0, 0.0, 8.0, 8.0], [0.0, 0.0, 64.0, 64.0]);
+        let px = b.pixmap().pixel(4, 4).expect("pixel in range");
+        assert!((px.red() as i32 - 127).abs() <= 1, "r={}", px.red());
+        assert_eq!(px.blue(), 255);
+        // Outside the frame rect stays blue.
+        let outside = b.pixmap().pixel(20, 20).expect("pixel in range");
+        assert_eq!(
+            (outside.red(), outside.green(), outside.blue()),
+            (0, 0, 255)
+        );
+    }
+
+    #[test]
+    fn composite_rgba_frame_rejects_bad_input() {
+        let mut b = backend();
+        // Truncated buffer — must not panic or draw.
+        b.composite_rgba_frame(
+            &[0u8; 8],
+            4,
+            4,
+            [0.0, 0.0, 4.0, 4.0],
+            [0.0, 0.0, 64.0, 64.0],
+        );
+        assert_eq!(non_zero_pixels(&b), 0);
+        // Zero-size frame.
+        b.composite_rgba_frame(&[], 0, 0, [0.0, 0.0, 4.0, 4.0], [0.0, 0.0, 64.0, 64.0]);
+        assert_eq!(non_zero_pixels(&b), 0);
     }
 }

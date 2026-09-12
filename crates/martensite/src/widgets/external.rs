@@ -14,20 +14,27 @@
 //! ───────────────────────               ────────────────
 //! registry.acquire(surface)
 //! render into slot texture
-//! registry.mark_ready_sized(...)  ──►   ExternalEngine::poll_frame()
+//! registry.mark_ready_full(...)   ──►   ExternalEngine::poll_frame()
 //!                                       → intrinsic size updated
 //!                                       → layout / repaint requested
-//!                                     orchestrator composites the
-//!                                     front texture at the marker
-//! registry.release(surface, slot) ◄──   (after the pass)
-//! engine.drain_released()               → slot recycled
+//!                                     dispatch: take_front →
+//!                                     composite_front samples the
+//!                                     slot's texture (zero-copy)
+//! registry.release(surface, slot) ◄──   after queue.submit
+//! engines.drain_released()              → Engine::release → recycled
 //! ```
+//!
+//! [`ExternalEngines`] is the app-loop integration point: call
+//! `render_frame` (pull engines), `drain_ready` (→ dirty + redraw), and
+//! `drain_released` (→ `Engine::release`) once per frame.
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite_core::node::Rect;
 use martensite_core::widget::{LayoutConstraints, LayoutContext, PaintContext, Widget};
-use martensite_engine_bridge::{BridgeHandle, FrameToken, SurfaceId};
+use martensite_engine_bridge::{
+    BridgeHandle, Engine, EngineContext, FrameToken, SurfaceId, Viewport,
+};
 use martensite_render::PaintList;
 
 use super::media::VideoFit;
@@ -79,6 +86,7 @@ pub struct ExternalEngine {
     cached_dest_rect: Rect,
     last_token: Option<FrameToken>,
     label: String,
+    scale_factor: f64,
 }
 
 impl ExternalEngine {
@@ -105,7 +113,28 @@ impl ExternalEngine {
             cached_dest_rect: Rect::default(),
             last_token: None,
             label: String::from("External content"),
+            scale_factor: 1.0,
         }
+    }
+
+    /// Sets the display scale factor forwarded to producers via the
+    /// bridge viewport (e.g. `2.0` on Retina). The paint loop should
+    /// call this when the window's `scale_factor` changes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngine;
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// let widget = ExternalEngine::new(handle, surface).with_scale_factor(2.0);
+    /// ```
+    #[must_use]
+    pub fn with_scale_factor(mut self, scale_factor: f64) -> Self {
+        self.scale_factor = scale_factor;
+        self
     }
 
     /// Sets the content-fit mode (letterbox, crop, stretch, or native
@@ -320,6 +349,270 @@ impl ExternalEngine {
     }
 }
 
+/// A bound collection of external [`Engine`] producers — the single
+/// integration point the application frame loop calls once per frame.
+///
+/// `ExternalEngines` closes the bridge lifecycle in production code:
+///
+/// ```text
+/// once per frame:
+///   engines.render_frame(&mut ctx)      — pull-driven engines render
+///                                         into their ring slots using
+///                                         the stored Viewport
+///   engines.drain_ready()               — surfaces with fresh frames
+///     → mark the owning widget dirty + window.request_redraw()
+///   ... widget tree paints, orchestrator composites, queue submits ...
+///   engines.drain_released()            — Engine::release per token,
+///                                         recycling the producer's
+///                                         slots
+/// ```
+///
+/// Streaming producers (video decoders, engine threads) may skip
+/// [`render_frame`](Self::render_frame) and call `mark_ready_*` from
+/// their own cadence; `drain_ready`/`drain_released` still apply.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::external::ExternalEngines;
+/// use martensite_engine_bridge::BridgeHandle;
+///
+/// let handle = BridgeHandle::new();
+/// let mut engines = ExternalEngines::new();
+/// // engines.bind(handle, surface, Box::new(my_engine));
+/// assert!(engines.drain_ready().is_empty());
+/// ```
+#[derive(Default)]
+pub struct ExternalEngines {
+    /// (bridge handle, surface, engine) triples — each engine owns one
+    /// surface on one registry.
+    bound: Vec<(BridgeHandle, SurfaceId, Box<dyn Engine>)>,
+}
+
+impl ExternalEngines {
+    /// Creates an empty collection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngines;
+    ///
+    /// let engines = ExternalEngines::new();
+    /// assert_eq!(engines.len(), 0);
+    /// ```
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Binds `engine` to `surface` on `handle`. The engine is expected
+    /// to publish frames into that surface's ring.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngines;
+    /// use martensite_engine_bridge::{
+    ///     BridgeHandle, Engine, EngineContext, Frame, FrameToken, Viewport,
+    /// };
+    ///
+    /// struct Idle;
+    /// impl Engine for Idle {
+    ///     fn render(&mut self, _c: &mut EngineContext, _v: Viewport) -> Option<Box<dyn Frame>> {
+    ///         None
+    ///     }
+    ///     fn release(&mut self, _t: FrameToken) {}
+    /// }
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// let mut engines = ExternalEngines::new();
+    /// engines.bind(handle, surface, Box::new(Idle));
+    /// assert_eq!(engines.len(), 1);
+    /// ```
+    pub fn bind(&mut self, handle: BridgeHandle, surface: SurfaceId, engine: Box<dyn Engine>) {
+        self.bound.push((handle, surface, engine));
+    }
+
+    /// Number of bound engines.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngines;
+    ///
+    /// assert_eq!(ExternalEngines::new().len(), 0);
+    /// ```
+    pub fn len(&self) -> usize {
+        self.bound.len()
+    }
+
+    /// Whether no engines are bound.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngines;
+    ///
+    /// assert!(ExternalEngines::new().is_empty());
+    /// ```
+    pub fn is_empty(&self) -> bool {
+        self.bound.is_empty()
+    }
+
+    /// Drives every bound pull-style engine once, passing the
+    /// [`Viewport`] its widget last laid out into (via
+    /// [`BridgeRegistry::set_viewport`]). Engines without a stored
+    /// viewport are skipped — the widget hasn't laid out yet.
+    ///
+    /// `BridgeRegistry::set_viewport` is pushed by
+    /// [`ExternalEngine::layout`]; this is how producers learn the
+    /// physical size + DPI to render at.
+    ///
+    /// Engines publish into their ring inside `render` (the
+    /// `mark_ready_*` family) — the returned `Vec` carries each produced
+    /// [`Frame`](martensite_engine_bridge::Frame) alongside its surface
+    /// for inspection; the composite path consumes the ring's copy, so
+    /// callers may drop the result.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite::widgets::external::ExternalEngines;
+    /// use martensite_engine_bridge::{BridgeHandle, EngineContext};
+    /// # let mut ctx: EngineContext = todo!();
+    /// # let handle = BridgeHandle::new();
+    /// let mut engines = ExternalEngines::new();
+    /// let produced = engines.render_frame(&mut ctx);
+    /// ```
+    ///
+    /// [`BridgeRegistry::set_viewport`]: martensite_engine_bridge::BridgeRegistry::set_viewport
+    pub fn render_frame(
+        &mut self,
+        ctx: &mut EngineContext,
+    ) -> Vec<(SurfaceId, Box<dyn martensite_engine_bridge::Frame>)> {
+        let mut produced = Vec::new();
+        for (handle, surface, engine) in &mut self.bound {
+            let viewport = match handle.lock().viewport(*surface) {
+                Ok(Some(vp)) => vp,
+                _ => continue,
+            };
+            if let Some(frame) = engine.render(ctx, viewport) {
+                produced.push((*surface, frame));
+            }
+        }
+        produced
+    }
+
+    /// Drains the ready-event queues of every bound registry and
+    /// returns the surfaces with fresh frames. The frame loop maps each
+    /// to its owning widget's dirty flag + `window.request_redraw()`.
+    ///
+    /// Registries shared by several bound engines are drained once —
+    /// the ready queue is per-registry, so each unique
+    /// [`BridgeHandle::same_registry`] group contributes every ready
+    /// surface bound to it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngines;
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// {
+    ///     let mut reg = handle.lock();
+    ///     let (slot, _) = reg.acquire(surface).unwrap();
+    ///     reg.mark_ready(surface, slot).unwrap();
+    /// }
+    /// let mut engines = ExternalEngines::new();
+    /// struct Idle;
+    /// impl martensite_engine_bridge::Engine for Idle {
+    ///     fn render(&mut self, _c: &mut martensite_engine_bridge::EngineContext, _v: martensite_engine_bridge::Viewport) -> Option<Box<dyn martensite_engine_bridge::Frame>> { None }
+    ///     fn release(&mut self, _t: martensite_engine_bridge::FrameToken) {}
+    /// }
+    /// engines.bind(handle, surface, Box::new(Idle));
+    /// assert_eq!(engines.drain_ready(), vec![surface]);
+    /// ```
+    pub fn drain_ready(&mut self) -> Vec<SurfaceId> {
+        let mut out = Vec::new();
+        for i in 0..self.bound.len() {
+            // Drain each unique registry exactly once — the ready queue
+            // is per-registry, so a second binding on the same registry
+            // would otherwise see (and discard) nothing.
+            if self.bound[..i]
+                .iter()
+                .any(|(h, _, _)| h.same_registry(&self.bound[i].0))
+            {
+                continue;
+            }
+            // Keep only surfaces bound on THIS registry — both so
+            // unbound surfaces' events survive in the queue and so
+            // `SurfaceId`s from different registries can't collide.
+            let here: Vec<SurfaceId> = self
+                .bound
+                .iter()
+                .filter(|(h, _, _)| h.same_registry(&self.bound[i].0))
+                .map(|(_, s, _)| *s)
+                .collect();
+            out.extend(
+                self.bound[i]
+                    .0
+                    .lock()
+                    .drain_ready_matching(|s| here.contains(&s)),
+            );
+        }
+        out
+    }
+
+    /// Drains each registry's released-token queue for the bound
+    /// surfaces and calls [`Engine::release`] once per token — the
+    /// producer-side recycling half of the bridge lifecycle.
+    ///
+    /// Call after the frame's composite encoder has been submitted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngines;
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// {
+    ///     let mut reg = handle.lock();
+    ///     let (slot, token) = reg.acquire(surface).unwrap();
+    ///     reg.mark_ready(surface, slot).unwrap();
+    ///     let (s, _) = reg.take_front(surface).unwrap().unwrap();
+    ///     reg.release(surface, s).unwrap();
+    /// }
+    /// let mut engines = ExternalEngines::new();
+    /// struct Rec(std::sync::Mutex<Vec<martensite_engine_bridge::FrameToken>>);
+    /// impl martensite_engine_bridge::Engine for Rec {
+    ///     fn render(&mut self, _c: &mut martensite_engine_bridge::EngineContext, _v: martensite_engine_bridge::Viewport) -> Option<Box<dyn martensite_engine_bridge::Frame>> { None }
+    ///     fn release(&mut self, t: martensite_engine_bridge::FrameToken) { self.0.lock().unwrap().push(t); }
+    /// }
+    /// engines.bind(handle, surface, Box::new(Rec(std::sync::Mutex::new(Vec::new()))));
+    /// engines.drain_released(); // engine.release called once for token
+    /// ```
+    pub fn drain_released(&mut self) {
+        for (handle, surface, engine) in &mut self.bound {
+            let tokens = handle.lock().drain_released(*surface).unwrap_or_default();
+            for token in tokens {
+                engine.release(token);
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for ExternalEngines {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalEngines")
+            .field("bound", &self.bound.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Widget for ExternalEngine {
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A zero intrinsic size (no frame yet) yields a flexible zero so
@@ -331,6 +624,16 @@ impl Widget for ExternalEngine {
     fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
         self.cached_dest_rect = self.compute_dest_rect(bounds, self.fit);
+        // Forward the physical-pixel bounds + DPI to the bridge so
+        // producers render at the widget's actual size and scale.
+        let _ = self.handle.lock().set_viewport(
+            self.surface_id,
+            Viewport::new(
+                bounds.size.x.max(0.0) as u32,
+                bounds.size.y.max(0.0) as u32,
+                self.scale_factor,
+            ),
+        );
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -434,6 +737,117 @@ mod tests {
         }
         assert_eq!(w.poll_frame(), FramePoll::Resized);
         assert_eq!(w.intrinsic_size(), Vec2::new(128.0, 128.0));
+    }
+
+    #[test]
+    fn layout_forwards_viewport_to_bridge() {
+        let (w, handle, surface) = widget_with_frame((64, 64));
+        // Non-1.0 scale factor proves the forwarding end-to-end.
+        let mut w = w.with_scale_factor(2.0);
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = LayoutContext { hot: &mut hot };
+        w.layout(&mut cx, Rect::new(0.0, 0.0, 320.0, 240.0));
+        let vp = handle.lock().viewport(surface).unwrap().unwrap();
+        assert_eq!(vp.size, (320, 240));
+        assert_eq!(vp.scale_factor, 2.0);
+    }
+
+    #[test]
+    fn external_engines_drives_release_lifecycle() {
+        use std::sync::{Arc, Mutex as StdMutex};
+        struct Rec(Arc<StdMutex<Vec<FrameToken>>>);
+        impl Engine for Rec {
+            fn render(
+                &mut self,
+                _c: &mut martensite_engine_bridge::EngineContext,
+                _v: Viewport,
+            ) -> Option<Box<dyn martensite_engine_bridge::Frame>> {
+                None
+            }
+            fn release(&mut self, t: FrameToken) {
+                self.0.lock().unwrap().push(t);
+            }
+        }
+        let handle = BridgeHandle::new();
+        let surface = handle.lock().register();
+        // Host composites a frame: take → release → released queue.
+        let expected_token = {
+            let mut reg = handle.lock();
+            let (slot, token) = reg.acquire(surface).unwrap();
+            reg.mark_ready(surface, slot).unwrap();
+            let (s, _) = reg.take_front(surface).unwrap().unwrap();
+            reg.release(surface, s).unwrap();
+            token
+        };
+        let seen = Arc::new(StdMutex::new(Vec::new()));
+        let mut engines = ExternalEngines::new();
+        engines.bind(handle, surface, Box::new(Rec(Arc::clone(&seen))));
+        engines.drain_released();
+        // The bound engine saw exactly one release for the composited token.
+        assert_eq!(*seen.lock().unwrap(), vec![expected_token]);
+        // Re-drain: no double-release.
+        engines.drain_released();
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn external_engines_drain_ready_reports_surfaces() {
+        struct Idle;
+        impl Engine for Idle {
+            fn render(
+                &mut self,
+                _c: &mut martensite_engine_bridge::EngineContext,
+                _v: Viewport,
+            ) -> Option<Box<dyn martensite_engine_bridge::Frame>> {
+                None
+            }
+            fn release(&mut self, _t: FrameToken) {}
+        }
+        let handle = BridgeHandle::new();
+        let surface = handle.lock().register();
+        {
+            let mut reg = handle.lock();
+            let (slot, _) = reg.acquire(surface).unwrap();
+            reg.mark_ready(surface, slot).unwrap();
+        }
+        let mut engines = ExternalEngines::new();
+        engines.bind(handle, surface, Box::new(Idle));
+        assert_eq!(engines.drain_ready(), vec![surface]);
+        assert!(engines.drain_ready().is_empty());
+    }
+
+    #[test]
+    fn drain_ready_shared_registry_reports_all_bound_surfaces() {
+        // Regression: the ready queue is per-registry — draining it per
+        // binding would consume events for the sibling surface.
+        struct Idle;
+        impl Engine for Idle {
+            fn render(
+                &mut self,
+                _c: &mut martensite_engine_bridge::EngineContext,
+                _v: Viewport,
+            ) -> Option<Box<dyn martensite_engine_bridge::Frame>> {
+                None
+            }
+            fn release(&mut self, _t: FrameToken) {}
+        }
+        let handle = BridgeHandle::new();
+        let (s1, s2) = {
+            let mut reg = handle.lock();
+            (reg.register(), reg.register())
+        };
+        {
+            let mut reg = handle.lock();
+            let (a, _) = reg.acquire(s1).unwrap();
+            reg.mark_ready(s1, a).unwrap();
+            let (b, _) = reg.acquire(s2).unwrap();
+            reg.mark_ready(s2, b).unwrap();
+        }
+        let mut engines = ExternalEngines::new();
+        engines.bind(handle.clone(), s1, Box::new(Idle));
+        engines.bind(handle, s2, Box::new(Idle));
+        let ready = engines.drain_ready();
+        assert!(ready.contains(&s1) && ready.contains(&s2), "got {ready:?}");
     }
 
     #[test]

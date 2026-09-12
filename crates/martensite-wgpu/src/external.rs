@@ -34,6 +34,7 @@
 //! blending convention byte-for-byte.
 
 pub use martensite_engine_bridge::SourceAlpha;
+use martensite_engine_bridge::{BridgeRegistry, SurfaceId};
 use std::cell::Cell;
 use std::collections::HashMap;
 
@@ -142,6 +143,21 @@ pub struct CompositeTarget<'a> {
     pub view: &'a wgpu::TextureView,
     /// Target dimensions in physical pixels.
     pub size: (u32, u32),
+}
+
+/// A ring slot taken for compositing by
+/// [`WgpuHost::composite_front`].
+///
+/// The caller must [`BridgeRegistry::release`] it **after** the encoder
+/// containing the composite is submitted — same-queue ordering then
+/// guarantees the producer's next write to the freed texture lands
+/// after the host's sample.
+#[derive(Copy, Clone, Debug)]
+pub struct TakenFrame {
+    /// The ring slot that was taken.
+    pub slot: u8,
+    /// The frame's token — for `Engine::release` accounting.
+    pub token: martensite_engine_bridge::FrameToken,
 }
 
 /// Per-surface GPU resources: the source texture's bind group and
@@ -709,6 +725,103 @@ impl WgpuHost {
         )
     }
 
+    /// Takes `surface_id`'s front frame from the bridge ring and draws
+    /// it into `target`.
+    ///
+    /// This is the ring-consuming composite path: the surface's
+    /// two-slot mailbox is honored end-to-end so the producer never
+    /// writes the texture the host is sampling. On success it returns
+    /// the [`TakenFrame`] the caller must
+    /// [`BridgeRegistry::release`] **after** submitting the encoder —
+    /// same-queue ordering makes the producer's next write to the freed
+    /// slot land after this composite's sample.
+    ///
+    /// Returns `Ok(None)` when no front frame exists or it carries no
+    /// same-device texture (the slot is released immediately — nothing
+    /// was queued — and the caller may fall back to the
+    /// [`register_texture`](WgpuHost::register_texture) path).
+    ///
+    /// # Errors
+    ///
+    /// [`ExternalError::UnknownSurface`] if `surface_id` is not
+    /// registered in the ring, or [`ExternalError::RectCapacityExceeded`]
+    /// past the per-frame composite limit.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::external::WgpuHost;
+    /// # let (device, queue): (wgpu::Device, wgpu::Queue) = todo!();
+    /// let host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+    /// // `composite_front` is called by the orchestrator's segmented
+    /// // dispatch when a bridge handle is installed.
+    /// ```
+    pub fn composite_front(
+        &self,
+        device: &wgpu::Device,
+        registry: &mut BridgeRegistry,
+        target: CompositeTarget<'_>,
+        surface_id: SurfaceId,
+        rect: [f32; 4],
+        clip: [f32; 4],
+    ) -> Result<Option<TakenFrame>, ExternalError> {
+        let taken = registry
+            .take_front(surface_id)
+            .map_err(|_| ExternalError::UnknownSurface(surface_id.0))?;
+        let Some((slot, token)) = taken else {
+            return Ok(None);
+        };
+
+        // Borrow the published frame's texture; the borrow ends before
+        // any `&mut registry` call.
+        let frame_data: Option<(wgpu::TextureView, SourceAlpha)> = registry
+            .front_frame(surface_id)
+            .ok()
+            .flatten()
+            .and_then(|f| {
+                f.same_device_texture().map(|t| {
+                    (
+                        t.create_view(&wgpu::TextureViewDescriptor::default()),
+                        f.alpha_mode(),
+                    )
+                })
+            });
+        let Some((view, alpha)) = frame_data else {
+            // Nothing to sample — free the slot right away (no GPU read
+            // was recorded for it).
+            let _ = registry.release(surface_id, slot);
+            return Ok(None);
+        };
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("external-front-bind-group"),
+            layout: &self.texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        if let Err(err) = self.record_composite(
+            target,
+            &bind_group,
+            self.external_pipeline(alpha),
+            rect,
+            clip,
+        ) {
+            // Free the slot — a permanent `Compositing` state would
+            // exhaust the two-slot ring and stall the producer.
+            let _ = registry.release(surface_id, slot);
+            return Err(err);
+        }
+        Ok(Some(TakenFrame { slot, token }))
+    }
+
     /// Draws an arbitrary `view` into `target` — the Vello segment blit.
     ///
     /// Unlike [`composite`](WgpuHost::composite) the texture is not
@@ -946,6 +1059,143 @@ mod tests {
             )
             .expect("segment blit succeeds");
             queue.submit([encoder.finish()]);
+        }
+
+        #[test]
+        fn composite_front_takes_and_composites_ring_frame() {
+            let (device, queue) = noop_device();
+            let host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+            host.begin_frame();
+            let handle = martensite_engine_bridge::BridgeHandle::new();
+            let surface = handle.lock().register();
+            // Publish a frame into the ring (producer side).
+            let texture = make_texture(&device, "producer-frame", 32);
+            {
+                let mut reg = handle.lock();
+                let (slot, token) = reg.acquire(surface).unwrap();
+                let frame: Box<dyn martensite_engine_bridge::Frame> = Box::new(
+                    martensite_engine_bridge::TextureFrame::new(token, texture, (32, 32)),
+                );
+                reg.mark_ready_frame(surface, slot, frame).unwrap();
+            }
+            let (_tex, view) = make_target(&device);
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let taken = {
+                let mut reg = handle.lock();
+                host.composite_front(
+                    &device,
+                    &mut reg,
+                    CompositeTarget {
+                        encoder: &mut encoder,
+                        queue: &queue,
+                        view: &view,
+                        size: (64, 64),
+                    },
+                    surface,
+                    [0.0, 0.0, 64.0, 64.0],
+                    [0.0, 0.0, 64.0, 64.0],
+                )
+                .expect("composite_front succeeds")
+            };
+            let taken = taken.expect("front frame was taken");
+            queue.submit([encoder.finish()]);
+            // Release after submit — the token enters the released queue.
+            handle.lock().release(surface, taken.slot).unwrap();
+            let released = handle.lock().drain_released(surface).unwrap();
+            assert_eq!(released, vec![taken.token]);
+        }
+
+        #[test]
+        fn composite_front_without_frame_returns_none() {
+            let (device, queue) = noop_device();
+            let host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+            host.begin_frame();
+            let handle = martensite_engine_bridge::BridgeHandle::new();
+            let surface = handle.lock().register();
+            let (_tex, view) = make_target(&device);
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let taken = {
+                let mut reg = handle.lock();
+                host.composite_front(
+                    &device,
+                    &mut reg,
+                    CompositeTarget {
+                        encoder: &mut encoder,
+                        queue: &queue,
+                        view: &view,
+                        size: (64, 64),
+                    },
+                    surface,
+                    [0.0, 0.0, 64.0, 64.0],
+                    [0.0, 0.0, 64.0, 64.0],
+                )
+                .expect("composite_front succeeds")
+            };
+            assert!(taken.is_none());
+        }
+
+        #[test]
+        fn composite_front_unsamplesable_frame_releases_slot() {
+            // A frame with no same-device texture frees the slot
+            // immediately — the ring must not leak the Compositing state.
+            use martensite_engine_bridge::{Frame, FrameSync, FrameToken, SourceAlpha};
+            struct CpuOnly;
+            impl Frame for CpuOnly {
+                fn token(&self) -> FrameToken {
+                    FrameToken(0)
+                }
+                fn same_device_texture(&self) -> Option<&wgpu::Texture> {
+                    None
+                }
+                fn native_handle(&self) -> Option<martensite_engine_bridge::NativeFrame> {
+                    None
+                }
+                fn sync(&self) -> FrameSync {
+                    FrameSync::None
+                }
+                fn size(&self) -> (u32, u32) {
+                    (8, 8)
+                }
+                fn alpha_mode(&self) -> SourceAlpha {
+                    SourceAlpha::Premultiplied
+                }
+            }
+            let (device, queue) = noop_device();
+            let host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+            host.begin_frame();
+            let handle = martensite_engine_bridge::BridgeHandle::new();
+            let surface = handle.lock().register();
+            {
+                let mut reg = handle.lock();
+                let (slot, _token) = reg.acquire(surface).unwrap();
+                reg.mark_ready_frame(surface, slot, Box::new(CpuOnly))
+                    .unwrap();
+            }
+            let (_tex, view) = make_target(&device);
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let taken = {
+                let mut reg = handle.lock();
+                host.composite_front(
+                    &device,
+                    &mut reg,
+                    CompositeTarget {
+                        encoder: &mut encoder,
+                        queue: &queue,
+                        view: &view,
+                        size: (64, 64),
+                    },
+                    surface,
+                    [0.0, 0.0, 64.0, 64.0],
+                    [0.0, 0.0, 64.0, 64.0],
+                )
+                .expect("composite_front succeeds")
+            };
+            assert!(taken.is_none());
+            // The slot was freed — producer can acquire again.
+            assert!(handle.lock().acquire(surface).is_ok());
         }
 
         #[test]

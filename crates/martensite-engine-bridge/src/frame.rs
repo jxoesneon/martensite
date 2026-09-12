@@ -347,5 +347,16 @@ impl Frame for TextureFrame {
 /// Shared, cheaply-clonable storage for a frame payload.
 ///
 /// Producers returning boxed [`Frame`] trait objects usually embed this
-/// when the same texture is re-uploaded in place every frame.
+/// when the same texture is re-uploaded in place every frame — the
+/// producer keeps one `Arc` so the ring dropping the published
+/// `Frame` on release is never the last owner of the texture.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_engine_bridge::SharedTexture;
+/// # let texture: wgpu::Texture = todo!();
+/// let shared: SharedTexture = std::sync::Arc::new(texture);
+/// assert!(SharedTexture::strong_count(&shared) >= 1);
+/// ```
 pub type SharedTexture = Arc<wgpu::Texture>;

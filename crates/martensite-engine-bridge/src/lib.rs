@@ -55,4 +55,6 @@ pub mod testing;
 pub use bridge::{BridgeHandle, BridgeRegistry, FrontFrame, SurfaceId, SurfaceRing};
 pub use engine::{Engine, EngineContext, Viewport};
 pub use error::BridgeError;
-pub use frame::{CpuFrame, Frame, FrameSync, FrameToken, NativeFrame, SourceAlpha, TextureFrame};
+pub use frame::{
+    CpuFrame, Frame, FrameSync, FrameToken, NativeFrame, SharedTexture, SourceAlpha, TextureFrame,
+};

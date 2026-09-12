@@ -176,6 +176,11 @@ pub struct RenderOrchestrator {
     /// `dispatch_pending` to match the frame target.
     #[cfg(feature = "vello")]
     seg_pool: Vec<Option<(wgpu::Texture, wgpu::TextureView)>>,
+    /// The engine bridge consumed by `PaintCommand::External` markers —
+    /// when installed, `dispatch_pending` takes each marker's front
+    /// frame from the ring (zero-copy mailbox semantics) instead of
+    /// sampling a statically registered texture.
+    bridge: Option<martensite_engine_bridge::BridgeHandle>,
 }
 
 /// One element of a segmented frame — mirrors
@@ -258,6 +263,7 @@ impl RenderOrchestrator {
             gpu_clear: martensite_render::ClearMode::Opaque([0.0, 0.0, 0.0, 1.0]),
             #[cfg(feature = "vello")]
             seg_pool: Vec::new(),
+            bridge: None,
         })
     }
 
@@ -324,6 +330,47 @@ impl RenderOrchestrator {
             self.mode = RenderMode::Cpu;
             self.pending.clear();
             self.tinyskia.render_with_clear(paint_list, clear_mode);
+            // Resolve CPU-fallback payloads: each external marker whose
+            // ring slot carries a CpuFrame is composited over the
+            // placeholder. The slot is still taken/released so the
+            // producer's mailbox keeps cycling — without releases the
+            // two-slot ring would stall once both slots went Ready.
+            if paint_list.has_external() {
+                if let Some(bridge) = &self.bridge {
+                    let mut reg = bridge.lock();
+                    for command in &paint_list.commands {
+                        if let martensite_render::PaintCommand::External {
+                            surface_id,
+                            rect,
+                            clip,
+                        } = command
+                        {
+                            let sid = martensite_engine_bridge::SurfaceId(*surface_id);
+                            if let Ok(Some((slot, _token))) = reg.take_front(sid) {
+                                if let Ok(Some(cpu)) = reg.front_cpu_frame(sid) {
+                                    self.tinyskia.composite_rgba_frame(
+                                        &cpu.pixels,
+                                        cpu.width,
+                                        cpu.height,
+                                        *rect,
+                                        *clip,
+                                    );
+                                }
+                                // CPU compositing is synchronous — the
+                                // frame is consumed before we release.
+                                if let Err(err) = reg.release(sid, slot) {
+                                    tracing::warn!(
+                                        error = %err,
+                                        surface_id = sid.0,
+                                        slot,
+                                        "external CPU slot release failed"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             self.mode = RenderMode::Gpu;
             // The frame clear is consumed by `dispatch_pending`'s
@@ -925,6 +972,47 @@ impl RenderOrchestrator {
         self.external_host.as_mut()
     }
 
+    /// Installs the engine bridge `PaintCommand::External` markers are
+    /// resolved through.
+    ///
+    /// With a bridge installed, `dispatch_pending` takes each marker's
+    /// front frame from the ring — [`BridgeRegistry::take_front`],
+    /// composite, then [`BridgeRegistry::release`] after the composite
+    /// encoder is submitted — so the producer never writes the texture
+    /// the host is sampling. Without a bridge the marker falls back to
+    /// the statically registered [`WgpuHost::register_texture`] entry.
+    ///
+    /// [`BridgeRegistry::take_front`]: martensite_engine_bridge::BridgeRegistry::take_front
+    /// [`BridgeRegistry::release`]: martensite_engine_bridge::BridgeRegistry::release
+    /// [`WgpuHost::register_texture`]: crate::external::WgpuHost::register_texture
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// use martensite_engine_bridge::BridgeHandle;
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// orchestrator.set_bridge(BridgeHandle::new());
+    /// # }
+    /// ```
+    pub fn set_bridge(&mut self, bridge: martensite_engine_bridge::BridgeHandle) {
+        self.bridge = Some(bridge);
+    }
+
+    /// The installed bridge handle, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// assert!(orchestrator.bridge_handle().is_none());
+    /// # }
+    /// ```
+    pub fn bridge_handle(&self) -> Option<&martensite_engine_bridge::BridgeHandle> {
+        self.bridge.as_ref()
+    }
+
     /// Ensures the installed [`WgpuHost`] exists and was built for
     /// `target_format`, lazily creating or recreating it.
     #[cfg(feature = "vello")]
@@ -1116,6 +1204,10 @@ impl RenderOrchestrator {
             occlusion_query_set: None,
             multiview_mask: None,
         }));
+        // One registry guard for the whole phase — taken lazily on the
+        // first bridge-resolved external marker.
+        let mut bridge_guard = self.bridge.as_ref().map(|b| b.lock());
+        let mut releases: Vec<(martensite_engine_bridge::SurfaceId, u8)> = Vec::new();
         for (i, segment) in work.iter().enumerate() {
             match segment {
                 PendingSegment::Commands(_) => {
@@ -1147,8 +1239,45 @@ impl RenderOrchestrator {
                     surface_id,
                     rect,
                     clip,
-                } => match &self.external_host {
-                    Some(host) => {
+                } => {
+                    let Some(host) = &self.external_host else {
+                        unreachable!("host ensured above");
+                    };
+                    let sid = martensite_engine_bridge::SurfaceId(*surface_id);
+                    // Prefer the ring: take the front frame under the
+                    // registry guard and release after submit. Fall back
+                    // to the statically registered texture when the ring
+                    // is absent or has no front frame.
+                    let mut took = false;
+                    if let Some(reg) = bridge_guard.as_deref_mut() {
+                        match host.composite_front(
+                            device,
+                            reg,
+                            crate::external::CompositeTarget {
+                                encoder: &mut encoder,
+                                queue,
+                                view: target,
+                                size: (width, height),
+                            },
+                            sid,
+                            *rect,
+                            *clip,
+                        ) {
+                            Ok(Some(taken)) => {
+                                releases.push((sid, taken.slot));
+                                took = true;
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                tracing::warn!(
+                                    error = %err,
+                                    surface_id,
+                                    "external ring composite skipped"
+                                );
+                            }
+                        }
+                    }
+                    if !took {
                         match host.composite(
                             crate::external::CompositeTarget {
                                 encoder: &mut encoder,
@@ -1170,13 +1299,27 @@ impl RenderOrchestrator {
                             }
                         }
                     }
-                    None => unreachable!("host ensured above"),
-                },
+                }
             }
         }
         // Always submitted — the initial clear pass alone already
         // requires it.
         queue.submit([encoder.finish()]);
+        // Release composited slots AFTER the submit: same-queue
+        // ordering guarantees the producer's next write to the freed
+        // texture lands after this frame's composite sample.
+        if let Some(reg) = bridge_guard.as_deref_mut() {
+            for (sid, slot) in releases {
+                if let Err(err) = reg.release(sid, slot) {
+                    tracing::warn!(
+                        error = %err,
+                        surface_id = sid.0,
+                        slot,
+                        "external slot release failed"
+                    );
+                }
+            }
+        }
     }
 }
 
