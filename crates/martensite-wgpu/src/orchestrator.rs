@@ -175,13 +175,41 @@ pub struct RenderOrchestrator {
     /// target); the sRGB-or-not sample view is created per frame by
     /// `dispatch_pending` to match the frame target.
     #[cfg(feature = "vello")]
-    seg_pool: Vec<Option<(wgpu::Texture, wgpu::TextureView)>>,
+    seg_pool: Vec<Option<SegEntry>>,
     /// The engine bridge consumed by `PaintCommand::External` markers —
     /// when installed, `dispatch_pending` takes each marker's front
     /// frame from the ring (zero-copy mailbox semantics) instead of
     /// sampling a statically registered texture.
     bridge: Option<martensite_engine_bridge::BridgeHandle>,
+    /// Invoked immediately before `SurfaceTexture::present` — the app
+    /// installs `winit::window::Window::pre_present_notify` here so the
+    /// compositor is notified before the frame lands (milestone pacing
+    /// contract).
+    pre_present_notify: Option<Box<dyn Fn() + Send>>,
+    /// CPU-fallback frame resolver: when a ring's front slot carries no
+    /// `CpuFrame`, this asks the owning `Engine` for `to_pixmap(token)`
+    /// (wired from `ExternalEngines::cpu_frame_for`).
+    cpu_frame_resolver: Option<CpuFrameResolver>,
 }
+
+/// One pooled Vello segment texture: storage target + cached
+/// target-format sample view and bind group (rebuilt only on resize or
+/// host recreation — never per frame).
+#[cfg(feature = "vello")]
+struct SegEntry {
+    texture: wgpu::Texture,
+    storage_view: wgpu::TextureView,
+    /// `(target_is_srgb, sample_view, bind_group)` — the composite
+    /// pipeline's sampling state, keyed by the host's target sRGB-ness.
+    sample: Option<(bool, wgpu::TextureView, wgpu::BindGroup)>,
+}
+
+/// CPU-fallback frame resolver installed via
+/// [`RenderOrchestrator::set_cpu_frame_resolver`]: maps
+/// `(surface, frame_token)` to the engine's `to_pixmap` raster.
+pub type CpuFrameResolver = Box<
+    dyn FnMut(martensite_core::SurfaceId, u64) -> Option<martensite_engine_bridge::CpuFrame> + Send,
+>;
 
 /// One element of a segmented frame — mirrors
 /// [`martensite_render::PaintSegment`] but owns its command span so it
@@ -193,7 +221,7 @@ enum PendingSegment {
     /// An external-surface composite point.
     External {
         /// The registered external surface identifier.
-        surface_id: u64,
+        surface_id: martensite_core::SurfaceId,
         /// Destination rectangle in physical pixels.
         rect: [f32; 4],
         /// Clip rectangle in physical pixels.
@@ -264,6 +292,8 @@ impl RenderOrchestrator {
             #[cfg(feature = "vello")]
             seg_pool: Vec::new(),
             bridge: None,
+            pre_present_notify: None,
+            cpu_frame_resolver: None,
         })
     }
 
@@ -337,7 +367,6 @@ impl RenderOrchestrator {
             // two-slot ring would stall once both slots went Ready.
             if paint_list.has_external() {
                 if let Some(bridge) = &self.bridge {
-                    let mut reg = bridge.lock();
                     for command in &paint_list.commands {
                         if let martensite_render::PaintCommand::External {
                             surface_id,
@@ -345,27 +374,48 @@ impl RenderOrchestrator {
                             clip,
                         } = command
                         {
-                            let sid = martensite_engine_bridge::SurfaceId(*surface_id);
-                            if let Ok(Some((slot, _token))) = reg.take_front(sid) {
-                                if let Ok(Some(cpu)) = reg.front_cpu_frame(sid) {
-                                    self.tinyskia.composite_rgba_frame(
-                                        &cpu.pixels,
-                                        cpu.width,
-                                        cpu.height,
-                                        *rect,
-                                        *clip,
-                                    );
+                            let sid = *surface_id;
+                            // Ring bookkeeping under a short lock; the
+                            // CpuFrame is consumed after the guard drops.
+                            let taken = {
+                                let mut reg = bridge.lock();
+                                match reg.take_front(sid) {
+                                    Ok(Some((slot, token))) => {
+                                        let cpu = reg.front_cpu_frame(sid).ok().flatten().cloned();
+                                        Some((slot, token, cpu))
+                                    }
+                                    _ => None,
                                 }
-                                // CPU compositing is synchronous — the
-                                // frame is consumed before we release.
-                                if let Err(err) = reg.release(sid, slot) {
-                                    tracing::warn!(
-                                        error = %err,
-                                        surface_id = sid.0,
-                                        slot,
-                                        "external CPU slot release failed"
-                                    );
-                                }
+                            };
+                            let Some((slot, token, cpu)) = taken else {
+                                continue;
+                            };
+                            // Prefer the ring-published CpuFrame; if the
+                            // producer shipped none, ask the engine for
+                            // `to_pixmap(token)` via the resolver.
+                            let cpu = cpu.or_else(|| {
+                                self.cpu_frame_resolver
+                                    .as_mut()
+                                    .and_then(|resolve| resolve(sid, token.0))
+                            });
+                            if let Some(cpu) = cpu {
+                                self.tinyskia.composite_rgba_frame(
+                                    &cpu.pixels,
+                                    cpu.width,
+                                    cpu.height,
+                                    *rect,
+                                    *clip,
+                                );
+                            }
+                            // CPU compositing is synchronous — the
+                            // frame is consumed before we release.
+                            if let Err(err) = bridge.lock().release(sid, slot) {
+                                tracing::warn!(
+                                    error = %err,
+                                    surface_id = sid.0,
+                                    slot,
+                                    "external CPU slot release failed"
+                                );
                             }
                         }
                     }
@@ -707,6 +757,9 @@ impl RenderOrchestrator {
             }
         }
 
+        if let Some(notify) = &self.pre_present_notify {
+            notify();
+        }
         queue.present(st);
         Ok(())
     }
@@ -880,30 +933,75 @@ impl RenderOrchestrator {
     }
 
     /// Returns the current rendering mode.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    ///
+    /// let orch = RenderOrchestrator::with_default_config(64, 64).unwrap();
+    /// let _mode = orch.mode();
+    /// ```
     #[must_use]
     pub fn mode(&self) -> RenderMode {
         self.mode
     }
 
     /// Returns a reference to the Vello renderer.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    ///
+    /// let orch = RenderOrchestrator::with_default_config(64, 64).unwrap();
+    /// let _vello = orch.vello();
+    /// ```
     #[must_use]
     pub fn vello(&self) -> &VelloRenderer {
         &self.vello
     }
 
     /// Returns a mutable reference to the Vello renderer.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    ///
+    /// let mut orch = RenderOrchestrator::with_default_config(64, 64).unwrap();
+    /// let _vello = orch.vello_mut();
+    /// ```
     #[must_use]
     pub fn vello_mut(&mut self) -> &mut VelloRenderer {
         &mut self.vello
     }
 
     /// Returns a reference to the TinySkia backend.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    ///
+    /// let orch = RenderOrchestrator::with_default_config(64, 64).unwrap();
+    /// let _tinyskia = orch.tinyskia();
+    /// ```
     #[must_use]
     pub fn tinyskia(&self) -> &TinySkiaBackend {
         &self.tinyskia
     }
 
     /// Returns a mutable reference to the TinySkia backend.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    ///
+    /// let mut orch = RenderOrchestrator::with_default_config(64, 64).unwrap();
+    /// let _tinyskia = orch.tinyskia_mut();
+    /// ```
     #[must_use]
     pub fn tinyskia_mut(&mut self) -> &mut TinySkiaBackend {
         &mut self.tinyskia
@@ -913,12 +1011,30 @@ impl RenderOrchestrator {
     ///
     /// This is the RGBA8 buffer that can be presented via
     /// [`martensite_render::present_rgba_to_softbuffer`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    ///
+    /// let orch = RenderOrchestrator::with_default_config(64, 64).unwrap();
+    /// let _pixels = orch.cpu_pixels();
+    /// ```
     #[must_use]
     pub fn cpu_pixels(&self) -> &[u8] {
         self.tinyskia.pixels()
     }
 
     /// Returns the orchestrator configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    ///
+    /// let orch = RenderOrchestrator::with_default_config(64, 64).unwrap();
+    /// assert!(!orch.config().prefer_cpu);
+    /// ```
     #[must_use]
     pub fn config(&self) -> &OrchestratorConfig {
         &self.config
@@ -1013,6 +1129,48 @@ impl RenderOrchestrator {
         self.bridge.as_ref()
     }
 
+    /// Installs the callback invoked immediately before
+    /// `SurfaceTexture::present` — the milestone's `pre_present_notify`
+    /// pacing contract.
+    ///
+    /// The application typically wires `winit`'s
+    /// `Window::pre_present_notify` here so the platform compositor is
+    /// notified before the frame lands:
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// // Inside the app, wire winit's `Window::pre_present_notify`:
+    /// // `orchestrator.set_pre_present_notify(Some(Box::new(move || window.pre_present_notify())))`.
+    /// orchestrator.set_pre_present_notify(Some(Box::new(|| {})));
+    /// # }
+    /// ```
+    pub fn set_pre_present_notify(&mut self, notify: Option<Box<dyn Fn() + Send>>) {
+        self.pre_present_notify = notify;
+    }
+
+    /// Installs the CPU-fallback frame resolver used when a ring's
+    /// front slot carries no `CpuFrame`.
+    ///
+    /// Wire `martensite::widgets::external::ExternalEngines::cpu_frame_for`
+    /// here (usually behind a shared `Mutex`) so the TinySkia path can
+    /// ask each bound `Engine` for `to_pixmap(token)` on demand — the
+    /// spec's `Engine::to_pixmap` fallback contract.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// orchestrator.set_cpu_frame_resolver(Some(Box::new(|_surface, _token| None)));
+    /// # }
+    /// ```
+    pub fn set_cpu_frame_resolver(&mut self, resolver: Option<CpuFrameResolver>) {
+        self.cpu_frame_resolver = resolver;
+    }
+
     /// Ensures the installed [`WgpuHost`] exists and was built for
     /// `target_format`, lazily creating or recreating it.
     #[cfg(feature = "vello")]
@@ -1026,6 +1184,10 @@ impl RenderOrchestrator {
                     );
                 }
                 self.external_host = Some(crate::external::WgpuHost::new(device, target_format));
+                // Cached segment bind groups reference the old host's
+                // bind-group layout — rebuild the pool.
+                #[cfg(feature = "vello")]
+                self.seg_pool.clear();
             }
         }
     }
@@ -1043,7 +1205,7 @@ impl RenderOrchestrator {
             self.seg_pool.push(None);
         }
         let stale = match &self.seg_pool[i] {
-            Some((tex, _)) => tex.width() != width || tex.height() != height,
+            Some(entry) => entry.texture.width() != width || entry.texture.height() != height,
             None => true,
         };
         if stale {
@@ -1061,8 +1223,12 @@ impl RenderOrchestrator {
                 usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
             });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.seg_pool[i] = Some((texture, view));
+            let storage_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.seg_pool[i] = Some(SegEntry {
+                texture,
+                storage_view,
+                sample: None,
+            });
         }
     }
 
@@ -1119,7 +1285,7 @@ impl RenderOrchestrator {
         } else {
             pending
         };
-        let mut seg_views: Vec<Option<wgpu::TextureView>> = Vec::with_capacity(work.len());
+        let mut seg_views: Vec<Option<usize>> = Vec::with_capacity(work.len());
         let mut seg_index = 0usize;
         for segment in &work {
             if let PendingSegment::Commands(list) = segment {
@@ -1128,7 +1294,7 @@ impl RenderOrchestrator {
                     let storage_view = &self.seg_pool[seg_index]
                         .as_ref()
                         .expect("segment just created")
-                        .1;
+                        .storage_view;
                     if single_scene {
                         // The scene is already built — dispatch as-is.
                         self.vello
@@ -1145,23 +1311,32 @@ impl RenderOrchestrator {
                             .render_to_texture(device, queue, storage_view, width, height);
                     }
                 }
-                // Sample view: decode-on-sample when the target encodes
-                // on store (sRGB), raw pass-through otherwise — either
-                // way the bytes round-trip.
-                let sample_format = if target_is_srgb {
-                    wgpu::TextureFormat::Rgba8UnormSrgb
-                } else {
-                    wgpu::TextureFormat::Rgba8Unorm
-                };
-                let sample_view = self.seg_pool[seg_index]
-                    .as_ref()
-                    .expect("segment just created")
-                    .0
-                    .create_view(&wgpu::TextureViewDescriptor {
+                // Sample view + bind group are cached on the entry:
+                // decode-on-sample when the target encodes on store
+                // (sRGB), raw pass-through otherwise — either way the
+                // bytes round-trip. Rebuilt only when the sRGB-ness of
+                // the host's target changes.
+                let entry = self.seg_pool[seg_index]
+                    .as_mut()
+                    .expect("segment just created");
+                if entry.sample.as_ref().map(|(s, _, _)| *s) != Some(target_is_srgb) {
+                    let sample_format = if target_is_srgb {
+                        wgpu::TextureFormat::Rgba8UnormSrgb
+                    } else {
+                        wgpu::TextureFormat::Rgba8Unorm
+                    };
+                    let sample_view = entry.texture.create_view(&wgpu::TextureViewDescriptor {
                         format: Some(sample_format),
                         ..Default::default()
                     });
-                seg_views.push(Some(sample_view));
+                    let bind_group = self
+                        .external_host
+                        .as_ref()
+                        .expect("host just ensured")
+                        .segment_bind_group(device, &sample_view);
+                    entry.sample = Some((target_is_srgb, sample_view, bind_group));
+                }
+                seg_views.push(Some(seg_index));
                 seg_index += 1;
             } else {
                 seg_views.push(None);
@@ -1211,21 +1386,28 @@ impl RenderOrchestrator {
         for (i, segment) in work.iter().enumerate() {
             match segment {
                 PendingSegment::Commands(_) => {
-                    let Some(view) = seg_views[i].as_ref() else {
+                    let Some(seg_i) = seg_views[i] else {
                         tracing::warn!("segment {i} has no view — skipped");
+                        continue;
+                    };
+                    let Some(entry) = self.seg_pool[seg_i].as_ref() else {
+                        tracing::warn!("segment {i} missing pool entry — skipped");
+                        continue;
+                    };
+                    let Some((_, _, bind_group)) = entry.sample.as_ref() else {
+                        tracing::warn!("segment {i} has no cached bind group — skipped");
                         continue;
                     };
                     match &self.external_host {
                         Some(host) => {
-                            match host.composite_view(
-                                device,
+                            match host.record_segment_composite(
                                 crate::external::CompositeTarget {
                                     encoder: &mut encoder,
                                     queue,
                                     view: target,
                                     size: (width, height),
                                 },
-                                view,
+                                bind_group,
                                 [0.0, 0.0, width as f32, height as f32],
                                 [0.0, 0.0, width as f32, height as f32],
                             ) {
@@ -1247,7 +1429,7 @@ impl RenderOrchestrator {
                         tracing::warn!("no external host — marker skipped");
                         continue;
                     };
-                    let sid = martensite_engine_bridge::SurfaceId(*surface_id);
+                    let sid = *surface_id;
                     // Prefer the ring: take the front frame and release
                     // after submit. Fall back to the statically
                     // registered texture when the ring is absent or has
@@ -1275,7 +1457,7 @@ impl RenderOrchestrator {
                             Err(err) => {
                                 tracing::warn!(
                                     error = %err,
-                                    surface_id,
+                                    surface_id = surface_id.0,
                                     "external ring composite skipped"
                                 );
                             }
@@ -1297,7 +1479,7 @@ impl RenderOrchestrator {
                             Err(err) => {
                                 tracing::warn!(
                                     error = %err,
-                                    surface_id,
+                                    surface_id = surface_id.0,
                                     "external composite skipped"
                                 );
                             }

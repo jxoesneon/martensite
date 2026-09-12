@@ -37,23 +37,22 @@ Add `martensite-wgpu` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-wgpu = "0.7.0"
+martensite-wgpu = "0.14.0"
 ```
 
 Configuring the render orchestrator:
 
 ```rust
 use martensite_wgpu::{OrchestratorConfig, RenderMode, RenderOrchestrator};
-use std::time::Duration;
 
 fn main() {
     let config = OrchestratorConfig {
         allow_software_fallback: true,
-        fallback_timeout: Duration::from_millis(32),
         prefer_cpu: false,
     };
 
-    let orchestrator = RenderOrchestrator::new(config);
+    let orchestrator =
+        RenderOrchestrator::new(800, 600, config).expect("orchestrator init");
     assert_eq!(orchestrator.mode(), RenderMode::Gpu);
 }
 ```

@@ -9,6 +9,7 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Cross-platform shell integration: system backdrops, snap layouts, CSD, and system tray."
+readme = "README.md"
 
 [lints]
 workspace = true

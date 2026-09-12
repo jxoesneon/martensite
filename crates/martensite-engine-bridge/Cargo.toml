@@ -13,6 +13,7 @@ description = "Producer/consumer protocol for embedding external GPU renderers (
 readme = "README.md"
 
 [dependencies]
+martensite-core = { workspace = true }
 wgpu = { workspace = true }
 parking_lot = { workspace = true }
 

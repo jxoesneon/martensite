@@ -119,6 +119,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `martensite-blessed` and `martensite_render`/`render_hud` links in
   `martensite-devtools` that failed `cargo doc` without
   `--all-features`.
+- **Round-2 audit hardening**:
+  - `SurfaceId` moved to `martensite-core` and is now the typed
+    identifier end-to-end — `PaintCommand::External` and
+    `PaintSegment::External` carry `SurfaceId` instead of raw `u64`.
+  - Ring lifecycle: mailbox-overwritten ready frames now push their
+    token to `released` (previously producers leaked per-token
+    resources); `SurfaceRing::force_release`/`reclaim_stalled` +
+    `BridgeRegistry` equivalents recover slots from stalled producers;
+    `released`/`ready_events` queues are watermark-bounded.
+  - Payload validation: `set_frame`/`set_cpu_frame` reject dimensions
+    above `MAX_FRAME_DIM` (16384) and `CpuFrame`s whose pixel length
+    doesn't match `w*h*4` via `BridgeError::InvalidPayload`.
+  - `ExternalEngines` wraps every `Engine` call in `catch_unwind` and
+    quarantines panicking producers; `ExternalEngine::drop` unregisters
+    its surface.
+  - Frame-loop wiring: `BridgeRegistry::set_ready_waker` +
+    `BridgeHandle::set_ready_waker` implement the spec's
+    `notify_frame_ready` → dirty/`request_redraw` hook;
+    `RenderOrchestrator::set_pre_present_notify` invokes the app's
+    `Window::pre_present_notify` before `present`; the CPU fallback path
+    now asks engines for `to_pixmap(token)` through
+    `set_cpu_frame_resolver`/`ExternalEngines::cpu_frame_for`;
+    `ExternalEngines::drive_frame` combines `render_frame` +
+    `drain_ready`; `FramePoll::{needs_layout, needs_redraw}` convenience
+    methods; `ExternalEngine` gained `with_aspect_ratio`/
+    `explicit_aspect_ratio`/`effective_aspect_ratio` matching
+    `MediaView`.
+  - Efficiency: per-segment `TextureView` + `BindGroup` are cached in
+    the segment pool (keyed on target sRGB-ness, rebuilt on resize/host
+    recreation) instead of allocated every frame.
+  - `martensite-shell` gained a `README.md`; `martensite-render`/
+    `martensite-wgpu` READMEs bumped to 0.14.0 with corrected API
+    examples; `VkSemaphoreFd` gained a `stage` field for the HAL wait
+    signature; `CompositeTarget`, `TakenFrame`, and
+    `PresentModePreference` re-exported at the `martensite-wgpu` root.
 
 ## [0.13.0] - 2026-09-11
 

@@ -1614,7 +1614,11 @@ mod tests {
     fn external_command_draws_placeholder() {
         let mut b = backend();
         let mut list = PaintList::new();
-        list.push_external(1, [8.0, 8.0, 32.0, 32.0], [8.0, 8.0, 32.0, 32.0]);
+        list.push_external(
+            martensite_core::SurfaceId(1),
+            [8.0, 8.0, 32.0, 32.0],
+            [8.0, 8.0, 32.0, 32.0],
+        );
         b.render(&list);
         // The checkerboard fills the rect — a pixel well inside must be
         // opaque, and a pixel outside must stay transparent.
@@ -1637,7 +1641,11 @@ mod tests {
         let mut b = backend();
         let mut list = PaintList::new();
         // Rect extends beyond the clip on the right.
-        list.push_external(1, [8.0, 8.0, 48.0, 48.0], [8.0, 8.0, 16.0, 48.0]);
+        list.push_external(
+            martensite_core::SurfaceId(1),
+            [8.0, 8.0, 48.0, 48.0],
+            [8.0, 8.0, 16.0, 48.0],
+        );
         b.render(&list);
         let inside_clip = b.pixmap().pixel(16, 16).expect("pixel in range");
         assert_eq!(inside_clip.alpha(), 255);
@@ -1651,7 +1659,11 @@ mod tests {
     fn composite_rgba_frame_blits_over_placeholder() {
         let mut b = backend();
         let mut list = PaintList::new();
-        list.push_external(1, [8.0, 8.0, 32.0, 32.0], [8.0, 8.0, 32.0, 32.0]);
+        list.push_external(
+            martensite_core::SurfaceId(1),
+            [8.0, 8.0, 32.0, 32.0],
+            [8.0, 8.0, 32.0, 32.0],
+        );
         b.render(&list);
         // A producer's straight-alpha CpuFrame composites over the
         // checkerboard placeholder.

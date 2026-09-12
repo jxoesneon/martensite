@@ -101,14 +101,15 @@ pub struct EngineContext<'a> {
 /// }
 /// ```
 ///
-/// # Contract
+/// # Safety boundary
 ///
 /// `Engine` implementations run in the host process with access to the
-/// host's `wgpu::Device` — they are trusted producers. A panic inside
-/// `render`/`release`/`to_pixmap` propagates to the host (and under
-/// Martensite's `panic = "abort"` release profile, aborts it). Adapters
-/// embedding untrusted renderers should isolate them in a child process
-/// and transport frames via [`NativeFrame`](crate::NativeFrame) handles.
+/// host's `wgpu::Device` — they are trusted producers. `ExternalEngines`
+/// wraps each `Engine` call in `catch_unwind` and quarantines a panicking
+/// engine, but under Martensite's `panic = "abort"` release profile a
+/// producer panic still aborts the process. Adapters embedding untrusted
+/// renderers should isolate them in a child process and transport frames
+/// via [`NativeFrame`](crate::NativeFrame) handles.
 pub trait Engine: Send + Sync {
     /// Renders the next frame for `viewport`, or `None` if nothing new is
     /// available.

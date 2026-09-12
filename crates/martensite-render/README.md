@@ -35,7 +35,7 @@ Add `martensite-render` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-render = "0.7.0"
+martensite-render = "0.14.0"
 ```
 
 Recording draw commands and rasterizing to a software buffer:
@@ -48,16 +48,13 @@ fn main() {
     let mut paint_list = PaintList::new();
 
     // Record draw operations
-    paint_list.push(PaintCommand::FillRect {
-        rect: Rect::new(0.0, 0.0, 400.0, 300.0),
-        color: [0.1, 0.2, 0.3, 1.0],
-    });
+    paint_list.push_fill_rect(Rect::new(0.0, 0.0, 400.0, 300.0), [26, 51, 77, 255]);
 
-    // Render using CPU SIMD backend
-    let mut backend = TinySkiaBackend::new(400, 300);
+    // Render using the CPU (TinySkia) backend
+    let mut backend = TinySkiaBackend::new(400, 300).expect("backend init");
     backend.render(&paint_list);
 
-    let pixels = backend.rgba_data();
+    let pixels = backend.pixels();
     assert_eq!(pixels.len(), 400 * 300 * 4);
 }
 ```

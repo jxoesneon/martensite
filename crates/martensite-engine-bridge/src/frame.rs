@@ -62,6 +62,11 @@ pub enum FrameSync {
         fd: i32,
         /// Timeline wait value, or `None` for binary semaphore semantics.
         value: Option<u64>,
+        /// Pipeline stage at which the wait blocks, encoded as
+        /// `vk::PipelineStageFlags` bits. The importing adapter
+        /// (v0.15.0+) converts this to `wgpu_hal`'s stage type; keeping
+        /// it transport-thin avoids a HAL dependency here.
+        stage: u32,
     },
     /// An `MTLSharedEvent` counter value (macOS/iOS). Maps to
     /// `wgpu_hal::metal::Queue::add_wait_event`.

@@ -90,3 +90,25 @@ impl WidgetId {
         Self::from_u64(u64::from_le_bytes(bytes))
     }
 }
+
+/// A process-unique identifier for an external surface — a ring of
+/// frame slots shared between a producer (`Engine`) and the host
+/// compositor.
+///
+/// The same type is used by `martensite-engine-bridge`
+/// (`BridgeRegistry`), `martensite-render` (`PaintCommand::External`),
+/// and `martensite-wgpu` (`WgpuHost`) so the identifier is typed
+/// end-to-end rather than being a raw `u64` at the transport boundary.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::SurfaceId;
+///
+/// let id = SurfaceId(3);
+/// assert_eq!(id, SurfaceId(3));
+/// assert_eq!(id.0, 3);
+/// ```
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SurfaceId(pub u64);

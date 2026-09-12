@@ -148,10 +148,20 @@ pub struct CompositeTarget<'a> {
 /// A ring slot taken for compositing by
 /// [`WgpuHost::composite_front`].
 ///
-/// The caller must [`BridgeRegistry::release`] it **after** the encoder
+/// The caller must [`martensite_engine_bridge::BridgeRegistry::release`] it **after** the encoder
 /// containing the composite is submitted — same-queue ordering then
 /// guarantees the producer's next write to the freed texture lands
 /// after the host's sample.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::TakenFrame;
+/// use martensite_engine_bridge::FrameToken;
+///
+/// let taken = TakenFrame { slot: 0, token: FrameToken(1) };
+/// assert_eq!(taken.slot, 0);
+/// ```
 #[derive(Copy, Clone, Debug)]
 pub struct TakenFrame {
     /// The ring slot that was taken.
@@ -170,7 +180,17 @@ struct ExternalEntry {
 }
 
 /// Errors returned by [`WgpuHost`] operations.
-#[derive(Debug)]
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::ExternalError;
+/// use martensite_engine_bridge::SurfaceId;
+///
+/// let err = ExternalError::UnknownSurface(SurfaceId(9));
+/// assert!(err.to_string().contains("not registered"));
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ExternalError {
     /// The `surface_id` is not registered with this host.
     UnknownSurface(SurfaceId),
@@ -664,8 +684,53 @@ impl WgpuHost {
     /// let host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
     /// assert_eq!(host.surface_size(SurfaceId(0)), None);
     /// ```
+    #[must_use]
     pub fn surface_size(&self, surface_id: SurfaceId) -> Option<(u32, u32)> {
         self.entries.get(&surface_id).map(|e| e.size)
+    }
+
+    /// Creates a bind group sampling `view` through this host's texture
+    /// layout — used by the segment pool to cache per-segment bind
+    /// groups instead of recreating them every frame.
+    #[cfg_attr(not(feature = "vello"), allow(dead_code))]
+    pub(crate) fn segment_bind_group(
+        &self,
+        device: &wgpu::Device,
+        view: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("segment-blit-bind-group"),
+            layout: &self.texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        })
+    }
+
+    /// Records a straight-alpha segment blit with a caller-supplied
+    /// (cached) bind group — the per-segment fast path.
+    #[cfg_attr(not(feature = "vello"), allow(dead_code))]
+    pub(crate) fn record_segment_composite(
+        &self,
+        target: CompositeTarget<'_>,
+        bind_group: &wgpu::BindGroup,
+        rect: [f32; 4],
+        clip: [f32; 4],
+    ) -> Result<(), ExternalError> {
+        self.record_composite(
+            target,
+            bind_group,
+            &self.pipeline_straight_passthrough,
+            rect,
+            clip,
+        )
     }
 
     /// Records a composite draw into `target`'s encoder.
@@ -771,7 +836,7 @@ impl WgpuHost {
     /// two-slot mailbox is honored end-to-end so the producer never
     /// writes the texture the host is sampling. On success it returns
     /// the [`TakenFrame`] the caller must
-    /// [`BridgeRegistry::release`] **after** submitting the encoder —
+    /// [`martensite_engine_bridge::BridgeRegistry::release`] **after** submitting the encoder —
     /// same-queue ordering makes the producer's next write to the freed
     /// slot land after this composite's sample.
     ///

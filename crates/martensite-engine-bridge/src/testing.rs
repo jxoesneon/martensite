@@ -211,7 +211,7 @@ impl Engine for MockEngine {
             &pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(w.max(1) * 4),
+                bytes_per_row: Some(w.max(1).saturating_mul(4)),
                 rows_per_image: Some(h.max(1)),
             },
             wgpu::Extent3d {

@@ -52,6 +52,20 @@ pub mod error;
 pub mod frame;
 pub mod testing;
 
+/// Maximum frame dimension accepted by the bridge (width or height).
+///
+/// Matches wgpu's default `max_texture_dimension_2d` limit (16384);
+/// producers publishing larger frames get [`BridgeError::InvalidPayload`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_engine_bridge::MAX_FRAME_DIM;
+///
+/// assert_eq!(MAX_FRAME_DIM, 16384);
+/// ```
+pub const MAX_FRAME_DIM: u32 = 16384;
+
 pub use bridge::{
     BridgeHandle, BridgeRegistry, FrontFrame, SurfaceId, SurfaceRing, TakenFrontFrame,
 };

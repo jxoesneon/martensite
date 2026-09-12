@@ -58,6 +58,40 @@ pub enum FramePoll {
     Resized,
 }
 
+impl FramePoll {
+    /// Whether the app should re-run layout for the widget.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::FramePoll;
+    ///
+    /// assert!(FramePoll::Resized.needs_layout());
+    /// assert!(!FramePoll::NewFrame.needs_layout());
+    /// ```
+    #[must_use]
+    pub fn needs_layout(self) -> bool {
+        matches!(self, Self::Resized)
+    }
+
+    /// Whether the app should schedule a repaint
+    /// (`window.request_redraw()`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::FramePoll;
+    ///
+    /// assert!(FramePoll::NewFrame.needs_redraw());
+    /// assert!(FramePoll::Resized.needs_redraw());
+    /// assert!(!FramePoll::None.needs_redraw());
+    /// ```
+    #[must_use]
+    pub fn needs_redraw(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// A retained leaf widget displaying frames produced by an external GPU
 /// engine via `martensite-engine-bridge`.
 ///
@@ -81,6 +115,9 @@ pub struct ExternalEngine {
     surface_id: SurfaceId,
     handle: BridgeHandle,
     intrinsic_size: Vec2,
+    /// Explicit aspect-ratio override (width / height), applied in
+    /// `measure`/`compute_dest_rect` like `MediaView`'s.
+    explicit_aspect_ratio: Option<f32>,
     fit: VideoFit,
     cached_bounds: Rect,
     cached_dest_rect: Rect,
@@ -108,6 +145,7 @@ impl ExternalEngine {
             surface_id,
             handle,
             intrinsic_size: Vec2::ZERO,
+            explicit_aspect_ratio: None,
             fit: VideoFit::default(),
             cached_bounds: Rect::default(),
             cached_dest_rect: Rect::default(),
@@ -194,7 +232,77 @@ impl ExternalEngine {
         self.surface_id
     }
 
-    /// The current intrinsic (frame-native) size in physical pixels.
+    /// Sets an explicit aspect ratio (width / height) overriding the
+    /// frame's native dimensions — same contract as
+    /// `MediaView::with_aspect_ratio`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngine;
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// let widget = ExternalEngine::new(handle, surface).with_aspect_ratio(16.0 / 9.0);
+    /// assert_eq!(widget.explicit_aspect_ratio(), Some(16.0 / 9.0));
+    /// ```
+    #[must_use]
+    pub fn with_aspect_ratio(mut self, ratio: f32) -> Self {
+        self.explicit_aspect_ratio = if ratio.is_finite() && ratio > 0.0 {
+            Some(ratio.clamp(0.001, 1000.0))
+        } else {
+            None
+        };
+        self
+    }
+
+    /// Returns the explicit aspect-ratio override, if configured.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngine;
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// let widget = ExternalEngine::new(handle, surface).with_aspect_ratio(4.0 / 3.0);
+    /// assert_eq!(widget.explicit_aspect_ratio(), Some(4.0 / 3.0));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn explicit_aspect_ratio(&self) -> Option<f32> {
+        self.explicit_aspect_ratio
+    }
+
+    /// Resolves the effective aspect ratio (width / height): the
+    /// explicit override, else the current intrinsic frame size, else
+    /// the widescreen default.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngine;
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// let widget = ExternalEngine::new(handle, surface);
+    /// assert!((widget.effective_aspect_ratio() - 16.0 / 9.0).abs() < 1e-4);
+    /// ```
+    #[must_use]
+    pub fn effective_aspect_ratio(&self) -> f32 {
+        if let Some(explicit) = self.explicit_aspect_ratio {
+            return explicit;
+        }
+        if self.intrinsic_size.x > 0.0 && self.intrinsic_size.y > 0.0 {
+            return self.intrinsic_size.x / self.intrinsic_size.y;
+        }
+        16.0 / 9.0
+    }
+
+    /// Returns the last observed frame size (physical pixels).
     ///
     /// # Examples
     ///
@@ -309,14 +417,14 @@ impl ExternalEngine {
     /// widget.record_paint(&mut list);
     /// assert!(matches!(
     ///     list.commands[0],
-    ///     PaintCommand::External { surface_id, .. } if surface_id == surface.0
+    ///     PaintCommand::External { surface_id, .. } if surface_id == surface
     /// ));
     /// ```
     pub fn record_paint(&self, list: &mut PaintList) {
         let r = self.cached_dest_rect;
         let b = self.cached_bounds;
         list.push_external(
-            self.surface_id.0,
+            self.surface_id,
             [r.origin.x, r.origin.y, r.size.x, r.size.y],
             [b.origin.x, b.origin.y, b.size.x, b.size.y],
         );
@@ -395,6 +503,9 @@ pub struct ExternalEngines {
     /// (bridge handle, surface, engine) triples — each engine owns one
     /// surface on one registry.
     bound: Vec<(BridgeHandle, SurfaceId, Box<dyn Engine>)>,
+    /// `(registry_id, surface)` pairs quarantined after an `Engine`
+    /// panic — the engine is never called again.
+    quarantined: std::collections::HashSet<(usize, SurfaceId)>,
 }
 
 impl ExternalEngines {
@@ -470,6 +581,7 @@ impl ExternalEngines {
     ///
     /// assert_eq!(ExternalEngines::new().len(), 0);
     /// ```
+    #[must_use]
     pub fn len(&self) -> usize {
         self.bound.len()
     }
@@ -483,6 +595,7 @@ impl ExternalEngines {
     ///
     /// assert!(ExternalEngines::new().is_empty());
     /// ```
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bound.is_empty()
     }
@@ -520,12 +633,26 @@ impl ExternalEngines {
     ) -> Vec<(SurfaceId, Box<dyn martensite_engine_bridge::Frame>)> {
         let mut produced = Vec::new();
         for (handle, surface, engine) in &mut self.bound {
+            if self.quarantined.contains(&(handle.registry_id(), *surface)) {
+                continue;
+            }
             let viewport = match handle.lock().viewport(*surface) {
                 Ok(Some(vp)) => vp,
                 _ => continue,
             };
-            if let Some(frame) = engine.render(ctx, viewport) {
-                produced.push((*surface, frame));
+            // Isolate producer panics: a panicking engine is
+            // quarantined instead of unwinding into the host frame
+            // loop. (Under `panic = "abort"` release builds a panic
+            // still aborts — the Engine contract documents this.)
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                engine.render(ctx, viewport)
+            }));
+            match result {
+                Ok(Some(frame)) => produced.push((*surface, frame)),
+                Ok(None) => {}
+                Err(_) => {
+                    self.quarantined.insert((handle.registry_id(), *surface));
+                }
             }
         }
         produced
@@ -620,11 +747,110 @@ impl ExternalEngines {
     /// engines.bind(handle, surface, Box::new(Rec(std::sync::Mutex::new(Vec::new())))).unwrap();
     /// engines.drain_released(); // engine.release called once for token
     /// ```
+    /// Resolves the CPU-fallback raster for `token` on `surface`:
+    /// first the ring-published `CpuFrame`, then the bound engine's
+    /// `Engine::to_pixmap`.
+    ///
+    /// Wire this into `RenderOrchestrator::set_cpu_frame_resolver` so
+    /// the TinySkia path can ask engines for a raster on demand.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngines;
+    /// use martensite_engine_bridge::{BridgeHandle, FrameToken};
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let surface = handle.lock().register();
+    /// let mut engines = ExternalEngines::new();
+    /// // No engine bound — resolution returns None.
+    /// assert!(engines.cpu_frame_for(surface, FrameToken(1)).is_none());
+    /// ```
+    pub fn cpu_frame_for(
+        &mut self,
+        surface: SurfaceId,
+        token: FrameToken,
+    ) -> Option<martensite_engine_bridge::CpuFrame> {
+        for (handle, s, engine) in &mut self.bound {
+            if *s != surface {
+                continue;
+            }
+            // Ring-published payload wins; else ask the engine.
+            let published = handle.lock().front_cpu_frame(*s).ok().flatten().cloned();
+            if let Some(cpu) = published {
+                return Some(cpu);
+            }
+            if self.quarantined.contains(&(handle.registry_id(), *s)) {
+                return None;
+            }
+            return std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                engine.to_pixmap(token)
+            }))
+            .unwrap_or_else(|_| {
+                self.quarantined.insert((handle.registry_id(), *s));
+                None
+            });
+        }
+        None
+    }
+
+    /// Drives one producer frame tick: renders every bound engine at
+    /// its stored viewport, then returns the surfaces that published a
+    /// new frame (ready events drained per registry).
+    ///
+    /// The app loop calls this after layout and before compositing;
+    /// each returned surface maps to "mark widget dirty +
+    /// `window.request_redraw()`". Pair with [`drain_released`](Self::drain_released)
+    /// after `queue.submit`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite::widgets::external::ExternalEngines;
+    /// use martensite_engine_bridge::{BridgeHandle, EngineContext};
+    /// # let mut ctx: EngineContext = todo!();
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let mut engines = ExternalEngines::new();
+    /// let ready = engines.drive_frame(&mut ctx);
+    /// // for surface in ready { widget_dirty(surface); window.request_redraw(); }
+    /// ```
+    pub fn drive_frame(&mut self, ctx: &mut EngineContext) -> Vec<SurfaceId> {
+        let _produced = self.render_frame(ctx);
+        self.drain_ready()
+    }
+
+    /// Drains released frame tokens and calls `Engine::release` once
+    /// per token — the producer's texture-recycling signal. Engines
+    /// that panicked earlier are skipped (quarantined) but their tokens
+    /// are still drained so the ring's queue stays bounded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngines;
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let handle = BridgeHandle::new();
+    /// let mut engines = ExternalEngines::new();
+    /// engines.drain_released(); // no bound engines — no-op
+    /// ```
     pub fn drain_released(&mut self) {
         for (handle, surface, engine) in &mut self.bound {
+            if self.quarantined.contains(&(handle.registry_id(), *surface)) {
+                // Still drain the tokens so the ring's released queue
+                // stays bounded; skip the quarantined engine's callback.
+                let _ = handle.lock().drain_released(*surface);
+                continue;
+            }
             let tokens = handle.lock().drain_released(*surface).unwrap_or_default();
             for token in tokens {
-                engine.release(token);
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| engine.release(token)))
+                    .is_err()
+                {
+                    self.quarantined.insert((handle.registry_id(), *surface));
+                    break;
+                }
             }
         }
     }
@@ -667,8 +893,20 @@ impl Widget for ExternalEngine {
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A zero intrinsic size (no frame yet) yields a flexible zero so
         // the viewport can appear lazily without reserving space.
-        self.intrinsic_size
-            .clamp(constraints.min_size, constraints.max_size)
+        let mut size = self
+            .intrinsic_size
+            .clamp(constraints.min_size, constraints.max_size);
+        // Honor the explicit aspect ratio: when one axis is
+        // under-constrained, derive it from the other (Taffy
+        // `aspect-ratio` semantics for replaced elements).
+        if let Some(r) = self.explicit_aspect_ratio {
+            if size.y <= 0.0 && size.x > 0.0 {
+                size.y = (size.x / r).clamp(constraints.min_size.y, constraints.max_size.y);
+            } else if size.x <= 0.0 && size.y > 0.0 {
+                size.x = (size.y * r).clamp(constraints.min_size.x, constraints.max_size.x);
+            }
+        }
+        size
     }
 
     fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
@@ -679,8 +917,8 @@ impl Widget for ExternalEngine {
         let _ = self.handle.lock().set_viewport(
             self.surface_id,
             Viewport::new(
-                bounds.size.x.max(0.0) as u32,
-                bounds.size.y.max(0.0) as u32,
+                (bounds.size.x.max(0.0) as u32).min(martensite_engine_bridge::MAX_FRAME_DIM),
+                (bounds.size.y.max(0.0) as u32).min(martensite_engine_bridge::MAX_FRAME_DIM),
                 self.scale_factor,
             ),
         );
@@ -693,6 +931,17 @@ impl Widget for ExternalEngine {
 
     fn paint(&self, _cx: &mut PaintContext) {
         // Emission path is `record_paint` — see its docs.
+    }
+}
+
+impl Drop for ExternalEngine {
+    /// Unregisters the widget's surface so the ring and its queued
+    /// events don't leak after the widget is removed. A shared
+    /// `BridgeHandle` keeps the registry alive for other users.
+    fn drop(&mut self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.handle.lock().unregister(self.surface_id);
+        }));
     }
 }
 
@@ -758,7 +1007,7 @@ mod tests {
                 rect,
                 clip,
             } => {
-                assert_eq!(surface_id, surface.0);
+                assert_eq!(surface_id, surface);
                 assert_eq!(clip, [10.0, 20.0, 100.0, 100.0]);
                 assert_eq!(rect[2], 100.0);
             }

@@ -32,7 +32,7 @@ pub mod widget;
 
 pub use arena::{ArenaError, BreadthFirstIter, Children, DepthFirstIter, SubtreeIter, WidgetArena};
 pub use fence::{FrameFence, FrameGuard, DEFAULT_LEASE_TIMEOUT};
-pub use id::WidgetId;
+pub use id::{SurfaceId, WidgetId};
 pub use node::{ColdNode, HotNode, InlineTextCache, NodeFlags, Rect};
 pub use widget::{
     AccessibilityContext, DummyWidget, EventContext, EventResponse, LayoutConstraints,

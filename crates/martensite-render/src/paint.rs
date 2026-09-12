@@ -569,8 +569,8 @@ pub enum PaintCommand {
     /// this exact position in the paint order (see `PaintList::segments`).
     /// The TinySkia backend draws a documented checkerboard placeholder.
     External {
-        /// The external surface identifier (`SurfaceId` raw value).
-        surface_id: u64,
+        /// The external surface identifier.
+        surface_id: martensite_core::SurfaceId,
         /// The destination rectangle in physical pixels (`x`, `y`, `w`, `h`).
         rect: [f32; 4],
         /// The clip rectangle in physical pixels (`x`, `y`, `w`, `h`).
@@ -593,12 +593,12 @@ pub enum PaintCommand {
 ///
 /// let mut list = PaintList::new();
 /// list.push_fill_rect(Rect::new(0.0, 0.0, 10.0, 10.0), [255, 0, 0, 255]);
-/// list.push_external(7, [0.0, 0.0, 100.0, 50.0], [0.0, 0.0, 100.0, 50.0]);
+/// list.push_external(martensite_core::SurfaceId(7), [0.0, 0.0, 100.0, 50.0], [0.0, 0.0, 100.0, 50.0]);
 /// list.push_fill_rect(Rect::new(0.0, 0.0, 5.0, 5.0), [0, 255, 0, 255]);
 ///
 /// let segments = list.segments();
 /// assert_eq!(segments.len(), 3);
-/// assert!(matches!(segments[1], PaintSegment::External { surface_id: 7, .. }));
+/// assert!(matches!(segments[1], PaintSegment::External { surface_id: martensite_core::SurfaceId(7), .. }));
 /// ```
 #[derive(Debug)]
 pub enum PaintSegment<'a> {
@@ -607,7 +607,7 @@ pub enum PaintSegment<'a> {
     /// An external-surface composite point.
     External {
         /// The external surface identifier.
-        surface_id: u64,
+        surface_id: martensite_core::SurfaceId,
         /// Destination rectangle in physical pixels.
         rect: [f32; 4],
         /// Clip rectangle in physical pixels.
@@ -1098,13 +1098,18 @@ impl PaintList {
     /// use martensite_render::{PaintCommand, PaintList};
     ///
     /// let mut list = PaintList::new();
-    /// list.push_external(42, [10.0, 10.0, 640.0, 360.0], [10.0, 10.0, 640.0, 360.0]);
+    /// list.push_external(martensite_core::SurfaceId(42), [10.0, 10.0, 640.0, 360.0], [10.0, 10.0, 640.0, 360.0]);
     /// assert!(matches!(
     ///     list.commands[0],
-    ///     PaintCommand::External { surface_id: 42, .. }
+    ///     PaintCommand::External { surface_id: martensite_core::SurfaceId(42), .. }
     /// ));
     /// ```
-    pub fn push_external(&mut self, surface_id: u64, rect: [f32; 4], clip: [f32; 4]) {
+    pub fn push_external(
+        &mut self,
+        surface_id: martensite_core::SurfaceId,
+        rect: [f32; 4],
+        clip: [f32; 4],
+    ) {
         self.commands.push(PaintCommand::External {
             surface_id,
             rect,
@@ -1128,9 +1133,9 @@ impl PaintList {
     ///
     /// let mut list = PaintList::new();
     /// list.push_fill_rect(Rect::ZERO, [0, 0, 0, 255]);
-    /// list.push_external(1, [0.0, 0.0, 8.0, 8.0], [0.0, 0.0, 8.0, 8.0]);
+    /// list.push_external(martensite_core::SurfaceId(1), [0.0, 0.0, 8.0, 8.0], [0.0, 0.0, 8.0, 8.0]);
     /// list.push_fill_rect(Rect::ZERO, [9, 9, 9, 255]);
-    /// list.push_external(2, [1.0, 1.0, 8.0, 8.0], [1.0, 1.0, 8.0, 8.0]);
+    /// list.push_external(martensite_core::SurfaceId(2), [1.0, 1.0, 8.0, 8.0], [1.0, 1.0, 8.0, 8.0]);
     ///
     /// let segments = list.segments();
     /// // Commands → External → Commands → External (trailing empty span omitted).
@@ -1173,7 +1178,7 @@ impl PaintList {
     ///
     /// let mut list = PaintList::new();
     /// assert!(!list.has_external());
-    /// list.push_external(1, [0.0, 0.0, 4.0, 4.0], [0.0, 0.0, 4.0, 4.0]);
+    /// list.push_external(martensite_core::SurfaceId(1), [0.0, 0.0, 4.0, 4.0], [0.0, 0.0, 4.0, 4.0]);
     /// assert!(list.has_external());
     /// ```
     pub fn has_external(&self) -> bool {
@@ -1410,9 +1415,17 @@ mod tests {
     fn segments_split_at_external_markers() {
         let mut list = PaintList::new();
         list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
-        list.push_external(7, [0.0, 0.0, 100.0, 50.0], [0.0, 0.0, 100.0, 50.0]);
+        list.push_external(
+            martensite_core::SurfaceId(7),
+            [0.0, 0.0, 100.0, 50.0],
+            [0.0, 0.0, 100.0, 50.0],
+        );
         list.push_fill_rect(Rect::ZERO, [0, 255, 0, 255]);
-        list.push_external(9, [0.0, 0.0, 10.0, 10.0], [0.0, 0.0, 10.0, 10.0]);
+        list.push_external(
+            martensite_core::SurfaceId(9),
+            [0.0, 0.0, 10.0, 10.0],
+            [0.0, 0.0, 10.0, 10.0],
+        );
         list.push_fill_rect(Rect::ZERO, [0, 0, 255, 255]);
 
         let segments = list.segments();
@@ -1420,12 +1433,18 @@ mod tests {
         assert!(matches!(segments[0], PaintSegment::Commands(c) if c.len() == 1));
         assert!(matches!(
             segments[1],
-            PaintSegment::External { surface_id: 7, .. }
+            PaintSegment::External {
+                surface_id: martensite_core::SurfaceId(7),
+                ..
+            }
         ));
         assert!(matches!(segments[2], PaintSegment::Commands(c) if c.len() == 1));
         assert!(matches!(
             segments[3],
-            PaintSegment::External { surface_id: 9, .. }
+            PaintSegment::External {
+                surface_id: martensite_core::SurfaceId(9),
+                ..
+            }
         ));
         assert!(matches!(segments[4], PaintSegment::Commands(c) if c.len() == 1));
     }
@@ -1434,19 +1453,25 @@ mod tests {
     fn segments_omit_empty_spans() {
         // External first and External last produce no empty command spans.
         let mut list = PaintList::new();
-        list.push_external(1, [0.0; 4], [0.0; 4]);
+        list.push_external(martensite_core::SurfaceId(1), [0.0; 4], [0.0; 4]);
         list.push_fill_rect(Rect::ZERO, [0, 0, 0, 255]);
-        list.push_external(2, [0.0; 4], [0.0; 4]);
+        list.push_external(martensite_core::SurfaceId(2), [0.0; 4], [0.0; 4]);
         let segments = list.segments();
         assert_eq!(segments.len(), 3);
         assert!(matches!(
             segments[0],
-            PaintSegment::External { surface_id: 1, .. }
+            PaintSegment::External {
+                surface_id: martensite_core::SurfaceId(1),
+                ..
+            }
         ));
         assert!(matches!(segments[1], PaintSegment::Commands(_)));
         assert!(matches!(
             segments[2],
-            PaintSegment::External { surface_id: 2, .. }
+            PaintSegment::External {
+                surface_id: martensite_core::SurfaceId(2),
+                ..
+            }
         ));
     }
 

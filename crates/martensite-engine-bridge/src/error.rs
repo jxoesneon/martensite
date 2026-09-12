@@ -27,6 +27,10 @@ pub enum BridgeError {
     /// The requested transition is not legal from the slot's current
     /// state (e.g. marking a `Free` slot ready).
     InvalidTransition,
+    /// The published frame payload is malformed — a `CpuFrame` whose
+    /// pixel length does not match `width * height * 4`, or dimensions
+    /// exceeding [`crate::MAX_FRAME_DIM`].
+    InvalidPayload,
 }
 
 impl fmt::Display for BridgeError {
@@ -39,6 +43,12 @@ impl fmt::Display for BridgeError {
             Self::InvalidSlot(slot) => write!(f, "invalid ring slot {slot}"),
             Self::InvalidTransition => {
                 write!(f, "illegal ring-slot state transition")
+            }
+            Self::InvalidPayload => {
+                write!(
+                    f,
+                    "frame payload is malformed (bad dimensions or pixel length)"
+                )
             }
         }
     }

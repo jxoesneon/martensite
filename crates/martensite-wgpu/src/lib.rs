@@ -38,7 +38,7 @@ pub mod surface;
 pub mod theme_transition;
 
 pub use device::{GpuContext, GpuContextError};
-pub use external::{ExternalError, WgpuHost};
+pub use external::{CompositeTarget, ExternalError, TakenFrame, WgpuHost};
 pub use interop::{
     create_video_texture_view, FormatNegotiator, VideoPipelineUniforms, VideoProcessor,
     VideoProcessorError, MEDIA_YUV_EOTF_WGSL,
@@ -49,7 +49,7 @@ pub use resilience::{
     RecoveryOutcome, SurfaceError, DEFAULT_FALLBACK_THRESHOLD, DEFAULT_MAX_RETRIES,
     RECOVERY_BUDGET,
 };
-pub use surface::{BackdropMode, SurfaceWrapper, SurfaceWrapperError};
+pub use surface::{BackdropMode, PresentModePreference, SurfaceWrapper, SurfaceWrapperError};
 pub use theme_transition::{
     render_theme_transition, ThemeTransitionError, ThemeTransitionPipeline, THEME_UNIFORM_SIZE,
 };

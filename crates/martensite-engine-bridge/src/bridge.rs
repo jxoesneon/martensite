@@ -22,14 +22,7 @@ use std::sync::Arc;
 ///
 /// # Examples
 ///
-/// ```
-/// use martensite_engine_bridge::SurfaceId;
-///
-/// let id = SurfaceId(3);
-/// assert_eq!(id, SurfaceId(3));
-/// ```
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SurfaceId(pub u64);
+pub use martensite_core::SurfaceId;
 
 /// A snapshot of a ring's front frame, returned atomically by
 /// [`BridgeRegistry::front_with_token`].
@@ -244,10 +237,14 @@ impl SurfaceRing {
         if self.slots[idx].state != SlotState::Writing {
             return Err(BridgeError::InvalidTransition);
         }
-        // Free a stale ready slot: the mailbox keeps only the newest frame.
+        // Free a stale ready slot: the mailbox keeps only the newest
+        // frame. The dropped frame's token is pushed to `released` so a
+        // producer tracking per-token resources can recycle it — without
+        // this, mailbox overwrites would leak producer-side resources.
         if let Some(old_front) = self.front {
             let old = usize::from(old_front);
             if old != idx && self.slots[old].state == SlotState::Ready {
+                self.push_released(self.slots[old].token);
                 self.slots[old].state = SlotState::Free;
                 self.slots[old].frame = None;
                 self.slots[old].cpu_frame = None;
@@ -343,8 +340,87 @@ impl SurfaceRing {
         if self.front == Some(slot) {
             self.front = None;
         }
-        self.released.push(token);
+        self.push_released(token);
         Ok(())
+    }
+
+    /// Maximum number of released tokens queued for producer recycling.
+    /// If a producer never calls [`drain_released`](Self::drain_released)
+    /// the oldest tokens are dropped — a lost token only means the
+    /// producer doesn't reclaim that texture, not a host stall.
+    const RELEASED_WATERMARK: usize = 128;
+
+    fn push_released(&mut self, token: FrameToken) {
+        if self.released.len() >= Self::RELEASED_WATERMARK {
+            self.released.remove(0);
+        }
+        self.released.push(token);
+    }
+
+    /// Force-frees a slot stuck in `Writing` or `Ready`.
+    ///
+    /// The host calls this when a producer acquired a slot and never
+    /// published (abandoned `Writing`), or when a `Ready` frame must be
+    /// evicted without compositing. The slot's token is queued to
+    /// `released` so the producer can recycle its resources.
+    ///
+    /// Must NOT be called on a `Compositing` slot — the host may still
+    /// be sampling its texture. Returns `false` for `Compositing`,
+    /// `Free`, or invalid slot indices.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::SurfaceRing;
+    ///
+    /// let mut ring = SurfaceRing::new();
+    /// let (slot, _) = ring.acquire().unwrap();
+    /// // Producer abandoned the slot without mark_ready.
+    /// assert!(ring.force_release(slot));
+    /// assert!(ring.acquire().is_ok());
+    /// ```
+    pub fn force_release(&mut self, slot: u8) -> bool {
+        let idx = usize::from(slot);
+        if idx >= 2 {
+            return false;
+        }
+        match self.slots[idx].state {
+            SlotState::Writing | SlotState::Ready => {
+                let token = self.slots[idx].token;
+                self.slots[idx].state = SlotState::Free;
+                self.slots[idx].frame = None;
+                self.slots[idx].cpu_frame = None;
+                if self.front == Some(slot) {
+                    self.front = None;
+                }
+                self.push_released(token);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Frees every slot stuck in `Writing` or `Ready` and returns the
+    /// number freed. Called by the host when a producer is considered
+    /// stalled (e.g., widget removed, engine stopped responding).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::SurfaceRing;
+    ///
+    /// let mut ring = SurfaceRing::new();
+    /// ring.acquire().unwrap();
+    /// assert_eq!(ring.reclaim_stalled(), 1);
+    /// ```
+    pub fn reclaim_stalled(&mut self) -> usize {
+        let mut n = 0;
+        for slot in 0..2u8 {
+            if self.force_release(slot) {
+                n += 1;
+            }
+        }
+        n
     }
 
     /// Drains tokens the host has released since the last call. The
@@ -374,6 +450,7 @@ impl SurfaceRing {
     /// let ring = SurfaceRing::new();
     /// assert!(ring.front_frame().is_none());
     /// ```
+    #[must_use]
     pub fn front_frame(&self) -> Option<&dyn Frame> {
         let idx = usize::from(self.front?);
         self.slots[idx].frame.as_deref()
@@ -390,6 +467,7 @@ impl SurfaceRing {
     /// let ring = SurfaceRing::new();
     /// assert!(ring.front_cpu_frame().is_none());
     /// ```
+    #[must_use]
     pub fn front_cpu_frame(&self) -> Option<&CpuFrame> {
         let idx = usize::from(self.front?);
         self.slots[idx].cpu_frame.as_ref()
@@ -400,12 +478,37 @@ impl SurfaceRing {
     ///
     /// # Errors
     ///
-    /// [`BridgeError::InvalidSlot`] for slot indices ≥ 2, and
-    /// [`BridgeError::InvalidTransition`] if the slot is not `Writing`.
+    /// [`BridgeError::InvalidSlot`] for slot indices ≥ 2,
+    /// [`BridgeError::InvalidTransition`] if the slot is not `Writing`,
+    /// or [`BridgeError::InvalidPayload`] if the frame's dimensions
+    /// exceed [`crate::MAX_FRAME_DIM`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{Frame, FrameSync, FrameToken, SourceAlpha, SurfaceRing};
+    ///
+    /// struct Solid;
+    /// impl Frame for Solid {
+    ///     fn token(&self) -> FrameToken { FrameToken(0) }
+    ///     fn same_device_texture(&self) -> Option<&wgpu::Texture> { None }
+    ///     fn native_handle(&self) -> Option<martensite_engine_bridge::NativeFrame> { None }
+    ///     fn sync(&self) -> FrameSync { FrameSync::None }
+    ///     fn size(&self) -> (u32, u32) { (4, 4) }
+    ///     fn alpha_mode(&self) -> SourceAlpha { SourceAlpha::Premultiplied }
+    /// }
+    /// let mut ring = SurfaceRing::new();
+    /// let (slot, _) = ring.acquire().unwrap();
+    /// ring.set_frame(slot, Box::new(Solid)).unwrap();
+    /// ```
     pub fn set_frame(&mut self, slot: u8, frame: Box<dyn Frame>) -> Result<(), BridgeError> {
         let idx = usize::from(slot);
         if idx >= 2 {
             return Err(BridgeError::InvalidSlot(slot));
+        }
+        let (w, h) = frame.size();
+        if w > crate::MAX_FRAME_DIM || h > crate::MAX_FRAME_DIM {
+            return Err(BridgeError::InvalidPayload);
         }
         if self.slots[idx].state != SlotState::Writing {
             return Err(BridgeError::InvalidTransition);
@@ -421,7 +524,24 @@ impl SurfaceRing {
     ///
     /// [`BridgeError::InvalidSlot`] for slot indices ≥ 2, and
     /// [`BridgeError::InvalidTransition`] if the slot is not `Writing`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{CpuFrame, SurfaceRing};
+    ///
+    /// let mut ring = SurfaceRing::new();
+    /// let (slot, _) = ring.acquire().unwrap();
+    /// ring.set_cpu_frame(slot, CpuFrame::new(1, 1, vec![0, 0, 0, 255])).unwrap();
+    /// ```
     pub fn set_cpu_frame(&mut self, slot: u8, frame: CpuFrame) -> Result<(), BridgeError> {
+        let expected = frame.width as usize * frame.height as usize * 4;
+        if frame.width > crate::MAX_FRAME_DIM
+            || frame.height > crate::MAX_FRAME_DIM
+            || frame.pixels.len() != expected
+        {
+            return Err(BridgeError::InvalidPayload);
+        }
         let idx = usize::from(slot);
         if idx >= 2 {
             return Err(BridgeError::InvalidSlot(slot));
@@ -438,6 +558,16 @@ impl SurfaceRing {
     /// The widget pushes this on every `layout`; producers read
     /// [`SurfaceRing::viewport`] to render at the widget's physical
     /// bounds and DPI scale.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{SurfaceRing, Viewport};
+    ///
+    /// let mut ring = SurfaceRing::new();
+    /// ring.set_viewport(Viewport::new(800, 600, 2.0));
+    /// assert_eq!(ring.viewport().unwrap().size, (800, 600));
+    /// ```
     pub fn set_viewport(&mut self, viewport: crate::Viewport) {
         self.viewport = Some(viewport);
     }
@@ -452,6 +582,7 @@ impl SurfaceRing {
     /// let ring = SurfaceRing::new();
     /// assert!(ring.viewport().is_none());
     /// ```
+    #[must_use]
     pub fn viewport(&self) -> Option<crate::Viewport> {
         self.viewport
     }
@@ -466,6 +597,7 @@ impl SurfaceRing {
     /// let ring = SurfaceRing::new();
     /// assert!(ring.front().is_none());
     /// ```
+    #[must_use]
     pub fn front(&self) -> Option<u8> {
         self.front
     }
@@ -501,6 +633,7 @@ impl SurfaceRing {
     /// let ring = SurfaceRing::new();
     /// assert_eq!(ring.front_size(), None);
     /// ```
+    #[must_use]
     pub fn front_size(&self) -> Option<(u32, u32)> {
         self.front_size
     }
@@ -533,6 +666,10 @@ pub struct BridgeRegistry {
     rings: HashMap<SurfaceId, SurfaceRing>,
     ready_events: VecDeque<SurfaceId>,
     next_surface: u64,
+    /// Invoked once per newly-ready surface (the `notify_frame_ready`
+    /// hook) — the app installs a closure that marks the owning widget
+    /// dirty and calls `window.request_redraw()`.
+    ready_waker: Option<Box<dyn Fn(SurfaceId) + Send + Sync>>,
 }
 
 impl BridgeRegistry {
@@ -551,6 +688,7 @@ impl BridgeRegistry {
             rings: HashMap::new(),
             ready_events: VecDeque::new(),
             next_surface: 1,
+            ready_waker: None,
         }
     }
 
@@ -636,9 +774,7 @@ impl BridgeRegistry {
             .get_mut(&id)
             .ok_or(BridgeError::UnknownSurface(id))?
             .mark_ready(slot)?;
-        if self.ready_events.back() != Some(&id) {
-            self.ready_events.push_back(id);
-        }
+        self.push_ready_event(id);
         Ok(())
     }
 
@@ -755,6 +891,16 @@ impl BridgeRegistry {
     /// # Errors
     ///
     /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// assert!(registry.front_frame(id).unwrap().is_none());
+    /// ```
     pub fn front_frame(&self, id: SurfaceId) -> Result<Option<&dyn Frame>, BridgeError> {
         Ok(self
             .rings
@@ -769,6 +915,16 @@ impl BridgeRegistry {
     /// # Errors
     ///
     /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// assert!(registry.front_cpu_frame(id).unwrap().is_none());
+    /// ```
     pub fn front_cpu_frame(&self, id: SurfaceId) -> Result<Option<&CpuFrame>, BridgeError> {
         Ok(self
             .rings
@@ -894,9 +1050,7 @@ impl BridgeRegistry {
         if let Some(s) = size {
             ring.set_front_size(s);
         }
-        if self.ready_events.back() != Some(&id) {
-            self.ready_events.push_back(id);
-        }
+        self.push_ready_event(id);
         Ok(())
     }
 
@@ -935,9 +1089,7 @@ impl BridgeRegistry {
         ring.set_cpu_frame(slot, cpu_frame)?;
         ring.mark_ready(slot)?;
         ring.set_front_size(size);
-        if self.ready_events.back() != Some(&id) {
-            self.ready_events.push_back(id);
-        }
+        self.push_ready_event(id);
         Ok(())
     }
 
@@ -992,6 +1144,104 @@ impl BridgeRegistry {
             .get(&id)
             .ok_or(BridgeError::UnknownSurface(id))?
             .viewport())
+    }
+
+    // Maximum queued ready events. Beyond this watermark the oldest
+    // event is dropped — a missed event only means one skipped redraw
+    // for that surface, not a stalled ring.
+    const READY_EVENTS_WATERMARK: usize = 1024;
+
+    /// Installs the ready waker — invoked once per newly-ready surface
+    /// (the spec's `notify_frame_ready` → "mark widget dirty +
+    /// `request_redraw`" hook).
+    ///
+    /// The closure is called while the registry lock is held; it must
+    /// not re-enter the registry (e.g. post to the event loop, don't
+    /// call `lock()` inline).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let wakes = Arc::new(AtomicUsize::new(0));
+    /// let w = Arc::clone(&wakes);
+    /// let mut registry = BridgeRegistry::new();
+    /// registry.set_ready_waker(Some(Box::new(move |_id| {
+    ///     w.fetch_add(1, Ordering::Relaxed);
+    /// })));
+    /// let id = registry.register();
+    /// let (slot, _) = registry.acquire(id).unwrap();
+    /// registry.mark_ready(id, slot).unwrap();
+    /// assert_eq!(wakes.load(Ordering::Relaxed), 1);
+    /// ```
+    pub fn set_ready_waker(&mut self, waker: Option<Box<dyn Fn(SurfaceId) + Send + Sync>>) {
+        self.ready_waker = waker;
+    }
+
+    fn push_ready_event(&mut self, id: SurfaceId) {
+        if self.ready_events.back() != Some(&id) {
+            if self.ready_events.len() >= Self::READY_EVENTS_WATERMARK {
+                self.ready_events.pop_front();
+            }
+            self.ready_events.push_back(id);
+            if let Some(waker) = &self.ready_waker {
+                waker(id);
+            }
+        }
+    }
+
+    /// Force-frees a slot stuck in `Writing` or `Ready` on `id`'s ring.
+    /// See [`SurfaceRing::force_release`].
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// let (slot, _) = registry.acquire(id).unwrap();
+    /// assert!(registry.force_release(id, slot).unwrap());
+    /// ```
+    pub fn force_release(&mut self, id: SurfaceId, slot: u8) -> Result<bool, BridgeError> {
+        Ok(self
+            .rings
+            .get_mut(&id)
+            .ok_or(BridgeError::UnknownSurface(id))?
+            .force_release(slot))
+    }
+
+    /// Frees every `Writing`/`Ready` slot on `id`'s ring — the
+    /// host-side recovery path for a stalled producer. Returns the
+    /// number of slots reclaimed. See [`SurfaceRing::reclaim_stalled`].
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// registry.acquire(id).unwrap();
+    /// assert_eq!(registry.reclaim_stalled(id).unwrap(), 1);
+    /// ```
+    pub fn reclaim_stalled(&mut self, id: SurfaceId) -> Result<usize, BridgeError> {
+        Ok(self
+            .rings
+            .get_mut(&id)
+            .ok_or(BridgeError::UnknownSurface(id))?
+            .reclaim_stalled())
     }
 
     /// Drains the ready-event queue. Each event means "this surface has a
@@ -1084,9 +1334,7 @@ impl BridgeRegistry {
             .ok_or(BridgeError::UnknownSurface(id))?;
         ring.mark_ready(slot)?;
         ring.set_front_size(size);
-        if self.ready_events.back() != Some(&id) {
-            self.ready_events.push_back(id);
-        }
+        self.push_ready_event(id);
         Ok(())
     }
 
@@ -1268,6 +1516,24 @@ impl BridgeHandle {
     /// Several `ExternalEngines` bindings may attach to the same
     /// registry through different handles — callers deduplicating
     /// registry-level queues (like `drain_ready`) use this to drain
+    /// each registry once.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let a = BridgeHandle::new();
+    /// let b = a.clone();
+    /// let c = BridgeHandle::new();
+    /// assert!(a.same_registry(&b));
+    /// assert!(!a.same_registry(&c));
+    /// ```
+    #[must_use]
+    pub fn same_registry(&self, other: &BridgeHandle) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// A process-unique identifier for the underlying registry.
     ///
     /// Cloned handles share the same id; two handles built from
@@ -1289,21 +1555,21 @@ impl BridgeHandle {
         Arc::as_ptr(&self.inner) as usize
     }
 
-    /// each registry once.
+    /// Installs the registry's ready waker — see
+    /// [`BridgeRegistry::set_ready_waker`].
     ///
     /// # Examples
     ///
     /// ```
     /// use martensite_engine_bridge::BridgeHandle;
     ///
-    /// let a = BridgeHandle::new();
-    /// let b = a.clone();
-    /// let c = BridgeHandle::new();
-    /// assert!(a.same_registry(&b));
-    /// assert!(!a.same_registry(&c));
+    /// let handle = BridgeHandle::new();
+    /// handle.set_ready_waker(Some(Box::new(|_surface| {
+    ///     // mark widget dirty + window.request_redraw()
+    /// })));
     /// ```
-    pub fn same_registry(&self, other: &BridgeHandle) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
+    pub fn set_ready_waker(&self, waker: Option<Box<dyn Fn(SurfaceId) + Send + Sync>>) {
+        self.lock().set_ready_waker(waker);
     }
 }
 
