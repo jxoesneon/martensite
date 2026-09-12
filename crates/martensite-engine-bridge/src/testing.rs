@@ -197,7 +197,7 @@ impl Engine for MockEngine {
         let (w, h) = viewport.size;
         let mut color = self.base_color;
         color[0] = color[0].wrapping_add(self.frame_count as u8);
-        let mut pixels = vec![0u8; (w.max(1) * h.max(1) * 4) as usize];
+        let mut pixels = vec![0u8; w.max(1) as usize * h.max(1) as usize * 4];
         for px in pixels.as_chunks_mut::<4>().0 {
             px.copy_from_slice(&color);
         }

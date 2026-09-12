@@ -34,7 +34,7 @@
 //! blending convention byte-for-byte.
 
 pub use martensite_engine_bridge::SourceAlpha;
-use martensite_engine_bridge::{BridgeRegistry, SurfaceId};
+use martensite_engine_bridge::SurfaceId;
 use std::cell::Cell;
 use std::collections::HashMap;
 
@@ -173,7 +173,11 @@ struct ExternalEntry {
 #[derive(Debug)]
 pub enum ExternalError {
     /// The `surface_id` is not registered with this host.
-    UnknownSurface(u64),
+    UnknownSurface(SurfaceId),
+    /// The producer's texture cannot be sampled by the composite
+    /// pipeline — it lacks `TEXTURE_BINDING` usage or a filterable
+    /// float format.
+    UnsamplableTexture(SurfaceId),
     /// More composites were recorded in one frame than the shared
     /// rect-uniform buffer can hold. Call
     /// [`WgpuHost::begin_frame`] once per frame; the capacity is
@@ -184,7 +188,12 @@ pub enum ExternalError {
 impl std::fmt::Display for ExternalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnknownSurface(id) => write!(f, "external surface {id} is not registered"),
+            Self::UnknownSurface(id) => write!(f, "external surface {} is not registered", id.0),
+            Self::UnsamplableTexture(id) => write!(
+                f,
+                "external surface {} texture lacks TEXTURE_BINDING or filterable float format",
+                id.0
+            ),
             Self::RectCapacityExceeded => {
                 write!(f, "rect uniform capacity exceeded for one frame")
             }
@@ -249,7 +258,7 @@ pub struct WgpuHost {
     pipeline_straight_encode: wgpu::RenderPipeline,
     target_format: wgpu::TextureFormat,
     target_is_srgb: bool,
-    entries: HashMap<u64, ExternalEntry>,
+    entries: HashMap<SurfaceId, ExternalEntry>,
 }
 
 impl WgpuHost {
@@ -526,23 +535,34 @@ impl WgpuHost {
     /// filterable; it is sampled until [`WgpuHost::unregister`] or the
     /// next `register_texture` for the same id.
     ///
+    /// # Errors
+    ///
+    /// [`ExternalError::UnsamplableTexture`] if the texture cannot be
+    /// sampled by the composite pipeline (missing `TEXTURE_BINDING`
+    /// usage or a non-filterable format).
+    ///
     /// # Examples
     ///
     /// ```no_run
     /// use martensite_wgpu::external::{WgpuHost, SourceAlpha};
+    /// use martensite_engine_bridge::SurfaceId;
     /// # let device: wgpu::Device = todo!();
     /// # let texture: wgpu::Texture = todo!();
     /// let mut host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    /// host.register_texture(&device, 7, &texture, SourceAlpha::Premultiplied);
-    /// assert!(host.is_registered(7));
+    /// host.register_texture(&device, SurfaceId(7), &texture, SourceAlpha::Premultiplied)
+    ///     .unwrap();
+    /// assert!(host.is_registered(SurfaceId(7)));
     /// ```
     pub fn register_texture(
         &mut self,
         device: &wgpu::Device,
-        surface_id: u64,
+        surface_id: SurfaceId,
         texture: &wgpu::Texture,
         alpha: SourceAlpha,
-    ) {
+    ) -> Result<(), ExternalError> {
+        if !Self::is_samplable(device, texture) {
+            return Err(ExternalError::UnsamplableTexture(surface_id));
+        }
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("external-texture-bind-group"),
@@ -566,6 +586,21 @@ impl WgpuHost {
                 size: (texture.width(), texture.height()),
             },
         );
+        Ok(())
+    }
+
+    /// Whether `texture` can be sampled by the composite pipeline:
+    /// `TEXTURE_BINDING` usage plus a filterable float format on this
+    /// device.
+    fn is_samplable(device: &wgpu::Device, texture: &wgpu::Texture) -> bool {
+        texture
+            .usage()
+            .contains(wgpu::TextureUsages::TEXTURE_BINDING)
+            && texture
+                .format()
+                .guaranteed_format_features(device.features())
+                .flags
+                .contains(wgpu::TextureFormatFeatureFlags::FILTERABLE)
     }
 
     /// Drops the surface registration.
@@ -574,14 +609,16 @@ impl WgpuHost {
     ///
     /// ```no_run
     /// use martensite_wgpu::external::{WgpuHost, SourceAlpha};
+    /// use martensite_engine_bridge::SurfaceId;
     /// # let device: wgpu::Device = todo!();
     /// # let texture: wgpu::Texture = todo!();
     /// let mut host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    /// host.register_texture(&device, 7, &texture, SourceAlpha::Premultiplied);
-    /// host.unregister(7);
-    /// assert!(!host.is_registered(7));
+    /// host.register_texture(&device, SurfaceId(7), &texture, SourceAlpha::Premultiplied)
+    ///     .unwrap();
+    /// host.unregister(SurfaceId(7));
+    /// assert!(!host.is_registered(SurfaceId(7)));
     /// ```
-    pub fn unregister(&mut self, surface_id: u64) {
+    pub fn unregister(&mut self, surface_id: SurfaceId) {
         self.entries.remove(&surface_id);
     }
 
@@ -591,12 +628,13 @@ impl WgpuHost {
     ///
     /// ```no_run
     /// use martensite_wgpu::external::WgpuHost;
+    /// use martensite_engine_bridge::SurfaceId;
     /// # let device: wgpu::Device = todo!();
     /// let host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    /// assert!(!host.is_registered(0));
+    /// assert!(!host.is_registered(SurfaceId(0)));
     /// ```
     #[must_use]
-    pub fn is_registered(&self, surface_id: u64) -> bool {
+    pub fn is_registered(&self, surface_id: SurfaceId) -> bool {
         self.entries.contains_key(&surface_id)
     }
 
@@ -621,11 +659,12 @@ impl WgpuHost {
     ///
     /// ```no_run
     /// use martensite_wgpu::external::WgpuHost;
+    /// use martensite_engine_bridge::SurfaceId;
     /// # let device: wgpu::Device = todo!();
     /// let host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    /// assert_eq!(host.surface_size(0), None);
+    /// assert_eq!(host.surface_size(SurfaceId(0)), None);
     /// ```
-    pub fn surface_size(&self, surface_id: u64) -> Option<(u32, u32)> {
+    pub fn surface_size(&self, surface_id: SurfaceId) -> Option<(u32, u32)> {
         self.entries.get(&surface_id).map(|e| e.size)
     }
 
@@ -708,7 +747,7 @@ impl WgpuHost {
     pub fn composite(
         &self,
         target: CompositeTarget<'_>,
-        surface_id: u64,
+        surface_id: SurfaceId,
         rect: [f32; 4],
         clip: [f32; 4],
     ) -> Result<(), ExternalError> {
@@ -759,39 +798,46 @@ impl WgpuHost {
     pub fn composite_front(
         &self,
         device: &wgpu::Device,
-        registry: &mut BridgeRegistry,
+        handle: &martensite_engine_bridge::BridgeHandle,
         target: CompositeTarget<'_>,
         surface_id: SurfaceId,
         rect: [f32; 4],
         clip: [f32; 4],
     ) -> Result<Option<TakenFrame>, ExternalError> {
-        let taken = registry
-            .take_front(surface_id)
-            .map_err(|_| ExternalError::UnknownSurface(surface_id.0))?;
-        let Some((slot, token)) = taken else {
+        // Take the front slot and move the frame payload out — the
+        // registry lock is released before any GPU work, so producers
+        // are never blocked for the duration of the composite.
+        let taken = {
+            let mut registry = handle.lock();
+            registry
+                .take_front_frame(surface_id)
+                .map_err(|_| ExternalError::UnknownSurface(surface_id))?
+        };
+        let Some(martensite_engine_bridge::TakenFrontFrame { slot, token, frame }) = taken else {
             return Ok(None);
         };
 
-        // Borrow the published frame's texture; the borrow ends before
-        // any `&mut registry` call.
-        let frame_data: Option<(wgpu::TextureView, SourceAlpha)> = registry
-            .front_frame(surface_id)
-            .ok()
-            .flatten()
-            .and_then(|f| {
-                f.same_device_texture().map(|t| {
-                    (
-                        t.create_view(&wgpu::TextureViewDescriptor::default()),
-                        f.alpha_mode(),
-                    )
-                })
-            });
-        let Some((view, alpha)) = frame_data else {
+        let frame_data: Option<(bool, wgpu::TextureView, SourceAlpha)> = frame.and_then(|f| {
+            f.same_device_texture().map(|t| {
+                (
+                    Self::is_samplable(device, t),
+                    t.create_view(&wgpu::TextureViewDescriptor::default()),
+                    f.alpha_mode(),
+                )
+            })
+        });
+        let Some((samplable, view, alpha)) = frame_data else {
             // Nothing to sample — free the slot right away (no GPU read
             // was recorded for it).
-            let _ = registry.release(surface_id, slot);
+            let _ = handle.lock().release(surface_id, slot);
             return Ok(None);
         };
+        if !samplable {
+            // Producer published a texture the pipeline can't sample —
+            // release the slot so the ring doesn't stall, then report.
+            let _ = handle.lock().release(surface_id, slot);
+            return Err(ExternalError::UnsamplableTexture(surface_id));
+        }
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("external-front-bind-group"),
@@ -816,7 +862,7 @@ impl WgpuHost {
         ) {
             // Free the slot — a permanent `Compositing` state would
             // exhaust the two-slot ring and stall the producer.
-            let _ = registry.release(surface_id, slot);
+            let _ = handle.lock().release(surface_id, slot);
             return Err(err);
         }
         Ok(Some(TakenFrame { slot, token }))
@@ -951,11 +997,12 @@ mod tests {
             let (device, _queue) = noop_device();
             let mut host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
             let texture = make_texture(&device, "test-source", 64);
-            host.register_texture(&device, 1, &texture, SourceAlpha::Premultiplied);
-            assert!(host.is_registered(1));
-            assert_eq!(host.surface_size(1), Some((64, 64)));
-            host.unregister(1);
-            assert!(!host.is_registered(1));
+            host.register_texture(&device, SurfaceId(1), &texture, SourceAlpha::Premultiplied)
+                .unwrap();
+            assert!(host.is_registered(SurfaceId(1)));
+            assert_eq!(host.surface_size(SurfaceId(1)), Some((64, 64)));
+            host.unregister(SurfaceId(1));
+            assert!(!host.is_registered(SurfaceId(1)));
         }
 
         #[test]
@@ -973,11 +1020,14 @@ mod tests {
                     view: &view,
                     size: (64, 64),
                 },
-                99,
+                SurfaceId(99),
                 [0.0, 0.0, 64.0, 64.0],
                 [0.0, 0.0, 64.0, 64.0],
             );
-            assert!(matches!(result, Err(ExternalError::UnknownSurface(99))));
+            assert!(matches!(
+                result,
+                Err(ExternalError::UnknownSurface(SurfaceId(99)))
+            ));
         }
 
         #[test]
@@ -986,7 +1036,8 @@ mod tests {
             let mut host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
             host.begin_frame();
             let texture = make_texture(&device, "src", 32);
-            host.register_texture(&device, 7, &texture, SourceAlpha::Straight);
+            host.register_texture(&device, SurfaceId(7), &texture, SourceAlpha::Straight)
+                .unwrap();
             let (_tex, view) = make_target(&device);
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -997,7 +1048,7 @@ mod tests {
                     view: &view,
                     size: (64, 64),
                 },
-                7,
+                SurfaceId(7),
                 [0.0, 0.0, 64.0, 64.0],
                 [0.0, 0.0, 64.0, 64.0],
             )
@@ -1011,7 +1062,8 @@ mod tests {
             let mut host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
             host.begin_frame();
             let texture = make_texture(&device, "src", 32);
-            host.register_texture(&device, 7, &texture, SourceAlpha::Premultiplied);
+            host.register_texture(&device, SurfaceId(7), &texture, SourceAlpha::Premultiplied)
+                .unwrap();
             let (_tex, view) = make_target(&device);
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -1026,7 +1078,7 @@ mod tests {
                         view: &view,
                         size: (64, 64),
                     },
-                    7,
+                    SurfaceId(7),
                     [x, 0.0, 16.0, 16.0],
                     [0.0, 0.0, 64.0, 64.0],
                 )
@@ -1082,10 +1134,9 @@ mod tests {
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
             let taken = {
-                let mut reg = handle.lock();
                 host.composite_front(
                     &device,
-                    &mut reg,
+                    &handle,
                     CompositeTarget {
                         encoder: &mut encoder,
                         queue: &queue,
@@ -1117,10 +1168,9 @@ mod tests {
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
             let taken = {
-                let mut reg = handle.lock();
                 host.composite_front(
                     &device,
-                    &mut reg,
+                    &handle,
                     CompositeTarget {
                         encoder: &mut encoder,
                         queue: &queue,
@@ -1177,10 +1227,9 @@ mod tests {
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
             let taken = {
-                let mut reg = handle.lock();
                 host.composite_front(
                     &device,
-                    &mut reg,
+                    &handle,
                     CompositeTarget {
                         encoder: &mut encoder,
                         queue: &queue,
@@ -1199,12 +1248,42 @@ mod tests {
         }
 
         #[test]
+        fn unsamplable_texture_rejected() {
+            let (device, _queue) = noop_device();
+            let mut host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+            // Texture without TEXTURE_BINDING — composite sampling must
+            // reject it rather than fail validation at draw time.
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("render-only"),
+                size: wgpu::Extent3d {
+                    width: 8,
+                    height: 8,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let result =
+                host.register_texture(&device, SurfaceId(3), &texture, SourceAlpha::Premultiplied);
+            assert!(matches!(
+                result,
+                Err(ExternalError::UnsamplableTexture(SurfaceId(3)))
+            ));
+            assert!(!host.is_registered(SurfaceId(3)));
+        }
+
+        #[test]
         fn zero_clip_returns_early() {
             let (device, queue) = noop_device();
             let mut host = WgpuHost::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
             host.begin_frame();
             let texture = make_texture(&device, "src", 8);
-            host.register_texture(&device, 1, &texture, SourceAlpha::Premultiplied);
+            host.register_texture(&device, SurfaceId(1), &texture, SourceAlpha::Premultiplied)
+                .unwrap();
             let (_tex, view) = make_target(&device);
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -1215,7 +1294,7 @@ mod tests {
                     view: &view,
                     size: (64, 64),
                 },
-                1,
+                SurfaceId(1),
                 [0.0, 0.0, 64.0, 64.0],
                 [0.0, 0.0, 0.0, 0.0],
             )

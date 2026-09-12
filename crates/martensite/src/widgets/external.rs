@@ -188,6 +188,8 @@ impl ExternalEngine {
     /// let widget = ExternalEngine::new(handle, surface);
     /// assert_eq!(widget.surface_id(), surface);
     /// ```
+    #[inline]
+    #[must_use]
     pub fn surface_id(&self) -> SurfaceId {
         self.surface_id
     }
@@ -206,6 +208,8 @@ impl ExternalEngine {
     /// let widget = ExternalEngine::new(handle, surface);
     /// assert_eq!(widget.intrinsic_size(), Vec2::ZERO);
     /// ```
+    #[inline]
+    #[must_use]
     pub fn intrinsic_size(&self) -> Vec2 {
         self.intrinsic_size
     }
@@ -224,6 +228,8 @@ impl ExternalEngine {
     /// let widget = ExternalEngine::new(handle, surface);
     /// assert_eq!(widget.dest_rect().size.x, 0.0);
     /// ```
+    #[inline]
+    #[must_use]
     pub fn dest_rect(&self) -> Rect {
         self.cached_dest_rect
     }
@@ -328,7 +334,9 @@ impl ExternalEngine {
         }
         let (w, h) = match fit {
             VideoFit::Fill => (bw, bh),
-            VideoFit::Fixed => (iw.min(bw), ih.min(bh)),
+            // Native size unclamped — the clip rect confines overflow,
+            // matching `MediaView::compute_dest_rect`.
+            VideoFit::Fixed => (iw, ih),
             VideoFit::Contain => {
                 let scale = (bw / iw).min(bh / ih);
                 (iw * scale, ih * scale)
@@ -407,6 +415,13 @@ impl ExternalEngines {
     /// Binds `engine` to `surface` on `handle`. The engine is expected
     /// to publish frames into that surface's ring.
     ///
+    /// # Errors
+    ///
+    /// [`BindError::DuplicateBinding`] if an engine is already bound to
+    /// the same `(registry, surface)` pair — the second engine would
+    /// never see `release` callbacks (the per-surface released queue is
+    /// drained by the first).
+    ///
     /// # Examples
     ///
     /// ```
@@ -426,11 +441,24 @@ impl ExternalEngines {
     /// let handle = BridgeHandle::new();
     /// let surface = handle.lock().register();
     /// let mut engines = ExternalEngines::new();
-    /// engines.bind(handle, surface, Box::new(Idle));
+    /// engines.bind(handle, surface, Box::new(Idle)).unwrap();
     /// assert_eq!(engines.len(), 1);
     /// ```
-    pub fn bind(&mut self, handle: BridgeHandle, surface: SurfaceId, engine: Box<dyn Engine>) {
+    pub fn bind(
+        &mut self,
+        handle: BridgeHandle,
+        surface: SurfaceId,
+        engine: Box<dyn Engine>,
+    ) -> Result<(), BindError> {
+        if self
+            .bound
+            .iter()
+            .any(|(h, s, _)| *s == surface && h.same_registry(&handle))
+        {
+            return Err(BindError::DuplicateBinding);
+        }
         self.bound.push((handle, surface, engine));
+        Ok(())
     }
 
     /// Number of bound engines.
@@ -531,25 +559,22 @@ impl ExternalEngines {
     ///     fn render(&mut self, _c: &mut martensite_engine_bridge::EngineContext, _v: martensite_engine_bridge::Viewport) -> Option<Box<dyn martensite_engine_bridge::Frame>> { None }
     ///     fn release(&mut self, _t: martensite_engine_bridge::FrameToken) {}
     /// }
-    /// engines.bind(handle, surface, Box::new(Idle));
+    /// engines.bind(handle, surface, Box::new(Idle)).unwrap();
     /// assert_eq!(engines.drain_ready(), vec![surface]);
     /// ```
     pub fn drain_ready(&mut self) -> Vec<SurfaceId> {
         let mut out = Vec::new();
+        // Group bindings by registry once — the ready queue is
+        // per-registry, so each unique registry is drained exactly once.
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for i in 0..self.bound.len() {
-            // Drain each unique registry exactly once — the ready queue
-            // is per-registry, so a second binding on the same registry
-            // would otherwise see (and discard) nothing.
-            if self.bound[..i]
-                .iter()
-                .any(|(h, _, _)| h.same_registry(&self.bound[i].0))
-            {
+            if !seen.insert(self.bound[i].0.registry_id()) {
                 continue;
             }
             // Keep only surfaces bound on THIS registry — both so
             // unbound surfaces' events survive in the queue and so
             // `SurfaceId`s from different registries can't collide.
-            let here: Vec<SurfaceId> = self
+            let here: std::collections::HashSet<SurfaceId> = self
                 .bound
                 .iter()
                 .filter(|(h, _, _)| h.same_registry(&self.bound[i].0))
@@ -592,7 +617,7 @@ impl ExternalEngines {
     ///     fn render(&mut self, _c: &mut martensite_engine_bridge::EngineContext, _v: martensite_engine_bridge::Viewport) -> Option<Box<dyn martensite_engine_bridge::Frame>> { None }
     ///     fn release(&mut self, t: martensite_engine_bridge::FrameToken) { self.0.lock().unwrap().push(t); }
     /// }
-    /// engines.bind(handle, surface, Box::new(Rec(std::sync::Mutex::new(Vec::new()))));
+    /// engines.bind(handle, surface, Box::new(Rec(std::sync::Mutex::new(Vec::new())))).unwrap();
     /// engines.drain_released(); // engine.release called once for token
     /// ```
     pub fn drain_released(&mut self) {
@@ -604,6 +629,31 @@ impl ExternalEngines {
         }
     }
 }
+
+/// Error returned by [`ExternalEngines::bind`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::external::BindError;
+///
+/// assert_eq!(BindError::DuplicateBinding, BindError::DuplicateBinding);
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BindError {
+    /// An engine is already bound to this `(registry, surface)` pair.
+    DuplicateBinding,
+}
+
+impl std::fmt::Display for BindError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DuplicateBinding => f.write_str("an engine is already bound to this surface"),
+        }
+    }
+}
+
+impl std::error::Error for BindError {}
 
 impl std::fmt::Debug for ExternalEngines {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -781,7 +831,9 @@ mod tests {
         };
         let seen = Arc::new(StdMutex::new(Vec::new()));
         let mut engines = ExternalEngines::new();
-        engines.bind(handle, surface, Box::new(Rec(Arc::clone(&seen))));
+        engines
+            .bind(handle, surface, Box::new(Rec(Arc::clone(&seen))))
+            .unwrap();
         engines.drain_released();
         // The bound engine saw exactly one release for the composited token.
         assert_eq!(*seen.lock().unwrap(), vec![expected_token]);
@@ -811,7 +863,7 @@ mod tests {
             reg.mark_ready(surface, slot).unwrap();
         }
         let mut engines = ExternalEngines::new();
-        engines.bind(handle, surface, Box::new(Idle));
+        engines.bind(handle, surface, Box::new(Idle)).unwrap();
         assert_eq!(engines.drain_ready(), vec![surface]);
         assert!(engines.drain_ready().is_empty());
     }
@@ -844,10 +896,36 @@ mod tests {
             reg.mark_ready(s2, b).unwrap();
         }
         let mut engines = ExternalEngines::new();
-        engines.bind(handle.clone(), s1, Box::new(Idle));
-        engines.bind(handle, s2, Box::new(Idle));
+        engines.bind(handle.clone(), s1, Box::new(Idle)).unwrap();
+        engines.bind(handle, s2, Box::new(Idle)).unwrap();
         let ready = engines.drain_ready();
         assert!(ready.contains(&s1) && ready.contains(&s2), "got {ready:?}");
+    }
+
+    #[test]
+    fn duplicate_bind_rejected() {
+        struct Idle;
+        impl Engine for Idle {
+            fn render(
+                &mut self,
+                _c: &mut martensite_engine_bridge::EngineContext,
+                _v: Viewport,
+            ) -> Option<Box<dyn martensite_engine_bridge::Frame>> {
+                None
+            }
+            fn release(&mut self, _t: FrameToken) {}
+        }
+        let handle = BridgeHandle::new();
+        let surface = handle.lock().register();
+        let mut engines = ExternalEngines::new();
+        engines
+            .bind(handle.clone(), surface, Box::new(Idle))
+            .unwrap();
+        assert!(matches!(
+            engines.bind(handle, surface, Box::new(Idle)),
+            Err(BindError::DuplicateBinding)
+        ));
+        assert_eq!(engines.len(), 1);
     }
 
     #[test]

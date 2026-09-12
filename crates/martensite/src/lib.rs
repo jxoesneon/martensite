@@ -98,8 +98,8 @@ pub use martensite_window as window;
 pub mod prelude {
     pub use crate::app::{App, AppBuilder, AppConfig};
     pub use crate::widgets::{
-        Container, ExternalEngine, ExternalEngines, Flex, FlexDirection, FramePoll, MediaView,
-        Stack, Text, VideoFit,
+        BindError, Container, ExternalEngine, ExternalEngines, Flex, FlexDirection, FramePoll,
+        MediaView, Stack, Text, VideoFit,
     };
     pub use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, Widget, WidgetArena, WidgetId};
     pub use martensite_engine_bridge::{

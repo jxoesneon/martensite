@@ -100,6 +100,15 @@ pub struct EngineContext<'a> {
 ///     fn release(&mut self, _token: FrameToken) {}
 /// }
 /// ```
+///
+/// # Contract
+///
+/// `Engine` implementations run in the host process with access to the
+/// host's `wgpu::Device` — they are trusted producers. A panic inside
+/// `render`/`release`/`to_pixmap` propagates to the host (and under
+/// Martensite's `panic = "abort"` release profile, aborts it). Adapters
+/// embedding untrusted renderers should isolate them in a child process
+/// and transport frames via [`NativeFrame`](crate::NativeFrame) handles.
 pub trait Engine: Send + Sync {
     /// Renders the next frame for `viewport`, or `None` if nothing new is
     /// available.
@@ -107,10 +116,45 @@ pub trait Engine: Send + Sync {
 
     /// Called after the host finished compositing `token`; the producer
     /// may recycle the underlying texture/slot.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{
+    ///     Engine, EngineContext, Frame, FrameToken, Viewport,
+    /// };
+    /// struct Recycled;
+    /// impl Engine for Recycled {
+    ///     fn render(&mut self, _c: &mut EngineContext, _v: Viewport) -> Option<Box<dyn Frame>> {
+    ///         None
+    ///     }
+    ///     fn release(&mut self, token: FrameToken) {
+    ///         assert!(token > FrameToken(0));
+    ///     }
+    /// }
+    /// ```
     fn release(&mut self, token: FrameToken);
 
     /// Returns a CPU raster of `token` for the TinySkia fallback path, or
     /// `None` if the producer cannot rasterize on the CPU.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{
+    ///     CpuFrame, Engine, EngineContext, Frame, FrameToken, Viewport,
+    /// };
+    /// struct Raster;
+    /// impl Engine for Raster {
+    ///     fn render(&mut self, _c: &mut EngineContext, _v: Viewport) -> Option<Box<dyn Frame>> {
+    ///         None
+    ///     }
+    ///     fn release(&mut self, _t: FrameToken) {}
+    ///     fn to_pixmap(&self, _t: FrameToken) -> Option<CpuFrame> {
+    ///         Some(CpuFrame::new(1, 1, vec![255, 0, 0, 255]))
+    ///     }
+    /// }
+    /// ```
     fn to_pixmap(&self, token: FrameToken) -> Option<CpuFrame> {
         let _ = token;
         None

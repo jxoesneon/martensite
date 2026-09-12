@@ -7,8 +7,8 @@
 //! - Real-time dirty rect visualization.
 //! - Live `WidgetArena` slot utilization and compaction telemetry.
 //!
-//! When the `render` feature is enabled, [`DiagnosticHud::render_hud`]
-//! encodes the overlay into a [`martensite_render::PaintList`] using simple
+//! When the `render` feature is enabled, `DiagnosticHud::render_hud`
+//! encodes the overlay into a `martensite_render::PaintList` using simple
 //! fill, stroke, and text commands.
 //!
 //! # Example

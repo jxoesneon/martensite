@@ -52,7 +52,9 @@ pub mod error;
 pub mod frame;
 pub mod testing;
 
-pub use bridge::{BridgeHandle, BridgeRegistry, FrontFrame, SurfaceId, SurfaceRing};
+pub use bridge::{
+    BridgeHandle, BridgeRegistry, FrontFrame, SurfaceId, SurfaceRing, TakenFrontFrame,
+};
 pub use engine::{Engine, EngineContext, Viewport};
 pub use error::BridgeError;
 pub use frame::{

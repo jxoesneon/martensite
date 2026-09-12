@@ -1204,14 +1204,17 @@ impl RenderOrchestrator {
             occlusion_query_set: None,
             multiview_mask: None,
         }));
-        // One registry guard for the whole phase — taken lazily on the
-        // first bridge-resolved external marker.
-        let mut bridge_guard = self.bridge.as_ref().map(|b| b.lock());
+        // The registry lock is taken per-call inside `composite_front`
+        // (ring bookkeeping only) — producers are never blocked for the
+        // duration of the composite pass.
         let mut releases: Vec<(martensite_engine_bridge::SurfaceId, u8)> = Vec::new();
         for (i, segment) in work.iter().enumerate() {
             match segment {
                 PendingSegment::Commands(_) => {
-                    let view = seg_views[i].as_ref().expect("segment view exists");
+                    let Some(view) = seg_views[i].as_ref() else {
+                        tracing::warn!("segment {i} has no view — skipped");
+                        continue;
+                    };
                     match &self.external_host {
                         Some(host) => {
                             match host.composite_view(
@@ -1232,7 +1235,7 @@ impl RenderOrchestrator {
                                 }
                             }
                         }
-                        None => unreachable!("host ensured above"),
+                        None => tracing::warn!("no external host — segment skipped"),
                     }
                 }
                 PendingSegment::External {
@@ -1241,18 +1244,19 @@ impl RenderOrchestrator {
                     clip,
                 } => {
                     let Some(host) = &self.external_host else {
-                        unreachable!("host ensured above");
+                        tracing::warn!("no external host — marker skipped");
+                        continue;
                     };
                     let sid = martensite_engine_bridge::SurfaceId(*surface_id);
-                    // Prefer the ring: take the front frame under the
-                    // registry guard and release after submit. Fall back
-                    // to the statically registered texture when the ring
-                    // is absent or has no front frame.
+                    // Prefer the ring: take the front frame and release
+                    // after submit. Fall back to the statically
+                    // registered texture when the ring is absent or has
+                    // no front frame.
                     let mut took = false;
-                    if let Some(reg) = bridge_guard.as_deref_mut() {
+                    if let Some(bridge) = &self.bridge {
                         match host.composite_front(
                             device,
-                            reg,
+                            bridge,
                             crate::external::CompositeTarget {
                                 encoder: &mut encoder,
                                 queue,
@@ -1285,7 +1289,7 @@ impl RenderOrchestrator {
                                 view: target,
                                 size: (width, height),
                             },
-                            *surface_id,
+                            sid,
                             *rect,
                             *clip,
                         ) {
@@ -1308,15 +1312,18 @@ impl RenderOrchestrator {
         // Release composited slots AFTER the submit: same-queue
         // ordering guarantees the producer's next write to the freed
         // texture lands after this frame's composite sample.
-        if let Some(reg) = bridge_guard.as_deref_mut() {
-            for (sid, slot) in releases {
-                if let Err(err) = reg.release(sid, slot) {
-                    tracing::warn!(
-                        error = %err,
-                        surface_id = sid.0,
-                        slot,
-                        "external slot release failed"
-                    );
+        if !releases.is_empty() {
+            if let Some(bridge) = &self.bridge {
+                let mut reg = bridge.lock();
+                for (sid, slot) in releases {
+                    if let Err(err) = reg.release(sid, slot) {
+                        tracing::warn!(
+                            error = %err,
+                            surface_id = sid.0,
+                            slot,
+                            "external slot release failed"
+                        );
+                    }
                 }
             }
         }

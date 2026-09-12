@@ -55,6 +55,33 @@ pub struct FrontFrame {
     pub size: Option<(u32, u32)>,
 }
 
+/// The payload extracted by
+/// [`SurfaceRing::take_front_frame`]/[`BridgeRegistry::take_front_frame`].
+///
+/// The slot is already in `Compositing` state; the caller owns the
+/// published [`Frame`] (if any) and must eventually call
+/// [`SurfaceRing::release`]/[`BridgeRegistry::release`] on `slot` after
+/// the GPU has consumed it.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_engine_bridge::SurfaceRing;
+///
+/// let mut ring = SurfaceRing::new();
+/// assert!(ring.take_front_frame().is_none());
+/// ```
+pub struct TakenFrontFrame {
+    /// The ring slot transitioned to `Compositing`.
+    pub slot: u8,
+    /// The published frame's unique token.
+    pub token: FrameToken,
+    /// The frame payload — `Some` for GPU-published frames
+    /// (`mark_ready_frame`/`mark_ready_full`), `None` for CPU-only
+    /// publications (`mark_ready_cpu`).
+    pub frame: Option<Box<dyn Frame>>,
+}
+
 /// Lifecycle state of one ring slot.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SlotState {
@@ -249,6 +276,38 @@ impl SurfaceRing {
         }
         self.slots[idx].state = SlotState::Compositing;
         Some((idx as u8, self.slots[idx].token))
+    }
+
+    /// Takes the front `Ready` slot for compositing, moving the
+    /// published frame payload out of the ring.
+    ///
+    /// Returns `(slot, token, frame)` where `frame` is `Some` for the
+    /// GPU path (`mark_ready_full`/`set_frame`) and `None` for
+    /// CPU-published frames. The slot transitions to `Compositing`;
+    /// call [`release`](Self::release) when the host has submitted the
+    /// composite. Because the payload is owned by the caller, the
+    /// registry lock need not be held while the GPU reads the texture.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::SurfaceRing;
+    ///
+    /// let mut ring = SurfaceRing::new();
+    /// assert!(ring.take_front_frame().is_none());
+    /// ```
+    pub fn take_front_frame(&mut self) -> Option<TakenFrontFrame> {
+        let idx = usize::from(self.front?);
+        if self.slots[idx].state != SlotState::Ready {
+            return None;
+        }
+        let frame = self.slots[idx].frame.take();
+        self.slots[idx].state = SlotState::Compositing;
+        Some(TakenFrontFrame {
+            slot: idx as u8,
+            token: self.slots[idx].token,
+            frame,
+        })
     }
 
     /// Releases a `Compositing` slot back to `Free` and queues its token
@@ -535,6 +594,17 @@ impl BridgeRegistry {
     ///
     /// [`BridgeError::UnknownSurface`] if `id` is not registered;
     /// [`BridgeError::RingExhausted`] if no slot is free.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// let (slot, _token) = registry.acquire(id).unwrap();
+    /// assert!(slot < 2);
+    /// ```
     pub fn acquire(&mut self, id: SurfaceId) -> Result<(u8, FrameToken), BridgeError> {
         self.rings
             .get_mut(&id)
@@ -549,6 +619,18 @@ impl BridgeRegistry {
     ///
     /// [`BridgeError::UnknownSurface`], [`BridgeError::InvalidSlot`], or
     /// [`BridgeError::InvalidTransition`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// let (slot, _) = registry.acquire(id).unwrap();
+    /// registry.mark_ready(id, slot).unwrap();
+    /// assert_eq!(registry.drain_ready(), vec![id]);
+    /// ```
     pub fn mark_ready(&mut self, id: SurfaceId, slot: u8) -> Result<(), BridgeError> {
         self.rings
             .get_mut(&id)
@@ -560,11 +642,56 @@ impl BridgeRegistry {
         Ok(())
     }
 
+    /// Takes the front slot of `id` for compositing, moving the
+    /// published frame payload out of the ring.
+    ///
+    /// Unlike [`take_front`](Self::take_front), which borrows the frame
+    /// through [`front_frame`](Self::front_frame), this variant hands
+    /// ownership of the `Box<dyn Frame>` to the caller. The registry
+    /// lock can then be released while the host records the composite —
+    /// the producer's `acquire`/`mark_ready` calls are not blocked for
+    /// the duration of the GPU pass. The slot remains `Compositing`
+    /// until [`release`](Self::release).
+    ///
+    /// # Errors
+    ///
+    /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// assert!(registry.take_front_frame(id).unwrap().is_none());
+    /// ```
+    pub fn take_front_frame(
+        &mut self,
+        id: SurfaceId,
+    ) -> Result<Option<TakenFrontFrame>, BridgeError> {
+        Ok(self
+            .rings
+            .get_mut(&id)
+            .ok_or(BridgeError::UnknownSurface(id))?
+            .take_front_frame())
+    }
+
     /// Takes the front slot of `id` for compositing.
     ///
     /// # Errors
     ///
     /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// assert!(registry.take_front(id).unwrap().is_none());
+    /// ```
     pub fn take_front(&mut self, id: SurfaceId) -> Result<Option<(u8, FrameToken)>, BridgeError> {
         Ok(self
             .rings
@@ -579,6 +706,19 @@ impl BridgeRegistry {
     ///
     /// [`BridgeError::UnknownSurface`], [`BridgeError::InvalidSlot`], or
     /// [`BridgeError::InvalidTransition`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// let (slot, _) = registry.acquire(id).unwrap();
+    /// registry.mark_ready(id, slot).unwrap();
+    /// let (front, _) = registry.take_front(id).unwrap().unwrap();
+    /// registry.release(id, front).unwrap();
+    /// ```
     pub fn release(&mut self, id: SurfaceId, slot: u8) -> Result<(), BridgeError> {
         self.rings
             .get_mut(&id)
@@ -591,6 +731,16 @@ impl BridgeRegistry {
     /// # Errors
     ///
     /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// assert!(registry.drain_released(id).unwrap().is_empty());
+    /// ```
     pub fn drain_released(&mut self, id: SurfaceId) -> Result<Vec<FrameToken>, BridgeError> {
         Ok(self
             .rings
@@ -825,6 +975,17 @@ impl BridgeRegistry {
     /// # Errors
     ///
     /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{BridgeRegistry, Viewport};
+    ///
+    /// let mut reg = BridgeRegistry::new();
+    /// let id = reg.register();
+    /// reg.set_viewport(id, Viewport::new(800, 600, 1.0)).unwrap();
+    /// assert!(reg.viewport(id).unwrap().is_some());
+    /// ```
     pub fn viewport(&self, id: SurfaceId) -> Result<Option<crate::Viewport>, BridgeError> {
         Ok(self
             .rings
@@ -934,6 +1095,16 @@ impl BridgeRegistry {
     /// # Errors
     ///
     /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// assert_eq!(registry.front(id).unwrap(), None);
+    /// ```
     pub fn front(&self, id: SurfaceId) -> Result<Option<u8>, BridgeError> {
         Ok(self
             .rings
@@ -947,6 +1118,16 @@ impl BridgeRegistry {
     /// # Errors
     ///
     /// [`BridgeError::UnknownSurface`] if `id` is not registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeRegistry;
+    ///
+    /// let mut registry = BridgeRegistry::new();
+    /// let id = registry.register();
+    /// assert_eq!(registry.front_size(id).unwrap(), None);
+    /// ```
     pub fn front_size(&self, id: SurfaceId) -> Result<Option<(u32, u32)>, BridgeError> {
         Ok(self
             .rings
@@ -1087,6 +1268,27 @@ impl BridgeHandle {
     /// Several `ExternalEngines` bindings may attach to the same
     /// registry through different handles — callers deduplicating
     /// registry-level queues (like `drain_ready`) use this to drain
+    /// A process-unique identifier for the underlying registry.
+    ///
+    /// Cloned handles share the same id; two handles built from
+    /// different registries never collide. Useful for deduplicating
+    /// handles into a `HashMap`/`HashSet` (e.g. draining each registry's
+    /// ready queue exactly once).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::BridgeHandle;
+    ///
+    /// let a = BridgeHandle::new();
+    /// assert_eq!(a.registry_id(), a.clone().registry_id());
+    /// assert_ne!(a.registry_id(), BridgeHandle::new().registry_id());
+    /// ```
+    #[must_use]
+    pub fn registry_id(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
+    }
+
     /// each registry once.
     ///
     /// # Examples

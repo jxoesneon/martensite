@@ -1255,8 +1255,8 @@ impl DockDragSession {
 ///
 /// A vector of these records fully describes a [`DockTree`] and can be
 /// round-tripped through [`DockTree::to_layout`] / [`DockTree::from_layout`].
-/// When the `serde` feature is enabled the record derives [`serde::Serialize`]
-/// and [`serde::Deserialize`].
+/// When the `serde` feature is enabled the record derives `serde::Serialize`
+/// and `serde::Deserialize`.
 ///
 /// # Examples
 ///

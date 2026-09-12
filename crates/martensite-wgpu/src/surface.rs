@@ -86,12 +86,38 @@ impl BackdropMode {
     }
 }
 
-/// The present-mode preference order used during negotiation.
+/// Present-mode pacing preference for surface negotiation.
 ///
-/// The wrapper tries each mode in turn and selects the first one advertised by
-/// the surface's [`wgpu::SurfaceCapabilities`]. This implements the milestone
-/// fallback chain `Mailbox → FifoRelaxed → Fifo`.
-const PRESENT_MODE_PREFERENCE: &[wgpu::PresentMode] = &[
+/// `Standard` (the default) selects vsync-paced [`wgpu::PresentMode::Fifo`]
+/// — predictable, latency-bounded presentation suitable for a retained-mode
+/// UI that only redraws on damage. `LowLatency` opts into the
+/// `Mailbox → FifoRelaxed → Fifo` chain for streaming content (video,
+/// embedded engines) where freshness matters more than frame pacing.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::surface::PresentModePreference;
+///
+/// assert_eq!(
+///     PresentModePreference::default(),
+///     PresentModePreference::Standard
+/// );
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum PresentModePreference {
+    /// Vsync-paced `Fifo` — the milestone default.
+    #[default]
+    Standard,
+    /// Low-latency streaming: `Mailbox → FifoRelaxed → Fifo`.
+    LowLatency,
+}
+
+/// The low-latency preference order used when `PresentModePreference::LowLatency`
+/// is selected. The wrapper tries each mode in turn and selects the first one
+/// advertised by the surface's [`wgpu::SurfaceCapabilities`].
+const LOW_LATENCY_PREFERENCE: &[wgpu::PresentMode] = &[
     wgpu::PresentMode::Mailbox,
     wgpu::PresentMode::FifoRelaxed,
     wgpu::PresentMode::Fifo,
@@ -122,6 +148,8 @@ pub struct SurfaceWrapper<'window> {
     /// The backdrop mode applied by the most recent `configure` call, reused
     /// by `resize` so the alpha mode is preserved across reconfigurations.
     backdrop_mode: BackdropMode,
+    /// The pacing preference used by `negotiate_present_mode`.
+    pacing: PresentModePreference,
 }
 
 impl<'window> SurfaceWrapper<'window> {
@@ -147,7 +175,46 @@ impl<'window> SurfaceWrapper<'window> {
             surface,
             config: None,
             backdrop_mode: BackdropMode::Opaque,
+            pacing: PresentModePreference::Standard,
         }
+    }
+
+    /// Sets the present-mode pacing preference used by the next
+    /// [`configure`](Self::configure) call.
+    ///
+    /// The default is [`PresentModePreference::Standard`] (vsync-paced
+    /// `Fifo`). Choose [`PresentModePreference::LowLatency`] for
+    /// streaming surfaces (embedded video, external engines) where the
+    /// `Mailbox` chain is preferred.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::surface::{PresentModePreference, SurfaceWrapper};
+    ///
+    /// # fn example(mut wrapper: SurfaceWrapper<'_>) {
+    /// wrapper.set_pacing(PresentModePreference::LowLatency);
+    /// assert_eq!(wrapper.pacing(), PresentModePreference::LowLatency);
+    /// # }
+    /// ```
+    pub fn set_pacing(&mut self, pacing: PresentModePreference) {
+        self.pacing = pacing;
+    }
+
+    /// Returns the current pacing preference.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::surface::{PresentModePreference, SurfaceWrapper};
+    ///
+    /// # fn example(wrapper: SurfaceWrapper<'_>) {
+    /// assert_eq!(wrapper.pacing(), PresentModePreference::Standard);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn pacing(&self) -> PresentModePreference {
+        self.pacing
     }
 
     /// Returns a reference to the inner surface.
@@ -206,11 +273,12 @@ impl<'window> SurfaceWrapper<'window> {
         self.backdrop_mode
     }
 
-    /// Negotiates the best present mode supported by `adapter` for this surface.
+    /// Negotiates the present mode for the current [`pacing`](Self::pacing)
+    /// preference.
     ///
-    /// The selection tries `Mailbox`, then `FifoRelaxed`, and always falls back
-    /// to [`wgpu::PresentMode::Fifo`], which is guaranteed to be supported on
-    /// every backend.
+    /// `Standard` always selects [`wgpu::PresentMode::Fifo`] (guaranteed
+    /// supported). `LowLatency` tries `Mailbox`, then `FifoRelaxed`, falling
+    /// back to `Fifo`.
     ///
     /// # Examples
     ///
@@ -219,26 +287,25 @@ impl<'window> SurfaceWrapper<'window> {
     ///
     /// # fn example(wrapper: &SurfaceWrapper<'_>, adapter: &wgpu::Adapter) {
     /// let mode = wrapper.negotiate_present_mode(adapter);
-    /// // `Fifo` is always supported, so the result is never an invalid mode.
-    /// assert!(matches!(
-    ///     mode,
-    ///     wgpu::PresentMode::Mailbox
-    ///         | wgpu::PresentMode::FifoRelaxed
-    ///         | wgpu::PresentMode::Fifo
-    /// ));
+    /// // The default pacing is Standard, so the result is `Fifo`.
+    /// assert_eq!(mode, wgpu::PresentMode::Fifo);
     /// # }
     /// ```
     #[must_use]
     pub fn negotiate_present_mode(&self, adapter: &wgpu::Adapter) -> wgpu::PresentMode {
-        let caps = self.surface.get_capabilities(adapter);
-        for preferred in PRESENT_MODE_PREFERENCE {
-            if caps.present_modes.contains(preferred) {
-                return *preferred;
+        match self.pacing {
+            // `Fifo` is guaranteed to be supported on every backend.
+            PresentModePreference::Standard => wgpu::PresentMode::Fifo,
+            PresentModePreference::LowLatency => {
+                let caps = self.surface.get_capabilities(adapter);
+                for preferred in LOW_LATENCY_PREFERENCE {
+                    if caps.present_modes.contains(preferred) {
+                        return *preferred;
+                    }
+                }
+                wgpu::PresentMode::Fifo
             }
         }
-        // `Fifo` is guaranteed to be supported everywhere; this is the safe
-        // last-resort fallback.
-        wgpu::PresentMode::Fifo
     }
 
     /// Configures the surface for presentation at `width` x `height`.
@@ -415,12 +482,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn present_mode_preference_starts_with_mailbox() {
-        // The negotiation order must match the milestone specification:
-        // Mailbox → FifoRelaxed → Fifo.
-        assert_eq!(PRESENT_MODE_PREFERENCE[0], wgpu::PresentMode::Mailbox);
-        assert_eq!(PRESENT_MODE_PREFERENCE[1], wgpu::PresentMode::FifoRelaxed);
-        assert_eq!(PRESENT_MODE_PREFERENCE[2], wgpu::PresentMode::Fifo);
+    fn low_latency_preference_starts_with_mailbox() {
+        // The opt-in streaming chain: Mailbox → FifoRelaxed → Fifo.
+        assert_eq!(LOW_LATENCY_PREFERENCE[0], wgpu::PresentMode::Mailbox);
+        assert_eq!(LOW_LATENCY_PREFERENCE[1], wgpu::PresentMode::FifoRelaxed);
+        assert_eq!(LOW_LATENCY_PREFERENCE[2], wgpu::PresentMode::Fifo);
+    }
+
+    #[test]
+    fn default_pacing_is_standard() {
+        // Milestone spec: Fifo is the default; Mailbox is opt-in.
+        assert_eq!(
+            PresentModePreference::default(),
+            PresentModePreference::Standard
+        );
     }
 
     #[test]

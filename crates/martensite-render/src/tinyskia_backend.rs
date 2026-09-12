@@ -928,12 +928,14 @@ impl TinySkiaBackend {
         }
         let pw_i = self.pixmap.width() as usize;
         let data = self.pixmap.data_mut();
+        let inv_w = 1.0 / rect[2];
+        let inv_h = 1.0 / rect[3];
         for dy in (y0 as u32)..(y1 as u32) {
             // Nearest-neighbor source row.
-            let v = (dy as f32 + 0.5 - rect[1]) / rect[3];
+            let v = (dy as f32 + 0.5 - rect[1]) * inv_h;
             let sy = (v * frame_height as f32).clamp(0.0, frame_height as f32 - 1.0) as usize;
             for dx in (x0 as u32)..(x1 as u32) {
-                let u = (dx as f32 + 0.5 - rect[0]) / rect[2];
+                let u = (dx as f32 + 0.5 - rect[0]) * inv_w;
                 let sx = (u * frame_width as f32).clamp(0.0, frame_width as f32 - 1.0) as usize;
                 let s = (sy * frame_width as usize + sx) * 4;
                 let (sr, sg, sb, sa) = (

@@ -32,6 +32,9 @@ pub struct FrameToken(pub u64);
 /// synchronization surface consumed by later milestones; they are
 /// transport metadata only — the bridge never executes the waits itself.
 ///
+/// `#[non_exhaustive]`: later milestones may add variants or fields as
+/// the cross-device HAL import paths land.
+///
 /// # Examples
 ///
 /// ```
@@ -41,6 +44,7 @@ pub struct FrameToken(pub u64);
 /// assert!(matches!(sync, FrameSync::None));
 /// ```
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum FrameSync {
     /// Same `wgpu::Device` and `wgpu::Queue`: serial `Queue::submit`
     /// ordering guarantees the producer's commands complete before the
@@ -102,6 +106,9 @@ pub enum SourceAlpha {
 /// transports them — conversion into a `wgpu::Texture` happens in the
 /// consumer's allowed-unsafe platform crate.
 ///
+/// `#[non_exhaustive]`: the cross-device import paths exercised in
+/// v0.15.0+ may add variants or fields (plane index, initial usage).
+///
 /// # Examples
 ///
 /// ```
@@ -111,6 +118,7 @@ pub enum SourceAlpha {
 /// assert!(matches!(frame, NativeFrame::IoSurface { surface_id: 42 }));
 /// ```
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum NativeFrame {
     /// A Linux `dma-buf` file descriptor with DRM format modifier.
     DmaBuf {
@@ -118,10 +126,12 @@ pub enum NativeFrame {
         fd: i32,
         /// DRM fourcc-style format modifier.
         modifier: u64,
-        /// Plane stride in bytes.
-        stride: u32,
-        /// Plane offset in bytes.
-        offset: u32,
+        /// Plane stride in bytes (`u64` to match the `wgpu_hal` dmabuf
+        /// import signature).
+        stride: u64,
+        /// Plane offset in bytes (`u64` to match the `wgpu_hal` dmabuf
+        /// import signature).
+        offset: u64,
     },
     /// A macOS `IOSurface` global identifier.
     IoSurface {
@@ -173,7 +183,7 @@ impl CpuFrame {
     /// assert_eq!(frame.width, 4);
     /// ```
     pub fn new(width: u32, height: u32, pixels: Vec<u8>) -> Self {
-        debug_assert_eq!(pixels.len(), (width * height * 4) as usize);
+        debug_assert_eq!(pixels.len(), width as usize * height as usize * 4);
         Self {
             width,
             height,
@@ -191,7 +201,7 @@ impl CpuFrame {
     /// assert_eq!(CpuFrame::new(3, 2, vec![0; 24]).len_bytes(), 24);
     /// ```
     pub fn len_bytes(&self) -> usize {
-        (self.width * self.height * 4) as usize
+        self.width as usize * self.height as usize * 4
     }
 }
 

@@ -87,11 +87,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TinySkiaBackend::composite_rgba_frame` (nearest-neighbor source-over
   blit), and still takes/releases the slot so the producer's ring keeps
   cycling.
+- **Publish-hardening (council audit)**:
+  - `SurfaceWrapper` now defaults to `PresentMode::Fifo` per the spec;
+    `PresentModePreference::LowLatency` opts into the
+    `Mailbox → FifoRelaxed → Fifo` chain for streaming surfaces.
+  - `WgpuHost` public API uses `SurfaceId` consistently (previously raw
+    `u64`); `register_texture` validates `TEXTURE_BINDING` + filterable
+    format and returns `UnsamplableTexture` instead of failing at draw
+    validation.
+  - `composite_front` takes `&BridgeHandle` and holds the registry lock
+    only for ring bookkeeping — the frame payload is moved out via
+    `take_front_frame` so producers are never blocked during the GPU
+    composite.
+  - `FrameSync`/`NativeFrame` marked `#[non_exhaustive]`; dma-buf
+    `stride`/`offset` widened to `u64` to match the `wgpu_hal` import
+    signatures.
+  - `ExternalEngines::bind` rejects duplicate `(registry, surface)`
+    bindings (`BindError::DuplicateBinding`); `drain_ready` dedupes
+    registries in O(n) via `BridgeHandle::registry_id`.
+  - `u32` overflow fixes in `CpuFrame` byte-length math; CPU blit inner
+    loop hoisted to multiply-by-inverse.
+  - `Engine` documents the trusted-producer panic contract (the
+    workspace `panic = "abort"` release profile means producer panics
+    abort the host).
 - **Fixed (pre-existing)**: the GPU `render_to_surface` path no longer
   dispatches Vello directly into the surface texture — typical
   surfaces are `*Srgb` and lack `STORAGE_BINDING`, so the direct
   dispatch failed validation at runtime. All surface frames now go
   through the offscreen segment + composite path.
+- **Fixed (pre-existing)**: broken `serde::*` intra-doc links in
+  `martensite-blessed` and `martensite_render`/`render_hud` links in
+  `martensite-devtools` that failed `cargo doc` without
+  `--all-features`.
 
 ## [0.13.0] - 2026-09-11
 
