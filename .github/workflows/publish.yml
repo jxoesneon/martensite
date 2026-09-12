@@ -104,6 +104,7 @@ jobs:
             martensite-font-fallback
             martensite-accesskit-winit
             martensite-access
+            martensite-shell
             martensite-window
             martensite-focus
             martensite-clipboard-platform
@@ -230,6 +231,7 @@ jobs:
           # martensite-media-platform must come before martensite-wgpu.
           # martensite-clipboard-platform must come before martensite-clipboard.
           # martensite-font-fallback must come before martensite.
+          # martensite-shell must come before martensite-window.
           CRATES=(
             martensite-reactive
             martensite-macros
@@ -246,6 +248,7 @@ jobs:
             martensite-font-fallback
             martensite-accesskit-winit
             martensite-access
+            martensite-shell
             martensite-window
             martensite-focus
             martensite-clipboard-platform

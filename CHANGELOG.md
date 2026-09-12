@@ -44,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `NSDistributedNotificationCenter` with `block2` callback.
   - `supports_liquid_glass()` checks OS version via
     `NSProcessInfo.operatingSystemVersion` (macOS 26+).
+  - `NSGlassEffectView` preferred over `NSVisualEffectView` when the
+    class is registered at runtime; an `EffectViewKind` tag ensures
+    only class-appropriate selectors are sent (`setStyle:` /
+    `setCornerRadius:` for glass, `setMaterial:` /
+    `setBlendingMode:` / `setState:` for `NSVisualEffectView`).
+  - `MacosBackdropController::reduce_transparency_enabled()` queries
+    `NSWorkspace.accessibilityDisplayOptions` so callers can fall
+    back to opaque content when Reduce Transparency is on.
 - **Wayland backend** (`platform_impl/wayland`):
   - `WaylandBackdropController` (no system blur on Wayland).
   - `FractionalScale` for `wp_fractional_scale_v1` (1.5x DPI).
@@ -69,8 +77,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `RenderBackend::render_with_clear` method with `ClearMode`.
   - `PaintList::push_blurred_rect` for CSD shadows and blur effects.
   - `PaintCommand::BlurredRect` variant.
-  - CPU fallback (tinyskia) box-blur implementation.
-  - Vello GPU backend blur fallback.
+  - CPU fallback (tinyskia) three-pass separable box-blur.
+  - Vello GPU backend uses a real analytical Gaussian-blur
+    rounded-rect shader (`Scene::draw_blurred_rounded_rect`) with
+    `σ = radius/3` for visual parity with the CPU path.
+- **Render orchestrator** (`martensite-wgpu`):
+  - `RenderOrchestrator::backdrop_mode` /
+    `set_backdrop_mode` accessors.
+  - `RenderOrchestrator::render` derives the frame clear color from
+    the active `BackdropMode` (transparent black for Transparent,
+    opaque black for Opaque).
+  - `RenderOrchestrator::configure_surface` applies the backdrop mode
+    to both the orchestrator and the wgpu surface configuration in
+    one call.
+  - `SurfaceWrapper::backdrop_mode` accessor; device-loss recovery
+    preserves the surface's existing backdrop mode.
 - **Window crate extensions** (`martensite-window`):
   - `CsdController` for per-window CSD configuration.
   - `WindowEventOutcome::FractionalScaleChanged` for Wayland DPI.

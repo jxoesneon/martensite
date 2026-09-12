@@ -6,9 +6,10 @@ It is a living document — items move off this list when they are resolved.
 Last updated: v0.13.0 Modern Shell & Platform implementation
 (post-v0.12.0 Blessed Widgets & Kinematics delivery).
 
-## v0.13.0 — Modern Shell & Platform (IMPLEMENTED, PENDING VERIFICATION)
+## v0.13.0 — Modern Shell & Platform (IMPLEMENTED, VERIFIED)
 
-All v0.13.0 deliverables are implemented and pending verification:
+All v0.13.0 deliverables are implemented and verified on CI
+(run 34659412786, all 10 jobs green):
 
 ### 1. New `martensite-shell` crate
 - `BackdropMaterial` enum, `BackdropController` trait,
@@ -32,7 +33,8 @@ All v0.13.0 deliverables are implemented and pending verification:
 ### 4. Render pipeline (`martensite-render`)
 - `ClearMode` enum, `RenderBackend::render_with_clear`,
   `PaintList::push_blurred_rect`, `PaintCommand::BlurredRect`,
-  CPU (tinyskia) and Vello GPU blur fallbacks.
+  CPU (tinyskia) three-pass box-blur, and Vello GPU Gaussian blur
+  via `Scene::draw_blurred_rounded_rect`.
 
 ### 5. Window crate extensions (`martensite-window`)
 - `CsdController`, `WindowEventOutcome::FractionalScaleChanged`,
@@ -46,16 +48,32 @@ All v0.13.0 deliverables are implemented and pending verification:
   cfg-gated to Linux, behind `wayland-backend` feature).
 
 ### Verification Status
-- `cargo check --workspace`: pending (critical gate — verifies the
-  winit feature change and zbus dependency don't break the build).
-- `cargo fmt --all -- --check`: pending.
+- `cargo check --workspace`: pass.
+- `cargo fmt --all -- --check`: pass.
 - Full CI gate suite (clippy, tests, doctests, docs, audit, deny):
-  pending.
+  pass — GitHub Actions run 34659412786, all 10 jobs green.
 
-### Remaining (CI-only verification)
-- No new release tag or crates.io publish until CI confirms all gates.
-- Platform-specific backends (Windows DWM, macOS NSVisualEffectView)
-  require platform CI runners to exercise the FFI paths.
+### Non-Windows compromises resolved (post-audit)
+- Vello `BlurredRect` is a real GPU Gaussian blur (was an
+  alpha-scaled solid placeholder).
+- `RenderOrchestrator::backdrop_mode` now drives the frame clear
+  color (`ClearMode::Transparent` / `Opaque`) and
+  `configure_surface` keeps the swapchain alpha mode in sync;
+  device-loss recovery preserves the surface's backdrop mode.
+- macOS `NSGlassEffectView` path no longer receives
+  `NSVisualEffectView` selectors; `EffectViewKind` tags the live
+  view class and `reduce_transparency_enabled()` exposes the
+  accessibility check.
+
+### Remaining (accepted Windows-specific compromises)
+- DXGI shared-handle texture import is a validated stub.
+- `WindowsSnapLayout` support is inferred from DWM/backdrop probing
+  rather than the `ISnapLayouts` COM interface (requires the
+  Windows App SDK).
+- `martensite-font-fallback` and `martensite-text-reference` are
+  excluded from the Windows workspace build (DirectWrite API
+  mismatch with `windows` 0.61; Pango/Cairo are Linux-only).
+- No new release tag or crates.io publish until the user requests it.
 
 ---
 
