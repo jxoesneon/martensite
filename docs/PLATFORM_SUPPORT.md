@@ -39,11 +39,27 @@ Tier 1 platforms are guaranteed to compile, link, and render with 100% feature p
 
 Tier 2 platforms compile cleanly via pure-Rust toolchains. They receive CI build checks but may not have fully verified hardware rendering pipelines in continuous integration.
 
-### WebAssembly (wasm32-unknown-unknown)
-* **GPU Backend:** WebGPU (Primary), WebGL2 (Fallback)
-* **Accessibility:** HTML DOM proxying via AccessKit
-* **IME Support:** Browser native `<input>` overlay
-* **Limitations:** Multi-threading requires `SharedArrayBuffer` (COOP/COEP headers). File system access is emulated or restricted.
+### WebAssembly (wasm32-unknown-unknown) — targeted in v0.17.0
+* **GPU Backend:** WebGPU (Primary — required for Vello compute), WebGL2 (downlevel, TinySkia raster fallback only)
+* **Accessibility:** **No upstream AccessKit web adapter exists.** v0.17.0 ships a minimal hidden-DOM/ARIA live-region bridge; full DOM mirroring is post-1.0 hardening.
+* **IME Support:** Hidden `<input>` overlay (canvas has no native IME).
+* **Fonts:** Bundled via `fontdb::Source::Binary` + `fetch`; no system fonts.
+* **Limitations:** Multi-threading requires `SharedArrayBuffer` (COOP/COEP headers). Clipboard is async + user-gesture gated. File system access is emulated or restricted.
+* **Browser floor:** Chrome/Edge 113+ (WebGPU), Firefox 141+ (Windows), Safari 26 (partial). Non-WebGPU browsers render via TinySkia.
+
+### iOS (aarch64) — targeted in v0.17.0
+* **GPU Backend:** Metal via `wgpu`; `wgpu::Surface` created in `can_create_surfaces`.
+* **Accessibility:** `accesskit_ios` `SubclassingAdapter` — **upstream Phase-1 maturity** (basic traits/properties; editable text incomplete).
+* **Input:** Unified winit 0.31 `Pointer*` events; `Window::safe_area()` implemented.
+* **Packaging:** `staticlib`/`cdylib` + Xcode project (`cargo-mobile2`).
+* **CI Status:** Not yet implemented.
+
+### Android (aarch64 / x86_64) — targeted in v0.17.0
+* **GPU Backend:** Vulkan (primary), GLES (downlevel fallback); surface destroy/recreate across `can_destroy_surfaces`/`resumed`.
+* **Accessibility:** `accesskit_android` `InjectingAdapter` (`embedded-dex`). **Requires `GameActivity`** — `NativeActivity` breaks IME and AccessKit.
+* **IME/Input:** `GameActivity` GameText path; `Window::safe_area()` returns zeros on Android — `WindowInsets` platform code until winit lands it.
+* **Packaging:** `cdylib` + `cargo-apk2`/`xbuild`.
+* **CI Status:** Not yet implemented.
 
 ### Linux (aarch64) & FreeBSD (x86_64)
 * **GPU Backend:** Vulkan / Software

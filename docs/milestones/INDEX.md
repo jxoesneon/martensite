@@ -20,8 +20,11 @@ graph TD
     M10 --> M11["v0.11.0: Typography & A11y<br/>(BiDi UAX #9, Vertical Text, Font Cascades, WCAG 2.2)"]
     M11 --> M12["v0.12.0: Blessed Widgets & Kinematics<br/>(1M-Row DataGrid, BSP Docking, 0.55 Rubber-Band)"]
     M12 --> M13["v0.13.0: Modern Shell & Platform<br/>(Win11 Mica, macOS Liquid Glass, Wayland CSD)"]
-    M13 --> M14["v0.14.0: Engine Embedding & Media<br/>(Bevy/Godot Bridge, Zero-Copy Surfaces, BT.2408 HDR)"]
-    M14 --> M15["v1.0.0: Production Stability & Distribution<br/>(API Freeze, WiX/DMG/Flatpak, Ed25519 Updates, Crates.io)"]
+    M13 --> M14["v0.14.0: External Surface Foundation<br/>(External-Texture Widget, Engine Bridge, Zero-Copy Composite)"]
+    M14 --> M15["v0.15.0: Engine Showcase<br/>(Bevy Host-Mode Viewport, Godot GDExtension Readback)"]
+    M15 --> M16["v0.16.0: Hardware Media Pipeline<br/>(Platform Decoders, Multi-Plane Import, 4K120 Gate)"]
+    M16 --> M17["v0.17.0: Platform Expansion<br/>(Widget Breadth, Web/WASM, iOS/Android, Time-Travel Debug)"]
+    M17 --> M18["v1.0.0: Production Stability & Distribution<br/>(API Freeze, WiX/DMG/Flatpak, Ed25519 Updates, Crates.io)"]
 ```
 
 ---
@@ -43,8 +46,11 @@ graph TD
 | **v0.11.0** | [v0.11.0-typography-a11y.md](v0.11.0-typography-a11y.md) | `martensite-text`, `martensite-access`, `martensite-layout` | Swash/HarfBuzz BiDi (UAX #9), vertical-rl (UAX #50), system font cascades, WCAG 2.2 AA/AAA, Section 508 VPAT, caret tracking | 100% BiDi/vertical layout parity; 0 missing glyphs; WCAG 2.2 AAA pass; caret sync <16.6ms |
 | **v0.12.0** | [v0.12.0-blessed-kinematics.md](v0.12.0-blessed-kinematics.md) | `martensite-blessed`, `martensite-motion`, `martensite-window` | 1,000,000-Row virtualized DataGrid, BSP docking tree with multi-swapchains, 0.55 rubber-banding, 6-DoF Kalman stylus | 1M-row scroll steady 120fps; zero allocation during docking split; Kalman latency <2.0ms |
 | **v0.13.0** | [v0.13.0-modern-shell.md](v0.13.0-modern-shell.md) | `martensite-window`, `martensite-shell`, `martensite-theme` | Windows 11 Mica / Mica Alt / Acrylic & Snap Layouts, macOS Liquid Glass vibrancy, Wayland wp_fractional_scale_v1 & StatusNotifierItem | DWM backdrop switch <8ms; zero blur under fractional Wayland DPI; native CSD hit-testing |
-| **v0.14.0** | `v0.14.0-embedding-media.md` | `martensite-engine-bridge`, `martensite-media`, `martensite-wgpu` | Bevy ECS plugin, Godot 4 GDExtension RenderingDevice, DXGI / IOSurface / dma-buf zero-copy surfaces, ITU-R BT.2408 SDR white scaling | In-pass Bevy/Godot UI compositing at zero GPU copy; 4K 120fps video playback with <0.1% frame drops |
-| **v1.0.0** | [v1.0.0-production-release.md](v1.0.0-production-release.md) | Complete Workspace (22+ crates) | Public API freeze, 100% docs.rs coverage, security audit sign-off | Zero compiler warnings; cargo audit clean; Crates.io release |
+| **v0.14.0** | [v0.14.0-external-surfaces.md](v0.14.0-external-surfaces.md) | `martensite-engine-bridge`, `martensite-wgpu`, `martensite-render` | Generic external-texture widget, `Engine`/`Frame`/`FrameSync` bridge protocol, same-device zero-copy composite pipeline | Same-device composite with zero GPU copy; damage-driven redraw; documented CPU-fallback path |
+| **v0.15.0** | [v0.15.0-engine-showcase.md](v0.15.0-engine-showcase.md) | `martensite-bevy`, `martensite-godot`, `martensite-engine-bridge` | Bevy host-mode viewport (`RenderCreation::Manual` + `RenderTarget::TextureView`), Godot 4 GDExtension readback path (zero-copy requires upstream Godot patches — documented) | Bevy viewport at 120fps zero-copy; Godot viewport via async readback with published throughput |
+| **v0.16.0** | [v0.16.0-media-pipeline.md](v0.16.0-media-pipeline.md) | `martensite-media`, `martensite-media-platform` | Platform hardware decoders (VideoToolbox / Media Foundation / VAAPI), multi-plane NV12/P010 import fix, `HdrMetadata` flow, `FrameQueue` drop accounting | 4K 120fps playback with <0.1% frame drops and <1% CPU dispatch on GPU reference runner |
+| **v0.17.0** | [v0.17.0-platform-expansion.md](v0.17.0-platform-expansion.md) | `martensite` widgets, `martensite-wgpu`, `martensite-window`, `martensite-access`, `martensite-devtools` | Slider/radio/dropdown/scrollview/tabs/tooltip with ARIA APG contracts, overlay layer, wasm32 + iOS + Android targets, hybrid command-ledger time-travel debugger | Six widgets pass APG + AccessKit conformance; wasm render via WebGPU; iOS/Android example apps; deterministic journal+snapshot replay |
+| **v1.0.0** | [v1.0.0-production-release.md](v1.0.0-production-release.md) | Complete Workspace (33+ crates) | Public API freeze, 100% docs.rs coverage, security audit sign-off | Zero compiler warnings; cargo audit clean; Crates.io release |
 
 ---
 

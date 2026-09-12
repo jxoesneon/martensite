@@ -560,6 +560,59 @@ pub enum PaintCommand {
         /// The fill color (R, G, B, A), each channel in `0.0..=1.0`.
         color: [f32; 4],
     },
+    /// Composite an externally-produced GPU surface into the scene.
+    ///
+    /// `surface_id` refers to a surface registered with the
+    /// `martensite-engine-bridge` registry / `martensite-wgpu` `WgpuHost`.
+    /// The Vello scene builder emits nothing for this command — the
+    /// orchestrator composites the external texture into the target at
+    /// this exact position in the paint order (see `PaintList::segments`).
+    /// The TinySkia backend draws a documented checkerboard placeholder.
+    External {
+        /// The external surface identifier (`SurfaceId` raw value).
+        surface_id: u64,
+        /// The destination rectangle in physical pixels (`x`, `y`, `w`, `h`).
+        rect: [f32; 4],
+        /// The clip rectangle in physical pixels (`x`, `y`, `w`, `h`).
+        clip: [f32; 4],
+    },
+}
+
+/// One element of a [`PaintList`] split at [`PaintCommand::External`]
+/// boundaries.
+///
+/// The orchestrator renders each [`PaintSegment::Commands`] span with the
+/// normal backend and composites each [`PaintSegment::External`] via the
+/// `WgpuHost` pipeline, preserving exact paint ordering.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_render::{PaintList, PaintSegment};
+/// use kurbo::Rect;
+///
+/// let mut list = PaintList::new();
+/// list.push_fill_rect(Rect::new(0.0, 0.0, 10.0, 10.0), [255, 0, 0, 255]);
+/// list.push_external(7, [0.0, 0.0, 100.0, 50.0], [0.0, 0.0, 100.0, 50.0]);
+/// list.push_fill_rect(Rect::new(0.0, 0.0, 5.0, 5.0), [0, 255, 0, 255]);
+///
+/// let segments = list.segments();
+/// assert_eq!(segments.len(), 3);
+/// assert!(matches!(segments[1], PaintSegment::External { surface_id: 7, .. }));
+/// ```
+#[derive(Debug)]
+pub enum PaintSegment<'a> {
+    /// A contiguous span of ordinary paint commands.
+    Commands(&'a [PaintCommand]),
+    /// An external-surface composite point.
+    External {
+        /// The external surface identifier.
+        surface_id: u64,
+        /// Destination rectangle in physical pixels.
+        rect: [f32; 4],
+        /// Clip rectangle in physical pixels.
+        clip: [f32; 4],
+    },
 }
 
 /// A helper for incrementally constructing a [`kurbo::BezPath`].
@@ -1033,6 +1086,102 @@ impl PaintList {
         });
     }
 
+    /// Pushes a [`PaintCommand::External`] — a marker that an external GPU
+    /// surface must be composited at this point in the paint order.
+    ///
+    /// `rect` is the widget's destination rectangle and `clip` the active
+    /// clip region, both in physical pixels.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintCommand, PaintList};
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_external(42, [10.0, 10.0, 640.0, 360.0], [10.0, 10.0, 640.0, 360.0]);
+    /// assert!(matches!(
+    ///     list.commands[0],
+    ///     PaintCommand::External { surface_id: 42, .. }
+    /// ));
+    /// ```
+    pub fn push_external(&mut self, surface_id: u64, rect: [f32; 4], clip: [f32; 4]) {
+        self.commands.push(PaintCommand::External {
+            surface_id,
+            rect,
+            clip,
+        });
+    }
+
+    /// Splits the command list at [`PaintCommand::External`] boundaries.
+    ///
+    /// The result alternates ordinary command spans and external markers
+    /// in paint order. Rendering each `Commands` span with the normal
+    /// backend and compositing each `External` via the `WgpuHost`
+    /// pipeline reproduces the exact z-order — including UI elements
+    /// drawn both below and above the external content.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::{PaintList, PaintSegment};
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_fill_rect(Rect::ZERO, [0, 0, 0, 255]);
+    /// list.push_external(1, [0.0, 0.0, 8.0, 8.0], [0.0, 0.0, 8.0, 8.0]);
+    /// list.push_fill_rect(Rect::ZERO, [9, 9, 9, 255]);
+    /// list.push_external(2, [1.0, 1.0, 8.0, 8.0], [1.0, 1.0, 8.0, 8.0]);
+    ///
+    /// let segments = list.segments();
+    /// // Commands → External → Commands → External (trailing empty span omitted).
+    /// assert_eq!(segments.len(), 4);
+    /// ```
+    pub fn segments(&self) -> Vec<PaintSegment<'_>> {
+        let mut out = Vec::new();
+        let mut start = 0usize;
+        for (i, cmd) in self.commands.iter().enumerate() {
+            if let PaintCommand::External {
+                surface_id,
+                rect,
+                clip,
+            } = *cmd
+            {
+                if i > start {
+                    out.push(PaintSegment::Commands(&self.commands[start..i]));
+                }
+                out.push(PaintSegment::External {
+                    surface_id,
+                    rect,
+                    clip,
+                });
+                start = i + 1;
+            }
+        }
+        if start < self.commands.len() {
+            out.push(PaintSegment::Commands(&self.commands[start..]));
+        }
+        out
+    }
+
+    /// Returns `true` when the list contains at least one
+    /// [`PaintCommand::External`] marker.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::PaintList;
+    ///
+    /// let mut list = PaintList::new();
+    /// assert!(!list.has_external());
+    /// list.push_external(1, [0.0, 0.0, 4.0, 4.0], [0.0, 0.0, 4.0, 4.0]);
+    /// assert!(list.has_external());
+    /// ```
+    pub fn has_external(&self) -> bool {
+        self.commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::External { .. }))
+    }
+
     /// Returns the number of commands currently in the list.
     ///
     /// # Examples
@@ -1255,5 +1404,59 @@ mod tests {
         assert!(matches!(list.commands[0], PaintCommand::FillRect(..)));
         assert!(matches!(list.commands[1], PaintCommand::StrokeRect(..)));
         assert!(matches!(list.commands[2], PaintCommand::DrawText(..)));
+    }
+
+    #[test]
+    fn segments_split_at_external_markers() {
+        let mut list = PaintList::new();
+        list.push_fill_rect(Rect::ZERO, [255, 0, 0, 255]);
+        list.push_external(7, [0.0, 0.0, 100.0, 50.0], [0.0, 0.0, 100.0, 50.0]);
+        list.push_fill_rect(Rect::ZERO, [0, 255, 0, 255]);
+        list.push_external(9, [0.0, 0.0, 10.0, 10.0], [0.0, 0.0, 10.0, 10.0]);
+        list.push_fill_rect(Rect::ZERO, [0, 0, 255, 255]);
+
+        let segments = list.segments();
+        assert_eq!(segments.len(), 5);
+        assert!(matches!(segments[0], PaintSegment::Commands(c) if c.len() == 1));
+        assert!(matches!(
+            segments[1],
+            PaintSegment::External { surface_id: 7, .. }
+        ));
+        assert!(matches!(segments[2], PaintSegment::Commands(c) if c.len() == 1));
+        assert!(matches!(
+            segments[3],
+            PaintSegment::External { surface_id: 9, .. }
+        ));
+        assert!(matches!(segments[4], PaintSegment::Commands(c) if c.len() == 1));
+    }
+
+    #[test]
+    fn segments_omit_empty_spans() {
+        // External first and External last produce no empty command spans.
+        let mut list = PaintList::new();
+        list.push_external(1, [0.0; 4], [0.0; 4]);
+        list.push_fill_rect(Rect::ZERO, [0, 0, 0, 255]);
+        list.push_external(2, [0.0; 4], [0.0; 4]);
+        let segments = list.segments();
+        assert_eq!(segments.len(), 3);
+        assert!(matches!(
+            segments[0],
+            PaintSegment::External { surface_id: 1, .. }
+        ));
+        assert!(matches!(segments[1], PaintSegment::Commands(_)));
+        assert!(matches!(
+            segments[2],
+            PaintSegment::External { surface_id: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn segments_no_externals_single_span() {
+        let mut list = PaintList::new();
+        list.push_fill_rect(Rect::ZERO, [1, 2, 3, 4]);
+        let segments = list.segments();
+        assert_eq!(segments.len(), 1);
+        assert!(matches!(segments[0], PaintSegment::Commands(c) if c.len() == 1));
+        assert!(!list.has_external());
     }
 }

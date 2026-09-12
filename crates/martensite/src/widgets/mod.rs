@@ -119,6 +119,17 @@ pub mod text;
 /// ```
 pub mod text_input;
 
+/// External GPU surface widget (`PaintCallback` primitive).
+///
+/// ```
+/// use martensite::widgets::external::ExternalEngine;
+/// use martensite_engine_bridge::BridgeHandle;
+///
+/// let handle = BridgeHandle::new();
+/// let surface = handle.lock().register();
+/// let widget = ExternalEngine::new(handle, surface);
+/// ```
+pub mod external;
 /// Hardware video presentation widget.
 ///
 /// # Examples
@@ -133,6 +144,7 @@ pub mod media;
 pub use button::Button;
 pub use checkbox::CheckBox;
 pub use container::Container;
+pub use external::{ExternalEngine, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use media::{MediaView, VideoFit};
 pub use stack::Stack;

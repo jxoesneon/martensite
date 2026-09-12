@@ -25,6 +25,7 @@
 /// GPU device context: adapter enumeration, feature selection, device/queue
 /// lifecycle.
 pub mod device;
+pub mod external;
 /// External video surface memory import, texture format negotiation, and compute EOTF shaders.
 pub mod interop;
 /// Render pipeline orchestrator bridging GPU and CPU backends.
@@ -37,6 +38,7 @@ pub mod surface;
 pub mod theme_transition;
 
 pub use device::{GpuContext, GpuContextError};
+pub use external::{ExternalError, WgpuHost};
 pub use interop::{
     create_video_texture_view, FormatNegotiator, VideoPipelineUniforms, VideoProcessor,
     VideoProcessorError, MEDIA_YUV_EOTF_WGSL,

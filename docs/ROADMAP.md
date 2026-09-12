@@ -150,6 +150,75 @@
 **Key Risks:** Wasmtime trampoline latency exceeding frame budget; unexpected edge-case crashes exposed by fuzzing delaying v1.0.0.
 **Mitigations:** Inline trampoline optimization; begin fuzzing campaign infrastructure early in Phase 7.
 
+## v0.11.0 — Typography & Accessibility Expansion
+*Detailed Specification:* [docs/milestones/v0.11.0-typography-a11y.md](milestones/v0.11.0-typography-a11y.md)
+**Status:** SHIPPED.
+**Deliverables:**
+- `martensite-text`: Swash/HarfBuzz BiDi (UAX #9), vertical-rl (UAX #50), system font cascades via `martensite-font-fallback` (DirectWrite `MapCharacters`, CoreText `CTFontCreateForStringWithLanguage`, Fontconfig `FcFontSort`).
+- `martensite-access`: WCAG 2.2 AA/AAA, Section 508 VPAT, caret tracking.
+**Exit Criteria:** 100% BiDi/vertical layout parity; 0 missing glyphs; WCAG 2.2 AAA pass; caret sync <16.6ms.
+
+## v0.12.0 — Blessed Widgets & Kinematics
+*Detailed Specification:* [docs/milestones/v0.12.0-blessed-kinematics.md](milestones/v0.12.0-blessed-kinematics.md)
+**Status:** SHIPPED.
+**Deliverables:**
+- `martensite-blessed`: 1,000,000-row virtualized DataGrid (sort/filter/select), BSP docking tree with multi-swapchain panels, code editor, charts, audio waveform.
+- `martensite-motion`: 0.55 rubber-band overscroll; `martensite-window`: 6-DoF Kalman stylus prediction.
+**Exit Criteria:** 1M-row scroll at steady 120fps; zero-alloc docking split/merge; Kalman latency <2.0ms.
+
+## v0.13.0 — Modern Shell & Platform
+*Detailed Specification:* [docs/milestones/v0.13.0-modern-shell.md](milestones/v0.13.0-modern-shell.md)
+**Status:** SHIPPED (v0.13.0 released on crates.io).
+**Deliverables:**
+- `martensite-shell`: Windows 11 Mica/MicaAlt/Acrylic + Snap Layouts, macOS `NSVisualEffectView`/`NSGlassEffectView` Liquid Glass + Reduce Transparency detection, Wayland `wp_fractional_scale_v1` + CSD + StatusNotifierItem tray.
+- `martensite-render`: real GPU Gaussian `BlurredRect` (Vello `draw_blurred_rounded_rect`) + CPU three-pass box blur.
+**Exit Criteria:** DWM backdrop switch <8ms; zero CSD blur under fractional DPI; native hit-testing across GNOME/KDE/wlroots.
+
+## v0.14.0 — External Surface Foundation
+*Detailed Specification:* [docs/milestones/v0.14.0-external-surfaces.md](milestones/v0.14.0-external-surfaces.md)
+**Entry Criteria:** v0.13.0 complete.
+**Deliverables:**
+- `martensite-engine-bridge` (NEW): `Engine`/`Frame`/`FrameSync`/`Viewport` producer-consumer protocol, `BridgeHandle` damage signaling, two-slot frame ring.
+- `martensite` `ExternalEngine` widget: Taffy replaced-element leaf emitting `PaintCommand::External`.
+- `martensite-wgpu` `WgpuHost`: direct-`TextureView` composite pipeline (fullscreen triangle, no atlas copy).
+**Exit Criteria:** Same-device composite at zero GPU copy; damage-driven redraw; documented TinySkia fallback.
+**Key Risks:** wgpu version pinning vs ecosystem; frame-ready → redraw latency.
+**Mitigations:** Same-queue `submit` ordering; `on_submitted_work_done` for async producers.
+**Note:** Re-scoped from the original "Engine Embedding & Media" entry after v0.13.0 competitive analysis — zero-copy surface import and BT.2408 scaling already shipped in v0.8.0; engine adapters moved to v0.15.0. Direction A (host-mode embed) recorded in ADR-0033.
+
+## v0.15.0 — Engine Showcase
+*Detailed Specification:* [docs/milestones/v0.15.0-engine-showcase.md](milestones/v0.15.0-engine-showcase.md)
+**Entry Criteria:** v0.14.0 complete.
+**Deliverables:**
+- `martensite-bevy`: headless Bevy app (`WinitPlugin` disabled), `RenderCreation::Manual` device injection, `RenderTarget::TextureView` viewport, input forwarding via `bevy_picking` `PointerInput`.
+- `martensite-godot`: GDExtension (`godot` crate 0.5.x) — `texture_get_data_async` readback path (shipped); feature-gated shared-texture blit path (experimental, one GPU copy).
+**Exit Criteria:** Bevy viewport at 120fps with zero GPU copy; Godot viewport via readback with published throughput/latency.
+**Key Risks:** Bevy wgpu-30 coupling (needs git pin or 0.20); Godot cannot do true zero-copy without engine patches.
+**Mitigations:** Adapter crates are optional workspace members; Godot limitation documented, upstream contribution path noted.
+
+## v0.16.0 — Hardware Media Pipeline
+*Detailed Specification:* [docs/milestones/v0.16.0-media-pipeline.md](milestones/v0.16.0-media-pipeline.md)
+**Entry Criteria:** v0.14.0 complete.
+**Deliverables:**
+- `martensite-media` `VideoDecoder` trait + `FrameQueue` + `HdrMetadata`.
+- `martensite-media-platform` decoder backends: VideoToolbox→IOSurface (macOS), MF+D3D11→DXGI shared handle (Windows), `cros-libva`→dma-buf (Linux), `ffmpeg-next` software fallback.
+- Multi-plane NV12/P010 import fix (Y+UV as two textures).
+**Exit Criteria:** 4K 120fps <0.1% frame drops, <1% CPU dispatch on dedicated GPU runner; noop-wgpu + CPU paths verified in CI.
+**Key Risks:** 4K120 gate requires self-hosted GPU hardware; pure-Rust software decode cannot reach 4K120.
+**Mitigations:** `#[ignore]`-gated hardware tests; CI covers mock/noop/software paths.
+
+## v0.17.0 — Platform Expansion
+*Detailed Specification:* [docs/milestones/v0.17.0-platform-expansion.md](milestones/v0.17.0-platform-expansion.md)
+**Entry Criteria:** v0.14.0–v0.16.0 complete.
+**Deliverables:**
+- Widget breadth: slider, radio group, dropdown/listbox, scrollview (chaining + anchoring), tabs, tooltip — full ARIA APG + AccessKit contracts; new overlay/popup layer.
+- Web: `wasm32-unknown-unknown` via wgpu WebGPU + TinySkia fallback; bundled fonts; hidden-input IME; minimal hidden-DOM a11y bridge (no upstream AccessKit web adapter exists).
+- Mobile: iOS (UIKit + Metal + `accesskit_ios`) and Android (`GameActivity` + Vulkan/GLES + `accesskit_android`).
+- `martensite-devtools::timemachine`: hybrid command-ledger (`martensite-history`) + periodic arena/signal snapshots + deterministic replay.
+**Exit Criteria:** APG conformance on all six widgets; wasm renders via WebGPU; iOS/Android example apps; deterministic replay verified under `VirtualClock`.
+**Key Risks:** Web accessibility has no upstream adapter; `accesskit_winit` fork must track winit 0.31; Android safe-area not in winit.
+**Mitigations:** Scope web a11y to minimal viable bridge; keep vendored fork maintained; Android `WindowInsets` platform code.
+
 ## v1.0.0 — Production Stability
 *Detailed Specification:* [docs/milestones/v1.0.0-production-release.md](milestones/v1.0.0-production-release.md)
 **Entry Criteria:** v0.10.0 complete. Zero known critical bugs.

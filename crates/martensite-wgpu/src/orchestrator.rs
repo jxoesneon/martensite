@@ -157,6 +157,62 @@ pub struct RenderOrchestrator {
     /// orchestrator expose the active mode to the application so it
     /// can skip the background fill rect when `Transparent`.
     backdrop_mode: crate::surface::BackdropMode,
+    /// The external-surface composite host (`v0.14.0`). When `Some`,
+    /// `PaintCommand::External` markers in a paint list are composited
+    /// via [`WgpuHost`] between Vello scene segments, preserving exact
+    /// paint ordering.
+    external_host: Option<crate::external::WgpuHost>,
+    /// Ordered paint segments captured by the last GPU-mode `render`
+    /// call. Empty when the last list contained no `External` markers —
+    /// the whole-list Vello dispatch is used unchanged.
+    pending: Vec<PendingSegment>,
+    /// The clear mode the last GPU-mode `render` call configured —
+    /// applied by `dispatch_pending`'s phase-2 frame-clear pass.
+    #[cfg_attr(not(feature = "vello"), allow(dead_code))]
+    gpu_clear: martensite_render::ClearMode,
+    /// Offscreen `Rgba8Unorm` textures one per Vello command segment.
+    /// Each entry is the texture plus its storage view (the Vello
+    /// target); the sRGB-or-not sample view is created per frame by
+    /// `dispatch_pending` to match the frame target.
+    #[cfg(feature = "vello")]
+    seg_pool: Vec<Option<(wgpu::Texture, wgpu::TextureView)>>,
+}
+
+/// One element of a segmented frame — mirrors
+/// [`martensite_render::PaintSegment`] but owns its command span so it
+/// can live past `render` until `render_to_surface`.
+#[cfg_attr(not(feature = "vello"), allow(dead_code))]
+enum PendingSegment {
+    /// Ordinary paint commands for the Vello scene builder.
+    Commands(martensite_render::PaintList),
+    /// An external-surface composite point.
+    External {
+        /// The registered external surface identifier.
+        surface_id: u64,
+        /// Destination rectangle in physical pixels.
+        rect: [f32; 4],
+        /// Clip rectangle in physical pixels.
+        clip: [f32; 4],
+    },
+}
+
+/// The frame target [`RenderOrchestrator::dispatch_pending`] draws
+/// into — bundles the view, format, size, and Vello-direct flag.
+#[cfg(feature = "vello")]
+struct DispatchTarget<'a> {
+    /// The target texture view (surface texture or offscreen buffer).
+    view: &'a wgpu::TextureView,
+    /// The target's texture format — the composite pipelines are
+    /// built for it.
+    format: wgpu::TextureFormat,
+    /// Target width in physical pixels.
+    width: u32,
+    /// Target height in physical pixels.
+    height: u32,
+    /// Whether Vello can write the target directly (Rgba8Unorm +
+    /// STORAGE_BINDING), skipping the offscreen-segment path when no
+    /// external markers are present.
+    vello_direct: bool,
 }
 
 impl RenderOrchestrator {
@@ -197,6 +253,11 @@ impl RenderOrchestrator {
             mode: initial_mode,
             config,
             backdrop_mode: crate::surface::BackdropMode::Opaque,
+            external_host: None,
+            pending: Vec::new(),
+            gpu_clear: martensite_render::ClearMode::Opaque([0.0, 0.0, 0.0, 1.0]),
+            #[cfg(feature = "vello")]
+            seg_pool: Vec::new(),
         })
     }
 
@@ -261,10 +322,44 @@ impl RenderOrchestrator {
         };
         if use_cpu {
             self.mode = RenderMode::Cpu;
+            self.pending.clear();
             self.tinyskia.render_with_clear(paint_list, clear_mode);
         } else {
             self.mode = RenderMode::Gpu;
-            self.vello.render_with_clear(paint_list, clear_mode);
+            // The frame clear is consumed by `dispatch_pending`'s
+            // phase-2 clear pass — update it for every GPU frame, not
+            // just segmented ones, or it goes stale.
+            self.gpu_clear = clear_mode;
+            if paint_list.has_external() {
+                // Segmented path: capture each span and external marker so
+                // `render_to_surface` can interleave Vello dispatches with
+                // `WgpuHost` composites in exact paint order. The
+                // whole-list scene build is skipped — each segment is
+                // translated individually at dispatch time.
+                self.pending = paint_list
+                    .segments()
+                    .into_iter()
+                    .map(|seg| match seg {
+                        martensite_render::PaintSegment::Commands(cmds) => {
+                            PendingSegment::Commands(martensite_render::PaintList {
+                                commands: cmds.to_vec(),
+                            })
+                        }
+                        martensite_render::PaintSegment::External {
+                            surface_id,
+                            rect,
+                            clip,
+                        } => PendingSegment::External {
+                            surface_id,
+                            rect,
+                            clip,
+                        },
+                    })
+                    .collect();
+            } else {
+                self.pending.clear();
+                self.vello.render_with_clear(paint_list, clear_mode);
+            }
         }
     }
 
@@ -476,8 +571,20 @@ impl RenderOrchestrator {
                     let view = st
                         .texture
                         .create_view(&wgpu::TextureViewDescriptor::default());
-                    self.vello
-                        .render_to_texture(device, queue, &view, width, height);
+                    // Surface textures are never Vello-compatible
+                    // (RENDER_ATTACHMENT | COPY_DST only, typically
+                    // sRGB): the offscreen-segment path always applies.
+                    self.dispatch_pending(
+                        device,
+                        queue,
+                        DispatchTarget {
+                            view: &view,
+                            format,
+                            width,
+                            height,
+                            vello_direct: false,
+                        },
+                    );
                 }
                 #[cfg(not(feature = "vello"))]
                 {
@@ -616,14 +723,30 @@ impl RenderOrchestrator {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            // RENDER_ATTACHMENT is needed by the external-surface
+            // composite pass when the paint list contains `External`
+            // markers; STORAGE_BINDING | COPY_SRC cover Vello + readback.
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // 2. Dispatch the Vello scene into the offscreen texture.
-        self.vello
-            .render_to_texture(device, queue, &view, width, height);
+        // 2. Dispatch the scene (segmented when external markers exist).
+        // The offscreen target is Rgba8Unorm + STORAGE_BINDING — Vello
+        // can write it directly when no external markers are present.
+        self.dispatch_pending(
+            device,
+            queue,
+            DispatchTarget {
+                view: &view,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                width,
+                height,
+                vello_direct: true,
+            },
+        );
 
         // 3. Staging buffer: MAP_READ | COPY_DST. `bytes_per_row` must be a
         //    multiple of wgpu's COPY_BYTES_PER_ROW_ALIGNMENT (256), so the
@@ -752,6 +875,308 @@ impl RenderOrchestrator {
     #[must_use]
     pub fn config(&self) -> &OrchestratorConfig {
         &self.config
+    }
+
+    /// Installs (or removes) the [`WgpuHost`](crate::external::WgpuHost)
+    /// used to composite `PaintCommand::External` markers.
+    ///
+    /// The host's pipelines are created for a specific target format;
+    /// construct it with the surface's configured format before calling
+    /// this method.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// assert!(orchestrator.external_host().is_none());
+    /// # }
+    /// ```
+    pub fn set_external_host(&mut self, host: Option<crate::external::WgpuHost>) {
+        self.external_host = host;
+    }
+
+    /// Returns the installed external host, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// assert!(orchestrator.external_host().is_none());
+    /// # }
+    /// ```
+    pub fn external_host(&self) -> Option<&crate::external::WgpuHost> {
+        self.external_host.as_ref()
+    }
+
+    /// Returns a mutable reference to the external host (e.g. to call
+    /// `register_texture` when a producer's ring acquires a slot).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// assert!(orchestrator.external_host_mut().is_none());
+    /// # }
+    /// ```
+    pub fn external_host_mut(&mut self) -> Option<&mut crate::external::WgpuHost> {
+        self.external_host.as_mut()
+    }
+
+    /// Ensures the installed [`WgpuHost`] exists and was built for
+    /// `target_format`, lazily creating or recreating it.
+    #[cfg(feature = "vello")]
+    fn ensure_host(&mut self, device: &wgpu::Device, target_format: wgpu::TextureFormat) {
+        match &self.external_host {
+            Some(host) if host.target_format() == target_format => {}
+            _ => {
+                if self.external_host.is_some() {
+                    tracing::warn!(
+                        "surface format changed; recreating WgpuHost (registered surfaces dropped)"
+                    );
+                }
+                self.external_host = Some(crate::external::WgpuHost::new(device, target_format));
+            }
+        }
+    }
+
+    /// Ensures segment texture `i` exists at `width`×`height`, growing
+    /// the pool and recreating textures when the size changes.
+    ///
+    /// Segment textures are `Rgba8Unorm` — Vello's storage format —
+    /// with `Rgba8UnormSrgb` in `view_formats` so the composite pass
+    /// can sample through a view whose sRGB-ness matches the frame
+    /// target.
+    #[cfg(feature = "vello")]
+    fn ensure_segment(&mut self, device: &wgpu::Device, i: usize, width: u32, height: u32) {
+        while self.seg_pool.len() <= i {
+            self.seg_pool.push(None);
+        }
+        let stale = match &self.seg_pool[i] {
+            Some((tex, _)) => tex.width() != width || tex.height() != height,
+            None => true,
+        };
+        if stale {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("vello-segment-texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.seg_pool[i] = Some((texture, view));
+        }
+    }
+
+    /// Dispatches the pending paint work into `target`.
+    ///
+    /// `vello::Renderer::render_to_texture` overwrites its whole target
+    /// with the base color (a compute store, not a blend), so segments
+    /// cannot be composited by sequential Vello dispatches into one
+    /// target. Instead each command span renders into its own offscreen
+    /// `Rgba8Unorm` texture with a transparent base, and all textures
+    /// (Vello segments *and* external surfaces) are composited in one
+    /// encoder — preceded by an explicit frame-clear pass honoring the
+    /// configured clear mode — in exact paint order, via [`WgpuHost`].
+    ///
+    /// `vello_direct` marks targets that Vello can write directly
+    /// (`Rgba8Unorm` + `STORAGE_BINDING`, e.g. the offscreen readback
+    /// texture): when the frame contains no `External` markers the
+    /// historical single dispatch is used and no blit pass is needed.
+    #[cfg(feature = "vello")]
+    fn dispatch_pending(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: DispatchTarget<'_>,
+    ) {
+        let DispatchTarget {
+            view: target,
+            format: target_format,
+            width,
+            height,
+            vello_direct,
+        } = target;
+        if self.pending.is_empty() && vello_direct {
+            self.vello
+                .render_to_texture(device, queue, target, width, height);
+            return;
+        }
+
+        self.ensure_host(device, target_format);
+        let target_is_srgb = self
+            .external_host
+            .as_ref()
+            .expect("host just ensured")
+            .target_is_srgb();
+        let pending = std::mem::take(&mut self.pending);
+
+        // Phase 1 — render every command span into its own segment
+        // texture. Vello submits each dispatch internally; the writes
+        // land on the queue before the composite encoder submitted in
+        // phase 2, so the textures are complete when sampled.
+        let single_scene = pending.is_empty();
+        let work: Vec<PendingSegment> = if single_scene {
+            vec![PendingSegment::Commands(martensite_render::PaintList::new())]
+        } else {
+            pending
+        };
+        let mut seg_views: Vec<Option<wgpu::TextureView>> = Vec::with_capacity(work.len());
+        let mut seg_index = 0usize;
+        for segment in &work {
+            if let PendingSegment::Commands(list) = segment {
+                self.ensure_segment(device, seg_index, width, height);
+                {
+                    let storage_view = &self.seg_pool[seg_index]
+                        .as_ref()
+                        .expect("segment just created")
+                        .1;
+                    if single_scene {
+                        // The scene is already built — dispatch as-is.
+                        self.vello
+                            .render_to_texture(device, queue, storage_view, width, height);
+                    } else {
+                        // Every segment uses a transparent base: the
+                        // frame itself is cleared in phase 2, and
+                        // transparent bases let lower content (cleared
+                        // backdrop, earlier segments, external
+                        // surfaces) show through correctly.
+                        self.vello
+                            .render_with_clear(list, martensite_render::ClearMode::Transparent);
+                        self.vello
+                            .render_to_texture(device, queue, storage_view, width, height);
+                    }
+                }
+                // Sample view: decode-on-sample when the target encodes
+                // on store (sRGB), raw pass-through otherwise — either
+                // way the bytes round-trip.
+                let sample_format = if target_is_srgb {
+                    wgpu::TextureFormat::Rgba8UnormSrgb
+                } else {
+                    wgpu::TextureFormat::Rgba8Unorm
+                };
+                let sample_view = self.seg_pool[seg_index]
+                    .as_ref()
+                    .expect("segment just created")
+                    .0
+                    .create_view(&wgpu::TextureViewDescriptor {
+                        format: Some(sample_format),
+                        ..Default::default()
+                    });
+                seg_views.push(Some(sample_view));
+                seg_index += 1;
+            } else {
+                seg_views.push(None);
+            }
+        }
+
+        // Phase 2 — one encoder, one ordered sequence of composites.
+        // The frame starts with an explicit clear: acquired surface
+        // textures have undefined contents, so a transparent-clear
+        // frame would otherwise composite over garbage.
+        self.external_host
+            .as_ref()
+            .expect("host just ensured")
+            .begin_frame();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("external-composite-encoder"),
+        });
+        let clear_color = match self.gpu_clear {
+            martensite_render::ClearMode::Opaque(c) => wgpu::Color {
+                r: f64::from(c[0]),
+                g: f64::from(c[1]),
+                b: f64::from(c[2]),
+                a: f64::from(c[3]),
+            },
+            martensite_render::ClearMode::Transparent => wgpu::Color::TRANSPARENT,
+        };
+        drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("frame-clear-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear_color),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        }));
+        for (i, segment) in work.iter().enumerate() {
+            match segment {
+                PendingSegment::Commands(_) => {
+                    let view = seg_views[i].as_ref().expect("segment view exists");
+                    match &self.external_host {
+                        Some(host) => {
+                            match host.composite_view(
+                                device,
+                                crate::external::CompositeTarget {
+                                    encoder: &mut encoder,
+                                    queue,
+                                    view: target,
+                                    size: (width, height),
+                                },
+                                view,
+                                [0.0, 0.0, width as f32, height as f32],
+                                [0.0, 0.0, width as f32, height as f32],
+                            ) {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    tracing::warn!(error = %err, "segment blit skipped");
+                                }
+                            }
+                        }
+                        None => unreachable!("host ensured above"),
+                    }
+                }
+                PendingSegment::External {
+                    surface_id,
+                    rect,
+                    clip,
+                } => match &self.external_host {
+                    Some(host) => {
+                        match host.composite(
+                            crate::external::CompositeTarget {
+                                encoder: &mut encoder,
+                                queue,
+                                view: target,
+                                size: (width, height),
+                            },
+                            *surface_id,
+                            *rect,
+                            *clip,
+                        ) {
+                            Ok(()) => {}
+                            Err(err) => {
+                                tracing::warn!(
+                                    error = %err,
+                                    surface_id,
+                                    "external composite skipped"
+                                );
+                            }
+                        }
+                    }
+                    None => unreachable!("host ensured above"),
+                },
+            }
+        }
+        // Always submitted — the initial clear pass alone already
+        // requires it.
+        queue.submit([encoder.finish()]);
     }
 }
 

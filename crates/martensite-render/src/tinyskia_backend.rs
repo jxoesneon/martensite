@@ -482,6 +482,95 @@ impl TinySkiaBackend {
             } => {
                 self.render_blurred_rect(*rect, *blur_radius, *color);
             }
+            PaintCommand::External { rect, clip, .. } => {
+                self.render_external_placeholder(*rect, *clip);
+            }
+        }
+    }
+
+    /// Renders the documented [`PaintCommand::External`] placeholder: an
+    /// 8-px two-tone checkerboard filling `rect ∩ clip` with a dark
+    /// border — the TinySkia stand-in for GPU content it cannot sample.
+    ///
+    /// The real external texture is composited by `martensite-wgpu`'s
+    /// `WgpuHost` on the GPU path; producers that support CPU rasterization
+    /// expose it via `Engine::to_pixmap`, which the host resolves into
+    /// ordinary fill commands before this backend runs.
+    fn render_external_placeholder(&mut self, rect: [f32; 4], clip: [f32; 4]) {
+        // Intersect destination with the command's clip (backend clip stack
+        // applies on top via `fill_rect`'s mask argument).
+        let x0 = rect[0].max(clip[0]);
+        let y0 = rect[1].max(clip[1]);
+        let x1 = (rect[0] + rect[2]).min(clip[0] + clip[2]);
+        let y1 = (rect[1] + rect[3]).min(clip[1] + clip[3]);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+
+        const CELL: f32 = 8.0;
+        const LIGHT: [u8; 4] = [78, 78, 86, 255];
+        const DARK: [u8; 4] = [44, 44, 50, 255];
+        let clip_mask = self.clip_stack.last().cloned();
+
+        let mut py = y0;
+        let mut row = 0u32;
+        while py < y1 {
+            let mut px = x0;
+            let mut col = 0u32;
+            while px < x1 {
+                let color = if (row + col).is_multiple_of(2) {
+                    DARK
+                } else {
+                    LIGHT
+                };
+                let cell = Rect::from_origin_size(
+                    Point::new(px as f64, py as f64),
+                    kurbo::Size::new(
+                        (px + CELL).min(x1) as f64 - px as f64,
+                        (py + CELL).min(y1) as f64 - py as f64,
+                    ),
+                );
+                if let Some(ts_rect) = Self::to_ts_rect(cell) {
+                    let mut paint = Paint::default();
+                    paint.set_color(Self::to_color(color));
+                    self.pixmap.fill_rect(
+                        ts_rect,
+                        &paint,
+                        Transform::identity(),
+                        clip_mask.as_ref(),
+                    );
+                }
+                px += CELL;
+                col += 1;
+            }
+            py += CELL;
+            row += 1;
+        }
+
+        // Dark border so the placeholder reads as a deliberate surface,
+        // not a hole in the paint output.
+        let border = Rect::from_origin_size(
+            Point::new(x0 as f64, y0 as f64),
+            kurbo::Size::new((x1 - x0) as f64, (y1 - y0) as f64),
+        );
+        if let Some(ts_rect) = Self::to_ts_rect(border) {
+            let mut paint = Paint::default();
+            paint.set_color(Self::to_color([24, 24, 28, 255]));
+            let stroke = Stroke {
+                width: 1.0,
+                line_cap: tiny_skia::LineCap::Butt,
+                line_join: tiny_skia::LineJoin::Miter,
+                miter_limit: 4.0,
+                dash: None,
+            };
+            let path = TsPathBuilder::from_rect(ts_rect);
+            self.pixmap.stroke_path(
+                &path,
+                &paint,
+                &stroke,
+                Transform::identity(),
+                clip_mask.as_ref(),
+            );
         }
     }
 
@@ -1438,5 +1527,42 @@ mod tests {
             non_zero_pixels(&b) > 10,
             "fallback bounding box should draw"
         );
+    }
+
+    #[test]
+    fn external_command_draws_placeholder() {
+        let mut b = backend();
+        let mut list = PaintList::new();
+        list.push_external(1, [8.0, 8.0, 32.0, 32.0], [8.0, 8.0, 32.0, 32.0]);
+        b.render(&list);
+        // The checkerboard fills the rect — a pixel well inside must be
+        // opaque, and a pixel outside must stay transparent.
+        let inside = b.pixmap().pixel(20, 20).expect("pixel in range");
+        assert_eq!(inside.alpha(), 255);
+        let outside = b.pixmap().pixel(4, 4).expect("pixel in range");
+        assert_eq!(outside.alpha(), 0);
+        // Checkerboard cells alternate: two pixels 8 px apart differ.
+        let a = b.pixmap().pixel(16, 16).expect("pixel in range");
+        let c = b.pixmap().pixel(24, 16).expect("pixel in range");
+        assert_ne!(
+            (a.red(), a.green(), a.blue()),
+            (c.red(), c.green(), c.blue()),
+            "adjacent checkerboard cells should differ"
+        );
+    }
+
+    #[test]
+    fn external_command_respects_clip() {
+        let mut b = backend();
+        let mut list = PaintList::new();
+        // Rect extends beyond the clip on the right.
+        list.push_external(1, [8.0, 8.0, 48.0, 48.0], [8.0, 8.0, 16.0, 48.0]);
+        b.render(&list);
+        let inside_clip = b.pixmap().pixel(16, 16).expect("pixel in range");
+        assert_eq!(inside_clip.alpha(), 255);
+        // Outside the clip (x >= 24) must remain transparent even though
+        // it's inside the destination rect.
+        let outside_clip = b.pixmap().pixel(32, 16).expect("pixel in range");
+        assert_eq!(outside_clip.alpha(), 0);
     }
 }

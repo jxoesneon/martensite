@@ -34,6 +34,7 @@ members = [
     "crates/martensite-text-reference",
     "crates/martensite-render-test",
     "crates/martensite-media-test",
+    "crates/martensite-engine-bridge",
     "tools/cargo-martensite",
     "examples/industrial_dashboard",
     "benches/bench_suite",
@@ -86,6 +87,7 @@ martensite-font-fallback = { version = "0.14.0", path = "crates/martensite-font-
 martensite-clipboard-platform = { version = "0.14.0", path = "crates/martensite-clipboard-platform" }
 martensite-host = { version = "0.14.0", path = "crates/martensite-host" }
 martensite-shell = { version = "0.14.0", path = "crates/martensite-shell" }
+martensite-engine-bridge = { version = "0.14.0", path = "crates/martensite-engine-bridge" }
 
 # Core rendering stack — versions verified against crates.io on 2026-09-06
 # wgpu backends are enabled unconditionally; wgpu internally gates them by

@@ -1,0 +1,26 @@
+[package]
+name = "martensite-engine-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Producer/consumer protocol for embedding external GPU renderers (engines, decoders, compositors) as zero-copy surfaces inside the Martensite widget tree."
+readme = "README.md"
+
+[dependencies]
+wgpu = { workspace = true }
+parking_lot = { workspace = true }
+
+[features]
+# Enables `wgpu`'s `noop` backend so tests can construct a `wgpu::Device`
+# without a real GPU adapter. Forwarded to the shared workspace `wgpu`
+# dependency, which unifies the feature across every crate that links it.
+test-noop = ["wgpu/noop"]
+
+[lints]
+workspace = true

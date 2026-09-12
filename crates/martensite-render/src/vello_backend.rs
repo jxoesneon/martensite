@@ -491,6 +491,11 @@ impl VelloRenderer {
             } => {
                 self.render_blurred_rect(*rect, *blur_radius, *color);
             }
+            // External surfaces are not Vello scene content — the
+            // `martensite-wgpu` orchestrator splits the paint list at
+            // these markers (`PaintList::segments`) and composites the
+            // registered texture via `WgpuHost` at this exact position.
+            PaintCommand::External { .. } => {}
         }
     }
 

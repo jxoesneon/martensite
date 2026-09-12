@@ -16,6 +16,7 @@ readme = "README.md"
 martensite-core = { workspace = true }
 martensite-render = { workspace = true }
 martensite-media = { workspace = true }
+martensite-engine-bridge = { workspace = true }
 # Unconditional: `interop::platform_import` re-exports
 # `martensite_media_platform::{import_external_texture, import_cpu_memory,
 # ImportTextureDescriptor}` without any `cfg` gate, so the dependency
@@ -41,6 +42,10 @@ default = []
 # in turn enables vello's `wgpu` feature so that `vello::Renderer` is available
 # on the same wgpu 30 version as the rest of the workspace.
 vello = ["martensite-render/vello"]
+# Enables `wgpu`'s `noop` backend so tests can construct a `wgpu::Device`
+# without a real GPU adapter. Forwarded to the shared workspace `wgpu`
+# dependency, which unifies the feature across every crate that links it.
+test-noop = ["wgpu/noop"]
 
 [lints]
 workspace = true

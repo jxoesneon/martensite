@@ -30,6 +30,7 @@ martensite-history = { workspace = true }
 martensite-assets = { workspace = true }
 martensite-l10n = { workspace = true }
 martensite-media = { workspace = true }
+martensite-engine-bridge = { workspace = true }
 martensite-macros = { workspace = true }
 # Optional: OS-native font fallback providers (DirectWrite, CoreText, Fontconfig).
 martensite-font-fallback = { workspace = true, optional = true }

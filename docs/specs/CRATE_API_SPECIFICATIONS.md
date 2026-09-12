@@ -405,3 +405,96 @@ impl TestHarness {
 **8. Memory Layout:** Software rasterized buffers.
 **9. Phase:** Phase 7.
 **10. Limitations v0.x:** Vello software rasterizer is slow.
+
+## 22. `martensite-shell` (v0.13.0)
+**1. Purpose:** Native platform shell integration — system backdrops, snap layouts, CSD, system tray.
+**2. API Surface:**
+```rust
+pub enum BackdropMaterial { None, Mica, MicaAlt, Acrylic, Transient, Vibrancy(VibrancyMaterial) }
+pub trait BackdropController { /* set_material, current_material, mode, supports_material */ }
+pub struct SnapLayout { /* ... */ }
+```
+**3. Invariants:** Non-supporting platforms degrade to `StubBackdropController` / solid fallback.
+**4. Error Handling:** Graceful fallback; no panics on unsupported materials.
+**5. Features:** `wayland-backend`.
+**6. Dependencies:** `windows` (Win32), `objc2` (macOS), `zbus` (Wayland SNI), `martensite-window`, `martensite-theme`.
+**7. Thread Safety:** Main-thread bound.
+**8. Memory Layout:** N/A.
+**9. Phase:** Shipped (v0.13.0).
+**10. Limitations v0.x:** `ISnapLayouts` COM probing inferred; Wayland backdrop stub.
+
+---
+
+## 23. `martensite-engine-bridge` (v0.14.0, planned)
+**1. Purpose:** Producer/consumer protocol for embedding external GPU renderers (Bevy, video decoders, compositors) as zero-copy surfaces inside the widget tree.
+**2. API Surface:**
+```rust
+pub trait Engine { fn render(&mut self, ctx: &mut EngineContext, vp: Viewport) -> Option<Box<dyn Frame>>; fn release(&mut self, token: FrameToken); fn to_pixmap(&self, t: FrameToken) -> Option<Pixmap>; }
+pub trait Frame { /* token, same_device_texture, native_handle, sync, size, alpha_mode */ }
+pub enum FrameSync { None, FenceValue(u64), VkSemaphoreFd{..}, MetalSharedEvent(u64), DxgiKeyedMutex{..} }
+pub struct BridgeHandle { /* notify_frame_ready, SurfaceId registration */ }
+```
+**3. Invariants:** `#![forbid(unsafe_code)]`; same-device path performs zero GPU copies; `release` called exactly once per composited token.
+**4. Error Handling:** `BridgeError` for negotiation/sync failures.
+**5. Features:** None planned.
+**6. Dependencies:** `wgpu`, `martensite-core`.
+**7. Thread Safety:** `Engine: Send + Sync`; frames cross producer→host threads.
+**8. Memory Layout:** Two-slot frame ring per `SurfaceId`.
+**9. Phase:** v0.14.0.
+**10. Limitations v0.x:** Cross-device `NativeFrame` import stubs until v0.15.0+.
+
+---
+
+## 24. `martensite-bevy` (v0.15.0, planned, optional)
+**1. Purpose:** Host-mode Bevy 3D viewport adapter — Bevy renders into Martensite-owned `wgpu::Texture` via `RenderTarget::TextureView`.
+**2. API Surface:**
+```rust
+pub struct BevyEngine { /* impl martensite_engine_bridge::Engine */ }
+pub struct BevyViewport { /* ManualTextureViewHandle lifecycle */ }
+pub struct MartensiteInputPlugin; // forwards host input into bevy_picking
+```
+**3. Invariants:** Shared `wgpu::Device`/`Queue` via `RenderCreation::Manual`; no `WinitPlugin`; `PipelinedRenderingPlugin` omitted.
+**4. Error Handling:** `BevyBridgeError`.
+**5. Features:** `bevy` git pin / 0.20 (wgpu 30 coupling — see spec §4.1).
+**6. Dependencies:** `bevy`, `martensite-engine-bridge`, `wgpu`.
+**7. Thread Safety:** `SubApps` pumped on host frame thread.
+**8. Memory Layout:** N/A.
+**9. Phase:** v0.15.0.
+**10. Limitations v0.x:** Requires unreleased-Bevy wgpu-30 path (git pin or fork).
+
+---
+
+## 25. `martensite-godot` (v0.15.0, planned, optional, cdylib)
+**1. Purpose:** GDExtension producing frames Martensite displays. Tier 1 `texture_get_data_async` readback; Tier 2 experimental shared-texture blit.
+**2. API Surface:**
+```rust
+#[gdextension] unsafe impl ExtensionLibrary for MartensiteGodot;
+// Exposes GodotViewport node producing frames into a channel.
+```
+**3. Invariants:** No "zero-copy" claims — Godot render targets are not exportable without engine patches (documented).
+**4. Error Handling:** Godot `Error` + `GodotBridgeError`.
+**5. Features:** `godot-gpu-copy` (experimental Tier 2).
+**6. Dependencies:** `godot` (gdext) 0.5.x, `martensite-engine-bridge`.
+**7. Thread Safety:** Godot main-thread callbacks → channel → host.
+**8. Memory Layout:** N/A.
+**9. Phase:** v0.15.0.
+**10. Limitations v0.x:** True zero-copy blocked on upstream Godot (export-flagged targets, public fence APIs).
+
+---
+
+## 26. `martensite-access-platform` (v0.17.0, planned)
+**1. Purpose:** Mobile/web accessibility bridges — `accesskit_ios`, `accesskit_android`, hidden-DOM/ARIA web bridge.
+**2. API Surface:**
+```rust
+pub struct IosAccessAdapter;   // wraps accesskit_ios::SubclassingAdapter
+pub struct AndroidAccessAdapter; // wraps accesskit_android::InjectingAdapter
+pub struct WebAccessBridge;    // hidden-DOM/ARIA live-region mirror
+```
+**3. Invariants:** AccessKit tree parity with desktop `martensite-access` semantics.
+**4. Error Handling:** `AccessPlatformError`.
+**5. Features:** `ios`, `android`, `web`.
+**6. Dependencies:** `accesskit_ios`, `accesskit_android`, `web-sys` (web), `martensite-access`.
+**7. Thread Safety:** Platform-main-thread bound.
+**8. Memory Layout:** N/A.
+**9. Phase:** v0.17.0.
+**10. Limitations v0.x:** `accesskit_ios` is upstream Phase-1; web bridge is minimal viable scope.

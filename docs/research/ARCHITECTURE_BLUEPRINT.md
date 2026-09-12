@@ -265,8 +265,21 @@ evaluating drop shadows and inner shadows in a single compute pass with mathemat
 ## Domain 10: External Engine Embedding, Zero-Copy Media & Cloud Streaming
 
 ### 10.1 3D Engine Viewport Embedding (Bevy & Godot 4)
-- **Bevy Engine**: Integrates into Bevy’s Render World as a custom `RenderGraph` node executing after `Core3dSystems::MainPass`, rendering directly to the camera's `ViewTarget` color attachment with zero blit copies.
-- **Godot 4**: GDExtension integration registering native Vulkan `VkImage` or Direct3D 12 texture handles with Godot’s `RenderingDevice` via `texture_create_from_extension`, or directly injecting passes via `CompositorEffect`.
+
+> **Amendment (v0.14.0 re-scope, ADR-0033):** The original direction below
+> describes Martensite rendering *into* the host engine's render graph
+> (guest mode). The confirmed architecture is the inverse — **host mode**:
+> Martensite owns the window, event loop, wgpu device, and compositing;
+> external engines produce textures Martensite consumes via
+> `martensite-engine-bridge` (v0.14.0). For Bevy this is
+> `RenderCreation::Manual` device injection + `RenderTarget::TextureView`.
+> For Godot, deep research (v0.15.0 spec) established that Godot's render
+> targets are not exportable and GDExtension exposes no fence/semaphore
+> APIs — the shipped path is `texture_get_data_async` readback; true
+> zero-copy requires upstream engine patches.
+
+- **Bevy Engine**: Integrates into Bevy’s Render World as a custom `RenderGraph` node executing after `Core3dSystems::MainPass`, rendering directly to the camera's `ViewTarget` color attachment with zero blit copies. *(Superseded by host-mode embed — see amendment.)*
+- **Godot 4**: GDExtension integration registering native Vulkan `VkImage` or Direct3D 12 texture handles with Godot’s `RenderingDevice` via `texture_create_from_extension`, or directly injecting passes via `CompositorEffect`. *(Superseded — see amendment; `texture_create_from_extension` remains the mechanism for the one-copy experimental path.)*
 - **Diegetic World-Space UI**: Offscreen GUI textures mapped onto 3D in-game meshes, using camera raycasting to map 3D intersection coordinates into 2D UI input events.
 
 ### 10.2 Zero-Copy Hardware Video Playback
@@ -304,10 +317,25 @@ evaluating drop shadows and inner shadows in a single compute pass with mathemat
       │   ├── macOS Liquid Glass / NSVisualEffectView vibrancy.
       │   └── Wayland wp_fractional_scale_v1 & StatusNotifierItem shell menus.
       │
-      ├─► [v0.14.0] Engine Embedding & Zero-Copy Media
-      │   ├── Bevy ECS plugin and Godot 4 GDExtension RenderingDevice integration.
-      │   ├── DXGI NT handle / IOSurface / dma-buf zero-copy video surfaces.
-      │   └── ITU-R BT.2408 display-adaptive SDR reference white scaling.
+      ├─► [v0.14.0] External Surface Foundation
+      │   ├── Generic external-texture widget + martensite-engine-bridge protocol.
+      │   ├── Same-device zero-copy composite (direct TextureView sampling).
+      │   └── Damage-driven redraw + CPU fallback contract.
+      │       (DXGI/IOSurface/dma-buf import & BT.2408 scaling shipped in v0.8.0.)
+      │
+      ├─► [v0.15.0] Engine Showcase
+      │   ├── Bevy host-mode viewport (shared wgpu device, RenderTarget::TextureView).
+      │   └── Godot 4 GDExtension (async readback; zero-copy needs upstream patches).
+      │
+      ├─► [v0.16.0] Hardware Media Pipeline
+      │   ├── Platform decoders: VideoToolbox / Media Foundation / VAAPI.
+      │   ├── Multi-plane NV12/P010 import fix + HDR metadata flow.
+      │   └── 4K 120fps gate: <0.1% drops, <1% CPU dispatch.
+      │
+      ├─► [v0.17.0] Platform Expansion
+      │   ├── Widget breadth: slider, radio, dropdown, scrollview, tabs, tooltip.
+      │   ├── Web (wasm32/WebGPU), iOS (Metal), Android (GameActivity/Vulkan).
+      │   └── Hybrid command-ledger + snapshot time-travel debugger.
       │
       └─► [v1.0.0] Production Stability & Distribution Release
           ├── Enterprise packaging: WiX v5 MSI/MSIX, notarized DMG, AppImage/Flatpak.

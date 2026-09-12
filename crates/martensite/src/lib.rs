@@ -97,8 +97,14 @@ pub use martensite_window as window;
 /// ```
 pub mod prelude {
     pub use crate::app::{App, AppBuilder, AppConfig};
-    pub use crate::widgets::{Container, Flex, FlexDirection, MediaView, Stack, Text, VideoFit};
+    pub use crate::widgets::{
+        Container, ExternalEngine, Flex, FlexDirection, FramePoll, MediaView, Stack, Text, VideoFit,
+    };
     pub use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, Widget, WidgetArena, WidgetId};
+    pub use martensite_engine_bridge::{
+        BridgeHandle, BridgeRegistry, Engine, EngineContext, Frame, FrameSync, FrameToken,
+        SourceAlpha, SurfaceId, Viewport,
+    };
     pub use martensite_media::color::{ColorSpace, ScRgb, TransferFunction};
     pub use martensite_media::surface::{
         ColorRange, HardwareHandle, VideoFrameMetadata, VideoPixelFormat, VideoSurface,

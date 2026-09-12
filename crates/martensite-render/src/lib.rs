@@ -22,7 +22,7 @@ pub mod vello_backend;
 
 pub use paint::{
     FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintCommand, PaintList,
-    PathBuilder,
+    PaintSegment, PathBuilder,
 };
 pub use presentation::{
     nonzero as presentation_nonzero, present_rgba_to_softbuffer, rgba_to_softbuffer,

@@ -3,8 +3,112 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.13.0 Modern Shell & Platform implementation
-(post-v0.12.0 Blessed Widgets & Kinematics delivery).
+Last updated: v0.14.0 foundation implementation (external surface
+compositing) — offscreen-segment architecture after adversarial review.
+Workspace is versioned 0.14.0 (local commits `a11fccd`,
+`6516479`; not pushed).
+
+## Active Milestone Plan (v0.14.0 → v0.17.0 → v1.0.0)
+
+Competitive feature-coverage research (egui 0.35, iced 0.14, Xilem,
+Floem, Vizia, Slint 1.16, Makepad, GPUI, Dioxus) re-scoped the roadmap
+into four milestones. Direction A (host-mode embedding) is confirmed —
+see ADR-0033.
+
+- **v0.14.0 External Surface Foundation** — generic external-texture
+  widget + `martensite-engine-bridge` (`Engine`/`Frame`/`FrameSync`),
+  same-device zero-copy composite, damage-driven redraw.
+  Spec: `docs/milestones/v0.14.0-external-surfaces.md`.
+  **Status: IMPLEMENTED & VERIFIED** — see the v0.14.0 section below.
+- **v0.15.0 Engine Showcase** — `martensite-bevy` host-mode viewport
+  (`RenderCreation::Manual` + `RenderTarget::TextureView`); requires
+  Bevy wgpu-30 pin (0.19 ships wgpu 29). `martensite-godot` GDExtension
+  — **true zero-copy impossible without Godot engine patches**; ships
+  `texture_get_data_async` readback + experimental shared-texture blit.
+  Spec: `docs/milestones/v0.15.0-engine-showcase.md`.
+- **v0.16.0 Hardware Media Pipeline** — `VideoDecoder` trait;
+  VideoToolbox/MF/VAAPI backends in `martensite-media-platform`;
+  multi-plane import fix; `HdrMetadata`; `FrameQueue` drop accounting;
+  4K120 <0.1%-drop gate needs a dedicated GPU runner.
+  Spec: `docs/milestones/v0.16.0-media-pipeline.md`.
+- **v0.17.0 Platform Expansion** — slider/radio/dropdown/scrollview/
+  tabs/tooltip with ARIA APG + AccessKit; overlay layer; wasm32
+  (WebGPU + TinySkia fallback; web a11y needs new hidden-DOM bridge —
+  no upstream AccessKit web adapter exists); iOS (UIKit/Metal/
+  `accesskit_ios`) + Android (**GameActivity** not NativeActivity,
+  `accesskit_android`); hybrid command-ledger + snapshot time-travel
+  debugger.
+  Spec: `docs/milestones/v0.17.0-platform-expansion.md`.
+
+
+## v0.14.0 — External Surface Foundation (IMPLEMENTED, VERIFIED)
+
+### 1. `martensite-engine-bridge` crate
+- `Engine`/`Frame`/`FrameSync`/`EngineContext`/`Viewport` protocol types.
+- `SurfaceRing` two-slot mailbox ring; `BridgeRegistry`/`BridgeHandle`
+  shared lifecycle with ready-event wake channel.
+- `FrontFrame` atomic snapshot (slot + `FrameToken` + size in one lock)
+  consumed by `ExternalEngine::poll_frame` — recycled-slot frames are
+  detected correctly by token, not slot index.
+- `MockEngine`, `CpuFrame`, `TextureFrame`, `NativeFrame`; zero unsafe.
+
+### 2. `PaintCommand::External` (`martensite-render`)
+- Ordered marker carrying `surface_id`, destination rect, clip rect.
+- `PaintList::segments()`/`has_external()`/`push_external()` split a
+  list into `PaintSegment::Commands`/`External` spans preserving paint
+  order; Vello emits no geometry for markers, TinySkia draws a
+  deterministic checkerboard placeholder (CPU fallback).
+
+### 3. `WgpuHost` composite pipeline (`martensite-wgpu`)
+- `register_texture`/`composite`/`composite_view`: producer textures
+  drawn directly into the frame target — zero GPU copies.
+- Shared dynamic-offset rect uniform (128 slots/frame) so repeated
+  composites of one surface keep independent destination rects.
+- sRGB-aware pipelines (pass-through vs in-shader `linear_to_srgb`).
+
+### 4. Segmented `RenderOrchestrator` dispatch
+- Each command span renders into its own offscreen `Rgba8Unorm`
+  texture (`seg_pool`, `view_formats` includes `Rgba8UnormSrgb`);
+  one encoder clears the frame then composites all segment blits and
+  external surfaces in exact paint order.
+- Segment blits use the straight→premul pipeline: Vello's fine shader
+  stores *unpremultiplied* pixels, so the blit premultiplies
+  in-shader — byte-parity with the direct-dispatch convention.
+- Fixed a pre-existing bug: the GPU `render_to_surface` path no longer
+  dispatches Vello directly into surface textures (typical surfaces
+  are `*Srgb` and lack `STORAGE_BINDING` — the direct dispatch failed
+  validation at runtime). All surface frames use the offscreen path.
+
+### 5. `ExternalEngine` widget (`martensite`)
+- Retained leaf widget (`PaintCallback` primitive): `poll_frame()` →
+  `FramePoll` damage signaling, `VideoFit`-compatible scaling,
+  `record_paint` marker emission, `Role::Image` accessibility;
+  exported via `widgets::external` and the prelude.
+
+### Verification Status
+- `cargo fmt --all -- --check`: pass.
+- `cargo check --workspace` (default + all-features): pass.
+- `cargo clippy --workspace --all-targets` (default + all-features)
+  `-D warnings`: pass.
+- `cargo test` (touched crates, default + all-features): all pass;
+  full workspace suite pass except `locale_switch_1000_nodes_settle`
+  (pre-existing flaky timing test, passes standalone).
+- `cargo test --doc` (touched crates): pass.
+- `RUSTDOCFLAGS="-D warnings" cargo doc` (touched crates): pass.
+- Two adversarial Santa-method reviewers: PASS (3 rounds — corrected
+  a slot-recycling token bug, a pending-frame redispatch bug, a
+  same-surface multi-composite rect overwrite, the Vello
+  whole-target-overwrite ordering flaw, the straight-alpha segment
+  blit, and a stale `gpu_clear`).
+
+### Known limitations (by design, tracked for later milestones)
+- External composite ordering is per-frame only — no cross-frame
+  `FrameSync` wait integration yet (fence/timeline support is in the
+  types; host-side `add_wait_*` wiring lands with the Bevy adapter).
+- Cross-device/native-handle import (`NativeFrame`, dmabuf/IOSurface)
+  is type-defined but the wgpu HAL import path is not implemented.
+- `WgpuHost` owns its own pipelines; no Vello-internal integration.
+
 
 ## v0.13.0 — Modern Shell & Platform (IMPLEMENTED, VERIFIED)
 

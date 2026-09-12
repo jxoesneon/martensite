@@ -37,16 +37,19 @@ The framework provides direct GPU compute rendering via WGPU, a fine-grained pus
 
 Martensite is engineered for predictable throughput, zero quiescent idle power, and instant reactivity.
 
-| Capability / Benchmark | Martensite (v0.12.0) | egui (v0.29) | Iced (v0.13) | Slint (v1.8) | GPUI (Zed 2026) |
+| Capability / Benchmark | Martensite (v0.13.0) | egui (v0.35) | Iced (v0.14) | Slint (v1.16) | GPUI (Zed 2026) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Vector Renderer** | **Vello (Compute Shaders)** | Triangles (Immediate) | wgpu / TinySkia | Software / FemtoVG | Metal / Vulkan Direct |
+| **Vector Renderer** | **Vello (Compute Shaders)** | Triangles (Immediate) | wgpu / TinySkia | Skia / FemtoVG / Software | Metal / wgpu / D3D |
 | **Quiescent Idle CPU** | **† 0.00% (Kernel Sleep)** (event-driven target) | ~15–30% (Continuous Poll) | 0.00% (Event-driven) | 0.00% (Event-driven) | 0.00% (Event-driven) |
 | **10k Reactive DAG Propagation** | **< 1.0 ms (reference)** | N/A (Immediate) | ~4.2 ms | ~1.6 ms | ~1.1 ms |
 | **1,000,000-Row Table** | **† Steady 120 FPS / 0 alloc (target)** | Severe frame drops | ~60 FPS | ~90 FPS | Custom required |
-| **Accessibility (AccessKit)** | **Built-in (Step 6)** | Partial / Bolted-on | Lagging (Issue #552) | Built-in | Partial (`text!` macro) |
-| **Multilingual IME & BiDi** | **Damped Cursor Tracking** | Manual setup / Tofu | Basic | Good | In-house editor |
-| **Zero-Copy 4K HDR Video** | **† < 0.1ms CPU (DXGI/P010) (target)** | CPU Copy required | CPU Copy required | Unsupported | macOS only |
-| **Hot Reload Turnaround** | **† < 350 ms (cdylib split) (target)** | Full rebuild | Full rebuild | Live preview (DSL) | Rebuild required |
+| **Accessibility (AccessKit)** | **Built-in** | Built-in | Not in upstream (forks only) | Built-in | Built-in |
+| **Multilingual IME & BiDi** | **Full BiDi + native OS font fallback** | No BiDi (Issue #1016) | Yes (cosmic-text) | Yes (Parley) | In-house editor |
+| **Zero-Copy 4K HDR Video** | **† DXGI/IOSurface/dma-buf import (decode pipeline in v0.16.0)** | Third-party (lumina-video) | Third-party (gstreamer) | Examples only | Third-party |
+| **Native Shell (Mica/Liquid Glass/Snap/Tray)** | **Built-in** | Third-party | Third-party | Tray only | Third-party |
+| **External Engine Viewport** | **† v0.14.0–v0.15.0 (in progress)** | `PaintCallback` + `bevy_egui` | `widget::shader` | `Image::try_from(wgpu::Texture)` | Canvas / fork |
+| **Hot Reload Turnaround** | **† < 350 ms (cdylib split)** | Third-party | Experimental (cargo-hot) | Live preview (DSL) | Third-party |
+| **Time-Travel Debugging** | † v0.17.0 (planned) | No | `comet` (0.14) | No | No |
 
 > *`†` values are reference targets or design goals, not all of which are yet enforced by the Criterion benchmark suite. Detailed test harness specifications, hardware methodology, and CI gate thresholds are documented in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).*
 
@@ -77,6 +80,14 @@ Martensite is engineered for predictable throughput, zero quiescent idle power, 
 | [`martensite-devtools`](crates/martensite-devtools) | Tracing spans, GPU profiling timestamps, and in-app developer diagnostics overlay. |
 | [`martensite-macros`](crates/martensite-macros) | Declarative procedural widget construction macros. |
 | [`martensite-test`](crates/martensite-test) | Headless CI mock windowing, deterministic virtual clock, and image diff testing. |
+| [`martensite-shell`](crates/martensite-shell) | Native shell integration: Windows Mica/Acrylic/Snap Layouts, macOS Liquid Glass, Wayland CSD + StatusNotifierItem tray. |
+| [`martensite-blessed`](crates/martensite-blessed) | Production widget tier: 1M-row DataGrid, BSP docking, code editor, charts, audio waveform. |
+| [`martensite-plugin`](crates/martensite-plugin) | Wasmtime-sandboxed third-party widget runtime with capability gating. |
+| [`martensite-host`](crates/martensite-host) | cdylib guest loading + hot-reload host for the `cargo-martensite` dev loop. |
+| `martensite-engine-bridge` *(v0.14.0)* | External-GPU-surface protocol: `Engine`/`Frame`/`FrameSync`, zero-copy composite. |
+| `martensite-bevy` *(v0.15.0)* | Host-mode Bevy 3D viewport adapter (shared wgpu device). |
+| `martensite-godot` *(v0.15.0)* | Godot 4 GDExtension viewport producer (readback + experimental shared-texture path). |
+| `martensite-access-platform` *(v0.17.0)* | iOS/Android/web accessibility bridges. |
 | [`cargo-martensite`](tools/cargo-martensite) | Developer CLI toolchain for hot-reloading and asset packaging. |
 
 ---

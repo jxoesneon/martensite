@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Roadmap re-scope (post-v0.13.0 competitive analysis)
+
+- The v0.14.0 "Engine Embedding & Media" milestone was split into four
+  milestones after competitive feature-coverage research against
+  egui 0.35, iced 0.14, Xilem/Masonry, Floem, Vizia, Slint 1.16,
+  Makepad, GPUI, and Dioxus:
+  - **v0.14.0 External Surface Foundation** — generic external-texture
+    widget + `martensite-engine-bridge` protocol (same-device
+    zero-copy composite; ADR-0033 host-mode decision).
+  - **v0.15.0 Engine Showcase** — `martensite-bevy` host-mode viewport;
+    `martensite-godot` GDExtension (readback path; true zero-copy
+    requires upstream Godot patches).
+  - **v0.16.0 Hardware Media Pipeline** — platform decoder backends
+    (VideoToolbox / Media Foundation / VAAPI) feeding the v0.8.0
+    zero-copy surface import; 4K120 frame-drop gate.
+  - **v0.17.0 Platform Expansion** — widget breadth (slider, radio,
+    dropdown, scrollview, tabs, tooltip), wasm32 + iOS + Android
+    targets, hybrid command-ledger time-travel debugger.
+- New specs: `docs/milestones/v0.14.0-external-surfaces.md`,
+  `v0.15.0-engine-showcase.md`, `v0.16.0-media-pipeline.md`,
+  `v0.17.0-platform-expansion.md`; new `docs/adr/ADR-0033`.
+- Updated `docs/milestones/INDEX.md`, `docs/ROADMAP.md`,
+  `docs/PLATFORM_SUPPORT.md`, `docs/specs/*`, `WORKING_ON.md`,
+  `docs/research/ARCHITECTURE_BLUEPRINT.md` (§10.1 amendment).
+
+### Added — v0.14.0: External Surface Foundation
+
+- **New `martensite-engine-bridge` crate** — the producer/consumer
+  protocol for external GPU content:
+  - `Engine`/`Frame`/`FrameSync`/`EngineContext`/`Viewport` traits and
+    types for external renderers.
+  - `SurfaceRing` two-slot mailbox ring (`acquire` → `mark_ready` →
+    `take_front` → `release`) with `BridgeRegistry`/`BridgeHandle`
+    shared lifecycle, ready-event wake channel, and `FrontFrame`
+    atomic snapshot accessor.
+  - `MockEngine` + `CpuFrame`/`TextureFrame`/`NativeFrame` test
+    utilities; zero unsafe code.
+- **`PaintCommand::External`** in `martensite-render` — ordered
+  external-surface marker carrying `surface_id`, destination rect, and
+  clip rect; `PaintList::segments()`/`has_external()`/`push_external()`
+  split a paint list into `PaintSegment::Commands`/`External` spans.
+  Vello emits no scene geometry for markers; TinySkia draws a
+  deterministic checkerboard placeholder for the CPU fallback path.
+- **`WgpuHost` external composite pipeline** in `martensite-wgpu`:
+  - `register_texture`/`composite` draw producer `wgpu::Texture`s
+    directly into the frame target — zero GPU copies.
+  - Shared dynamic-offset rect-uniform buffer (128 slots/frame) so
+    every composite draws its own destination rect.
+  - sRGB-aware pipelines: pass-through on `*Srgb`/float targets,
+    in-shader `linear_to_srgb` on unorm non-sRGB targets; straight- and
+    premultiplied-alpha entry points.
+- **Segmented `RenderOrchestrator` dispatch** — each command span
+  renders to its own offscreen `Rgba8Unorm` texture; a single ordered
+  encoder clears the frame and composites all segment blits and
+  external surfaces in paint order. Vello segment blits premultiply
+  in-shader (Vello stores straight-alpha), preserving byte-parity with
+  the direct-dispatch convention.
+- **`ExternalEngine` widget** in `martensite` — retained leaf widget
+  (the `PaintCallback` primitive) with `poll_frame()` → `FramePoll`
+  damage signaling, `VideoFit`-compatible scaling, `record_paint`
+  marker emission, and `Role::Image` accessibility; exported via
+  `widgets::external` and the prelude.
+- **Fixed (pre-existing)**: the GPU `render_to_surface` path no longer
+  dispatches Vello directly into the surface texture — typical
+  surfaces are `*Srgb` and lack `STORAGE_BINDING`, so the direct
+  dispatch failed validation at runtime. All surface frames now go
+  through the offscreen segment + composite path.
+
 ## [0.13.0] - 2026-09-11
 
 ### Added — v0.13.0: Modern Shell & Platform
