@@ -2,9 +2,9 @@
 //!
 //! One `MockEngine` producer renders a deterministic frame into a
 //! same-device `wgpu::Texture` every tick and publishes it through the
-//! [`BridgeRegistry`] two-slot mailbox ring (`mark_ready_full`). The
-//! [`ExternalEngine`] widget laid out inside the window emits a
-//! `PaintCommand::External` marker, and [`RenderOrchestrator`]
+//! [`martensite_engine_bridge::BridgeRegistry`] two-slot mailbox ring (`mark_ready_full`). The
+//! [`martensite::widgets::external::ExternalEngine`] widget laid out inside the window emits a
+//! `PaintCommand::External` marker, and [`martensite_wgpu::RenderOrchestrator`]
 //! composites the ring's front frame zero-copy between the surrounding
 //! Vello paint segments — then the released token flows back to the
 //! engine for texture recycling:
