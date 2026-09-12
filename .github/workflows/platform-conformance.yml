@@ -39,6 +39,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install Wayland dev headers (for wayland-sys build script)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev
       - name: Download Unicode BiDi test corpora (UCD 17.0.0)
         run: |
           mkdir -p crates/martensite-text/tests/data
@@ -67,11 +71,11 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install CJK fonts (Linux)
+      - name: Install CJK fonts and Wayland dev headers (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk fonts-noto-cjk-extra
+          sudo apt-get install -y fonts-noto-cjk fonts-noto-cjk-extra libwayland-dev
       - name: Run multilingual fallback tests
         run: cargo test -p martensite-text --test v0_11_conformance -- multilingual
         env:
@@ -169,7 +173,7 @@ jobs:
           # python3-gi. at-spi2-core provides the bus and registry.
           sudo apt-get install -y at-spi2-core orca \
             gir1.2-atspi-2.0 python3-gi \
-            xvfb dbus-x11
+            xvfb dbus-x11 libwayland-dev
       - name: Start virtual display and D-Bus
         if: steps.orca-deps.outcome == 'success'
         run: |
@@ -244,10 +248,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install CJK fonts
+      - name: Install CJK fonts and Wayland dev headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk
+          sudo apt-get install -y fonts-noto-cjk libwayland-dev
       - name: Run vertical golden-frame conformance tests
         run: cargo test -p martensite-text --test vertical_golden_conformance
 
@@ -264,7 +268,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
-            libglib2.0-dev pkg-config fonts-noto-cjk
+            libglib2.0-dev pkg-config fonts-noto-cjk libwayland-dev
       - uses: Swatinem/rust-cache@v2
       - name: Build reference crate
         run: cargo build -p martensite-text-reference
