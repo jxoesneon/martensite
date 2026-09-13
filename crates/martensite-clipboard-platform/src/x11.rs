@@ -155,6 +155,9 @@ impl X11Backend {
     /// ```
     #[must_use]
     pub fn new() -> Self {
+        // SAFETY: `XOpenDisplay` accepts a null display name (it falls back
+        // to the `DISPLAY` environment variable) and returns either a valid
+        // `Display*` or null; the null case is checked immediately below.
         let display = unsafe { XOpenDisplay(ptr::null()) };
         if display.is_null() {
             return Self {
@@ -164,11 +167,22 @@ impl X11Backend {
                 utf8_string_atom: 0,
             };
         }
+        // SAFETY: `display` is a valid, non-null `Display*` (checked above)
+        // opened by `XOpenDisplay`. `XDefaultRootWindow` only reads the
+        // display struct and returns a `Window` XID by value.
         let root = unsafe { XDefaultRootWindow(display) };
+        // SAFETY: `display` is valid and `root` is a valid window on that
+        // connection. The returned `Window` XID is owned by this connection
+        // and is destroyed in `Drop` before `XCloseDisplay`.
         let window = unsafe { XCreateSimpleWindow(display, root, 0, 0, 1, 1, 0, 0, 0) };
         let clipboard_name = CString::new("CLIPBOARD").unwrap();
         let utf8_name = CString::new("UTF8_STRING").unwrap();
+        // SAFETY: `display` is valid and `clipboard_name` is a live,
+        // NUL-terminated `CString`; `XInternAtom` only reads the name for
+        // the duration of the call.
         let clipboard_atom = unsafe { XInternAtom(display, clipboard_name.as_ptr(), FALSE) };
+        // SAFETY: `display` is valid and `utf8_name` is a live,
+        // NUL-terminated `CString` for the duration of the call.
         let utf8_string_atom = unsafe { XInternAtom(display, utf8_name.as_ptr(), FALSE) };
         Self {
             display: Some(display),
@@ -194,6 +208,9 @@ impl X11Backend {
         let Ok(name) = CString::new(mime) else {
             return 0;
         };
+        // SAFETY: `display` is a valid `Display*` (the `None` case returned
+        // early above) and `name` is a live, NUL-terminated `CString` for
+        // the duration of the call.
         unsafe { XInternAtom(display, name.as_ptr(), FALSE) }
     }
 
@@ -205,6 +222,12 @@ impl X11Backend {
         let mut nitems: c_ulong = 0;
         let mut bytes_after: c_ulong = 0;
         let mut prop_data: *mut c_char = ptr::null_mut();
+        // SAFETY: `display` is a valid connection and `self.window` is a
+        // valid window on it. Every out-parameter points to a live stack
+        // variable of the matching type. On success Xlib writes `prop_data`
+        // to an Xmalloc'd buffer that we must release with `XFree` (done
+        // below); on failure or for an absent property it stays null,
+        // which is checked before any dereference.
         let status = unsafe {
             XGetWindowProperty(
                 display,
@@ -224,8 +247,16 @@ impl X11Backend {
         if status != 0 || prop_data.is_null() || nitems == 0 {
             return None;
         }
+        // SAFETY: `prop_data` is non-null (checked above) and points to an
+        // Xlib allocation holding at least `nitems` items of the returned
+        // format; since the smallest format is 8 bits, `nitems` bytes are
+        // always in bounds. The slice only borrows the buffer until it is
+        // copied and freed below.
         let slice = unsafe { std::slice::from_raw_parts(prop_data as *const u8, nitems as usize) };
         let result = slice.to_vec();
+        // SAFETY: `prop_data` was allocated by Xlib inside
+        // `XGetWindowProperty` and must be released with `XFree`; it is
+        // non-null here and freed exactly once, after the bytes were copied.
         unsafe { XFree(prop_data as *mut c_void) };
         Some(result)
     }
@@ -241,8 +272,14 @@ impl Drop for X11Backend {
     fn drop(&mut self) {
         if let Some(display) = self.display {
             if self.window != 0 {
+                // SAFETY: `display` is a live connection and `self.window`
+                // was created on it in `new`; destroying the window before
+                // closing the display is the required teardown order.
                 unsafe { XDestroyWindow(display, self.window) };
             }
+            // SAFETY: `display` is a live `Display*` returned by
+            // `XOpenDisplay` in `new` that has not been closed before; it
+            // is closed exactly once here.
             unsafe { XCloseDisplay(display) };
         }
     }
@@ -254,6 +291,9 @@ impl ClipboardBackend for X11Backend {
             return;
         };
         // Take ownership of the CLIPBOARD selection.
+        // SAFETY: `display` is a valid connection and `self.clipboard_atom`
+        // and `self.window` are valid XIDs created on it. A timestamp of
+        // `0` (`CurrentTime`) is legal per the ICCCM.
         unsafe {
             XSetSelectionOwner(display, self.clipboard_atom, self.window, 0);
         }
@@ -261,6 +301,12 @@ impl ClipboardBackend for X11Backend {
         if target == 0 {
             return;
         }
+        // SAFETY: `display`, `self.window`, and `target` are valid XIDs on
+        // this connection. `bytes` is a live slice for the duration of the
+        // call; mode `0` (`PropModeReplace`) makes the server copy the data,
+        // and format `8` matches the `u8`/`c_char` element size so the
+        // `nelements` count is exact. `XFlush` only requires a valid
+        // display.
         unsafe {
             XChangeProperty(
                 display,
@@ -286,6 +332,9 @@ impl ClipboardBackend for X11Backend {
         // If we are the selection owner, read the property we set in write()
         // directly. XConvertSelection would send a SelectionRequest to us,
         // but we don't serve those events, so the conversion would time out.
+        // SAFETY: `display` is a valid connection and `self.clipboard_atom`
+        // is a valid atom; `XGetSelectionOwner` returns a `Window` XID (or
+        // `None` = 0) by value and performs no writes.
         let owner = unsafe { XGetSelectionOwner(display, self.clipboard_atom) };
         if owner == self.window {
             return self.read_property(display, target);
@@ -293,7 +342,13 @@ impl ClipboardBackend for X11Backend {
 
         // Request the selection conversion into a property on our window.
         let prop_name = CString::new("MARTENSITE_CLIP").unwrap();
+        // SAFETY: `display` is valid and `prop_name` is a live,
+        // NUL-terminated `CString` for the duration of the call.
         let prop_atom = unsafe { XInternAtom(display, prop_name.as_ptr(), FALSE) };
+        // SAFETY: `display` is valid; `self.clipboard_atom`, `target`,
+        // `prop_atom`, and `self.window` are valid XIDs on this connection,
+        // and `0` (`CurrentTime`) is a legal timestamp per the ICCCM.
+        // `XFlush` only requires a valid display.
         unsafe {
             XConvertSelection(
                 display,
@@ -307,8 +362,14 @@ impl ClipboardBackend for X11Backend {
         }
         // Wait for the SelectionNotify event (with a bounded poll).
         for _ in 0..100 {
+            // SAFETY: `display` is a valid connection; `XPending` only
+            // inspects the event queue and returns a count.
             if unsafe { XPending(display) } > 0 {
                 let mut event = XEvent::default();
+                // SAFETY: `display` is valid and `event` is a live,
+                // properly aligned `XEvent` whose `repr(C)` padding makes
+                // it at least as large as the real union for Xlib to
+                // write into.
                 unsafe { XNextEvent(display, &mut event) };
                 if event.type_ == SELECTION_NOTIFY {
                     break;
@@ -324,6 +385,8 @@ impl ClipboardBackend for X11Backend {
             return Vec::new();
         };
         // If we own the selection, report the text type.
+        // SAFETY: `display` is a valid connection and `self.clipboard_atom`
+        // is a valid atom; `XGetSelectionOwner` returns an XID by value.
         let owner = unsafe { XGetSelectionOwner(display, self.clipboard_atom) };
         if owner == self.window {
             return vec!["text/plain;charset=utf-8".to_string()];
@@ -335,6 +398,10 @@ impl ClipboardBackend for X11Backend {
         let Some(display) = self.display() else {
             return;
         };
+        // SAFETY: `display` is a valid connection and `self.clipboard_atom`
+        // is a valid atom; an owner of `0` (`None`) relinquishes the
+        // selection and `0` (`CurrentTime`) is a legal timestamp per the
+        // ICCCM. `XFlush` only requires a valid display.
         unsafe {
             XSetSelectionOwner(display, self.clipboard_atom, 0, 0);
             XFlush(display);

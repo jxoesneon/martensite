@@ -70,6 +70,9 @@ impl Win32Backend {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
+        // SAFETY: `wide` is a live, NUL-terminated UTF-16 buffer for the
+        // duration of the call; `RegisterClipboardFormatW` copies the name
+        // and returns a format ID (or 0 on failure, which callers check).
         unsafe { RegisterClipboardFormatW(PCWSTR::from_raw(wide.as_ptr())) }
     }
 }
@@ -82,6 +85,15 @@ impl Default for Win32Backend {
 
 impl ClipboardBackend for Win32Backend {
     fn write(&mut self, mime: &str, bytes: &[u8]) {
+        // SAFETY: `OpenClipboard(None)`/`EmptyClipboard`/`CloseClipboard`
+        // are paired Win32 calls legal on any thread with no current
+        // clipboard owner. The `GlobalAlloc` handle is locked and written
+        // for exactly `size` bytes within its own allocation; on success
+        // `SetClipboardData` transfers ownership of the handle to the
+        // system, and on failure it is freed exactly once with
+        // `GlobalFree`. The `from_raw_parts` slice reads the live `wide`
+        // buffer for `wide.len() * 2` bytes — within its allocation —
+        // and `data` outlives the `copy_nonoverlapping` source pointer.
         unsafe {
             if OpenClipboard(None).is_err() {
                 return;
@@ -136,6 +148,13 @@ impl ClipboardBackend for Win32Backend {
         if format == 0 {
             return None;
         }
+        // SAFETY: `OpenClipboard`/`CloseClipboard` are paired. The handle
+        // from `GetClipboardData` is owned by the system and only borrowed
+        // while the clipboard is open. `GlobalLock` yields a pointer valid
+        // for `GlobalSize(h)` bytes, and each `from_raw_parts` slice is
+        // bounded by that size (never `usize::MAX`), so the NUL-terminator
+        // scan stays in bounds. The pointer is unlocked before
+        // `CloseClipboard` and never used afterwards.
         unsafe {
             if OpenClipboard(None).is_err() {
                 return None;
@@ -186,6 +205,9 @@ impl ClipboardBackend for Win32Backend {
     fn available_types(&self) -> Vec<String> {
         // Enumerating registered formats requires EnumClipboardFormats; we
         // report the text type as available if CF_UNICODETEXT is present.
+        // SAFETY: `OpenClipboard`/`CloseClipboard` are paired Win32 calls
+        // and the `GetClipboardData` handle — owned by the system — is
+        // only inspected for validity, never dereferenced or freed.
         unsafe {
             if OpenClipboard(None).is_err() {
                 return Vec::new();
@@ -207,6 +229,9 @@ impl ClipboardBackend for Win32Backend {
     }
 
     fn clear(&mut self) {
+        // SAFETY: `OpenClipboard`, `EmptyClipboard`, and `CloseClipboard`
+        // are paired Win32 calls; if `OpenClipboard` fails the clipboard
+        // is left untouched.
         unsafe {
             if OpenClipboard(None).is_ok() {
                 let _ = EmptyClipboard();

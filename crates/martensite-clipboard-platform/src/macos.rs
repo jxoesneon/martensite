@@ -60,67 +60,167 @@ extern "C" {
 /// Returns the Objective-C class for the given name, or null if not found.
 fn class(name: &str) -> Id {
     let c_name = std::ffi::CString::new(name).expect("class name has no nul bytes");
+    // SAFETY: `c_name` is a live, NUL-terminated `CString` for the duration
+    // of the call; `objc_getClass` only reads it and returns a valid class
+    // `id` or null, which callers check before use.
     unsafe { objc_getClass(c_name.as_ptr()) }
 }
 
 /// Returns (and registers if needed) the selector for the given name.
 fn sel(name: &str) -> Sel {
     let c_name = std::ffi::CString::new(name).expect("selector name has no nul bytes");
+    // SAFETY: `c_name` is a live, NUL-terminated `CString` for the duration
+    // of the call; `sel_registerName` only reads it and always returns a
+    // valid `SEL`.
     unsafe { sel_registerName(c_name.as_ptr()) }
 }
 
 /// Sends a message that returns an object (`id`).
+///
+/// # Safety
+///
+/// `obj` must be a valid Objective-C receiver (or null, in which case the
+/// runtime returns nil/0 without dereferencing), and `selector` must name
+/// a method whose signature matches `fn(Id, Sel) -> Id`.
 unsafe fn send(obj: Id, selector: Sel) -> Id {
+    // SAFETY: the caller's contract guarantees `obj` is a valid receiver
+    // and `selector` matches this signature; the declared base signature
+    // is used directly with no transmute.
     objc_msgSend(obj, selector)
 }
 
 /// Sends a message with one object argument that returns an object.
+///
+/// # Safety
+///
+/// `obj` must be a valid Objective-C receiver and `selector` must name a
+/// method taking one `id` parameter and returning `id`.
 unsafe fn send1(obj: Id, selector: Sel, arg: Id) -> Id {
+    // SAFETY: `objc_msgSend` is a signature-agnostic trampoline that reads
+    // arguments per the platform C ABI, so casting its base 2-argument
+    // function pointer to the exact 3-argument signature is the standard
+    // idiom. All parameter types are pointer-width and match the method's
+    // declared parameters.
     let f: unsafe extern "C" fn(Id, Sel, Id) -> Id =
         std::mem::transmute(objc_msgSend as unsafe extern "C" fn(Id, Sel) -> Id);
+    // SAFETY: `f` is the `objc_msgSend` entry point cast to the matching
+    // arity; the caller's contract guarantees `obj`, `selector`, and `arg`
+    // match the target method.
     f(obj, selector, arg)
 }
 
 /// Sends a message with one pointer argument that returns an object.
+///
+/// # Safety
+///
+/// `obj` must be a valid Objective-C receiver, `selector` must name a
+/// method taking one pointer parameter and returning `id`, and `arg`
+/// must satisfy that parameter's validity requirements.
 unsafe fn send_ptr(obj: Id, selector: Sel, arg: *const c_void) -> Id {
+    // SAFETY: `objc_msgSend` is a signature-agnostic trampoline; the cast
+    // only reinterprets the function pointer (same bit pattern, same
+    // calling convention) to add one pointer-width parameter.
     let f: unsafe extern "C" fn(Id, Sel, *const c_void) -> Id =
         std::mem::transmute(objc_msgSend as unsafe extern "C" fn(Id, Sel) -> Id);
+    // SAFETY: `f` is the `objc_msgSend` entry point cast to the matching
+    // arity; the caller's contract guarantees the receiver, selector, and
+    // pointer argument match the target method.
     f(obj, selector, arg)
 }
 
 /// Sends a message with one pointer and one `NSUInteger` argument that
 /// returns an object.
+///
+/// # Safety
+///
+/// `obj` must be a valid Objective-C receiver, `selector` must name a
+/// method taking a pointer and an `NSUInteger` and returning `id`, and
+/// `arg1` must satisfy the pointer parameter's validity requirements.
 unsafe fn send_ptr_usize(obj: Id, selector: Sel, arg1: *const c_void, arg2: NSUInteger) -> Id {
+    // SAFETY: `objc_msgSend` is a signature-agnostic trampoline; the cast
+    // reinterprets the function pointer (same bit pattern, same calling
+    // convention) to add a pointer and an `NSUInteger` parameter, both
+    // pointer-width.
     let f: unsafe extern "C" fn(Id, Sel, *const c_void, NSUInteger) -> Id =
         std::mem::transmute(objc_msgSend as unsafe extern "C" fn(Id, Sel) -> Id);
+    // SAFETY: `f` is the `objc_msgSend` entry point cast to the matching
+    // arity; the caller's contract guarantees the arguments match the
+    // target method.
     f(obj, selector, arg1, arg2)
 }
 
 /// Sends a message that returns a `BOOL`.
+///
+/// # Safety
+///
+/// `obj` must be a valid Objective-C receiver and `selector` must name a
+/// method taking no parameters and returning `BOOL`.
 unsafe fn send_bool(obj: Id, selector: Sel) -> ObjcBool {
+    // SAFETY: `objc_msgSend` is a signature-agnostic trampoline; the cast
+    // reinterprets the function pointer to a signature returning `BOOL`
+    // (a `signed char` returned in the same integer return register as
+    // `id`, per the platform ABI).
     let f: unsafe extern "C" fn(Id, Sel) -> ObjcBool =
         std::mem::transmute(objc_msgSend as unsafe extern "C" fn(Id, Sel) -> Id);
+    // SAFETY: `f` is the `objc_msgSend` entry point cast to the matching
+    // signature; the caller's contract guarantees the receiver and
+    // selector match a `BOOL`-returning method.
     f(obj, selector)
 }
 
 /// Sends a message with two object arguments that returns a `BOOL`.
+///
+/// # Safety
+///
+/// `obj` must be a valid Objective-C receiver and `selector` must name a
+/// method taking two `id` parameters and returning `BOOL`.
 unsafe fn send2_bool(obj: Id, selector: Sel, arg1: Id, arg2: Id) -> ObjcBool {
+    // SAFETY: `objc_msgSend` is a signature-agnostic trampoline; the cast
+    // reinterprets the function pointer (same bit pattern, same calling
+    // convention) to add two pointer-width parameters and a `BOOL`
+    // (integer-register) return.
     let f: unsafe extern "C" fn(Id, Sel, Id, Id) -> ObjcBool =
         std::mem::transmute(objc_msgSend as unsafe extern "C" fn(Id, Sel) -> Id);
+    // SAFETY: `f` is the `objc_msgSend` entry point cast to the matching
+    // arity; the caller's contract guarantees the arguments match the
+    // target method.
     f(obj, selector, arg1, arg2)
 }
 
 /// Sends a message that returns an `NSUInteger`.
+///
+/// # Safety
+///
+/// `obj` must be a valid Objective-C receiver and `selector` must name a
+/// method taking no parameters and returning `NSUInteger`.
 unsafe fn send_usize(obj: Id, selector: Sel) -> NSUInteger {
+    // SAFETY: `objc_msgSend` is a signature-agnostic trampoline; the cast
+    // reinterprets the function pointer to a signature returning
+    // `NSUInteger`, which shares the integer return register and width
+    // with `id` on 64-bit platforms.
     let f: unsafe extern "C" fn(Id, Sel) -> NSUInteger =
         std::mem::transmute(objc_msgSend as unsafe extern "C" fn(Id, Sel) -> Id);
+    // SAFETY: `f` is the `objc_msgSend` entry point cast to the matching
+    // signature; the caller's contract guarantees the receiver and
+    // selector match an `NSUInteger`-returning method.
     f(obj, selector)
 }
 
 /// Sends a message with one `NSUInteger` argument that returns an object.
+///
+/// # Safety
+///
+/// `obj` must be a valid Objective-C receiver and `selector` must name a
+/// method taking one `NSUInteger` parameter and returning `id`.
 unsafe fn send1_index(obj: Id, selector: Sel, arg: NSUInteger) -> Id {
+    // SAFETY: `objc_msgSend` is a signature-agnostic trampoline; the cast
+    // reinterprets the function pointer (same bit pattern, same calling
+    // convention) to add one pointer-width `NSUInteger` parameter.
     let f: unsafe extern "C" fn(Id, Sel, NSUInteger) -> Id =
         std::mem::transmute(objc_msgSend as unsafe extern "C" fn(Id, Sel) -> Id);
+    // SAFETY: `f` is the `objc_msgSend` entry point cast to the matching
+    // arity; the caller's contract guarantees the receiver, selector, and
+    // index match the target method.
     f(obj, selector, arg)
 }
 
@@ -136,6 +236,11 @@ fn nsstring_from_bytes(bytes: &[u8]) -> Id {
     };
     let c_s = std::ffi::CString::new(s).unwrap_or_default();
     let nsstring = class("NSString");
+    // SAFETY: `nsstring` is the `NSString` class object (or null, which
+    // `objc_msgSend` tolerates), the selector matches
+    // `+stringWithUTF8String:` which takes a `const char*`, and `c_s` is a
+    // live, NUL-terminated buffer read only for the duration of the call.
+    // The result is an autoreleased `NSString*` we do not own.
     unsafe {
         send_ptr(
             nsstring,
@@ -148,6 +253,11 @@ fn nsstring_from_bytes(bytes: &[u8]) -> Id {
 /// Creates an autoreleased `NSData` from a byte slice.
 fn nsdata_from_bytes(bytes: &[u8]) -> Id {
     let nsdata = class("NSData");
+    // SAFETY: `nsdata` is the `NSData` class object (or null, which
+    // `objc_msgSend` tolerates), the selector matches
+    // `+dataWithBytes:length:` which copies `arg2` bytes from `arg1`
+    // during the call, and `bytes` is a live slice of that length.
+    // The result is an autoreleased `NSData*` we do not own.
     unsafe {
         send_ptr_usize(
             nsdata,
@@ -163,14 +273,22 @@ fn nsdata_to_bytes(data: Id) -> Option<Vec<u8>> {
     if data.is_null() {
         return None;
     }
+    // SAFETY: `data` is non-null (checked above) and `-length` returns an
+    // `NSUInteger`, matching the `send_usize` contract.
     let length = unsafe { send_usize(data, sel("length")) } as usize;
     if length == 0 {
         return Some(Vec::new());
     }
+    // SAFETY: `data` is a valid `NSData*` and `-bytes` returns a pointer
+    // to its contents, which remain valid while the object lives (it is
+    // autoreleased and still alive here).
     let bytes_ptr = unsafe { send(data, sel("bytes")) } as *const u8;
     if bytes_ptr.is_null() {
         return Some(Vec::new());
     }
+    // SAFETY: `bytes_ptr` is non-null (checked above) and points to
+    // `length` readable bytes owned by the live `NSData`; the slice only
+    // borrows them until copied into the `Vec` below.
     let slice = unsafe { std::slice::from_raw_parts(bytes_ptr, length) };
     Some(slice.to_vec())
 }
@@ -180,23 +298,36 @@ fn nsstring_to_bytes(string: Id) -> Option<Vec<u8>> {
     if string.is_null() {
         return None;
     }
+    // SAFETY: `string` is a non-null `NSString*` (checked above) and
+    // `-UTF8String` returns a `const char*` valid for the object's
+    // autorelease lifetime.
     let c_str_ptr = unsafe { send(string, sel("UTF8String")) } as *const c_char;
     if c_str_ptr.is_null() {
         return None;
     }
+    // SAFETY: `c_str_ptr` is non-null (checked above) and points to a
+    // NUL-terminated UTF-8 string owned by the still-alive `NSString`;
+    // the borrow ends when the bytes are copied below.
     let c_str = unsafe { CStr::from_ptr(c_str_ptr) };
     Some(c_str.to_bytes().to_vec())
 }
 
 /// Returns the `NSArray` of type strings (`NSString`) on the pasteboard.
 fn pasteboard_types(pasteboard: Id) -> Vec<String> {
+    // SAFETY: `pasteboard` is non-null (checked by callers) and `-types`
+    // returns an autoreleased `NSArray*` (or nil, checked below).
     let types_array = unsafe { send(pasteboard, sel("types")) };
     if types_array.is_null() {
         return Vec::new();
     }
+    // SAFETY: `types_array` is a non-null `NSArray*` and `-count` returns
+    // an `NSUInteger`, matching the `send_usize` contract.
     let count = unsafe { send_usize(types_array, sel("count")) } as usize;
     let mut result = Vec::with_capacity(count);
     for i in 0..count {
+        // SAFETY: `types_array` is a valid `NSArray*` and `i` is a valid
+        // index (`i < count`), so `-objectAtIndex:` returns a valid
+        // `NSString*` element.
         let type_str = unsafe { send1_index(types_array, sel("objectAtIndex:"), i as NSUInteger) };
         if let Some(bytes) = nsstring_to_bytes(type_str) {
             if let Ok(s) = std::str::from_utf8(&bytes) {
@@ -278,6 +409,9 @@ impl MacosBackend {
     /// Returns the system `generalPasteboard` (`NSPasteboard` instance).
     fn general_pasteboard() -> Id {
         let cls = class("NSPasteboard");
+        // SAFETY: `cls` is the `NSPasteboard` class object (or null, which
+        // `objc_msgSend` tolerates by returning nil) and `+generalPasteboard`
+        // returns an autoreleased singleton we do not own.
         unsafe { send(cls, sel("generalPasteboard")) }
     }
 }
@@ -295,6 +429,9 @@ impl ClipboardBackend for MacosBackend {
             return;
         }
         // Clear the pasteboard first.
+        // SAFETY: `pasteboard` is non-null (checked above) and
+        // `-clearContents` takes no arguments and returns `BOOL`,
+        // matching the `send_bool` contract.
         unsafe {
             send_bool(pasteboard, sel("clearContents"));
         }
@@ -307,6 +444,11 @@ impl ClipboardBackend for MacosBackend {
         if data.is_null() {
             return;
         }
+        // SAFETY: `pasteboard`, `data`, and `type_string` are all non-null
+        // (checked above) and `-setData:forType:` takes two `id` arguments
+        // and returns `BOOL`, matching the `send2_bool` contract. The
+        // pasteboard retains the data, so no lifetime hazard remains after
+        // the call.
         unsafe {
             send2_bool(pasteboard, sel("setData:forType:"), data, type_string);
         }
@@ -322,6 +464,10 @@ impl ClipboardBackend for MacosBackend {
         if type_string.is_null() {
             return None;
         }
+        // SAFETY: `pasteboard` and `type_string` are non-null (checked
+        // above) and `-dataForType:` takes one `id` and returns `id`
+        // (an autoreleased `NSData*` or nil), matching the `send1`
+        // contract. Null is handled inside `nsdata_to_bytes`.
         let data = unsafe { send1(pasteboard, sel("dataForType:"), type_string) };
         nsdata_to_bytes(data)
     }
@@ -342,6 +488,9 @@ impl ClipboardBackend for MacosBackend {
         if pasteboard.is_null() {
             return;
         }
+        // SAFETY: `pasteboard` is non-null (checked above) and
+        // `-clearContents` takes no arguments and returns `BOOL`,
+        // matching the `send_bool` contract.
         unsafe {
             send_bool(pasteboard, sel("clearContents"));
         }

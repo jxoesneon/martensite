@@ -562,7 +562,7 @@ impl BackdropController for MacosBackdropController {
         };
 
         // Validate handle BEFORE committing state.
-        // Safety: the caller guarantees the window is alive for the
+        // SAFETY: the caller guarantees the window is alive for the
         // duration of this call.
         let ns_window = unsafe { window.raw_handle() } as *mut AnyObject;
         if ns_window.is_null() {

@@ -191,7 +191,7 @@ impl WindowsBackdropController {
     pub fn set_title_bar_style(&mut self, window: &dyn Window, style: &TitleBarStyle) {
         #[cfg(feature = "windows-backend")]
         {
-            // Safety: the caller guarantees the window is alive for the
+            // SAFETY: the caller guarantees the window is alive for the
             // duration of this call, so the HWND is valid to pass to DWM.
             let handle = unsafe { window.raw_handle() };
             let hwnd = HWND(handle);
@@ -199,6 +199,10 @@ impl WindowsBackdropController {
             // DWMWA_USE_IMMERSIVE_DARK_MODE — BOOL (i32, 0 or 1).
             if let Some(dark) = style.dark_mode {
                 let value: i32 = i32::from(dark);
+                // SAFETY: `hwnd` is valid for this call (see above), and
+                // `&value` points to a live `i32` for exactly
+                // `size_of::<i32>()` bytes — the BOOL type and size this
+                // attribute expects.
                 let _ = unsafe {
                     DwmSetWindowAttribute(
                         hwnd,
@@ -216,6 +220,11 @@ impl WindowsBackdropController {
                 } else {
                     DWMWCP_DEFAULT
                 };
+                // SAFETY: `hwnd` is valid for this call (see above), and
+                // `&value` points to a live `i32` for exactly
+                // `size_of::<i32>()` bytes — the
+                // `DWM_WINDOW_CORNER_PREFERENCE` type and size this
+                // attribute expects.
                 let _ = unsafe {
                     DwmSetWindowAttribute(
                         hwnd,
@@ -228,6 +237,10 @@ impl WindowsBackdropController {
 
             // DWMWA_CAPTION_COLOR — COLORREF (u32).
             if let Some(color) = style.caption_color {
+                // SAFETY: `hwnd` is valid for this call (see above), and
+                // `&color` points to a live `u32` for exactly
+                // `size_of::<u32>()` bytes — the COLORREF type and size
+                // this attribute expects.
                 let _ = unsafe {
                     DwmSetWindowAttribute(
                         hwnd,
@@ -240,6 +253,10 @@ impl WindowsBackdropController {
 
             // DWMWA_TEXT_COLOR — COLORREF (u32).
             if let Some(color) = style.text_color {
+                // SAFETY: `hwnd` is valid for this call (see above), and
+                // `&color` points to a live `u32` for exactly
+                // `size_of::<u32>()` bytes — the COLORREF type and size
+                // this attribute expects.
                 let _ = unsafe {
                     DwmSetWindowAttribute(
                         hwnd,
@@ -254,7 +271,7 @@ impl WindowsBackdropController {
         #[cfg(not(feature = "windows-backend"))]
         {
             // Without the windows-backend feature, no FFI is available.
-            // Safety: stub does not dereference the handle.
+            // SAFETY: stub does not dereference the handle.
             let _ = unsafe { window.raw_handle() };
         }
     }
@@ -310,10 +327,14 @@ impl BackdropController for WindowsBackdropController {
                 BackdropMaterial::Vibrancy(_) => DWMSBT_NONE, // unreachable; handled above
             };
 
-            // Safety: the caller guarantees the window is alive for the
+            // SAFETY: the caller guarantees the window is alive for the
             // duration of this call, so the HWND is valid to pass to DWM.
             let handle = unsafe { window.raw_handle() };
             let hwnd = HWND(handle);
+            // SAFETY: `hwnd` is valid for this call (see above), and
+            // `&dwm_type` points to a live `DWM_SYSTEMBACKDROP_TYPE` for
+            // exactly `size_of::<DWM_SYSTEMBACKDROP_TYPE>()` bytes — the
+            // type and size `DWMWA_SYSTEMBACKDROP_TYPE` expects.
             let result = unsafe {
                 DwmSetWindowAttribute(
                     hwnd,
@@ -336,7 +357,7 @@ impl BackdropController for WindowsBackdropController {
         #[cfg(not(feature = "windows-backend"))]
         {
             // Without the windows-backend feature, no FFI is available.
-            // Safety: stub does not dereference the handle.
+            // SAFETY: stub does not dereference the handle.
             let _ = unsafe { window.raw_handle() };
             self.material = material;
             self.supported = false;
