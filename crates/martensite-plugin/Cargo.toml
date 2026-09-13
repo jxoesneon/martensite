@@ -2,7 +2,8 @@
 name = "martensite-plugin"
 edition.workspace = true
 version.workspace = true
-rust-version.workspace = true
+# wasmtime 48 requires rustc 1.95 — higher than the workspace MSRV.
+rust-version = "1.95.0"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
