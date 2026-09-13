@@ -37,6 +37,7 @@ jobs:
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
             libglib2.0-dev pkg-config \
             libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavfilter-dev libavdevice-dev \
             libavformat-dev
       - name: Rustfmt Check
         run: cargo fmt --all -- --check
@@ -64,7 +65,9 @@ jobs:
         with:
           tool: cargo-vet
       - name: Run cargo-vet
-        run: cargo vet --locked
+        # Cargo.lock is gitignored (library workspace), so --locked would
+        # fail on a missing lockfile. cargo vet generates one itself.
+        run: cargo vet
 
   test-suite:
     name: Test Suite
@@ -82,6 +85,7 @@ jobs:
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
             libglib2.0-dev pkg-config \
             libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavfilter-dev libavdevice-dev \
             libavformat-dev
       - name: Run Tests
         run: cargo test --workspace --bins --lib --tests
@@ -117,6 +121,7 @@ jobs:
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
             libglib2.0-dev pkg-config \
             libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavfilter-dev libavdevice-dev \
             libavformat-dev
       - name: Install Wayland dev headers (for wayland-sys build script)
         run: |
@@ -158,6 +163,7 @@ jobs:
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
             libglib2.0-dev pkg-config \
             libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavfilter-dev libavdevice-dev \
             libavformat-dev
       - name: Build Documentation
         run: cargo doc --workspace --no-deps --all-features
@@ -196,6 +202,7 @@ jobs:
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
             libglib2.0-dev pkg-config \
             libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavfilter-dev libavdevice-dev \
             libavformat-dev
       # Runs #[ignore]-gated performance tests in release mode with
       # MARTENSITE_STRICT_BENCH=1. Only the crates that have #[ignore]-gated

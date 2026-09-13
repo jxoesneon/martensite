@@ -257,6 +257,7 @@ fn picking_button(button: PointerButton) -> Option<bevy::picking::pointer::Point
         PointerButton::Secondary => Some(bevy::picking::pointer::PointerButton::Secondary),
         PointerButton::Middle => Some(bevy::picking::pointer::PointerButton::Middle),
         PointerButton::Back | PointerButton::Forward | PointerButton::Other(_) => None,
+        _ => None,
     }
 }
 
@@ -270,6 +271,7 @@ fn mouse_button(button: PointerButton) -> MouseButton {
         PointerButton::Back => MouseButton::Back,
         PointerButton::Forward => MouseButton::Forward,
         PointerButton::Other(n) => MouseButton::Other(n),
+        _ => MouseButton::Other(0),
     }
 }
 
