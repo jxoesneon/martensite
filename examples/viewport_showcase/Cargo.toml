@@ -1,6 +1,6 @@
 [package]
 name = "viewport_showcase"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 # `martensite-bevy` pins a Bevy main revision whose MSRV is 1.96; that
 # bound applies to every crate in this dependency graph.
@@ -11,7 +11,7 @@ repository = "https://github.com/jxoesneon/martensite"
 keywords = ["gui", "bevy", "godot", "viewport"]
 categories = ["gui", "rendering::engine"]
 homepage = "https://martensite.dev"
-description = "v0.15.0 verification app — a live Bevy 3D viewport and a Godot viewport composited side by side inside one Martensite window."
+description = "v0.16.0 verification app — a live Bevy 3D viewport and a Godot viewport composited side by side inside one Martensite window."
 publish = false
 readme = "README.md"
 
@@ -24,15 +24,15 @@ readme = "README.md"
 [workspace]
 
 [dependencies]
-martensite = { path = "../../crates/martensite", version = "0.15.0" }
-martensite-engine-bridge = { path = "../../crates/martensite-engine-bridge", version = "0.15.0" }
-martensite-render = { path = "../../crates/martensite-render", version = "0.15.0" }
+martensite = { path = "../../crates/martensite", version = "0.16.0" }
+martensite-engine-bridge = { path = "../../crates/martensite-engine-bridge", version = "0.16.0" }
+martensite-render = { path = "../../crates/martensite-render", version = "0.16.0" }
 # `vello` enables the segmented GPU dispatch in `RenderOrchestrator`:
 # without it the GPU mode presents cleared frames only (the TinySkia
 # fallback path still works).
-martensite-wgpu = { path = "../../crates/martensite-wgpu", version = "0.15.0", features = ["vello"] }
-martensite-bevy = { path = "../../crates/martensite-bevy", version = "0.15.0" }
-martensite-godot = { path = "../../crates/martensite-godot", version = "0.15.0" }
+martensite-wgpu = { path = "../../crates/martensite-wgpu", version = "0.16.0", features = ["vello"] }
+martensite-bevy = { path = "../../crates/martensite-bevy", version = "0.16.0" }
+martensite-godot = { path = "../../crates/martensite-godot", version = "0.16.0" }
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }
 # Backend features mirror the workspace's wgpu spec so the host's
 # `wgpu::Device` type unifies with the one `martensite-bevy` injects into

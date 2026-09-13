@@ -107,9 +107,12 @@ jobs:
       - name: Run soak campaign
         run: |
           mkdir -p /tmp/fuzz-results
+          # GitHub expressions have no arithmetic operators, so the
+          # hours -> seconds conversion happens in the shell.
+          export MARTENSITE_FUZZ_DURATION=$(( ${SOAK_HOURS:-6} * 3600 ))
           cargo test --release -p martensite-test --lib soak_campaign -- --ignored --nocapture 2>&1 | tee /tmp/fuzz-results/fuzz-results.txt
         env:
-          MARTENSITE_FUZZ_DURATION: ${{ fromJSON(github.event.inputs.soak_hours || '6') * 3600 }}
+          SOAK_HOURS: ${{ github.event.inputs.soak_hours }}
           MARTENSITE_FUZZ_SEED: ${{ github.event.inputs.seed || '1' }}
           MARTENSITE_FUZZ_RELEASE: "1"
           MARTENSITE_FUZZ_RESULTS_DIR: "/tmp/fuzz-results"
