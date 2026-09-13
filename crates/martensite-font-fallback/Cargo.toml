@@ -22,6 +22,11 @@ windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Com",
 ] }
+# Required as a direct dependency because the `#[implement]` macro
+# (re-exported as `windows::core::implement`) expands to `::windows_core::`
+# paths, which only resolve when `windows-core` is in the extern prelude.
+# `windows` 0.61 re-exports `windows-core` 0.61.
+windows-core = "0.61"
 
 # macOS: CoreText via `core-text` and `core-foundation`.
 [target.'cfg(target_os = "macos")'.dependencies]

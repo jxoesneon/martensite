@@ -15,8 +15,7 @@
 
 use martensite_text::cascade::{FontFallbackProvider, ScriptTag};
 
-use windows::core::{implement, Interface, HSTRING, PCWSTR};
-use windows::Win32::Foundation::BOOL;
+use windows::core::{implement, Interface, BOOL, HSTRING, PCWSTR};
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteFactory2, IDWriteFont, IDWriteFontCollection,
     IDWriteFontFallback, IDWriteNumberSubstitution, IDWriteTextAnalysisSource,
@@ -47,6 +46,9 @@ use windows::Win32::Graphics::DirectWrite::{
 /// ```
 pub struct DirectWriteFontFallback {
     /// The DirectWrite factory, used to create the font fallback.
+    /// Retained so the factory COM object stays alive for the lifetime
+    /// of the provider; it is not read after construction.
+    #[allow(dead_code)]
     factory: IDWriteFactory,
     /// The font fallback object, cached for reuse.
     fallback: Option<IDWriteFontFallback>,
@@ -119,7 +121,7 @@ impl DirectWriteFontFallback {
         // Create a simple text analysis source that returns the text
         // and locale. DirectWrite uses this to determine the script
         // and locale for fallback mapping.
-        let source = SimpleAnalysisSource::new(text, locale);
+        let source: IDWriteTextAnalysisSource = SimpleAnalysisSource::new(text, locale).into();
 
         // Convert text to UTF-16 for the text length parameter.
         let text_utf16: Vec<u16> = text.encode_utf16().collect();
@@ -310,7 +312,7 @@ impl SimpleAnalysisSource {
     }
 }
 
-impl IDWriteTextAnalysisSource_Impl for SimpleAnalysisSource {
+impl IDWriteTextAnalysisSource_Impl for SimpleAnalysisSource_Impl {
     fn GetTextAtPosition(
         &self,
         textposition: u32,
