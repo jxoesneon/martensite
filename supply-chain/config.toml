@@ -5,91 +5,97 @@
 version = "0.10"
 
 [policy.martensite]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-access]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-accesskit-winit]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-assets]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-blessed]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-clipboard]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-clipboard-platform]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-core]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-cosmic-text]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-devtools]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-dnd]
-audit-as-crates-io = true
+audit-as-crates-io = false
+
+[policy.martensite-engine-bridge]
+audit-as-crates-io = false
 
 [policy.martensite-focus]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-font-fallback]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-history]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-host]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-l10n]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-layout]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-macros]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-media]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-media-platform]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-motion]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-plugin]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-reactive]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-render]
-audit-as-crates-io = true
+audit-as-crates-io = false
+
+[policy.martensite-shell]
+audit-as-crates-io = false
 
 [policy.martensite-test]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-text]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-theme]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-wgpu]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.martensite-window]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [[exemptions.accesskit]]
 version = "0.25.0"
@@ -1199,238 +1205,6 @@ criteria = "safe-to-deploy"
 version = "0.4.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.martensite]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-access]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-access]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-accesskit-winit]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-accesskit-winit]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-assets]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-assets]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-blessed]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-blessed]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-clipboard]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-clipboard]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-clipboard-platform]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-clipboard-platform]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-core]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-core]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-cosmic-text]]
-version = "0.19.0-martensite.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-devtools]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-devtools]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-dnd]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-dnd]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-focus]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-focus]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-font-fallback]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-font-fallback]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-history]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-history]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-host]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-host]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-l10n]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-l10n]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-layout]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-layout]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-macros]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-macros]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-media]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-media]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-media-platform]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-media-platform]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-motion]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-motion]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-plugin]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-plugin]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-reactive]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-reactive]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-render]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-render]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-shell]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-test]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-test]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-text]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-text]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-theme]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-theme]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-wgpu]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-wgpu]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-window]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.martensite-window]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.maybe-owned]]
 version = "0.3.4"
 criteria = "safe-to-deploy"
@@ -1501,10 +1275,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.ndk-sys]]
 version = "0.6.0+11769913"
-criteria = "safe-to-deploy"
-
-[[exemptions.netrender-vello]]
-version = "0.10.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.notify]]
@@ -2183,6 +1953,10 @@ criteria = "safe-to-deploy"
 version = "0.8.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.taffy]]
+version = "0.14.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.target-lexicon]]
 version = "0.12.16"
 criteria = "safe-to-deploy"
@@ -2609,6 +2383,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.wgpu-naga-bridge]]
 version = "30.0.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.wgpu-profiler]]
+version = "0.28.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.wgpu-types]]
