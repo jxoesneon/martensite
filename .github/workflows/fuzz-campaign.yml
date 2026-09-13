@@ -49,9 +49,12 @@ jobs:
     timeout-minutes: 60
     # Runs on push, PR, and the weekly schedule. On manual dispatch it only
     # runs when mode=smoke, so a soak dispatch does not duplicate it.
+    # NOTE: the `inputs` context is unavailable on push/schedule events and
+    # fails workflow validation, so read the dispatch payload via
+    # `github.event.inputs` instead.
     if: >-
       github.event_name != 'workflow_dispatch' ||
-      inputs.mode == 'smoke'
+      github.event.inputs.mode == 'smoke'
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -86,9 +89,9 @@ jobs:
   # If the job is killed at the timeout, `if: always()` on the upload step
   # still preserves partial results.
   fuzz-soak:
-    name: Fuzz Soak Campaign (${{ inputs.soak_hours }}h)
+    name: Fuzz Soak Campaign (${{ github.event.inputs.soak_hours }}h)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'soak'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'soak'
     timeout-minutes: 340
     steps:
       - uses: actions/checkout@v5
@@ -106,7 +109,7 @@ jobs:
           mkdir -p /tmp/fuzz-results
           cargo test --release -p martensite-test --lib soak_campaign -- --ignored --nocapture 2>&1 | tee /tmp/fuzz-results/fuzz-results.txt
         env:
-          MARTENSITE_FUZZ_DURATION: ${{ fromJSON(inputs.soak_hours) * 3600 }}
+          MARTENSITE_FUZZ_DURATION: ${{ fromJSON(github.event.inputs.soak_hours || '6') * 3600 }}
           MARTENSITE_FUZZ_SEED: ${{ github.event.inputs.seed || '1' }}
           MARTENSITE_FUZZ_RELEASE: "1"
           MARTENSITE_FUZZ_RESULTS_DIR: "/tmp/fuzz-results"
