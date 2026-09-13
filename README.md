@@ -94,30 +94,35 @@ Martensite is engineered for predictable throughput, zero quiescent idle power, 
 
 ## Quick Start
 
+Add `martensite` to your `Cargo.toml`:
+
+```toml
+[dependencies]
+martensite = "0.15.0"
+```
+
 ```rust
 use martensite::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    App::build()
-        .title("Martensite Application")
-        .size(1280.0, 800.0)
-        .run(|cx| {
-            let counter = cx.signal(0);
+fn main() {
+    // Configure the application: GPU-first with a transparent
+    // TinySkia CPU fallback on device loss or headless hosts.
+    let app = App::build()
+        .allow_software_fallback(true)
+        .build();
 
-            column()
-                .padding(24.0)
-                .gap(16.0)
-                .child(
-                    text(cx.memo(move || format!("Count: {}", counter.get())))
-                        .size(24.0)
-                        .weight(FontWeight::Bold)
-                )
-                .child(
-                    button("Increment")
-                        .padding(12.0)
-                        .on_click(move |_| counter.update(|c| *c + 1))
-                )
-        })
+    // Fine-grained reactive state — no VDOM, no diffing.
+    let counter = Signal::new(0);
+    let label = Memo::new(move || format!("Count: {}", counter.get()));
+
+    // Foundational widgets with intrinsic measurement.
+    let view = Flex::column()
+        .gap(16.0)
+        .child(Text::new(label.get()).font_size(24.0))
+        .child(Button::new("Increment").enabled(true));
+
+    assert!(app.allow_software_fallback());
+    assert_eq!(view.child_count(), 2);
 }
 ```
 
