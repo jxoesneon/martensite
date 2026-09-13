@@ -498,79 +498,92 @@ impl LayoutEngine {
         // real parent constraints rather than unbounded space.
         let tree = &mut self.tree;
         let measure_trans = FlowTransposition::new(self.writing_mode, GeomSize::zero());
-        let measure = |known: Size<Option<f32>>,
-                       available_space: Size<AvailableSpace>,
-                       node_id: NodeId,
-                       _context: Option<&mut WidgetId>,
-                       _style: &Style| {
-            // Recursion guard: nodes deeper than [`MAX_LAYOUT_DEPTH`] return
-            // a zero size instead of recursing into the widget, preventing
-            // stack overflow on pathological trees.
-            let depth = node_depths.get(&node_id).copied().unwrap_or(0);
-            if depth > MAX_LAYOUT_DEPTH {
-                return Size {
-                    width: 0.0,
-                    height: 0.0,
-                };
-            }
-            if let Some(widget_id) = node_to_widget.get(&node_id) {
-                if let Some((hot, cold)) = arena.get_both_mut(*widget_id) {
-                    // Taffy's `available_space` is in logical (inline/block)
-                    // dimensions. Convert to flow-relative [`Constraints`],
-                    // then transpose to the physical width/height the widget
-                    // will measure, and convert the result back to logical.
-                    //
-                    // # Known Limitation: MinContent Sizing
-                    //
-                    // Taffy's `MinContent` requests the narrowest possible
-                    // intrinsic size (e.g. the longest unbreakable word for
-                    // text). We approximate this as `0.0` because the
-                    // `Widget::measure` API does not distinguish between
-                    // min-content and max-content queries. A future milestone
-                    // will add a `MeasureMode` parameter to `Widget::measure`
-                    // to support proper min-content sizing. For v0.3.0, this
-                    // approximation is acceptable because Taffy primarily
-                    // uses `MaxContent` and `Definite` constraints during
-                    // flexbox layout.
-                    let max_width = match (known.width, available_space.width) {
-                        (Some(w), _) => w,
-                        (None, AvailableSpace::Definite(w)) => w,
-                        (None, AvailableSpace::MaxContent) => f32::MAX,
-                        (None, AvailableSpace::MinContent) => 0.0,
-                    };
-                    let max_height = match (known.height, available_space.height) {
-                        (Some(h), _) => h,
-                        (None, AvailableSpace::Definite(h)) => h,
-                        (None, AvailableSpace::MaxContent) => f32::MAX,
-                        (None, AvailableSpace::MinContent) => 0.0,
-                    };
-                    // If known dimensions are provided, use them as both
-                    // min and max (fixed size). Otherwise, min is zero.
-                    let (min_w, min_h) = match (known.width, known.height) {
-                        (Some(w), Some(h)) => (w, h),
-                        (Some(w), None) => (w, 0.0),
-                        (None, Some(h)) => (0.0, h),
-                        (None, None) => (0.0, 0.0),
-                    };
-                    let logical = Constraints::new(min_w, min_h, max_width, max_height);
-                    let physical = measure_trans.transpose_constraints(logical);
-                    let constraints = LayoutConstraints {
-                        min_size: Vec2::new(physical.min_width, physical.min_height),
-                        max_size: Vec2::new(physical.max_width, physical.max_height),
-                    };
-                    let mut cx = LayoutContext { hot };
-                    let size = cold.widget.measure(&mut cx, constraints);
-                    let logical = measure_trans.to_logical_size(GeomSize::new(size.x, size.y));
+        // Taffy 0.14 routes leaf measurement through `compute_leaf_layout`,
+        // which applies the node's own style (min/max size, aspect ratio) to
+        // the intrinsic size returned by the widget measure callback and
+        // produces the `LayoutOutput` the measure closure must return.
+        let mut leaf_measure =
+            |node_id: NodeId, known: Size<Option<f32>>, available_space: Size<AvailableSpace>| {
+                // Recursion guard: nodes deeper than [`MAX_LAYOUT_DEPTH`] return
+                // a zero size instead of recursing into the widget, preventing
+                // stack overflow on pathological trees.
+                let depth = node_depths.get(&node_id).copied().unwrap_or(0);
+                if depth > MAX_LAYOUT_DEPTH {
                     return Size {
-                        width: logical.inline,
-                        height: logical.block,
+                        width: 0.0,
+                        height: 0.0,
                     };
                 }
-            }
-            Size {
-                width: 0.0,
-                height: 0.0,
-            }
+                if let Some(widget_id) = node_to_widget.get(&node_id) {
+                    if let Some((hot, cold)) = arena.get_both_mut(*widget_id) {
+                        // Taffy's `available_space` is in logical (inline/block)
+                        // dimensions. Convert to flow-relative [`Constraints`],
+                        // then transpose to the physical width/height the widget
+                        // will measure, and convert the result back to logical.
+                        //
+                        // # Known Limitation: MinContent Sizing
+                        //
+                        // Taffy's `MinContent` requests the narrowest possible
+                        // intrinsic size (e.g. the longest unbreakable word for
+                        // text). We approximate this as `0.0` because the
+                        // `Widget::measure` API does not distinguish between
+                        // min-content and max-content queries. A future milestone
+                        // will add a `MeasureMode` parameter to `Widget::measure`
+                        // to support proper min-content sizing. For v0.3.0, this
+                        // approximation is acceptable because Taffy primarily
+                        // uses `MaxContent` and `Definite` constraints during
+                        // flexbox layout.
+                        let max_width = match (known.width, available_space.width) {
+                            (Some(w), _) => w,
+                            (None, AvailableSpace::Definite(w)) => w,
+                            (None, AvailableSpace::MaxContent) => f32::MAX,
+                            (None, AvailableSpace::MinContent) => 0.0,
+                        };
+                        let max_height = match (known.height, available_space.height) {
+                            (Some(h), _) => h,
+                            (None, AvailableSpace::Definite(h)) => h,
+                            (None, AvailableSpace::MaxContent) => f32::MAX,
+                            (None, AvailableSpace::MinContent) => 0.0,
+                        };
+                        // If known dimensions are provided, use them as both
+                        // min and max (fixed size). Otherwise, min is zero.
+                        let (min_w, min_h) = match (known.width, known.height) {
+                            (Some(w), Some(h)) => (w, h),
+                            (Some(w), None) => (w, 0.0),
+                            (None, Some(h)) => (0.0, h),
+                            (None, None) => (0.0, 0.0),
+                        };
+                        let logical = Constraints::new(min_w, min_h, max_width, max_height);
+                        let physical = measure_trans.transpose_constraints(logical);
+                        let constraints = LayoutConstraints {
+                            min_size: Vec2::new(physical.min_width, physical.min_height),
+                            max_size: Vec2::new(physical.max_width, physical.max_height),
+                        };
+                        let mut cx = LayoutContext { hot };
+                        let size = cold.widget.measure(&mut cx, constraints);
+                        let logical = measure_trans.to_logical_size(GeomSize::new(size.x, size.y));
+                        return Size {
+                            width: logical.inline,
+                            height: logical.block,
+                        };
+                    }
+                }
+                Size {
+                    width: 0.0,
+                    height: 0.0,
+                }
+            };
+
+        let measure = |inputs: taffy::LayoutInput,
+                       node_id: NodeId,
+                       _context: Option<&mut WidgetId>,
+                       style: &Style| {
+            taffy::compute_leaf_layout(
+                inputs,
+                style,
+                |_, _| 0.0,
+                |known, available_space| leaf_measure(node_id, known, available_space),
+            )
         };
 
         tree.compute_layout_with_measure(root_node, logical_available, measure)
