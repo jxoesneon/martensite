@@ -342,14 +342,26 @@ mod tests {
         let engine = GodotEngine::new_channel(handle, surface, rx);
         tx.send(&FrameMsg::rgba8(2, 2, 1, vec![7u8; 16]).unwrap())
             .unwrap();
-        // Give the receiver thread a moment to drain.
-        for _ in 0..100 {
-            if engine.latest.lock().unwrap().is_some() {
+        // Give the receiver thread a moment to drain. A tight yield loop
+        // is insufficient on loaded CI runners — the OS may not schedule
+        // the receiver within 100 yields. Sleep-bounded poll instead.
+        for _ in 0..1000 {
+            if engine
+                .latest
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
+            {
                 break;
             }
-            std::thread::yield_now();
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        let msg = engine.latest.lock().unwrap().take().unwrap();
+        let msg = engine
+            .latest
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+            .unwrap();
         assert_eq!((msg.width, msg.height, msg.seq), (2, 2, 1));
         assert_eq!(msg.pixels, vec![7u8; 16]);
     }
@@ -366,6 +378,21 @@ mod tests {
         let mut engine = GodotEngine::new_channel(handle.clone(), surface, rx);
         tx.send(&FrameMsg::rgba8(4, 4, 1, vec![9u8; 64]).unwrap())
             .unwrap();
+
+        // Wait for the receiver thread to drain the frame before
+        // calling `render` — same race-condition guard as
+        // `mailbox_drains_into_latest`.
+        for _ in 0..1000 {
+            if engine
+                .latest
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
 
         // `Device::noop` short-circuits the Instance/Adapter dance: a
         // fully validating no-op backend, no GPU required.
