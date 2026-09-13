@@ -16,6 +16,23 @@ pub const FRAME_NS: u64 = 33_333_333;
 /// VCL NAL (type 1–5) that follows a VCL NAL — SPS/PPS/SEI/AUD prefix NALs
 /// attach to the AU they precede.
 pub fn annex_b_access_units(stream: &[u8]) -> Vec<&[u8]> {
+    annex_b_split(stream, |header| (1..=5).contains(&(header & 0x1f)))
+}
+
+/// Splits an Annex-B HEVC byte stream into access units using the same rule
+/// as [`annex_b_access_units`]: a new AU starts at each VCL NAL (types 0–31)
+/// that follows a VCL NAL — VPS/SPS/PPS/AUD/SEI prefix NALs attach to the AU
+/// they precede. The HEVC NAL header is two bytes and the unit type lives in
+/// bits 1–6 of its first byte.
+pub fn hevc_access_units(stream: &[u8]) -> Vec<&[u8]> {
+    annex_b_split(stream, |header| ((header >> 1) & 0x3f) <= 31)
+}
+
+/// Shared Annex-B access-unit splitter: `is_vcl` classifies the NAL header
+/// byte (H.264 `type & 0x1f` ∈ 1–5, HEVC `(type >> 1) & 0x3f` ∈ 0–31). A new
+/// AU starts at each VCL NAL that follows a VCL NAL; non-VCL prefix NALs
+/// attach to the AU they precede.
+fn annex_b_split(stream: &[u8], is_vcl: impl Fn(u8) -> bool) -> Vec<&[u8]> {
     // (slice_start, nal_header) per NAL: `slice_start` is the first byte of
     // the start code, `nal_header` the byte after it.
     let mut nals: Vec<(usize, usize)> = Vec::new();
@@ -41,14 +58,13 @@ pub fn annex_b_access_units(stream: &[u8]) -> Vec<&[u8]> {
     let mut au_start = 0usize;
     let mut au_has_vcl = false;
     for &(start, header) in &nals {
-        let nal_type = stream[header] & 0x1f;
-        let is_vcl = (1..=5).contains(&nal_type);
-        if is_vcl && au_has_vcl {
+        let vcl = is_vcl(stream[header]);
+        if vcl && au_has_vcl {
             aus.push(&stream[au_start..start]);
             au_start = start;
             au_has_vcl = false;
         }
-        au_has_vcl |= is_vcl;
+        au_has_vcl |= vcl;
     }
     if au_start < stream.len() {
         aus.push(&stream[au_start..]);
@@ -116,13 +132,122 @@ pub fn avcc_record(stream: &[u8]) -> Option<Vec<u8>> {
     Some(rec)
 }
 
+/// Builds a minimal `HEVCDecoderConfigurationRecord` (`hvcC`) from the
+/// VPS/SPS/PPS NAL units of an Annex-B HEVC stream. `None` when no SPS is
+/// present.
+///
+/// The record is deliberately minimal: the only fields the consumers in this
+/// workspace read are `lengthSizeMinusOne` (byte 21, fixed to 4-byte
+/// lengths) and the parameter-set arrays starting at byte 22, so the
+/// profile/level/constraint bytes (1–20) are left zero — decoders re-parse
+/// the SPS itself. NAL units are stored complete with their two-byte
+/// headers, matching the `avcC` convention of including the NAL header.
+pub fn hvcc_record(stream: &[u8]) -> Option<Vec<u8>> {
+    let nals = annex_b_nals(stream);
+    // Parameter sets in NAL-type order: VPS (32), SPS (33), PPS (34).
+    let mut groups: [(u8, Vec<&[u8]>); 3] = [(32, Vec::new()), (33, Vec::new()), (34, Vec::new())];
+    for nal in nals {
+        if nal.len() < 2 {
+            continue; // HEVC NAL headers are two bytes; a shorter run is padding.
+        }
+        for (nal_type, group) in &mut groups {
+            if (nal[0] >> 1) & 0x3f == *nal_type {
+                group.push(nal);
+            }
+        }
+    }
+    if groups[1].1.is_empty() {
+        return None; // no SPS → nothing a decoder can configure from
+    }
+
+    let num_arrays = groups.iter().filter(|(_, g)| !g.is_empty()).count() as u8;
+    let mut rec = vec![0x01]; // configurationVersion
+    rec.extend_from_slice(&[0; 20]); // profile/level/constraints fields (unused)
+    rec.push(0xFF); // reserved + lengthSizeMinusOne = 3 (4-byte lengths)
+    rec.push(num_arrays);
+    for (nal_type, group) in &groups {
+        if group.is_empty() {
+            continue;
+        }
+        rec.push(0x80 | nal_type); // array_completeness + NAL_unit_type
+        rec.extend_from_slice(&(group.len() as u16).to_be_bytes());
+        for nal in group {
+            rec.extend_from_slice(&(nal.len() as u16).to_be_bytes());
+            rec.extend_from_slice(nal);
+        }
+    }
+    Some(rec)
+}
+
 /// Converts one Annex-B access unit to 4-byte length-prefixed (`avcC`
 /// sample) form for APIs that require it (VideoToolbox).
 pub fn au_to_avcc(au: &[u8]) -> Vec<u8> {
+    au_to_length_prefixed(au)
+}
+
+/// Converts one Annex-B HEVC access unit to 4-byte length-prefixed (`hvcC`
+/// sample) form for APIs that require it (VideoToolbox).
+///
+/// Unlike [`au_to_avcc`] this omits parameter-set NALs (VPS/SPS/PPS, types
+/// 32–34): a format description built from `hvcC` parameter sets describes
+/// `hvc1` samples, which must not carry those NALs in-band — the record
+/// already supplies them, and strict decoders (VideoToolbox) answer with
+/// `kVTVideoDecoderBadDataErr` when a sample repeats them. VCL, AUD and SEI
+/// NALs pass through unchanged.
+pub fn au_to_hvcc(au: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(au.len());
+    for nal in annex_b_nals(au) {
+        if nal.len() >= 2 && matches!((nal[0] >> 1) & 0x3f, 32..=34) {
+            continue;
+        }
+        out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+        out.extend_from_slice(nal);
+    }
+    out
+}
+
+/// Shared Annex-B → 4-byte length-prefixed converter backing
+/// [`au_to_avcc`]; [`au_to_hvcc`] uses its own loop so it can filter
+/// parameter-set NALs out of `hvc1` samples.
+fn au_to_length_prefixed(au: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(au.len());
     for nal in annex_b_nals(au) {
         out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
         out.extend_from_slice(nal);
     }
     out
+}
+
+/// Parses an IVF file (despite the `.bin` extension used by the sample
+/// assets) into owned per-frame payloads.
+///
+/// IVF is a trivial container: a fixed-size header opening with the `DKIF`
+/// signature, then a sequence of `[u32 LE size][u64 LE pts][payload]` frame
+/// records. Returns `None` when the signature is absent or no complete frame
+/// is present; a truncated tail record simply stops parsing.
+pub fn ivf_frames(file: &[u8]) -> Option<Vec<Vec<u8>>> {
+    if file.len() < 32 || file[..4] != *b"DKIF" {
+        return None;
+    }
+    // The header size is a u16 LE at offset 6 (32 in every conforming file);
+    // honour it so streams with extension headers still parse.
+    let header_len = usize::from(u16::from_le_bytes([file[6], file[7]]));
+    let mut pos = header_len.max(32);
+    let mut frames = Vec::new();
+    while pos + 12 <= file.len() {
+        let size = u32::from_le_bytes([file[pos], file[pos + 1], file[pos + 2], file[pos + 3]]);
+        pos += 12; // 4-byte size + 8-byte timestamp
+        let Some(end) = pos.checked_add(size as usize) else {
+            break;
+        };
+        if end > file.len() {
+            break;
+        }
+        frames.push(file[pos..end].to_vec());
+        pos = end;
+    }
+    if frames.is_empty() {
+        return None;
+    }
+    Some(frames)
 }
