@@ -6,7 +6,6 @@ ignore = [
     "RUSTSEC-2025-0141", # bincode unmaintained (transitive via cosmic-text/syntect)
     "RUSTSEC-2024-0388", # derivative unmaintained (transitive via cosmic-text/syntect)
     "RUSTSEC-2024-0320", # yaml-rust unmaintained (transitive via cosmic-text/syntect)
-    "RUSTSEC-2025-0057", # fxhash unmaintained (transitive via wasmtime/fxprof-processed-profile)
     # proc-macro-error is unmaintained but is a transitive dependency of
     # glib-macros 0.18 (gtk-rs-core 0.18), used by the Pango/Cairo reference
     # renderer. No safe upgrade is available within the gtk-rs 0.18 series.

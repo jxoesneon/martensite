@@ -13,8 +13,8 @@ description = "Wasmtime sandboxed plugin runtime for Martensite."
 readme = "README.md"
 
 [dependencies]
-wasmtime = "36.0.14"
-wasmtime-wasi = "36.0.14"
+wasmtime = "=48.0.1"
+wasmtime-wasi = "=48.0.1"
 martensite-core = { workspace = true }
 martensite-render = { workspace = true }
 martensite-reactive = { workspace = true }

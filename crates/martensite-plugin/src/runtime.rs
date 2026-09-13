@@ -34,7 +34,7 @@ use wasmtime::{
     Caller, Config, Engine, Extern, ExternType, Instance, Linker, Memory, MemoryType, Module,
     Store, Trap, WasmParams, WasmResults,
 };
-use wasmtime_wasi::preview1::{self, WasiP1Ctx};
+use wasmtime_wasi::p1::{self, WasiP1Ctx};
 use wasmtime_wasi::WasiCtxBuilder;
 
 use crate::ring_buffer::{PluginPaintCmd, PluginRingBuffer, DEFAULT_CAPACITY, SHARED_HEADER_SIZE};
@@ -265,7 +265,7 @@ impl PluginRuntime {
         let engine = Engine::new(&config)?;
 
         let mut linker = Linker::<PluginState>::new(&engine);
-        preview1::add_to_linker_sync(&mut linker, |state: &mut PluginState| &mut state.wasi)?;
+        p1::add_to_linker_sync(&mut linker, |state: &mut PluginState| &mut state.wasi)?;
         Self::add_host_functions(&mut linker)?;
 
         Ok(Self {
