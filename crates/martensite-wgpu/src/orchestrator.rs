@@ -596,7 +596,7 @@ impl RenderOrchestrator {
     /// 1. Acquires a frame from `surface` via [`SurfaceWrapper::acquire_frame`].
     /// 2. If the GPU (Vello) mode is active, creates a view of the surface
     ///    texture and dispatches the scene to the GPU compute pipeline via
-    ///    [`VelloRenderer::render_to_texture`].
+    ///    `vello::Renderer::render_to_texture`.
     /// 3. If the CPU (TinySkia) mode is active, uploads the rasterized RGBA8
     ///    pixel buffer to the surface texture via [`wgpu::Queue::write_texture`]
     ///    (which internally stages the data in a buffer), swizzling R/B channels
@@ -618,7 +618,7 @@ impl RenderOrchestrator {
     /// (commonly `Bgra8Unorm`) and `RENDER_ATTACHMENT | COPY_DST` usage, so a
     /// direct dispatch to the surface texture may be rejected by Vello at
     /// runtime; in that case the error is logged (see
-    /// [`VelloRenderer::render_to_texture`]) and the frame is still presented.
+    /// `vello::Renderer::render_to_texture`) and the frame is still presented.
     /// A production deployment that wants the Vello path should configure the
     /// surface with `Rgba8Unorm` + `STORAGE_BINDING`, or render to an
     /// intermediate texture and blit (deferred to a follow-up).

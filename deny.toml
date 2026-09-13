@@ -28,6 +28,11 @@ allow = [
     "MPL-2.0",
     "Unlicense",
     "NOASSERTION",
+    # ffmpeg-next's crate license; note this covers the Rust bindings only.
+    # The decoder-ffmpeg feature links the system FFmpeg libraries, which
+    # are LGPL/GPL depending on how the local FFmpeg build was configured —
+    # downstream distributors must honor the linked library's terms.
+    "WTFPL",
 ]
 confidence-threshold = 0.8
 

@@ -213,6 +213,34 @@ impl MediaView {
         }
     }
 
+    /// Signals the attached decoder that no further packets will arrive,
+    /// releasing every frame still held in its reorder buffer.
+    ///
+    /// Returns `Ok(false)` when no decoder is attached. Call this once the
+    /// producer reaches end-of-stream, then keep pumping
+    /// [`advance`](Self::advance) until the queue is empty.
+    ///
+    /// # Errors
+    ///
+    /// Propagates backend drain errors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media::MediaView;
+    ///
+    /// assert_eq!(MediaView::new().end_of_stream().unwrap(), false);
+    /// ```
+    pub fn end_of_stream(&mut self) -> Result<bool, martensite_media::surface::MediaError> {
+        match self.decoder.as_mut() {
+            None => Ok(false),
+            Some(dec) => {
+                dec.end_of_stream()?;
+                Ok(true)
+            }
+        }
+    }
+
     /// Advances the pipeline at `now_nanos`: drains decoded frames into the
     /// pacing queue, then presents the frame whose PTS has been reached by
     /// updating the [`VideoSurface`] handle.

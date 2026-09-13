@@ -41,10 +41,21 @@ objc2-core-media = { version = "0.3.2", optional = true }
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61", features = [
     "Win32_Graphics_Dxgi",
+    # DXGI_FORMAT_* used by D3D11_TEXTURE2D_DESC (format field is cfg-gated
+    # on this feature inside the windows crate).
+    "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Direct3D12",
     "Win32_Graphics_Direct3D11",
+    # D3D_DRIVER_TYPE / D3D_FEATURE_LEVEL for D3D11CreateDevice.
+    "Win32_Graphics_Direct3D",
     "Win32_Media_MediaFoundation",
     "Win32_Foundation",
+    # CoInitializeEx / CoUninitialize / CoCreateInstance / CoTaskMemFree for
+    # COM apartment setup and MFTEnumEx activation arrays.
+    "Win32_System_Com",
+    # IDXGIResource1::CreateSharedHandle is #[cfg(feature = "Win32_Security")]
+    # inside the windows crate (SECURITY_ATTRIBUTES parameter).
+    "Win32_Security",
 ] }
 
 # Linux: dma-buf import (compiles only on Linux). VAAPI decode is
@@ -53,6 +64,9 @@ windows = { version = "0.61", features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 drm = "0.12"
 cros-libva = { version = "0.0.13", optional = true }
+
+[target."cfg(windows)".dependencies]
+windows-0-62 = { version = "0.62", package = "windows", features = ["Win32_Foundation"] }
 
 # Software fallback decoder (all platforms). Requires FFmpeg system
 # libraries discoverable via pkg-config; feature-gated so the default

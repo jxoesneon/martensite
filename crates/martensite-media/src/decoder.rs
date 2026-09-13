@@ -91,6 +91,20 @@ pub trait VideoDecoder: Send + Sync {
     /// Returns an error on unrecoverable backend faults.
     fn try_recv_frame(&mut self) -> Result<Option<DecodedFrame>, MediaError>;
 
+    /// Signals that no further packets will arrive and asks the backend to
+    /// release all frames still held in its reorder buffer.
+    ///
+    /// `avcodec_send_packet(NULL)` / `VTDecompressionSessionFinishDelayedFrames`
+    /// / `MEEndOfStream`-style drain; decoders with no reorder delay (e.g.
+    /// [`MockDecoder`]) may use the default no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the backend cannot complete the drain.
+    fn end_of_stream(&mut self) -> Result<(), MediaError> {
+        Ok(())
+    }
+
     /// Drops all queued packets and pending reorder state. The next packet
     /// after a flush must be a keyframe.
     ///
@@ -137,6 +151,9 @@ pub struct MockDecoder {
     stats: DecodeStats,
     /// Packets received but not yet "decoded" (reorder latency).
     pending: std::collections::VecDeque<EncodedPacket>,
+    /// Set by `end_of_stream`: emit frames until `pending` is empty,
+    /// bypassing the reorder latency.
+    draining: bool,
     /// Packet delay before a frame is emitted.
     latency: usize,
     format: VideoPixelFormat,
@@ -169,6 +186,7 @@ impl MockDecoder {
                 ..DecodeStats::default()
             },
             pending: std::collections::VecDeque::new(),
+            draining: false,
             latency,
             hdr: None,
             next_frame_id: 0,
@@ -232,13 +250,10 @@ impl VideoDecoder for MockDecoder {
     }
 
     fn try_recv_frame(&mut self) -> Result<Option<DecodedFrame>, MediaError> {
-        if self.pending.len() <= self.latency {
+        if self.pending.is_empty() || (!self.draining && self.pending.len() <= self.latency) {
             return Ok(None);
         }
-        let packet = self
-            .pending
-            .pop_front()
-            .expect("pending is longer than latency");
+        let packet = self.pending.pop_front().expect("pending checked non-empty");
         self.next_frame_id = self.next_frame_id.saturating_add(1);
         self.stats.record_frame(1_000_000); // deterministic 1 ms quantum
         let mut meta = VideoFrameMetadata::new(
@@ -262,9 +277,15 @@ impl VideoDecoder for MockDecoder {
         Ok(Some(frame))
     }
 
+    fn end_of_stream(&mut self) -> Result<(), MediaError> {
+        self.draining = true;
+        Ok(())
+    }
+
     fn flush(&mut self) -> Result<(), MediaError> {
         self.pending.clear();
         self.seen_keyframe = false;
+        self.draining = false;
         Ok(())
     }
 
@@ -304,6 +325,10 @@ impl VideoDecoder for videotoolbox::VideoToolboxDecoder {
         Self::try_recv_frame(self)
     }
 
+    fn end_of_stream(&mut self) -> Result<(), MediaError> {
+        Self::end_of_stream(self)
+    }
+
     fn flush(&mut self) -> Result<(), MediaError> {
         Self::flush(self)
     }
@@ -333,6 +358,10 @@ impl VideoDecoder for mediafoundation::MediaFoundationDecoder {
 
     fn try_recv_frame(&mut self) -> Result<Option<DecodedFrame>, MediaError> {
         Self::try_recv_frame(self)
+    }
+
+    fn end_of_stream(&mut self) -> Result<(), MediaError> {
+        Self::end_of_stream(self)
     }
 
     fn flush(&mut self) -> Result<(), MediaError> {
@@ -366,6 +395,10 @@ impl VideoDecoder for vaapi::VaapiDecoder {
         Self::try_recv_frame(self)
     }
 
+    fn end_of_stream(&mut self) -> Result<(), MediaError> {
+        Self::end_of_stream(self)
+    }
+
     fn flush(&mut self) -> Result<(), MediaError> {
         Self::flush(self)
     }
@@ -395,6 +428,10 @@ impl VideoDecoder for ffmpeg::FfmpegDecoder {
 
     fn try_recv_frame(&mut self) -> Result<Option<DecodedFrame>, MediaError> {
         Self::try_recv_frame(self)
+    }
+
+    fn end_of_stream(&mut self) -> Result<(), MediaError> {
+        Self::end_of_stream(self)
     }
 
     fn flush(&mut self) -> Result<(), MediaError> {

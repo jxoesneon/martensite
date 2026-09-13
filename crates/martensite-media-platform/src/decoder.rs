@@ -588,9 +588,7 @@ impl core::fmt::Display for DecodeError {
             Self::StreamCorrupt(m) => write!(f, "corrupt stream: {m}"),
             Self::UnsupportedCodec(m) => write!(f, "unsupported codec: {m}"),
             Self::Fatal(m) => write!(f, "fatal decoder error: {m}"),
-            Self::NeedsKeyframe => {
-                f.write_str("decoder requires a keyframe before delta packets")
-            }
+            Self::NeedsKeyframe => f.write_str("decoder requires a keyframe before delta packets"),
         }
     }
 }

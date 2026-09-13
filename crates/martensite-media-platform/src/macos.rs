@@ -120,8 +120,8 @@ pub(crate) fn import_iosurface(
     })?;
 
     // Step 5: Wrap the MTLTexture as a wgpu-hal Texture.
-    let wgpu_format = plane_wgpu_format(desc.format, desc.plane_index)
-        .ok_or(MediaError::InvalidHandle)?;
+    let wgpu_format =
+        plane_wgpu_format(desc.format, desc.plane_index).ok_or(MediaError::InvalidHandle)?;
     let copy_size = wgpu::hal::CopyExtent {
         width: desc.width,
         height: desc.height,

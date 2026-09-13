@@ -173,16 +173,23 @@ pub enum HardwareHandle {
         /// 32-bit global surface identifier.
         surface_id: u32,
     },
-    /// Linux DRM `dma-buf` file descriptor with stride, offset, and modifier.
+    /// Linux DRM `dma-buf` exported surface (e.g. `vaExportSurfaceHandle`).
+    ///
+    /// Carries every GEM object fd plus per-plane layout so a bi-planar
+    /// format (NV12 → Y + interleaved UV) is fully described by one handle.
+    /// [`crate::import_external_texture`] imports
+    /// [`ImportTextureDescriptor::plane_index`] by looking up the matching
+    /// [`DmaBufPlane`] entry.
+    ///
+    /// [`ImportTextureDescriptor::plane_index`]: crate::ImportTextureDescriptor::plane_index
     DmaBuf {
-        /// File descriptor number.
-        fd: i32,
-        /// Row stride in bytes.
-        stride: u32,
-        /// Plane byte offset.
-        offset: u32,
-        /// DRM format modifier (e.g. `DRM_FORMAT_MOD_LINEAR`).
+        /// dma-buf file descriptors, one per exported GEM object (usually 1).
+        objects: Vec<i32>,
+        /// DRM format modifier applied to every plane
+        /// (e.g. `DRM_FORMAT_MOD_LINEAR`).
         modifier: u64,
+        /// Per-image-plane layout into `objects` (NV12 → 2 entries).
+        planes: Vec<DmaBufPlane>,
     },
     /// Mock hardware surface handle for headless execution, benchmarking, and CI testing.
     Mock {
@@ -202,7 +209,70 @@ pub enum HardwareHandle {
     },
 }
 
+/// Layout of one image plane inside an exported dma-buf surface.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_media_platform::surface::DmaBufPlane;
+///
+/// let plane = DmaBufPlane { object_index: 0, offset: 0, stride: 1920 };
+/// assert_eq!(plane.stride, 1920);
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct DmaBufPlane {
+    /// Index into [`HardwareHandle::DmaBuf`]'s `objects` fd list.
+    pub object_index: u32,
+    /// Byte offset of this plane within its object.
+    pub offset: u32,
+    /// Row stride (pitch) in bytes.
+    pub stride: u32,
+}
+
 impl HardwareHandle {
+    /// Builds a single-plane dma-buf handle — the common case for linear
+    /// RGBA exports.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_media_platform::surface::HardwareHandle;
+    ///
+    /// let h = HardwareHandle::dmabuf_single(3, 1920, 0, 0);
+    /// assert!(h.is_zero_copy());
+    /// ```
+    #[must_use]
+    pub fn dmabuf_single(fd: i32, stride: u32, offset: u32, modifier: u64) -> Self {
+        Self::DmaBuf {
+            objects: vec![fd],
+            modifier,
+            planes: vec![DmaBufPlane {
+                object_index: 0,
+                offset,
+                stride,
+            }],
+        }
+    }
+
+    /// Resolves `plane_index` to `(fd, stride, offset, modifier)` for a
+    /// [`DmaBuf`](Self::DmaBuf) handle; `None` for other variants or an
+    /// out-of-range plane. Only the Linux import path consumes this.
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub(crate) fn dmabuf_plane(&self, plane_index: u32) -> Option<(i32, u32, u32, u64)> {
+        let Self::DmaBuf {
+            objects,
+            modifier,
+            planes,
+        } = self
+        else {
+            return None;
+        };
+        let plane = planes.get(plane_index as usize)?;
+        let fd = *objects.get(plane.object_index as usize)?;
+        Some((fd, plane.stride, plane.offset, *modifier))
+    }
+
     /// Returns `true` if this handle represents a zero-copy hardware surface.
     ///
     /// # Examples

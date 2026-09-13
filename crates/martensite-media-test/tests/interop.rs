@@ -224,12 +224,7 @@ mod noop {
         // A dma-buf handle with an invalid fd. On Linux this is rejected as an
         // invalid handle; on other platforms the platform import is
         // unavailable. Either way it must surface an error, not succeed.
-        let handle = HardwareHandle::DmaBuf {
-            fd: -1,
-            stride: 0,
-            offset: 0,
-            modifier: 0,
-        };
+        let handle = HardwareHandle::dmabuf_single(-1, 0, 0, 0);
         let desc = ImportTextureDescriptor::new(64, 64, VideoPixelFormat::Nv12);
         let result = import_external_texture(&device, &handle, &desc);
         assert!(

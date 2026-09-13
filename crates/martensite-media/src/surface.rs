@@ -368,12 +368,7 @@ mod tests {
     fn zero_copy_handle_classification() {
         let dxgi = HardwareHandle::DxgiSharedHandle { handle: 0x1234 };
         let iosurface = HardwareHandle::IoSurface { surface_id: 12 };
-        let dmabuf = HardwareHandle::DmaBuf {
-            fd: 3,
-            stride: 1920,
-            offset: 0,
-            modifier: 0,
-        };
+        let dmabuf = HardwareHandle::dmabuf_single(3, 1920, 0, 0);
         let mock = HardwareHandle::Mock { id: 1 };
         let cpu = HardwareHandle::CpuMemory {
             y_plane: vec![0; 100],

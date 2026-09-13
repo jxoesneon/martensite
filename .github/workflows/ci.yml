@@ -31,11 +31,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install Pango/Cairo (for martensite-text-reference)
+      - name: Install Pango/Cairo + FFmpeg/libva (text-reference + decoder backends)
         run: |
           sudo apt-get update
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
-            libglib2.0-dev pkg-config
+            libglib2.0-dev pkg-config \
+            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavformat-dev
       - name: Rustfmt Check
         run: cargo fmt --all -- --check
       - name: Clippy Lints (default features)
@@ -75,10 +77,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
-      - name: Install Pango/Cairo (for martensite-text-reference)
+      - name: Install Pango/Cairo + FFmpeg/libva (text-reference + decoder backends)
         run: |
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
-            libglib2.0-dev pkg-config
+            libglib2.0-dev pkg-config \
+            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavformat-dev
       - name: Run Tests
         run: cargo test --workspace --bins --lib --tests
         env:
@@ -108,10 +112,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
-      - name: Install Pango/Cairo (for martensite-text-reference)
+      - name: Install Pango/Cairo + FFmpeg/libva (text-reference + decoder backends)
         run: |
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
-            libglib2.0-dev pkg-config
+            libglib2.0-dev pkg-config \
+            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavformat-dev
       - name: Install Wayland dev headers (for wayland-sys build script)
         run: |
           sudo apt-get install -y libwayland-dev
@@ -146,11 +152,13 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install Pango/Cairo (for martensite-text-reference)
+      - name: Install Pango/Cairo + FFmpeg/libva (text-reference + decoder backends)
         run: |
           sudo apt-get update
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
-            libglib2.0-dev pkg-config
+            libglib2.0-dev pkg-config \
+            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavformat-dev
       - name: Build Documentation
         run: cargo doc --workspace --no-deps --all-features
         env:
@@ -183,10 +191,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
-      - name: Install Pango/Cairo (for martensite-text-reference)
+      - name: Install Pango/Cairo + FFmpeg/libva (text-reference + decoder backends)
         run: |
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
-            libglib2.0-dev pkg-config
+            libglib2.0-dev pkg-config \
+            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavformat-dev
       # Runs #[ignore]-gated performance tests in release mode with
       # MARTENSITE_STRICT_BENCH=1. Only the crates that have #[ignore]-gated
       # perf tests are compiled (not the entire workspace) to keep CI time
@@ -271,6 +281,8 @@ jobs:
         run: cargo check -p martensite-font-fallback --all-targets
       - name: Check martensite-media-platform (IOSurface)
         run: cargo check -p martensite-media-platform --all-targets
+      - name: Check VideoToolbox decoder backend
+        run: cargo check -p martensite-media-platform --features decoder-videotoolbox --all-targets
 
   ffi-windows-check:
     name: FFI Check (Windows)
@@ -285,6 +297,8 @@ jobs:
         run: cargo check -p martensite-font-fallback --all-targets
       - name: Check martensite-media-platform (DXGI)
         run: cargo check -p martensite-media-platform --all-targets
+      - name: Check Media Foundation decoder backend
+        run: cargo check -p martensite-media-platform --features decoder-mf --all-targets
 
   adapters:
     name: Heavy Adapters (Bevy + Godot)

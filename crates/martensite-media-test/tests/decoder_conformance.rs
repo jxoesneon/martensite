@@ -83,9 +83,23 @@ fn conformance_suite(dec: &mut dyn VideoDecoder) {
     }
     assert!(count > 0, "decoder must emit at least one frame");
     assert_eq!(dec.stats().packets_received, 3);
-    assert_eq!(dec.stats().frames_decoded as usize, count);
 
-    // 4. Flush resets the keyframe gate.
+    // 4. `end_of_stream` is idempotent and drains reorder-buffered frames:
+    // everything the decoder has seen must be emitted or accounted for.
+    dec.end_of_stream().expect("end_of_stream");
+    dec.end_of_stream().expect("end_of_stream is idempotent");
+    let mut drained = count;
+    while let Ok(Some(frame)) = dec.try_recv_frame() {
+        assert!(frame.metadata.pts_nanos >= last_pts);
+        last_pts = frame.metadata.pts_nanos;
+        drained += 1;
+        if drained > 16 {
+            break;
+        }
+    }
+    assert_eq!(dec.stats().frames_decoded as usize, drained);
+
+    // 5. Flush resets the keyframe gate.
     dec.flush().expect("flush");
     assert!(
         dec.send_packet(&packet(FRAME_NS * 3, false)).is_err(),

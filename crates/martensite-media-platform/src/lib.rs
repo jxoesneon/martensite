@@ -54,9 +54,7 @@ mod linux;
 
 /// Re-export of the shared surface types so downstream crates can use them
 /// without depending on `martensite-media`.
-pub use surface::{
-    ColorRange, HardwareHandle, MediaError, VideoFrameMetadata, VideoPixelFormat,
-};
+pub use surface::{ColorRange, HardwareHandle, MediaError, VideoFrameMetadata, VideoPixelFormat};
 
 /// Re-export of the hal API types for downstream crates that need to
 /// interact with the platform-specific backend.
@@ -376,19 +374,19 @@ pub fn import_external_texture(
                 ))
             }
         }
-        HardwareHandle::DmaBuf {
-            fd,
-            stride,
-            offset,
-            modifier,
-        } => {
+        HardwareHandle::DmaBuf { .. } => {
             #[cfg(target_os = "linux")]
             {
-                import_dmabuf(device, *fd, *stride, *offset, *modifier, desc)
+                // `plane_index` selects the (fd, stride, offset) triple from
+                // the exported surface's plane table.
+                let (fd, stride, offset, modifier) = handle
+                    .dmabuf_plane(desc.plane_index)
+                    .ok_or(MediaError::InvalidHandle)?;
+                import_dmabuf(device, fd, stride, offset, modifier, desc)
             }
             #[cfg(not(target_os = "linux"))]
             {
-                let _ = (device, fd, stride, offset, modifier, desc);
+                let _ = (device, desc);
                 Err(MediaError::ImportFailed(
                     "dma-buf import not available on this platform".to_string(),
                 ))

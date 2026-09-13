@@ -210,6 +210,37 @@ These are explicitly documented in code, not hidden:
 - `swash` font-data access is wrapped in `catch_unwind` to guard against
   malformed-font panics.
 
+### Media pipeline architecture (v0.16.0)
+
+- Decoder **wire types** (`EncodedPacket`, `DecodedFrame`, `DecoderConfig`,
+  `DecodeStats`, `HdrSideData`, `DecodeError`, `VideoCodec`) live in
+  `martensite-media-platform::decoder` — the same cycle-break pattern as
+  `surface` (media → platform direction, so backend impls in the FFI crate
+  cannot name media-crate types). `martensite-media::decoder` re-exports
+  them and defines the `VideoDecoder` trait, implementing it for each
+  platform backend type (local trait on foreign type).
+- `VideoDecoder` requires `Send + Sync`; all mutation goes through
+  `&mut self` methods. `end_of_stream` drains reorder-buffered frames —
+  tests MUST call it before draining or reorder-delayed frames never emit.
+  `flush` re-arms the keyframe gate.
+- `HardwareHandle::DmaBuf` is multi-plane: `objects: Vec<fd>` + `planes:
+  Vec<DmaBufPlane{object_index, offset, stride}>` + a surface-wide
+  `modifier`. `import_external_planes` imports NV12/P010 as a
+  `VideoTexture{y, uv}` pair via `ImportTextureDescriptor::plane_index`.
+- Windows zero-copy: `import_dxgi_texture` works only on a **Vulkan-backend**
+  wgpu device with `Features::VULKAN_EXTERNAL_MEMORY_WIN32` — wgpu-hal's
+  `texture_from_d3d11_shared_handle` binds the whole allocation to one
+  image, so bi-planar NV12/P010 cannot be split (they return
+  `UnsupportedFormat`; callers fall back to `import_cpu_memory`). The DX12
+  backend cannot import D3D11 shared handles at all.
+- `ffmpeg-next` 9 API notes: `Packet::copy` + `set_flags(Flags::KEY)`
+  (no `set_key`), side data via `side_data::Type::MasteringDisplayMetadata`
+  / `ContentLightLevel` / `DYNAMIC_HDR_PLUS`, and
+  `set_packet_time_base(1/1e9)` for nanosecond PTS.
+- New decoder deps are feature-gated (`decoder-videotoolbox`, `decoder-mf`,
+  `decoder-vaapi`, `decoder-ffmpeg`); default build is unaffected. CI
+  installs `libva-dev` + ffmpeg `-dev` packages for `--all-features` jobs.
+
 ### Accessibility architecture (v0.11.0)
 
 - AccessKit's platform adapters handle live-region notifications
