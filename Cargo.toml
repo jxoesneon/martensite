@@ -184,5 +184,9 @@ incremental = true
 opt-level = 3
 codegen-units = 1
 lto = "thin"
-panic = "abort"
+# panic = "abort" is intentionally omitted: the workspace relies on
+# catch_unwind for malformed-font guards and engine panic quarantine
+# (martensite-text, martensite::widgets::external). Abort would silently
+# disable that hardening. Downstream apps may still choose abort in their
+# own profile — it only affects binaries built within this workspace.
 strip = true
