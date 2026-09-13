@@ -1,7 +1,7 @@
 //! Vello GPU rendering backend.
 //!
 //! [`VelloRenderer`] translates a [`PaintList`] into a Vello
-//! [`Scene`] by mapping each [`PaintCommand`] to the corresponding
+//! `Scene` by mapping each [`crate::PaintCommand`] to the corresponding
 //! Vello scene draw call. The actual GPU compute dispatch is performed
 //! by the `martensite-wgpu` orchestrator, which owns the Vello render
 //! pipeline and target texture. This module is responsible only for
@@ -79,11 +79,11 @@ fn gradient_stops_to_peniko(stops: &crate::paint::GradientStops) -> ColorStops {
 /// A GPU renderer that converts a [`PaintList`] into a Vello scene.
 ///
 /// When the `vello` feature is enabled, [`VelloRenderer::render`] builds a
-/// [`Scene`] from the supplied commands by translating each [`PaintCommand`]
-/// into the corresponding Vello draw call (fill, stroke, gradient, clip
-/// layer, or glyph run). The scene is then available via [`VelloRenderer::scene`]
-/// for the `martensite-wgpu` orchestrator to dispatch to the GPU compute
-/// pipeline.
+/// `vello::Scene` from the supplied commands by translating each
+/// [`crate::PaintCommand`] into the corresponding Vello draw call (fill,
+/// stroke, gradient, clip layer, or glyph run). The scene is then
+/// available via `VelloRenderer::scene` for the `martensite-wgpu`
+/// orchestrator to dispatch to the GPU compute pipeline.
 ///
 /// When the feature is disabled the renderer is a no-op stub that simply
 /// records the number of commands it received, which is useful for

@@ -788,8 +788,9 @@ impl PathBuilder {
     }
 }
 
-/// An ordered list of [`PaintCommand`]s produced by the layout phase and
-/// consumed by a [`crate::RenderBackend`].
+/// An ordered list of [`PaintCommand`]s produced by the widget paint
+/// pass (`WidgetArena::build_paint_list`) and consumed by render
+/// backends such as `martensite_render::RenderBackend`.
 ///
 /// The list is designed for zero-allocation steady-state rendering: call
 /// [`PaintList::clear`] between frames to retain the underlying capacity.
