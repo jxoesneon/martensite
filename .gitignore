@@ -1,7 +1,8 @@
 # Rust / Cargo output
 target/
 **/*.rs.bk
-Cargo.lock
+# NOTE: Cargo.lock IS committed — cargo-vet/deny gates need a pinned
+# dependency graph to be meaningful. Library consumers ignore it anyway.
 
 # IDE / Editor configuration
 .vscode/

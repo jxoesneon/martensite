@@ -66,12 +66,8 @@ jobs:
           # imports.lock publisher entries carry `user-id` fields, which
           # cargo-vet < 0.10.1 cannot parse — pin the version that wrote it.
           tool: cargo-vet@0.10.2
-      # Cargo.lock is gitignored (library workspace) and cargo-vet invokes
-      # `cargo metadata --locked` internally, so resolve the graph first.
-      - name: Generate lockfile
-        run: cargo generate-lockfile
       - name: Run cargo-vet
-        run: cargo vet
+        run: cargo vet --locked
 
   test-suite:
     name: Test Suite
