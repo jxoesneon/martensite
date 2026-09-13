@@ -670,7 +670,7 @@ impl EventRouter {
     /// };
     /// // `DummyWidget` ignores input — dispatch still resolves.
     /// assert_eq!(
-    ///     router.dispatch_pointer_event(&mut arena, root, WindowId::PRIMARY, &event),
+    ///     router.dispatch_pointer_event(&mut arena, root, WindowId::from_raw(1), &event),
     ///     Some(martensite_core::EventResponse::Ignored),
     /// );
     /// ```
