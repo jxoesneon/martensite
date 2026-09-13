@@ -225,3 +225,206 @@ impl HardwareHandle {
         )
     }
 }
+
+/// Color range quantization of the video signal.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_media_platform::surface::ColorRange;
+///
+/// assert_eq!(ColorRange::default(), ColorRange::Limited);
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum ColorRange {
+    /// Limited/Video range (e.g. Y: `[16, 235]`, UV: `[16, 240]` for 8-bit).
+    #[default]
+    Limited,
+    /// Full/PC range (`[0, 255]` for 8-bit, `[0, 1023]` for 10-bit).
+    Full,
+}
+
+impl ColorRange {
+    /// Expands a raw normalized luma sample $Y_{\text{raw}} \in [0, 1]$ to full dynamic range $[0, 1]$.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_media_platform::surface::ColorRange;
+    ///
+    /// let range = ColorRange::Limited;
+    /// let black = 16.0 / 255.0;
+    /// let white = 235.0 / 255.0;
+    /// assert!((range.expand_luma_8bit(black) - 0.0).abs() < 1e-5);
+    /// assert!((range.expand_luma_8bit(white) - 1.0).abs() < 1e-5);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn expand_luma_8bit(&self, raw: f32) -> f32 {
+        match self {
+            Self::Full => raw.clamp(0.0, 1.0),
+            Self::Limited => {
+                let y_min = 16.0 / 255.0;
+                let y_max = 235.0 / 255.0;
+                ((raw - y_min) / (y_max - y_min)).clamp(0.0, 1.0)
+            }
+        }
+    }
+
+    /// Expands a 10-bit normalized luma sample $Y_{\text{raw}} \in [0, 1]$ to full dynamic range $[0, 1]$.
+    ///
+    /// In 10-bit limited range, black is code 64 and peak white is code 940 (range 876).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_media_platform::surface::ColorRange;
+    ///
+    /// let range = ColorRange::Limited;
+    /// let black = 64.0 / 1023.0;
+    /// let white = 940.0 / 1023.0;
+    /// assert!((range.expand_luma_10bit(black) - 0.0).abs() < 1e-5);
+    /// assert!((range.expand_luma_10bit(white) - 1.0).abs() < 1e-5);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn expand_luma_10bit(&self, raw: f32) -> f32 {
+        match self {
+            Self::Full => raw.clamp(0.0, 1.0),
+            Self::Limited => {
+                let y_min = 64.0 / 1023.0;
+                let y_max = 940.0 / 1023.0;
+                ((raw - y_min) / (y_max - y_min)).clamp(0.0, 1.0)
+            }
+        }
+    }
+
+    /// Expands a raw normalized chroma sample $C_{\text{raw}} \in [0, 1]$ to centered chroma $[-0.5, 0.5]$.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_media_platform::surface::ColorRange;
+    ///
+    /// let range = ColorRange::Limited;
+    /// let mid = 128.0 / 255.0;
+    /// assert!((range.expand_chroma_8bit(mid) - 0.0).abs() < 1e-5);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn expand_chroma_8bit(&self, raw: f32) -> f32 {
+        match self {
+            Self::Full => (raw - 0.5).clamp(-0.5, 0.5),
+            Self::Limited => {
+                let c_min = 16.0 / 255.0;
+                let c_max = 240.0 / 255.0;
+                (((raw - c_min) / (c_max - c_min)) - 0.5).clamp(-0.5, 0.5)
+            }
+        }
+    }
+
+    /// Expands a 10-bit normalized chroma sample $C_{\text{raw}} \in [0, 1]$ to centered chroma $[-0.5, 0.5]$.
+    ///
+    /// In 10-bit limited range, neutral chroma is code 512, range 896 (`[64, 960]`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_media_platform::surface::ColorRange;
+    ///
+    /// let range = ColorRange::Limited;
+    /// let mid = 512.0 / 1023.0;
+    /// assert!((range.expand_chroma_10bit(mid) - 0.0).abs() < 1e-5);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn expand_chroma_10bit(&self, raw: f32) -> f32 {
+        match self {
+            Self::Full => (raw - 0.5).clamp(-0.5, 0.5),
+            Self::Limited => {
+                let c_min = 64.0 / 1023.0;
+                let c_max = 960.0 / 1023.0;
+                (((raw - c_min) / (c_max - c_min)) - 0.5).clamp(-0.5, 0.5)
+            }
+        }
+    }
+}
+
+/// Frame metadata accompanying a decoded video frame or surface.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VideoFrameMetadata {
+    /// Video width in pixels.
+    pub width: u32,
+    /// Video height in pixels.
+    pub height: u32,
+    /// Pixel format of the video frame.
+    pub format: VideoPixelFormat,
+    /// Color range encoding.
+    pub range: ColorRange,
+    /// Presentation timestamp (PTS) in nanoseconds.
+    pub pts_nanos: u64,
+    /// Frame duration in nanoseconds.
+    pub duration_nanos: u64,
+    /// Monotonically increasing frame index.
+    pub frame_index: u64,
+}
+
+impl VideoFrameMetadata {
+    /// Creates a new `VideoFrameMetadata` instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_media_platform::surface::{
+    ///     ColorRange, VideoFrameMetadata, VideoPixelFormat,
+    /// };
+    ///
+    /// let meta = VideoFrameMetadata::new(3840, 2160, VideoPixelFormat::P010, ColorRange::Limited);
+    /// assert_eq!(meta.width, 3840);
+    /// assert_eq!(meta.height, 2160);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn new(width: u32, height: u32, format: VideoPixelFormat, range: ColorRange) -> Self {
+        Self {
+            width,
+            height,
+            format,
+            range,
+            pts_nanos: 0,
+            duration_nanos: 16_666_667, // default ~60 fps
+            frame_index: 0,
+        }
+    }
+
+    /// Creates a new `VideoFrameMetadata` instance, validating non-zero buffer dimensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidBufferDimensions`] if `width == 0` or `height == 0`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_media_platform::surface::{
+    ///     ColorRange, VideoFrameMetadata, VideoPixelFormat,
+    /// };
+    ///
+    /// let meta = VideoFrameMetadata::try_new(1920, 1080, VideoPixelFormat::Nv12, ColorRange::Limited);
+    /// assert!(meta.is_ok());
+    ///
+    /// let err = VideoFrameMetadata::try_new(0, 1080, VideoPixelFormat::Nv12, ColorRange::Limited);
+    /// assert!(err.is_err());
+    /// ```
+    pub fn try_new(
+        width: u32,
+        height: u32,
+        format: VideoPixelFormat,
+        range: ColorRange,
+    ) -> Result<Self, MediaError> {
+        if width == 0 || height == 0 {
+            return Err(MediaError::InvalidBufferDimensions { width, height });
+        }
+        Ok(Self::new(width, height, format, range))
+    }
+}

@@ -39,6 +39,9 @@
 #![deny(missing_docs)]
 
 pub mod color;
+pub mod decoder;
+pub mod hdr;
+pub mod queue;
 pub mod surface;
 pub mod tonemap;
 
@@ -47,6 +50,12 @@ pub use color::{
     rgb_to_bt2020_yuv, rgb_to_bt709_yuv, rgb_to_xyz, xyz_to_lab, ColorSpace, ScRgb,
     TransferFunction,
 };
+pub use decoder::{
+    DecodeStats, DecodedFrame, DecoderBackend, DecoderConfig, EncodedPacket, MockDecoder,
+    VideoCodec, VideoDecoder,
+};
+pub use hdr::{ContentLightLevel, Eotf, HdrMetadata, MasteringDisplayVolume};
+pub use queue::{FrameQueue, QueueAction};
 pub use surface::{
     ColorRange, HardwareHandle, MediaError, VideoFrameMetadata, VideoPixelFormat, VideoSurface,
 };

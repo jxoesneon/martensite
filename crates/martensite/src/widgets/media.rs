@@ -7,6 +7,8 @@ use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite_core::node::Rect;
 use martensite_core::widget::{LayoutConstraints, LayoutContext, PaintContext, Widget};
+use martensite_media::decoder::{EncodedPacket, VideoDecoder};
+use martensite_media::queue::{FrameQueue, QueueAction};
 use martensite_media::surface::VideoSurface;
 
 /// Scaling fit mode for video surfaces within their allocated layout bounds.
@@ -52,6 +54,24 @@ pub struct MediaView {
     explicit_aspect_ratio: Option<f32>,
     cached_bounds: Rect,
     cached_video_rect: Rect,
+    /// Decode producer feeding [`VideoSurface`] handles through `queue`.
+    decoder: Option<Box<dyn VideoDecoder>>,
+    /// Decode-ahead pacing ring; frames leave in PTS order.
+    queue: FrameQueue,
+}
+
+impl std::fmt::Debug for MediaView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MediaView")
+            .field("surface", &self.surface)
+            .field("fit", &self.fit)
+            .field("explicit_aspect_ratio", &self.explicit_aspect_ratio)
+            .field("cached_bounds", &self.cached_bounds)
+            .field("cached_video_rect", &self.cached_video_rect)
+            .field("decoder", &self.decoder.is_some())
+            .field("queue_len", &self.queue.len())
+            .finish()
+    }
 }
 
 impl Default for MediaView {
@@ -80,7 +100,207 @@ impl MediaView {
             explicit_aspect_ratio: None,
             cached_bounds: Rect::default(),
             cached_video_rect: Rect::default(),
+            decoder: None,
+            queue: FrameQueue::new(3),
         }
+    }
+
+    /// Attaches a decode producer and creates the presentation surface from
+    /// its negotiated format and configured size.
+    ///
+    /// Packets are fed with [`feed_packet`](Self::feed_packet); each
+    /// [`advance`](Self::advance) call drains decoded frames into the pacing
+    /// queue and presents the frame whose PTS has been reached.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media::MediaView;
+    /// use martensite_media::decoder::{DecoderConfig, MockDecoder, VideoCodec, VideoDecoder};
+    ///
+    /// let dec = MockDecoder::init(DecoderConfig::new(VideoCodec::H264, 640, 360)).unwrap();
+    /// let view = MediaView::new().with_decoder(Box::new(dec));
+    /// assert!(view.decoder().is_some());
+    /// ```
+    #[must_use]
+    pub fn with_decoder(mut self, decoder: Box<dyn VideoDecoder>) -> Self {
+        self.set_decoder(decoder);
+        self
+    }
+
+    /// Replaces the decode producer, recreating the presentation surface
+    /// from the decoder's negotiated format and configured size.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media::MediaView;
+    /// use martensite_media::decoder::{DecoderConfig, MockDecoder, VideoCodec, VideoDecoder};
+    ///
+    /// let dec = MockDecoder::init(DecoderConfig::new(VideoCodec::H264, 320, 240)).unwrap();
+    /// let mut view = MediaView::new();
+    /// view.set_decoder(Box::new(dec));
+    /// assert!(view.decoder().is_some());
+    /// ```
+    pub fn set_decoder(&mut self, decoder: Box<dyn VideoDecoder>) {
+        let format = decoder.negotiated_format();
+        // The surface starts as a zero-sized mock; the first decoded frame
+        // re-dimensions it via `update_handle`'s metadata.
+        self.surface
+            .get_or_insert_with(|| VideoSurface::new_mock(2, 2, format));
+        self.queue.clear();
+        self.decoder = Some(decoder);
+    }
+
+    /// Returns a shared reference to the decode producer, if attached.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media::MediaView;
+    ///
+    /// assert!(MediaView::new().decoder().is_none());
+    /// ```
+    #[must_use]
+    pub fn decoder(&self) -> Option<&dyn VideoDecoder> {
+        self.decoder.as_deref()
+    }
+
+    /// Returns an exclusive reference to the decode producer, if attached.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media::MediaView;
+    ///
+    /// assert!(MediaView::new().decoder_mut().is_none());
+    /// ```
+    #[must_use]
+    pub fn decoder_mut(&mut self) -> Option<&mut (dyn VideoDecoder + 'static)> {
+        self.decoder.as_deref_mut()
+    }
+
+    /// Feeds one compressed packet to the attached decoder.
+    ///
+    /// Returns `Ok(false)` when no decoder is attached; `Ok(true)` when the
+    /// packet was accepted.
+    ///
+    /// # Errors
+    ///
+    /// Propagates decoder errors (corrupt stream, keyframe violations,
+    /// fatal backend faults).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media::MediaView;
+    /// use martensite_media::decoder::{DecoderConfig, EncodedPacket, MockDecoder, VideoCodec, VideoDecoder};
+    ///
+    /// let dec = MockDecoder::init(DecoderConfig::new(VideoCodec::H264, 64, 64)).unwrap();
+    /// let mut view = MediaView::new().with_decoder(Box::new(dec));
+    /// assert!(view.feed_packet(&EncodedPacket::new(vec![0x67], 0, 16_666_667)).unwrap());
+    /// ```
+    pub fn feed_packet(
+        &mut self,
+        packet: &EncodedPacket,
+    ) -> Result<bool, martensite_media::surface::MediaError> {
+        match self.decoder.as_mut() {
+            None => Ok(false),
+            Some(dec) => {
+                dec.send_packet(packet)?;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Advances the pipeline at `now_nanos`: drains decoded frames into the
+    /// pacing queue, then presents the frame whose PTS has been reached by
+    /// updating the [`VideoSurface`] handle.
+    ///
+    /// Returns `true` when a new frame was presented and the widget needs a
+    /// repaint. Returns `false` when waiting (queue early or decoder starved).
+    /// The returned [`Option<u64>`] via [`next_wait_nanos`](Self::next_wait_nanos)
+    /// tells the event loop how long it can sleep.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media::MediaView;
+    /// use martensite_media::decoder::{DecoderConfig, EncodedPacket, MockDecoder, VideoCodec, VideoDecoder};
+    ///
+    /// let dec = MockDecoder::init(DecoderConfig::new(VideoCodec::H264, 64, 64)).unwrap();
+    /// let mut view = MediaView::new().with_decoder(Box::new(dec));
+    /// view.feed_packet(&EncodedPacket::new(vec![0x67], 0, 16_666_667)).unwrap();
+    /// assert!(view.advance(0));
+    /// ```
+    pub fn advance(&mut self, now_nanos: u64) -> bool {
+        // Drain the decoder into the pacing queue.
+        if let Some(dec) = self.decoder.as_mut() {
+            while let Ok(Some(frame)) = dec.try_recv_frame() {
+                self.queue.push(frame);
+            }
+        }
+
+        match self.queue.pop_present(now_nanos) {
+            QueueAction::Present(frame) => {
+                let surface = self
+                    .surface
+                    .get_or_insert_with(|| VideoSurface::new_mock(2, 2, frame.metadata.format));
+                surface.update_handle(frame.handle, frame.metadata.pts_nanos);
+                surface.metadata_mut().width = frame.metadata.width;
+                surface.metadata_mut().height = frame.metadata.height;
+                surface.metadata_mut().format = frame.metadata.format;
+                surface.metadata_mut().range = frame.metadata.range;
+                surface.metadata_mut().duration_nanos = frame.metadata.duration_nanos;
+                true
+            }
+            QueueAction::WaitFor { .. } | QueueAction::Empty => false,
+        }
+    }
+
+    /// Nanoseconds until the next queued frame's PTS, if the head frame is
+    /// early. Returns `None` when the queue is empty or a frame is due.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media::MediaView;
+    ///
+    /// assert_eq!(MediaView::new().next_wait_nanos(0), None);
+    /// ```
+    #[must_use]
+    pub fn next_wait_nanos(&self, now_nanos: u64) -> Option<u64> {
+        let pts = self.queue.next_pts_nanos()?;
+        (pts > now_nanos).then_some(pts - now_nanos)
+    }
+
+    /// Percentage of frames dropped by the pacing queue (the `< 0.1%`
+    /// milestone gate reads this).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media::MediaView;
+    ///
+    /// assert_eq!(MediaView::new().drop_rate_pct(), 0.0);
+    /// ```
+    #[must_use]
+    pub fn drop_rate_pct(&self) -> f64 {
+        self.queue.drop_rate_pct()
+    }
+
+    /// Number of decoded frames waiting in the pacing queue.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media::MediaView;
+    ///
+    /// assert_eq!(MediaView::new().queued_frames(), 0);
+    /// ```
+    #[must_use]
+    pub fn queued_frames(&self) -> usize {
+        self.queue.len()
     }
 
     /// Attaches an active hardware [`VideoSurface`].
@@ -380,8 +600,25 @@ impl Widget for MediaView {
         node.set_role(accesskit::Role::Video);
     }
 
-    fn paint(&self, _cx: &mut PaintContext) {
-        // Video frames are presented via hardware zero-copy overlay or compute pass.
+    fn paint(&self, cx: &mut PaintContext) {
+        // Video frames present via the hardware overlay / `VideoProcessor`
+        // compute path, keyed off the attached `VideoSurface` handle. Paint
+        // a black backdrop under the video rect so the letterbox region and
+        // any pre-first-frame state are not transparent.
+        if self.surface.is_some() {
+            let r = self.cached_video_rect;
+            if r.size.x > 0.0 && r.size.y > 0.0 {
+                cx.list.push_fill_rect(
+                    kurbo::Rect::new(
+                        f64::from(r.origin.x),
+                        f64::from(r.origin.y),
+                        f64::from(r.max_x()),
+                        f64::from(r.max_y()),
+                    ),
+                    [0, 0, 0, 255],
+                );
+            }
+        }
     }
 }
 

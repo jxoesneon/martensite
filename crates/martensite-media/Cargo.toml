@@ -31,6 +31,20 @@ bytemuck = { workspace = true }
 # workspace `wgpu` dependency, which unifies the feature across every
 # crate that links it.
 test-noop = ["wgpu/noop"]
+# Decoder backends: forwarded to `martensite-media-platform`. `decoder`
+# enables every backend available on the target; the per-backend
+# `decoder-*` features enable a single backend each. All are optional so
+# the default build has no decoder FFI surface.
+decoder = [
+    "martensite-media-platform/decoder-videotoolbox",
+    "martensite-media-platform/decoder-mf",
+    "martensite-media-platform/decoder-vaapi",
+    "martensite-media-platform/decoder-ffmpeg",
+]
+decoder-videotoolbox = ["martensite-media-platform/decoder-videotoolbox"]
+decoder-mf = ["martensite-media-platform/decoder-mf"]
+decoder-vaapi = ["martensite-media-platform/decoder-vaapi"]
+decoder-ffmpeg = ["martensite-media-platform/decoder-ffmpeg"]
 
 [lints]
 workspace = true

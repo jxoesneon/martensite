@@ -62,6 +62,17 @@ test-noop = [
     "martensite-engine-bridge/test-noop",
     "martensite-wgpu/test-noop",
 ]
+# Hardware/software video decode backends for `MediaView` (v0.16.0).
+# `decoder` enables every backend available on the target; each
+# `decoder-*` feature enables one backend. `decoder-ffmpeg` requires
+# FFmpeg system libraries (pkg-config); `decoder-vaapi` requires
+# `libva-dev` on Linux. All are forwarded to `martensite-media` and are
+# off by default.
+decoder = ["martensite-media/decoder"]
+decoder-videotoolbox = ["martensite-media/decoder-videotoolbox"]
+decoder-mf = ["martensite-media/decoder-mf"]
+decoder-vaapi = ["martensite-media/decoder-vaapi"]
+decoder-ffmpeg = ["martensite-media/decoder-ffmpeg"]
 
 [package.metadata.docs.rs]
 features = ["docs-rs"]

@@ -8,10 +8,14 @@
 //! - [`VideoPipelineUniforms`]: A 256-byte aligned uniform buffer carrying color matrices,
 //!   EOTF parameters, panel luminance limits, and filmic constants.
 //! - [`MEDIA_YUV_EOTF_WGSL`]: A complete, AOT-validated WGSL compute shader executing
-//!   bi-planar YUV sampling, SMPTE ST 2084 PQ EOTF linearization, and Hable filmic tone mapping.
+//!   bi-planar YUV sampling, SMPTE ST 2084 PQ / ARIB STD-B67 HLG EOTF linearization,
+//!   and Hable filmic tone mapping.
 
 use bytemuck::{Pod, Zeroable};
-use martensite_media::surface::VideoPixelFormat;
+use martensite_media::color::ColorSpace;
+use martensite_media::hdr::{Eotf, HdrMetadata};
+use martensite_media::surface::{ColorRange, VideoPixelFormat};
+use martensite_media::tonemap::DisplayProfile;
 
 /// Negotiates texture formats and swapchain parameters for hardware video surfaces.
 ///
@@ -131,7 +135,7 @@ pub struct VideoPipelineUniforms {
     pub gamut_1: [f32; 4],
     /// Row 2 of gamut transformation matrix.
     pub gamut_2: [f32; 4],
-    /// Flags: `[is_p010, is_full_range, eotf_mode (0=sRGB, 1=PQ), tonemap_mode (0=none, 1=hable)]`.
+    /// Flags: `[is_p010, is_full_range, eotf_mode (0=sRGB/SDR, 1=PQ, 2=HLG), tonemap_mode (0=none, 1=hable)]`.
     pub flags: [u32; 4],
     /// Display luminance parameters: `[sdr_white_nits, display_max_nits, display_min_nits, exposure]`.
     pub display_params: [f32; 4],
@@ -201,6 +205,87 @@ impl VideoPipelineUniforms {
         }
     }
 
+    /// Builds pipeline uniforms from typed [`HdrMetadata`] and a target
+    /// [`DisplayProfile`].
+    ///
+    /// This is the v0.16.0 media-pipeline entry point: decoder side data is
+    /// lifted to [`HdrMetadata`] and combined with the display's luminance
+    /// capabilities to produce a complete uniform block.
+    ///
+    /// Mapping:
+    /// - `yuv_to_rgb_*`: the BT.2020 matrix when
+    ///   `hdr.color_space == ColorSpace::Bt2020`, otherwise the BT.709
+    ///   matrix (also used for `DisplayP3`, whose YUV coefficients are not
+    ///   separately signalled).
+    /// - `gamut_*`: the BT.2020→BT.709 linear conversion for BT.2020
+    ///   sources, identity otherwise.
+    /// - `flags`: `[pixel_format == P010, range == Full, eotf_mode, tonemap]`
+    ///   where `eotf_mode` is `0` (SDR/sRGB or unrecognised transfer),
+    ///   `1` (PQ), or `2` (HLG), and `tonemap` is `1` (hable) whenever
+    ///   [`HdrMetadata::is_hdr`] is true.
+    /// - `display_params`: `[display.effective_sdr_white(), max_nits,
+    ///   min_nits, 1.0]` where `max_nits` is the mastering-display peak,
+    ///   else the content `MaxCLL`, else [`HdrMetadata::effective_peak_nits`],
+    ///   and `min_nits` is the mastering-display minimum or `0.005`.
+    ///
+    /// The struct layout is unchanged: all parameters are packed into the
+    /// existing fields, keeping the buffer exactly 256 bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_media::color::ColorSpace;
+    /// use martensite_media::hdr::{Eotf, HdrMetadata};
+    /// use martensite_media::surface::{ColorRange, VideoPixelFormat};
+    /// use martensite_media::tonemap::DisplayProfile;
+    /// use martensite_wgpu::interop::VideoPipelineUniforms;
+    ///
+    /// let hdr = HdrMetadata::new(Eotf::Pq)
+    ///     .with_color_space(ColorSpace::Bt2020)
+    ///     .with_range(ColorRange::Limited);
+    /// let u = VideoPipelineUniforms::from_hdr_metadata(
+    ///     &hdr,
+    ///     &DisplayProfile::default_hdr10(),
+    ///     VideoPixelFormat::P010,
+    /// );
+    /// assert_eq!(u.flags[0], 1); // P010
+    /// assert_eq!(u.flags[2], 1); // PQ EOTF
+    /// assert_eq!(u.flags[3], 1); // hable on for HDR
+    /// ```
+    #[must_use]
+    pub fn from_hdr_metadata(
+        hdr: &HdrMetadata,
+        display: &DisplayProfile,
+        pixel_format: VideoPixelFormat,
+    ) -> Self {
+        let max_nits = hdr
+            .mastering_display
+            .map(|m| m.max_luminance_nits)
+            .or_else(|| hdr.content_light.map(|c| f32::from(c.max_cll)))
+            .unwrap_or_else(|| hdr.effective_peak_nits());
+        let min_nits = hdr
+            .mastering_display
+            .map(|m| m.min_luminance_nits)
+            .unwrap_or(0.005);
+        let eotf_mode = match hdr.eotf {
+            Eotf::Pq => 1,
+            Eotf::Hlg => 2,
+            Eotf::Sdr | Eotf::Other(_) => 0,
+        };
+
+        let mut uniforms = if hdr.color_space == ColorSpace::Bt2020 {
+            Self::new_bt2020_hdr(hdr.is_hdr(), display.effective_sdr_white(), max_nits)
+        } else {
+            Self::new_bt709_sdr()
+        };
+        uniforms.flags[0] = u32::from(pixel_format == VideoPixelFormat::P010);
+        uniforms.flags[1] = u32::from(hdr.range == ColorRange::Full);
+        uniforms.flags[2] = eotf_mode;
+        uniforms.flags[3] = u32::from(hdr.is_hdr());
+        uniforms.display_params = [display.effective_sdr_white(), max_nits, min_nits, 1.0];
+        uniforms
+    }
+
     /// Returns a byte slice view of the uniforms struct for buffer uploads.
     ///
     /// # Examples
@@ -218,8 +303,15 @@ impl VideoPipelineUniforms {
     }
 }
 
-/// AOT-validated WGSL compute shader for planar YUV sampling, SMPTE ST 2084 PQ EOTF
-/// linearization, gamut conversion, and filmic tone mapping.
+/// AOT-validated WGSL compute shader for planar YUV sampling, SMPTE ST 2084 PQ /
+/// ARIB STD-B67 HLG EOTF linearization, gamut conversion, and filmic tone mapping.
+///
+/// The `VideoUniforms` block matches [`VideoPipelineUniforms`] byte-for-byte.
+/// `flags.z` selects the transfer function: `0` applies a simple sRGB-style
+/// `pow(2.2)` expansion scaled by SDR white, `1` applies the PQ EOTF yielding
+/// absolute nits, and `2` applies the HLG inverse OETF scaled by the signalled
+/// content peak (`display.y`) followed by a `gamma = 1.2` system-gamma
+/// approximation on the scRGB output.
 ///
 /// # Examples
 ///
@@ -236,6 +328,7 @@ struct VideoUniforms {
     gamut_0: vec4<f32>,
     gamut_1: vec4<f32>,
     gamut_2: vec4<f32>,
+    // [is_p010, is_full_range, eotf_mode (0=sRGB, 1=PQ, 2=HLG), tonemap_mode]
     flags: vec4<u32>,
     display: vec4<f32>,
     filmic1: vec4<f32>,
@@ -266,6 +359,18 @@ fn pq_eotf(n: vec3<f32>) -> vec3<f32> {
     let den = c2 - c3 * n_pow;
     let y = pow(num / den, vec3<f32>(1.0 / m1));
     return y * 10000.0;
+}
+
+fn hlg_eotf(v: vec3<f32>) -> vec3<f32> {
+    // ARIB STD-B67 inverse OETF.
+    let a = 0.17883277;
+    let b = 1.0 - 4.0 * a;
+    let c = 0.5 - a * log(4.0 * a);
+
+    let v_clamped = clamp(v, vec3<f32>(0.0), vec3<f32>(1.0));
+    let low = v_clamped * v_clamped / 3.0;
+    let high = (exp((v_clamped - c) / a) + b) / 12.0;
+    return select(high, low, v_clamped <= vec3<f32>(0.5));
 }
 
 fn hable_f(x: vec3<f32>) -> vec3<f32> {
@@ -320,6 +425,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var linear_nits: vec3<f32>;
     if (uniforms.flags.z == 1u) {
         linear_nits = pq_eotf(rgb_non_linear);
+    } else if (uniforms.flags.z == 2u) {
+        // HLG inverse OETF yields scene-linear in [0, 1]; scale to nits by
+        // the signalled/nominal content peak carried in display.y.
+        linear_nits = hlg_eotf(rgb_non_linear) * uniforms.display.y;
     } else {
         linear_nits = pow(max(rgb_non_linear, vec3<f32>(0.0)), vec3<f32>(2.2)) * uniforms.display.x;
     }
@@ -331,6 +440,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let sdr_white = uniforms.display.x;
     var scrgb = target_linear / sdr_white;
+
+    if (uniforms.flags.z == 2u) {
+        // HLG: approximate the OOTF display system gamma (gamma = 1.2).
+        scrgb = pow(max(scrgb, vec3<f32>(0.0)), vec3<f32>(1.0 / 1.2));
+    }
 
     if (uniforms.flags.w == 1u) {
         let w_val = uniforms.filmic2.z;
@@ -363,8 +477,35 @@ pub fn create_video_texture_view(texture: &wgpu::Texture) -> wgpu::TextureView {
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-/// GPU compute pipeline for bi-planar YUV sampling, SMPTE ST 2084 PQ EOTF
-/// linearization, gamut conversion, and filmic tone mapping.
+/// Returns the luma and optional chroma [`wgpu::TextureView`]s of a
+/// [`martensite_media_platform::VideoTexture`].
+///
+/// The views cover mip 0 of a single 2D layer with the planes' native
+/// formats, suitable for direct binding by
+/// [`VideoProcessor::process_frame`]. The chroma view is `None` for
+/// single-plane (packed RGBA) sources.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_media_platform::VideoTexture;
+/// use martensite_wgpu::interop::video_texture_views;
+///
+/// # fn example(video: &VideoTexture) {
+/// let (luma_view, chroma_view) = video_texture_views(video);
+/// let _ = (luma_view, chroma_view);
+/// # }
+/// ```
+#[must_use]
+pub fn video_texture_views(
+    video: &martensite_media_platform::VideoTexture,
+) -> (wgpu::TextureView, Option<wgpu::TextureView>) {
+    (video.luma_view(), video.chroma_view())
+}
+
+/// GPU compute pipeline for bi-planar YUV sampling, SMPTE ST 2084 PQ /
+/// ARIB STD-B67 HLG EOTF linearization, gamut conversion, and filmic
+/// tone mapping.
 ///
 /// `VideoProcessor` wraps a [`wgpu::ComputePipeline`] compiled from
 /// [`MEDIA_YUV_EOTF_WGSL`] and the associated bind group layout. It provides
@@ -648,6 +789,76 @@ impl VideoProcessor {
         compute_pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
     }
 
+    /// Processes a [`martensite_media_platform::VideoTexture`] through the
+    /// YUV EOTF compute pipeline.
+    ///
+    /// Convenience wrapper around [`Self::process_frame`] that obtains the
+    /// plane views via [`video_texture_views`].
+    ///
+    /// This path is intended for **bi-planar** video surfaces (NV12, P010).
+    /// When the texture has no chroma plane (`video.chroma_view()` returns
+    /// `None`), the luma view is bound for the chroma binding as well so the
+    /// bind group stays valid — the shader then samples `.rg` of a
+    /// single-channel texture, which yields undefined chroma. Callers with
+    /// packed RGBA sources should therefore not use this path; upload or
+    /// convert them through a dedicated pipeline instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The wgpu device used to create the bind group.
+    /// * `encoder` - The command encoder to record the compute pass into.
+    /// * `video` - The imported bi-planar video texture.
+    /// * `uniform_buffer` - The 256-byte aligned uniform buffer.
+    /// * `output_view` - The output storage texture view (Rgba16Float).
+    /// * `dimensions` - The video frame dimensions `(width, height)`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_media_platform::VideoTexture;
+    /// use martensite_wgpu::interop::{VideoProcessor, VideoPipelineUniforms};
+    /// use wgpu::{Buffer, CommandEncoder, Device, TextureView};
+    ///
+    /// # fn example(
+    /// #     device: &Device,
+    /// #     encoder: &mut CommandEncoder,
+    /// #     video: &VideoTexture,
+    /// #     uniform_buffer: &Buffer,
+    /// #     output_view: &TextureView,
+    /// # ) {
+    /// let processor = VideoProcessor::new(device).unwrap();
+    /// processor.process_video_texture(
+    ///     device,
+    ///     encoder,
+    ///     video,
+    ///     uniform_buffer,
+    ///     output_view,
+    ///     (video.width(), video.height()),
+    /// );
+    /// # }
+    /// ```
+    pub fn process_video_texture(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        video: &martensite_media_platform::VideoTexture,
+        uniform_buffer: &wgpu::Buffer,
+        output_view: &wgpu::TextureView,
+        dimensions: (u32, u32),
+    ) {
+        let (luma_view, chroma_view) = video_texture_views(video);
+        let uv_view = chroma_view.as_ref().unwrap_or(&luma_view);
+        self.process_frame(
+            device,
+            encoder,
+            &luma_view,
+            uv_view,
+            uniform_buffer,
+            output_view,
+            dimensions,
+        );
+    }
+
     /// Creates the output texture for a video frame of the given dimensions.
     ///
     /// The output texture is a `Rgba16Float` storage texture suitable for
@@ -837,5 +1048,88 @@ mod tests {
                 .any(|(_, f)| f.name.as_deref() == Some("hable_f")),
             "function `hable_f` should exist in the parsed module"
         );
+    }
+
+    #[test]
+    fn wgsl_shader_has_hlg_eotf() {
+        let module = parse_shader();
+        assert!(
+            module
+                .functions
+                .iter()
+                .any(|(_, f)| f.name.as_deref() == Some("hlg_eotf")),
+            "function `hlg_eotf` should exist in the parsed module"
+        );
+    }
+
+    #[test]
+    fn from_hdr_metadata_pq_bt2020() {
+        use martensite_media::hdr::MasteringDisplayVolume;
+
+        let mut hdr = HdrMetadata::new(Eotf::Pq)
+            .with_color_space(ColorSpace::Bt2020)
+            .with_range(ColorRange::Full);
+        hdr.mastering_display = Some(MasteringDisplayVolume::new(4000.0, 0.001));
+
+        let u = VideoPipelineUniforms::from_hdr_metadata(
+            &hdr,
+            &DisplayProfile::default_hdr10(),
+            VideoPixelFormat::P010,
+        );
+        assert_eq!(u.flags, [1, 1, 1, 1]);
+        assert_eq!(u.display_params, [203.0, 4000.0, 0.001, 1.0]);
+        // BT.2020 YUV-to-RGB row 0 and gamut row 0 must be selected.
+        assert_eq!(u.yuv_to_rgb_0, [1.0, 0.0, 1.47460, 0.0]);
+        assert_eq!(u.gamut_0, [1.6605, -0.5876, -0.0728, 0.0]);
+    }
+
+    #[test]
+    fn from_hdr_metadata_hlg() {
+        let hdr = HdrMetadata::new(Eotf::Hlg).with_color_space(ColorSpace::Bt2020);
+
+        let u = VideoPipelineUniforms::from_hdr_metadata(
+            &hdr,
+            &DisplayProfile::default_hdr10(),
+            VideoPixelFormat::Nv12,
+        );
+        assert_eq!(u.flags[0], 0); // 8-bit NV12
+        assert_eq!(u.flags[1], 0); // limited range
+        assert_eq!(u.flags[2], 2); // HLG EOTF
+        assert_eq!(u.flags[3], 1); // hable on for HDR
+                                   // No static metadata: content peak falls back to effective_peak_nits.
+        assert_eq!(u.display_params[1], 10_000.0);
+        assert_eq!(u.display_params[2], 0.005);
+    }
+
+    #[test]
+    fn from_hdr_metadata_sdr_bt709() {
+        let hdr = HdrMetadata::new(Eotf::Sdr);
+
+        let u = VideoPipelineUniforms::from_hdr_metadata(
+            &hdr,
+            &DisplayProfile::default_sdr(),
+            VideoPixelFormat::Nv12,
+        );
+        assert_eq!(u.flags, [0, 0, 0, 0]);
+        assert_eq!(u.yuv_to_rgb_0, [1.0, 0.0, 1.57480, 0.0]);
+        assert_eq!(u.gamut_0, [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(u.display_params[0], 203.0);
+    }
+
+    #[test]
+    fn from_hdr_metadata_prefers_content_light_over_default_peak() {
+        use martensite_media::hdr::ContentLightLevel;
+
+        let hdr = HdrMetadata::new(Eotf::Pq)
+            .with_color_space(ColorSpace::Bt2020)
+            .with_content_light(ContentLightLevel::new(1200, 400));
+
+        let u = VideoPipelineUniforms::from_hdr_metadata(
+            &hdr,
+            &DisplayProfile::default_hdr10(),
+            VideoPixelFormat::P010,
+        );
+        assert_eq!(u.display_params[1], 1200.0);
+        assert_eq!(u.display_params[2], 0.005);
     }
 }

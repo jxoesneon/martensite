@@ -40,8 +40,8 @@ pub mod theme_transition;
 pub use device::{GpuContext, GpuContextError};
 pub use external::{CompositeTarget, ExternalError, TakenFrame, WgpuHost};
 pub use interop::{
-    create_video_texture_view, FormatNegotiator, VideoPipelineUniforms, VideoProcessor,
-    VideoProcessorError, MEDIA_YUV_EOTF_WGSL,
+    create_video_texture_view, video_texture_views, FormatNegotiator, VideoPipelineUniforms,
+    VideoProcessor, VideoProcessorError, MEDIA_YUV_EOTF_WGSL,
 };
 pub use orchestrator::{OrchestratorConfig, OrchestratorError, RenderMode, RenderOrchestrator};
 pub use resilience::{

@@ -38,9 +38,14 @@ fn luma_mtl_format(format: VideoPixelFormat) -> MTLPixelFormat {
 }
 
 /// Maps a [`VideoPixelFormat`] to the corresponding wgpu texture format
-/// for the luma plane (re-exported from the crate root for convenience).
-fn luma_wgpu_format(format: VideoPixelFormat) -> wgpu::TextureFormat {
-    crate::luma_texture_format(format)
+/// for the requested plane index (re-exported from the crate root for
+/// convenience).
+fn plane_wgpu_format(format: VideoPixelFormat, plane_index: u32) -> Option<wgpu::TextureFormat> {
+    match plane_index {
+        0 => Some(crate::luma_texture_format(format)),
+        1 => crate::chroma_texture_format(format),
+        _ => None,
+    }
 }
 
 /// Imports an `IOSurface` by its 32-bit global identifier into a
@@ -65,8 +70,23 @@ pub(crate) fn import_iosurface(
 
     let mtl_device = hal_device_guard.raw_device().clone();
 
+    // The IOSurface must actually contain the requested plane: bi-planar
+    // surfaces (NV12/P010) have 2 planes, packed formats have 1.
+    let plane_count = io_surface.plane_count();
+    if desc.plane_index as usize >= plane_count {
+        return Err(MediaError::InvalidHandle);
+    }
+
     // Step 3: Create an MTLTextureDescriptor for the IOSurface-backed texture.
-    let mtl_format = luma_mtl_format(desc.format);
+    let mtl_format = match desc.plane_index {
+        0 => luma_mtl_format(desc.format),
+        1 => match desc.format {
+            VideoPixelFormat::Nv12 => MTLPixelFormat::RG8Unorm,
+            VideoPixelFormat::P010 => MTLPixelFormat::RG16Unorm,
+            _ => return Err(MediaError::InvalidHandle),
+        },
+        _ => return Err(MediaError::InvalidHandle),
+    };
     let texture_descriptor = autoreleasepool(|_| {
         let descriptor = MTLTextureDescriptor::new();
         descriptor.setTextureType(MTLTextureType::Type2D);
@@ -86,12 +106,13 @@ pub(crate) fn import_iosurface(
     // Step 4: Create the MTLTexture from the IOSurface.
     let mtl_texture = autoreleasepool(|_| {
         // SAFETY: The IOSurface is a valid, live surface object. The
-        // descriptor matches the surface dimensions and format. Plane 0
-        // is the luma plane for bi-planar YUV formats.
+        // descriptor matches the surface dimensions and format of
+        // `desc.plane_index` (validated against the surface's plane
+        // count above).
         mtl_device.newTextureWithDescriptor_iosurface_plane(
             &texture_descriptor,
             &io_surface,
-            0, // plane 0 = luma
+            desc.plane_index as NSUInteger,
         )
     })
     .ok_or_else(|| {
@@ -99,7 +120,8 @@ pub(crate) fn import_iosurface(
     })?;
 
     // Step 5: Wrap the MTLTexture as a wgpu-hal Texture.
-    let wgpu_format = luma_wgpu_format(desc.format);
+    let wgpu_format = plane_wgpu_format(desc.format, desc.plane_index)
+        .ok_or(MediaError::InvalidHandle)?;
     let copy_size = wgpu::hal::CopyExtent {
         width: desc.width,
         height: desc.height,

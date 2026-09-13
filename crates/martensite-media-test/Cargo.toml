@@ -22,6 +22,13 @@ wgpu = { workspace = true }
 # Enables `wgpu`'s `noop` backend so the interop tests can construct a
 # `wgpu::Device` without a real GPU adapter.
 test-noop = ["wgpu/noop"]
+# Decoder-backend conformance coverage — forwarded so CI can drive
+# `cargo test -p martensite-media-test --features decoder-ffmpeg` etc.
+decoder = ["martensite-media/decoder"]
+decoder-videotoolbox = ["martensite-media/decoder-videotoolbox"]
+decoder-mf = ["martensite-media/decoder-mf"]
+decoder-vaapi = ["martensite-media/decoder-vaapi"]
+decoder-ffmpeg = ["martensite-media/decoder-ffmpeg"]
 
 [lints]
 workspace = true

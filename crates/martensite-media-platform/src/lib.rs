@@ -40,6 +40,7 @@
 
 use wgpu::Texture;
 
+pub mod decoder;
 pub mod surface;
 
 #[cfg(target_os = "macos")]
@@ -53,7 +54,9 @@ mod linux;
 
 /// Re-export of the shared surface types so downstream crates can use them
 /// without depending on `martensite-media`.
-pub use surface::{HardwareHandle, MediaError, VideoPixelFormat};
+pub use surface::{
+    ColorRange, HardwareHandle, MediaError, VideoFrameMetadata, VideoPixelFormat,
+};
 
 /// Re-export of the hal API types for downstream crates that need to
 /// interact with the platform-specific backend.
@@ -83,6 +86,11 @@ pub struct ImportTextureDescriptor {
     pub mip_level_count: u32,
     /// Array layer count (typically 1 for video frames).
     pub array_layer_count: u32,
+    /// Hardware-surface plane index to import: 0 = luma (or the single plane
+    /// for packed formats), 1 = interleaved chroma for bi-planar NV12/P010.
+    /// On Windows this selects the D3D11/D3D12 array slice; on Linux the
+    /// dma-buf plane/layer offset; on macOS the `IOSurface` plane.
+    pub plane_index: u32,
 }
 
 impl ImportTextureDescriptor {
@@ -105,6 +113,56 @@ impl ImportTextureDescriptor {
             format,
             mip_level_count: 1,
             array_layer_count: 1,
+            plane_index: 0,
+        }
+    }
+
+    /// Returns a copy of this descriptor targeting the given hardware plane.
+    ///
+    /// For bi-planar formats the chroma plane is half resolution, so the
+    /// returned descriptor's dimensions are halved when `plane_index == 1`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_media_platform::surface::VideoPixelFormat;
+    /// use martensite_media_platform::ImportTextureDescriptor;
+    ///
+    /// let desc = ImportTextureDescriptor::new(1920, 1080, VideoPixelFormat::Nv12);
+    /// let chroma = desc.for_plane(1);
+    /// assert_eq!(chroma.plane_index, 1);
+    /// assert_eq!((chroma.width, chroma.height), (960, 540));
+    /// ```
+    #[must_use]
+    pub fn for_plane(&self, plane_index: u32) -> Self {
+        let mut desc = self.clone();
+        desc.plane_index = plane_index;
+        if plane_index == 1 && desc.format.is_yuv() {
+            desc.width /= 2;
+            desc.height /= 2;
+        }
+        desc
+    }
+
+    /// Returns the wgpu texture format that describes `plane_index` of this
+    /// descriptor's [`VideoPixelFormat`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_media_platform::surface::VideoPixelFormat;
+    /// use martensite_media_platform::ImportTextureDescriptor;
+    ///
+    /// let desc = ImportTextureDescriptor::new(1920, 1080, VideoPixelFormat::Nv12);
+    /// assert_eq!(desc.plane_wgpu_format(0), Some(wgpu::TextureFormat::R8Unorm));
+    /// assert_eq!(desc.plane_wgpu_format(1), Some(wgpu::TextureFormat::Rg8Unorm));
+    /// ```
+    #[must_use]
+    pub fn plane_wgpu_format(&self, plane_index: u32) -> Option<wgpu::TextureFormat> {
+        match plane_index {
+            0 => Some(luma_texture_format(self.format)),
+            1 => chroma_texture_format(self.format),
+            _ => None,
         }
     }
 }
@@ -349,6 +407,50 @@ pub fn import_external_texture(
             ))
         }
     }
+}
+
+/// Imports every plane of a bi-planar hardware surface as a [`VideoTexture`].
+///
+/// For [`VideoPixelFormat::Nv12`]/[`VideoPixelFormat::P010`] this imports
+/// plane 0 (full-resolution luma) and plane 1 (half-resolution interleaved
+/// chroma) as two separate `wgpu::Texture`s, feeding `VideoProcessor`'s
+/// bi-planar path directly. Single-plane formats (`Rgba8`,
+/// `Rgba16Float`) produce a `VideoTexture` whose `uv` is `None`.
+///
+/// Falls back to nothing: on failure the caller should use
+/// [`import_cpu_memory`] with a `CpuMemory` copy of the frame.
+///
+/// # Errors
+///
+/// Returns [`MediaError::InvalidHandle`] when the handle is invalid or
+/// does not contain the required planes, [`MediaError::ImportFailed`]
+/// when the platform import path is unavailable.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_media_platform::surface::{HardwareHandle, VideoPixelFormat};
+/// use martensite_media_platform::{import_external_planes, ImportTextureDescriptor};
+/// use wgpu::Device;
+///
+/// # fn example(device: &Device) {
+/// let handle = HardwareHandle::IoSurface { surface_id: 42 };
+/// let desc = ImportTextureDescriptor::new(1920, 1080, VideoPixelFormat::Nv12);
+/// let tex = import_external_planes(device, &handle, &desc);
+/// # }
+/// ```
+pub fn import_external_planes(
+    device: &wgpu::Device,
+    handle: &HardwareHandle,
+    desc: &ImportTextureDescriptor,
+) -> Result<VideoTexture, MediaError> {
+    let y = import_external_texture(device, handle, &desc.for_plane(0))?;
+    let uv = if desc.format.is_yuv() {
+        Some(import_external_texture(device, handle, &desc.for_plane(1))?)
+    } else {
+        None
+    };
+    Ok(VideoTexture { y, uv })
 }
 
 /// Imports CPU memory plane data into a [`VideoTexture`] by uploading
