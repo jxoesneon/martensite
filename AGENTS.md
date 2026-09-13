@@ -134,7 +134,21 @@ cargo bench -p bench_suite --bench bench_suite -- --test
 - `LayoutEngine` uses Taffy for arena-level layout.
 - Widgets (`Flex`, `Container`, `Stack`) manage their own children
   internally as `Box<dyn Widget>`.
-- Widget-internal children are NOT registered in the arena.
+- Widget-internal children are NOT registered in the arena; the
+  framework reaches them through the `Widget::child_count`/`child`/
+  `child_mut`/`child_bounds` protocol:
+  - `Widget::event` forwards into internal children by default
+    (bounds-gated, topmost-first).
+  - `WidgetArena::dispatch_event` bubbles up arena ancestors on
+    `EventResponse::Ignored`; `RequestRepaint` sets `DIRTY_PAINT`.
+  - `WidgetArena::build_paint_list` records each visible widget's
+    `paint` chrome plus internal children in document order.
+  - The AccessKit adapter emits internal children as virtual nodes
+    (generation-0 `NodeId` space) — see `martensite-access`'s
+    `AccessKitAdapter::resolve_internal`.
+- `EventRouter::dispatch_pointer_event`/`dispatch_keyboard_event`/
+  `dispatch_scroll_event` in `martensite-window` are the production
+  entry points combining routing and delivery.
 - This is documented in `crates/martensite/src/widgets/mod.rs`.
 
 ### Text caching

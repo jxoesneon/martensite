@@ -101,7 +101,10 @@ pub mod prelude {
         BindError, Container, ExternalEngine, ExternalEngines, Flex, FlexDirection, FramePoll,
         MediaView, Stack, Text, VideoFit,
     };
-    pub use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, Widget, WidgetArena, WidgetId};
+    pub use martensite_core::{
+        ColdNode, EventContext, EventResponse, HotNode, NodeFlags, PaintContext, PaintList, Rect,
+        Widget, WidgetArena, WidgetEvent, WidgetId,
+    };
     pub use martensite_engine_bridge::{
         BridgeHandle, BridgeRegistry, Engine, EngineContext, EngineEvent, Frame, FrameSync,
         FrameToken, PointerButton, SourceAlpha, SurfaceId, Viewport,

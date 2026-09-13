@@ -3,12 +3,13 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.15.0 in progress — `martensite-bevy` and
-`martensite-godot` adapter crates are being built (excluded from the
-default workspace; checked by the dedicated `adapters` CI job),
-`examples/viewport_showcase` to follow. v0.14.0 remains the latest
-release: tagged `v0.14.0` and pushed; `publish.yml` runs all gates
-then publishes 31 crates.
+Last updated: post-v0.15.0 audit remediation. v0.15.0 is released —
+tagged, published to crates.io, and released on GitHub. A follow-up
+audit pass landed fixes across CI gates, font fallback, the publish
+rate limiter, event-loop quiescence (`QuiescentApp`), the widget
+event/paint dispatch path, accessibility for widget-internal
+children, vendored `martensite-vello`, and taffy 0.14 / wasmtime 48
+upgrades. v0.16.0 is the next milestone.
 
 ## Active Milestone Plan (v0.14.0 → v0.17.0 → v1.0.0)
 

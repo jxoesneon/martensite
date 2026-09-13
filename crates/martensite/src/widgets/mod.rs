@@ -36,9 +36,12 @@
 //! architecture gives widgets full control over their internal layout
 //! while Taffy handles the top-level arena tree.
 //!
-//! In a future milestone, widgets may optionally register their children
-//! in the arena for Taffy-driven flexbox layout, but for v0.3.0 the
-//! widget-internal approach is used.
+//! Internal children are not invisible, though: the framework reaches
+//! them through the `Widget::child_count`/`child`/`child_mut`/
+//! `child_bounds` protocol — `Widget::event` forwards events into them
+//! (bounds-gated, topmost-first), `WidgetArena::build_paint_list`
+//! recurses into them after the parent's chrome, and the AccessKit
+//! adapter emits them as virtual nodes in the accessibility tree.
 
 /// Interactive button widget.
 ///

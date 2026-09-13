@@ -66,21 +66,8 @@ impl Viewport {
 ///
 /// assert_ne!(PointerButton::Primary, PointerButton::Secondary);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PointerButton {
-    /// The primary pointer button (left for right-handed users).
-    Primary,
-    /// The secondary pointer button (right for right-handed users).
-    Secondary,
-    /// The middle pointer button (scroll-wheel click).
-    Middle,
-    /// The "back" navigation button (mouse button 4 / browser back).
-    Back,
-    /// The "forward" navigation button (mouse button 5 / browser forward).
-    Forward,
-    /// Any other platform button, identified by its raw code.
-    Other(u16),
-}
+// Re-exported so engine events and widget events share one button type.
+pub use martensite_core::PointerButton;
 
 /// A host→engine input event, in surface-local physical pixels.
 ///
