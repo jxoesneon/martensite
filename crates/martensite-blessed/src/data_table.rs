@@ -1161,11 +1161,14 @@ mod tests {
     /// under 8.3 ms (120 fps) while scrolling through one thousand consecutive
     /// offsets on a one-million-row table.
     ///
-    /// CI runners are the gate of record for this budget; the test is
-    /// `#[ignore]`d by default to avoid flakiness on shared developer
-    /// hardware.
+    /// CI runners are the gate of record for this budget: the
+    /// `performance-gates` job runs it in release mode via
+    /// `cargo test --release -p martensite-blessed --lib -- --ignored`.
+    /// The test is `#[ignore]`d by default to avoid flakiness on shared
+    /// developer hardware.
     #[test]
-    #[ignore]
+    #[ignore = "perf gate (8.3 ms/frame scroll budget); runs in the CI \
+               performance-gates job via --release --ignored"]
     fn data_table_1m_steady_scroll() {
         use std::time::Instant;
 

@@ -853,10 +853,12 @@ mod tests {
     /// per-event time is under 2.0 ms. **CI runners are the gate of record**
     /// for absolute latency numbers — local machines vary, so this test is
     /// `#[ignore]` by default to avoid flakiness on shared/loaded hardware.
-    /// Run it explicitly with `cargo test -p martensite-window --lib
-    /// kalman_stylus_latency -- --ignored`.
+    /// The `ignored-tests` job runs it in debug mode and the
+    /// `performance-gates` job runs it in release mode via
+    /// `cargo test -p martensite-window --lib -- --ignored`.
     #[test]
-    #[ignore]
+    #[ignore = "perf gate (2.0 ms avg/event); runs in the CI ignored-tests and \
+               performance-gates jobs via --ignored"]
     fn kalman_stylus_latency() {
         use std::time::Instant;
 

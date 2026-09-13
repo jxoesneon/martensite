@@ -7,8 +7,8 @@
 //!
 //! The test is `#[ignore]`d by default because it is sensitive to
 //! allocations from other threads in the process. CI is the gate of record:
-//! run it explicitly with `cargo test -p martensite-blessed --test
-//! docking_zero_alloc -- --ignored`.
+//! the `performance-gates` job runs it in release mode via `cargo test
+//! --release -p martensite-blessed --test docking_zero_alloc -- --ignored`.
 
 // The workspace sets `unsafe_code = "deny"` via `[lints] workspace = true`.
 // This test crate legitimately needs `unsafe` to implement `GlobalAlloc`, so
@@ -51,9 +51,11 @@ fn make_panel(id: u64) -> DockPanel {
 /// Performs 10,000 split/merge cycles within the slab capacity and verifies
 /// that no heap allocation occurs.
 ///
-/// CI is the gate of record for this check.
+/// CI is the gate of record for this check: the `performance-gates` job runs
+/// it in release mode.
 #[test]
-#[ignore = "allocation-sensitive; run explicitly in CI with --ignored"]
+#[ignore = "zero-alloc gate, allocation-sensitive; runs in the CI \
+           performance-gates job via --release --ignored"]
 fn docking_zero_alloc_split_merge() {
     // Use a small, fixed capacity so the slab never needs to grow. Each cycle
     // oscillates between 1 node (leaf) and 3 nodes (split + 2 leaves), well

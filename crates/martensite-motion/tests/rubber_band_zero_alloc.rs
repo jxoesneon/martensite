@@ -40,10 +40,13 @@ static A: Counting = Counting;
 ///
 /// This is `#[ignore]` because installing a global allocator is process-global
 /// and incompatible with running alongside other tests that may rely on the
-/// default allocator's behaviour; run explicitly with
-/// `cargo test --test rubber_band_zero_alloc -- --ignored`.
+/// default allocator's behaviour. CI is the gate of record: the
+/// `performance-gates` job runs it via
+/// `cargo test --release -p martensite-motion --test rubber_band_zero_alloc
+/// -- --ignored`.
 #[test]
-#[ignore]
+#[ignore = "zero-alloc gate; runs in the CI performance-gates job via \
+           --release --ignored"]
 fn rubber_band_zero_alloc() {
     let mut scroller = RubberBandScroller::new(1000.0, 500.0);
     // Establish an overscrolled state with an active spring.

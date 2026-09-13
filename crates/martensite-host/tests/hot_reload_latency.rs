@@ -3,7 +3,9 @@
 //! This integration test measures the full `file change -> build -> load ->
 //! reload` pipeline latency and asserts it is below the 350 ms milestone
 //! budget. It is `#[ignore]` by default because it spawns real `cargo`
-//! builds and requires a working C toolchain.
+//! builds and requires a working C toolchain. CI is the gate of record:
+//! the `performance-gates` job runs it in release mode via `cargo test
+//! --release -p martensite-host --test hot_reload_latency -- --ignored`.
 
 use martensite_host::GuestLibrary;
 use std::fs;
@@ -85,7 +87,8 @@ fn versioned_path(target_dir: &Path, version: u64) -> PathBuf {
 /// reloads into `GuestLibrary`, measuring the full pipeline from the file
 /// write to the new dylib being live.
 #[test]
-#[ignore = "performance: requires cargo build environment and C toolchain"]
+#[ignore = "perf gate (<350 ms hot-reload); spawns nested cargo builds — \
+           runs in the CI performance-gates job via --release --ignored"]
 fn file_change_to_dylib_reload_within_350ms() {
     let guest = create_guest_crate(1);
     let target_dir = tempfile::tempdir().expect("failed to create target dir");

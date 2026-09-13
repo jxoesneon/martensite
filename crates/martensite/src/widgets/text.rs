@@ -834,7 +834,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Performance gate: run with cargo test --release --ignored. \
+    #[ignore = "Performance gate: runs in the CI performance-gates job via \
+        cargo test --release -p martensite --lib -- --ignored. \
         The 98% hit-rate target applies to the combined Tier 1 + Tier 2 \
         cache system during interactive resizing with 500 text nodes. \
         This test measures Tier 2 hit rate in isolation, which is lower \
@@ -908,10 +909,11 @@ mod tests {
     /// it for regression tracking. Run with
     /// `cargo test --release --ignored -- --nocapture`.
     #[test]
-    #[ignore = "actual-performance tracking: run with --release --ignored -- --nocapture. \
-                Measures the combined Tier 1 + Tier 2 cache hit rate under a realistic \
-                Taffy probing pattern. Prints the measured hit rate; does not assert a \
-                hard threshold (the 98% target is documented in the milestone spec)."]
+    #[ignore = "actual-performance tracking: runs in the CI performance-gates job via \
+                cargo test --release -p martensite --lib -- --ignored (add --nocapture \
+                locally to see the measured rate). Measures the combined Tier 1 + Tier 2 \
+                cache hit rate under a realistic Taffy probing pattern and asserts the \
+                98% milestone target."]
     fn text_measure_combined_cache_hit_rate() {
         let mut hot = HotNode::new(taffy::NodeId::new(1));
         let mut cx = make_cx(&mut hot);
