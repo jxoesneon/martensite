@@ -67,7 +67,16 @@ pub struct CoreTextFontFallback {
 /// immutable after creation, so concurrent reads are safe.
 struct SendSyncCTFontRef(CTFontRef);
 
+// SAFETY: `CTFontRef` is an immutable, reference-counted
+// CoreFoundation object whose refcount is managed atomically; see the
+// `SendSyncCTFontRef` doc comment. Moving it to another thread only
+// transfers ownership of the pointer.
 unsafe impl Send for SendSyncCTFontRef {}
+
+// SAFETY: as above — the wrapped `CTFontRef` is immutable after
+// creation, so concurrent shared reads from multiple threads are
+// safe. The only mutation (`CFRelease` in `Drop`) happens under
+// exclusive `&mut self` ownership.
 unsafe impl Sync for SendSyncCTFontRef {}
 
 /// Opaque type alias for `CTFontRef`.
@@ -107,6 +116,11 @@ impl CoreTextFontFallback {
     pub fn new() -> Self {
         // Use the system UI font (kCTFontUIFontSystem = 0) as the base.
         // Size 0.0 means "default size for the UI type".
+        // SAFETY: `CTFontCreateUIFontForLanguage` takes no borrowed
+        // pointers — a null `language` is documented to select the
+        // system language. It returns a +1 `CTFontRef` that we own
+        // (released in `Drop`), or null on failure; the null case is
+        // handled by checks in `fallback_family_for_text` and `Drop`.
         let base_font = unsafe { CTFontCreateUIFontForLanguage(0, 0.0, std::ptr::null()) };
         Self {
             base_font: SendSyncCTFontRef(base_font),
@@ -118,15 +132,17 @@ impl CoreTextFontFallback {
     ///
     /// Returns `None` if CoreText cannot find a fallback font.
     fn fallback_family_for_text(&self, text: &str, locale: &str) -> Option<String> {
-        if text.is_empty() {
+        if text.is_empty() || self.base_font.0.is_null() {
             return None;
         }
 
         let cf_text = CFString::new(text);
+        // `lang` must outlive the FFI call below — `cf_language`
+        // borrows the CFStringRef from it.
+        let lang = CFString::new(locale);
         let cf_language = if locale.is_empty() {
             std::ptr::null()
         } else {
-            let lang = CFString::new(locale);
             lang.as_concrete_TypeRef()
         };
 
@@ -135,6 +151,14 @@ impl CoreTextFontFallback {
             length: cf_text.char_len(),
         };
 
+        // SAFETY: `self.base_font.0` is a valid, non-null `CTFontRef`
+        // (null-checked above). `cf_text` and `lang` are live
+        // `CFString`s whose refs remain valid for the duration of the
+        // call; `cf_language` is either null (documented to mean the
+        // system language) or borrowed from `lang`. `range` is a
+        // by-value `#[repr(C)]` struct covering `cf_text`. The call
+        // returns a +1 `CTFontRef` that we own, or null on failure
+        // (checked below).
         let font = unsafe {
             CTFontCreateForStringWithLanguage(
                 self.base_font.0,
@@ -148,13 +172,25 @@ impl CoreTextFontFallback {
             return None;
         }
 
+        // SAFETY: `font` is a non-null `CTFontRef` (checked above).
+        // `CTFontCopyFamilyName` returns a +1 `CFStringRef` that we
+        // own, or null (checked below).
         let family_name_ref = unsafe { CTFontCopyFamilyName(font) };
+        // SAFETY: `font` is a non-null +1 CoreFoundation reference
+        // owned by us; this release balances the create-rule retain
+        // from `CTFontCreateForStringWithLanguage`. `font` is not used
+        // after this call.
         unsafe { CFRelease(font as CFTypeRef) };
 
         if family_name_ref.is_null() {
             return None;
         }
 
+        // SAFETY: `family_name_ref` is a non-null `CFStringRef`
+        // (checked above) returned by a `Copy`-named function, so the
+        // CoreFoundation create rule applies and
+        // `wrap_under_create_rule` correctly takes ownership of the
+        // +1 reference.
         let family = unsafe { CFString::wrap_under_create_rule(family_name_ref) };
         let name = family.to_string();
         if name.is_empty() {
@@ -189,6 +225,10 @@ impl Default for CoreTextFontFallback {
 impl Drop for CoreTextFontFallback {
     fn drop(&mut self) {
         if !self.base_font.0.is_null() {
+            // SAFETY: `base_font.0` is a non-null +1 `CTFontRef` owned
+            // by `self` (created in `new`). `Drop` runs exactly once
+            // and the pointer is never used afterwards, so the release
+            // cannot be duplicated or raced.
             unsafe { CFRelease(self.base_font.0 as CFTypeRef) };
         }
     }

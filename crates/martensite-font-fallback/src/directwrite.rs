@@ -37,12 +37,13 @@ use windows::Win32::Graphics::DirectWrite::{
 /// use martensite_font_fallback::directwrite::DirectWriteFontFallback;
 /// use martensite_text::cascade::FontFallbackProvider;
 ///
-/// let provider = DirectWriteFontFallback::new();
-/// let fallbacks = provider.script_fallbacks(
-///     martensite_text::cascade::ScriptTag::Cjk,
-///     "zh-cn",
-/// );
-/// assert!(!fallbacks.is_empty());
+/// if let Some(provider) = DirectWriteFontFallback::new() {
+///     let fallbacks = provider.script_fallbacks(
+///         martensite_text::cascade::ScriptTag::Cjk,
+///         "zh-cn",
+///     );
+///     assert!(!fallbacks.is_empty());
+/// }
 /// ```
 pub struct DirectWriteFontFallback {
     /// The DirectWrite factory, used to create the font fallback.
@@ -57,26 +58,51 @@ impl DirectWriteFontFallback {
     /// This initializes a DirectWrite factory and retrieves the
     /// `IDWriteFontFallback` interface from it.
     ///
+    /// # Returns
+    ///
+    /// `Some(Self)` on success, or `None` if `DWriteCreateFactory`
+    /// fails (for example, if DirectWrite is unavailable or COM
+    /// initialization fails). Callers should fall back to a non-native
+    /// provider in that case. Note that a `Some` result may still have
+    /// no `IDWriteFontFallback` interface on older Windows versions;
+    /// in that case the provider degrades to static fallback lists.
+    ///
     /// # Examples
     ///
     /// ```
     /// use martensite_font_fallback::directwrite::DirectWriteFontFallback;
+    /// use martensite_text::cascade::FontFallbackProvider;
     ///
-    /// let provider = DirectWriteFontFallback::new();
+    /// if let Some(provider) = DirectWriteFontFallback::new() {
+    ///     let fallbacks = provider.script_fallbacks(
+    ///         martensite_text::cascade::ScriptTag::Latin,
+    ///         "en-us",
+    ///     );
+    ///     assert!(!fallbacks.is_empty());
+    /// }
     /// ```
-    pub fn new() -> Self {
-        let factory = unsafe {
-            DWriteCreateFactory::<IDWriteFactory>(DWRITE_FACTORY_TYPE_SHARED)
-                .unwrap_or_else(|_| panic!("DWriteCreateFactory failed"))
-        };
+    pub fn new() -> Option<Self> {
+        // SAFETY: `DWriteCreateFactory` is a stateless OS entry point
+        // that is always safe to call. It takes no pointer arguments
+        // and returns a COM object (or an `HRESULT` error) through the
+        // `windows` crate's checked `Result`, so no raw pointers are
+        // involved. COM objects created this way are valid for use on
+        // any thread once marshalled; `IDWriteFactory` is an agile
+        // (free-threaded) object per the DirectWrite documentation.
+        let factory =
+            unsafe { DWriteCreateFactory::<IDWriteFactory>(DWRITE_FACTORY_TYPE_SHARED) }.ok()?;
 
         // Try to get IDWriteFontFallback from IDWriteFactory2.
-        let fallback = factory
-            .cast::<IDWriteFactory2>()
-            .ok()
-            .and_then(|f2| unsafe { f2.GetSystemFontFallback().ok() });
+        let fallback = factory.cast::<IDWriteFactory2>().ok().and_then(|f2| {
+            // SAFETY: `f2` is a valid `IDWriteFactory2` COM object
+            // obtained by `cast` from the live `factory`.
+            // `GetSystemFontFallback` takes no pointer arguments and
+            // returns a COM object or an `HRESULT` error; both are
+            // handled by `.ok()`.
+            unsafe { f2.GetSystemFontFallback().ok() }
+        });
 
-        Self { factory, fallback }
+        Some(Self { factory, fallback })
     }
 
     /// Queries DirectWrite for the fallback family name for the given
@@ -103,6 +129,15 @@ impl DirectWriteFontFallback {
         let mut mapped_length = 0u32;
         let mut scale = 1.0f32;
 
+        // SAFETY: `fallback` is a valid `IDWriteFontFallback` COM
+        // object. `source` is a live `IDWriteTextAnalysisSource`
+        // implementation that outlives this call, and `text_len` is the
+        // length of its text in UTF-16 code units. A null
+        // `IDWriteFontCollection` and `PCWSTR::null()` are documented to
+        // select the system collection and the user's default locale.
+        // `mapped_length`, `mapped_font`, and `scale` are valid
+        // out-pointers to stack locals. Errors are reported via
+        // `HRESULT` and ignored here — failure just yields no mapping.
         let _ = unsafe {
             fallback.MapCharacters(
                 &source,
@@ -124,7 +159,14 @@ impl DirectWriteFontFallback {
         // Get the family name from the mapped font.
         // IDWriteFont -> GetFontFamily -> IDWriteFontFamily -> GetFamilyNames
         // -> IDWriteLocalizedStrings -> FindLocaleName + GetString
+
+        // SAFETY: `font` is a valid `IDWriteFont` COM object returned by
+        // `MapCharacters`; `GetFontFamily` returns a COM object or an
+        // `HRESULT` error, both handled by `.ok()`.
         let family = unsafe { font.GetFontFamily().ok() }?;
+        // SAFETY: `family` is a valid `IDWriteFontFamily` COM object;
+        // `GetFamilyNames` returns a COM object or an `HRESULT` error,
+        // both handled by `.ok()`.
         let names = unsafe { family.GetFamilyNames().ok() }?;
 
         let locale_str = if locale.is_empty() { "en-us" } else { locale };
@@ -133,6 +175,11 @@ impl DirectWriteFontFallback {
         let mut index = 0u32;
         let mut exists = BOOL(0);
 
+        // SAFETY: `names` is a valid `IDWriteLocalizedStrings` object,
+        // `locale_hstring` is a valid `HSTRING` that outlives the call,
+        // and `index`/`exists` are valid out-pointers to stack locals.
+        // A failure `HRESULT` is ignored; `exists` stays false and we
+        // fall back to index 0 below.
         let _ = unsafe { names.FindLocaleName(&locale_hstring, &mut index, &mut exists) };
 
         // If the locale doesn't exist, fall back to index 0.
@@ -140,8 +187,16 @@ impl DirectWriteFontFallback {
             index = 0;
         }
 
+        // SAFETY: `names` is valid and `index` is either a locale index
+        // confirmed by `FindLocaleName` or 0. An out-of-range index
+        // produces an `HRESULT` error (handled by `.ok()?`), not
+        // undefined behavior.
         let length = unsafe { names.GetStringLength(index).ok()? } as usize;
         let mut buffer = vec![0u16; length + 1];
+        // SAFETY: `buffer` contains `length + 1` elements, where
+        // `length` is the value `GetStringLength` reported for the same
+        // `index`. `GetString` therefore writes at most `length` code
+        // units plus the NUL terminator, all within the allocation.
         unsafe { names.GetString(index, &mut buffer).ok()? };
 
         // Convert the UTF-16 buffer to a Rust String.
@@ -168,12 +223,6 @@ impl DirectWriteFontFallback {
             ScriptTag::Math => "∑∫√",
             ScriptTag::Other => "A",
         }
-    }
-}
-
-impl Default for DirectWriteFontFallback {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -281,11 +330,20 @@ impl IDWriteTextAnalysisSource_Impl for SimpleAnalysisSource {
         // The pointer is valid for the lifetime of this object because
         // `text_utf16` is owned by `self` and not reallocated.
         if !textstring.is_null() {
+            // SAFETY: `textstring` is non-null (checked above) and
+            // points to a caller-provided out-slot valid for one write.
+            // `pos <= len` was checked above, so `.add(pos)` stays
+            // within the `text_utf16` allocation (one past the end is
+            // permitted). The stored pointer borrows `self`, which
+            // DirectWrite only dereferences during `MapCharacters`.
             unsafe {
                 *textstring = self.text_utf16.as_ptr().add(pos) as *mut u16;
             }
         }
         if !textlength.is_null() {
+            // SAFETY: `textlength` is non-null (checked above) and
+            // points to a caller-provided out-slot valid for one write.
+            // `pos <= len`, so `len - pos` cannot underflow.
             unsafe {
                 *textlength = (len - pos) as u32;
             }
@@ -303,11 +361,20 @@ impl IDWriteTextAnalysisSource_Impl for SimpleAnalysisSource {
 
         // Return a pointer to the text before `textposition`.
         if !textstring.is_null() {
+            // SAFETY: `textstring` is non-null (checked above) and
+            // points to a caller-provided out-slot valid for one write.
+            // The base pointer of `text_utf16` is valid for the `pos`
+            // code units reported via `textlength` below (when `pos`
+            // is 0 the pointer is never dereferenced). It borrows
+            // `self`, which outlives the `MapCharacters` call.
             unsafe {
                 *textstring = self.text_utf16.as_ptr() as *mut u16;
             }
         }
         if !textlength.is_null() {
+            // SAFETY: `textlength` is non-null (checked above) and
+            // points to a caller-provided out-slot valid for one write.
+            // `pos` is clamped to the buffer length above.
             unsafe {
                 *textlength = pos as u32;
             }
@@ -330,11 +397,18 @@ impl IDWriteTextAnalysisSource_Impl for SimpleAnalysisSource {
         // Return the locale name for the entire text.
         // The locale is stored as a null-terminated UTF-16 string.
         if !localename.is_null() {
+            // SAFETY: `localename` is non-null (checked above) and
+            // points to a caller-provided out-slot valid for one write.
+            // `locale_utf16` is NUL-terminated and owned by `self`, so
+            // the stored pointer is a valid C-style wide string for as
+            // long as DirectWrite holds it during `MapCharacters`.
             unsafe {
                 *localename = self.locale_utf16.as_ptr() as *mut u16;
             }
         }
         if !textlength.is_null() {
+            // SAFETY: `textlength` is non-null (checked above) and
+            // points to a caller-provided out-slot valid for one write.
             unsafe {
                 // Report the entire remaining text length as having
                 // this locale.
@@ -355,6 +429,8 @@ impl IDWriteTextAnalysisSource_Impl for SimpleAnalysisSource {
         // returning an error, which is the correct behavior per the
         // DirectWrite documentation.
         if !textlength.is_null() {
+            // SAFETY: `textlength` is non-null (checked above) and
+            // points to a caller-provided out-slot valid for one write.
             unsafe {
                 *textlength = 0;
             }
@@ -373,7 +449,11 @@ mod tests {
 
     #[test]
     fn directwrite_provider_returns_fallbacks() {
-        let provider = DirectWriteFontFallback::new();
+        let Some(provider) = DirectWriteFontFallback::new() else {
+            // DirectWrite is unavailable on this host (e.g., a
+            // non-Windows CI runner or missing COM); nothing to test.
+            return;
+        };
         let fallbacks = provider.script_fallbacks(ScriptTag::Latin, "en-us");
         assert!(!fallbacks.is_empty());
     }

@@ -60,7 +60,10 @@ pub mod fontconfig;
 pub fn native_provider() -> Option<Box<dyn FontFallbackProvider>> {
     #[cfg(target_os = "windows")]
     {
-        return Some(Box::new(directwrite::DirectWriteFontFallback::new()));
+        // `None` is propagated when DirectWrite initialization fails,
+        // letting the caller fall back to a non-native provider.
+        let provider = directwrite::DirectWriteFontFallback::new()?;
+        return Some(Box::new(provider));
     }
     #[cfg(target_os = "macos")]
     {
