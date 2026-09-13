@@ -94,6 +94,7 @@ jobs:
             martensite-core
             martensite-host
             martensite-layout
+            martensite-vello
             martensite-render
             martensite-theme
             martensite-media-platform
@@ -230,6 +231,7 @@ jobs:
           echo "[$(date -u +%H:%M:%S)] Workspace version: ${WORKSPACE_VERSION}"
 
           # Crates in topological dependency order.
+          # martensite-vello must come before martensite-render.
           # martensite-cosmic-text must come before martensite-text.
           # martensite-theme must come before martensite-wgpu.
           # martensite-media-platform must come before martensite-wgpu.
@@ -242,6 +244,7 @@ jobs:
             martensite-core
             martensite-host
             martensite-layout
+            martensite-vello
             martensite-render
             martensite-theme
             martensite-media-platform
@@ -270,22 +273,24 @@ jobs:
             martensite-blessed
           )
 
-          TARGET_VERSION="$WORKSPACE_VERSION"
-
           published=0
           for crate in "${CRATES[@]}"; do
+            # Vendored crates (martensite-vello, martensite-cosmic-text) pin
+            # their own version rather than inheriting the workspace version.
+            crate_version=$(grep -m1 '^version *= *"' "crates/${crate}/Cargo.toml" | sed 's/^version *= *"\(.*\)".*/\1/')
+            TARGET_VERSION="${crate_version:-$WORKSPACE_VERSION}"
             # Pre-check: query crates.io API for the crate's max published
-            # version. If TARGET_VERSION is already published, skip immediately
-            # without invoking cargo publish or sleeping.
+            # version (max_version includes pre-releases, which the vendored
+            # crates use exclusively). If TARGET_VERSION is already published,
+            # skip immediately without invoking cargo publish or sleeping.
             api_url="https://crates.io/api/v1/crates/${crate}"
-            # Use `|| true` on the pipeline so that crates with no stable
-            # version (e.g. pre-release-only like martensite-cosmic-text) or
-            # crates not yet on crates.io don't abort the script under
-            # `set -euo pipefail`. grep returns exit code 1 when there is no
-            # match, which is a normal condition here.
+            # Use `|| true` on the pipeline so that crates not yet on
+            # crates.io don't abort the script under `set -euo pipefail`.
+            # grep returns exit code 1 when there is no match, which is a
+            # normal condition here.
             existing=$( (curl -fsSL -A "martensite-ci (https://github.com/jxoesneon/martensite)" "$api_url" 2>/dev/null \
-              | grep -oE '"max_stable_version":"[^"]*"' | head -1 \
-              | sed 's/"max_stable_version":"//;s/"//') || true )
+              | grep -oE '"max_version":"[^"]*"' | head -1 \
+              | sed 's/"max_version":"//;s/"//') || true )
             if [ "$existing" = "$TARGET_VERSION" ]; then
               echo "[$(date -u +%H:%M:%S)] $crate ${TARGET_VERSION} already on crates.io; skipping."
               continue
