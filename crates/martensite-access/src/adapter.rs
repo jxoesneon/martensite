@@ -16,9 +16,25 @@
 //! intended to be used on the UI thread.
 
 use accesskit::{Node, NodeId, TreeInfo, TreeUpdate};
-use martensite_core::{NodeFlags, Rect as MartensiteRect, WidgetArena, WidgetId};
+use martensite_core::{NodeFlags, Rect as MartensiteRect, Widget, WidgetArena, WidgetId};
+use std::collections::HashMap;
 
 use crate::{node_id_to_widget_id, rect_to_accesskit, widget_id_to_node_id};
+
+/// A stable path to a widget-internal child: the owning arena node plus
+/// the chain of [`Widget::child`] indices that reaches the internal
+/// widget. Internal children have no arena `WidgetId`, so the adapter
+/// mints virtual [`NodeId`]s for them from the generation-0 space —
+/// real widget handles always carry a non-zero generation in their high
+/// 32 bits, so values `1..=u32::MAX` can never collide.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct InternalPath {
+    /// The arena node whose widget owns the internal subtree.
+    owner: WidgetId,
+    /// Indices of nested `Widget::child` calls from the owner down to
+    /// the target internal widget.
+    indices: Vec<u32>,
+}
 
 /// The AccessKit adapter that bridges the Martensite widget arena to the
 /// platform accessibility subsystem.
@@ -54,6 +70,16 @@ pub struct AccessKitAdapter {
     toolkit_name: Option<String>,
     /// Toolkit version reported to the platform.
     toolkit_version: Option<String>,
+    /// Virtual [`NodeId`]s allocated for widget-internal children, keyed
+    /// by their internal path. Persisted across updates so a given
+    /// internal child keeps a stable `NodeId` for its lifetime.
+    internal_ids: HashMap<InternalPath, NodeId>,
+    /// Reverse lookup from a virtual [`NodeId`] to its internal path,
+    /// used by [`resolve_internal`](Self::resolve_internal).
+    internal_targets: HashMap<NodeId, InternalPath>,
+    /// Next virtual `NodeId` to allocate (counts up in generation-0
+    /// space).
+    next_internal: u32,
 }
 
 impl AccessKitAdapter {
@@ -70,6 +96,9 @@ impl AccessKitAdapter {
             tree_id: accesskit::TreeId::ROOT,
             toolkit_name: Some("Martensite".to_string()),
             toolkit_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            internal_ids: HashMap::new(),
+            internal_targets: HashMap::new(),
+            next_internal: 1,
         }
     }
 
@@ -124,16 +153,29 @@ impl AccessKitAdapter {
             };
             let node_id = widget_id_to_node_id(widget_id);
             let mut node = self.build_node(widget_id, hot.bounds, cold, arena);
-            // Set children from arena topology.
-            let children: Vec<NodeId> = arena
-                .children(widget_id)
-                .map(widget_id_to_node_id)
-                .collect();
+            // Internal children are "inside" the widget's own subtree and
+            // precede arena children, matching paint order.
+            let mut children = Vec::new();
+            self.build_internal_children(
+                widget_id,
+                &*cold.widget,
+                &mut Vec::new(),
+                &mut nodes,
+                &mut children,
+            );
+            children.extend(arena.children(widget_id).map(widget_id_to_node_id));
             if !children.is_empty() {
                 node.set_children(children);
             }
             nodes.push((node_id, node));
         }
+
+        // Drop virtual ids whose owning arena node has died; a node that
+        // reappears carries a fresh generation and gets a fresh id.
+        self.internal_ids
+            .retain(|path, _| arena.is_alive(path.owner));
+        self.internal_targets
+            .retain(|_, path| arena.is_alive(path.owner));
 
         let focus_id = self
             .focus
@@ -224,10 +266,15 @@ impl AccessKitAdapter {
             };
             let node_id = widget_id_to_node_id(widget_id);
             let mut node = self.build_node(widget_id, hot.bounds, cold, arena);
-            let children: Vec<NodeId> = arena
-                .children(widget_id)
-                .map(widget_id_to_node_id)
-                .collect();
+            let mut children = Vec::new();
+            self.build_internal_children(
+                widget_id,
+                &*cold.widget,
+                &mut Vec::new(),
+                &mut nodes,
+                &mut children,
+            );
+            children.extend(arena.children(widget_id).map(widget_id_to_node_id));
             if !children.is_empty() {
                 node.set_children(children);
             }
@@ -311,6 +358,101 @@ impl AccessKitAdapter {
         cold.widget.accessibility(&mut node);
 
         node
+    }
+
+    /// Returns an existing virtual [`NodeId`] for an internal-child path,
+    /// minting a new one from the generation-0 space on first use.
+    fn internal_node_id(&mut self, path: InternalPath) -> NodeId {
+        if let Some(id) = self.internal_ids.get(&path) {
+            return *id;
+        }
+        let id = NodeId(u64::from(self.next_internal));
+        self.next_internal = self
+            .next_internal
+            .checked_add(1)
+            .expect("virtual NodeId space exhausted");
+        self.internal_targets.insert(id, path.clone());
+        self.internal_ids.insert(path, id);
+        id
+    }
+
+    /// Emits AccessKit nodes for a widget's internal children — and
+    /// their internal children, recursively — appending each
+    /// `(NodeId, Node)` pair to `nodes` and each child id to
+    /// `out_children` in child order.
+    ///
+    /// Internal children have no arena node and no `ColdNode`, so their
+    /// node is built from `Role::Unknown`, their layout-cached
+    /// [`Widget::child_bounds`], and their own `accessibility` hook —
+    /// which is expected to set the real role and semantic properties.
+    fn build_internal_children(
+        &mut self,
+        owner: WidgetId,
+        widget: &dyn Widget,
+        prefix: &mut Vec<u32>,
+        nodes: &mut Vec<(NodeId, Node)>,
+        out_children: &mut Vec<NodeId>,
+    ) {
+        for i in 0..widget.child_count() {
+            let Some(child) = widget.child(i) else {
+                continue;
+            };
+            prefix.push(i as u32);
+            let id = self.internal_node_id(InternalPath {
+                owner,
+                indices: prefix.clone(),
+            });
+
+            let mut node = Node::new(accesskit::Role::Unknown);
+            if let Some(b) = widget.child_bounds(i) {
+                if b.width() > 0.0 && b.height() > 0.0 {
+                    node.set_bounds(rect_to_accesskit(b));
+                }
+            }
+            child.accessibility(&mut node);
+
+            // Recurse so grandchildren attach to this node, not the
+            // arena owner.
+            let mut grandchildren = Vec::new();
+            self.build_internal_children(owner, child, prefix, nodes, &mut grandchildren);
+            if !grandchildren.is_empty() {
+                node.set_children(grandchildren);
+            }
+            prefix.pop();
+
+            nodes.push((id, node));
+            out_children.push(id);
+        }
+    }
+
+    /// Resolves a virtual [`NodeId`] minted for a widget-internal child
+    /// to the owning arena widget and the `Widget::child` index path
+    /// that reaches it.
+    ///
+    /// Returns `None` for ordinary (arena) node ids — use
+    /// [`resolve`](Self::resolve) for those. Action dispatch on an
+    /// internal target is the caller's responsibility: walk `indices`
+    /// through `Widget::child_mut` starting from the owning widget.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_access::{widget_id_to_node_id, AccessKitAdapter};
+    /// use martensite_core::{HotNode, WidgetArena};
+    /// # use martensite_core::{ColdNode, DummyWidget};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert(HotNode::default(), ColdNode::default());
+    /// let mut adapter = AccessKitAdapter::new(root);
+    /// let _ = adapter.build_update(&mut arena);
+    ///
+    /// // Arena node ids are not internal targets.
+    /// assert!(adapter.resolve_internal(widget_id_to_node_id(root)).is_none());
+    /// ```
+    pub fn resolve_internal(&self, node_id: NodeId) -> Option<(WidgetId, &[u32])> {
+        self.internal_targets
+            .get(&node_id)
+            .map(|path| (path.owner, path.indices.as_slice()))
     }
 
     /// Marks a widget as dirty for the next incremental update.
@@ -736,5 +878,97 @@ mod tests {
         let node = &update.nodes[0].1;
         assert_eq!(node.label(), Some("Custom Button Label"));
         assert!(node.supports_action(accesskit::Action::Click));
+    }
+    #[test]
+    fn internal_children_emitted_with_virtual_ids() {
+        use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
+        use martensite_core::Rect;
+
+        struct LabelLeaf;
+        impl Widget for LabelLeaf {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> glam::Vec2 {
+                glam::Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+            fn accessibility(&self, node: &mut accesskit::Node) {
+                node.set_role(accesskit::Role::Label);
+                node.set_label("inner text");
+            }
+        }
+
+        struct ParentComposite {
+            child: LabelLeaf,
+        }
+        impl Widget for ParentComposite {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> glam::Vec2 {
+                glam::Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+            fn accessibility(&self, node: &mut accesskit::Node) {
+                node.set_role(accesskit::Role::GenericContainer);
+            }
+            fn child_count(&self) -> usize {
+                1
+            }
+            fn child(&self, index: usize) -> Option<&dyn Widget> {
+                (index == 0).then_some(&self.child as &dyn Widget)
+            }
+            fn child_bounds(&self, index: usize) -> Option<Rect> {
+                (index == 0).then_some(Rect::new(4.0, 4.0, 20.0, 10.0))
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let hot = HotNode {
+            bounds: Rect::new(0.0, 0.0, 100.0, 40.0),
+            ..HotNode::default()
+        };
+        let root = arena.insert(
+            hot,
+            ColdNode::new(Box::new(ParentComposite { child: LabelLeaf })),
+        );
+
+        let mut adapter = AccessKitAdapter::new(root);
+        let update = adapter.build_update(&mut arena);
+
+        // Two nodes: the arena root plus the internal child.
+        assert_eq!(update.nodes.len(), 2);
+        let root_nid = widget_id_to_node_id(root);
+        let (virtual_id, node) = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id != root_nid)
+            .expect("internal child node emitted");
+        let n: &accesskit::Node = node;
+        assert_eq!(n.role(), accesskit::Role::Label);
+        assert_eq!(n.label(), Some("inner text"));
+        assert!(n.bounds().is_some(), "child bounds propagated");
+
+        // The virtual id lives in generation-0 space: it must not
+        // resolve to an arena widget, but resolve_internal maps it back.
+        assert!(adapter.resolve(&arena, *virtual_id).is_none());
+        let (owner, path) = adapter
+            .resolve_internal(*virtual_id)
+            .expect("internal path");
+        assert_eq!(owner, root);
+        assert_eq!(path, &[0]);
+
+        // The parent's children list contains the virtual id.
+        let root_node = &update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == root_nid)
+            .expect("root node")
+            .1;
+        assert_eq!(root_node.children(), &[*virtual_id]);
+
+        // Stability: a second full build reuses the same virtual id.
+        let update2 = adapter.build_update(&mut arena);
+        let (virtual_id2, _) = update2
+            .nodes
+            .iter()
+            .find(|(id, _)| *id != root_nid)
+            .expect("internal child re-emitted");
+        assert_eq!(*virtual_id, *virtual_id2);
     }
 }
