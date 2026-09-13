@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-13
+
+### Added — v0.16.0: Hardware Media Pipeline
+
+- **`VideoDecoder` trait** in `martensite-media` — the producer-side
+  decode contract (`init`/`send_packet`/`try_recv_frame`/`end_of_stream`/
+  `flush`/`negotiated_format`/`hdr_metadata`/`stats`), object-safe for
+  `dyn VideoDecoder` use in widgets, with `Send + Sync` bounds. Wire
+  types (`VideoCodec`, `EncodedPacket`, `DecodedFrame`, `DecoderConfig`,
+  `DecodeStats`, `HdrSideData`, `DecodeError`) live in
+  `martensite-media-platform` so platform backends can implement without
+  a dependency cycle; `martensite-media` re-exports them and provides
+  the trait impls plus a `MockDecoder` with configurable reorder
+  latency, keyframe gating, and EOF drain semantics.
+- **Platform decoder backends** in `martensite-media-platform`, each
+  behind a `decoder-*` cargo feature (default build unaffected):
+  - `videotoolbox` (macOS) — `VTDecompressionSession` →
+    `HardwareHandle::IoSurface`; accepts `avcC`/`hvcC` extradata with
+    length-prefixed AUs or bare descriptions for deferred Annex-B;
+    bounded async output queue (`decode_ahead`); HDR signalling read
+    from `CMFormatDescription` extensions.
+  - `decoder-mf` (Windows) — Media Foundation `IMFTransform` +
+    D3D11; exports `DxgiSharedHandle` or falls back to CPU readback;
+    `COMMAND_DRAIN` end-of-stream.
+  - `decoder-vaapi` (Linux) — `cros-libva` → `vaExportSurfaceHandle` →
+    multi-plane `DmaBuf`; self-contained H.264 SPS/PPS/slice-header
+    parser, EPB removal, avcC handling, and DPB reorder. Synchronous
+    decode (`vaSyncSurface`) makes `end_of_stream` a no-op.
+  - `decoder-ffmpeg` (anywhere FFmpeg is installed) — `ffmpeg-next`
+    9.x software fallback → `HardwareHandle::CpuMemory`; NV12/P010
+    output normalization through swscale; HDR side-data extraction
+    (mastering display, content light, colour attributes); frame
+    threading with opportunistic drains so libavcodec 5.x cannot drop
+    the tail frame at `send_eof`.
+- **Multi-plane hardware-surface import** — `HardwareHandle::DmaBuf`
+  now carries `objects` + per-plane `{object_index, offset, stride}`
+  entries (`DmaBufPlane`); `ImportTextureDescriptor::plane_index` +
+  `for_plane()`; `import_external_planes()` returns `VideoTexture`
+  with paired luma/chroma textures for NV12/P010. Windows DXGI import
+  is implemented through wgpu-hal's Vulkan
+  `texture_from_d3d11_shared_handle` (single-plane; NV12/P010 report
+  `UnsupportedFormat` and fall back to `import_cpu_memory`; DX12
+  cannot import D3D11 handles — documented limitation).
+- **`HdrMetadata` + `Eotf`** in `martensite-media::hdr` — typed model
+  (SDR/PQ/HLG, mastering-display volume, content-light levels,
+  HDR10+ dynamic metadata) with conversion to/from `HdrSideData`.
+- **`FrameQueue`** in `martensite-media::queue` — bounded PTS-ordered
+  decode-ahead ring: last-buffer-drop under pressure, >1.5×-interval
+  deadline skips, `drop_rate_pct()`/`cpu_utilization_pct(fps)`/
+  `dispatch_nanos()` counters the acceptance gate reads.
+- **`MediaView` decoder wiring** — `with_decoder`/`set_decoder`,
+  `feed_packet`, `advance(now_nanos)` (drains the decoder into the
+  queue, presents due frames, updates `VideoSurface`), `next_wait_nanos`,
+  `drop_rate_pct`, `queued_frames`, `end_of_stream`.
+- **wgpu HDR video pipeline** — `VideoPipelineUniforms::from_hdr_metadata`
+  (EOTF flags SDR=0/PQ=1/HLG=2), HLG shader path, `video_texture_views`
+  paired-plane plumbing, `process_video_texture`.
+- **`martensite-media-test`** conformance suite — generic `VideoDecoder`
+  contract tests, `decoded_frame_handle_classification`, queue
+  integration, HDR propagation, real-decode tests on the checked-in
+  320×240 Annex-B fixture (FFmpeg everywhere, VideoToolbox on macOS),
+  noop-wgpu interop coverage, and `full_rate_4k120_gate`.
+- **`docker/media-test.Dockerfile`** — Linux verification image
+  (rust 1.95 + libva/ffmpeg/mesa/clippy): VAAPI compiles and its parser
+  tests run against real libva, FFmpeg real-decode on libavcodec 59,
+  noop-wgpu interop; `--device /dev/dri` on a Linux host exercises
+  runtime hardware decode.
+- **`scripts/generate-media-samples.sh`** — regenerates the contractual
+  `*-4k120.bin` gate assets (60 s hardware-encoded H.264/HEVC, 15 s
+  libsvtav1 AV1 in IVF) into `target/media-samples/`
+  (`$MARTENSITE_MEDIA_SAMPLES` overrides).
+
+### Verified
+
+- **4K120 acceptance gate on Apple M4** — H.264 and HEVC present
+  7200/7200 frames through VideoToolbox hardware at a wall-clock
+  120.0 fps with 0.000% drops and ~0.015% dispatch CPU; the AV1 leg
+  falls back to dav1d software (~119.8 fps; advisory only — no
+  av1C→`CMFormatDescription` bridge exists in objc2-core-media 0.3.2).
+
+### Fixed
+
+- `import_iosurface` now honours `plane_index` (was hard-coded to
+  plane 0) and rejects out-of-range indices.
+- `FfmpegDecoder::send_packet` drains completed frames after each
+  accepted packet — libavcodec 5.x otherwise drops the final frame at
+  `send_eof` when no mid-stream receive occurred.
+
 ## [0.15.0] - 2026-09-12
 
 ### Added — v0.15.0: Engine Showcase
