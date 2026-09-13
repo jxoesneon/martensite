@@ -183,14 +183,17 @@ jobs:
           }
 
           # Consume a token for the given crate type and sleep if the
-          # bucket is empty. Returns the sleep duration via stdout.
+          # bucket is empty. Sets the global CONSUME_WAITED to the sleep
+          # duration (0 if no wait was needed). Must NOT be called inside
+          # $() — command substitution runs in a subshell, which would
+          # discard all token/refill mutations.
           consume_token() {
             local is_new="$1"
             refill_tokens
             if [ "$is_new" = "1" ]; then
               if [ "$new_crate_tokens" -gt 0 ]; then
                 new_crate_tokens=$((new_crate_tokens - 1))
-                echo 0
+                CONSUME_WAITED=0
               else
                 # Wait until the next token refills.
                 local now next_refill wait
@@ -202,12 +205,12 @@ jobs:
                 sleep "$wait"
                 refill_tokens
                 new_crate_tokens=$((new_crate_tokens - 1))
-                echo "$wait"
+                CONSUME_WAITED=$wait
               fi
             else
               if [ "$new_version_tokens" -gt 0 ]; then
                 new_version_tokens=$((new_version_tokens - 1))
-                echo 0
+                CONSUME_WAITED=0
               else
                 local now next_refill wait
                 now=$(TZ=UTC date +%s)
@@ -217,7 +220,7 @@ jobs:
                 sleep "$wait"
                 refill_tokens
                 new_version_tokens=$((new_version_tokens - 1))
-                echo "$wait"
+                CONSUME_WAITED=$wait
               fi
             fi
           }
@@ -300,7 +303,9 @@ jobs:
             fi
 
             # Consume a rate-limit token, sleeping if the bucket is empty.
-            waited=$(consume_token "$is_new_crate")
+            # Call directly (not inside $()) so token mutations persist.
+            consume_token "$is_new_crate"
+            waited=$CONSUME_WAITED
             if [ "$waited" -gt 0 ]; then
               echo "[$(date -u +%H:%M:%S)] Rate limit bucket empty; waited ${waited}s for token refill."
             fi
