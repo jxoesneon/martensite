@@ -219,3 +219,35 @@ jobs:
       - name: Clippy (windows-backend)
         run: cargo clippy -p martensite-shell --features windows-backend --all-targets -- -D warnings
 
+  adapters:
+    name: Heavy Adapters (Bevy + Godot)
+    runs-on: ubuntu-latest
+    # The adapter crates and the showcase example are excluded from the
+    # default workspace (root Cargo.toml `exclude`). They pull heavyweight
+    # dependencies (bevy git pin, godot gdext), so this job is skipped on
+    # pull requests to keep PR CI fast; it still runs on main/tag pushes
+    # and on publish gates via `workflow_call`.
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        manifest:
+          - crates/martensite-bevy/Cargo.toml
+          - crates/martensite-godot/Cargo.toml
+          - examples/viewport_showcase/Cargo.toml
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "adapters-${{ matrix.manifest }}"
+      - name: Check ${{ matrix.manifest }}
+        run: cargo check --manifest-path ${{ matrix.manifest }}
+      - name: Clippy ${{ matrix.manifest }}
+        run: cargo clippy --manifest-path ${{ matrix.manifest }} --all-targets -- -D warnings
+      # martensite-godot is a cdylib; its unit tests run through the rlib.
+      - name: Test ${{ matrix.manifest }}
+        run: cargo test --manifest-path ${{ matrix.manifest }}
+

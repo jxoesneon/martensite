@@ -3,10 +3,12 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.14.0 release — external-surface foundation shipped,
-`examples/engine_embed` end-to-end demonstration landed, publish
-pipeline updated for `martensite-engine-bridge`. Tagged `v0.14.0` and
-pushed; `publish.yml` runs all gates then publishes 31 crates.
+Last updated: v0.15.0 in progress — `martensite-bevy` and
+`martensite-godot` adapter crates are being built (excluded from the
+default workspace; checked by the dedicated `adapters` CI job),
+`examples/viewport_showcase` to follow. v0.14.0 remains the latest
+release: tagged `v0.14.0` and pushed; `publish.yml` runs all gates
+then publishes 31 crates.
 
 ## Active Milestone Plan (v0.14.0 → v0.17.0 → v1.0.0)
 
@@ -39,6 +41,33 @@ see ADR-0033.
   `accesskit_android`); hybrid command-ledger + snapshot time-travel
   debugger.
   Spec: `docs/milestones/v0.17.0-platform-expansion.md`.
+
+
+## v0.15.0 — Engine Showcase (IN PROGRESS)
+
+- `martensite-bevy` — host-mode zero-copy Bevy viewport: the host's
+  `wgpu::Device`/`Queue` are injected via `RenderCreation::manual`
+  (bevy git pin `rev = "5036d97"`, the wgpu-30 merge commit on bevy
+  main — released 0.19.x ships wgpu 29); Bevy renders into a
+  Martensite-owned texture through `ManualTextureViews` +
+  `RenderTarget::TextureView` (`ManualTextureViewHandle`);
+  `sub_apps.update()` + `RenderDevice::poll(PollType::Wait)` per
+  frame; `PipelinedRenderingPlugin` omitted (no GPU fence yet).
+  See ADR-0034.
+- `martensite-godot` — GDExtension viewport under an explicit honesty
+  contract: Tier 1 `texture_get_data_async` readback → transport →
+  `queue.write_texture` (one GPU→CPU copy + one CPU→GPU upload);
+  Tier 2 `godot-gpu-copy` feature-gated shared-texture blit (one
+  GPU→GPU copy). True zero-copy needs four upstream Godot changes —
+  see ADR-0035. 8th crate on the `AGENTS.md` allowed-unsafe list.
+- `examples/viewport_showcase` — Bevy 3D scene and Godot viewport
+  side-by-side inside a Martensite window with native shell chrome
+  (follows the adapter crates; excluded from the workspace).
+
+Both adapters are `publish = false` and excluded from the default
+workspace build (root `Cargo.toml` `exclude`); the `adapters` CI job
+runs `cargo check`/`clippy`/`test` per manifest on main/tag pushes
+and publish gates, skipping PRs to keep PR CI fast.
 
 
 ## v0.14.0 — External Surface Foundation (IMPLEMENTED, VERIFIED)

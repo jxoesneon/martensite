@@ -1,0 +1,80 @@
+[package]
+name = "martensite-bevy"
+version = "0.15.0"
+edition = "2024"
+# Bevy main at the pinned rev declares rust-version 1.96 (`bevy`) / 1.95
+# (`bevy_ecs`, `bevy_reflect`); the crate inherits the highest bound.
+rust-version = "1.96.0"
+license = "MIT OR Apache-2.0"
+authors = ["Jose Eduardo Rojas Jimenez <joseeduardox@gmail.com>"]
+repository = "https://github.com/jxoesneon/martensite"
+homepage = "https://martensite.dev"
+description = "Host-mode Bevy 3D viewport adapter for Martensite — a headless Bevy `App` renders into `wgpu` slot textures on the host device for zero-copy compositing via `martensite-engine-bridge`."
+keywords = ["gui", "bevy", "viewport", "gamedev"]
+categories = ["gui", "rendering::engine"]
+readme = "README.md"
+# Pre-release Bevy main (wgpu 30) is a git dependency — this crate cannot be
+# published to crates.io until Bevy ships a release built on wgpu 30
+# (expected in Bevy 0.20). See README.md.
+publish = false
+
+# This crate is deliberately NOT a member of the enclosing workspace (the
+# root manifest also lists it under `workspace.exclude`). The empty
+# `[workspace]` table makes the manifest self-standing: the git-pinned Bevy
+# dependency tree must not constrain or be constrained by the workspace's
+# shared lockfile. Path dependencies into workspace crates
+# (`martensite-engine-bridge`, `martensite-wgpu`) still resolve into the
+# parent workspace for those crates.
+[workspace]
+
+[features]
+default = []
+# Enables `wgpu`'s `noop` backend so tests can boot a real headless Bevy app
+# (RenderCreation::manual against a validating no-op adapter/device) without a
+# GPU. Forwarded to both `wgpu` and `martensite-engine-bridge` so the feature
+# unifies across the dependency graph — including Bevy's own `wgpu` 30
+# dependency, which shares the same package version.
+test-noop = ["wgpu/noop", "martensite-engine-bridge/test-noop"]
+
+[dependencies]
+# Pinned to the "Upgrade to wgpu 30 (#24841)" merge on bevy main — the first
+# Bevy revision whose `bevy_render` builds against wgpu 30, matching the
+# workspace's wgpu 30 so the host and engine share one `wgpu::Device` type.
+bevy = { git = "https://github.com/bevyengine/bevy", rev = "5036d978a294a3fbb1c42bf005d6a255e2978a74", default-features = false, features = [
+    "std",
+    "async_executor",
+    "bevy_asset",
+    "bevy_camera",
+    "bevy_core_pipeline",
+    "bevy_image",
+    "bevy_pbr",
+    "bevy_picking",
+    "bevy_render",
+    # `bevy_window` provides `WindowPlugin` (configured with no windows) and
+    # auto-enables `bevy_input`'s `mouse`/`keyboard`/`touch`/`gestures`
+    # features, which `bevy_picking` requires.
+    "bevy_window",
+    "mesh_picking",
+    "tonemapping_luts",
+    # `bevy_image` hard-requires one zstd backend; `zstd_rust` keeps the tree
+    # free of C toolchains.
+    "zstd_rust",
+] }
+martensite-engine-bridge = { path = "../martensite-engine-bridge", version = "0.15.0" }
+martensite-wgpu = { path = "../martensite-wgpu", version = "0.15.0" }
+wgpu = "30"
+
+[dev-dependencies]
+pollster = "1.0"
+
+# The workspace lint table is unreachable from an excluded crate, so the same
+# lints are declared here explicitly.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

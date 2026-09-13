@@ -219,28 +219,16 @@ impl ApplicationHandler for App {
             .into();
 
         // GPU: surface first, then a compatible adapter — the adapter
-        // is guaranteed to be able to present to this surface.
+        // is guaranteed to be able to present to this surface. The
+        // surface and adapter must originate from the same instance
+        // (wgpu panics on foreign-instance surfaces), so `for_surface`
+        // is given the instance that created it.
         let instance = wgpu::Instance::default();
         let raw_surface = instance
             .create_surface(Arc::clone(&window))
             .expect("create surface");
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&raw_surface),
-            force_fallback_adapter: false,
-            apply_limit_buckets: true,
-        }))
-        .expect("request adapter");
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-                .expect("request device");
-        let gpu = GpuContext {
-            adapter_info: adapter.get_info(),
-            instance,
-            adapter,
-            device,
-            queue,
-        };
+        let gpu = pollster::block_on(GpuContext::for_surface(&instance, &raw_surface))
+            .expect("request surface-compatible GPU context");
 
         // Swapchain — low-latency pacing for streaming content.
         let size = window.surface_size();

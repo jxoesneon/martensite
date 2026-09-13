@@ -7,7 +7,7 @@ on the Martensite codebase. Follow these to avoid repeating past issues.
 
 - **Path**: `/Users/mey/martensite`
 - **Remote**: `https://github.com/jxoesneon/martensite.git`
-- **Language**: Rust (workspace, 22+ crates)
+- **Language**: Rust (workspace, 35+ crates)
 - **Milestone docs**: `docs/milestones/`
 
 ## Release Pipeline — Critical Rules
@@ -160,7 +160,7 @@ These are explicitly documented in code, not hidden:
   - `DirectWriteFontFallback` (Windows, `IDWriteFontFallback::MapCharacters`)
   - `CoreTextFontFallback` (macOS, `CTFontCreateForStringWithLanguage`)
   - `FontconfigFontFallback` (Linux, `FcFontSort`)
-- The following seven crates use `#![allow(unsafe_code)]` for
+- The following eight crates use `#![allow(unsafe_code)]` for
   platform-specific FFI or vendored upstream code. These are the ONLY
   crates in the workspace that allow unsafe code; all other crates
   maintain `unsafe_code = "deny"`.
@@ -180,6 +180,9 @@ These are explicitly documented in code, not hidden:
   - `martensite-shell` — platform FFI for system backdrops (DWM on
     Windows, NSVisualEffectView/Liquid Glass on macOS). Wayland CSD
     is safe Rust.
+  - `martensite-godot` — GDExtension FFI boundary via the `godot`
+    (gdext) crate. Unsafe is confined to the extension crate; it is
+    `publish = false` and excluded from the default workspace build.
 - `FallbackDecisionCache` caches resolved fallback chains keyed by
   `(script, locale, primary_family)`, invalidated by a font-system
   generation counter.

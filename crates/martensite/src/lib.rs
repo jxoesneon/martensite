@@ -103,8 +103,8 @@ pub mod prelude {
     };
     pub use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, Widget, WidgetArena, WidgetId};
     pub use martensite_engine_bridge::{
-        BridgeHandle, BridgeRegistry, Engine, EngineContext, Frame, FrameSync, FrameToken,
-        SourceAlpha, SurfaceId, Viewport,
+        BridgeHandle, BridgeRegistry, Engine, EngineContext, EngineEvent, Frame, FrameSync,
+        FrameToken, PointerButton, SourceAlpha, SurfaceId, Viewport,
     };
     pub use martensite_media::color::{ColorSpace, ScRgb, TransferFunction};
     pub use martensite_media::surface::{

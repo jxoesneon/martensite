@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-12
+
+### Added — v0.15.0: Engine Showcase
+
+- **`martensite-bevy`** (new, `publish = false`, excluded from the
+  default workspace build) — host-mode Bevy viewport adapter: the
+  host's `wgpu::Device`/`Queue` are injected via
+  `RenderCreation::manual`, and Bevy renders into a Martensite-owned
+  texture through `ManualTextureViews` +
+  `RenderTarget::TextureView` for a true zero-copy composite. Bevy is
+  pinned to git `rev = "5036d97"` (the wgpu-30 merge commit on bevy
+  main; released 0.19.x ships wgpu 29).
+- **`martensite-godot`** (new `cdylib`, `publish = false`, excluded
+  from the default workspace build) — Godot 4 GDExtension viewport
+  under an explicit copy-count honesty contract:
+  - Tier 1 (shipped): `texture_get_data_async` readback → transport →
+    `queue.write_texture` — one GPU→CPU copy plus one CPU→GPU upload,
+    measured and published.
+  - Tier 2 (`godot-gpu-copy` feature, experimental): shared-texture
+    `CompositorEffect` blit — one GPU→GPU copy. True zero-copy
+    requires upstream Godot patches (documented in ADR-0035).
+- **`examples/viewport_showcase`** — Bevy 3D scene and Godot viewport
+  side-by-side inside a Martensite window with native shell chrome.
+- **`GpuContext` shared fields + `for_surface`** in `martensite-wgpu` —
+  `Instance`/`Adapter`/`Device`/`Queue` exposed as `Arc`s suitable for
+  `RenderCreation::manual` injection; `GpuContext::for_surface`
+  requests a presentation-capable adapter for a given surface.
+- **`Engine::on_event` / `EngineEvent` input seam** in
+  `martensite-engine-bridge` — surface-local pointer, button, key,
+  scroll, text, and focus events delivered to bound engines.
+- **`ExternalEngines::unbind` / `forward_event`** in `martensite` —
+  remove a surface→engine binding and route `EngineEvent`s to the
+  bound engine (panicking producers are quarantined, matching the
+  frame-path contract).
+- **ADR-0034** (Bevy `RenderCreation::Manual` device injection) and
+  **ADR-0035** (Godot readback honesty) recorded under `docs/adr/`.
+- **CI**: new `adapters` job checks/clippy/tests the three
+  workspace-excluded manifests on main/tag pushes and publish gates
+  (skipped on pull requests to keep PR CI fast).
+
 ## [0.14.0] - 2026-09-12
 
 ### Roadmap re-scope (post-v0.13.0 competitive analysis)

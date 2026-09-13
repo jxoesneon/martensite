@@ -7,6 +7,7 @@
 //! power-preference selection and for verifying that the acquired device
 //! satisfies a required feature/limit set.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Errors that can occur while constructing a [`GpuContext`].
@@ -60,8 +61,16 @@ impl std::error::Error for GpuContextError {}
 /// * the logical [`wgpu::Device`] used to allocate resources, and
 /// * the command [`wgpu::Queue`] used to submit work.
 ///
+/// Each resource is held in an [`Arc`] so hosts can share the identical
+/// instance/adapter/device/queue with an embedded engine — Bevy's
+/// `RenderCreation::Manual` takes `Arc` clones of exactly these handles,
+/// and `wgpu` requires the surface, adapter, and device to originate from
+/// the same instance.
+///
 /// It is constructed via [`GpuContext::new`] (default high-performance
-/// selection) or [`GpuContext::with_power_preference`] for explicit control.
+/// selection), [`GpuContext::with_power_preference`] for explicit control,
+/// or [`GpuContext::for_surface`] when the context will present to a real
+/// window.
 ///
 /// # Examples
 ///
@@ -73,13 +82,16 @@ impl std::error::Error for GpuContextError {}
 /// ```
 pub struct GpuContext {
     /// The `wgpu` instance used to enumerate and create adapters and surfaces.
-    pub instance: wgpu::Instance,
+    ///
+    /// Shared via [`Arc`]: surfaces must be created from this exact instance
+    /// for [`GpuContext::for_surface`]-acquired adapters to present to them.
+    pub instance: Arc<wgpu::Instance>,
     /// The physical GPU adapter selected for high-performance compute work.
-    pub adapter: wgpu::Adapter,
+    pub adapter: Arc<wgpu::Adapter>,
     /// The logical device used to allocate resources and submit commands.
-    pub device: wgpu::Device,
+    pub device: Arc<wgpu::Device>,
     /// The command queue used to submit work to the GPU.
-    pub queue: wgpu::Queue,
+    pub queue: Arc<wgpu::Queue>,
     /// Cached descriptive metadata for the selected adapter.
     pub adapter_info: wgpu::AdapterInfo,
 }
@@ -147,10 +159,10 @@ impl GpuContext {
         let adapter_info = adapter.get_info();
 
         Ok(Self {
-            instance,
-            adapter,
-            device,
-            queue,
+            instance: Arc::new(instance),
+            adapter: Arc::new(adapter),
+            device: Arc::new(device),
+            queue: Arc::new(queue),
             adapter_info,
         })
     }
@@ -196,10 +208,76 @@ impl GpuContext {
         let adapter_info = adapter.get_info();
 
         Ok(Self {
-            instance,
-            adapter,
-            device,
-            queue,
+            instance: Arc::new(instance),
+            adapter: Arc::new(adapter),
+            device: Arc::new(device),
+            queue: Arc::new(queue),
+            adapter_info,
+        })
+    }
+
+    /// Requests a surface-compatible adapter on `instance` and returns a
+    /// ready-to-use [`GpuContext`] sharing that instance.
+    ///
+    /// Use this when the context will present to a real window — host-mode
+    /// engine embedding needs the same device family for zero-copy
+    /// compositing. This is the windowed counterpart of
+    /// [`GpuContext::with_power_preference`] (`HighPerformance`,
+    /// `force_fallback_adapter: false`, default device descriptor).
+    ///
+    /// `surface` must have been created from `instance`: `wgpu` requires the
+    /// surface, adapter, and device to originate from the same instance —
+    /// passing a surface built by a different [`wgpu::Instance`] panics
+    /// inside `request_adapter`. The returned context clones `instance` into
+    /// an [`Arc`], so the caller keeps its own handle for Bevy's
+    /// `RenderCreation::Manual` or further surface creation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuContextError::NoAdapter`] if no adapter compatible with
+    /// `surface` could be acquired, or [`GpuContextError::DeviceRequestFailed`]
+    /// if the adapter was found but the device request failed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::device::GpuContext;
+    /// use martensite_wgpu::wgpu;
+    ///
+    /// # fn surface_for(instance: &wgpu::Instance) -> wgpu::Surface<'static> {
+    /// #     unimplemented!() // instance.create_surface(window)
+    /// # }
+    /// let instance = wgpu::Instance::default();
+    /// let surface = surface_for(&instance);
+    /// let ctx = pollster::block_on(GpuContext::for_surface(&instance, &surface))
+    ///     .expect("surface-compatible GPU context");
+    /// ```
+    pub async fn for_surface(
+        instance: &wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+    ) -> Result<Self, GpuContextError> {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(surface),
+                force_fallback_adapter: false,
+                apply_limit_buckets: true,
+            })
+            .await
+            .map_err(|e| GpuContextError::NoAdapter(e.to_string()))?;
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor::default())
+            .await
+            .map_err(|e| GpuContextError::DeviceRequestFailed(e.to_string()))?;
+
+        let adapter_info = adapter.get_info();
+
+        Ok(Self {
+            instance: Arc::new(instance.clone()),
+            adapter: Arc::new(adapter),
+            device: Arc::new(device),
+            queue: Arc::new(queue),
             adapter_info,
         })
     }
@@ -232,8 +310,8 @@ impl GpuContext {
         )
         .map_err(|e| GpuContextError::DeviceRequestFailed(e.to_string()))?;
 
-        self.device = device;
-        self.queue = queue;
+        self.device = Arc::new(device);
+        self.queue = Arc::new(queue);
         Ok(())
     }
 

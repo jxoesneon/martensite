@@ -33,7 +33,7 @@ use glam::Vec2;
 use martensite_core::node::Rect;
 use martensite_core::widget::{LayoutConstraints, LayoutContext, PaintContext, Widget};
 use martensite_engine_bridge::{
-    BridgeHandle, Engine, EngineContext, FrameToken, SurfaceId, Viewport,
+    BridgeHandle, Engine, EngineContext, EngineEvent, FrameToken, SurfaceId, Viewport,
 };
 use martensite_render::PaintList;
 
@@ -837,6 +837,82 @@ impl ExternalEngines {
     pub fn drive_frame(&mut self, ctx: &mut EngineContext) -> Vec<SurfaceId> {
         let _produced = self.render_frame(ctx);
         self.drain_ready()
+    }
+
+    /// Forwards an input event to the engine bound to `surface`.
+    ///
+    /// Positions in `event` are surface-local physical pixels — the caller
+    /// (the window event loop) subtracts the widget's laid-out origin
+    /// before calling. Quarantined engines are skipped under the same
+    /// policy as [`render_frame`](Self::render_frame) and
+    /// [`drain_released`](Self::drain_released): a panic inside
+    /// `Engine::on_event` quarantines the engine and it is never called
+    /// again. Unknown, unbound, and unregistered surfaces are a no-op.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngines;
+    /// use martensite_engine_bridge::{BridgeHandle, EngineEvent};
+    ///
+    /// let mut engines = ExternalEngines::new();
+    /// // No engine bound — forwarding is a no-op.
+    /// engines.forward_event(
+    ///     martensite_engine_bridge::SurfaceId(1),
+    ///     &EngineEvent::Focus { focused: true },
+    /// );
+    /// ```
+    pub fn forward_event(&mut self, surface: SurfaceId, event: &EngineEvent) {
+        for (handle, s, engine) in &mut self.bound {
+            if *s != surface {
+                continue;
+            }
+            if self.quarantined.contains(&(handle.registry_id(), *s)) {
+                return;
+            }
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| engine.on_event(event)))
+                .is_err()
+            {
+                self.quarantined.insert((handle.registry_id(), *s));
+            }
+            return;
+        }
+    }
+
+    /// Unbinds the engine for `surface`, dropping it.
+    ///
+    /// The ring and surface stay registered on the bridge — only the
+    /// producer binding is removed, so a fresh engine can be bound again
+    /// with [`bind`](Self::bind) (a quarantine record for the dropped
+    /// engine is cleared; it belongs to the binding, not the surface).
+    /// `drain_ready`/`drain_released` keep draining the surface's ring
+    /// queues on the registry as usual — the released tokens just have no
+    /// engine to call back.
+    ///
+    /// Returns `true` if a binding existed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::external::ExternalEngines;
+    /// use martensite_engine_bridge::{BridgeHandle, SurfaceId};
+    ///
+    /// let mut engines = ExternalEngines::new();
+    /// assert!(!engines.unbind(SurfaceId(7)));
+    /// ```
+    pub fn unbind(&mut self, surface: SurfaceId) -> bool {
+        let mut removed = false;
+        let mut i = 0;
+        while i < self.bound.len() {
+            if self.bound[i].1 == surface {
+                let (handle, s, _) = self.bound.remove(i);
+                self.quarantined.remove(&(handle.registry_id(), s));
+                removed = true;
+            } else {
+                i += 1;
+            }
+        }
+        removed
     }
 
     /// Drains released frame tokens and calls `Engine::release` once

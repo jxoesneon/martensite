@@ -1,0 +1,53 @@
+[package]
+name = "viewport_showcase"
+version = "0.15.0"
+edition = "2021"
+# `martensite-bevy` pins a Bevy main revision whose MSRV is 1.96; that
+# bound applies to every crate in this dependency graph.
+rust-version = "1.96.0"
+license = "MIT OR Apache-2.0"
+authors = ["Jose Eduardo Rojas Jimenez <joseeduardox@gmail.com>"]
+repository = "https://github.com/jxoesneon/martensite"
+keywords = ["gui", "bevy", "godot", "viewport"]
+categories = ["gui", "rendering::engine"]
+homepage = "https://martensite.dev"
+description = "v0.15.0 verification app — a live Bevy 3D viewport and a Godot viewport composited side by side inside one Martensite window."
+publish = false
+readme = "README.md"
+
+# This crate is deliberately NOT a member of the enclosing workspace (the
+# root manifest lists it under `workspace.exclude`). The empty
+# `[workspace]` table makes the manifest self-standing so the git-pinned
+# Bevy tree and the `godot` (gdext) tree do not constrain the workspace's
+# shared lockfile. Path dependencies into workspace crates still resolve
+# into the parent workspace for those crates.
+[workspace]
+
+[dependencies]
+martensite = { path = "../../crates/martensite", version = "0.15.0" }
+martensite-engine-bridge = { path = "../../crates/martensite-engine-bridge", version = "0.15.0" }
+martensite-render = { path = "../../crates/martensite-render", version = "0.15.0" }
+# `vello` enables the segmented GPU dispatch in `RenderOrchestrator`:
+# without it the GPU mode presents cleared frames only (the TinySkia
+# fallback path still works).
+martensite-wgpu = { path = "../../crates/martensite-wgpu", version = "0.15.0", features = ["vello"] }
+martensite-bevy = { path = "../../crates/martensite-bevy", version = "0.15.0" }
+martensite-godot = { path = "../../crates/martensite-godot", version = "0.15.0" }
+winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }
+# Backend features mirror the workspace's wgpu spec so the host's
+# `wgpu::Device` type unifies with the one `martensite-bevy` injects into
+# `RenderCreation::Manual` — the zero-copy path requires exactly one wgpu.
+wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12", "gles", "webgpu"] }
+pollster = "1.0"
+
+# The workspace lint table is unreachable from an excluded crate, so the
+# same lints are declared here explicitly.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

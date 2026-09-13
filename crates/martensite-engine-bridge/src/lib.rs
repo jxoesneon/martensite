@@ -69,7 +69,7 @@ pub const MAX_FRAME_DIM: u32 = 16384;
 pub use bridge::{
     BridgeHandle, BridgeRegistry, FrontFrame, SurfaceId, SurfaceRing, TakenFrontFrame,
 };
-pub use engine::{Engine, EngineContext, Viewport};
+pub use engine::{Engine, EngineContext, EngineEvent, PointerButton, Viewport};
 pub use error::BridgeError;
 pub use frame::{
     CpuFrame, Frame, FrameSync, FrameToken, NativeFrame, SharedTexture, SourceAlpha, TextureFrame,

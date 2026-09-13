@@ -46,7 +46,7 @@ Due to the strict workspace constraints and inter-crate dependencies, the publis
 22. `martensite-plugin`
 23. `martensite`
 24. `martensite-blessed`
-*(Not published: `examples/industrial_dashboard`, `examples/engine_embed`, `benches/bench_suite`)*
+*(Not published: `examples/industrial_dashboard`, `examples/engine_embed`, `benches/bench_suite`, `crates/martensite-bevy`, `crates/martensite-godot`, `examples/viewport_showcase`)*
 
 > **Note:** `cargo-semver-checks` must be run (locally or in CI) before any publish tag to verify that public API changes are reflected in the version bump. The `publish.yml` workflow embeds all CI gates as `needs:` on the `publish` job, and dry-run packaging is performed with `cargo package --allow-dirty --no-verify` before real uploads.
 

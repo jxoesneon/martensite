@@ -54,6 +54,99 @@ impl Viewport {
     }
 }
 
+/// A pointer button carried by [`EngineEvent::PointerButton`].
+///
+/// The mapping follows the platform/winit convention: `Primary` is the
+/// left button for right-handed users, `Secondary` the right button.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_engine_bridge::PointerButton;
+///
+/// assert_ne!(PointerButton::Primary, PointerButton::Secondary);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PointerButton {
+    /// The primary pointer button (left for right-handed users).
+    Primary,
+    /// The secondary pointer button (right for right-handed users).
+    Secondary,
+    /// The middle pointer button (scroll-wheel click).
+    Middle,
+    /// The "back" navigation button (mouse button 4 / browser back).
+    Back,
+    /// The "forward" navigation button (mouse button 5 / browser forward).
+    Forward,
+    /// Any other platform button, identified by its raw code.
+    Other(u16),
+}
+
+/// A host→engine input event, in surface-local physical pixels.
+///
+/// Positions are relative to the surface's origin (the `ExternalEngine`
+/// widget's laid-out bounds), already converted to the physical pixels the
+/// producer renders at — the host subtracts the widget origin before
+/// forwarding so engines never need the window-global position.
+///
+/// The enum is `#[non_exhaustive]`: new event kinds may be added in minor
+/// releases. Engines should ignore events they do not handle.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_engine_bridge::{EngineEvent, PointerButton};
+///
+/// let ev = EngineEvent::PointerButton {
+///     position: [12.0, 34.0],
+///     button: PointerButton::Primary,
+///     pressed: true,
+/// };
+/// assert!(matches!(ev, EngineEvent::PointerButton { pressed: true, .. }));
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum EngineEvent {
+    /// Pointer moved; `position` is relative to the surface origin.
+    PointerMove {
+        /// Surface-local physical-pixel position.
+        position: [f32; 2],
+    },
+    /// Pointer button press/release.
+    PointerButton {
+        /// Surface-local physical-pixel position.
+        position: [f32; 2],
+        /// Which button changed state.
+        button: PointerButton,
+        /// `true` on press, `false` on release.
+        pressed: bool,
+    },
+    /// Scroll delta in surface-local space.
+    Scroll {
+        /// Surface-local physical-pixel position of the pointer.
+        position: [f32; 2],
+        /// Scroll delta `(x, y)` in lines or physical pixels, per platform.
+        delta: [f32; 2],
+    },
+    /// Key press/release. `scancode` is the platform scancode.
+    Key {
+        /// Platform scancode of the key.
+        scancode: u32,
+        /// `true` on press, `false` on release.
+        pressed: bool,
+    },
+    /// Composed text input (IME-resulting string).
+    TextInput {
+        /// The composed text delivered to the engine.
+        text: String,
+    },
+    /// Surface focus gained/lost.
+    Focus {
+        /// `true` when the surface gained keyboard focus.
+        focused: bool,
+    },
+}
+
 /// Context handed to [`Engine::render`] for the current frame.
 ///
 /// For the same-device path this carries the host's `wgpu::Device` and
@@ -159,5 +252,39 @@ pub trait Engine: Send + Sync {
     fn to_pixmap(&self, token: FrameToken) -> Option<CpuFrame> {
         let _ = token;
         None
+    }
+
+    /// Forwards a host input event into the engine.
+    ///
+    /// The host calls this when window events target the surface bound to
+    /// this engine (`martensite::widgets::external::ExternalEngines::
+    /// forward_event` in the `martensite` crate). Positions are
+    /// surface-local physical pixels — see [`EngineEvent`].
+    ///
+    /// The default implementation ignores every event, so existing
+    /// `Engine` implementations keep compiling unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_engine_bridge::{
+    ///     Engine, EngineContext, EngineEvent, Frame, FrameToken, Viewport,
+    /// };
+    ///
+    /// struct Keys(std::sync::Mutex<u32>);
+    /// impl Engine for Keys {
+    ///     fn render(&mut self, _c: &mut EngineContext, _v: Viewport) -> Option<Box<dyn Frame>> {
+    ///         None
+    ///     }
+    ///     fn release(&mut self, _t: FrameToken) {}
+    ///     fn on_event(&mut self, event: &EngineEvent) {
+    ///         if let EngineEvent::Key { pressed: true, .. } = event {
+    ///             *self.0.lock().unwrap() += 1;
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    fn on_event(&mut self, event: &EngineEvent) {
+        let _ = event;
     }
 }

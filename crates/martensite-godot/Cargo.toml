@@ -1,0 +1,45 @@
+[package]
+name = "martensite-godot"
+version = "0.15.0"
+edition = "2024"
+rust-version = "1.94.0"
+license = "MIT OR Apache-2.0"
+authors = ["Jose Eduardo Rojas Jimenez <joseeduardox@gmail.com>"]
+repository = "https://github.com/jxoesneon/martensite"
+homepage = "https://martensite.dev"
+description = "Godot 4 GDExtension viewport adapter for Martensite — Tier-1 async texture readback plus an experimental shared-texture blit. True zero-copy requires upstream Godot engine patches."
+keywords = ["gui", "godot", "viewport", "gamedev"]
+categories = ["gui", "rendering::engine"]
+readme = "README.md"
+publish = false
+
+# This crate is deliberately NOT a member of the enclosing workspace (the
+# root manifest also lists it under `workspace.exclude`). The empty
+# `[workspace]` table makes the manifest self-standing: `godot`'s MSRV
+# (1.94, edition 2024) and its cdylib build must not constrain or be
+# constrained by the workspace's shared lockfile. Path dependencies into
+# workspace crates (`martensite-engine-bridge`, `martensite-core`) still
+# resolve into the parent workspace for those crates.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Experimental one-GPU-copy shared-texture path (Tier 2). NOT zero-copy.
+# `CompositorEffect` is an experimental Godot API class, so this pulls in
+# godot's `experimental-godot-api` feature.
+godot-gpu-copy = ["godot/experimental-godot-api"]
+# Enables `wgpu`'s `noop` backend so tests can exercise the host-side
+# publish path (texture creation + `queue.write_texture`) without a real
+# GPU adapter. Forwarded to both `wgpu` and `martensite-engine-bridge` so
+# the feature unifies across the dependency graph.
+test-noop = ["wgpu/noop", "martensite-engine-bridge/test-noop"]
+
+[dependencies]
+godot = "0.5.5"
+martensite-engine-bridge = { path = "../martensite-engine-bridge", version = "0.15.0" }
+martensite-core = { path = "../martensite-core", version = "0.15.0" }
+wgpu = "30"
+

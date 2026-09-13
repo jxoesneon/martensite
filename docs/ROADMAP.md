@@ -188,13 +188,15 @@
 
 ## v0.15.0 — Engine Showcase
 *Detailed Specification:* [docs/milestones/v0.15.0-engine-showcase.md](milestones/v0.15.0-engine-showcase.md)
+**Status:** In progress.
 **Entry Criteria:** v0.14.0 complete.
 **Deliverables:**
 - `martensite-bevy`: headless Bevy app (`WinitPlugin` disabled), `RenderCreation::Manual` device injection, `RenderTarget::TextureView` viewport, input forwarding via `bevy_picking` `PointerInput`.
 - `martensite-godot`: GDExtension (`godot` crate 0.5.x) — `texture_get_data_async` readback path (shipped); feature-gated shared-texture blit path (experimental, one GPU copy).
+- `examples/viewport_showcase`: Bevy 3D scene and Godot viewport side-by-side inside a Martensite window with native shell chrome.
 **Exit Criteria:** Bevy viewport at 120fps with zero GPU copy; Godot viewport via readback with published throughput/latency.
 **Key Risks:** Bevy wgpu-30 coupling (needs git pin or 0.20); Godot cannot do true zero-copy without engine patches.
-**Mitigations:** Adapter crates are optional workspace members; Godot limitation documented, upstream contribution path noted.
+**Mitigations:** Adapter crates are `publish = false` and excluded from the default workspace build (checked by the dedicated `adapters` CI job); Godot limitation documented, upstream contribution path noted.
 
 ## v0.16.0 — Hardware Media Pipeline
 *Detailed Specification:* [docs/milestones/v0.16.0-media-pipeline.md](milestones/v0.16.0-media-pipeline.md)

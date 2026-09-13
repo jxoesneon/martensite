@@ -24,8 +24,9 @@
 
 use martensite::widgets::external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 use martensite_engine_bridge::{
-    BridgeError, BridgeHandle, BridgeRegistry, CpuFrame, Engine, EngineContext, Frame, FrameSync,
-    FrameToken, NativeFrame, SourceAlpha, SurfaceId, SurfaceRing, Viewport, MAX_FRAME_DIM,
+    BridgeError, BridgeHandle, BridgeRegistry, CpuFrame, Engine, EngineContext, EngineEvent, Frame,
+    FrameSync, FrameToken, NativeFrame, PointerButton, SourceAlpha, SurfaceId, SurfaceRing,
+    Viewport, MAX_FRAME_DIM,
 };
 use martensite_wgpu::wgpu;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -90,6 +91,46 @@ impl Engine for FragileRelease {
     fn release(&mut self, _t: FrameToken) {
         self.calls.fetch_add(1, Ordering::SeqCst);
         panic!("producer release exploded");
+    }
+}
+
+/// An engine that records every `on_event` input event (plus released
+/// tokens, like `Rec`) — the `forward_event` delivery observer.
+struct RecEvents {
+    events: Arc<Mutex<Vec<EngineEvent>>>,
+    released: Arc<Mutex<Vec<FrameToken>>>,
+}
+
+impl Engine for RecEvents {
+    fn render(&mut self, _c: &mut EngineContext, _v: Viewport) -> Option<Box<dyn Frame>> {
+        None
+    }
+    fn release(&mut self, t: FrameToken) {
+        self.released.lock().unwrap().push(t);
+    }
+    fn on_event(&mut self, event: &EngineEvent) {
+        self.events.lock().unwrap().push(event.clone());
+    }
+}
+
+/// An engine whose `on_event` always panics — the input-path quarantine
+/// trigger. `release` is well-behaved so tests can observe that the
+/// quarantine skips it too.
+struct FragileEvent {
+    event_calls: Arc<AtomicUsize>,
+    release_calls: Arc<AtomicUsize>,
+}
+
+impl Engine for FragileEvent {
+    fn render(&mut self, _c: &mut EngineContext, _v: Viewport) -> Option<Box<dyn Frame>> {
+        None
+    }
+    fn release(&mut self, _t: FrameToken) {
+        self.release_calls.fetch_add(1, Ordering::SeqCst);
+    }
+    fn on_event(&mut self, _e: &EngineEvent) {
+        self.event_calls.fetch_add(1, Ordering::SeqCst);
+        panic!("producer on_event exploded");
     }
 }
 
@@ -931,4 +972,177 @@ fn drain_ready_only_reports_bound_surfaces_on_each_registry() {
     });
     assert_eq!(h1.lock().drain_ready(), vec![u1]);
     assert_eq!(h2.lock().drain_ready(), vec![u2]);
+}
+
+// ──────────────── 7. input-event seam (v0.15.0) ────────────────
+
+#[test]
+fn forward_event_reaches_bound_engine() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let released = Arc::new(Mutex::new(Vec::new()));
+    let handle = BridgeHandle::new();
+    let mut engines = ExternalEngines::new();
+    let surface = bound(
+        &handle,
+        &mut engines,
+        Box::new(RecEvents {
+            events: Arc::clone(&events),
+            released,
+        }),
+    );
+
+    let move_ev = EngineEvent::PointerMove {
+        position: [12.0, 34.0],
+    };
+    let button_ev = EngineEvent::PointerButton {
+        position: [12.0, 34.0],
+        button: PointerButton::Primary,
+        pressed: true,
+    };
+    let key_ev = EngineEvent::Key {
+        scancode: 30,
+        pressed: true,
+    };
+    engines.forward_event(surface, &move_ev);
+    engines.forward_event(surface, &button_ev);
+    engines.forward_event(surface, &key_ev);
+
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![move_ev, button_ev, key_ev],
+        "every forwarded event must reach the bound engine, in order"
+    );
+}
+
+#[test]
+fn forward_event_quarantines_panicking_engine() {
+    let event_calls = Arc::new(AtomicUsize::new(0));
+    let release_calls = Arc::new(AtomicUsize::new(0));
+    let handle = BridgeHandle::new();
+    let mut engines = ExternalEngines::new();
+    let surface = bound(
+        &handle,
+        &mut engines,
+        Box::new(FragileEvent {
+            event_calls: Arc::clone(&event_calls),
+            release_calls: Arc::clone(&release_calls),
+        }),
+    );
+
+    // First event: on_event panics → the engine is quarantined.
+    engines.forward_event(surface, &EngineEvent::Focus { focused: true });
+    assert_eq!(event_calls.load(Ordering::SeqCst), 1);
+
+    // Subsequent events never reach it again.
+    engines.forward_event(
+        surface,
+        &EngineEvent::PointerMove {
+            position: [0.0, 0.0],
+        },
+    );
+    assert_eq!(
+        event_calls.load(Ordering::SeqCst),
+        1,
+        "quarantined engine must never be called again"
+    );
+
+    // The same quarantine applies to drain_released: the callback is
+    // skipped while the token queue is still drained.
+    publish_and_composite(&handle, surface, (8, 8));
+    engines.drain_released();
+    assert_eq!(release_calls.load(Ordering::SeqCst), 0);
+    assert!(handle.lock().drain_released(surface).unwrap().is_empty());
+}
+
+#[test]
+fn unbind_removes_engine_binding() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let released = Arc::new(Mutex::new(Vec::new()));
+    let handle = BridgeHandle::new();
+    let mut engines = ExternalEngines::new();
+    let surface = bound(
+        &handle,
+        &mut engines,
+        Box::new(RecEvents {
+            events: Arc::clone(&events),
+            released: Arc::clone(&released),
+        }),
+    );
+
+    // Ring stays usable while bound: publishes a ready event + a
+    // released token, both still queued.
+    let token = publish_and_composite(&handle, surface, (8, 8));
+
+    assert!(engines.unbind(surface));
+    assert_eq!(engines.len(), 0);
+    assert!(!engines.unbind(surface), "second unbind finds nothing");
+
+    // Events are dropped — no engine is bound to the surface.
+    engines.forward_event(surface, &EngineEvent::TextInput { text: "x".into() });
+    assert!(events.lock().unwrap().is_empty());
+
+    // drain_ready/drain_released with no binding are no-ops: the ring's
+    // queues are untouched (event + token still queued for later).
+    assert!(engines.drain_ready().is_empty());
+    engines.drain_released();
+    assert!(released.lock().unwrap().is_empty());
+    assert_eq!(
+        handle.lock().drain_ready(),
+        vec![surface],
+        "unbinding must not discard the surface's queued ready event"
+    );
+
+    // Rebinding works — a fresh engine sees events, and the released
+    // token that accumulated while unbound drains to it.
+    let events2 = Arc::new(Mutex::new(Vec::new()));
+    let released2 = Arc::new(Mutex::new(Vec::new()));
+    engines
+        .bind(
+            handle.clone(),
+            surface,
+            Box::new(RecEvents {
+                events: Arc::clone(&events2),
+                released: Arc::clone(&released2),
+            }),
+        )
+        .unwrap();
+    engines.forward_event(surface, &EngineEvent::Focus { focused: true });
+    assert_eq!(
+        *events2.lock().unwrap(),
+        vec![EngineEvent::Focus { focused: true }]
+    );
+    engines.drain_released();
+    assert_eq!(*released2.lock().unwrap(), vec![token]);
+}
+
+#[test]
+fn forward_event_unknown_surface_is_noop() {
+    let mut engines = ExternalEngines::new();
+    // No engines bound at all.
+    engines.forward_event(
+        SurfaceId(999),
+        &EngineEvent::Scroll {
+            position: [0.0, 0.0],
+            delta: [1.0, -1.0],
+        },
+    );
+
+    // A bound engine on a different surface must not observe it.
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let handle = BridgeHandle::new();
+    let _surface = bound(
+        &handle,
+        &mut engines,
+        Box::new(RecEvents {
+            events: Arc::clone(&events),
+            released: Arc::new(Mutex::new(Vec::new())),
+        }),
+    );
+    engines.forward_event(
+        SurfaceId(999),
+        &EngineEvent::PointerMove {
+            position: [1.0, 2.0],
+        },
+    );
+    assert!(events.lock().unwrap().is_empty());
 }
