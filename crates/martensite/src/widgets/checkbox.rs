@@ -16,8 +16,22 @@
 
 use accesskit::{Node as AccessKitNode, Toggled};
 use glam::Vec2;
-use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
+use martensite_core::widget::{
+    EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
+    Widget, WidgetEvent,
+};
 use martensite_core::Rect;
+
+/// Checkbox frame border colour.
+const EDGE: [u8; 4] = [110, 115, 125, 255];
+/// Checkmark / fill colour.
+const ACCENT: [u8; 4] = [40, 110, 220, 255];
+/// Label ink colour.
+const INK: [u8; 4] = [20, 20, 25, 255];
+/// Side length of the checkbox square.
+const BOX_SIZE: f32 = 16.0;
+/// Gap between the box and the label.
+const LABEL_GAP: f32 = 8.0;
 
 /// A checkbox widget with a label and toggle state.
 ///
@@ -156,6 +170,58 @@ impl Widget for CheckBox {
         if !self.enabled {
             node.set_disabled();
         }
+    }
+
+    fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        if !self.enabled {
+            return EventResponse::Ignored;
+        }
+        let toggle = matches!(
+            cx.event,
+            WidgetEvent::PointerReleased {
+                button: PointerButton::Primary,
+                ..
+            } | WidgetEvent::KeyPressed { .. }
+        );
+        if toggle {
+            self.checked = !self.checked;
+            EventResponse::RequestRepaint
+        } else {
+            EventResponse::Ignored
+        }
+    }
+
+    fn paint(&self, cx: &mut PaintContext) {
+        let b = cx.bounds;
+        let y = b.origin.y + (b.size.y - BOX_SIZE) / 2.0;
+        let bx = kurbo::Rect::new(
+            f64::from(b.origin.x),
+            f64::from(y),
+            f64::from(b.origin.x + BOX_SIZE),
+            f64::from(y + BOX_SIZE),
+        );
+        cx.list.push_stroke_rect(bx, 1.0, EDGE);
+
+        if self.checked {
+            // Check mark: two strokes forming a tick inside the box.
+            let x0 = f64::from(b.origin.x) + 3.5;
+            let y0 = f64::from(y) + 8.5;
+            let mut tick = kurbo::BezPath::new();
+            tick.move_to((x0, y0));
+            tick.line_to((x0 + 3.5, y0 + 3.5));
+            tick.line_to((x0 + 9.0, y0 - 5.0));
+            cx.list.push_stroke_path(tick, 2.0, ACCENT);
+        }
+
+        cx.list.push_text(
+            kurbo::Point::new(
+                f64::from(b.origin.x + BOX_SIZE + LABEL_GAP),
+                f64::from(b.origin.y + b.size.y / 2.0 + 5.0),
+            ),
+            self.label.clone(),
+            14.0,
+            INK,
+        );
     }
 }
 

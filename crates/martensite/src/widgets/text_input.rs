@@ -16,8 +16,26 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
-use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
+use martensite_core::widget::{
+    EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
+    Widget, WidgetEvent,
+};
 use martensite_core::Rect;
+
+/// Field background colour.
+const FACE: [u8; 4] = [255, 255, 255, 255];
+/// Field border colour.
+const EDGE: [u8; 4] = [140, 145, 155, 255];
+/// Border colour while focused.
+const EDGE_FOCUSED: [u8; 4] = [40, 110, 220, 255];
+/// Text ink colour.
+const INK: [u8; 4] = [20, 20, 25, 255];
+/// Placeholder ink colour.
+const INK_PLACEHOLDER: [u8; 4] = [150, 150, 155, 255];
+/// Caret colour.
+const CARET: [u8; 4] = [30, 30, 35, 255];
+/// Horizontal inset for the editable text.
+const TEXT_PAD_X: f32 = 8.0;
 
 /// A text input widget with a label and editable value.
 ///
@@ -46,6 +64,9 @@ pub struct TextInput {
     pub read_only: bool,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Whether the input currently holds keyboard focus. Updated by the
+    /// `FocusGained`/`FocusLost` widget events.
+    focused: bool,
 }
 
 impl TextInput {
@@ -68,6 +89,7 @@ impl TextInput {
             enabled: true,
             read_only: false,
             cached_bounds: Rect::default(),
+            focused: false,
         }
     }
 
@@ -197,6 +219,77 @@ impl Widget for TextInput {
         }
         if self.read_only {
             node.set_read_only();
+        }
+    }
+
+    fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        if !self.enabled {
+            return EventResponse::Ignored;
+        }
+        match cx.event {
+            WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                ..
+            } => EventResponse::CaptureFocus,
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::ImeCommitted { text } if !self.read_only => {
+                self.value.push_str(text);
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::KeyPressed { key, .. } if !self.read_only && key == "Backspace" => {
+                self.value.pop();
+                EventResponse::RequestRepaint
+            }
+            _ => EventResponse::Ignored,
+        }
+    }
+
+    fn paint(&self, cx: &mut PaintContext) {
+        let b = cx.bounds;
+        let rect = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        );
+        cx.list.push_fill_rect(rect, FACE);
+        cx.list
+            .push_stroke_rect(rect, 1.0, if self.focused { EDGE_FOCUSED } else { EDGE });
+
+        let baseline_y = b.origin.y + b.size.y / 2.0 + 5.0;
+        let text_x = b.origin.x + TEXT_PAD_X;
+        if self.value.is_empty() {
+            cx.list.push_text(
+                kurbo::Point::new(f64::from(text_x), f64::from(baseline_y)),
+                self.placeholder.clone(),
+                14.0,
+                INK_PLACEHOLDER,
+            );
+        } else {
+            cx.list.push_text(
+                kurbo::Point::new(f64::from(text_x), f64::from(baseline_y)),
+                self.value.clone(),
+                14.0,
+                INK,
+            );
+        }
+
+        // End-of-text caret — approximate x advance at 7 px per
+        // character until real shaping lands in this widget.
+        if self.focused {
+            let caret_x = f64::from(text_x + self.value.chars().count() as f32 * 7.0);
+            let top = f64::from(b.origin.y + 4.0);
+            let mut caret = kurbo::BezPath::new();
+            caret.move_to((caret_x, top));
+            caret.line_to((caret_x, f64::from(b.max_y()) - 4.0));
+            cx.list.push_stroke_path(caret, 1.0, CARET);
         }
     }
 }

@@ -237,6 +237,26 @@ impl Oklab {
         (linear_to_srgb(r), linear_to_srgb(g), linear_to_srgb(b))
     }
 
+    /// Converts this [`Oklab`] color to a display-ready `[R, G, B, A]` byte
+    /// array with channels clamped to `0..=255`.
+    ///
+    /// This is the format consumed by `PaintCommand` color fields.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_theme::Oklab;
+    ///
+    /// assert_eq!(Oklab::WHITE.to_srgba8(), [255, 255, 255, 255]);
+    /// assert_eq!(Oklab::BLACK.to_srgba8(), [0, 0, 0, 255]);
+    /// ```
+    #[inline]
+    pub fn to_srgba8(&self) -> [u8; 4] {
+        let (r, g, b) = self.to_srgb();
+        let to_u8 = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+        [to_u8(r), to_u8(g), to_u8(b), to_u8(self.alpha)]
+    }
+
     /// Converts this [`Oklab`] color to linear sRGB channel values using the
     /// inverse Oklab → LMS → linear sRGB transform.
     ///

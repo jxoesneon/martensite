@@ -36,6 +36,7 @@ martensite-macros = { workspace = true }
 martensite-font-fallback = { workspace = true, optional = true }
 accesskit = { workspace = true }
 glam = { workspace = true }
+kurbo = { workspace = true }
 taffy = { workspace = true }
 
 [dev-dependencies]

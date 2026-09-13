@@ -63,6 +63,28 @@ impl Rect {
     pub fn max_y(&self) -> f32 {
         self.origin.y + self.size.y
     }
+    /// Returns `true` if the point lies inside the rectangle
+    /// (inclusive of the top/left edges, exclusive of bottom/right).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::Rect;
+    ///
+    /// let r = Rect::new(10.0, 10.0, 100.0, 50.0);
+    /// assert!(r.contains(Vec2::new(50.0, 30.0)));
+    /// assert!(r.contains(Vec2::new(10.0, 10.0)));
+    /// assert!(!r.contains(Vec2::new(110.0, 30.0)));
+    /// assert!(!r.contains(Vec2::new(5.0, 5.0)));
+    /// ```
+    #[inline(always)]
+    pub fn contains(&self, point: Vec2) -> bool {
+        point.x >= self.min_x()
+            && point.x < self.max_x()
+            && point.y >= self.min_y()
+            && point.y < self.max_y()
+    }
     /// Returns the width.
     #[inline(always)]
     pub fn width(&self) -> f32 {

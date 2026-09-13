@@ -213,6 +213,9 @@ pub struct Flex {
     child_sizes: Vec<Vec2>,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Screen-space bounds assigned to each child during the last layout
+    /// pass, in the same order as `children`.
+    child_rects: Vec<Rect>,
 }
 
 impl Flex {
@@ -235,6 +238,7 @@ impl Flex {
             children: Vec::new(),
             child_sizes: Vec::new(),
             cached_bounds: Rect::default(),
+            child_rects: Vec::new(),
         }
     }
 
@@ -531,6 +535,9 @@ impl Widget for Flex {
         let cross_alignment = self.cross_axis_alignment;
         let direction = self.direction;
 
+        self.child_rects.clear();
+        self.child_rects.reserve(n);
+
         for (i, child) in self.children.iter_mut().enumerate() {
             let child_size = self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO);
             let child_main = direction.main(child_size);
@@ -567,12 +574,29 @@ impl Widget for Flex {
                 (child_cross, child_main)
             };
             let child_bounds = Rect::new(x, y, w, h);
+            self.child_rects.push(child_bounds);
             child.layout(cx, child_bounds);
         }
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::GenericContainer);
+    }
+
+    fn child_count(&self) -> usize {
+        self.children.len()
+    }
+
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        self.children.get(index).map(|c| &**c)
+    }
+
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        self.children.get_mut(index).map(|c| &mut **c)
+    }
+
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        self.child_rects.get(index).copied()
     }
 }
 

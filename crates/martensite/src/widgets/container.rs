@@ -48,6 +48,10 @@ pub struct Container {
     cached_content_size: Size,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Cached content rectangle (bounds minus padding) from the last
+    /// layout pass. Used by `child_bounds` for event and paint
+    /// traversal.
+    cached_content_rect: Rect,
 }
 
 impl Container {
@@ -68,6 +72,7 @@ impl Container {
             child: None,
             cached_content_size: Size::zero(),
             cached_bounds: Rect::default(),
+            cached_content_rect: Rect::default(),
         }
     }
 
@@ -215,6 +220,7 @@ impl Widget for Container {
             (bounds.size.y - self.padding.vertical()).max(0.0),
         );
         self.cached_content_size = Size::new(content.size.x, content.size.y);
+        self.cached_content_rect = content;
 
         if let Some(child) = &mut self.child {
             child.layout(cx, content);
@@ -223,6 +229,49 @@ impl Widget for Container {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::GenericContainer);
+    }
+
+    fn paint(&self, cx: &mut martensite_core::widget::PaintContext) {
+        if let Some(bg) = self.background {
+            let b = cx.bounds;
+            cx.list.push_fill_rect(
+                kurbo::Rect::new(
+                    f64::from(b.origin.x),
+                    f64::from(b.origin.y),
+                    f64::from(b.max_x()),
+                    f64::from(b.max_y()),
+                ),
+                bg.to_srgba8(),
+            );
+        }
+    }
+
+    fn child_count(&self) -> usize {
+        usize::from(self.child.is_some())
+    }
+
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        if index == 0 {
+            self.child.as_deref()
+        } else {
+            None
+        }
+    }
+
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        if index == 0 {
+            self.child.as_deref_mut()
+        } else {
+            None
+        }
+    }
+
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        if index == 0 && self.child.is_some() {
+            Some(self.cached_content_rect)
+        } else {
+            None
+        }
     }
 }
 

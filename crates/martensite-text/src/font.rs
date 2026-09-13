@@ -554,6 +554,28 @@ impl FontManager {
         self.system
     }
 
+    /// Resolves a [`FontId`] to its raw file bytes and collection index.
+    ///
+    /// Returns `None` when the id is unknown to the font database or its
+    /// backing source cannot be read (e.g. a removed font file). The
+    /// returned pair is suitable for constructing a
+    /// `martensite_core::FontResource` during the paint pass.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::{FontId, FontManager};
+    ///
+    /// let manager = FontManager::with_fonts(std::iter::empty());
+    /// // The dummy id is not registered in the database.
+    /// assert!(manager.font_data(FontId::dummy()).is_none());
+    /// ```
+    pub fn font_data(&self, id: FontId) -> Option<(Vec<u8>, u32)> {
+        self.system
+            .db()
+            .with_face_data(id.raw(), |data, index| (data.to_vec(), index))
+    }
+
     /// Creates default attrs for a text run with the given family name.
     ///
     /// # Examples

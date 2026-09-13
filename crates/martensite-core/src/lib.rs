@@ -27,6 +27,9 @@ pub mod fence;
 pub mod id;
 /// Hot and cold node representations for cache-friendly scene graph storage.
 pub mod node;
+/// The [`PaintList`](paint::PaintList) command stream vocabulary produced by
+/// the widget paint pass and consumed by render backends.
+pub mod paint;
 /// Widget trait and rendering/layout/event context types.
 pub mod widget;
 
@@ -34,9 +37,13 @@ pub use arena::{ArenaError, BreadthFirstIter, Children, DepthFirstIter, SubtreeI
 pub use fence::{FrameFence, FrameGuard, DEFAULT_LEASE_TIMEOUT};
 pub use id::{SurfaceId, WidgetId};
 pub use node::{ColdNode, HotNode, InlineTextCache, NodeFlags, Rect};
+pub use paint::{
+    FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintCommand, PaintList,
+    PaintSegment, PathBuilder,
+};
 pub use widget::{
     AccessibilityContext, DummyWidget, EventContext, EventResponse, LayoutConstraints,
-    LayoutContext, PaintContext, Widget,
+    LayoutContext, PaintContext, PointerButton, Widget, WidgetEvent,
 };
 
 #[cfg(test)]

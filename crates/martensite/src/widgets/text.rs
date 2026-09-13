@@ -19,11 +19,11 @@
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite_access::CaretTracker;
-use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
-use martensite_core::{InlineTextCache, Rect};
+use martensite_core::widget::{LayoutConstraints, LayoutContext, PaintContext, Widget};
+use martensite_core::{FontResource, GlyphInstance, GlyphRun, InlineTextCache, Rect};
 use martensite_text::{
-    Attrs, BidiDirection, Family, FontManager, Metrics, Shaper, ShapingOptions, TextMetrics,
-    TextShapeCache,
+    Attrs, BidiDirection, CachedShape, Family, FontManager, Metrics, Shaper, ShapingOptions,
+    TextMetrics, TextShapeCache,
 };
 
 /// A text widget that displays a string with specified font properties.
@@ -85,6 +85,12 @@ pub struct Text {
     /// [`CaretTracker`] is set, the accessibility node receives a
     /// `text_selection`.
     focused: bool,
+    /// The shaped result from the most recent measurement.
+    ///
+    /// `measure_real()` stores the produced [`CachedShape`] here so that
+    /// `paint()` can emit `DrawGlyphRun` commands without re-shaping.
+    /// Cleared by `invalidate_cache()`.
+    last_shape: Option<CachedShape>,
 }
 
 impl Text {
@@ -115,6 +121,7 @@ impl Text {
             cached_bounds: Rect::default(),
             caret: None,
             focused: false,
+            last_shape: None,
         }
     }
 
@@ -180,6 +187,7 @@ impl Text {
         self.shape_cache.clear();
         self.cached_metrics = TextMetrics::zero();
         self.cached_bounds = Rect::default();
+        self.last_shape = None;
     }
 
     /// Sets the font size.
@@ -564,6 +572,7 @@ impl Text {
         };
 
         if let Some(cached) = self.shape_cache.get(&cache_key) {
+            self.last_shape = Some(cached.clone());
             return cached.metrics;
         }
 
@@ -589,6 +598,7 @@ impl Text {
             shaper.shape_with_options(manager.system_mut(), &content, &attrs, &options);
             let cached = shaper.cached_shape();
             let m = cached.metrics;
+            self.last_shape = Some(cached.clone());
             self.shape_cache.insert(cache_key, cached);
             m
         } else {
@@ -645,6 +655,11 @@ impl Widget for Text {
 
     fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        // Re-shape at the final allocated width so `last_shape` carries
+        // line breaks and glyph positions for the rect `paint()` draws
+        // into — measure() may have been called with a wider or
+        // unconstrained width.
+        let _ = self.measure_real(bounds.size.x);
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -665,6 +680,72 @@ impl Widget for Text {
                 caret.apply_to_node(node);
             }
         }
+    }
+
+    fn paint(&self, cx: &mut PaintContext) {
+        let Some(shape) = &self.last_shape else {
+            // Nothing has been measured yet — painting without a shaped
+            // result would require `&mut FontSystem`, which `paint(&self)`
+            // cannot take.
+            return;
+        };
+
+        let color = self.color.map_or([0, 0, 0, 255], |c| c.to_srgba8());
+        let origin = cx.bounds.origin;
+
+        // Emit one GlyphRun per (line, font) segment — glyph runs must
+        // share a single font, so a line that underwent font fallback is
+        // split wherever `font_id` changes.
+        for line in &shape.lines {
+            let baseline_y = origin.y + line.line_y;
+            let mut run = GlyphRun::new(self.font_size, color);
+            let mut run_font: Option<martensite_text::FontId> = None;
+
+            for g in &line.glyphs {
+                if let Some(prev) = run_font {
+                    if prev != g.font_id {
+                        self.push_glyph_run(cx, run, prev);
+                        run = GlyphRun::new(g.font_size, color);
+                    }
+                }
+                run.font_size = g.font_size;
+                run_font = Some(g.font_id);
+                run.push(GlyphInstance::new(
+                    origin.x + g.x,
+                    baseline_y + g.y,
+                    u32::from(g.glyph_id),
+                    g.w,
+                    line.line_height,
+                ));
+            }
+
+            if let Some(font_id) = run_font {
+                self.push_glyph_run(cx, run, font_id);
+            }
+        }
+    }
+}
+
+impl Text {
+    /// Pushes a glyph run into the paint list, resolving its font bytes
+    /// through the widget's `FontManager`. Runs with no resolvable font
+    /// are still emitted — backends fall back to bounding-box rendering.
+    fn push_glyph_run(
+        &self,
+        cx: &mut PaintContext,
+        run: GlyphRun,
+        font_id: martensite_text::FontId,
+    ) {
+        if run.is_empty() {
+            return;
+        }
+        let mut run = run;
+        if let Some(manager) = &self.font_manager {
+            if let Some((data, index)) = manager.font_data(font_id) {
+                run.set_font(FontResource::new(data, index));
+            }
+        }
+        cx.list.push_glyph_run(run);
     }
 }
 
@@ -695,6 +776,7 @@ impl Clone for Text {
             cached_bounds: self.cached_bounds,
             caret: self.caret.clone(),
             focused: self.focused,
+            last_shape: self.last_shape.clone(),
         }
     }
 }

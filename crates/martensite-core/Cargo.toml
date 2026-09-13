@@ -20,6 +20,7 @@ smallvec = { workspace = true }
 bitflags = { workspace = true }
 tracing = { workspace = true }
 glam = { workspace = true }
+kurbo = { workspace = true }
 slotmap = { workspace = true }
 
 [dev-dependencies]

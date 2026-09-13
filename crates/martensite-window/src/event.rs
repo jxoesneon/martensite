@@ -30,7 +30,7 @@
 use std::collections::HashMap;
 
 use glam::Vec2;
-use martensite_core::{WidgetArena, WidgetId};
+use martensite_core::{EventResponse, PointerButton, WidgetArena, WidgetEvent, WidgetId};
 
 use crate::dpi::DpiScale;
 use crate::hit_test::HitTester;
@@ -629,6 +629,163 @@ impl EventRouter {
             Some(id) => EventDispatchOutcome::Handled(id),
             None => EventDispatchOutcome::Unhandled,
         }
+    }
+
+    /// Routes a pointer event *and* delivers it to the resolved widget.
+    ///
+    /// This is the production event-delivery path: the target is resolved
+    /// exactly as in [`route_pointer_event`](Self::route_pointer_event)
+    /// (pointer capture first, then hit-testing), then the event is
+    /// delivered through [`WidgetArena::dispatch_event`], which invokes
+    /// `Widget::event` on the target and bubbles to ancestors on
+    /// [`EventResponse::Ignored`].
+    ///
+    /// Returns the widget's [`EventResponse`], or `None` when no widget
+    /// was hit. `EventResponse::RequestRepaint` already marks the
+    /// responding node `DIRTY_PAINT` inside `dispatch_event`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+    /// use martensite_window::event::{
+    ///     EventRouter, ModifierKeys, MouseButton, PointerEvent, PointerId, PointerState,
+    /// };
+    /// use martensite_window::WindowId;
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags = NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
+    /// hot.bounds = martensite_core::Rect::new(0.0, 0.0, 100.0, 100.0);
+    /// let root = arena.insert_with_widget(hot, Box::new(DummyWidget));
+    ///
+    /// let mut router = EventRouter::new();
+    /// let event = PointerEvent {
+    ///     pointer_id: PointerId::PRIMARY,
+    ///     position: Vec2::new(10.0, 10.0),
+    ///     state: PointerState::Pressed,
+    ///     button: Some(MouseButton::Left),
+    ///     modifiers: ModifierKeys::empty(),
+    /// };
+    /// // `DummyWidget` ignores input — dispatch still resolves.
+    /// assert_eq!(
+    ///     router.dispatch_pointer_event(&mut arena, root, WindowId::PRIMARY, &event),
+    ///     Some(martensite_core::EventResponse::Ignored),
+    /// );
+    /// ```
+    pub fn dispatch_pointer_event(
+        &mut self,
+        arena: &mut WidgetArena,
+        root: WidgetId,
+        window_id: WindowId,
+        event: &PointerEvent,
+    ) -> Option<EventResponse> {
+        match self.route_pointer_event(arena, root, window_id, event) {
+            EventDispatchOutcome::Handled(id) => {
+                Some(arena.dispatch_event(id, &widget_event_for_pointer(event)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Routes a keyboard event to the focused widget and delivers it.
+    ///
+    /// Wraps [`route_keyboard_event`](Self::route_keyboard_event): when a
+    /// widget is focused, `key` is delivered through
+    /// [`WidgetArena::dispatch_event`] as a
+    /// [`WidgetEvent::KeyPressed`]/[`WidgetEvent::KeyReleased`]. Returns
+    /// `None` when no widget is focused.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    /// use martensite_window::event::EventRouter;
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let mut router = EventRouter::new();
+    /// // No focus → no delivery.
+    /// assert!(router
+    ///     .dispatch_keyboard_event(&mut arena, None, "Enter", true, false)
+    ///     .is_none());
+    /// ```
+    pub fn dispatch_keyboard_event(
+        &mut self,
+        arena: &mut WidgetArena,
+        focused: Option<WidgetId>,
+        key: &str,
+        pressed: bool,
+        repeat: bool,
+    ) -> Option<EventResponse> {
+        match self.route_keyboard_event(focused) {
+            EventDispatchOutcome::Handled(id) => {
+                let event = if pressed {
+                    WidgetEvent::KeyPressed {
+                        key: key.to_string(),
+                        repeat,
+                    }
+                } else {
+                    WidgetEvent::KeyReleased {
+                        key: key.to_string(),
+                    }
+                };
+                Some(arena.dispatch_event(id, &event))
+            }
+            _ => None,
+        }
+    }
+
+    /// Routes a scroll event to the hovered widget and delivers it.
+    ///
+    /// Wraps [`route_scroll_event`](Self::route_scroll_event); the hover
+    /// position tracked for `window_id` supplies the event position.
+    /// Returns `None` when no widget is hovered.
+    pub fn dispatch_scroll_event(
+        &mut self,
+        arena: &mut WidgetArena,
+        window_id: WindowId,
+        delta: Vec2,
+    ) -> Option<EventResponse> {
+        match self.route_scroll_event(window_id, delta) {
+            EventDispatchOutcome::Handled(id) => {
+                let position = self.mouse.position(window_id).unwrap_or(Vec2::ZERO);
+                Some(arena.dispatch_event(id, &WidgetEvent::Scroll { position, delta }))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Converts a normalized [`PointerEvent`] into the widget-level
+/// [`WidgetEvent`] vocabulary.
+#[must_use]
+pub fn widget_event_for_pointer(event: &PointerEvent) -> WidgetEvent {
+    let position = event.position;
+    match event.state {
+        PointerState::Moved => WidgetEvent::PointerMoved { position },
+        PointerState::Pressed => WidgetEvent::PointerPressed {
+            position,
+            button: convert_pointer_button(event.button.unwrap_or(MouseButton::Left)),
+        },
+        PointerState::Released => WidgetEvent::PointerReleased {
+            position,
+            button: convert_pointer_button(event.button.unwrap_or(MouseButton::Left)),
+        },
+    }
+}
+
+/// Converts the normalized [`MouseButton`] into [`PointerButton`].
+#[must_use]
+pub fn convert_pointer_button(button: MouseButton) -> PointerButton {
+    match button {
+        MouseButton::Left => PointerButton::Primary,
+        MouseButton::Right => PointerButton::Secondary,
+        MouseButton::Middle => PointerButton::Middle,
+        MouseButton::Back => PointerButton::Back,
+        MouseButton::Forward => PointerButton::Forward,
+        MouseButton::Other(n) => PointerButton::Other(u16::from(n)),
     }
 }
 

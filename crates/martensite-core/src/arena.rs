@@ -15,7 +15,9 @@ use std::iter::FusedIterator;
 
 use crate::fence::FrameFence;
 use crate::id::WidgetId;
-use crate::node::{ColdNode, HotNode};
+use crate::node::{ColdNode, HotNode, NodeFlags};
+use crate::paint::PaintList;
+use crate::widget::{EventContext, EventResponse, PaintContext, WidgetEvent};
 
 /// Error variants for arena tree operations and synchronization.
 ///
@@ -974,6 +976,140 @@ impl WidgetArena {
         self.shrink_to_fit_idle();
         self.end_compaction(fence);
         Ok(())
+    }
+
+    /// Deliver `event` to the widget at `target`, bubbling to arena
+    /// ancestors while widgets return [`EventResponse::Ignored`].
+    ///
+    /// The hit-test resolution (which `WidgetId` receives a positional
+    /// event) is the caller's job — `martensite-window`'s `EventRouter`
+    /// produces the target. This method owns in-arena propagation:
+    ///
+    /// - `INERT` nodes are skipped (they ignore input) — the event keeps
+    ///   bubbling to the next ancestor.
+    /// - [`EventResponse::RequestRepaint`] additionally marks the
+    ///   responding node [`NodeFlags::DIRTY_PAINT`].
+    /// - Within a node, the widget's own `event` implementation governs
+    ///   internal children (the trait default forwards to
+    ///   [`Widget::child_mut`](crate::Widget::child_mut) in reverse order,
+    ///   gated on [`Widget::child_bounds`](crate::Widget::child_bounds)).
+    ///
+    /// Returns the terminal response, or `Ignored` if the event bubbled
+    /// past the root.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::{
+    ///     DummyWidget, EventResponse, HotNode, PointerButton, WidgetArena, WidgetEvent,
+    /// };
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    ///
+    /// // `DummyWidget` ignores input — the event bubbles past the root.
+    /// let event = WidgetEvent::PointerPressed {
+    ///     position: Vec2::ZERO,
+    ///     button: PointerButton::Primary,
+    /// };
+    /// assert_eq!(arena.dispatch_event(root, &event), EventResponse::Ignored);
+    /// ```
+    pub fn dispatch_event(&mut self, target: WidgetId, event: &WidgetEvent) -> EventResponse {
+        let mut current = Some(target);
+        while let Some(id) = current {
+            let Some(hot) = self.get_hot(id) else {
+                break;
+            };
+            let bounds = hot.bounds;
+            let parent = hot.parent;
+            if hot.flags.contains(NodeFlags::INERT) {
+                current = parent;
+                continue;
+            }
+            let Some(cold) = self.get_cold_mut(id) else {
+                break;
+            };
+            let mut cx = EventContext { event, bounds };
+            match cold.widget.event(&mut cx) {
+                EventResponse::Ignored => current = parent,
+                EventResponse::RequestRepaint => {
+                    if let Some(h) = self.get_hot_mut(id) {
+                        h.flags |= NodeFlags::DIRTY_PAINT;
+                    }
+                    return EventResponse::RequestRepaint;
+                }
+                response => return response,
+            }
+        }
+        EventResponse::Ignored
+    }
+
+    /// Record the visible subtree rooted at `root` into `list`, in
+    /// document paint order.
+    ///
+    /// For each arena node: invisible subtrees are skipped entirely, the
+    /// widget's own `paint` emits its chrome first, then internal
+    /// children (via the `Widget::child_count`/`child`/`child_bounds`
+    /// protocol), then arena children in sibling order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{
+    ///     DummyWidget, HotNode, NodeFlags, PaintList, WidgetArena,
+    /// };
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags = NodeFlags::VISIBLE;
+    /// let root = arena.insert_with_widget(hot, Box::new(DummyWidget));
+    ///
+    /// let mut list = PaintList::new();
+    /// arena.build_paint_list(root, &mut list);
+    /// // `DummyWidget` emits no chrome — the list is empty.
+    /// assert!(list.is_empty());
+    /// ```
+    pub fn build_paint_list(&self, root: WidgetId, list: &mut PaintList) {
+        self.paint_node(root, list);
+    }
+
+    /// Recursive helper for [`WidgetArena::build_paint_list`].
+    fn paint_node(&self, id: WidgetId, list: &mut PaintList) {
+        let Some(hot) = self.get_hot(id) else {
+            return;
+        };
+        if !hot.flags.contains(NodeFlags::VISIBLE) {
+            return;
+        }
+        let Some(cold) = self.get_cold(id) else {
+            return;
+        };
+
+        paint_widget_recursive(&*cold.widget, hot.bounds, list);
+
+        let mut child = hot.first_child;
+        while let Some(child_id) = child {
+            self.paint_node(child_id, list);
+            child = self.get_hot(child_id).and_then(|h| h.next_sibling);
+        }
+    }
+}
+
+/// Paint a widget and its internal children recursively.
+///
+/// Emits the widget's own chrome via `paint`, then recurses into each
+/// internal child using the child's layout-assigned bounds. Internal
+/// children have no arena nodes, so this walk is driven entirely by the
+/// `Widget::child_count`/`child`/`child_bounds` protocol.
+fn paint_widget_recursive(widget: &dyn crate::Widget, bounds: crate::Rect, list: &mut PaintList) {
+    let mut cx = PaintContext { list, bounds };
+    widget.paint(&mut cx);
+    for i in 0..widget.child_count() {
+        let (Some(child), Some(child_bounds)) = (widget.child(i), widget.child_bounds(i)) else {
+            continue;
+        };
+        paint_widget_recursive(child, child_bounds, &mut *cx.list);
     }
 }
 

@@ -15,8 +15,27 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
-use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
+use kurbo::Shape as _;
+use martensite_core::widget::{
+    EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
+    Widget, WidgetEvent,
+};
 use martensite_core::Rect;
+
+/// Button face colour when enabled (light neutral grey).
+const FACE_ENABLED: [u8; 4] = [230, 233, 238, 255];
+/// Button face colour when disabled.
+const FACE_DISABLED: [u8; 4] = [245, 245, 246, 255];
+/// Button border colour.
+const EDGE: [u8; 4] = [140, 145, 155, 255];
+/// Label ink colour when enabled.
+const INK_ENABLED: [u8; 4] = [20, 20, 25, 255];
+/// Label ink colour when disabled.
+const INK_DISABLED: [u8; 4] = [160, 160, 165, 255];
+/// Corner radius of the button face.
+const CORNER_RADIUS: f64 = 4.0;
+/// Horizontal padding between the border and the label.
+const TEXT_PAD_X: f32 = 10.0;
 
 /// An interactive button widget with an accessible label.
 ///
@@ -140,6 +159,55 @@ impl Widget for Button {
         if !self.enabled {
             node.set_disabled();
         }
+    }
+
+    fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        if !self.enabled {
+            return EventResponse::Ignored;
+        }
+        match cx.event {
+            WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                ..
+            }
+            | WidgetEvent::KeyPressed { .. } => EventResponse::RequestRepaint,
+            WidgetEvent::PointerReleased { .. } | WidgetEvent::KeyReleased { .. } => {
+                EventResponse::Handled
+            }
+            _ => EventResponse::Ignored,
+        }
+    }
+
+    fn paint(&self, cx: &mut PaintContext) {
+        let b = cx.bounds;
+        let rect = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        );
+        let (face, ink) = if self.enabled {
+            (FACE_ENABLED, INK_ENABLED)
+        } else {
+            (FACE_DISABLED, INK_DISABLED)
+        };
+
+        let rounded = kurbo::RoundedRect::from_rect(rect, CORNER_RADIUS).into_path(0.1);
+        cx.list.push_path(rounded.clone(), face);
+        cx.list.push_stroke_path(rounded, 1.0, EDGE);
+
+        // The label is left-aligned inside the face and vertically
+        // centred — `DrawText` positions by baseline, so offset half the
+        // cap height (~font_size / 2) below the midpoint.
+        cx.list.push_text(
+            kurbo::Point::new(
+                f64::from(b.origin.x + TEXT_PAD_X),
+                f64::from(b.origin.y + b.size.y / 2.0 + 5.0),
+            ),
+            self.label.clone(),
+            14.0,
+            ink,
+        );
     }
 }
 

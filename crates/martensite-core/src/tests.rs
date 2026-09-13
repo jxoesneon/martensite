@@ -137,8 +137,12 @@ mod suite {
         };
         assert_eq!(widget.measure(&mut cx, constraints), Vec2::ZERO);
         widget.layout(&mut cx, Rect::new(0.0, 0.0, 50.0, 50.0));
+        let event = crate::widget::WidgetEvent::FocusGained;
         assert_eq!(
-            widget.event(&mut crate::widget::EventContext {}),
+            widget.event(&mut crate::widget::EventContext {
+                event: &event,
+                bounds: Rect::new(0.0, 0.0, 50.0, 50.0),
+            }),
             crate::widget::EventResponse::Ignored
         );
     }
@@ -995,7 +999,11 @@ mod suite {
 
         // Widget trait default methods
         let w = DummyWidget;
-        w.paint(&mut crate::widget::PaintContext {});
+        let mut list = crate::paint::PaintList::new();
+        w.paint(&mut crate::widget::PaintContext {
+            list: &mut list,
+            bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+        });
         let mut node = accesskit::Node::new(accesskit::Role::GenericContainer);
         w.accessibility(&mut node);
     }
@@ -1172,5 +1180,330 @@ mod suite {
             arena.get_cold(id).unwrap().text_cache.get(250.0),
             Some((200.0, 50.0))
         );
+    }
+}
+
+// --- Event dispatch and paint-list wiring (item: dead hooks) ---
+
+#[cfg(test)]
+mod dispatch_paint {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use crate::node::{HotNode, NodeFlags, Rect};
+    use crate::paint::{PaintCommand, PaintList};
+    use crate::widget::{
+        DummyWidget, EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext,
+        PointerButton, Widget, WidgetEvent,
+    };
+    use crate::WidgetArena;
+    use glam::Vec2;
+
+    /// A widget that counts `event` calls and replies with a fixed
+    /// response.
+    struct ProbeWidget {
+        calls: Arc<AtomicUsize>,
+        response: EventResponse,
+    }
+
+    impl ProbeWidget {
+        fn new(calls: Arc<AtomicUsize>, response: EventResponse) -> Self {
+            Self { calls, response }
+        }
+    }
+
+    impl Widget for ProbeWidget {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn event(&mut self, _cx: &mut EventContext) -> EventResponse {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.response
+        }
+    }
+
+    /// A widget that paints a marker fill into the list.
+    struct FillWidget([u8; 4]);
+
+    impl Widget for FillWidget {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn paint(&self, cx: &mut PaintContext) {
+            cx.list.commands.push(PaintCommand::FillRect(
+                kurbo::Rect::new(0.0, 0.0, 1.0, 1.0),
+                self.0,
+            ));
+        }
+    }
+
+    fn hot_visible(bounds: Rect) -> HotNode {
+        HotNode {
+            flags: NodeFlags::VISIBLE,
+            bounds,
+            ..HotNode::default()
+        }
+    }
+
+    #[test]
+    fn dispatch_event_invokes_target_hook() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 10.0, 10.0)),
+            Box::new(ProbeWidget::new(calls.clone(), EventResponse::Handled)),
+        );
+        let event = WidgetEvent::PointerMoved {
+            position: Vec2::new(5.0, 5.0),
+        };
+        assert_eq!(arena.dispatch_event(id, &event), EventResponse::Handled);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dispatch_event_bubbles_to_parent_on_ignored() {
+        let child_calls = Arc::new(AtomicUsize::new(0));
+        let parent_calls = Arc::new(AtomicUsize::new(0));
+        let mut arena = WidgetArena::new();
+        let parent = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Box::new(ProbeWidget::new(
+                parent_calls.clone(),
+                EventResponse::Handled,
+            )),
+        );
+        let child = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 10.0, 10.0)),
+            Box::new(ProbeWidget::new(
+                child_calls.clone(),
+                EventResponse::Ignored,
+            )),
+        );
+        arena.append_child(parent, child).unwrap();
+
+        let event = WidgetEvent::PointerMoved {
+            position: Vec2::new(5.0, 5.0),
+        };
+        assert_eq!(arena.dispatch_event(child, &event), EventResponse::Handled);
+        assert_eq!(child_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(parent_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dispatch_event_repaint_marks_dirty_paint() {
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 10.0, 10.0)),
+            Box::new(ProbeWidget::new(
+                Arc::new(AtomicUsize::new(0)),
+                EventResponse::RequestRepaint,
+            )),
+        );
+        arena
+            .get_hot_mut(id)
+            .unwrap()
+            .flags
+            .remove(NodeFlags::DIRTY_PAINT);
+
+        let event = WidgetEvent::PointerMoved {
+            position: Vec2::new(5.0, 5.0),
+        };
+        assert_eq!(
+            arena.dispatch_event(id, &event),
+            EventResponse::RequestRepaint
+        );
+        assert!(arena
+            .get_hot(id)
+            .unwrap()
+            .flags
+            .contains(NodeFlags::DIRTY_PAINT));
+    }
+
+    #[test]
+    fn dispatch_event_skips_inert_widgets() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut arena = WidgetArena::new();
+        let mut hot = hot_visible(Rect::new(0.0, 0.0, 10.0, 10.0));
+        hot.flags |= NodeFlags::INERT;
+        let id = arena.insert_with_widget(
+            hot,
+            Box::new(ProbeWidget::new(calls.clone(), EventResponse::Handled)),
+        );
+        let event = WidgetEvent::PointerMoved {
+            position: Vec2::new(5.0, 5.0),
+        };
+        assert_eq!(arena.dispatch_event(id, &event), EventResponse::Ignored);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// A composite widget with two internal children — the second one
+    /// handles positional events.
+    struct InnerLeaf {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl Widget for InnerLeaf {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn event(&mut self, _cx: &mut EventContext) -> EventResponse {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            EventResponse::Handled
+        }
+    }
+
+    struct TwoChildComposite {
+        a: InnerLeaf,
+        b: InnerLeaf,
+    }
+
+    impl Widget for TwoChildComposite {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn child_count(&self) -> usize {
+            2
+        }
+        fn child(&self, index: usize) -> Option<&dyn Widget> {
+            match index {
+                0 => Some(&self.a),
+                1 => Some(&self.b),
+                _ => None,
+            }
+        }
+        fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+            match index {
+                0 => Some(&mut self.a),
+                1 => Some(&mut self.b),
+                _ => None,
+            }
+        }
+        fn child_bounds(&self, index: usize) -> Option<Rect> {
+            match index {
+                0 => Some(Rect::new(0.0, 0.0, 50.0, 50.0)),
+                1 => Some(Rect::new(50.0, 0.0, 50.0, 50.0)),
+                _ => None,
+            }
+        }
+    }
+
+    #[test]
+    fn default_event_forwards_to_internal_children_bounds_gated() {
+        let a_calls = Arc::new(AtomicUsize::new(0));
+        let b_calls = Arc::new(AtomicUsize::new(0));
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 50.0)),
+            Box::new(TwoChildComposite {
+                a: InnerLeaf {
+                    calls: a_calls.clone(),
+                },
+                b: InnerLeaf {
+                    calls: b_calls.clone(),
+                },
+            }),
+        );
+
+        // Press inside child b's rect — b is topmost (reverse order).
+        let event = WidgetEvent::PointerPressed {
+            position: Vec2::new(75.0, 25.0),
+            button: PointerButton::Primary,
+        };
+        assert_eq!(arena.dispatch_event(id, &event), EventResponse::Handled);
+        assert_eq!(a_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(b_calls.load(Ordering::SeqCst), 1);
+
+        // Press inside child a's rect — b's bounds gate it out.
+        let event = WidgetEvent::PointerPressed {
+            position: Vec2::new(10.0, 25.0),
+            button: PointerButton::Primary,
+        };
+        assert_eq!(arena.dispatch_event(id, &event), EventResponse::Handled);
+        assert_eq!(a_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(b_calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// A composite whose paint emits its own marker and whose internal
+    /// child paints a second marker — ordering must be parent-then-child.
+    struct PaintComposite {
+        child: FillWidget,
+    }
+
+    impl Widget for PaintComposite {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn paint(&self, cx: &mut PaintContext) {
+            cx.list.commands.push(PaintCommand::FillRect(
+                kurbo::Rect::new(0.0, 0.0, 1.0, 1.0),
+                [1, 0, 0, 255],
+            ));
+        }
+        fn child_count(&self) -> usize {
+            1
+        }
+        fn child(&self, index: usize) -> Option<&dyn Widget> {
+            (index == 0).then_some(&self.child as &dyn Widget)
+        }
+        fn child_bounds(&self, index: usize) -> Option<Rect> {
+            (index == 0).then_some(Rect::new(0.0, 0.0, 5.0, 5.0))
+        }
+    }
+
+    #[test]
+    fn build_paint_list_emits_in_document_order_and_skips_invisible() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Box::new(PaintComposite {
+                child: FillWidget([2, 0, 0, 255]),
+            }),
+        );
+        let hidden = arena.insert_with_widget(
+            HotNode {
+                bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+                ..HotNode::default()
+            },
+            Box::new(FillWidget([9, 9, 9, 255])),
+        );
+        let sibling = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 50.0, 10.0, 10.0)),
+            Box::new(FillWidget([3, 0, 0, 255])),
+        );
+        arena.append_child(root, hidden).unwrap();
+        arena.append_child(root, sibling).unwrap();
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+
+        let colors: Vec<[u8; 4]> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::FillRect(_, color) => Some(*color),
+                _ => None,
+            })
+            .collect();
+        // Parent chrome, internal child, arena sibling — hidden skipped.
+        assert_eq!(colors, vec![[1, 0, 0, 255], [2, 0, 0, 255], [3, 0, 0, 255]]);
+    }
+
+    #[test]
+    fn dummy_widget_default_event_is_ignored() {
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 10.0, 10.0)),
+            Box::new(DummyWidget),
+        );
+        let event = WidgetEvent::Scroll {
+            position: Vec2::ZERO,
+            delta: Vec2::new(0.0, 1.0),
+        };
+        assert_eq!(arena.dispatch_event(id, &event), EventResponse::Ignored);
     }
 }

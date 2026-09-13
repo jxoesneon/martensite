@@ -1024,8 +1024,8 @@ impl Widget for ExternalEngine {
         node.set_label(self.label.as_str());
     }
 
-    fn paint(&self, _cx: &mut PaintContext) {
-        // Emission path is `record_paint` — see its docs.
+    fn paint(&self, cx: &mut PaintContext) {
+        self.record_paint(cx.list);
     }
 }
 
