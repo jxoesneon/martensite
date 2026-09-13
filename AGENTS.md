@@ -50,10 +50,11 @@ compilable doctest. This is enforced by `cargo test --doc`.
 **Fix**: Examples were added to all key public types. Continue this
 practice for all new public API items.
 
-**Exemption**: `martensite-cosmic-text` is a vendored upstream fork of
-`cosmic-text` and opts out of the doc-example requirement via
+**Exemption**: `martensite-cosmic-text` and `martensite-vello` are vendored
+upstream forks (of `cosmic-text` and `netrender-vello`/Vello 0.10
+respectively) and opt out of the doc-example requirement via
 `#![allow(missing_docs)]` and `#![allow(rustdoc::broken_intra_doc_links)]`.
-It is the only crate in the workspace that does not need compilable
+They are the only crates in the workspace that do not need compilable
 doctest examples for every public item.
 
 ## CI — Known Pitfalls
@@ -160,7 +161,7 @@ These are explicitly documented in code, not hidden:
   - `DirectWriteFontFallback` (Windows, `IDWriteFontFallback::MapCharacters`)
   - `CoreTextFontFallback` (macOS, `CTFontCreateForStringWithLanguage`)
   - `FontconfigFontFallback` (Linux, `FcFontSort`)
-- The following eight crates use `#![allow(unsafe_code)]` for
+- The following nine crates use `#![allow(unsafe_code)]` for
   platform-specific FFI or vendored upstream code. These are the ONLY
   crates in the workspace that allow unsafe code; all other crates
   maintain `unsafe_code = "deny"`.
@@ -177,6 +178,10 @@ These are explicitly documented in code, not hidden:
   - `martensite-accesskit-winit` — vendored upstream fork of
     `accesskit_winit` 0.34.0 patched for winit 0.31.0-beta.3. Temporary;
     remove once upstream supports winit 0.31.
+  - `martensite-vello` — vendored copy of `netrender-vello` 0.10 (a
+    byte-compatible republish of Vello 0.10 built against wgpu 30).
+    Upstream uses `unsafe` for trusted shader module creation; exempt
+    with `#![allow(missing_docs)]` and `#![allow(clippy::all)]`.
   - `martensite-shell` — platform FFI for system backdrops (DWM on
     Windows, NSVisualEffectView/Liquid Glass on macOS). Wayland CSD
     is safe Rust.

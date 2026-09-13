@@ -48,9 +48,9 @@ deny = [
     { name = "libsqlite3-sys" },
 ]
 skip = [
-    # `netrender-vello` 0.10.0 -> `vello_shaders` 0.10.0 is pinned to `naga ^29.0.3`.
-    # `wgpu` 30.0.1 uses `naga` 30.0.1. Unification requires a new `netrender-vello`
-    # release or a fork of `vello_shaders`; this exemption documents the constraint.
+    # `martensite-vello` 0.10.0 -> `vello_shaders` 0.10.0 is pinned to `naga ^29.0.3`.
+    # `wgpu` 30.0.1 uses `naga` 30.0.1. Unification requires an upstream
+    # `vello_shaders` release or a fork; this exemption documents the constraint.
     { name = "naga", version = "29.0.4" },
     { name = "windows-sys" },
 ]

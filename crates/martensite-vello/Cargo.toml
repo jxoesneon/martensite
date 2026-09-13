@@ -1,0 +1,71 @@
+# Vendored copy of `netrender-vello` 0.10.0 — itself a byte-compatible
+# republish of upstream Vello 0.10 built against wgpu 30 (official vello
+# 0.10 pins wgpu 29, which cannot coexist with the workspace's wgpu 30 as a
+# single type). Vendored in-tree to remove the single-maintainer republish
+# from the registry dependency graph. The library name stays `vello` and
+# all feature flags are unchanged, so dependents compile without
+# modification.
+[package]
+name = "martensite-vello"
+version = "0.10.0-martensite.1"
+authors.workspace = true
+license = "Apache-2.0 OR MIT"
+description = "Vendored Vello 0.10 GPU compute renderer built against wgpu 30"
+categories = ["rendering", "graphics"]
+keywords = ["2d", "vector-graphics"]
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+edition = "2024"
+rust-version.workspace = true
+
+[lib]
+name = "vello"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+# There are no platform specific docs.
+default-target = "x86_64-unknown-linux-gnu"
+targets = []
+
+[features]
+default = ["wgpu", "wgpu_default"]
+# Enables GPU memory usage estimation. This performs additional computations
+# in order to estimate the minimum required allocations for buffers backing
+# bump-allocated GPU memory.
+# TODO: Turn this into a runtime option used at resolve time and remove the feature.
+bump_estimate = ["vello_encoding/bump_estimate"]
+wgpu = ["dep:wgpu", "dep:vello_shaders", "dep:futures-intrusive"]
+# Enable wgpu with its default features. If you need to customise the set of enabled wgpu features,
+# please disable this crate's default features, enable its "wgpu" feature, then depend on wgpu directly
+# with the features which you need enabled.
+wgpu_default = ["wgpu", "wgpu/default"]
+# Enables debug features when using the "async" pipeline.
+# This is only intended for development of Vello itself.
+debug_layers = []
+# Enables an embedded wgpu-profiler profiler.
+# This is only intended for development of Vello itself.
+wgpu-profiler = ["dep:wgpu-profiler"]
+# Enables hot reloading of Vello shaders.
+# This is only intended for development of Vello itself.
+# In practise, this won't compile outside of the Vello repository.
+hot_reload = ["vello_shaders/compile"]
+
+[dependencies]
+vello_encoding = "0.10.0"
+vello_shaders = { version = "0.10.0", optional = true }
+bytemuck = { workspace = true }
+skrifa = { version = "0.44.0", default-features = false, features = ["autohint_shaping", "std"] }
+peniko = { workspace = true }
+wgpu = { workspace = true, optional = true, features = ["std"] }
+log = "0.4.29"
+static_assertions = "1.1.0"
+futures-intrusive = { version = "0.5.0", optional = true }
+wgpu-profiler = { version = "0.28.0", optional = true }
+thiserror = { version = "2.0.18", default-features = false }
+# TODO: Add feature for built-in bitmap emoji support?
+png = "0.18.1"

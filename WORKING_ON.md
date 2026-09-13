@@ -620,16 +620,16 @@ pointer-event variants that `accesskit_winit` 0.34 cannot accept.
 
 ## 4. `naga` duplicate version (P2 — dependency hygiene)
 
-**Status:** Resolved — documented; unification requires upstream `netrender-vello` / `vello_shaders` update.
+**Status:** Resolved — documented; unification requires an upstream `vello_shaders` update.
 
 `wgpu 30.0.1` uses `naga 30.0.1` while `vello_shaders 0.10.0` (transitive
-through `netrender-vello`) uses `naga 29.0.4`. If `netrender-vello` /
+through `martensite-vello`) uses `naga 29.0.4`. If `martensite-vello` /
 `martensite-render` ever expose `naga` types or pass shader modules between
 the two versions, the build will break. Even if it compiles, carrying two
 `naga` copies increases compile time and binary size.
 
 **Resolution:**
-- Audited: `vello_shaders 0.10.0` is pinned to `naga ^29.0.3`; `netrender-vello` 0.10.0 is the latest published version.
+- Audited: `vello_shaders 0.10.0` is pinned to `naga ^29.0.3`; `netrender-vello` 0.10.0 (vendored as `martensite-vello`) is the latest published build.
 - Added an explicit `naga` 29.0.4 exemption in `deny.toml` with a comment explaining the upstream constraint.
 
 ---

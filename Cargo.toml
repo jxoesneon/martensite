@@ -27,6 +27,7 @@ members = [
     "crates/martensite-blessed",
     "crates/martensite-plugin",
     "crates/martensite-cosmic-text",
+    "crates/martensite-vello",
     "crates/martensite-font-fallback",
     "crates/martensite-host",
     "crates/martensite-shell",
@@ -107,12 +108,14 @@ martensite-engine-bridge = { version = "0.15.0", path = "crates/martensite-engin
 wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12", "gles", "webgpu"] }
 # NOTE: official `vello` 0.10 depends on wgpu 29, which is incompatible with the
 # workspace's wgpu 30 (the two major versions cannot coexist as a single type).
-# `netrender-vello` is a byte-compatible republish of vello 0.10 built against
-# wgpu 30; its library name is `vello`, so all `use vello::…` imports are
-# unchanged. This unifies the GPU compute renderer on the same wgpu version as
-# the rest of the workspace, allowing `vello::Renderer` to consume the
-# `wgpu::Device`/`wgpu::Queue` owned by `GpuContext`.
-vello = { package = "netrender-vello", version = "0.10", default-features = false }
+# `martensite-vello` is a vendored copy of `netrender-vello` 0.10 — itself a
+# byte-compatible republish of vello 0.10 built against wgpu 30; its library
+# name is `vello`, so all `use vello::…` imports are unchanged. Vendoring the
+# identical source in-tree removes the single-maintainer republish from the
+# registry dependency graph. This unifies the GPU compute renderer on the same
+# wgpu version as the rest of the workspace, allowing `vello::Renderer` to
+# consume the `wgpu::Device`/`wgpu::Queue` owned by `GpuContext`.
+vello = { package = "martensite-vello", version = "0.10.0-martensite.1", path = "crates/martensite-vello", default-features = false }
 taffy = { version = "0.8", default-features = false, features = ["flexbox", "grid", "block_layout", "taffy_tree"] }
 cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.1", path = "crates/martensite-cosmic-text", default-features = false, features = ["std", "swash"] }
 fontdb = { version = "0.24", default-features = false }
