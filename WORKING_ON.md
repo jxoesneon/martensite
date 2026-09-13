@@ -53,7 +53,19 @@ see ADR-0033.
   av1C→`CMFormatDescription` bridge in objc2-core-media 0.3.2). Samples
   regenerate via `scripts/generate-media-samples.sh` into
   `target/media-samples/` (gitignored; `$MARTENSITE_MEDIA_SAMPLES`
-  overrides). Remaining exit gate: Windows DXGI zero-copy requires a
+  overrides). The HDR golden gate (`tests/hdr_golden.rs`,
+  `decoder-ffmpeg`) decodes checked-in BT.2020/PQ (HDR10 mastering +
+  MaxCLL/MaxFALL) and BT.2020/HLG 10-bit HEVC fixtures, asserts
+  `HdrSideData` → `HdrMetadata` → `VideoPipelineUniforms`, then renders
+  a mid-GOP frame through `VideoProcessor` on a real headless adapter
+  (Metal on M4) and compares `Rgba16Float` readback against a CPU mirror
+  of `MEDIA_YUV_EOTF_WGSL`: PQ mean |err| 8.6e-5, HLG 3.5e-4 scRGB —
+  f16 quantization, ~2 orders under tolerance. It skips gracefully
+  without a GPU. P010 stays unexercised because the FFmpeg decoder
+  negotiates NV12 out of `yuv420p10le` (documented in the file);
+  `extract_hdr` handles the FFmpeg 8 `AVContentLightMetadata`
+  `unsigned short` → `unsigned` ABI widening by payload size.
+  Remaining exit gate: Windows DXGI zero-copy requires a
   Vulkan-backend wgpu device with `VULKAN_EXTERNAL_MEMORY_WIN32` (DX12
   backend cannot import D3D11 shared handles; NV12/P010 on Windows fall
   back to `import_cpu_memory`).

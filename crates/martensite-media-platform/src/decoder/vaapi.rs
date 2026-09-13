@@ -908,10 +908,7 @@ mod h264 {
         Ok((&data[start..end], end))
     }
 
-    fn split_length_prefixed(
-        data: &[u8],
-        len_size: usize,
-    ) -> Result<Vec<&[u8]>, DecodeError> {
+    fn split_length_prefixed(data: &[u8], len_size: usize) -> Result<Vec<&[u8]>, DecodeError> {
         let mut out = Vec::new();
         let mut pos = 0usize;
         while pos < data.len() {

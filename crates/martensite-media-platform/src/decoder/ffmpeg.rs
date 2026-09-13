@@ -60,14 +60,22 @@ mod mastering_display {
 }
 
 /// Byte offsets inside `AVContentLightMetadata`
-/// (`libavutil/mastering_display_metadata.h`): two `unsigned short` fields.
+/// (`libavutil/mastering_display_metadata.h`). FFmpeg ≤7 stores two
+/// `unsigned short` fields (4 bytes); FFmpeg 8 widened both to `unsigned`
+/// (8 bytes, `MaxFALL` at offset 4). The payload length discriminates
+/// the layout — no runtime version check is needed.
 mod content_light {
-    /// Offset of `unsigned short MaxCLL`.
+    /// Offset of `unsigned short MaxCLL` (FFmpeg ≤7, also the FFmpeg 8
+    /// `unsigned` offset since MaxCLL stays first).
     pub const MAX_CLL: usize = 0;
-    /// Offset of `unsigned short MaxFALL`.
+    /// Offset of `unsigned short MaxFALL` (FFmpeg ≤7 layout).
     pub const MAX_FALL: usize = 2;
-    /// `sizeof(AVContentLightMetadata)`.
+    /// Offset of `unsigned MaxFALL` (FFmpeg 8+ layout).
+    pub const MAX_FALL_W: usize = 4;
+    /// `sizeof(AVContentLightMetadata)` on FFmpeg ≤7.
     pub const SIZE: usize = 4;
+    /// `sizeof(AVContentLightMetadata)` on FFmpeg 8+.
+    pub const SIZE_W: usize = 8;
 }
 
 /// `libavcodec` software decoder producing [`HardwareHandle::CpuMemory`]
@@ -693,6 +701,12 @@ fn read_u16_ne(bytes: &[u8], offset: usize) -> Option<u16> {
     Some(u16::from_ne_bytes(raw))
 }
 
+/// Reads a native-endian `u32` out of a side-data payload.
+fn read_u32_ne(bytes: &[u8], offset: usize) -> Option<u32> {
+    let raw: [u8; 4] = bytes.get(offset..offset + 4)?.try_into().ok()?;
+    Some(u32::from_ne_bytes(raw))
+}
+
 /// Reads an `AVRational` (`{ num: i32, den: i32 }`) out of a side-data
 /// payload, treating non-positive fields as "not signalled".
 fn read_rational_ne(bytes: &[u8], offset: usize) -> Option<f32> {
@@ -739,7 +753,18 @@ fn extract_hdr(frame: &frame::Video) -> Option<HdrSideData> {
 
     if let Some(data) = frame.side_data(side_data::Type::ContentLightLevel) {
         let bytes = data.data();
-        if bytes.len() >= content_light::SIZE {
+        if bytes.len() >= content_light::SIZE_W {
+            // FFmpeg 8+: `unsigned` MaxCLL/MaxFALL.
+            if let Some(max_cll) = read_u32_ne(bytes, content_light::MAX_CLL).filter(|v| *v != 0) {
+                side.max_cll = Some(u16::try_from(max_cll).unwrap_or(u16::MAX));
+            }
+            if let Some(max_fall) =
+                read_u32_ne(bytes, content_light::MAX_FALL_W).filter(|v| *v != 0)
+            {
+                side.max_fall = Some(u16::try_from(max_fall).unwrap_or(u16::MAX));
+            }
+        } else if bytes.len() >= content_light::SIZE {
+            // FFmpeg ≤7: `unsigned short` MaxCLL/MaxFALL.
             if let Some(max_cll) = read_u16_ne(bytes, content_light::MAX_CLL).filter(|v| *v != 0) {
                 side.max_cll = Some(max_cll);
             }
