@@ -287,6 +287,13 @@ impl FfmpegDecoder {
             Ok(()) => {
                 self.seen_keyframe |= packet.is_keyframe;
                 self.stats.record_packet(packet.data.len());
+                // Opportunistically pull finished frames out of the
+                // frame-threading workers. Older libavcodec releases (5.x)
+                // can drop the final frame at `send_eof` when every frame
+                // is still queued inside the worker threads because the
+                // caller never received mid-stream; draining here keeps the
+                // output path exercised so EOF flushes the whole stream.
+                self.drain_decoder()?;
                 Ok(())
             }
             Err(ref e) if is_again(e) => {

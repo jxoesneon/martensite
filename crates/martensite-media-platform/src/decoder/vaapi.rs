@@ -55,7 +55,7 @@
 //! (`decoder-ffmpeg` feature); callers should construct that decoder when
 //! this one returns an error.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::os::fd::IntoRawFd;
 use std::rc::Rc;
 use std::time::Instant;
@@ -104,7 +104,9 @@ fn profile_candidates(codec: VideoCodec) -> &'static [va::VAProfile::Type] {
 
 /// Whether the negotiated profile decodes to >8-bit 4:2:0 (P010 surfaces).
 fn profile_is_10bit(profile: va::VAProfile::Type) -> bool {
-    profile == va::VAProfile::VAProfileHEVCMain10 || profile == va::VAProfile::VAProfileH264High10
+    // libva has no dedicated H.264 High10 profile constant — 10-bit H.264
+    // is signalled through `VA_RT_FORMAT` bits, not the profile enum.
+    profile == va::VAProfile::VAProfileHEVCMain10 || profile == va::VAProfile::VAProfileVP9Profile2
 }
 
 /// Maps an exported DRM/VAAPI fourcc to a [`VideoPixelFormat`].
@@ -624,7 +626,7 @@ impl VaapiDecoder {
             curr_pic,
             reference_frames,
             (sps.pic_width_in_mbs - 1) as u16,
-            (sps.pic_height_in_mbs - 1) as u16,
+            (sps.pic_height_in_mbs() - 1) as u16,
             sps.bit_depth_luma_minus8,
             sps.bit_depth_chroma_minus8,
             sps.max_num_ref_frames.min(255) as u8,
@@ -766,13 +768,13 @@ fn drm_prime_to_dmabuf_handle(
     }
 
     // Dup every object fd so the `OwnedFd`s inside `desc` keep their own
-    // copies — `try_clone_to_owned` is plain F_DUPFD_CLOEXEC, no unsafe.
+    // copies — `try_clone` is plain F_DUPFD_CLOEXEC, no unsafe.
     let mut objects = Vec::with_capacity(desc.objects.len());
     for object in &desc.objects {
         objects.push(
             object
                 .fd
-                .try_clone_to_owned()
+                .try_clone()
                 .map_err(|e| {
                     MediaError::from(DecodeError::Fatal(format!("dup of exported fd: {e}")))
                 })?
@@ -906,10 +908,10 @@ mod h264 {
         Ok((&data[start..end], end))
     }
 
-    fn split_length_prefixed<'a>(
-        data: &'a [u8],
+    fn split_length_prefixed(
+        data: &[u8],
         len_size: usize,
-    ) -> Result<Vec<&'a [u8]>, DecodeError> {
+    ) -> Result<Vec<&[u8]>, DecodeError> {
         let mut out = Vec::new();
         let mut pos = 0usize;
         while pos < data.len() {
@@ -1067,21 +1069,28 @@ mod h264 {
     }
 
     /// VUI colour information relevant to HDR/range signalling.
+    #[derive(Clone)]
     pub struct VuiColour {
         pub colour_primaries: u16,
         pub transfer_characteristics: u16,
     }
 
     /// Parsed VUI subset.
+    #[derive(Clone)]
     pub struct Vui {
         pub video_full_range_flag: bool,
         pub colour: Option<VuiColour>,
     }
 
     /// Parsed `seq_parameter_set` fields needed by VAAPI.
+    #[derive(Clone)]
     pub struct Sps {
         pub id: u8,
+        /// Kept for diagnostics; the parser must consume these regardless.
+        #[allow(dead_code)]
         pub profile_idc: u8,
+        /// Kept for diagnostics; the parser must consume these regardless.
+        #[allow(dead_code)]
         pub level_idc: u8,
         pub chroma_format_idc: u32,
         pub separate_colour_plane_flag: bool,
@@ -1285,6 +1294,7 @@ mod h264 {
     }
 
     /// Parsed `pic_parameter_set` fields needed by VAAPI.
+    #[derive(Clone)]
     pub struct Pps {
         pub id: u8,
         pub sps_id: u8,
@@ -1405,15 +1415,28 @@ mod h264 {
         pub first_mb_in_slice: u32,
         pub slice_type: u32,
         pub pps_id: u32,
+        /// Parsed for completeness; VAAPI derives the SPS link via `pps_id`.
+        #[allow(dead_code)]
         pub sps_id: u32,
         pub frame_num: u32,
         pub field_pic_flag: bool,
+        /// Parsed for completeness; field pictures are rejected upstream.
+        #[allow(dead_code)]
         pub bottom_field_flag: bool,
         pub nal_ref_idc: u8,
+        /// Parsed for completeness; the IDR flag gates DPB reset upstream.
+        #[allow(dead_code)]
         pub idr: bool,
         pub pic_order_cnt_lsb: u32,
+        /// Parsed for completeness; only used by `pic_order_cnt_type` 1
+        /// streams, which the DPB does not yet reorder.
+        #[allow(dead_code)]
         pub delta_pic_order_cnt_bottom: i32,
+        /// Parsed for completeness; only used by `pic_order_cnt_type` 1.
+        #[allow(dead_code)]
         pub delta_pic_order_cnt0: i32,
+        /// Parsed for completeness; only used by `pic_order_cnt_type` 1.
+        #[allow(dead_code)]
         pub delta_pic_order_cnt1: i32,
         pub direct_spatial_mv_pred_flag: bool,
         pub num_ref_idx_l0_active_minus1: u32,
@@ -1728,5 +1751,139 @@ mod h264 {
                 [[0; 2]; 32], // chroma_weight_l1
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — hardware-independent: the H.264 parser, NAL splitting, EPB removal,
+// and avcC handling are exercised against real bitstream bytes extracted from
+// `martensite-media-test`'s 320x240 baseline-profile fixture.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::h264::{self, unescape, SliceHeader};
+
+    /// SPS NAL from the 320x240@30fps baseline fixture (includes the two
+    /// emulation-prevention bytes a conformant encoder emits).
+    const FIXTURE_SPS: &[u8] = &[
+        0x67, 0x42, 0xc0, 0x0d, 0xd9, 0x01, 0x41, 0xfb, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00, 0x10,
+        0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x42, 0xa4, 0x80,
+    ];
+    /// PPS NAL from the same fixture.
+    const FIXTURE_PPS: &[u8] = &[0x68, 0xcb, 0x83, 0xcb, 0x20];
+    /// First IDR slice NAL from the same fixture.
+    const FIXTURE_IDR: &[u8] = &[
+        0x65, 0x88, 0x84, 0x0b, 0xf2, 0x62, 0x80, 0x00, 0xab, 0xcc, 0x9f, 0xf8, 0x7f, 0xe0, 0x8c,
+        0x13, 0x0a, 0x00, 0x05, 0xbc, 0x40, 0x00, 0x8f, 0x10,
+    ];
+
+    /// Builds the avcC record matching the fixture's parameter sets.
+    fn fixture_avcc() -> Vec<u8> {
+        let mut rec = vec![
+            0x01,
+            FIXTURE_SPS[1],
+            FIXTURE_SPS[2],
+            FIXTURE_SPS[3],
+            0xFF,
+            0xE1, // 1 SPS
+        ];
+        rec.extend_from_slice(&(FIXTURE_SPS.len() as u16).to_be_bytes());
+        rec.extend_from_slice(FIXTURE_SPS);
+        rec.push(0x01); // 1 PPS
+        rec.extend_from_slice(&(FIXTURE_PPS.len() as u16).to_be_bytes());
+        rec.extend_from_slice(FIXTURE_PPS);
+        rec
+    }
+
+    #[test]
+    fn unescape_removes_emulation_prevention() {
+        // `00 00 03 xx` → `00 00 xx`; a bare `00 00` (no 03) is untouched.
+        assert_eq!(unescape(&[0x00, 0x00, 0x03, 0x10]), vec![0x00, 0x00, 0x10]);
+        assert_eq!(
+            unescape(&[0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x01]),
+            vec![0x00, 0x00, 0x00, 0x00, 0x01]
+        );
+        assert_eq!(unescape(&[0x12, 0x00, 0x00]), vec![0x12, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn sps_parses_fixture_geometry() {
+        let sps = h264::Sps::parse(&unescape(&FIXTURE_SPS[1..])).unwrap();
+        assert_eq!(sps.profile_idc, 66); // baseline
+        assert_eq!(sps.level_idc, 13); // level 1.3
+        assert_eq!(sps.id, 0);
+        assert_eq!(sps.visible_size(), (320, 240));
+        assert!(sps.frame_mbs_only_flag);
+    }
+
+    #[test]
+    fn pps_parses_and_references_sps() {
+        let pps = h264::Pps::parse(&unescape(&FIXTURE_PPS[1..])).unwrap();
+        assert_eq!(pps.id, 0);
+    }
+
+    #[test]
+    fn split_nals_handles_annex_b_and_length_prefixed() {
+        let mut state = h264::State::new();
+
+        // Annex-B: three NALs, mixed 3- and 4-byte start codes.
+        let annex_b = [
+            0x00, 0x00, 0x00, 0x01, 0x67, 0xAA, 0x00, 0x00, 0x01, 0x68, 0xBB, 0x00, 0x00, 0x00,
+            0x01, 0x65, 0xCC,
+        ];
+        let nals = state.split_nals(&annex_b).unwrap();
+        assert_eq!(nals.len(), 3);
+        assert_eq!(nals[0], &[0x67, 0xAA]);
+        assert_eq!(nals[1], &[0x68, 0xBB]);
+        assert_eq!(nals[2], &[0x65, 0xCC]);
+
+        // After apply_codec_config the same state splits length-prefixed.
+        state.apply_codec_config(&fixture_avcc()).unwrap();
+        let lp = [
+            0x00, 0x00, 0x00, 0x02, 0x67, 0xAA, // NAL len 2
+            0x00, 0x00, 0x00, 0x03, 0x68, 0xBB, 0xCC, // NAL len 3
+        ];
+        let nals = state.split_nals(&lp).unwrap();
+        assert_eq!(nals, [&[0x67, 0xAA][..], &[0x68, 0xBB, 0xCC][..]]);
+    }
+
+    #[test]
+    fn apply_codec_config_loads_parameter_sets() {
+        let mut state = h264::State::new();
+        state.apply_codec_config(&fixture_avcc()).unwrap();
+        assert_eq!(state.sps.len(), 1);
+        assert_eq!(state.pps.len(), 1);
+        assert_eq!(state.sps[&0].visible_size(), (320, 240));
+
+        // Truncated and wrong-version records are rejected.
+        assert!(h264::State::new()
+            .apply_codec_config(&[0x01, 0x64])
+            .is_err());
+        assert!(h264::State::new()
+            .apply_codec_config(&[0x02, 0x64, 0x00, 0x1f, 0xff, 0xe0])
+            .is_err());
+    }
+
+    #[test]
+    fn slice_header_parses_fixture_idr() {
+        let mut state = h264::State::new();
+        state.apply_codec_config(&fixture_avcc()).unwrap();
+
+        // NAL header 0x65 → nal_ref_idc 3, nal_unit_type 5 (IDR).
+        let hdr = SliceHeader::parse(&unescape(&FIXTURE_IDR[1..]), 3, true, &state).unwrap();
+        assert!(hdr.idr);
+        assert_eq!(hdr.slice_type, 2, "baseline IDR is an I-slice");
+        assert_eq!(hdr.first_mb_in_slice, 0);
+        assert_eq!(hdr.pps_id, 0);
+    }
+
+    #[test]
+    fn slice_header_rejects_unknown_pps() {
+        let mut state = h264::State::new();
+        state.apply_codec_config(&fixture_avcc()).unwrap();
+        // Exp-Golomb ue(0)=`1`, ue(2)=`011`, ue(7)=`001000` — a header
+        // referencing pps_id 7, which was never loaded.
+        let rbsp = [0xB2, 0x00];
+        assert!(SliceHeader::parse(&rbsp, 3, true, &state).is_err());
     }
 }

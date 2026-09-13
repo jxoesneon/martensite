@@ -36,13 +36,20 @@ see ADR-0033.
   Spec: `docs/milestones/v0.16.0-media-pipeline.md`.
   **Status: IMPLEMENTED** — VT hardware-verified on macOS (30-frame real
   decode through `VideoToolboxDecoder` → `IoSurface`); FFmpeg real-decode
-  test on the checked-in 320x240 Annex-B fixture; MF/VAAPI compile-verified
-  for their targets (runtime needs Windows/Linux CI or self-hosted GPU
-  runner). Remaining exit gates: the 4K120 <0.1%-drop soak needs a
-  dedicated GPU runner (`#[ignore]`-gated, `MARTENSITE_MEDIA_4K120=1`), and
-  Windows DXGI zero-copy requires a Vulkan-backend wgpu device with
-  `VULKAN_EXTERNAL_MEMORY_WIN32` (DX12 backend cannot import D3D11 shared
-  handles; NV12/P010 on Windows fall back to `import_cpu_memory`).
+  test on the checked-in 320x240 Annex-B fixture; MF compile-verified for
+  `x86_64-pc-windows-msvc`; VAAPI compile + parser unit tests verified on
+  real Linux libva via `docker/media-test.Dockerfile`
+  (`docker build -t martensite-media-test -f docker/media-test.Dockerfile .`
+  — also runs the FFmpeg 5.1 real-decode and noop-wgpu interop suites;
+  `docker run --rm --device /dev/dri` on a Linux host exercises runtime
+  decode). FFmpeg backend drains opportunistically inside `send_packet`
+  because libavcodec 5.x drops the tail frame at `send_eof` when no
+  mid-stream receive occurred. Remaining exit gates: the 4K120 <0.1%-drop
+  soak needs a dedicated GPU runner (`#[ignore]`-gated,
+  `MARTENSITE_MEDIA_4K120=1`), and Windows DXGI zero-copy requires a
+  Vulkan-backend wgpu device with `VULKAN_EXTERNAL_MEMORY_WIN32` (DX12
+  backend cannot import D3D11 shared handles; NV12/P010 on Windows fall
+  back to `import_cpu_memory`).
 - **v0.17.0 Platform Expansion** — slider/radio/dropdown/scrollview/
   tabs/tooltip with ARIA APG + AccessKit; overlay layer; wasm32
   (WebGPU + TinySkia fallback; web a11y needs new hidden-DOM bridge —
