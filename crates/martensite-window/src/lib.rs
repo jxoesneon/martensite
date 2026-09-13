@@ -61,6 +61,7 @@ pub mod dpi;
 pub mod event;
 pub mod hit_test;
 pub mod manager;
+pub mod quiescent;
 pub mod stylus;
 pub mod window_attributes;
 
@@ -78,4 +79,5 @@ pub use event::{
 };
 pub use hit_test::{AffineTransform, ClipShape, HitTestResult, HitTester, RoundedRect};
 pub use manager::{WindowEntry, WindowEventOutcome, WindowKey, WindowManager};
+pub use quiescent::{Quiescence, QuiescentApp};
 pub use window_attributes::{MacOSWindowAttributes, WindowsWindowAttributes};

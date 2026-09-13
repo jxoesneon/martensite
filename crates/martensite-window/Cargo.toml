@@ -19,6 +19,7 @@ winit = { workspace = true }
 slotmap = { workspace = true }
 glam = { workspace = true }
 bitflags = { workspace = true }
+tracing = { workspace = true }
 
 [features]
 docs-rs = ["winit/x11"]
