@@ -235,8 +235,26 @@ fn section508_vpat_report_summary_is_honest() {
 // Caret synchronization latency under 16.6 ms
 // ===========================================================================
 
+/// Wall-clock latency gate for the caret-sync hot path.
+///
+/// Reads `MARTENSITE_AT_LATENCY_BUDGET_MS` (default `8.3` — half a
+/// 60 Hz frame) for the per-update budget, and `MARTENSITE_AT_HARNESS`
+/// (nvda | voiceover | orca) purely for log context.
+///
+/// `#[ignore]`-gated per the project convention that wall-clock
+/// performance tests run in the dedicated AT-harness CI jobs, not the
+/// default test suite.
 #[test]
+#[ignore = "wall-clock performance gate — runs in AT-harness CI jobs"]
 fn caret_synchronization_under_frame_budget() {
+    let budget_ms: f64 = std::env::var("MARTENSITE_AT_LATENCY_BUDGET_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8.3);
+    if let Ok(harness) = std::env::var("MARTENSITE_AT_HARNESS") {
+        eprintln!("AT harness: {harness}");
+    }
+
     // Build a CaretTracker over a representative text node (1,000
     // characters) and measure the cost of computing the caret geometry
     // and applying the selection to an AccessKit node. This is the
@@ -280,14 +298,11 @@ fn caret_synchronization_under_frame_budget() {
     }
     let elapsed = start.elapsed();
     let per_update = elapsed / 1_000;
+    let budget = std::time::Duration::from_secs_f64(budget_ms / 1_000.0);
 
-    // The 16.6 ms budget corresponds to a 60 Hz frame. We assert
-    // with a 2x safety margin (8.3 ms) to keep the test stable across
-    // hosts while still proving sub-frame latency.
     assert!(
-        per_update.as_secs_f64() < 8.3e-3,
-        "caret sync per update {:?} exceeds 8.3 ms (half-frame budget)",
-        per_update
+        per_update < budget,
+        "caret sync per update {per_update:?} exceeds {budget_ms} ms budget",
     );
 }
 
