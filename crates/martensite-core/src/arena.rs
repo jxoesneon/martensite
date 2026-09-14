@@ -1016,6 +1016,27 @@ impl WidgetArena {
     /// assert_eq!(arena.dispatch_event(root, &event), EventResponse::Ignored);
     /// ```
     pub fn dispatch_event(&mut self, target: WidgetId, event: &WidgetEvent) -> EventResponse {
+        self.dispatch_event_ex(target, event)
+            .map(|(_, response)| response)
+            .unwrap_or(EventResponse::Ignored)
+    }
+
+    /// Like [`Self::dispatch_event`], but also reports the arena node
+    /// that produced the terminal response.
+    ///
+    /// Event routers need the responder's [`WidgetId`] to apply
+    /// [`EventResponse::CapturePointer`] /
+    /// [`EventResponse::ReleasePointer`] to the widget that actually
+    /// handled the event — which may be an ancestor of the hit target
+    /// after bubbling — rather than to the hit target itself.
+    ///
+    /// Returns `Some((responder, response))` when a widget handled the
+    /// event, or `None` if it bubbled past the root.
+    pub fn dispatch_event_ex(
+        &mut self,
+        target: WidgetId,
+        event: &WidgetEvent,
+    ) -> Option<(WidgetId, EventResponse)> {
         let mut current = Some(target);
         while let Some(id) = current {
             let Some(hot) = self.get_hot(id) else {
@@ -1031,18 +1052,53 @@ impl WidgetArena {
                 break;
             };
             let mut cx = EventContext { event, bounds };
-            match cold.widget.event(&mut cx) {
+            let response = cold.widget.event(&mut cx);
+            match response {
                 EventResponse::Ignored => current = parent,
-                EventResponse::RequestRepaint => {
+                EventResponse::RequestRepaint
+                | EventResponse::CapturePointer
+                | EventResponse::ReleasePointer => {
                     if let Some(h) = self.get_hot_mut(id) {
                         h.flags |= NodeFlags::DIRTY_PAINT;
                     }
-                    return EventResponse::RequestRepaint;
+                    return Some((id, response));
                 }
-                response => return response,
+                other => return Some((id, other)),
             }
         }
-        EventResponse::Ignored
+        None
+    }
+
+    /// Walks a `Widget::child_mut` index path from an arena widget to a
+    /// nested internal child, returning it mutably.
+    ///
+    /// Used to deliver accessibility actions to internal targets: the
+    /// adapter's `resolve_internal` yields `(owner, path)` pairs and
+    /// this reaches the widget at that path — the internal analogue of
+    /// `OverlayLayer::widget_at_mut`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// // `DummyWidget` has no internal children — only the empty path resolves.
+    /// assert!(arena.internal_widget_mut(root, &[]).is_some());
+    /// assert!(arena.internal_widget_mut(root, &[0]).is_none());
+    /// ```
+    pub fn internal_widget_mut(
+        &mut self,
+        owner: WidgetId,
+        path: &[u32],
+    ) -> Option<&mut dyn crate::Widget> {
+        let cold = self.get_cold_mut(owner)?;
+        let mut widget: &mut dyn crate::Widget = &mut *cold.widget;
+        for &index in path {
+            widget = widget.child_mut(index as usize)?;
+        }
+        Some(widget)
     }
 
     /// Record the visible subtree rooted at `root` into `list`, in
@@ -1088,12 +1144,33 @@ impl WidgetArena {
 
         paint_widget_recursive(&*cold.widget, hot.bounds, list);
 
+        // Arena children honour the node's `CLIPS_CHILDREN` flag: their
+        // paint commands are wrapped in a clip for the node bounds.
+        // (`Widget::clips_children` governs *internal* children inside
+        // `paint_widget_recursive`.)
+        let clip_children = hot.flags.contains(NodeFlags::CLIPS_CHILDREN);
+        if clip_children {
+            list.push_clip(rect_to_kurbo(hot.bounds));
+        }
         let mut child = hot.first_child;
         while let Some(child_id) = child {
             self.paint_node(child_id, list);
             child = self.get_hot(child_id).and_then(|h| h.next_sibling);
         }
+        if clip_children {
+            list.pop_clip();
+        }
     }
+}
+
+/// Convert a [`crate::Rect`] to the `kurbo` rectangle paint commands use.
+pub(crate) fn rect_to_kurbo(rect: crate::Rect) -> kurbo::Rect {
+    kurbo::Rect::new(
+        f64::from(rect.min_x()),
+        f64::from(rect.min_y()),
+        f64::from(rect.max_x()),
+        f64::from(rect.max_y()),
+    )
 }
 
 /// Paint a widget and its internal children recursively.
@@ -1101,15 +1178,34 @@ impl WidgetArena {
 /// Emits the widget's own chrome via `paint`, then recurses into each
 /// internal child using the child's layout-assigned bounds. Internal
 /// children have no arena nodes, so this walk is driven entirely by the
-/// `Widget::child_count`/`child`/`child_bounds` protocol.
-fn paint_widget_recursive(widget: &dyn crate::Widget, bounds: crate::Rect, list: &mut PaintList) {
+/// `Widget::child_count`/`child`/`child_bounds` protocol. When
+/// [`Widget::clips_children`](crate::Widget::clips_children) reports
+/// `true` the recursion is wrapped in a
+/// [`PaintCommand::ClipRect`](crate::PaintCommand::ClipRect) /
+/// [`PaintCommand::PopClip`](crate::PaintCommand::PopClip) pair for
+/// `bounds`.
+///
+/// `pub(crate)` so the [`OverlayLayer`](crate::overlay::OverlayLayer)
+/// can paint popup content through the same walk.
+pub(crate) fn paint_widget_recursive(
+    widget: &dyn crate::Widget,
+    bounds: crate::Rect,
+    list: &mut PaintList,
+) {
     let mut cx = PaintContext { list, bounds };
     widget.paint(&mut cx);
+    let clip = widget.clips_children();
+    if clip {
+        cx.list.push_clip(rect_to_kurbo(bounds));
+    }
     for i in 0..widget.child_count() {
         let (Some(child), Some(child_bounds)) = (widget.child(i), widget.child_bounds(i)) else {
             continue;
         };
         paint_widget_recursive(child, child_bounds, &mut *cx.list);
+    }
+    if clip {
+        cx.list.pop_clip();
     }
 }
 

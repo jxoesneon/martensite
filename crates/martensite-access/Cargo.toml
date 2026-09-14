@@ -20,9 +20,9 @@ parking_lot = { workspace = true }
 tracing = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-bidi = { workspace = true }
+glam = { workspace = true }
 
 [dev-dependencies]
-glam = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 martensite-text = { workspace = true }
 

@@ -644,6 +644,12 @@ impl EventRouter {
     /// was hit. `EventResponse::RequestRepaint` already marks the
     /// responding node `DIRTY_PAINT` inside `dispatch_event`.
     ///
+    /// [`EventResponse::CapturePointer`] from the *responding* widget
+    /// (which may be an ancestor of the hit target after bubbling)
+    /// captures `event.pointer_id` to that widget;
+    /// [`EventResponse::ReleasePointer`] releases the capture for that
+    /// pointer.
+    ///
     /// # Examples
     ///
     /// ```
@@ -681,9 +687,43 @@ impl EventRouter {
         window_id: WindowId,
         event: &PointerEvent,
     ) -> Option<EventResponse> {
-        match self.route_pointer_event(arena, root, window_id, event) {
+        // Capture the hovered widget before routing so hover transitions
+        // can be detected. `PointerMoved` stops arriving once the pointer
+        // exits a widget's bounds, so `PointerEnter`/`PointerLeave` are
+        // dispatched explicitly at the boundary.
+        let prev_hovered = self.mouse.hovered_widget(window_id);
+        let outcome = self.route_pointer_event(arena, root, window_id, event);
+        let now_hovered = self.mouse.hovered_widget(window_id);
+        if event.state == PointerState::Moved && prev_hovered != now_hovered {
+            if let Some(old) = prev_hovered {
+                if arena.is_alive(old) {
+                    let _ = arena.dispatch_event(old, &WidgetEvent::PointerLeave);
+                }
+            }
+            if let Some(new) = now_hovered {
+                let _ = arena.dispatch_event(new, &WidgetEvent::PointerEnter);
+            }
+        }
+        match outcome {
             EventDispatchOutcome::Handled(id) => {
-                Some(arena.dispatch_event(id, &widget_event_for_pointer(event)))
+                match arena.dispatch_event_ex(id, &widget_event_for_pointer(event)) {
+                    Some((responder, response)) => {
+                        match response {
+                            EventResponse::CapturePointer => {
+                                self.capture_pointer(event.pointer_id, responder);
+                            }
+                            EventResponse::ReleasePointer => {
+                                self.release_pointer(event.pointer_id);
+                            }
+                            _ => {}
+                        }
+                        Some(response)
+                    }
+                    // The event bubbled past the root: it was delivered
+                    // but ignored, which is `Some(Ignored)` — not `None`
+                    // (that would mean no widget was hit at all).
+                    None => Some(EventResponse::Ignored),
+                }
             }
             _ => None,
         }

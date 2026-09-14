@@ -544,6 +544,16 @@ pub enum PaintCommand {
     ClipRect(Rect),
     /// Push a rounded-rectangular clip onto the active clip stack.
     ClipRoundedRect(Rect, f32),
+    /// Pop the most recent clip pushed by [`PaintCommand::ClipRect`] or
+    /// [`PaintCommand::ClipRoundedRect`], restoring the clip state to
+    /// what it was before that push.
+    ///
+    /// Without this command, clips accumulate for the remainder of the
+    /// paint list; `PopClip` lets a widget clip its descendants without
+    /// leaking the clip onto later siblings. Backends treat a `PopClip`
+    /// with an empty clip stack as a no-op so unbalanced lists stay
+    /// safe.
+    PopClip,
     /// Draw a text string at the given position, font size, and RGBA color.
     DrawText(Point, String, f32, [u8; 4]),
     /// Draw a pre-resolved [`GlyphRun`].
@@ -1025,6 +1035,24 @@ impl PaintList {
     pub fn push_clip_rounded(&mut self, rect: Rect, radius: f32) {
         self.commands
             .push(PaintCommand::ClipRoundedRect(rect, radius));
+    }
+
+    /// Pushes a [`PaintCommand::PopClip`], restoring the clip state to
+    /// what it was before the most recent clip push.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintCommand, PaintList};
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_clip(Rect::new(0.0, 0.0, 100.0, 100.0));
+    /// list.pop_clip();
+    /// assert!(matches!(list.commands[1], PaintCommand::PopClip));
+    /// ```
+    pub fn pop_clip(&mut self) {
+        self.commands.push(PaintCommand::PopClip);
     }
 
     /// Pushes a [`PaintCommand::DrawText`].

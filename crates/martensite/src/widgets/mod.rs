@@ -144,12 +144,85 @@ pub mod external;
 /// ```
 pub mod media;
 
+/// ARIA APG slider widget.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Slider;
+///
+/// let s = Slider::new(0.0, 100.0).with_value(50.0);
+/// ```
+pub mod slider;
+
+/// ARIA APG radio group widget.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::RadioGroup;
+///
+/// let g = RadioGroup::new(["A", "B"]);
+/// ```
+pub mod radio;
+
+/// ARIA APG scroll view with smart scrollbars and rubber-band
+/// overscroll.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{ScrollView, Text};
+///
+/// let v = ScrollView::new(Text::new("content"));
+/// ```
+pub mod scrollview;
+
+/// ARIA APG select-only combobox with an overlay listbox popup.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Dropdown;
+///
+/// let dd = Dropdown::new(["Small", "Medium", "Large"]);
+/// ```
+pub mod dropdown;
+
+/// ARIA APG tabs widget (tab list + tab panels).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Tabs;
+///
+/// let t = Tabs::with_labels(["General", "Advanced"]);
+/// ```
+pub mod tabs;
+
+/// ARIA APG tooltip with an overlay bubble and `aria-describedby`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Text, Tooltip};
+///
+/// let tip = Tooltip::new(Text::new("trigger"), "tip text");
+/// ```
+pub mod tooltip;
+
 pub use button::Button;
 pub use checkbox::CheckBox;
 pub use container::Container;
+pub use dropdown::Dropdown;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use media::{MediaView, VideoFit};
+pub use radio::{RadioGroup, RadioOption};
+pub use scrollview::{ScrollBarWidget, ScrollView};
+pub use slider::{Slider, SliderOrientation};
 pub use stack::Stack;
+pub use tabs::{TabActivation, TabItem, Tabs};
 pub use text::Text;
 pub use text_input::TextInput;
+pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS};

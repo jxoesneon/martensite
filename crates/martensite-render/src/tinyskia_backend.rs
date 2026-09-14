@@ -469,6 +469,11 @@ impl TinySkiaBackend {
                     self.push_clip_path(path);
                 }
             }
+            PaintCommand::PopClip => {
+                // Restore the clip to what it was before the most recent
+                // push; a pop on an empty stack is a documented no-op.
+                self.clip_stack.pop();
+            }
             PaintCommand::DrawText(origin, text, size, color) => {
                 self.render_text(*origin, text, *size, *color);
             }

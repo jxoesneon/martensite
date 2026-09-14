@@ -51,6 +51,24 @@ pub enum EventResponse {
     CaptureFocus,
     /// The event was handled and a repaint is requested.
     RequestRepaint,
+    /// The event was handled and this widget requests pointer capture:
+    /// every subsequent event for the pointer that produced this event
+    /// is routed to this widget regardless of hit-testing, until the
+    /// widget answers with [`EventResponse::ReleasePointer`] (or the
+    /// widget is removed from the arena). Used for drag interactions
+    /// such as slider thumbs and scroll thumbs that must keep tracking
+    /// the pointer outside the widget's bounds.
+    ///
+    /// The capture is applied by `martensite-window`'s `EventRouter`
+    /// when the response propagates out of
+    /// [`WidgetArena::dispatch_event`](crate::WidgetArena::dispatch_event);
+    /// the responding node is also marked `DIRTY_PAINT` because a
+    /// grab/release always changes visual state.
+    CapturePointer,
+    /// The event was handled and this widget releases its pointer
+    /// capture for the pointer that produced this event. See
+    /// [`EventResponse::CapturePointer`].
+    ReleasePointer,
 }
 
 /// Context provided to widgets during the layout pass.
@@ -125,10 +143,85 @@ pub enum WidgetEvent {
         /// The committed text.
         text: String,
     },
+    /// The pointer entered the widget's bounds (hover begin). Sent to
+    /// the previously-unhovered widget when the hovered hit-test
+    /// target changes, paired with [`PointerLeave`](Self::PointerLeave)
+    /// on the old target.
+    PointerEnter,
+    /// The pointer left the widget's bounds (hover end). Unlike
+    /// `PointerMoved` — which stops arriving once the pointer exits —
+    /// this is dispatched on the *transition*, letting widgets such as
+    /// `Tooltip` detect hover exit.
+    PointerLeave,
     /// The widget gained keyboard focus.
     FocusGained,
     /// The widget lost keyboard focus.
     FocusLost,
+    /// An assistive-technology action delivered to the widget — the
+    /// widget-space form of an AccessKit `ActionRequest`, decoded by
+    /// `martensite-access` into [`SemanticAction`] and dispatched
+    /// through the normal event pipeline.
+    SemanticAction(SemanticAction),
+}
+
+/// A semantic action an assistive technology requests of a widget.
+///
+/// Mirrors the `accesskit::Action` vocabulary in a `martensite-core`
+/// type so widgets handle AT actions through [`Widget::event`] like
+/// any other input, without core depending on the access adapter.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::SemanticAction;
+///
+/// let action = SemanticAction::Increment;
+/// assert_ne!(action, SemanticAction::Decrement);
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum SemanticAction {
+    /// Activate the widget (`accesskit::Action::Click`).
+    Click,
+    /// Move keyboard focus to the widget.
+    Focus,
+    /// Remove keyboard focus from the widget.
+    Blur,
+    /// Set the widget's value; carries the value as text — numeric
+    /// widgets parse it, matching `A11yAction::SetValue`.
+    SetValue(String),
+    /// Increment the widget's value by one step.
+    Increment,
+    /// Decrement the widget's value by one step.
+    Decrement,
+    /// Expand a collapsible widget (e.g. open a combobox popup).
+    Expand,
+    /// Collapse an expanded widget.
+    Collapse,
+    /// Show the widget's tooltip.
+    ShowTooltip,
+    /// Hide the widget's tooltip.
+    HideTooltip,
+    /// Show the widget's context menu.
+    ShowContextMenu,
+    /// Scroll up by one unit (`accesskit::Action::ScrollUp`).
+    ScrollUp,
+    /// Scroll down by one unit.
+    ScrollDown,
+    /// Scroll left by one unit.
+    ScrollLeft,
+    /// Scroll right by one unit.
+    ScrollRight,
+    /// Scroll so this widget becomes visible in its scrollable
+    /// ancestor(s) (`accesskit::Action::ScrollIntoView`).
+    ScrollIntoView,
+    /// Scroll the widget so the given point (in its own coordinate
+    /// space) is visible (`accesskit::Action::ScrollToPoint`).
+    ScrollToPoint(Vec2),
+    /// Set the scroll offset directly
+    /// (`accesskit::Action::SetScrollOffset` with
+    /// `ActionData::SetScrollOffset`).
+    SetScrollOffset(Vec2),
 }
 
 impl WidgetEvent {
@@ -246,6 +339,66 @@ pub struct PaintContext<'a> {
 /// Context provided to widgets during accessibility tree construction.
 pub struct AccessibilityContext {}
 
+/// A descendant AccessKit node emitted for a widget during tree
+/// construction, handed to [`Widget::a11y_fixup`] so widgets can wire
+/// relations that require the children's minted `NodeId`s —
+/// `aria-controls` and `aria-describedby` cannot be expressed inside
+/// [`Widget::accessibility`] because the descendant ids do not exist
+/// yet at that point.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::A11yEmittedNode;
+///
+/// // Constructed by the adapter; widgets read `path` and `id`, and
+/// // mutate `node`.
+/// let emitted = A11yEmittedNode {
+///     path: vec![0],
+///     id: accesskit::NodeId(7),
+///     node: accesskit::Node::new(accesskit::Role::Unknown),
+/// };
+/// assert_eq!(emitted.path, vec![0]);
+/// ```
+pub struct A11yEmittedNode {
+    /// The chain of [`Widget::child`] indices that reaches this node
+    /// within the widget's internal subtree.
+    pub path: Vec<u32>,
+    /// The AccessKit `NodeId` minted for this node.
+    pub id: accesskit::NodeId,
+    /// The emitted node, patchable in place.
+    pub node: AccessKitNode,
+}
+
+/// A read-only reference to a node emitted for an
+/// [`OverlayLayer`](crate::overlay::OverlayLayer) popup subtree, handed
+/// to [`Widget::a11y_fixup`] so a widget can resolve the `NodeId`s of
+/// popups it opened — e.g. a combobox wiring
+/// `aria-activedescendant` to one of its listbox options.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::OverlayA11yRef;
+///
+/// let r = OverlayA11yRef {
+///     entry: 3,
+///     path: vec![2],
+///     id: accesskit::NodeId(9),
+/// };
+/// assert_eq!(r.entry, 3);
+/// ```
+pub struct OverlayA11yRef {
+    /// The overlay entry id, as returned by
+    /// [`OverlayLayer::open`](crate::overlay::OverlayLayer::open).
+    pub entry: u64,
+    /// The chain of [`Widget::child`] indices reaching the node inside
+    /// the popup's internal widget tree; empty for the popup root.
+    pub path: Vec<u32>,
+    /// The AccessKit `NodeId` minted for this node.
+    pub id: accesskit::NodeId,
+}
+
 /// Core widget trait that all Martensite UI components implement.
 ///
 /// Widgets are stored in the [`WidgetArena`](crate::WidgetArena) and receive
@@ -321,6 +474,59 @@ pub trait Widget: Send + Sync + 'static {
 
     /// Populate the AccessKit accessibility node. Default is a no-op.
     fn accessibility(&self, _node: &mut AccessKitNode) {}
+
+    /// Prepare the widget for accessibility emission.
+    ///
+    /// Called once per widget before its node and internal-children
+    /// subtree are built during a `TreeUpdate` — the place to apply
+    /// pending assistive-technology activations received by internal
+    /// children (e.g. a `SemanticAction::Click` delivered to a radio
+    /// option) so the emitted tree reflects them. Popup content is
+    /// *not* prepared: popup widgets are expected to be stateless
+    /// views of owner state.
+    ///
+    /// Default: no-op.
+    fn a11y_prepare(&mut self) {}
+
+    /// Post-process the accessibility nodes emitted for this widget's
+    /// internal subtree, plus this widget's own node.
+    ///
+    /// Called once per widget after its whole subtree has been emitted.
+    /// `emitted` lists every descendant node minted for the widget's
+    /// internal children (mutable — relations such as
+    /// `aria-describedby` or `aria-controls` can be patched onto them);
+    /// `overlay_nodes` lists the `NodeId`s minted for every popup
+    /// currently open in the [`OverlayLayer`](crate::overlay::OverlayLayer)
+    /// (read-only — popups are emitted separately); `this_node` is the
+    /// widget's own node. Use this hook for `aria-activedescendant`,
+    /// `aria-controls`, and `aria-describedby`, which cannot be set
+    /// inside [`Self::accessibility`] because descendant `NodeId`s are
+    /// minted afterwards.
+    ///
+    /// Default: no-op.
+    fn a11y_fixup(
+        &self,
+        _emitted: &mut Vec<A11yEmittedNode>,
+        _overlay_nodes: &[OverlayA11yRef],
+        _this_node: &mut AccessKitNode,
+    ) {
+    }
+
+    /// Whether this widget's internal children and arena children are
+    /// clipped to the widget's bounds during paint traversal.
+    ///
+    /// When `true`, the paint walk emits a
+    /// [`PaintCommand::ClipRect`](crate::PaintCommand::ClipRect) for the
+    /// widget bounds before recursing into children and a
+    /// [`PaintCommand::PopClip`](crate::PaintCommand::PopClip)
+    /// afterwards, so descendants cannot draw outside the widget —
+    /// required by scrollable regions. Overlay popups are always painted
+    /// unclipped.
+    ///
+    /// Default: `false`.
+    fn clips_children(&self) -> bool {
+        false
+    }
 
     /// Record this widget's own paint commands into the context's paint
     /// list. Default is a no-op — the widget contributes no chrome.

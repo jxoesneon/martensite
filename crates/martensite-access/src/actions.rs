@@ -13,9 +13,69 @@
 //! 4. The widget processes the action and may update its state.
 
 use accesskit::{Action, ActionData, ActionRequest};
-use martensite_core::{WidgetArena, WidgetId};
+use martensite_core::{SemanticAction, WidgetArena, WidgetId};
 
 use crate::node_id_to_widget_id;
+
+/// Maps a decoded [`A11yAction`] to the widget-space
+/// [`SemanticAction`] it should be delivered as, or `None` for actions
+/// that carry no widget-side semantics (e.g. unsupported `Other`
+/// actions without recognised `ActionData`).
+///
+/// Deliver the result through the normal event pipeline:
+/// `WidgetEvent::SemanticAction(..)` to the action's target widget —
+/// via `WidgetArena::dispatch_event` for arena targets, or
+/// `WidgetArena::internal_widget_mut` /
+/// `OverlayLayer::widget_at_mut` for virtual-node targets resolved by
+/// `AccessKitAdapter::resolve_internal` / `resolve_overlay`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_access::actions::{semantic_action_for, A11yAction};
+/// use martensite_core::{SemanticAction, WidgetId};
+///
+/// let id = WidgetId::from_parts(0, 1);
+/// assert_eq!(
+///     semantic_action_for(&A11yAction::Increment(id)),
+///     Some(SemanticAction::Increment),
+/// );
+/// ```
+pub fn semantic_action_for(action: &A11yAction) -> Option<SemanticAction> {
+    Some(match action {
+        A11yAction::Click(_) => SemanticAction::Click,
+        A11yAction::Focus(_) => SemanticAction::Focus,
+        A11yAction::Blur(_) => SemanticAction::Blur,
+        A11yAction::SetValue(_, value) => SemanticAction::SetValue(value.clone()),
+        A11yAction::Increment(_) => SemanticAction::Increment,
+        A11yAction::Decrement(_) => SemanticAction::Decrement,
+        A11yAction::Expand(_) => SemanticAction::Expand,
+        A11yAction::Collapse(_) => SemanticAction::Collapse,
+        A11yAction::HideTooltip(_) => SemanticAction::HideTooltip,
+        A11yAction::ShowTooltip(_) => SemanticAction::ShowTooltip,
+        A11yAction::ShowContextMenu(_) => SemanticAction::ShowContextMenu,
+        A11yAction::Other(_, action, data) => match action {
+            Action::ScrollUp => SemanticAction::ScrollUp,
+            Action::ScrollDown => SemanticAction::ScrollDown,
+            Action::ScrollLeft => SemanticAction::ScrollLeft,
+            Action::ScrollRight => SemanticAction::ScrollRight,
+            Action::ScrollIntoView => SemanticAction::ScrollIntoView,
+            Action::ScrollToPoint => match data {
+                Some(ActionData::ScrollToPoint(p)) => {
+                    SemanticAction::ScrollToPoint(glam::Vec2::new(p.x as f32, p.y as f32))
+                }
+                _ => return None,
+            },
+            Action::SetScrollOffset => match data {
+                Some(ActionData::SetScrollOffset(p)) => {
+                    SemanticAction::SetScrollOffset(glam::Vec2::new(p.x as f32, p.y as f32))
+                }
+                _ => return None,
+            },
+            _ => return None,
+        },
+    })
+}
 
 /// A decoded accessibility action targeting a specific widget.
 ///
