@@ -282,11 +282,19 @@ mod gate_4k120 {
     }
 
     /// Opens a VideoToolbox session for `config` (`decoder-videotoolbox`
-    /// enabled and running on macOS).
+    /// enabled and running on macOS). Hardware decode is *required*: the
+    /// gate's `hw` claim is derived from the backend tag, so a
+    /// silently-created VT software decoder would still report
+    /// `hardware_accelerated()`. With `allow_software` unset the decoder
+    /// specification uses `RequireHardwareAcceleratedVideoDecoder`, so on
+    /// hosts without an AV1-capable hardware decoder (e.g. M1/M2) init
+    /// fails and the leg falls back to ffmpeg as designed.
     #[cfg(all(feature = "decoder-videotoolbox", target_os = "macos"))]
     fn open_videotoolbox(config: &DecoderConfig) -> Option<Box<dyn VideoDecoder>> {
         use martensite_media::decoder::videotoolbox::VideoToolboxDecoder;
-        match VideoToolboxDecoder::init(config.clone()) {
+        let mut config = config.clone();
+        config.allow_software = false;
+        match VideoToolboxDecoder::init(config) {
             Ok(dec) => Some(Box::new(dec)),
             Err(e) => {
                 eprintln!("4k120: VideoToolbox init failed: {e}");
@@ -440,8 +448,8 @@ mod gate_4k120 {
             // The `.bin` AV1 sample is actually an IVF container; payloads
             // are the raw per-frame temporal units (OBUs).
             VideoCodec::Av1 => {
-                let Some(frames) = ivf_frames(&data) else {
-                    eprintln!("4k120: {name} is not a parseable IVF stream; leg skipped");
+                let Some(frames) = ivf_frames(&data, b"AV01") else {
+                    eprintln!("4k120: {name} is not an AV1 IVF stream; leg skipped");
                     return None;
                 };
                 (frames, None)

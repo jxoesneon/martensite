@@ -48,9 +48,11 @@ see ADR-0033.
   (`full_rate_4k120_gate`, `#[ignore]` + `MARTENSITE_MEDIA_4K120=1`) and
   **verified on Apple M4**: H.264 + HEVC decode 60 s @ 4K120 through
   VideoToolbox hardware with 0.000% drops and ~0.015% dispatch CPU
-  (7200/7200 presented at a wall-clock 120.0 fps); the AV1 leg falls back
-  to dav1d software decode (~119.8 fps, advisory — VideoToolbox has no
-  av1C→`CMFormatDescription` bridge in objc2-core-media 0.3.2). Samples
+  (7200/7200 presented at a wall-clock 120.0 fps); the AV1 leg also runs
+  on VideoToolbox hardware via the vendored `av1C`→`CMFormatDescription`
+  bridge (`decoder::av1` + `SampleDescriptionExtensionAtoms`), presenting
+  1800/1800 frames at 120.1 fps with 0.000% loss (dav1d/ffmpeg remains
+  the fallback on hosts without AV1 hardware decode). Samples
   regenerate via `scripts/generate-media-samples.sh` into
   `target/media-samples/` (gitignored; `$MARTENSITE_MEDIA_SAMPLES`
   overrides). The HDR golden gate (`tests/hdr_golden.rs`,
