@@ -1,0 +1,47 @@
+[package]
+name = "martensite-access-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Platform-specific accessibility FFI glue (Android JNI, iOS Objective-C) for martensite-access."
+readme = "README.md"
+
+[dependencies]
+accesskit = { workspace = true }
+
+# Android: `accesskit_android`'s `InjectingAdapter` injects an
+# accessibility delegate into the GameActivity `InputEnabledSurfaceView`
+# via JNI. The `embedded-dex` feature bundles the prebuilt
+# `dev.accesskit.android.Delegate` dex bytecode so the class is loaded
+# from the crate itself rather than the application package.
+# `android-activity` is used only for the `AndroidApp` handle type; the
+# version is kept in lockstep with the one winit's `winit-android`
+# backend uses so the handle types unify.
+[target.'cfg(target_os = "android")'.dependencies]
+accesskit_android = { version = "0.8.0", features = ["embedded-dex"] }
+# `game-activity` is required (not `native-activity`): `android-activity`
+# compiles no activity backend without one of these features, and the
+# AccessKit adapter only works on GameActivity (see `src/android.rs`).
+android-activity = { version = "0.6", features = ["game-activity"] }
+
+[features]
+docs-rs = []
+
+[package.metadata.docs.rs]
+features = ["docs-rs"]
+
+# This crate uses `#![allow(unsafe_code)]` at the crate level because it
+# contains the mobile accessibility FFI boundary: JNI calls into the JVM
+# and the GameActivity surface view on Android (and, once implemented,
+# Objective-C calls on iOS). The workspace-level `unsafe_code = "deny"`
+# policy is preserved for all other crates; this is the narrowly scoped
+# audited exception, following the same pattern as
+# `martensite-media-platform` and `martensite-font-fallback`.
+[lints]
+workspace = true

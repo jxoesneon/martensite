@@ -21,6 +21,15 @@ tracing = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-bidi = { workspace = true }
 
+# Android: `accesskit_winit`'s `accesskit_android` feature selects the
+# `InjectingAdapter` backend (the JNI glue lives in the audited-unsafe
+# `martensite-access-platform` crate), and winit's `android-game-activity`
+# feature selects the GameActivity backend the adapter requires —
+# `NativeActivity` is unsupported.
+[target.'cfg(target_os = "android")'.dependencies]
+accesskit_winit = { workspace = true, features = ["accesskit_android"] }
+winit = { workspace = true, features = ["android-game-activity"] }
+
 [dev-dependencies]
 glam = { workspace = true }
 uuid = { version = "1", features = ["v4"] }

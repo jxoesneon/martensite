@@ -146,6 +146,79 @@ impl MartensiteAccessBridge {
         inner.adapter.build_incremental_update(&mut inner.arena)
     }
 
+    /// Returns a cloneable handle implementing the three AccessKit
+    /// handler traits ([`ActivationHandler`], [`ActionHandler`],
+    /// [`DeactivationHandler`]) by delegating to this bridge.
+    ///
+    /// `accesskit_winit::Adapter::with_direct_handlers` takes the three
+    /// handlers as separate values; clone the returned
+    /// [`BridgeHandlers`] once per parameter:
+    ///
+    /// ```no_run
+    /// use martensite_access::winit::MartensiteAccessBridge;
+    /// use martensite_access::AccessKitAdapter;
+    /// use martensite_core::WidgetArena;
+    /// use std::sync::Arc;
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert(Default::default(), Default::default());
+    /// let adapter = AccessKitAdapter::new(root);
+    /// let bridge = Arc::new(MartensiteAccessBridge::new(arena, adapter));
+    /// let handlers = bridge.handlers();
+    /// // accesskit_winit::Adapter::with_direct_handlers(
+    /// //     &event_loop, &*window,
+    /// //     handlers.clone(), handlers.clone(), handlers,
+    /// // );
+    /// ```
+    pub fn handlers(self: &Arc<Self>) -> BridgeHandlers {
+        BridgeHandlers {
+            bridge: Arc::clone(self),
+        }
+    }
+
+    /// Marks the tree activated and builds a full `TreeUpdate`.
+    ///
+    /// This is the shared body of [`ActivationHandler::request_initial_tree`]
+    /// for both [`MartensiteAccessBridge`] and [`BridgeHandlers`].
+    fn activate(&self) -> Option<TreeUpdate> {
+        let mut guard = self.inner.lock();
+        let inner = &mut *guard;
+        inner.activated = true;
+        Some(inner.adapter.build_update(&mut inner.arena))
+    }
+
+    /// Decodes `request` and enqueues it for batched dispatch.
+    ///
+    /// This is the shared body of [`ActionHandler::do_action`] for both
+    /// [`MartensiteAccessBridge`] and [`BridgeHandlers`].
+    fn dispatch_action(&self, request: ActionRequest) {
+        let mut guard = self.inner.lock();
+        let inner = &mut *guard;
+
+        // Decode the action (immutable borrow of arena) and enqueue it for
+        // batched processing on the main thread. This returns immediately,
+        // avoiding re-entrancy and long IPC-thread stalls. The application's
+        // event loop drains the queue via `process_pending_actions` once
+        // per frame.
+        let tree_id = inner.adapter.tree_id();
+        let action = crate::actions::decode_action_request(&inner.arena, &request, &tree_id);
+
+        if let Some(action) = action {
+            self.pump.push(action);
+        }
+    }
+
+    /// Marks the accessibility tree deactivated.
+    ///
+    /// This is the shared body of
+    /// [`DeactivationHandler::deactivate_accessibility`] for both
+    /// [`MartensiteAccessBridge`] and [`BridgeHandlers`].
+    fn deactivate(&self) {
+        let mut guard = self.inner.lock();
+        let inner = &mut *guard;
+        inner.activated = false;
+    }
+
     /// Processes all accessibility actions that were enqueued since the last
     /// call, dispatching them in a single batch to the registered
     /// [`MartensiteActionHandler`].
@@ -221,37 +294,68 @@ impl MartensiteAccessBridge {
 
 impl ActivationHandler for MartensiteAccessBridge {
     fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
-        let mut guard = self.inner.lock();
-        let inner = &mut *guard;
-        inner.activated = true;
-        Some(inner.adapter.build_update(&mut inner.arena))
+        self.activate()
     }
 }
 
 impl ActionHandler for MartensiteAccessBridge {
     fn do_action(&mut self, request: ActionRequest) {
-        let mut guard = self.inner.lock();
-        let inner = &mut *guard;
-
-        // Decode the action (immutable borrow of arena) and enqueue it for
-        // batched processing on the main thread. This returns immediately,
-        // avoiding re-entrancy and long IPC-thread stalls. The application's
-        // event loop drains the queue via `process_pending_actions` once
-        // per frame.
-        let tree_id = inner.adapter.tree_id();
-        let action = crate::actions::decode_action_request(&inner.arena, &request, &tree_id);
-
-        if let Some(action) = action {
-            self.pump.push(action);
-        }
+        self.dispatch_action(request);
     }
 }
 
 impl DeactivationHandler for MartensiteAccessBridge {
     fn deactivate_accessibility(&mut self) {
-        let mut guard = self.inner.lock();
-        let inner = &mut *guard;
-        inner.activated = false;
+        self.deactivate();
+    }
+}
+
+/// A cloneable handle implementing the three AccessKit handler traits by
+/// delegating to a shared [`MartensiteAccessBridge`].
+///
+/// `accesskit_winit::Adapter::with_direct_handlers` requires
+/// [`ActivationHandler`], [`ActionHandler`], and [`DeactivationHandler`]
+/// as three separate `impl` values. `Arc<MartensiteAccessBridge>` cannot
+/// implement those traits directly (orphan rules), so this handle wraps
+/// the `Arc` and delegates through the bridge's `Mutex`-guarded state.
+/// Clone it once per handler parameter — all clones share the same
+/// bridge, arena, and event pump.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_access::winit::MartensiteAccessBridge;
+/// use martensite_access::AccessKitAdapter;
+/// use martensite_core::WidgetArena;
+/// use std::sync::Arc;
+///
+/// let mut arena = WidgetArena::new();
+/// let root = arena.insert(Default::default(), Default::default());
+/// let adapter = AccessKitAdapter::new(root);
+/// let bridge = Arc::new(MartensiteAccessBridge::new(arena, adapter));
+/// let handlers = bridge.handlers();
+/// let _second_handle = handlers.clone();
+/// ```
+#[derive(Clone)]
+pub struct BridgeHandlers {
+    bridge: Arc<MartensiteAccessBridge>,
+}
+
+impl ActivationHandler for BridgeHandlers {
+    fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
+        self.bridge.activate()
+    }
+}
+
+impl ActionHandler for BridgeHandlers {
+    fn do_action(&mut self, request: ActionRequest) {
+        self.bridge.dispatch_action(request);
+    }
+}
+
+impl DeactivationHandler for BridgeHandlers {
+    fn deactivate_accessibility(&mut self) {
+        self.bridge.deactivate();
     }
 }
 

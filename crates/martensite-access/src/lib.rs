@@ -31,6 +31,10 @@ pub mod pump;
 pub mod tree;
 pub mod winit;
 
+/// Android (GameActivity) adapter wiring.
+#[cfg(target_os = "android")]
+pub mod android;
+
 pub use accesskit::{Node, NodeId, Rect, Role, TreeUpdate};
 pub use adapter::AccessKitAdapter;
 pub use caret::{CaretTracker, TextAffinity, TextBoundary, TextSelection};

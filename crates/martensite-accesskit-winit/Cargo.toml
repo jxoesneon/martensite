@@ -22,6 +22,11 @@ path = "src/lib.rs"
 [features]
 default = ["accesskit_unix", "async-io"]
 async-io = ["accesskit_unix/async-io"]
+# Enables the Android `InjectingAdapter` backend (GameActivity only — see
+# `platform_impl/android.rs`). The JNI glue lives in
+# `martensite-access-platform`, the workspace's audited-unsafe mobile
+# FFI crate.
+accesskit_android = ["dep:martensite-access-platform"]
 
 [dependencies]
 accesskit = { workspace = true }
@@ -37,8 +42,11 @@ accesskit_macos = { version = "0.27.0" }
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
 accesskit_unix = { version = "0.23.0", optional = true, default-features = false }
 
+# The Android platform adapter delegates to
+# `martensite-access-platform::android`, which owns the JNI boundary
+# (`accesskit_android`'s `InjectingAdapter` + `embedded-dex`).
 [target.'cfg(target_os = "android")'.dependencies]
-accesskit_android = { version = "0.8.0", optional = true, features = ["embedded-dex"] }
+martensite-access-platform = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 accesskit_ios = { version = "0.2.0" }

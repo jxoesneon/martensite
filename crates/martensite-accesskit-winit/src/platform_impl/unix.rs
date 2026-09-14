@@ -2,8 +2,6 @@
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file).
 
-use crate::raw_window_handle::HasWindowHandle;
-
 use accesskit::{ActionHandler, ActivationHandler, DeactivationHandler, Rect, TreeUpdate};
 use accesskit_unix::Adapter as UnixAdapter;
 use winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::Window};
@@ -15,8 +13,8 @@ pub struct Adapter {
 
 impl Adapter {
     pub fn new(
-        _event_loop: &impl ActiveEventLoop,
-        _window: &(impl Window + HasWindowHandle),
+        _event_loop: &dyn ActiveEventLoop,
+        _window: &dyn Window,
         activation_handler: impl 'static + ActivationHandler + Send,
         action_handler: impl 'static + ActionHandler + Send,
         deactivation_handler: impl 'static + DeactivationHandler + Send,
@@ -37,7 +35,7 @@ impl Adapter {
         self.adapter.update_window_focus_state(is_focused);
     }
 
-    pub fn process_event(&mut self, window: &impl Window, event: &WindowEvent) {
+    pub fn process_event(&mut self, window: &dyn Window, event: &WindowEvent) {
         match event {
             WindowEvent::Moved(outer_position) => {
                 let outer_position: (_, _) = outer_position.cast::<f64>().into();
