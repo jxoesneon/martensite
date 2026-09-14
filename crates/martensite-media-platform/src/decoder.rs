@@ -21,7 +21,10 @@
 
 use crate::surface::{HardwareHandle, MediaError, VideoFrameMetadata};
 
-#[cfg(all(feature = "decoder-videotoolbox", target_os = "macos"))]
+// The pure-Rust AV1 OBU/sequence-header parser compiles on every host so
+// its unit tests also run on Linux CI; only the VideoToolbox decoder that
+// consumes it is macOS-only.
+#[cfg(feature = "decoder-videotoolbox")]
 mod av1;
 
 #[cfg(all(feature = "decoder-videotoolbox", target_os = "macos"))]

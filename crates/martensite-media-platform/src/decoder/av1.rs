@@ -14,6 +14,12 @@
 //! require), extracts the sequence-header OBU, and parses the bit-level
 //! sequence-header fields needed to assemble the `av1C` record per the
 //! ISOBMFF AV1 codec-configuration spec.
+//!
+//! The module is compiled wherever the `decoder-videotoolbox` feature is
+//! enabled (not just on macOS) so its unit tests exercise the pure-Rust
+//! parser on every CI host; only the decoder in [`crate::decoder::videotoolbox`]
+//! is macOS-only.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 /// One parsed OBU: header, optional extension byte, optional `leb128` size,
 /// and payload — all views into the temporal unit it was parsed from.
@@ -71,8 +77,10 @@ pub(crate) fn parse_obus(data: &[u8]) -> Vec<Obu<'_>> {
     let mut pos = 0usize;
     while pos < data.len() {
         let header = data[pos];
-        if header & 0x80 != 0 {
-            break; // obu_forbidden_bit set — not an OBU stream.
+        if header & 0x81 != 0 {
+            // obu_forbidden_bit or obu_reserved_1bit set — not an OBU
+            // stream (both are required to be zero).
+            break;
         }
         let obu_type = (header >> 3) & 0x0f;
         let has_extension = header & 0x04 != 0;
@@ -149,9 +157,12 @@ impl BitReader<'_> {
         let mut leading_zeros = 0u32;
         while !self.flag()? {
             leading_zeros += 1;
-            if leading_zeros >= 32 {
-                return Some(u32::MAX);
-            }
+        }
+        if leading_zeros >= 32 {
+            // Spec §4.10.5: ≥32 leading zeros decodes as u32::MAX and no
+            // suffix is read — but the terminating 1 above *is* consumed,
+            // keeping the reader aligned for the following syntax element.
+            return Some(u32::MAX);
         }
         let suffix = self.bits(leading_zeros)?;
         Some((1u32 << leading_zeros) - 1 + suffix)
@@ -188,15 +199,30 @@ pub(crate) struct SequenceHeader {
     pub(crate) max_frame_width: u32,
     /// `max_frame_height_minus_1 + 1`.
     pub(crate) max_frame_height: u32,
+    /// `color_primaries` (ISO/IEC 23001-8 code; 2 = unspecified — also the
+    /// value used when `color_description_present_flag` is clear).
+    pub(crate) color_primaries: u8,
+    /// `transfer_characteristics` (ISO/IEC 23001-8 code; 2 = unspecified).
+    pub(crate) transfer_characteristics: u8,
+    /// `matrix_coefficients` (ISO/IEC 23001-8 code; 2 = unspecified).
+    pub(crate) matrix_coefficients: u8,
+    /// `color_range` — true for full-range output (also implied by the
+    /// BT.709/sRGB/identity-matrix combination).
+    pub(crate) color_range: bool,
 }
 
-/// Parses `sequence_header_obu()` (AV1 spec §5.5.1) through `color_config()`
-/// (§5.5.2), stopping once every field the `av1C` record needs has been read.
+/// Parses `sequence_header_obu()` (AV1 spec §5.5.1) through
+/// `chroma_sample_position` in `color_config()` (§5.5.2) — the tail of
+/// `color_config()` (`separate_uv_delta_q`, `film_grain_params_present`)
+/// carries nothing the `av1C` record or format description needs.
 /// Returns `None` on truncation or a bitstream violation.
 pub(crate) fn parse_sequence_header(payload: &[u8]) -> Option<SequenceHeader> {
     let mut r = BitReader::new(payload);
 
     let seq_profile = r.bits(3)? as u8;
+    if seq_profile > 2 {
+        return None; // only profiles 0..=2 are defined
+    }
     let _still_picture = r.flag()?;
     let reduced_still_picture_header = r.flag()?;
 
@@ -304,7 +330,7 @@ pub(crate) fn parse_sequence_header(payload: &[u8]) -> Option<SequenceHeader> {
     r.flag()?; // enable_cdef
     r.flag()?; // enable_restoration
 
-    // color_config() — only through chroma_sample_position is needed.
+    // color_config() — parsed through chroma_sample_position.
     let high_bitdepth = r.flag()?;
     let twelve_bit = if seq_profile == 2 && high_bitdepth {
         r.flag()?
@@ -321,18 +347,20 @@ pub(crate) fn parse_sequence_header(payload: &[u8]) -> Option<SequenceHeader> {
     };
     let subsampling_x;
     let subsampling_y;
+    let color_range;
     let mut chroma_sample_position = 0u8;
     if mono_chrome {
-        r.flag()?; // color_range
+        color_range = r.flag()?;
         subsampling_x = true;
         subsampling_y = true;
     } else if primaries == 1 && transfer == 13 && matrix == 0 {
-        // CP_BT_709 + TC_SRGB + MC_IDENTITY: full-range identity, no
-        // subsampling bits in the stream.
+        // CP_BT_709 + TC_SRGB + MC_IDENTITY: implicit full-range identity,
+        // no color_range/subsampling bits in the stream.
+        color_range = true;
         subsampling_x = false;
         subsampling_y = false;
     } else {
-        r.flag()?; // color_range
+        color_range = r.flag()?;
         let (sx, sy) = match seq_profile {
             0 => (true, true),
             1 => (false, false),
@@ -367,6 +395,10 @@ pub(crate) fn parse_sequence_header(payload: &[u8]) -> Option<SequenceHeader> {
         initial_display_delay_minus_1,
         max_frame_width,
         max_frame_height,
+        color_primaries: primaries as u8,
+        transfer_characteristics: transfer as u8,
+        matrix_coefficients: matrix as u8,
+        color_range,
     })
 }
 
@@ -417,11 +449,28 @@ pub(crate) fn codec_config_record(seq_obu: &Obu<'_>, seq: &SequenceHeader) -> Ve
     rec
 }
 
-/// Minimal sanity check for an `AV1CodecConfigurationRecord` supplied as
-/// extradata: the record needs the 4-byte header (marker/version `0x81`)
-/// plus at least one configOBU byte.
+/// Parses the sequence-header OBU an `AV1CodecConfigurationRecord` must
+/// carry as its first configOBU (ISOBMFF `av1C` spec). Returns `None` when
+/// the record header is wrong, configOBUs are empty, or the first OBU is
+/// not a parseable `OBU_SEQUENCE_HEADER` — used both for extradata
+/// validation and to extract authoritative dimensions/colour information.
+pub(crate) fn av1c_sequence_header(record: &[u8]) -> Option<SequenceHeader> {
+    if record.len() < 5 || record[0] != 0x81 {
+        return None;
+    }
+    let obus = parse_obus(&record[4..]);
+    let first = obus.into_iter().next()?;
+    if first.obu_type != OBU_SEQUENCE_HEADER {
+        return None;
+    }
+    parse_sequence_header(first.payload)
+}
+
+/// Sanity check for an `AV1CodecConfigurationRecord` supplied as
+/// extradata: valid record header plus a parseable sequence-header OBU
+/// as the first configOBU.
 pub(crate) fn is_valid_av1c(record: &[u8]) -> bool {
-    record.len() >= 5 && record[0] == 0x81
+    av1c_sequence_header(record).is_some()
 }
 
 #[cfg(test)]
@@ -486,6 +535,11 @@ mod tests {
         assert!(!seq.initial_display_delay_present);
         assert_eq!(seq.max_frame_width, 3840);
         assert_eq!(seq.max_frame_height, 2160);
+        // The libsvtav1 sample signals unspecified colour (CP=TC=MC=2).
+        assert_eq!(seq.color_primaries, 2);
+        assert_eq!(seq.transfer_characteristics, 2);
+        assert_eq!(seq.matrix_coefficients, 2);
+        assert!(!seq.color_range);
     }
 
     #[test]
@@ -498,6 +552,13 @@ mod tests {
         assert!(is_valid_av1c(&rec));
         assert!(!is_valid_av1c(&[0x81, 0, 0, 0]));
         assert!(!is_valid_av1c(&[0x82, 0x0e, 0x04, 0x00, 0x0a]));
+        // A well-shaped record whose first configOBU is not a sequence
+        // header (temporal delimiter) is not usable extradata.
+        let mut non_seq = rec.clone();
+        non_seq[4] = 0x12; // obu_type = 2 (TD), has_size_field = 1
+        assert!(!is_valid_av1c(&non_seq));
+        // Any ≥5-byte blob starting 0x81 is no longer accepted either.
+        assert!(!is_valid_av1c(&[0x81, 0, 0, 0, 0xff, 0x99]));
     }
 
     #[test]

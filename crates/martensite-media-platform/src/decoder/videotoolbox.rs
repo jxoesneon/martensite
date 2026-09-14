@@ -27,6 +27,10 @@
 //!   Chromium use. With `codec_config` the record is used verbatim; without
 //!   it session creation is deferred until the first access unit carrying a
 //!   sequence-header OBU arrives, and the record is synthesized in-band.
+//!   The sequence header embedded in the record is authoritative for
+//!   dimensions and colour: `ColorPrimaries`/`TransferFunction`/
+//!   `YCbCrMatrix`/`FullRangeVideo` extensions are populated from it so
+//!   HDR streams surface `HdrSideData` on decoded frames.
 //!   Samples are temporal units in low-overhead OBU format (the `av01`
 //!   sample-entry framing — no Annex-B style conversion exists for AV1).
 //! - VP9 is rejected up front: although `kCMVideoCodecType_VP9` exists, no
@@ -62,19 +66,21 @@ use std::time::Instant;
 use objc2_core_media::{
     kCMBlockBufferAssureMemoryNowFlag, kCMFormatDescriptionColorPrimaries_DCI_P3,
     kCMFormatDescriptionColorPrimaries_EBU_3213, kCMFormatDescriptionColorPrimaries_ITU_R_2020,
-    kCMFormatDescriptionColorPrimaries_P3_D65, kCMFormatDescriptionColorPrimaries_SMPTE_C,
-    kCMFormatDescriptionExtension_ColorPrimaries,
+    kCMFormatDescriptionColorPrimaries_ITU_R_709_2, kCMFormatDescriptionColorPrimaries_P3_D65,
+    kCMFormatDescriptionColorPrimaries_SMPTE_C, kCMFormatDescriptionExtension_ColorPrimaries,
     kCMFormatDescriptionExtension_ContentLightLevelInfo,
     kCMFormatDescriptionExtension_FullRangeVideo,
     kCMFormatDescriptionExtension_MasteringDisplayColorVolume,
     kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms,
-    kCMFormatDescriptionExtension_TransferFunction,
+    kCMFormatDescriptionExtension_TransferFunction, kCMFormatDescriptionExtension_YCbCrMatrix,
     kCMFormatDescriptionTransferFunction_ITU_R_2020,
     kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG,
-    kCMFormatDescriptionTransferFunction_Linear,
+    kCMFormatDescriptionTransferFunction_ITU_R_709_2, kCMFormatDescriptionTransferFunction_Linear,
     kCMFormatDescriptionTransferFunction_SMPTE_240M_1995,
     kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ,
     kCMFormatDescriptionTransferFunction_SMPTE_ST_428_1, kCMFormatDescriptionTransferFunction_sRGB,
+    kCMFormatDescriptionYCbCrMatrix_ITU_R_2020, kCMFormatDescriptionYCbCrMatrix_ITU_R_601_4,
+    kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2, kCMFormatDescriptionYCbCrMatrix_SMPTE_240M_1995,
     kCMTimeInvalid, kCMVideoCodecType_AV1, kCMVideoCodecType_H264, kCMVideoCodecType_HEVC,
     CMBlockBuffer, CMFormatDescription, CMSampleBuffer, CMSampleTimingInfo, CMTime, CMTimeFlags,
     CMVideoFormatDescriptionCreate, CMVideoFormatDescriptionCreateFromH264ParameterSets,
@@ -803,16 +809,28 @@ struct LiveSession {
 /// sequence-header OBU arrives in-band (used only when `codec_config` is
 /// absent — there is no out-of-band `av1C` to seed the format description).
 struct DeferredAv1 {
-    /// `DecoderConfig::width`, used when the sequence header yields no size.
-    width: u32,
-    /// `DecoderConfig::height`, used when the sequence header yields no size.
-    height: u32,
     /// `DecoderConfig::allow_software`, honoured when the session is built.
     allow_software: bool,
     /// Packets accepted before the sequence header arrived; replayed in
-    /// order once the session exists.
+    /// order once the session exists. Bounded by [`MAX_DEFERRED_PACKETS`]
+    /// and [`MAX_DEFERRED_BYTES`] — a stream that never produces a
+    /// sequence header must not buffer unboundedly.
     buffered: Vec<EncodedPacket>,
+    /// Total byte size of `buffered` (tracked incrementally to avoid
+    /// re-summing on every packet).
+    buffered_bytes: usize,
 }
+
+/// Maximum number of packets buffered while waiting for an in-band AV1
+/// sequence header. A conformant stream carries the header in its first
+/// temporal unit; the bound exists only so a stream that never produces
+/// one cannot grow memory without limit.
+const MAX_DEFERRED_PACKETS: usize = 32;
+
+/// Maximum total bytes buffered while waiting for an in-band AV1 sequence
+/// header (64 MiB — 4K temporal units are ~100–500 KiB each, so the packet
+/// count bound trips first for well-formed streams).
+const MAX_DEFERRED_BYTES: usize = 64 * 1024 * 1024;
 
 /// Hardware video decoder backed by a `VTDecompressionSession`.
 ///
@@ -916,10 +934,9 @@ impl VideoToolboxDecoder {
         Ok(Self {
             live,
             deferred: deferred_av1.then(|| DeferredAv1 {
-                width: config.width,
-                height: config.height,
                 allow_software: config.allow_software,
                 buffered: Vec::new(),
+                buffered_bytes: 0,
             }),
             state,
             seen_keyframe: false,
@@ -960,12 +977,13 @@ impl VideoToolboxDecoder {
 
     /// `send_packet` path for deferred AV1 init (`codec_config` absent).
     ///
-    /// Packets are buffered until a temporal unit carrying a sequence-header
-    /// OBU arrives; the `av1C` record is then synthesized from it, the live
-    /// session is created, and the buffered packets are replayed in order —
-    /// mirroring how a demuxer would deliver `av1C` extradata plus `av01`
-    /// samples. Buffered packets count toward `packets_received` only once
-    /// they are actually submitted.
+    /// Packets are buffered — bounded by [`MAX_DEFERRED_PACKETS`] and
+    /// [`MAX_DEFERRED_BYTES`] — until a temporal unit carrying a
+    /// sequence-header OBU arrives; the `av1C` record is then synthesized
+    /// from it, the live session is created, and the buffered packets are
+    /// replayed in order — mirroring how a demuxer would deliver `av1C`
+    /// extradata plus `av01` samples. Buffered packets count toward
+    /// `packets_received` only once they are actually submitted.
     ///
     /// # Errors
     ///
@@ -981,7 +999,22 @@ impl VideoToolboxDecoder {
         let Some(seq_obu) = av1::sequence_header_obu(&packet.data) else {
             // No sequence header yet — buffer and wait for the temporal unit
             // that carries one. An AV1 decoder cannot emit frames before it
-            // anyway.
+            // anyway. The buffer is bounded: a stream that never produces a
+            // sequence header fails rather than growing memory without
+            // limit.
+            let len = packet.data.len();
+            if deferred.buffered.len() >= MAX_DEFERRED_PACKETS
+                || deferred.buffered_bytes + len > MAX_DEFERRED_BYTES
+            {
+                self.stats.record_rejection();
+                return Err(DecodeError::StreamCorrupt(format!(
+                    "AV1 stream produced {} packets ({} bytes) without a sequence header OBU",
+                    deferred.buffered.len(),
+                    deferred.buffered_bytes,
+                ))
+                .into());
+            }
+            deferred.buffered_bytes += len;
             deferred.buffered.push(packet.clone());
             return Ok(());
         };
@@ -992,16 +1025,14 @@ impl VideoToolboxDecoder {
             .into());
         };
         let record = av1::codec_config_record(&seq_obu, &seq);
-        let buffered = std::mem::take(&mut deferred.buffered);
-        let (width, height, allow_software) =
-            (deferred.width, deferred.height, deferred.allow_software);
+        let allow_software = deferred.allow_software;
 
-        // The sequence header's coded size is authoritative; fall back to
-        // the configured dimensions when the header yielded zero.
-        let width = seq.max_frame_width.max(width);
-        let height = seq.max_frame_height.max(height);
-
-        let format_desc = create_av1_format_description(&record, width as i32, height as i32)?;
+        // The buffered packets are deliberately kept until session creation
+        // has succeeded: on failure they stay in `deferred.buffered` and the
+        // caller can retry (or surface the error) without silent loss.
+        // The sequence header embedded in the record is authoritative for
+        // dimensions and colour signalling.
+        let format_desc = create_av1_format_description(&record)?;
         let session = create_session(format_desc.get(), &self.state, allow_software)?;
         // SAFETY: `format_desc` is a valid, live CMFormatDescription.
         let hdr = unsafe { parse_hdr_side_data(format_desc.get()) };
@@ -1012,10 +1043,13 @@ impl VideoToolboxDecoder {
             session,
             format_desc,
         });
-        self.deferred = None;
+        let deferred = self
+            .deferred
+            .take()
+            .expect("deferred state was checked at function entry");
 
-        for buffered_packet in buffered {
-            self.submit(&buffered_packet)?;
+        for buffered_packet in &deferred.buffered {
+            self.submit(buffered_packet)?;
         }
         self.submit(packet)
     }
@@ -1195,6 +1229,7 @@ impl VideoToolboxDecoder {
         // the AV1 sequence header are stale input, not a reorder backlog.
         if let Some(deferred) = &mut self.deferred {
             deferred.buffered.clear();
+            deferred.buffered_bytes = 0;
         }
         self.seen_keyframe = false;
         let status = if finish_status != 0 {
@@ -1349,11 +1384,7 @@ fn create_format_description(
         // the SampleDescriptionExtensionAtoms bridge (no parameter-set
         // helper exists for AV1).
         (VideoCodec::Av1, Some(record)) => {
-            return create_av1_format_description(
-                record,
-                config.width as i32,
-                config.height as i32,
-            );
+            return create_av1_format_description(record);
         }
         // Bare codec/dimensions description: deferred (Annex-B) H.264/HEVC,
         // or any codec/extradata combination not handled above.
@@ -1407,6 +1438,89 @@ fn create_cf_string(s: &str) -> Option<CfOwned<c_void>> {
     unsafe { CfOwned::from_owned(string) }
 }
 
+/// Maps an AV1 sequence header's colour information (ISO/IEC 23001-8
+/// values) to CoreMedia format-description extension entries appended to
+/// `entries`, so decoded HDR streams carry `HdrSideData`. Unspecified or
+/// unmappable values are simply omitted — VideoToolbox then falls back to
+/// its own defaults. `FullRangeVideo` is always emitted from `color_range`.
+///
+/// Both sides of each entry are borrowed `CFTypeRef`s: the keys and values
+/// are `kCMFormatDescription*` / `kCFBoolean*` global objects that outlive
+/// the created dictionary.
+fn av1_color_extensions(
+    seq: &av1::SequenceHeader,
+    entries: &mut Vec<(*const c_void, *const c_void)>,
+) {
+    // SAFETY: every `kCMFormatDescription*` extension key and value string
+    // and the `kCFBoolean*` objects referenced below are immutable `extern`
+    // globals exported by CoreMedia/CoreFoundation; taking their pointers
+    // is safe.
+    unsafe {
+        let primaries = match seq.color_primaries {
+            1 => Some(cf_key_ptr(kCMFormatDescriptionColorPrimaries_ITU_R_709_2)),
+            6 => Some(cf_key_ptr(kCMFormatDescriptionColorPrimaries_SMPTE_C)),
+            9 => Some(cf_key_ptr(kCMFormatDescriptionColorPrimaries_ITU_R_2020)),
+            11 => Some(cf_key_ptr(kCMFormatDescriptionColorPrimaries_DCI_P3)),
+            12 => Some(cf_key_ptr(kCMFormatDescriptionColorPrimaries_P3_D65)),
+            22 => Some(cf_key_ptr(kCMFormatDescriptionColorPrimaries_EBU_3213)),
+            _ => None,
+        };
+        if let Some(value) = primaries {
+            entries.push((
+                cf_key_ptr(kCMFormatDescriptionExtension_ColorPrimaries),
+                value,
+            ));
+        }
+
+        let transfer = match seq.transfer_characteristics {
+            1 => Some(cf_key_ptr(kCMFormatDescriptionTransferFunction_ITU_R_709_2)),
+            7 => Some(cf_key_ptr(
+                kCMFormatDescriptionTransferFunction_SMPTE_240M_1995,
+            )),
+            8 => Some(cf_key_ptr(kCMFormatDescriptionTransferFunction_Linear)),
+            13 => Some(cf_key_ptr(kCMFormatDescriptionTransferFunction_sRGB)),
+            14 | 15 => Some(cf_key_ptr(kCMFormatDescriptionTransferFunction_ITU_R_2020)),
+            16 => Some(cf_key_ptr(
+                kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ,
+            )),
+            17 => Some(cf_key_ptr(
+                kCMFormatDescriptionTransferFunction_SMPTE_ST_428_1,
+            )),
+            18 => Some(cf_key_ptr(
+                kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG,
+            )),
+            _ => None,
+        };
+        if let Some(value) = transfer {
+            entries.push((
+                cf_key_ptr(kCMFormatDescriptionExtension_TransferFunction),
+                value,
+            ));
+        }
+
+        let matrix = match seq.matrix_coefficients {
+            1 => Some(cf_key_ptr(kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2)),
+            5 | 6 => Some(cf_key_ptr(kCMFormatDescriptionYCbCrMatrix_ITU_R_601_4)),
+            7 => Some(cf_key_ptr(kCMFormatDescriptionYCbCrMatrix_SMPTE_240M_1995)),
+            9 | 10 => Some(cf_key_ptr(kCMFormatDescriptionYCbCrMatrix_ITU_R_2020)),
+            _ => None,
+        };
+        if let Some(value) = matrix {
+            entries.push((cf_key_ptr(kCMFormatDescriptionExtension_YCbCrMatrix), value));
+        }
+
+        let range = if seq.color_range {
+            kCFBooleanTrue
+        } else {
+            kCFBooleanFalse
+        };
+        entries.push((
+            cf_key_ptr(kCMFormatDescriptionExtension_FullRangeVideo),
+            range,
+        ));
+    }
+}
+
 /// Builds an `av01` `CMVideoFormatDescription` from an
 /// `AV1CodecConfigurationRecord` (`record`).
 ///
@@ -1415,39 +1529,50 @@ fn create_cf_string(s: &str) -> Option<CfOwned<c_void>> {
 /// `kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms`
 /// dictionary — the path FFmpeg's `videotoolbox_av1.c`, WebKit
 /// (`CMUtilities.mm`), and Chromium (`video_toolbox_av1_accelerator.cc`)
-/// all use.
+/// all use. The sequence header embedded in the record is authoritative
+/// for dimensions and colour signalling — the configured dimensions are
+/// deliberately not consulted here.
 fn create_av1_format_description(
     record: &[u8],
-    width: i32,
-    height: i32,
 ) -> Result<CfOwned<CMFormatDescription>, DecodeError> {
     if !av1::is_valid_av1c(record) {
         return Err(DecodeError::StreamCorrupt(
             "malformed av1C record".to_string(),
         ));
     }
+    // `is_valid_av1c` already verified the record's first configOBU is a
+    // parseable sequence header.
+    let seq = av1::av1c_sequence_header(record).expect("record was validated");
+    let (width, height) = (seq.max_frame_width as i32, seq.max_frame_height as i32);
+
     let atom_key = create_cf_string("av1C")
         .ok_or_else(|| DecodeError::Fatal("CFStringCreateWithCString failed".to_string()))?;
     let atom_data = create_cf_data(record)
         .ok_or_else(|| DecodeError::Fatal("CFDataCreate failed".to_string()))?;
     // SAFETY: both arguments are valid +1 CFTypeRefs we own; the dictionary
-    // retains them (kCFType callbacks), so they may be dropped after.
+    // retains them (kCFType callbacks), so they may be dropped after. The
+    // result is wrapped in CfOwned immediately so no error path can leak it.
     let atoms = unsafe {
         cf_dict_one(
             atom_key.ptr.as_ptr().cast_const(),
             atom_data.ptr.as_ptr().cast_const(),
         )
+        .and_then(|ptr| CfOwned::from_owned(ptr.as_ptr()))
     }
     .ok_or_else(|| DecodeError::Fatal("CFDictionaryCreate (av1C atoms) failed".to_string()))?;
-    // SAFETY: the extension key is a global CFString and `atoms` is a valid
-    // +1 CFDictionary we own; the extensions dictionary retains it.
-    let extensions = unsafe {
-        cf_dict_one(
-            cf_key_ptr(kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms),
-            atoms.as_ptr().cast(),
-        )
-    }
-    .ok_or_else(|| DecodeError::Fatal("CFDictionaryCreate (extensions) failed".to_string()))?;
+
+    // SAFETY: the extension key is an immutable `extern` global.
+    let mut entries: Vec<(*const c_void, *const c_void)> = vec![(
+        unsafe { cf_key_ptr(kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms) },
+        atoms.ptr.as_ptr().cast_const(),
+    )];
+    av1_color_extensions(&seq, &mut entries);
+
+    // SAFETY: every entry is a borrowed, valid CFTypeRef (global constant
+    // or the live `atoms` object); the dictionary retains them. Wrapped in
+    // CfOwned immediately so it is released on every exit path.
+    let extensions = unsafe { cf_dict(&entries).and_then(|ptr| CfOwned::from_owned(ptr.as_ptr())) }
+        .ok_or_else(|| DecodeError::Fatal("CFDictionaryCreate (extensions) failed".to_string()))?;
 
     let mut raw: *const CMFormatDescription = std::ptr::null();
     // SAFETY: `extensions` is a valid CFDictionary borrowed for the call
@@ -1459,16 +1584,10 @@ fn create_av1_format_description(
             kCMVideoCodecType_AV1,
             width,
             height,
-            Some(&*extensions.as_ptr().cast()),
+            Some(&*extensions.ptr.as_ptr().cast()),
             NonNull::from(&mut raw),
         )
     };
-    // SAFETY: `extensions`/`atoms` are +1 CF objects we own; balanced
-    // releases (the dictionaries retained their contents at creation).
-    unsafe {
-        CFRelease(extensions.as_ptr());
-        CFRelease(atoms.as_ptr());
-    }
     if status != 0 {
         return Err(DecodeError::Fatal(format!(
             "CMVideoFormatDescriptionCreate (av01) failed: OSStatus {status}"
@@ -1766,6 +1885,26 @@ mod tests {
         let decoder = decoder.unwrap();
         assert_eq!(decoder.negotiated_format(), VideoPixelFormat::Nv12);
         assert_eq!(decoder.stats().backend, Some(DecoderBackend::VideoToolbox));
+    }
+
+    /// Deferred AV1 init must not buffer unboundedly: a stream that never
+    /// produces a sequence-header OBU fails once the buffer bound trips
+    /// rather than growing memory without limit. No session is created, so
+    /// this runs on any host.
+    #[test]
+    fn deferred_av1_bounds_buffered_packets() {
+        let config = DecoderConfig::new(VideoCodec::Av1, 64, 64);
+        let mut decoder = VideoToolboxDecoder::create(&config).unwrap();
+        // A temporal-delimiter-only temporal unit — valid OBU framing, but
+        // carries no sequence header.
+        let unit = || EncodedPacket::new(vec![0x12, 0x00], 0, 0);
+        for _ in 0..MAX_DEFERRED_PACKETS {
+            decoder.send_packet(&unit()).unwrap();
+        }
+        assert!(matches!(
+            decoder.send_packet(&unit()),
+            Err(MediaError::ImportFailed(_)) // StreamCorrupt → ImportFailed
+        ));
     }
 
     /// `send_packet` gate: a delta packet before any keyframe must be
