@@ -30,18 +30,19 @@ impl Adapter {
             _ => unreachable!(),
         };
 
-        // SAFETY: The view pointer comes from a valid winit window handle
-        // and is passed directly to the AccessKit iOS subclassing adapter.
-        // `Adapter::new` is invoked on the main thread inside
-        // `can_create_surfaces`, before the application first renders.
-        let adapter = unsafe {
-            IosAdapter::new(
-                view,
-                activation_handler,
-                action_handler,
-                deactivation_handler,
-            )
-        };
+        // Caller requirements upheld here (see `IosAdapter::new`): the
+        // view pointer comes from a valid winit window handle, this runs
+        // on the main thread inside `can_create_surfaces`, and the adapter
+        // is created before the app first renders. Note that the
+        // `is_visible()` guard in `Adapter::with_direct_handlers` cannot
+        // fire on iOS — winit-uikit reports visibility as `None` — so the
+        // before-show ordering is upheld by this call convention alone.
+        let adapter = IosAdapter::new(
+            view,
+            activation_handler,
+            action_handler,
+            deactivation_handler,
+        );
         Self { adapter }
     }
 

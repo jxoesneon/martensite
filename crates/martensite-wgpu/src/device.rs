@@ -403,12 +403,16 @@ impl GpuContext {
     /// UI and for the recovery FSM, which must re-enumerate adapters after a
     /// device loss.
     ///
+    /// Enumeration is restricted to [`platform_backends`](Self::platform_backends)
+    /// (Metal-only on iOS), consistent with [`create_instance`](Self::create_instance).
+    /// Pass an instance created by [`create_instance`](Self::create_instance).
+    ///
     /// # Examples
     ///
     /// ```no_run
     /// use martensite_wgpu::device::GpuContext;
     ///
-    /// let instance = wgpu::Instance::default();
+    /// let instance = GpuContext::create_instance();
     /// let adapters = GpuContext::enumerate_adapters(&instance, wgpu::PowerPreference::HighPerformance);
     /// // The list may be empty in headless environments without a GPU.
     /// println!("found {} adapter(s)", adapters.len());
@@ -418,7 +422,8 @@ impl GpuContext {
         instance: &wgpu::Instance,
         power_preference: wgpu::PowerPreference,
     ) -> Vec<wgpu::Adapter> {
-        let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+        let mut adapters =
+            pollster::block_on(instance.enumerate_adapters(Self::platform_backends()));
         // Stable sort by a power-preference score so the most-desired adapter
         // ends up first without disturbing the relative order of equal-score
         // adapters returned by the backend.

@@ -38,14 +38,12 @@
 //! let adapter = AccessKitAdapter::new(root);
 //! let bridge = Arc::new(MartensiteAccessBridge::new(arena, adapter));
 //!
-//! // Use with accesskit_winit::Adapter::with_direct_handlers:
-//! // accesskit_winit::Adapter::with_direct_handlers(
-//! //     &event_loop,
-//! //     &window,
-//! //     bridge.clone(),
-//! //     bridge.clone(),
-//! //     bridge.clone(),
-//! // );
+//! // Use with accesskit_winit::Adapter::with_direct_handlers. The three
+//! // handler slots each take a *separate* object implementing
+//! // ActivationHandler/ActionHandler/DeactivationHandler (the traits take
+//! // `&mut self`), so share the bridge by wrapping
+//! // `Arc<Mutex<MartensiteAccessBridge>>` in a newtype that delegates the
+//! // three traits through the lock — see `examples/ios_demo`.
 //! ```
 
 use std::sync::Arc;

@@ -15,13 +15,21 @@
 //!   [`SurfaceLifecycle::Persistent`] and `destroy_surfaces` is never
 //!   emitted.
 //! - **Safe area:** [`Window::safe_area`] returns UIKit's physical-pixel
-//!   `safeAreaInsets`; the demo logs them after window creation.
+//!   `safeAreaInsets`; the demo logs them after window creation and again
+//!   on every `SurfaceResized` (insets can change on rotation/split-view,
+//!   and are only authoritative once the view is laid out).
 //! - **Touch routing:** winit `PointerMoved`/`PointerButton` events are
 //!   normalized through [`convert_window_event`], preserving the
 //!   `PointerKind` (`Touch`, `Mouse`, `Tablet`, `Unknown`) and the
 //!   per-finger `PointerId`.
 //! - **IME:** [`WindowEvent::Ime`] events are logged; production callers
 //!   drive the software keyboard through `martensite_window::ime`.
+//! - **Accessibility (iOS):** [`can_create_surfaces`] constructs the real
+//!   adapter chain — `MartensiteAccessBridge` handlers behind
+//!   `martensite_access_platform::ios::IosAdapter` — against the window's
+//!   `UIView`, exporting the tree to VoiceOver.
+//!
+//! [`can_create_surfaces`]: winit::application::ApplicationHandler::can_create_surfaces
 //!
 //! See `README.md` for cargo-mobile2/Xcode packaging instructions.
 // No crate-level unsafe attribute: the workspace lints deny `unsafe_code`,
@@ -54,6 +62,106 @@ use martensite_window::lifecycle::{surface_lifecycle, SurfaceLifecycle};
 #[derive(Default)]
 pub struct IosDemoApp {
     window: Option<Box<dyn Window>>,
+    /// The AccessKit adapter chain, alive for the window's lifetime
+    /// (iOS only). Kept so the `SubclassingAdapter` stays attached to the
+    /// `UIView`; the bridge lets the demo flush queued a11y actions.
+    #[cfg(target_os = "ios")]
+    access: Option<IosA11y>,
+}
+
+/// The iOS accessibility bundle: the bridge (arena + tree adapter +
+/// action queue) plus the platform adapter subclassing the `UIView`.
+#[cfg(target_os = "ios")]
+struct IosA11y {
+    #[allow(dead_code)]
+    bridge: SharedBridge,
+    #[allow(dead_code)]
+    adapter: martensite_access_platform::ios::IosAdapter,
+}
+
+/// Shares one `MartensiteAccessBridge` across the three AccessKit handler
+/// roles the platform adapter requires.
+///
+/// AccessKit's `ActivationHandler`/`ActionHandler`/`DeactivationHandler`
+/// traits take `&mut self`, and the adapter stores each handler as a
+/// separate object — so a single bridge cannot be passed three times
+/// directly. Locking the shared bridge per callback satisfies the
+/// ownership split; the bridge's own internal `Mutex` already serializes
+/// its state, so the outer lock is contention-free on the main thread.
+#[cfg(target_os = "ios")]
+#[derive(Clone)]
+struct SharedBridge(
+    std::sync::Arc<std::sync::Mutex<martensite_access::winit::MartensiteAccessBridge>>,
+);
+
+#[cfg(target_os = "ios")]
+impl SharedBridge {
+    fn lock(&self) -> std::sync::MutexGuard<'_, martensite_access::winit::MartensiteAccessBridge> {
+        self.0.lock().expect("access bridge mutex poisoned")
+    }
+}
+
+#[cfg(target_os = "ios")]
+impl accesskit::ActivationHandler for SharedBridge {
+    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+        self.lock().request_initial_tree()
+    }
+}
+
+#[cfg(target_os = "ios")]
+impl accesskit::ActionHandler for SharedBridge {
+    fn do_action(&mut self, request: accesskit::ActionRequest) {
+        self.lock().do_action(request);
+    }
+}
+
+#[cfg(target_os = "ios")]
+impl accesskit::DeactivationHandler for SharedBridge {
+    fn deactivate_accessibility(&mut self) {
+        self.lock().deactivate_accessibility();
+    }
+}
+
+/// Logs the window's safe-area insets. Called after window creation and
+/// on every `SurfaceResized`: UIKit reports meaningful `safeAreaInsets`
+/// only once the view is laid out, and the insets change on rotation and
+/// multitasking size changes, so a single creation-time query is not
+/// authoritative.
+fn log_safe_area(window: &dyn Window, context: &str) {
+    let insets = window.safe_area();
+    println!(
+        "ios_demo: safe_area ({context}) physical insets \
+         left={} top={} right={} bottom={}",
+        insets.left, insets.top, insets.right, insets.bottom,
+    );
+}
+
+/// Constructs the real iOS accessibility adapter chain for `window`:
+/// a `MartensiteAccessBridge` over a fresh `WidgetArena` feeding an
+/// `IosAdapter` that subclasses the window's `UIView`.
+///
+/// Must run on the main thread before the view is shown —
+/// `can_create_surfaces` satisfies both. The adapter activates lazily:
+/// UIKit queries `accessibilityElements` when VoiceOver (or another
+/// assistive technology) is enabled.
+#[cfg(target_os = "ios")]
+fn create_accessibility(window: &dyn Window) -> Option<IosA11y> {
+    use martensite_access::{winit::MartensiteAccessBridge, AccessKitAdapter};
+    use martensite_access_platform::ios::IosAdapter;
+    use martensite_core::WidgetArena;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let view = match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::UiKit(handle) => handle.ui_view,
+        _ => return None,
+    };
+    let mut arena = WidgetArena::new();
+    let root = arena.insert(Default::default(), Default::default());
+    let bridge = SharedBridge(std::sync::Arc::new(std::sync::Mutex::new(
+        MartensiteAccessBridge::new(arena, AccessKitAdapter::new(root)),
+    )));
+    let adapter = IosAdapter::new(view, bridge.clone(), bridge.clone(), bridge.clone());
+    Some(IosA11y { bridge, adapter })
 }
 
 impl IosDemoApp {
@@ -82,12 +190,21 @@ impl ApplicationHandler for IosDemoApp {
         }
         match event_loop.create_window(WindowAttributes::default()) {
             Ok(window) => {
-                let insets = window.safe_area();
-                println!(
-                    "ios_demo: window created; safe_area physical insets \
-                     left={} top={} right={} bottom={}",
-                    insets.left, insets.top, insets.right, insets.bottom,
-                );
+                // Note: insets queried pre-layout may be zero; they are
+                // re-queried on every SurfaceResized below.
+                log_safe_area(&*window, "window created");
+                #[cfg(target_os = "ios")]
+                {
+                    self.access = create_accessibility(&*window);
+                    println!(
+                        "ios_demo: accesskit adapter {}",
+                        if self.access.is_some() {
+                            "attached to UIView"
+                        } else {
+                            "unavailable (no UIKit handle)"
+                        },
+                    );
+                }
                 window.request_redraw();
                 self.window = Some(window);
             }
@@ -148,6 +265,10 @@ impl ApplicationHandler for IosDemoApp {
             }
             WindowEvent::SurfaceResized(size) => {
                 println!("ios_demo: surface resized to {size:?}");
+                // Safe-area insets change with layout (rotation, split
+                // view, first layout pass) — re-query here rather than
+                // trusting the creation-time value.
+                log_safe_area(&**window, "surface resized");
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 println!("ios_demo: scale factor changed to {scale_factor}");
@@ -216,9 +337,11 @@ pub fn run() -> Result<(), winit::error::EventLoopError> {
 ///
 /// `run_app` never returns on iOS, matching the `UIApplicationMain`
 /// contract.
-// `#[no_mangle]` is an unsafe *attribute* (it can collide linker symbols);
-// the workspace `unsafe_code = "deny"` lint is relaxed for this one item.
-// The function body itself contains no unsafe code.
+// `#[no_mangle]` is an unsafe *attribute*: since Rust 1.82 the
+// `unsafe_code` lint rejects it in every edition (verified — this crate
+// failed to compile for iOS under `#![forbid(unsafe_code)]` without this
+// scoped allow). The attribute can collide linker symbols; the function
+// body itself contains no unsafe code.
 #[cfg(target_os = "ios")]
 #[allow(unsafe_code)]
 #[no_mangle]

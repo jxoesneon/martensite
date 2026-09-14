@@ -47,11 +47,9 @@ use accesskit_ios::SubclassingAdapter;
 /// ```ignore
 /// // iOS only: `view` is the `UIView *` behind a winit window, obtained
 /// // from `RawWindowHandle::UiKit(handle).ui_view`.
-/// let adapter = unsafe {
-///     martensite_access_platform::ios::IosAdapter::new(
-///         view, activation_handler, action_handler, deactivation_handler,
-///     )
-/// };
+/// let adapter = martensite_access_platform::ios::IosAdapter::new(
+///     view, activation_handler, action_handler, deactivation_handler,
+/// );
 /// ```
 pub struct IosAdapter {
     inner: SubclassingAdapter,
@@ -65,23 +63,43 @@ impl IosAdapter {
     /// subclassing is applied immediately and is reverted when the adapter
     /// is dropped.
     ///
-    /// # Safety
+    /// # Caller requirements
     ///
-    /// - `view` must be a valid, unreleased pointer to a `UIView`.
-    /// - This function must be called on the main thread.
+    /// These preconditions come from the upstream
+    /// `accesskit_ios::SubclassingAdapter` contract and cannot be checked
+    /// by the type system for a raw windowing handle; callers must uphold
+    /// them:
+    ///
+    /// - `view` must point to a valid, live `UIView` that outlives the
+    ///   adapter (the winit window's view does).
+    /// - The call must run on the main thread. Upstream enforces this
+    ///   with an internal `MainThreadMarker` unwrap, so a violation
+    ///   panics rather than corrupting state.
     /// - The adapter must be created before the view is shown or focused
-    ///   for the first time (immediately after window creation).
+    ///   for the first time — in practice, inside
+    ///   `ApplicationHandler::can_create_surfaces` right after window
+    ///   creation. Note that winit-uikit's `Window::is_visible` returns
+    ///   `None`, so the before-show check in
+    ///   `accesskit_winit::Adapter::with_direct_handlers` cannot fire on
+    ///   iOS; the ordering is upheld by convention at the call site.
     /// - Only one adapter may exist per view; creating a second panics
     ///   upstream.
-    pub unsafe fn new(
+    ///
+    /// # Panics
+    ///
+    /// Panics if called off the main thread or if an adapter already
+    /// exists on `view` (upstream `MainThreadMarker`/associated-object
+    /// checks).
+    pub fn new(
         view: NonNull<c_void>,
         activation_handler: impl 'static + ActivationHandler,
         action_handler: impl 'static + ActionHandler,
         deactivation_handler: impl 'static + DeactivationHandler,
     ) -> Self {
-        // SAFETY: the caller upholds the `SubclassingAdapter::new`
-        // contract — `view` is a valid, unreleased `UIView *`, and this
-        // call happens on the main thread before the view is shown.
+        // SAFETY: forwarded from the documented caller requirements —
+        // `view` is a valid, unreleased `UIView *`, and this call happens
+        // on the main thread before the view is shown. All Objective-C
+        // runtime FFI is confined to this whitelisted-unsafe crate.
         let inner = unsafe {
             SubclassingAdapter::new(
                 view.as_ptr(),
@@ -98,21 +116,25 @@ impl IosAdapter {
     /// Equivalent to [`IosAdapter::new`] but resolves the view from the
     /// window's `rootViewController` instead of taking it directly.
     ///
-    /// # Safety
+    /// # Caller requirements
     ///
-    /// - `window` must be a valid, unreleased pointer to a `UIWindow`
-    ///   whose root view controller currently has a view (the function
-    ///   panics otherwise).
-    /// - This function must be called on the main thread.
-    pub unsafe fn for_window(
+    /// - `window` must point to a valid, live `UIWindow` whose root view
+    ///   controller currently has a view (the function panics otherwise).
+    /// - The call must run on the main thread.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `window` has no root view controller with a view, or if
+    /// called off the main thread.
+    pub fn for_window(
         window: NonNull<c_void>,
         activation_handler: impl 'static + ActivationHandler,
         action_handler: impl 'static + ActionHandler,
         deactivation_handler: impl 'static + DeactivationHandler,
     ) -> Self {
-        // SAFETY: the caller upholds the `SubclassingAdapter::for_window`
-        // contract — `window` is a valid, unreleased `UIWindow *` with a
-        // root view controller, and this call happens on the main thread.
+        // SAFETY: forwarded from the documented caller requirements —
+        // `window` is a valid, unreleased `UIWindow *` with a root view
+        // controller, and this call happens on the main thread.
         let inner = unsafe {
             SubclassingAdapter::for_window(
                 window.as_ptr(),

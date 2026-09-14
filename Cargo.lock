@@ -2411,7 +2411,12 @@ checksum = "2f0fb0570afe1fed943c5c3d4102d5358592d8625fda6a0007fdbe65a92fba96"
 name = "ios_demo"
 version = "0.16.0"
 dependencies = [
+ "accesskit",
+ "martensite-access",
+ "martensite-access-platform",
+ "martensite-core",
  "martensite-window",
+ "raw-window-handle",
  "winit",
 ]
 
@@ -2807,6 +2812,9 @@ version = "0.16.0"
 dependencies = [
  "accesskit",
  "accesskit_ios",
+ "objc2 0.5.2",
+ "objc2-foundation 0.2.2",
+ "objc2-ui-kit 0.2.2",
 ]
 
 [[package]]

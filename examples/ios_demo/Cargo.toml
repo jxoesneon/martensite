@@ -24,5 +24,15 @@ crate-type = ["staticlib", "rlib"]
 martensite-window = { workspace = true }
 winit = { workspace = true }
 
+# iOS accessibility wiring: the demo constructs the real adapter chain
+# (`MartensiteAccessBridge` -> `martensite-access-platform`'s `IosAdapter`
+# -> `accesskit_ios::SubclassingAdapter`) inside `can_create_surfaces`.
+[target.'cfg(target_os = "ios")'.dependencies]
+accesskit = { workspace = true }
+martensite-access = { workspace = true }
+martensite-access-platform = { workspace = true }
+martensite-core = { workspace = true }
+raw-window-handle = { workspace = true }
+
 [lints]
 workspace = true
