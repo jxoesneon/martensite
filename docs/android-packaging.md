@@ -97,7 +97,7 @@ The application manifest must declare
 ```xml
 <activity
     android:name="com.google.androidgamesdk.GameActivity"
-    android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+    android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|keyboard|keyboardHidden|navigation|touchscreen"
     android:exported="true">
     <meta-data android:name="android.app.lib_name" android:value="my_app" />
     <intent-filter>
@@ -106,6 +106,12 @@ The application manifest must declare
     </intent-filter>
 </activity>
 ```
+
+The `configChanges` set is the one GameActivity documents for games:
+it keeps the activity — and, within the surface lifecycle contract of
+§6, its `ANativeWindow` — alive across rotations, fold/unfold,
+dark-mode flips, density changes, and keyboard attach/detach, each of
+which otherwise recreates the activity.
 
 ## 4. Packaging with `cargo-apk2`
 
@@ -184,6 +190,13 @@ kept; only the window/surface objects are tied to the `ANativeWindow`.
   upstream (winit's own Android `safe_area` returns `(0, 0, 0, 0)`).
 - `cargo-apk2` and `xbuild` are host tools — install them separately;
   they are not workspace dependencies.
-- Device/emulator verification is a manual gate (`cargo apk run` / an
-  emulator with Vulkan support), matching the milestone's
-  `#[ignore]`-gated acceptance criteria.
+- **Device/emulator gate (tracking):** the v0.17.0 §5 acceptance
+  artifact is
+  `crates/martensite-access-platform/tests/android_adapter_gate.rs` —
+  `#[ignore]`-gated and env-gated on `MARTENSITE_ANDROID_DEVICE=1`,
+  exercising the real `GameActivity.mSurfaceView` → `InjectingAdapter`
+  injection path. It only does meaningful work when run on-device
+  (`cargo apk test` / `x test` under a GameActivity process); host runs
+  print a skip line, matching the 4K120 gate pattern. An APK-level
+  end-to-end run (window + surface + IME) remains a manual step pending
+  a packaged example app.

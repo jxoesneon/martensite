@@ -30,8 +30,12 @@ impl Adapter {
         _deactivation_handler: impl 'static + DeactivationHandler,
     ) -> Self {
         let app = event_loop.android_app();
+        // `unwrap_or_else` + Display keeps the structured
+        // `AndroidAdapterError` context (the failing JNI operation and its
+        // source error) in the panic message — a bare `expect` would only
+        // show the `Debug` struct fields without the causal chain.
         let adapter = AndroidAdapter::new(app, activation_handler, action_handler)
-            .expect("failed to create the AccessKit Android adapter");
+            .unwrap_or_else(|e| panic!("failed to create the AccessKit Android adapter: {e}"));
         Self { adapter }
     }
 

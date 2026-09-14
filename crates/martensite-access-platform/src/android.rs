@@ -175,7 +175,12 @@ impl AndroidAdapter {
     ///
     /// ```ignore
     /// # fn example(adapter: &mut martensite_access_platform::android::AndroidAdapter) {
-    /// adapter.update_if_active(accesskit::TreeUpdate::default);
+    /// adapter.update_if_active(|| accesskit::TreeUpdate {
+    ///     nodes: Vec::new(),
+    ///     tree: None,
+    ///     tree_id: accesskit::TreeId::ROOT,
+    ///     focus: accesskit::NodeId(0),
+    /// });
     /// # }
     /// ```
     pub fn update_if_active(&mut self, updater: impl FnOnce() -> TreeUpdate) {

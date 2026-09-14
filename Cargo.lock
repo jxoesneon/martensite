@@ -2802,6 +2802,7 @@ dependencies = [
  "accesskit",
  "accesskit_android",
  "android-activity",
+ "ndk-context",
 ]
 
 [[package]]

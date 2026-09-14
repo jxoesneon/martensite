@@ -30,6 +30,12 @@ accesskit_android = { version = "0.8.0", features = ["embedded-dex"] }
 # AccessKit adapter only works on GameActivity (see `src/android.rs`).
 android-activity = { version = "0.6", features = ["game-activity"] }
 
+# `ndk-context` lets the on-device gate test recover the JavaVM and the
+# activity jobject that `android-activity` publishes at process start —
+# the same handles `AndroidAdapter::new` receives via `AndroidApp`.
+[target.'cfg(target_os = "android")'.dev-dependencies]
+ndk-context = "0.1"
+
 [features]
 docs-rs = []
 
