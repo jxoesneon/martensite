@@ -96,6 +96,11 @@ pub struct Signal<T: 'static> {
     pub id: SignalId,
     runtime: Arc<ReactiveRuntime>,
     value: Arc<RwLock<T>>,
+    /// Whether this signal's storage accessor has been registered with
+    /// the runtime's snapshot registry. Exists only under
+    /// `devtools-timemachine`; zero cost otherwise.
+    #[cfg(feature = "devtools-timemachine")]
+    access_registered: std::sync::atomic::AtomicBool,
 }
 
 impl<T: 'static> Clone for Signal<T> {
@@ -104,6 +109,11 @@ impl<T: 'static> Clone for Signal<T> {
             id: self.id,
             runtime: Arc::clone(&self.runtime),
             value: Arc::clone(&self.value),
+            #[cfg(feature = "devtools-timemachine")]
+            access_registered: std::sync::atomic::AtomicBool::new(
+                self.access_registered
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
         }
     }
 }
@@ -145,6 +155,8 @@ impl<T: Send + Sync + 'static> Signal<T> {
             id,
             runtime,
             value: Arc::new(RwLock::new(initial)),
+            #[cfg(feature = "devtools-timemachine")]
+            access_registered: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -191,6 +203,7 @@ impl<T: Send + Sync + 'static> Signal<T> {
     /// active.set(true);
     /// assert_eq!(active.get_untracked(), true);
     /// ```
+    #[cfg(not(feature = "devtools-timemachine"))]
     pub fn set(&self, val: T) {
         {
             let mut guard = self.value.write();
@@ -198,9 +211,61 @@ impl<T: Send + Sync + 'static> Signal<T> {
         }
         self.runtime.mark_dirty(self.id);
     }
+
+    /// Overwrites the stored value, journals the previous value in the
+    /// runtime's [`SourceJournal`](crate::journal::SourceJournal), and
+    /// flags downstream subscribers dirty.
+    ///
+    /// The previous value is captured via in-place replacement, so no
+    /// `Clone` bound is required on `T`. When journaling is suppressed
+    /// by [`ReactiveRuntime::suppress_journal`] the write is applied but
+    /// not recorded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::Signal;
+    ///
+    /// let active = Signal::new(false);
+    /// active.set(true);
+    /// assert_eq!(active.get_untracked(), true);
+    /// ```
+    #[cfg(feature = "devtools-timemachine")]
+    pub fn set(&self, val: T) {
+        {
+            let mut guard = self.value.write();
+            let previous = std::mem::replace(&mut *guard, val);
+            self.runtime
+                .record_source_write(self.id, Box::new(previous));
+        }
+        self.runtime.mark_dirty(self.id);
+    }
 }
 
 impl<T: Clone + Send + Sync + 'static> Signal<T> {
+    /// Registers this signal's storage accessor with the runtime so the
+    /// source participates in [`SignalSnapshot`](crate::journal::SignalSnapshot)
+    /// capture and restore. Idempotent — a single atomic swap on every
+    /// call after the first.
+    ///
+    /// Called lazily from the `Clone`-bounded read/write methods
+    /// because a snapshot requires copying the payload out of storage,
+    /// which is only possible for `Clone` values. A source registers on
+    /// its first `get`/`get_untracked`/`set_if_changed` — since
+    /// [`Memo`](crate::Memo) and [`Effect`](crate::Effect) evaluation
+    /// reads through `get`, every source wired into the reactive graph
+    /// registers on its first pull.
+    #[cfg(feature = "devtools-timemachine")]
+    #[inline]
+    fn ensure_source_access(&self) {
+        if !self
+            .access_registered
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            self.runtime.register_source_access(self.id, &self.value);
+        }
+    }
+
     /// Reads the current value, registering a dependency edge if called within a reactive context.
     ///
     /// Outside of a [`Memo`](crate::Memo) or [`Effect`](crate::Effect) evaluation this simply
@@ -224,6 +289,8 @@ impl<T: Clone + Send + Sync + 'static> Signal<T> {
     /// ```
     #[inline(always)]
     pub fn get(&self) -> T {
+        #[cfg(feature = "devtools-timemachine")]
+        self.ensure_source_access();
         self.runtime.track_read(self.id);
         self.value.read().clone()
     }
@@ -249,6 +316,8 @@ impl<T: Clone + Send + Sync + 'static> Signal<T> {
     /// ```
     #[inline(always)]
     pub fn get_untracked(&self) -> T {
+        #[cfg(feature = "devtools-timemachine")]
+        self.ensure_source_access();
         self.value.read().clone()
     }
 }
@@ -270,10 +339,15 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> Signal<T> {
     /// assert_eq!(selected.get_untracked(), 7);
     /// ```
     pub fn set_if_changed(&self, val: T) -> bool {
+        #[cfg(feature = "devtools-timemachine")]
+        self.ensure_source_access();
         let changed = {
             let mut guard = self.value.write();
             if *guard != val {
-                *guard = val;
+                let _previous = std::mem::replace(&mut *guard, val);
+                #[cfg(feature = "devtools-timemachine")]
+                self.runtime
+                    .record_source_write(self.id, Box::new(_previous));
                 true
             } else {
                 false

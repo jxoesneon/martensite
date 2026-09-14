@@ -9,7 +9,11 @@ use parking_lot::Mutex;
 
 use crate::cycle::CycleError;
 use crate::effect::Effect;
+#[cfg(feature = "devtools-timemachine")]
+use crate::journal::{JournalGuard, SignalSnapshot, SourceAccess, SourceJournal};
 use crate::memo::Memo;
+#[cfg(feature = "devtools-timemachine")]
+use crate::scheduler::FastBuildHasher;
 use crate::scheduler::SchedulerState;
 use crate::signal::{Signal, SignalId};
 
@@ -110,6 +114,13 @@ impl std::error::Error for ReactiveError {}
 pub struct ReactiveRuntime {
     state: Mutex<SchedulerState>,
     batch_depth: AtomicUsize,
+    /// Source-write journal recording `Signal::set` mutations.
+    #[cfg(feature = "devtools-timemachine")]
+    journal: Mutex<SourceJournal>,
+    /// Type-erased accessors to live source-signal storage, used to
+    /// capture and restore [`SignalSnapshot`]s.
+    #[cfg(feature = "devtools-timemachine")]
+    source_access: Mutex<std::collections::HashMap<SignalId, SourceAccess, FastBuildHasher>>,
 }
 
 impl Default for ReactiveRuntime {
@@ -117,6 +128,12 @@ impl Default for ReactiveRuntime {
         Self {
             state: Mutex::new(SchedulerState::new()),
             batch_depth: AtomicUsize::new(0),
+            #[cfg(feature = "devtools-timemachine")]
+            journal: Mutex::new(SourceJournal::new()),
+            #[cfg(feature = "devtools-timemachine")]
+            source_access: Mutex::new(std::collections::HashMap::with_hasher(
+                FastBuildHasher::default(),
+            )),
         }
     }
 }
@@ -672,6 +689,192 @@ impl ReactiveRuntime {
     /// ```
     pub fn clear_errors(&self) {
         self.state.lock().errors.clear();
+    }
+
+    /// Registers a type-erased accessor for a source signal's storage.
+    ///
+    /// Called lazily by `Signal`'s `Clone`-bounded read/write methods
+    /// (first `get`/`get_untracked`/`set_if_changed`) so the source
+    /// participates in [`snapshot_signals`](Self::snapshot_signals)
+    /// and [`restore_signals`](Self::restore_signals). Re-registering
+    /// the same `id` replaces the previous accessor.
+    #[cfg(feature = "devtools-timemachine")]
+    pub(crate) fn register_source_access<T: Clone + Send + Sync + 'static>(
+        &self,
+        id: SignalId,
+        value: &Arc<parking_lot::RwLock<T>>,
+    ) {
+        let read = {
+            let value = Arc::downgrade(value);
+            move || -> Option<Box<dyn std::any::Any + Send + Sync>> {
+                let value = value.upgrade()?;
+                let snapshot = value.read().clone();
+                Some(Box::new(snapshot))
+            }
+        };
+        let write = {
+            let value = Arc::downgrade(value);
+            move |new: &(dyn std::any::Any + Send + Sync)| -> bool {
+                let Some(value) = value.upgrade() else {
+                    return false;
+                };
+                let Some(new) = new.downcast_ref::<T>() else {
+                    return false;
+                };
+                *value.write() = new.clone();
+                true
+            }
+        };
+        self.source_access.lock().insert(
+            id,
+            SourceAccess {
+                read: Box::new(read),
+                write: Box::new(write),
+            },
+        );
+    }
+
+    /// Records a `Signal::set` write in the source journal.
+    ///
+    /// `previous` is the value the signal held immediately before the
+    /// write. The record is dropped when the journal is suppressed by a
+    /// [`JournalGuard`].
+    #[cfg(feature = "devtools-timemachine")]
+    pub(crate) fn record_source_write(
+        &self,
+        id: SignalId,
+        previous: Box<dyn std::any::Any + Send + Sync>,
+    ) {
+        self.journal.lock().record(id, previous);
+    }
+
+    /// Returns a lock guard on this runtime's [`SourceJournal`].
+    ///
+    /// The journal records every `Signal::set` and `Signal::set_if_changed`
+    /// write with a monotonic index. `Signal::update` mutations are not
+    /// journaled (no capturable previous value); [`Memo`](crate::Memo)
+    /// recomputation is never journaled — derived values recompute lazily.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let count = runtime.create_signal(0);
+    /// count.set(5);
+    /// assert_eq!(runtime.journal().len(), 1);
+    /// ```
+    #[cfg(feature = "devtools-timemachine")]
+    pub fn journal(&self) -> parking_lot::MutexGuard<'_, SourceJournal> {
+        self.journal.lock()
+    }
+
+    /// Suppresses source-write journaling until the returned guard drops.
+    ///
+    /// This is the `debug::disable`-style guard of the replay determinism
+    /// contract: while a [`JournalGuard`] is alive, `Signal::set` writes
+    /// are applied to state but not journaled, so replayed commands do
+    /// not re-journal themselves. Guards nest — recording resumes once
+    /// every guard has dropped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let count = runtime.create_signal(0);
+    ///
+    /// {
+    ///     let _guard = runtime.suppress_journal();
+    ///     count.set(1);
+    /// }
+    /// assert_eq!(runtime.journal().len(), 0, "suppressed write not journaled");
+    /// ```
+    #[cfg(feature = "devtools-timemachine")]
+    pub fn suppress_journal(&self) -> JournalGuard<'_> {
+        JournalGuard::new(&self.journal)
+    }
+
+    /// Captures a [`SignalSnapshot`] of every registered source signal.
+    ///
+    /// Signals register a type-erased accessor at construction when
+    /// their payload is `Clone`; dropped signals are skipped and their
+    /// accessors pruned. Entries are sorted by [`SignalId`] so snapshot
+    /// iteration order is deterministic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let a = runtime.create_signal(1i32);
+    /// let b = runtime.create_signal(String::from("x"));
+    ///
+    /// let snapshot = runtime.snapshot_signals();
+    /// assert_eq!(snapshot.len(), 2);
+    /// assert_eq!(snapshot.get::<i32>(a.id()), Some(&1));
+    /// ```
+    #[cfg(feature = "devtools-timemachine")]
+    pub fn snapshot_signals(&self) -> SignalSnapshot {
+        let mut access = self.source_access.lock();
+        let mut values = Vec::with_capacity(access.len());
+        let mut dead = Vec::new();
+        for (&id, entry) in access.iter() {
+            match (entry.read)() {
+                Some(value) => values.push((id, value)),
+                None => dead.push(id),
+            }
+        }
+        for id in dead {
+            access.remove(&id);
+        }
+        values.sort_by_key(|(id, _)| *id);
+        SignalSnapshot::from_parts(values)
+    }
+
+    /// Restores source-signal values from a [`SignalSnapshot`].
+    ///
+    /// Each restored value is written directly into the signal's storage
+    /// (bypassing `Signal::set`, so no journal records are produced) and
+    /// the signal is marked dirty *without* flushing — downstream
+    /// [`Memo`](crate::Memo)s and effects recompute lazily during the
+    /// pull phase. Signals that were dropped or whose payload type
+    /// mismatches are skipped. Returns the number of signals restored.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let count = runtime.create_signal(0i32);
+    /// let snapshot = runtime.snapshot_signals();
+    ///
+    /// count.set(42);
+    /// assert_eq!(runtime.restore_signals(&snapshot), 1);
+    /// assert_eq!(count.get_untracked(), 0);
+    /// ```
+    #[cfg(feature = "devtools-timemachine")]
+    pub fn restore_signals(&self, snapshot: &SignalSnapshot) -> usize {
+        let mut restored = Vec::with_capacity(snapshot.len());
+        {
+            let access = self.source_access.lock();
+            for (id, value) in snapshot.iter() {
+                if access.get(&id).is_some_and(|a| (a.write)(value)) {
+                    restored.push(id);
+                }
+            }
+        }
+        {
+            let mut state = self.state.lock();
+            for id in restored.iter().copied() {
+                state.mark_dirty_bfs(id);
+            }
+        }
+        restored.len()
     }
 }
 
