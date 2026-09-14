@@ -1,4 +1,5 @@
 use crate::node::{HotNode, Rect};
+use crate::overlay::OverlayLayer;
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 
@@ -48,6 +49,24 @@ pub enum EventResponse {
     /// The event was handled and should not propagate.
     Handled,
     /// The event was handled and this widget requests keyboard focus.
+    ///
+    /// When this response propagates out of
+    /// [`WidgetArena::dispatch_event`](crate::WidgetArena::dispatch_event),
+    /// the arena records the responding widget as a *pending focus
+    /// request* — drain it with
+    /// [`WidgetArena::take_focus_request`](crate::WidgetArena::take_focus_request)
+    /// (or
+    /// [`EventRouter::take_focus_request`](https://docs.rs/martensite-window)
+    /// when routing through `martensite-window`) and apply it through
+    /// `martensite-focus`'s `FocusManager`. Focus only lands if the
+    /// responding node carries
+    /// [`NodeFlags::FOCUSABLE`](crate::NodeFlags::FOCUSABLE); widgets declare
+    /// focusability by setting that flag on `cx.hot.flags` inside
+    /// [`Widget::layout`]. The responder is also marked `DIRTY_PAINT`.
+    ///
+    /// Additionally, any `PointerPressed` that is handled by a
+    /// `FOCUSABLE` node requests focus implicitly — press-to-focus is
+    /// automatic and needs no explicit `CaptureFocus` return.
     CaptureFocus,
     /// The event was handled and a repaint is requested.
     RequestRepaint,
@@ -184,8 +203,19 @@ pub enum SemanticAction {
     /// Activate the widget (`accesskit::Action::Click`).
     Click,
     /// Move keyboard focus to the widget.
+    ///
+    /// A widget that honours AT focus requests returns
+    /// [`EventResponse::CaptureFocus`]; the arena then records a pending
+    /// focus request the app drains via
+    /// [`WidgetArena::take_focus_request`](crate::WidgetArena::take_focus_request)
+    /// and applies through `martensite-focus`'s `FocusManager`.
     Focus,
     /// Remove keyboard focus from the widget.
+    ///
+    /// Widgets cannot unilaterally clear focus — the app maps
+    /// `A11yAction::Blur` to `FocusManager::clear_focus`, which
+    /// dispatches [`WidgetEvent::FocusLost`] to the old target. A widget
+    /// may answer `Blur` with [`EventResponse::Ignored`].
     Blur,
     /// Set the widget's value; carries the value as text — numeric
     /// widgets parse it, matching `A11yAction::SetValue`.
@@ -511,6 +541,23 @@ pub trait Widget: Send + Sync + 'static {
         _this_node: &mut AccessKitNode,
     ) {
     }
+
+    /// Reconcile this widget's popup state with an [`OverlayLayer`].
+    ///
+    /// Widgets that own overlay popups (e.g. `Dropdown`, `Tooltip`)
+    /// implement this to open their popup in `layer` while open, close
+    /// it while closed, keep the anchor in sync with their layout
+    /// bounds, and observe layer-initiated dismissal (outside click,
+    /// Escape) via
+    /// [`OverlayLayer::take_dismissed`](crate::overlay::OverlayLayer::take_dismissed).
+    /// It is called once per frame per widget by
+    /// [`WidgetArena::sync_overlays`](crate::WidgetArena::sync_overlays),
+    /// which walks arena widgets *and* their internal children before
+    /// running
+    /// [`OverlayLayer::layout_pass`](crate::overlay::OverlayLayer::layout_pass).
+    ///
+    /// Default: no-op (the widget owns no popups).
+    fn sync_overlay(&mut self, _overlay: &mut OverlayLayer) {}
 
     /// Whether this widget's internal children and arena children are
     /// clipped to the widget's bounds during paint traversal.

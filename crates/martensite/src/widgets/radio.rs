@@ -13,6 +13,16 @@
 //!   one option is checked at a time.
 //! - `SemanticAction::Click` on an option selects it.
 //!
+//! # Accessibility note: roving tabindex and virtual nodes
+//!
+//! Each option is an internal child emitted as a virtual
+//! `RadioButton` node; the option carrying the roving tabindex
+//! advertises `Action::Focus` so assistive technologies can direct
+//! focus. Platform focus itself is a single stop on the **group's
+//! arena node** — `TreeUpdate.focus` names the group, and an AT
+//! `Focus` request on an option moves the group's roving index rather
+//! than producing a separate focus target.
+//!
 //! # Examples
 //!
 //! ```
@@ -29,7 +39,7 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::Rect;
+use martensite_core::{NodeFlags, Rect};
 
 use crate::widgets::FlexDirection;
 
@@ -60,9 +70,12 @@ pub struct RadioOption {
     checked: bool,
     /// Whether this option carries the roving tabindex.
     focused: bool,
-    /// A `SemanticAction::Click` received but not yet applied by the
-    /// owning group (see [`RadioGroup::poll_pending`]).
+    /// A `SemanticAction::Click` or pointer press received but not yet
+    /// applied by the owning group (see [`RadioGroup::poll_pending`]).
     activation_pending: bool,
+    /// A `SemanticAction::Focus` received but not yet applied by the
+    /// owning group — moves the roving tabindex without selecting.
+    focus_pending: bool,
     /// Whether the group is enabled.
     enabled: bool,
 }
@@ -74,6 +87,7 @@ impl RadioOption {
             checked: false,
             focused: false,
             activation_pending: false,
+            focus_pending: false,
             enabled: true,
         }
     }
@@ -81,7 +95,10 @@ impl RadioOption {
 
 impl Widget for RadioOption {
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let w = DOT + LABEL_GAP + 8.0 * self.label.len() as f32;
+        // Approximate label width — real text shaping lives in the
+        // `martensite-text` pipeline; this is a coarse per-grapheme
+        // estimate sufficient for row layout.
+        let w = DOT + LABEL_GAP + 8.0 * self.label.chars().count() as f32;
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
             ROW_H.min(constraints.max_size.y.max(0.0)),
@@ -110,9 +127,25 @@ impl Widget for RadioOption {
             return EventResponse::Ignored;
         }
         match cx.event {
+            WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                ..
+            } => {
+                // Park the activation; the owning group applies it via
+                // `poll_pending` so the single-checked invariant stays
+                // centralized.
+                self.activation_pending = true;
+                EventResponse::CaptureFocus
+            }
             WidgetEvent::SemanticAction(SemanticAction::Click) => {
                 self.activation_pending = true;
                 EventResponse::Handled
+            }
+            WidgetEvent::SemanticAction(SemanticAction::Focus) => {
+                // Move the group's roving tabindex here and request
+                // platform focus on the owning group node.
+                self.focus_pending = true;
+                EventResponse::CaptureFocus
             }
             _ => EventResponse::Ignored,
         }
@@ -179,7 +212,9 @@ pub struct RadioGroup {
 
 impl RadioGroup {
     /// Creates a group from option labels; the first option is
-    /// selected and focused.
+    /// selected and focused. An empty group is tolerated — selection
+    /// operations become no-ops until options exist (consistent with
+    /// `Dropdown::new`).
     ///
     /// # Examples
     ///
@@ -192,10 +227,6 @@ impl RadioGroup {
     /// ```
     pub fn new(labels: impl IntoIterator<Item = impl Into<String>>) -> Self {
         let options: Vec<RadioOption> = labels.into_iter().map(RadioOption::new).collect();
-        assert!(
-            !options.is_empty(),
-            "RadioGroup requires at least one option"
-        );
         let mut group = Self {
             label: None,
             enabled: true,
@@ -327,7 +358,8 @@ impl RadioGroup {
         self.sync_options();
     }
 
-    /// Applies pending activations recorded by option children.
+    /// Applies pending activations and focus moves recorded by option
+    /// children.
     ///
     /// AT actions dispatched to internal option widgets (through
     /// `WidgetArena::internal_widget_mut`) can only mark the option —
@@ -357,14 +389,24 @@ impl RadioGroup {
     /// assert_eq!(g.selected(), 1);
     /// ```
     pub fn poll_pending(&mut self) {
-        if let Some(index) = self
-            .options
-            .iter_mut()
-            .enumerate()
-            .find_map(|(i, o)| o.activation_pending.then_some(i))
-        {
-            self.options[index].activation_pending = false;
+        let mut activate = None;
+        let mut focus = None;
+        for (i, option) in self.options.iter_mut().enumerate() {
+            if option.activation_pending {
+                option.activation_pending = false;
+                activate = Some(i);
+            }
+            if option.focus_pending {
+                option.focus_pending = false;
+                focus = Some(i);
+            }
+        }
+        if let Some(index) = activate {
             self.select(index);
+        } else if let Some(index) = focus {
+            // Focus without selection (activation also moves focus).
+            self.focused = index;
+            self.sync_options();
         }
     }
 
@@ -397,6 +439,12 @@ impl Widget for RadioGroup {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        // Declare keyboard focusability on the arena node.
+        if self.enabled {
+            cx.hot.flags |= NodeFlags::FOCUSABLE;
+        } else {
+            cx.hot.flags.remove(NodeFlags::FOCUSABLE);
+        }
         self.option_bounds.clear();
         let n = self.options.len();
         let row_gap = 16.0f32;
@@ -455,13 +503,28 @@ impl Widget for RadioGroup {
                 position,
                 button: PointerButton::Primary,
             } => {
-                for (i, bounds) in self.option_bounds.iter().enumerate() {
-                    if bounds.contains(*position) {
-                        self.select(i);
-                        return EventResponse::CaptureFocus;
+                // Forward to the option under the press via the child
+                // protocol; the option parks an activation, applied
+                // below so selection stays centralized.
+                let mut response = EventResponse::Ignored;
+                for i in (0..self.options.len()).rev() {
+                    let Some(b) = self.child_bounds(i) else {
+                        continue;
+                    };
+                    if !b.contains(*position) {
+                        continue;
                     }
+                    let mut child_cx = EventContext {
+                        event: cx.event,
+                        bounds: b,
+                    };
+                    if let Some(option) = self.options.get_mut(i) {
+                        response = option.event(&mut child_cx);
+                    }
+                    break;
                 }
-                EventResponse::Ignored
+                self.poll_pending();
+                response
             }
             WidgetEvent::KeyPressed { key, .. } => {
                 // APG: all four arrows cycle the group in either layout.
@@ -485,6 +548,7 @@ impl Widget for RadioGroup {
                 self.select(self.focused);
                 EventResponse::RequestRepaint
             }
+            WidgetEvent::SemanticAction(SemanticAction::Focus) => EventResponse::CaptureFocus,
             _ => EventResponse::Ignored,
         }
     }

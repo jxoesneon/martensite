@@ -17,6 +17,12 @@
 //! - **Dismissal**: `Escape` hides the tooltip (both via the overlay's
 //!   top-level Escape handling and the widget's own key handler) —
 //!   honouring WCAG 1.4.13's "dismissable without moving focus".
+//! - **Hoverable** (WCAG 1.4.13): after the pointer leaves the trigger
+//!   a [`TOOLTIP_HOVER_GRACE_MS`] grace window keeps the popup open —
+//!   long enough to cross the placement gap onto the bubble. The
+//!   bubble reports pointer activity back through a shared flag
+//!   drained in [`Tooltip::sync_overlay`], so the tooltip stays open
+//!   while the pointer is on the popup itself.
 //!
 //! Timing is explicit: the widget does not consult a wall clock, so
 //! the app (or the `martensite-test` virtual clock) drives the delay
@@ -36,6 +42,9 @@
 //! assert!(tip.is_shown());
 //! ```
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use kurbo::Shape;
@@ -44,10 +53,30 @@ use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
     PaintContext, SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::Rect;
+use martensite_core::{NodeFlags, Rect};
 
 /// Default hover delay before a tooltip appears (milliseconds).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::DEFAULT_TOOLTIP_DELAY_MS;
+///
+/// assert_eq!(DEFAULT_TOOLTIP_DELAY_MS, 700);
+/// ```
 pub const DEFAULT_TOOLTIP_DELAY_MS: u64 = 700;
+/// Grace window after the pointer leaves the trigger during which the
+/// tooltip stays open — the WCAG 1.4.13 "hoverable" budget that lets
+/// the pointer cross the anchor gap onto the popup (milliseconds).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::TOOLTIP_HOVER_GRACE_MS;
+///
+/// assert_eq!(TOOLTIP_HOVER_GRACE_MS, 300);
+/// ```
+pub const TOOLTIP_HOVER_GRACE_MS: u64 = 300;
 /// Minimum allowed hover delay.
 const MIN_DELAY_MS: u64 = 500;
 /// Maximum allowed hover delay.
@@ -80,6 +109,11 @@ const RADIUS: f64 = 4.0;
 pub struct TooltipBubble {
     /// The tooltip text.
     pub text: String,
+    /// Set on any pointer event inside the bubble — drained by the
+    /// owning `Tooltip` in `sync_overlay` to keep the popup open while
+    /// hovered (WCAG 1.4.13). A fresh flag each frame means "hovered
+    /// since the last sync".
+    hover_flag: Arc<AtomicBool>,
 }
 
 impl TooltipBubble {
@@ -94,13 +128,16 @@ impl TooltipBubble {
     /// assert_eq!(b.text, "hello");
     /// ```
     pub fn new(text: impl Into<String>) -> Self {
-        Self { text: text.into() }
+        Self {
+            text: text.into(),
+            hover_flag: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
 impl Widget for TooltipBubble {
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let w = (self.text.len() as f32 * 7.0 + PAD * 2.0).min(400.0);
+        let w = (self.text.chars().count() as f32 * 7.0 + PAD * 2.0).min(400.0);
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
             24.0_f32.min(constraints.max_size.y.max(0.0)),
@@ -135,6 +172,25 @@ impl Widget for TooltipBubble {
             12.0,
             BUBBLE_INK,
         );
+    }
+
+    fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        // Any pointer activity inside the bubble reports back to the
+        // owning Tooltip through the shared hover flag (drained in
+        // `sync_overlay`) so the popup survives the trigger→popup
+        // pointer gap. Events are swallowed — a tooltip is
+        // presentational, not interactive.
+        match cx.event {
+            WidgetEvent::PointerMoved { .. }
+            | WidgetEvent::PointerPressed { .. }
+            | WidgetEvent::PointerReleased { .. }
+            | WidgetEvent::PointerEnter
+            | WidgetEvent::PointerLeave => {
+                self.hover_flag.store(true, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        EventResponse::Ignored
     }
 }
 
@@ -172,6 +228,15 @@ pub struct Tooltip {
     popup_id: Option<u64>,
     /// Last seen pointer position (anchors pointer-anchored bubbles).
     last_pointer: Option<Vec2>,
+    /// Whether the pointer has left the trigger and the hide grace
+    /// window is counting down (WCAG 1.4.13 "hoverable").
+    leaving: bool,
+    /// Time elapsed since the pointer left the trigger.
+    leave_elapsed_ms: u64,
+    /// Shared flag the open bubble sets on pointer activity; drained
+    /// in [`sync_overlay`](Self::sync_overlay) to cancel the grace
+    /// countdown while the popup itself is hovered.
+    popup_hover: Arc<AtomicBool>,
 }
 
 impl Tooltip {
@@ -196,6 +261,9 @@ impl Tooltip {
             shown: false,
             popup_id: None,
             last_pointer: None,
+            leaving: false,
+            leave_elapsed_ms: 0,
+            popup_hover: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -254,6 +322,10 @@ impl Tooltip {
     /// ```
     pub fn show(&mut self) {
         self.shown = true;
+        // An explicit show (focus / ShowTooltip action) is not subject
+        // to the pointer-leave grace countdown.
+        self.leaving = false;
+        self.leave_elapsed_ms = 0;
     }
 
     /// Hides the tooltip and resets hover tracking.
@@ -272,6 +344,8 @@ impl Tooltip {
         self.shown = false;
         self.hovered = false;
         self.hover_elapsed_ms = 0;
+        self.leaving = false;
+        self.leave_elapsed_ms = 0;
     }
 
     /// Marks the trigger as hovered, starting the delay countdown.
@@ -292,6 +366,8 @@ impl Tooltip {
     pub fn begin_hover(&mut self) {
         self.hovered = true;
         self.hover_elapsed_ms = 0;
+        self.leaving = false;
+        self.leave_elapsed_ms = 0;
     }
 
     /// Advances the hover-delay clock by `dt`.
@@ -319,6 +395,16 @@ impl Tooltip {
             self.hover_elapsed_ms = self.hover_elapsed_ms.saturating_add(dt.as_millis() as u64);
             if self.hover_elapsed_ms >= self.delay_ms {
                 self.shown = true;
+            }
+        }
+        // WCAG 1.4.13 "hoverable": the pointer has left the trigger —
+        // the popup survives for the grace window so the user can move
+        // onto the bubble. `sync_overlay` cancels the countdown when
+        // the bubble reports pointer activity.
+        if self.leaving && self.shown {
+            self.leave_elapsed_ms = self.leave_elapsed_ms.saturating_add(dt.as_millis() as u64);
+            if self.leave_elapsed_ms >= TOOLTIP_HOVER_GRACE_MS {
+                self.hide();
             }
         }
     }
@@ -359,7 +445,15 @@ impl Tooltip {
                 self.shown = false;
                 self.hovered = false;
                 self.hover_elapsed_ms = 0;
+                self.leaving = false;
+                self.leave_elapsed_ms = 0;
             }
+        }
+        // The pointer reached the bubble since the last sync — cancel
+        // the grace countdown so the popup stays open while hovered.
+        if self.popup_hover.swap(false, Ordering::Relaxed) {
+            self.leaving = false;
+            self.leave_elapsed_ms = 0;
         }
         if self.shown && self.popup_id.is_none() {
             let anchor = self
@@ -367,7 +461,8 @@ impl Tooltip {
                 .map(OverlayAnchor::Pointer)
                 .or_else(|| self.trigger_bounds.map(OverlayAnchor::Bounds))
                 .unwrap_or(OverlayAnchor::Pointer(Vec2::ZERO));
-            let bubble = TooltipBubble::new(self.text.clone());
+            let mut bubble = TooltipBubble::new(self.text.clone());
+            bubble.hover_flag = Arc::clone(&self.popup_hover);
             self.popup_id = Some(overlay.open(Box::new(bubble), anchor));
         } else if !self.shown {
             if let Some(id) = self.popup_id.take() {
@@ -384,12 +479,20 @@ impl Widget for Tooltip {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.trigger_bounds = Some(bounds);
+        // The wrapper carries keyboard focus for the APG "focus shows
+        // the tooltip" contract — the trigger is an internal child
+        // with no arena node of its own.
+        cx.hot.flags |= NodeFlags::FOCUSABLE;
         self.trigger.layout(cx, bounds);
     }
 
-    fn accessibility(&self, _node: &mut AccessKitNode) {
+    fn accessibility(&self, node: &mut AccessKitNode) {
         // The trigger carries the semantics; the wrapper node is a
-        // plain container.
+        // plain container that advertises the show/hide tooltip
+        // actions so assistive tech can control the popup directly.
+        node.set_role(accesskit::Role::GenericContainer);
+        node.add_action(accesskit::Action::ShowTooltip);
+        node.add_action(accesskit::Action::HideTooltip);
     }
 
     fn a11y_fixup(
@@ -423,7 +526,13 @@ impl Widget for Tooltip {
             WidgetEvent::PointerLeave => {
                 self.hovered = false;
                 self.hover_elapsed_ms = 0;
-                self.shown = false;
+                // WCAG 1.4.13 "hoverable": don't hide immediately — arm
+                // the grace countdown in `tick` so the pointer can
+                // reach the popup first.
+                if self.shown {
+                    self.leaving = true;
+                    self.leave_elapsed_ms = 0;
+                }
             }
             WidgetEvent::PointerMoved { position } => {
                 self.last_pointer = Some(*position);
@@ -450,6 +559,10 @@ impl Widget for Tooltip {
                 self.hide();
                 return EventResponse::Handled;
             }
+            WidgetEvent::SemanticAction(SemanticAction::Focus) => {
+                // Focus shows the tooltip (FocusGained does the work).
+                return EventResponse::CaptureFocus;
+            }
             _ => {}
         }
         // Forward everything else (and the events above) to the trigger.
@@ -462,6 +575,12 @@ impl Widget for Tooltip {
         } else {
             EventResponse::Ignored
         }
+    }
+
+    fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
+        // Delegate to the inherent method so `Tooltip::sync_overlay`
+        // and the `Widget` trait seam stay in lock-step.
+        Tooltip::sync_overlay(self, overlay);
     }
 
     fn child_count(&self) -> usize {
@@ -515,18 +634,37 @@ mod tests {
     }
 
     #[test]
-    fn hover_exit_resets_and_hides() {
+    fn hover_exit_arms_grace_then_hides() {
+        let mut tip = Tooltip::new(Text::new("t"), "tip").delay_ms(500);
+        laid_out(&mut tip, Rect::new(0.0, 0.0, 100.0, 40.0));
+        event(&mut tip, &WidgetEvent::PointerEnter);
+        tip.tick(Duration::from_millis(600));
+        assert!(tip.is_shown());
+        // WCAG 1.4.13: the exit does not hide immediately — the grace
+        // window lets the pointer cross onto the popup.
+        event(&mut tip, &WidgetEvent::PointerLeave);
+        assert!(tip.is_shown());
+        tip.tick(Duration::from_millis(TOOLTIP_HOVER_GRACE_MS));
+        assert!(!tip.is_shown());
+        // Re-entering restarts the countdown.
+        event(&mut tip, &WidgetEvent::PointerEnter);
+        tip.tick(Duration::from_millis(100));
+        assert!(!tip.is_shown());
+    }
+
+    #[test]
+    fn hover_exit_reentry_cancels_grace() {
         let mut tip = Tooltip::new(Text::new("t"), "tip").delay_ms(500);
         laid_out(&mut tip, Rect::new(0.0, 0.0, 100.0, 40.0));
         event(&mut tip, &WidgetEvent::PointerEnter);
         tip.tick(Duration::from_millis(600));
         assert!(tip.is_shown());
         event(&mut tip, &WidgetEvent::PointerLeave);
-        assert!(!tip.is_shown());
-        // Re-entering restarts the countdown.
+        // Re-entering the trigger during the grace window cancels it.
+        tip.tick(Duration::from_millis(TOOLTIP_HOVER_GRACE_MS - 50));
         event(&mut tip, &WidgetEvent::PointerEnter);
-        tip.tick(Duration::from_millis(100));
-        assert!(!tip.is_shown());
+        tip.tick(Duration::from_millis(TOOLTIP_HOVER_GRACE_MS));
+        assert!(tip.is_shown());
     }
 
     #[test]

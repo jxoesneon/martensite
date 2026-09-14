@@ -13,6 +13,23 @@
 //!   `TabPanel` is visible; the rest are emitted hidden.
 //! - `SemanticAction::Click` on a tab activates it.
 //!
+//! # APG notes and documented deviations
+//!
+//! - **Roving tabindex vs. virtual nodes**: each `Tab` is an internal
+//!   child emitted as a virtual node; the roved tab advertises
+//!   `Action::Focus` for AT focus requests, but `TreeUpdate.focus`
+//!   still names the arena `Tabs` node — platform focus is a single
+//!   stop on the group, and an AT `Focus` on a tab moves the group's
+//!   roving index rather than producing a separate focus target.
+//! - **Tab into panel**: the APG pattern makes the `TabPanel` (or the
+//!   first focusable element inside it) the next `Tab` stop after the
+//!   tab list. `TabPanel`s here are *internal children* — not arena
+//!   nodes — so they cannot hold `FocusManager` focus. `Tab` pressed
+//!   on the strip is left `Ignored` and bubbles to the app, whose
+//!   `FocusManager::tab` advances to the next arena-level focusable
+//!   widget; a panel that must itself be a tab stop needs to host a
+//!   focusable arena widget composed at the arena level.
+//!
 //! # Examples
 //!
 //! ```
@@ -30,7 +47,7 @@ use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
     PaintContext, PointerButton, SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::Rect;
+use martensite_core::{NodeFlags, Rect};
 
 /// Tab strip height in logical pixels.
 const STRIP_H: f32 = 32.0;
@@ -100,7 +117,9 @@ impl TabItem {
 
 impl Widget for TabItem {
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let w = 24.0 + 8.0 * self.label.len() as f32;
+        // Approximate label width — real shaping lives in the
+        // `martensite-text` pipeline.
+        let w = 24.0 + 8.0 * self.label.chars().count() as f32;
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
             STRIP_H.min(constraints.max_size.y.max(0.0)),
@@ -131,13 +150,22 @@ impl Widget for TabItem {
             return EventResponse::Ignored;
         }
         match cx.event {
+            WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                ..
+            } => {
+                // Park the activation; the owning `Tabs` applies it
+                // via `poll_pending` so selection stays centralized.
+                self.activation_pending = true;
+                EventResponse::CaptureFocus
+            }
             WidgetEvent::SemanticAction(SemanticAction::Click) => {
                 self.activation_pending = true;
                 EventResponse::Handled
             }
             WidgetEvent::SemanticAction(SemanticAction::Focus) => {
                 self.focus_pending = true;
-                EventResponse::Handled
+                EventResponse::CaptureFocus
             }
             _ => EventResponse::Ignored,
         }
@@ -670,6 +698,13 @@ impl Widget for Tabs {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        // Declare keyboard focusability on the arena node — the tab
+        // list is one tab stop.
+        if self.enabled {
+            cx.hot.flags |= NodeFlags::FOCUSABLE;
+        } else {
+            cx.hot.flags.remove(NodeFlags::FOCUSABLE);
+        }
         let strip = Rect::new(
             bounds.min_x(),
             bounds.min_y(),
@@ -745,27 +780,31 @@ impl Widget for Tabs {
                 position,
                 button: PointerButton::Primary,
             } => {
-                if let Some(strip) = self.strip_bounds.filter(|s| s.contains(*position)) {
-                    let _ = strip;
-                    for (i, tab_bounds) in self.strip.tab_bounds.iter().enumerate() {
-                        if tab_bounds.contains(*position) {
-                            self.activate(i);
-                            return EventResponse::CaptureFocus;
-                        }
+                // Forward through the child protocol: the strip
+                // bounds-gates to the tab under the press (which parks
+                // an activation applied below); the panel set gates to
+                // the shown panel.
+                let mut response = EventResponse::Ignored;
+                for i in (0..self.child_count()).rev() {
+                    let Some(b) = self.child_bounds(i) else {
+                        continue;
+                    };
+                    if !b.contains(*position) {
+                        continue;
                     }
-                    return EventResponse::Handled;
-                }
-                // Inside the panel region: forward to the visible panel.
-                if let Some(region) = self.panel_bounds.filter(|r| r.contains(*position)) {
-                    if let Some(panel) = self.panels.panels.get_mut(self.selected) {
-                        let mut panel_cx = EventContext {
-                            event: cx.event,
-                            bounds: region,
-                        };
-                        return panel.event(&mut panel_cx);
+                    let mut child_cx = EventContext {
+                        event: cx.event,
+                        bounds: b,
+                    };
+                    if let Some(child) = self.child_mut(i) {
+                        response = child.event(&mut child_cx);
+                    }
+                    if response != EventResponse::Ignored {
+                        break;
                     }
                 }
-                EventResponse::Ignored
+                self.poll_pending();
+                response
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
                 "ArrowRight" => {
@@ -795,6 +834,7 @@ impl Widget for Tabs {
                 self.activate(self.focused);
                 EventResponse::RequestRepaint
             }
+            WidgetEvent::SemanticAction(SemanticAction::Focus) => EventResponse::CaptureFocus,
             _ => EventResponse::Ignored,
         }
     }

@@ -9,26 +9,35 @@
 
 #![forbid(unsafe_code)]
 
+use std::time::Duration;
+
 use accesskit::{Action, Node as AccessNode, NodeId, Role};
 use glam::Vec2;
-use martensite::widgets::{Dropdown, RadioGroup, ScrollView, Slider, Tabs, Text, Tooltip};
+use martensite::widgets::{
+    Dropdown, RadioGroup, ScrollView, Slider, Tabs, Text, Tooltip, TOOLTIP_HOVER_GRACE_MS,
+};
 use martensite_access::{widget_id_to_node_id, AccessKitAdapter};
-use martensite_core::widget::{LayoutContext, Widget};
+use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
 use martensite_core::{
-    ColdNode, EventContext, HotNode, NodeFlags, OverlayLayer, Rect, SemanticAction, WidgetArena,
-    WidgetEvent, WidgetId,
+    ColdNode, EventContext, EventResponse, HotNode, NodeFlags, OverlayAnchor, OverlayLayer,
+    PointerButton, Rect, SemanticAction, WidgetArena, WidgetEvent, WidgetId,
 };
 
 /// Inserts a laid-out widget into a fresh arena and returns
 /// `(arena, root)`.
+///
+/// Widget-declared flags (e.g. `NodeFlags::FOCUSABLE`, set inside
+/// `Widget::layout`) are propagated into the arena node the way the
+/// production layout pass writes into arena hot nodes.
 fn arena_with(mut widget: impl Widget + 'static, bounds: Rect) -> (WidgetArena, WidgetId) {
-    let mut hot = HotNode::default();
-    let mut cx = LayoutContext { hot: &mut hot };
+    let mut scratch = HotNode::default();
+    let mut cx = LayoutContext { hot: &mut scratch };
     widget.layout(&mut cx, bounds);
+    let declared = scratch.flags;
 
     let mut arena = WidgetArena::new();
     let mut hot = HotNode::new(taffy::NodeId::new(0));
-    hot.flags = NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
+    hot.flags = NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED | declared;
     hot.bounds = bounds;
     let id = arena.insert(hot, ColdNode::new(Box::new(widget)));
     (arena, id)
@@ -308,4 +317,259 @@ fn tooltip_described_by_wires_to_bubble() {
     // The trigger node describes-by the bubble.
     let trigger = find_node(&update, |n| n.described_by().contains(bubble_id));
     assert!(trigger.is_some(), "trigger has aria-describedby → bubble");
+}
+
+// ---------------------------------------------------------------------------
+// Focus requests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn press_on_focusable_widget_records_focus_request() {
+    let slider = Slider::new(0.0, 100.0).with_value(40.0);
+    let (mut arena, root) = arena_with(slider, Rect::new(0.0, 0.0, 200.0, 24.0));
+
+    let press = WidgetEvent::PointerPressed {
+        position: Vec2::new(50.0, 12.0),
+        button: PointerButton::Primary,
+    };
+    assert_eq!(
+        arena.dispatch_event(root, &press),
+        EventResponse::CapturePointer
+    );
+    // Implicit press-to-focus: the handled press on a `FOCUSABLE` node
+    // records a pending focus request the app drains into its
+    // `FocusManager`.
+    assert_eq!(arena.take_focus_request(), Some(root));
+    assert_eq!(arena.take_focus_request(), None);
+}
+
+#[test]
+fn semantic_focus_action_records_focus_request() {
+    let group = RadioGroup::new(["A", "B"]);
+    let (mut arena, root) = arena_with(group, Rect::new(0.0, 0.0, 200.0, 24.0));
+
+    arena.dispatch_event(root, &WidgetEvent::SemanticAction(SemanticAction::Focus));
+    // `CaptureFocus` from the widget becomes a drainable focus request.
+    assert_eq!(arena.take_focus_request(), Some(root));
+}
+
+// ---------------------------------------------------------------------------
+// Overlay routing contracts (arena-owned OverlayLayer)
+// ---------------------------------------------------------------------------
+
+/// Fixed-size stub popup content for overlay tests.
+struct Fixed(Vec2);
+
+impl Widget for Fixed {
+    fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+        self.0
+    }
+    fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+}
+
+#[test]
+fn dropdown_typeahead_stays_with_focused_owner_while_popup_open() {
+    let mut dd = Dropdown::new(["Red", "Green", "Blue"]);
+    dd.open();
+    let (mut arena, root) = arena_with(dd, Rect::new(10.0, 10.0, 160.0, 32.0));
+    arena
+        .overlay_mut()
+        .set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+    arena.sync_overlays();
+    assert_eq!(arena.overlay().len(), 1, "popup open in arena overlay");
+
+    let key = WidgetEvent::KeyPressed {
+        key: "g".to_string(),
+        repeat: false,
+    };
+    // Ordinary keys pass through the overlay — only Escape is
+    // consumed — so the focused combobox keeps receiving input.
+    assert_eq!(
+        arena.overlay_mut().dispatch_event(&key),
+        EventResponse::Ignored
+    );
+    arena.dispatch_event(root, &key);
+
+    let mut adapter = AccessKitAdapter::new(root);
+    let update = adapter.build_update(&mut arena);
+    let (_, combo) = find_node(&update, |n| n.role() == Role::ComboBox).unwrap();
+    let options = find_all(&update, |n| n.role() == Role::ListBoxOption);
+    assert_eq!(options.len(), 3);
+    assert_eq!(
+        combo.active_descendant(),
+        Some(options[1].0),
+        "typeahead moved activedescendant to \"Green\""
+    );
+}
+
+#[test]
+fn overlay_escape_and_outside_press_record_dismissals() {
+    let (mut arena, _root) = arena_with(Text::new("base"), Rect::new(0.0, 0.0, 100.0, 100.0));
+    arena
+        .overlay_mut()
+        .set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+    let a = arena.overlay_mut().open(
+        Box::new(Fixed(Vec2::new(40.0, 20.0))),
+        OverlayAnchor::Bounds(Rect::new(10.0, 10.0, 50.0, 20.0)),
+    );
+    let b = arena.overlay_mut().open(
+        Box::new(Fixed(Vec2::new(40.0, 20.0))),
+        OverlayAnchor::Bounds(Rect::new(100.0, 100.0, 50.0, 20.0)),
+    );
+
+    // Escape dismisses only the topmost popup and records it.
+    let escape = WidgetEvent::KeyPressed {
+        key: "Escape".to_string(),
+        repeat: false,
+    };
+    assert_eq!(
+        arena.overlay_mut().dispatch_event(&escape),
+        EventResponse::Handled
+    );
+    assert!(arena.overlay().is_open(a));
+    assert!(!arena.overlay().is_open(b));
+    assert_eq!(arena.overlay_mut().take_dismissed(), Some(b));
+
+    // An outside press dismisses the remaining popup, records it for
+    // owners to reconcile, and falls through to window content.
+    let press = WidgetEvent::PointerPressed {
+        position: Vec2::new(700.0, 500.0),
+        button: PointerButton::Primary,
+    };
+    assert_eq!(
+        arena.overlay_mut().dispatch_event(&press),
+        EventResponse::Ignored
+    );
+    assert_eq!(arena.overlay_mut().take_dismissed(), Some(a));
+    assert_eq!(arena.overlay_mut().take_dismissed(), None);
+    assert!(arena.overlay().is_empty());
+}
+
+#[test]
+fn overlay_lazily_lays_out_fresh_popup_for_hit_testing() {
+    let mut overlay = OverlayLayer::new();
+    overlay.set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+    // Bounds anchor (10,10,70,30) → popup placed below at y = 44.
+    let id = overlay.open(
+        Box::new(Fixed(Vec2::new(60.0, 40.0))),
+        OverlayAnchor::Bounds(Rect::new(10.0, 10.0, 70.0, 30.0)),
+    );
+    // No `layout_pass` yet: dispatch lays the entry out lazily so a
+    // press inside the popup's resolved bounds doesn't count as an
+    // outside click.
+    let inside = WidgetEvent::PointerPressed {
+        position: Vec2::new(20.0, 50.0),
+        button: PointerButton::Primary,
+    };
+    assert_ne!(overlay.dispatch_event(&inside), EventResponse::Ignored);
+    assert!(
+        overlay.is_open(id),
+        "press hit the popup, not an outside click"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tooltip WCAG 1.4.13 hoverable
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tooltip_hover_grace_bridges_pointer_to_bubble() {
+    let mut tip = Tooltip::new(Text::new("Save"), "tip").delay_ms(500);
+    let bounds = Rect::new(10.0, 10.0, 100.0, 40.0);
+    {
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext { hot: &mut hot };
+        tip.layout(&mut cx, bounds);
+    }
+    let send = |tip: &mut Tooltip, ev: WidgetEvent| {
+        let mut cx = EventContext { event: &ev, bounds };
+        tip.event(&mut cx)
+    };
+
+    send(&mut tip, WidgetEvent::PointerEnter);
+    tip.tick(Duration::from_millis(500));
+    assert!(tip.is_shown());
+
+    let mut overlay = OverlayLayer::new();
+    overlay.set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+    tip.sync_overlay(&mut overlay);
+    overlay.layout_pass();
+    let popup_id = tip.popup_id().expect("popup opened");
+    let bubble = overlay.entry_bounds(popup_id).expect("bubble laid out");
+
+    // Pointer leaves the trigger: the popup survives the grace window…
+    send(&mut tip, WidgetEvent::PointerLeave);
+    tip.tick(Duration::from_millis(TOOLTIP_HOVER_GRACE_MS - 100));
+    assert!(tip.is_shown(), "grace window keeps the popup open");
+
+    // …long enough for the pointer to reach the bubble — activity on
+    // the popup cancels the countdown at the next sync.
+    let inside = WidgetEvent::PointerMoved {
+        position: Vec2::new(bubble.min_x() + 5.0, bubble.min_y() + 5.0),
+    };
+    overlay.dispatch_event(&inside);
+    tip.sync_overlay(&mut overlay);
+    tip.tick(Duration::from_millis(TOOLTIP_HOVER_GRACE_MS));
+    assert!(tip.is_shown(), "bubble hover keeps the popup open");
+    assert!(overlay.is_open(popup_id));
+
+    // Leaving again without reaching the popup lets the grace expire;
+    // the next sync closes the entry.
+    send(&mut tip, WidgetEvent::PointerLeave);
+    tip.tick(Duration::from_millis(TOOLTIP_HOVER_GRACE_MS));
+    assert!(!tip.is_shown());
+    tip.sync_overlay(&mut overlay);
+    assert!(!overlay.is_open(popup_id));
+}
+
+// ---------------------------------------------------------------------------
+// ScrollView content hover forwarding
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scrollview_forwards_hover_to_content() {
+    /// Content widget that records pointer events through a shared log.
+    struct HoverLog {
+        seen: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    impl Widget for HoverLog {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::new(80.0, 400.0)
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+        fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+            let tag = match cx.event {
+                WidgetEvent::PointerMoved { .. } => Some("moved"),
+                WidgetEvent::PointerEnter => Some("enter"),
+                WidgetEvent::PointerLeave => Some("leave"),
+                _ => None,
+            };
+            if let Some(tag) = tag {
+                self.seen.lock().unwrap().push(tag);
+            }
+            EventResponse::Ignored
+        }
+    }
+
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let view = ScrollView::new(HoverLog {
+        seen: std::sync::Arc::clone(&seen),
+    });
+    let (mut arena, root) = arena_with(view, Rect::new(0.0, 0.0, 100.0, 100.0));
+
+    arena.dispatch_event(root, &WidgetEvent::PointerEnter);
+    arena.dispatch_event(
+        root,
+        &WidgetEvent::PointerMoved {
+            position: Vec2::new(50.0, 50.0),
+        },
+    );
+    arena.dispatch_event(root, &WidgetEvent::PointerLeave);
+
+    assert_eq!(
+        seen.lock().unwrap().as_slice(),
+        &["enter", "moved", "leave"],
+        "hover events reach the scrollable content"
+    );
 }

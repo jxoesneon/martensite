@@ -14,6 +14,17 @@
 //!   `ScrollUp/Down/Left/Right`/`SetScrollOffset` actions, plus
 //!   `Role::ScrollBar` children carrying the same range semantics.
 //!
+//! # Documented limitations
+//!
+//! - **`ScrollIntoView` semantics**: `accesskit::Action::ScrollIntoView`
+//!   carries no descendant identity, so the view scrolls the first
+//!   clipped direct descendant of its content into view (document
+//!   order) — a best-effort interpretation, not per-node targeting.
+//! - **Virtual scrolling**: the view always lays out and emits its
+//!   full content; virtualization for very large lists (windowed
+//!   `posinset`/`setsize` emission) is deferred — today it is the
+//!   app's responsibility to bound the content it composes.
+//!
 //! # Examples
 //!
 //! ```
@@ -30,7 +41,7 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::Rect;
+use martensite_core::{NodeFlags, Rect};
 use martensite_motion::RubberBandScroller2D;
 
 /// Scrollbar thickness in logical pixels.
@@ -402,6 +413,46 @@ impl ScrollView {
         self.set_scroll_offset(target);
     }
 
+    /// `ScrollIntoView` best-effort: scrolls the first direct
+    /// descendant of the content (document order) that is clipped by
+    /// the viewport fully into view. `accesskit::Action::ScrollIntoView`
+    /// carries no descendant identity — see the module-level documented
+    /// limitations — so when every child is already visible (or the
+    /// content has no internal children), the content's own origin is
+    /// scrolled into view instead.
+    fn scroll_first_clipped_descendant(&mut self) {
+        let vp = self.viewport;
+        for i in 0..self.content.child_count() {
+            let Some(b) = self.content.child_bounds(i) else {
+                continue;
+            };
+            // Window-space child bounds → content-space rect.
+            let rect = Rect::new(
+                b.min_x() - vp.min_x() + self.offset.x,
+                b.min_y() - vp.min_y() + self.offset.y,
+                b.width(),
+                b.height(),
+            );
+            let clipped = rect.min_y() < self.offset.y - 0.5
+                || rect.max_y() > self.offset.y + vp.height() + 0.5
+                || rect.min_x() < self.offset.x - 0.5
+                || rect.max_x() > self.offset.x + vp.width() + 0.5;
+            if clipped {
+                self.scroll_rect_into_view(rect);
+                return;
+            }
+        }
+        // Everything already visible — scroll the content origin in.
+        if let Some(rect) = self.content_rect {
+            self.scroll_rect_into_view(Rect::new(
+                rect.min_x() + self.offset.x,
+                rect.min_y() + self.offset.y,
+                rect.width(),
+                rect.height(),
+            ));
+        }
+    }
+
     /// Scroll anchoring: compensates the offset when `delta` logical
     /// pixels of content were inserted *above* the current viewport —
     /// the `S1 = S0 + (L1 − L0)` rule, keeping the same content under
@@ -512,9 +563,9 @@ impl ScrollView {
     /// Re-lays out the content child at the current effective offset so
     /// its `child_bounds` tracks the scroll position.
     fn relayout_content(&mut self) {
-        let Some(_bounds) = self.content_rect else {
-            return;
-        };
+        // `content_rect` starts out `None`; this is the one place it is
+        // assigned, so it must run unconditionally — otherwise the
+        // content child is never laid out, painted, or hit-tested.
         let mut hot = martensite_core::HotNode::default();
         let mut cx = LayoutContext { hot: &mut hot };
         let off = self.effective_offset();
@@ -696,6 +747,13 @@ impl Widget for ScrollView {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        // Declare keyboard focusability on the arena node — scroll
+        // regions are keyboard-scrollable (arrows/PageUp/PageDown).
+        if self.enabled {
+            cx.hot.flags |= NodeFlags::FOCUSABLE;
+        } else {
+            cx.hot.flags.remove(NodeFlags::FOCUSABLE);
+        }
         // Bottom-stick anchoring: capture whether the view is pinned to
         // the bottom *before* the content is re-measured, so a growth in
         // content height keeps the latest content visible.
@@ -840,11 +898,32 @@ impl Widget for ScrollView {
                     self.relayout_content();
                     return EventResponse::RequestRepaint;
                 }
+                // No drag in flight: hover reaches the scrollable
+                // content (e.g. listbox option highlighting).
+                if let Some(content_rect) = self.content_rect.filter(|r| r.contains(*position)) {
+                    let mut child_cx = EventContext {
+                        event: cx.event,
+                        bounds: content_rect,
+                    };
+                    return self.content.event(&mut child_cx);
+                }
+                EventResponse::Ignored
+            }
+            // Hover boundaries propagate to the scrollable content so
+            // children can clear their hover state.
+            WidgetEvent::PointerEnter | WidgetEvent::PointerLeave => {
+                if let Some(content_rect) = self.content_rect {
+                    let mut child_cx = EventContext {
+                        event: cx.event,
+                        bounds: content_rect,
+                    };
+                    return self.content.event(&mut child_cx);
+                }
                 EventResponse::Ignored
             }
             WidgetEvent::PointerReleased {
+                position,
                 button: PointerButton::Primary,
-                ..
             } => {
                 if self.thumb_drag.is_some() {
                     self.thumb_drag = None;
@@ -854,6 +933,15 @@ impl Widget for ScrollView {
                     self.drag_last = None;
                     self.scroller.release((0.0, 0.0));
                     return EventResponse::ReleasePointer;
+                }
+                // Symmetric with the press path: content that took the
+                // press also sees the release.
+                if let Some(content_rect) = self.content_rect.filter(|r| r.contains(*position)) {
+                    let mut child_cx = EventContext {
+                        event: cx.event,
+                        bounds: content_rect,
+                    };
+                    return self.content.event(&mut child_cx);
                 }
                 EventResponse::Ignored
             }
@@ -920,16 +1008,10 @@ impl Widget for ScrollView {
                     EventResponse::RequestRepaint
                 }
                 SemanticAction::ScrollIntoView => {
-                    if let Some(rect) = self.content_rect {
-                        self.scroll_rect_into_view(Rect::new(
-                            rect.min_x() + self.offset.x,
-                            rect.min_y() + self.offset.y,
-                            rect.width(),
-                            rect.height(),
-                        ));
-                    }
+                    self.scroll_first_clipped_descendant();
                     EventResponse::RequestRepaint
                 }
+                SemanticAction::Focus => EventResponse::CaptureFocus,
                 _ => EventResponse::Ignored,
             },
             _ => EventResponse::Ignored,

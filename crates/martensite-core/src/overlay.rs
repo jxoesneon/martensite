@@ -10,18 +10,26 @@
 //!   dismisses all popups and falls through to the content beneath;
 //! - `Escape` dismisses the topmost popup.
 //!
-//! Pointer events are dispatched to popups topmost-first before the
-//! caller forwards them to the arena, so popup content hit-tests ahead
-//! of in-window content. While an entry's content answers
-//! [`EventResponse::CapturePointer`], subsequent pointer events are
-//! routed to that entry until it answers
-//! [`EventResponse::ReleasePointer`].
+//! Pointer and scroll events are dispatched to popups topmost-first
+//! before the caller forwards them to the arena, so popup content
+//! hit-tests ahead of in-window content. While an entry's content
+//! answers [`EventResponse::CapturePointer`], subsequent pointer
+//! events are routed to that entry until it answers
+//! [`EventResponse::ReleasePointer`]. Keyboard input is *not* routed
+//! into popups (other than `Escape` dismissal): focus stays on the
+//! popup's owning widget, so e.g. combobox typeahead works while its
+//! listbox is open.
 //!
-//! The layer is deliberately standalone: the per-frame integration
-//! order is `dispatch_event` (before arena routing), `layout_pass`,
-//! then [`OverlayLayer::paint`] appended after the arena paint list.
-//! The AccessKit adapter emits open popups as top-level virtual nodes
-//! via `martensite-access`'s `build_update_with_overlay`.
+//! The layer is owned by [`WidgetArena`](crate::WidgetArena)
+//! ([`overlay`](crate::WidgetArena::overlay) /
+//! [`overlay_mut`](crate::WidgetArena::overlay_mut)) in production —
+//! `martensite-window`'s `EventRouter` offers it events before arena
+//! routing, [`WidgetArena::build_paint_list`](crate::WidgetArena::build_paint_list)
+//! appends it after arena content, and `martensite-access`'s
+//! `AccessKitAdapter` emits open popups as top-level virtual nodes.
+//! The layer can also be used standalone; widget owners reconcile
+//! with it once per frame via [`Widget::sync_overlay`](crate::Widget::sync_overlay),
+//! driven by [`WidgetArena::sync_overlays`](crate::WidgetArena::sync_overlays).
 //!
 //! # Examples
 //!
@@ -38,6 +46,8 @@
 //! assert!(overlay.is_open(id));
 //! assert_eq!(overlay.len(), 1);
 //! ```
+
+use std::collections::VecDeque;
 
 use glam::Vec2;
 
@@ -137,9 +147,9 @@ pub struct OverlayLayer {
     next_id: u64,
     /// Window viewport in logical pixels used for clamping.
     viewport: Rect,
-    /// Entry id most recently dismissed by [`Self::dispatch_event`]
+    /// FIFO of entry ids dismissed by [`Self::dispatch_event`]
     /// (outside press or Escape), for owners that poll for closure.
-    last_dismissed: Option<u64>,
+    dismissed: VecDeque<u64>,
     /// Entry currently holding overlay-level pointer capture.
     capture: Option<u64>,
 }
@@ -167,7 +177,7 @@ impl OverlayLayer {
             entries: Vec::new(),
             next_id: 1,
             viewport: Rect::default(),
-            last_dismissed: None,
+            dismissed: VecDeque::new(),
             capture: None,
         }
     }
@@ -372,13 +382,26 @@ impl OverlayLayer {
         Some(widget)
     }
 
-    /// Returns and clears the id of the popup most recently dismissed
-    /// by event dispatch (outside press or Escape).
+    /// Returns and clears the id of the oldest popup dismissed by
+    /// event dispatch (outside press or Escape).
+    ///
+    /// A single event can dismiss several popups — an outside press
+    /// closes the whole layer — so callers should drain in a loop:
+    /// `while let Some(id) = layer.take_dismissed() { … }`.
     ///
     /// Owners such as dropdowns poll this to reconcile their own
     /// expanded state after the layer closed their popup.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::OverlayLayer;
+    ///
+    /// let mut layer = OverlayLayer::new();
+    /// assert_eq!(layer.take_dismissed(), None);
+    /// ```
     pub fn take_dismissed(&mut self) -> Option<u64> {
-        self.last_dismissed.take()
+        self.dismissed.pop_front()
     }
 
     /// Measure, place, and lay out every entry that needs it.
@@ -482,12 +505,20 @@ impl OverlayLayer {
     ///   [`EventResponse::Ignored`], letting the press continue to the
     ///   content beneath.
     /// - `Escape` dismisses the topmost popup and returns
-    ///   [`EventResponse::Handled`]; other keys go to the topmost
-    ///   popup's content.
+    ///   [`EventResponse::Handled`]. **Other keys are ignored** —
+    ///   keyboard input stays with the focused arena widget (the
+    ///   popup's owner), so e.g. combobox typeahead keeps working
+    ///   while a listbox popup is open.
+    /// - Scroll and other positional events hit-test like pointer
+    ///   events, so popup content can scroll.
     ///
     /// [`EventResponse::CapturePointer`] /
     /// [`EventResponse::ReleasePointer`] from popup content are
     /// honoured by the layer itself.
+    ///
+    /// Entries opened since the last [`Self::layout_pass`] are laid out
+    /// lazily here (when a viewport is set) so hit-testing never sees a
+    /// stale zero-size rect between `open` and the frame's layout pass.
     ///
     /// # Examples
     ///
@@ -515,8 +546,20 @@ impl OverlayLayer {
     /// assert!(layer.is_empty());
     /// ```
     pub fn dispatch_event(&mut self, event: &WidgetEvent) -> EventResponse {
-        // Keyboard: Escape dismisses the topmost popup; other keys go to
-        // the topmost popup's content.
+        // Entries opened since the last layout pass would hit-test
+        // against a stale zero-size rect; resolve them first so a press
+        // between `open` and the frame's `layout_pass` doesn't count as
+        // an outside click. Skipped while the viewport is unset —
+        // placement needs a real clamp rect.
+        if self.viewport.width() > 0.0 && self.viewport.height() > 0.0 {
+            self.layout_pass();
+        }
+
+        // Keyboard: only Escape is meaningful to the layer — it
+        // dismisses the topmost popup. Every other key falls through so
+        // the focused arena widget (the popup's owner) keeps receiving
+        // input; popup content is a stateless view of owner state and
+        // never owns focus.
         if matches!(
             event,
             WidgetEvent::KeyPressed { .. } | WidgetEvent::KeyReleased { .. }
@@ -525,20 +568,12 @@ impl OverlayLayer {
                 if key == "Escape" {
                     if let Some(top) = self.entries.last().map(|e| e.id) {
                         self.close(top);
-                        self.last_dismissed = Some(top);
+                        self.dismissed.push_back(top);
                         return EventResponse::Handled;
                     }
-                    return EventResponse::Ignored;
                 }
             }
-            let Some(entry) = self.entries.last_mut() else {
-                return EventResponse::Ignored;
-            };
-            let mut cx = EventContext {
-                event,
-                bounds: entry.resolved,
-            };
-            return swallow_ignored(entry.content.event(&mut cx));
+            return EventResponse::Ignored;
         }
 
         // Pointer capture: deliver to the capturing entry regardless of
@@ -576,10 +611,11 @@ impl OverlayLayer {
             // Outside every popup: a press dismisses all popups and
             // falls through to window content.
             if matches!(event, WidgetEvent::PointerPressed { .. }) && !self.entries.is_empty() {
-                let top = self.entries.last().map(|e| e.id);
+                // Record every dismissed id — owners reconcile their
+                // own state via `take_dismissed`.
+                self.dismissed.extend(self.entries.iter().map(|e| e.id));
                 self.entries.clear();
                 self.capture = None;
-                self.last_dismissed = top;
                 return EventResponse::Ignored;
             }
         }
@@ -694,7 +730,8 @@ mod tests {
         };
         assert_eq!(layer.dispatch_event(&press), EventResponse::Ignored);
         assert!(layer.is_empty());
-        // The topmost popup is reported as the dismissed one.
+        // Every dismissed popup is recorded, in z-order.
+        assert_eq!(layer.take_dismissed(), Some(a));
         assert_eq!(layer.take_dismissed(), Some(b));
         assert_eq!(layer.take_dismissed(), None);
     }

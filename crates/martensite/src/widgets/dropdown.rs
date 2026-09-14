@@ -39,7 +39,7 @@ use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
     PaintContext, PointerButton, SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::Rect;
+use martensite_core::{NodeFlags, Rect};
 
 use crate::widgets::scrollview::ScrollView;
 
@@ -114,7 +114,9 @@ impl Widget for OptionItem {
         node.set_position_in_set(self.index + 1);
         node.set_size_of_set(state.options.len());
         node.add_action(accesskit::Action::Click);
-        node.add_action(accesskit::Action::Focus);
+        // No `Action::Focus`: options are not focusable — the combobox
+        // owns focus and tracks the highlight via
+        // `aria-activedescendant` (the select-only APG pattern).
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -745,12 +747,14 @@ impl Dropdown {
 
 impl Widget for Dropdown {
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        // Approximate face width — real shaping lives in the
+        // `martensite-text` pipeline.
         let widest = self
             .options
             .iter()
-            .map(|o| o.len())
+            .map(|o| o.chars().count())
             .max()
-            .unwrap_or(self.placeholder.len()) as f32;
+            .unwrap_or_else(|| self.placeholder.chars().count()) as f32;
         let w = widest * 7.0 + 48.0;
         Vec2::new(
             w.clamp(80.0, constraints.max_size.x.max(0.0)),
@@ -758,8 +762,14 @@ impl Widget for Dropdown {
         )
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        // Declare keyboard focusability on the arena node.
+        if self.enabled {
+            cx.hot.flags |= NodeFlags::FOCUSABLE;
+        } else {
+            cx.hot.flags.remove(NodeFlags::FOCUSABLE);
+        }
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -775,9 +785,13 @@ impl Widget for Dropdown {
         node.set_has_popup(accesskit::HasPopup::Listbox);
         node.set_expanded(self.open);
         node.add_action(accesskit::Action::Click);
-        node.add_action(accesskit::Action::Focus);
         node.add_action(accesskit::Action::Expand);
         node.add_action(accesskit::Action::Collapse);
+        // `SetValue` selects an option by label.
+        node.add_action(accesskit::Action::SetValue);
+        if self.enabled {
+            node.add_action(accesskit::Action::Focus);
+        }
         if !self.enabled {
             node.set_disabled();
         }
@@ -909,10 +923,17 @@ impl Widget for Dropdown {
                     }
                     EventResponse::Ignored
                 }
+                SemanticAction::Focus => EventResponse::CaptureFocus,
                 _ => EventResponse::Ignored,
             },
             _ => EventResponse::Ignored,
         }
+    }
+
+    fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
+        // Delegate to the inherent method so `Dropdown::sync_overlay`
+        // and the `Widget` trait seam stay in lock-step.
+        Dropdown::sync_overlay(self, overlay);
     }
 
     fn paint(&self, cx: &mut PaintContext) {

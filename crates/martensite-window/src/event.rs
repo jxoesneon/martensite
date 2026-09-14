@@ -416,6 +416,20 @@ pub enum EventDispatchOutcome {
 /// - [`EventRouter::route_scroll_event`] — routes a scroll to the widget under
 ///   the scroll position (the hovered widget for that window's tree).
 ///
+/// The `dispatch_*` delivery methods additionally integrate two
+/// framework concerns:
+///
+/// - **Overlay-first input**: pointer and scroll events are offered to
+///   the arena-owned
+///   [`OverlayLayer`](martensite_core::overlay::OverlayLayer) before
+///   arena hit-testing; an `Escape` key press is consumed by the layer
+///   to dismiss the topmost popup. All other keys pass through to the
+///   focused widget.
+/// - **Focus requests**: `EventResponse::CaptureFocus` responses (and
+///   implicit press-to-focus on `FOCUSABLE` nodes) are drained into
+///   [`EventRouter::take_focus_request`] for the app's `FocusManager`
+///   to apply.
+///
 /// # Examples
 ///
 /// ```
@@ -457,6 +471,10 @@ pub struct EventRouter {
     capture: PointerCapture,
     /// Per-window mouse position and hover state.
     mouse: MouseTracker,
+    /// Most recent widget that asked for keyboard focus during
+    /// dispatch — drained by
+    /// [`take_focus_request`](Self::take_focus_request).
+    pending_focus: Option<WidgetId>,
 }
 
 impl EventRouter {
@@ -533,6 +551,37 @@ impl EventRouter {
     #[must_use]
     pub fn captured_widget_primary(&self) -> Option<WidgetId> {
         self.capture.captured_primary()
+    }
+
+    /// Drains the most recent keyboard-focus request recorded while
+    /// dispatching events.
+    ///
+    /// Widgets ask for focus by answering an event with
+    /// [`EventResponse::CaptureFocus`], or implicitly by handling a
+    /// `PointerPressed` on a node carrying `NodeFlags::FOCUSABLE`
+    /// (press-to-focus). The arena records the request; the router
+    /// surfaces it here so the app can apply it through
+    /// `martensite-focus`'s `FocusManager::set_focus`, then dispatch
+    /// `WidgetEvent::FocusLost`/`FocusGained` to the old and new
+    /// targets.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_window::event::EventRouter;
+    ///
+    /// let mut router = EventRouter::new();
+    /// assert_eq!(router.take_focus_request(), None);
+    /// ```
+    pub fn take_focus_request(&mut self) -> Option<WidgetId> {
+        self.pending_focus.take()
+    }
+
+    /// Moves any pending focus request off the arena into the router.
+    fn drain_focus(&mut self, arena: &mut WidgetArena) {
+        if let Some(id) = arena.take_focus_request() {
+            self.pending_focus = Some(id);
+        }
     }
 
     /// Routes a normalized pointer event to its target widget.
@@ -687,6 +736,33 @@ impl EventRouter {
         window_id: WindowId,
         event: &PointerEvent,
     ) -> Option<EventResponse> {
+        // Popups in the arena-owned overlay hit-test ahead of window
+        // content — unless an arena widget holds pointer capture: a
+        // drag that began on window content must keep tracking even
+        // while the pointer crosses a popup.
+        let arena_captured = self
+            .capture
+            .captured(event.pointer_id)
+            .is_some_and(|id| arena.is_alive(id));
+        if !arena_captured {
+            let overlay_response = arena
+                .overlay_mut()
+                .dispatch_event(&widget_event_for_pointer(event));
+            if overlay_response != EventResponse::Ignored {
+                // The popup consumed the event. Keep the tracked pointer
+                // position fresh but leave hover untouched — the widget
+                // beneath the popup stays "hovered" (e.g. a dropdown
+                // trigger while browsing its options), so no spurious
+                // `PointerLeave` fires.
+                self.mouse.update_position(window_id, event.position);
+                self.drain_focus(arena);
+                return Some(overlay_response);
+            }
+            // `Ignored` means the press landed outside every popup
+            // (dismissing them) or no popup is open — fall through to
+            // normal routing.
+        }
+
         // Capture the hovered widget before routing so hover transitions
         // can be detected. `PointerMoved` stops arriving once the pointer
         // exits a widget's bounds, so `PointerEnter`/`PointerLeave` are
@@ -704,7 +780,7 @@ impl EventRouter {
                 let _ = arena.dispatch_event(new, &WidgetEvent::PointerEnter);
             }
         }
-        match outcome {
+        let result = match outcome {
             EventDispatchOutcome::Handled(id) => {
                 match arena.dispatch_event_ex(id, &widget_event_for_pointer(event)) {
                     Some((responder, response)) => {
@@ -726,7 +802,9 @@ impl EventRouter {
                 }
             }
             _ => None,
-        }
+        };
+        self.drain_focus(arena);
+        result
     }
 
     /// Routes a keyboard event to the focused widget and delivers it.
@@ -759,22 +837,30 @@ impl EventRouter {
         pressed: bool,
         repeat: bool,
     ) -> Option<EventResponse> {
-        match self.route_keyboard_event(focused) {
-            EventDispatchOutcome::Handled(id) => {
-                let event = if pressed {
-                    WidgetEvent::KeyPressed {
-                        key: key.to_string(),
-                        repeat,
-                    }
-                } else {
-                    WidgetEvent::KeyReleased {
-                        key: key.to_string(),
-                    }
-                };
-                Some(arena.dispatch_event(id, &event))
+        let event = if pressed {
+            WidgetEvent::KeyPressed {
+                key: key.to_string(),
+                repeat,
             }
-            _ => None,
+        } else {
+            WidgetEvent::KeyReleased {
+                key: key.to_string(),
+            }
+        };
+        // `Escape` dismisses the topmost open popup; the overlay ignores
+        // every other key so focused-widget interactions such as
+        // combobox typeahead keep working while a popup is open.
+        let overlay_response = arena.overlay_mut().dispatch_event(&event);
+        if overlay_response != EventResponse::Ignored {
+            self.drain_focus(arena);
+            return Some(overlay_response);
         }
+        let result = match self.route_keyboard_event(focused) {
+            EventDispatchOutcome::Handled(id) => Some(arena.dispatch_event(id, &event)),
+            _ => None,
+        };
+        self.drain_focus(arena);
+        result
     }
 
     /// Routes a scroll event to the hovered widget and delivers it.
@@ -788,13 +874,23 @@ impl EventRouter {
         window_id: WindowId,
         delta: Vec2,
     ) -> Option<EventResponse> {
-        match self.route_scroll_event(window_id, delta) {
+        let position = self.mouse.position(window_id).unwrap_or(Vec2::ZERO);
+        // Scroll over a popup goes to the popup (e.g. a long listbox).
+        let overlay_response = arena
+            .overlay_mut()
+            .dispatch_event(&WidgetEvent::Scroll { position, delta });
+        if overlay_response != EventResponse::Ignored {
+            self.drain_focus(arena);
+            return Some(overlay_response);
+        }
+        let result = match self.route_scroll_event(window_id, delta) {
             EventDispatchOutcome::Handled(id) => {
-                let position = self.mouse.position(window_id).unwrap_or(Vec2::ZERO);
                 Some(arena.dispatch_event(id, &WidgetEvent::Scroll { position, delta }))
             }
             _ => None,
-        }
+        };
+        self.drain_focus(arena);
+        result
     }
 }
 

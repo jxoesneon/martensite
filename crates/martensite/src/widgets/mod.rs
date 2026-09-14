@@ -225,4 +225,4 @@ pub use stack::Stack;
 pub use tabs::{TabActivation, TabItem, Tabs};
 pub use text::Text;
 pub use text_input::TextInput;
-pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS};
+pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};

@@ -176,6 +176,13 @@ impl AccessKitAdapter {
     /// includes the complete tree structure. Use this for the initial
     /// tree submission or when a large portion of the tree has changed.
     ///
+    /// Popups open in the arena-owned [`OverlayLayer`]
+    /// ([`WidgetArena::overlay`](martensite_core::WidgetArena::overlay))
+    /// are emitted automatically as top-level virtual nodes; use
+    /// [`build_update_with_overlay`](Self::build_update_with_overlay)
+    /// to additionally emit a standalone layer managed outside the
+    /// arena.
+    ///
     /// After this call, the `DIRTY_A11Y` flags on all emitted nodes are
     /// cleared and `last_emitted_focus` is updated.
     pub fn build_update(&mut self, arena: &mut WidgetArena) -> TreeUpdate {
@@ -241,20 +248,26 @@ impl AccessKitAdapter {
         let mut nodes = Vec::new();
 
         // Emit open popups first so `Widget::a11y_fixup` calls during the
-        // arena walk can resolve their ids through `overlay_refs`.
+        // arena walk can resolve their ids through `overlay_refs`. The
+        // arena-owned layer is always included; an external layer passed
+        // to `build_update_with_overlay` is emitted after it.
+        let mut open: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        for entry in arena.overlay().entries() {
+            let (root_id, mut emitted) = self.emit_overlay_entry(entry);
+            nodes.append(&mut emitted);
+            self.overlay_roots.push(root_id);
+            open.insert(entry.id());
+        }
         if let Some(layer) = overlay {
             for entry in layer.entries() {
                 let (root_id, mut emitted) = self.emit_overlay_entry(entry);
                 nodes.append(&mut emitted);
                 self.overlay_roots.push(root_id);
+                open.insert(entry.id());
             }
-            let open: std::collections::HashSet<u64> = layer.entries().map(|e| e.id()).collect();
-            self.overlay_ids.retain(|p, _| open.contains(&p.entry));
-            self.overlay_targets.retain(|_, p| open.contains(&p.entry));
-        } else {
-            self.overlay_ids.clear();
-            self.overlay_targets.clear();
         }
+        self.overlay_ids.retain(|p, _| open.contains(&p.entry));
+        self.overlay_targets.retain(|_, p| open.contains(&p.entry));
 
         for widget_id in arena.iter_subtree(self.root) {
             let Some((hot, cold)) = arena.get_both(widget_id) else {

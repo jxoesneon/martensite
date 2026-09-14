@@ -28,7 +28,7 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::Rect;
+use martensite_core::{NodeFlags, Rect};
 
 /// Thumb diameter in logical pixels.
 const THUMB: f32 = 16.0;
@@ -420,8 +420,16 @@ impl Widget for Slider {
         )
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        // Declare keyboard focusability on the arena node so the
+        // `FocusManager` accepts focus requests and press-to-focus
+        // applies.
+        if self.enabled {
+            cx.hot.flags |= NodeFlags::FOCUSABLE;
+        } else {
+            cx.hot.flags.remove(NodeFlags::FOCUSABLE);
+        }
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -439,7 +447,9 @@ impl Widget for Slider {
         node.add_action(accesskit::Action::SetValue);
         node.add_action(accesskit::Action::Increment);
         node.add_action(accesskit::Action::Decrement);
-        node.add_action(accesskit::Action::Focus);
+        if self.enabled {
+            node.add_action(accesskit::Action::Focus);
+        }
         if let Some(ref label) = self.label {
             node.set_label(label.as_str());
         }
@@ -515,6 +525,7 @@ impl Widget for Slider {
                     self.nudge(-self.step);
                     EventResponse::RequestRepaint
                 }
+                SemanticAction::Focus => EventResponse::CaptureFocus,
                 _ => EventResponse::Ignored,
             },
             _ => EventResponse::Ignored,
