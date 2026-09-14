@@ -164,6 +164,26 @@ impl WindowEntry {
             DpiScale::new(1.0)
         }
     }
+
+    /// Returns the inset area of the window's surface that is unobstructed
+    /// by notches, display cutouts, rounded corners, or system bars.
+    ///
+    /// This delegates to [`winit::window::Window::safe_area`]. Important
+    /// content (text, interactive controls) should be laid out inside the
+    /// surface rect minus these insets; backgrounds may extend to the
+    /// full surface.
+    ///
+    /// # Platform notes
+    ///
+    /// - **Android:** currently returns zero insets on every edge.
+    ///   Reading `WindowInsets` requires platform code that winit does
+    ///   not yet provide; treat the layout as edge-to-edge until then.
+    /// - **iOS:** real safe-area insets (implemented in winit 0.31).
+    /// - **Desktop:** zero insets.
+    #[must_use]
+    pub fn safe_area(&self) -> winit::dpi::PhysicalInsets<u32> {
+        self.window.safe_area()
+    }
 }
 
 /// Owns and dispatches events for every open window in the application.
@@ -322,6 +342,33 @@ impl WindowManager {
     /// `WindowEvent::Destroyed`: winit::event::WindowEvent::Destroyed
     pub fn destroy_window(&mut self, key: WindowKey) -> Option<WindowEntry> {
         self.windows.remove(key)
+    }
+
+    /// Destroys every tracked window and returns their entries.
+    ///
+    /// This is the mobile surface-teardown path. On Android, winit emits
+    /// [`ApplicationHandler::destroy_surfaces`] when the `ANativeWindow`
+    /// backing the app's surface is destroyed while the process stays
+    /// alive — every `winit::window::Window` (and any GPU surface created
+    /// from it) must be dropped there, then recreated in
+    /// [`ApplicationHandler::can_create_surfaces`]. Returning the drained
+    /// entries lets the caller release per-window GPU resources keyed on
+    /// [`WindowId`] before the `Window` handles themselves drop.
+    ///
+    /// [`ApplicationHandler::destroy_surfaces`]: winit::application::ApplicationHandler::destroy_surfaces
+    /// [`ApplicationHandler::can_create_surfaces`]: winit::application::ApplicationHandler::can_create_surfaces
+    pub fn destroy_all_windows(&mut self) -> Vec<(WindowKey, WindowEntry)> {
+        self.windows.drain().collect()
+    }
+
+    /// Returns the unobstructed inset area for the window identified by
+    /// `key`, or `None` if the key is stale.
+    ///
+    /// See [`WindowEntry::safe_area`] — on Android this is zero insets on
+    /// every edge until winit exposes `WindowInsets`.
+    #[must_use]
+    pub fn safe_area(&self, key: WindowKey) -> Option<winit::dpi::PhysicalInsets<u32>> {
+        self.window(key).map(WindowEntry::safe_area)
     }
 
     /// Returns a shared reference to the [`WindowEntry`] for `key`, or

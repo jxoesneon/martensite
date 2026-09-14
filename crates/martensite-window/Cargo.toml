@@ -21,6 +21,13 @@ glam = { workspace = true }
 bitflags = { workspace = true }
 tracing = { workspace = true }
 
+# Android: select winit's GameActivity backend. `NativeActivity` is
+# unsupported — IME events are unreliable and the AccessKit adapter
+# cannot inject its delegate (see `src/android.rs`). `android-activity`
+# is consumed through winit's re-export so versions cannot diverge.
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { workspace = true, features = ["android-game-activity"] }
+
 [features]
 docs-rs = ["winit/x11"]
 
