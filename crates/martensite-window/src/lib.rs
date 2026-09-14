@@ -56,6 +56,10 @@
 //! ```
 #![forbid(unsafe_code)]
 
+/// Android backend glue (GameActivity event-loop entry point, soft-input
+/// helpers, surface lifecycle notes).
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod csd;
 pub mod dpi;
 pub mod event;

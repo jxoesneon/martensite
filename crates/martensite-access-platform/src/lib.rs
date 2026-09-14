@@ -7,9 +7,10 @@
 //!   `SubclassingAdapter`, which dynamically subclasses the winit-provided
 //!   `UIView` to implement `UIAccessibilityContainer`,
 //!   `UIAccessibilityHitTest`, and view-visibility notifications.
-//! - **Android**: `accesskit_android`'s `InjectingAdapter` + `embedded-dex`
-//!   JNI glue (contributed by the parallel Android workstream; the
-//!   `android` module is a stub until then).
+//! - **Android**: [`android::AndroidAdapter`] resolves the GameActivity
+//!   `InputEnabledSurfaceView` and wraps `accesskit_android`'s
+//!   `InjectingAdapter` (with the `embedded-dex` feature so the Java
+//!   delegate class ships inside this crate).
 //!
 //! # Safety policy
 //!
@@ -32,8 +33,8 @@
 // `martensite-media-platform` and `martensite-font-fallback`.
 #![allow(rustdoc::broken_intra_doc_links)]
 
-#[cfg(target_os = "ios")]
-pub mod ios;
-
 #[cfg(target_os = "android")]
 pub mod android;
+
+#[cfg(target_os = "ios")]
+pub mod ios;

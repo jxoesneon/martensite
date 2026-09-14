@@ -24,7 +24,7 @@
 compile_error!("The \"async-io\" feature must be enabled for Unix AccessKit support.");
 
 use accesskit::{ActionHandler, ActivationHandler, DeactivationHandler, TreeUpdate};
-use raw_window_handle::HasWindowHandle;
+#[allow(unused)]
 use rwh_06 as raw_window_handle;
 use winit::{event::WindowEvent as WinitWindowEvent, event_loop::ActiveEventLoop, window::Window};
 
@@ -41,12 +41,17 @@ impl Adapter {
     /// use [`winit::window::WindowAttributes::with_visible`] to make the window
     /// initially invisible, then create the adapter, then show the window.
     ///
+    /// In winit 0.31 both [`ActiveEventLoop`] and [`Window`] are trait
+    /// objects (`create_window` returns `Box<dyn Window>` and
+    /// `ApplicationHandler` receives `&dyn ActiveEventLoop`), so this
+    /// function takes `&dyn` references.
+    ///
     /// # Panics
     ///
     /// Panics if the window is already visible.
     pub fn with_direct_handlers(
-        _event_loop: &impl ActiveEventLoop,
-        window: &(impl Window + HasWindowHandle),
+        _event_loop: &dyn ActiveEventLoop,
+        window: &dyn Window,
         activation_handler: impl 'static + ActivationHandler + Send,
         action_handler: impl 'static + ActionHandler + Send,
         deactivation_handler: impl 'static + DeactivationHandler + Send,
@@ -71,7 +76,7 @@ impl Adapter {
     ///
     /// This must be called whenever a new window event is received
     /// and before it is handled by the application.
-    pub fn process_event(&mut self, _window: &impl Window, _event: &WinitWindowEvent) {
+    pub fn process_event(&mut self, _window: &dyn Window, _event: &WinitWindowEvent) {
         self.inner.process_event(_window, _event);
     }
 

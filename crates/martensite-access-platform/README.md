@@ -1,16 +1,21 @@
 # martensite-access-platform
 
 Platform-specific accessibility FFI glue for
-[martensite](../martensite).
+[martensite-access](../martensite-access).
 
 This crate is the audited unsafe boundary between Martensite's AccessKit
 integration and the mobile operating systems' native accessibility APIs:
 
-- **iOS**: `ios::IosAdapter` wraps `accesskit_ios`'s `SubclassingAdapter`,
-  which dynamically subclasses the winit-provided `UIView` to implement
-  `UIAccessibilityContainer` and `UIAccessibilityHitTest`.
-- **Android**: `accesskit_android`'s `InjectingAdapter` + `embedded-dex`
-  JNI glue (stub — populated by the parallel Android workstream).
+- **iOS** (`ios` module): `IosAdapter` wraps `accesskit_ios`'s
+  `SubclassingAdapter`, which dynamically subclasses the winit-provided
+  `UIView` to implement `UIAccessibilityContainer` and
+  `UIAccessibilityHitTest`.
+- **Android** (`android` module): `AndroidAdapter` resolves the
+  GameActivity `InputEnabledSurfaceView` and wraps `accesskit_android`'s
+  `InjectingAdapter` (with the `embedded-dex` feature, so the Java
+  delegate class ships inside the crate). **GameActivity is required**;
+  `NativeActivity` is unsupported because IME events are unreliable there
+  and the AccessKit delegate cannot be injected.
 
 ## Upstream maturity (iOS)
 

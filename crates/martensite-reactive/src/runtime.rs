@@ -1,5 +1,11 @@
 //! Ambient reactive runtime managing DAG execution, batching, and evaluation contexts.
 #![forbid(unsafe_code)]
+// `missing_const_for_thread_local` false-positives on targets without
+// `#[thread_local]` attribute support (e.g. Android): the initializers
+// are already `const`, but std's fallback expansion makes clippy see a
+// non-const path. Allowed module-wide so `-D warnings` stays green on
+// every target.
+#![allow(clippy::missing_const_for_thread_local)]
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
