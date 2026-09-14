@@ -357,6 +357,99 @@ pub trait Widget: Send + Sync + 'static {
     fn child_bounds(&self, _index: usize) -> Option<Rect> {
         None
     }
+
+    /// Views this widget as `&mut dyn Any` so journaled commands can
+    /// reach concrete widget internals (e.g. a `Counter`'s tick field).
+    ///
+    /// Only compiled with the `devtools-timemachine` feature. The default
+    /// returns `None`; widgets that expose mutable state to time-travel
+    /// commands should return `Some(self)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::{LayoutConstraints, LayoutContext, Rect, Widget};
+    ///
+    /// struct Counter(u32);
+    /// impl Widget for Counter {
+    ///     fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+    ///         Vec2::ZERO
+    ///     }
+    ///     fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+    ///     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+    ///         Some(self)
+    ///     }
+    /// }
+    ///
+    /// let mut w = Counter(0);
+    /// let any = Widget::as_any_mut(&mut w).unwrap();
+    /// any.downcast_mut::<Counter>().unwrap().0 = 7;
+    /// assert_eq!(w.0, 7);
+    /// ```
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
+
+    /// Captures this widget's internal state for a time-travel snapshot.
+    ///
+    /// Only compiled with the `devtools-timemachine` feature. The default
+    /// implementation returns `None`, meaning the widget contributes no
+    /// restorable state beyond its [`ColdNode`](crate::ColdNode) metadata
+    /// — widgets that keep mutable internal state (counters, text, scroll
+    /// offsets) should override this so arena snapshots can round-trip it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::{
+    ///     LayoutConstraints, LayoutContext, Rect, TimemachineState, Widget,
+    /// };
+    ///
+    /// #[derive(Debug)]
+    /// struct CounterState(u32);
+    /// impl TimemachineState for CounterState {
+    ///     fn fingerprint(&self) -> u64 { self.0 as u64 }
+    ///     fn as_any(&self) -> &dyn std::any::Any { self }
+    /// }
+    ///
+    /// struct Counter(u32);
+    /// impl Widget for Counter {
+    ///     fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+    ///         Vec2::ZERO
+    ///     }
+    ///     fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+    ///     fn timemachine_snapshot(&self) -> Option<Box<dyn TimemachineState>> {
+    ///         Some(Box::new(CounterState(self.0)))
+    ///     }
+    ///     fn timemachine_restore(&mut self, state: &dyn TimemachineState) -> bool {
+    ///         let Some(s) = state.as_any().downcast_ref::<CounterState>() else {
+    ///             return false;
+    ///         };
+    ///         self.0 = s.0;
+    ///         true
+    ///     }
+    /// }
+    /// ```
+    #[cfg(feature = "devtools-timemachine")]
+    fn timemachine_snapshot(&self) -> Option<Box<dyn crate::snapshot::TimemachineState>> {
+        None
+    }
+
+    /// Restores state previously captured by
+    /// [`timemachine_snapshot`](Widget::timemachine_snapshot).
+    ///
+    /// The implementation should downcast `state` (via
+    /// [`TimemachineState::as_any`](crate::snapshot::TimemachineState::as_any))
+    /// to its own state type and return `true` on success. The default
+    /// implementation rejects all state (`false`), matching the `None`
+    /// snapshot default.
+    #[cfg(feature = "devtools-timemachine")]
+    fn timemachine_restore(&mut self, _state: &dyn crate::snapshot::TimemachineState) -> bool {
+        false
+    }
 }
 
 /// Default inert widget implementation for placeholder nodes and testing.

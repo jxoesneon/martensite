@@ -133,15 +133,15 @@ pub(crate) struct Slot {
 /// ```
 pub struct WidgetArena {
     /// Sparse slot indirection table.
-    slots: Vec<Slot>,
+    pub(crate) slots: Vec<Slot>,
     /// Dense cache-line aligned hot node records.
-    hot_nodes: Vec<HotNode>,
+    pub(crate) hot_nodes: Vec<HotNode>,
     /// Parallel cold node storage (widgets, metadata, accessibility).
-    cold_nodes: Vec<ColdNode>,
+    pub(crate) cold_nodes: Vec<ColdNode>,
     /// Reverse mapping from dense index to sparse slot index.
-    dense_to_slot: Vec<u32>,
+    pub(crate) dense_to_slot: Vec<u32>,
     /// Strict FIFO queue distributing recycled slot indices.
-    free_slots: VecDeque<u32>,
+    pub(crate) free_slots: VecDeque<u32>,
 }
 
 impl std::fmt::Debug for WidgetArena {
