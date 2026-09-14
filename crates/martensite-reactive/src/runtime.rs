@@ -748,6 +748,16 @@ impl ReactiveRuntime {
         self.journal.lock().record(id, previous);
     }
 
+    /// Returns `true` while source-write journaling is suppressed —
+    /// lets `Signal::set` skip boxing the previous value when the
+    /// record would be discarded anyway. The check inside
+    /// [`record_source_write`](Self::record_source_write) remains
+    /// authoritative; this fast path only elides the allocation.
+    #[cfg(feature = "devtools-timemachine")]
+    pub(crate) fn journal_suppressed(&self) -> bool {
+        self.journal.lock().is_suppressed()
+    }
+
     /// Returns a lock guard on this runtime's [`SourceJournal`].
     ///
     /// The journal records every `Signal::set` and `Signal::set_if_changed`
@@ -781,7 +791,14 @@ impl ReactiveRuntime {
     /// contract: while a [`JournalGuard`] is alive, `Signal::set` writes
     /// are applied to state but not journaled, so replayed commands do
     /// not re-journal themselves. Guards nest — recording resumes once
-    /// every guard has dropped.
+    /// every guard has dropped. Suppression is **runtime-global**, not
+    /// thread-scoped.
+    ///
+    /// **Deadlock warning**: acquiring the guard locks the journal
+    /// mutex. Do not call this while holding the [`journal`](Self::journal)
+    /// guard — `JournalGuard::new` will block on the lock you already
+    /// hold. For the same reason, do not [`std::mem::forget`] a guard:
+    /// it leaks the suppression permanently.
     ///
     /// # Examples
     ///
@@ -814,6 +831,11 @@ impl ReactiveRuntime {
     /// evaluation register on their first pull. Dropped signals are
     /// skipped and their accessors pruned. Entries are sorted by
     /// [`SignalId`] so snapshot iteration order is deterministic.
+    ///
+    /// The capture is **not atomic** against concurrent writers: each
+    /// signal's value is read under its own lock, so a `Signal::set`
+    /// racing `snapshot_signals` may yield a snapshot mixing pre- and
+    /// post-write values across signals. Call at a quiescent point.
     ///
     /// # Examples
     ///
@@ -857,6 +879,11 @@ impl ReactiveRuntime {
     /// [`Memo`](crate::Memo)s and effects recompute lazily during the
     /// pull phase. Signals that were dropped or whose payload type
     /// mismatches are skipped. Returns the number of signals restored.
+    ///
+    /// The restore is **not atomic** against concurrent writers: a
+    /// `Signal::set` racing `restore_signals` can interleave with the
+    /// per-signal writes. Call at a quiescent point (e.g., under
+    /// `TimeMachine::replay_to` on the UI thread).
     ///
     /// # Examples
     ///

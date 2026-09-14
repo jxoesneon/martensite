@@ -150,6 +150,9 @@ pub struct SourceJournal {
     max_records: usize,
     /// Number of live [`JournalGuard`]s suppressing recording.
     suppression_depth: usize,
+    /// Bumped by [`clear`](Self::clear): record indices are only
+    /// unique within a generation.
+    generation: u64,
 }
 
 impl Default for SourceJournal {
@@ -195,6 +198,7 @@ impl SourceJournal {
             base_index: 0,
             max_records: max_records.max(1),
             suppression_depth: 0,
+            generation: 0,
         }
     }
 
@@ -322,7 +326,30 @@ impl SourceJournal {
         self.suppression_depth > 0
     }
 
-    /// Drops all retained records. The index counter restarts at 0.
+    /// Returns the journal generation.
+    ///
+    /// Record indices restart at 0 on every [`clear`](Self::clear), so
+    /// a `WriteRecord::index` observed before a clear aliases with
+    /// post-clear indices. Callers that correlate indices across a
+    /// possible clear must compare generations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_reactive::journal::SourceJournal;
+    ///
+    /// let mut journal = SourceJournal::new();
+    /// assert_eq!(journal.generation(), 0);
+    /// journal.clear();
+    /// assert_eq!(journal.generation(), 1);
+    /// ```
+    #[inline]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Drops all retained records, restarts the index counter at 0,
+    /// and bumps the [`generation`](Self::generation).
     ///
     /// # Examples
     ///
@@ -336,6 +363,7 @@ impl SourceJournal {
     pub fn clear(&mut self) {
         self.records.clear();
         self.base_index = 0;
+        self.generation += 1;
     }
 
     /// Records a write; returns the assigned index or `None` when
@@ -380,6 +408,16 @@ impl SourceJournal {
 /// dropped. This is the `debug::disable`-style guard of the replay
 /// determinism contract — signal writes performed by replayed commands
 /// are applied to state but never re-journaled.
+///
+/// # Caveats
+///
+/// - Suppression is **runtime-global**, not thread-scoped: while any
+///   guard is alive, source writes on *every* thread sharing the
+///   runtime are skipped by the journal.
+/// - [`std::mem::forget`]ing a guard leaks the suppression: the depth
+///   stays incremented forever, silencing the journal until process
+///   end (later guards cannot fix it — each drop only undoes its own
+///   increment). Never forget a `JournalGuard`.
 ///
 /// # Examples
 ///
@@ -545,5 +583,54 @@ impl std::fmt::Debug for SignalSnapshot {
         f.debug_struct("SignalSnapshot")
             .field("len", &self.values.len())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ring_eviction_keeps_indices_monotonic() {
+        let mut journal = SourceJournal::with_max_records(3);
+        let sig = SignalId(0);
+        for _ in 0..5 {
+            journal.record(sig, Box::new(0i32));
+        }
+        assert_eq!(journal.len(), 3);
+        assert_eq!(journal.first_index(), 2);
+        assert_eq!(journal.next_index(), 5);
+        assert!(journal.get(0).is_none());
+        assert!(journal.get(1).is_none());
+        assert_eq!(journal.get(2).unwrap().index, 2);
+        assert_eq!(journal.get(4).unwrap().index, 4);
+        assert!(journal.get(5).is_none());
+        // Iteration stays in monotonic index order.
+        let indices: Vec<u64> = journal.records().map(|r| r.index).collect();
+        assert_eq!(indices, vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn clear_resets_indices_and_bumps_generation() {
+        let mut journal = SourceJournal::with_max_records(2);
+        journal.record(SignalId(0), Box::new(1i32));
+        assert_eq!(journal.generation(), 0);
+        journal.clear();
+        assert_eq!(journal.generation(), 1);
+        assert_eq!(journal.first_index(), 0);
+        assert_eq!(journal.next_index(), 0);
+        // Indices restart — generation disambiguates the reuse.
+        assert_eq!(journal.record(SignalId(0), Box::new(2i32)), Some(0));
+        assert_eq!(journal.get(0).unwrap().index, 0);
+    }
+
+    #[test]
+    fn suppressed_records_are_dropped() {
+        let mut journal = SourceJournal::with_max_records(4);
+        journal.suppress();
+        assert_eq!(journal.record(SignalId(0), Box::new(1i32)), None);
+        journal.unsuppress();
+        journal.unsuppress(); // saturates at 0
+        assert_eq!(journal.record(SignalId(0), Box::new(1i32)), Some(0));
     }
 }

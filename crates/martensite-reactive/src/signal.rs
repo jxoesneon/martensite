@@ -174,6 +174,13 @@ impl<T: Send + Sync + 'static> Signal<T> {
 
     /// Mutates the stored value in place via a closure and flags downstream subscribers dirty.
     ///
+    /// With `devtools-timemachine`: `update` mutations are **not**
+    /// journaled (no capturable previous value), and a write-only
+    /// source that is never read via `get`/`get_untracked` — and never
+    /// passes through `set_if_changed` — never registers its snapshot
+    /// accessor, so it is absent from `SignalSnapshot`s and is not
+    /// restored on replay.
+    ///
     /// # Examples
     ///
     /// ```
@@ -228,6 +235,12 @@ impl<T: Send + Sync + 'static> Signal<T> {
     /// the command journal (e.g. `TimeMachine::set_signal`/`commit`),
     /// not raw `Signal::set` calls.
     ///
+    /// A `Clone` source that is *only ever written* — never read via
+    /// `get`/`get_untracked` and never passed through `set_if_changed`
+    /// — never registers its snapshot accessor: it is journaled here
+    /// but stays absent from `SignalSnapshot`s, so replay does not
+    /// restore it.
+    ///
     /// # Examples
     ///
     /// ```
@@ -244,9 +257,13 @@ impl<T: Send + Sync + 'static> Signal<T> {
             std::mem::replace(&mut *guard, val)
         };
         // Journaled outside the signal write lock so the journal
-        // critical section never nests inside a signal's lock.
-        self.runtime
-            .record_source_write(self.id, Box::new(previous));
+        // critical section never nests inside a signal's lock. The
+        // suppressed fast-path skips boxing a record that would be
+        // discarded anyway.
+        if !self.runtime.journal_suppressed() {
+            self.runtime
+                .record_source_write(self.id, Box::new(previous));
+        }
         self.runtime.mark_dirty(self.id);
     }
 }
@@ -372,8 +389,10 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> Signal<T> {
         #[cfg(feature = "devtools-timemachine")]
         if let Some(previous) = previous {
             // Journaled outside the signal write lock (see `set`).
-            self.runtime
-                .record_source_write(self.id, Box::new(previous));
+            if !self.runtime.journal_suppressed() {
+                self.runtime
+                    .record_source_write(self.id, Box::new(previous));
+            }
         }
         if changed {
             self.runtime.mark_dirty(self.id);
