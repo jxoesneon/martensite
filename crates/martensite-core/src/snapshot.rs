@@ -305,6 +305,10 @@ impl WidgetArena {
                 WidgetId::from_parts(slot_idx, generation)
             })
             .collect();
+        let unique: std::collections::HashSet<WidgetId> = ids.iter().copied().collect();
+        if unique.len() != ids.len() {
+            return Err(ArenaRestoreError::Corrupt("duplicate widget ids"));
+        }
 
         // Fabricate replacements for widgets that are gone — before any
         // mutation, so a failure leaves the arena untouched.
@@ -328,22 +332,30 @@ impl WidgetArena {
             }
         }
 
-        // Apply widget-internal state on the live objects first — a
-        // rejection leaves the arena structurally untouched.
+        // Apply widget-internal state — on live objects *and* on
+        // factory-fabricated replacements — before any structural
+        // mutation, so a rejection leaves the arena untouched.
         for (snapshot_dense, &id) in ids.iter().enumerate() {
+            let Some(state_obj) = &state.cold[snapshot_dense].widget_state else {
+                continue;
+            };
+            if let Some(widget) = fabricated.get_mut(&id) {
+                if !widget.timemachine_restore(&**state_obj) {
+                    return Err(ArenaRestoreError::RestoreRejected(id));
+                }
+                continue;
+            }
             let dense = self
                 .slots
                 .get(id.slot_idx() as usize)
                 .filter(|s| s.generation == id.generation())
                 .map(|s| s.dense_idx as usize);
             if let Some(dense) = dense {
-                if let Some(state_obj) = &state.cold[snapshot_dense].widget_state {
-                    if !self.cold_nodes[dense]
-                        .widget
-                        .timemachine_restore(&**state_obj)
-                    {
-                        return Err(ArenaRestoreError::RestoreRejected(id));
-                    }
+                if !self.cold_nodes[dense]
+                    .widget
+                    .timemachine_restore(&**state_obj)
+                {
+                    return Err(ArenaRestoreError::RestoreRejected(id));
                 }
             }
         }
@@ -367,10 +379,11 @@ impl WidgetArena {
         let mut cold_nodes = Vec::with_capacity(state.cold.len());
         for (i, entry) in state.cold.iter().enumerate() {
             let id = ids[i];
-            let widget = widgets
-                .remove(&id)
-                .or_else(|| fabricated.remove(&id))
-                .expect("missing widget was fabricated or alive");
+            let Some(widget) = widgets.remove(&id).or_else(|| fabricated.remove(&id)) else {
+                return Err(ArenaRestoreError::Corrupt(
+                    "snapshot widget neither alive nor fabricated",
+                ));
+            };
             cold_nodes.push(ColdNode {
                 debug_name: entry.debug_name,
                 tooltip: entry.tooltip.clone(),
@@ -387,6 +400,43 @@ impl WidgetArena {
         self.free_slots = state.free_slots.clone();
         self.cold_nodes = cold_nodes;
         Ok(())
+    }
+
+    /// Returns the `WidgetId`s referenced by `state` that are **not**
+    /// currently alive in this arena.
+    ///
+    /// Used to pre-flight a restore: if the result is non-empty,
+    /// [`restore_state`](Self::restore_state) will fail with
+    /// [`ArenaRestoreError::MissingWidgets`] unless every id can be
+    /// reconstructed by the factory passed to
+    /// [`restore_state_with`](Self::restore_state_with). The check
+    /// mutates nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let snapshot = arena.snapshot_state();
+    /// arena.remove(id);
+    ///
+    /// assert_eq!(arena.missing_snapshot_widgets(&snapshot), vec![id]);
+    /// ```
+    pub fn missing_snapshot_widgets(&self, state: &ArenaState) -> Vec<WidgetId> {
+        let mut missing: Vec<WidgetId> = state
+            .dense_to_slot
+            .iter()
+            .filter_map(|&slot_idx| {
+                let generation = state.slots.get(slot_idx as usize)?.generation;
+                let id = WidgetId::from_parts(slot_idx, generation);
+                (!self.is_alive(id)).then_some(id)
+            })
+            .collect();
+        missing.sort_by_key(|id| id.to_u64());
+        missing.dedup();
+        missing
     }
 
     /// Deterministic `u64` fingerprint of the arena's full state.
