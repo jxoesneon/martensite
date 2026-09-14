@@ -95,6 +95,11 @@ pub enum LedgerError {
     /// inconsistency (non-root nodes always carry an op). Indicates a
     /// corrupt ledger.
     MissingOp,
+    /// The navigation path crosses a region where bounded-history
+    /// pruning compressed out ancestors and dropped their operations.
+    /// The requested transition cannot be reproduced faithfully —
+    /// failing loudly rather than silently diverging.
+    HistoryGap,
 }
 
 impl std::fmt::Display for LedgerError {
@@ -108,6 +113,9 @@ impl std::fmt::Display for LedgerError {
             }
             LedgerError::MissingOp => {
                 write!(f, "replay path node has no recorded operation")
+            }
+            LedgerError::HistoryGap => {
+                write!(f, "navigation path crosses pruned history")
             }
         }
     }
@@ -383,6 +391,12 @@ impl<S: 'static> HistoryLedger<S> {
         if self.tree.current_depth() == 0 {
             return Err(LedgerError::NoUndo);
         }
+        // The edge to the parent may skip ancestors compressed out by
+        // pruning: reverting only this node's op would land on the
+        // parent with the dropped ops still folded into the state.
+        if self.tree.node(current).map(|n| n.gap_above).unwrap_or(0) > 0 {
+            return Err(LedgerError::HistoryGap);
+        }
         if let Some(op) = self.ops.get(&current) {
             op.revert(&mut self.state);
         } else {
@@ -425,6 +439,10 @@ impl<S: 'static> HistoryLedger<S> {
             .max_by_key(|&c| self.tree.node(c).map(|n| n.last_visited).unwrap_or(0))
             .ok_or(LedgerError::NoRedo)?;
 
+        // Reaching the child may require ops compressed out by pruning.
+        if self.tree.node(best).map(|n| n.gap_above).unwrap_or(0) > 0 {
+            return Err(LedgerError::HistoryGap);
+        }
         self.tree.move_to_child(best);
         let current = self.tree.current();
         if let Some(op) = self.ops.get(&current) {
@@ -472,6 +490,12 @@ impl<S: 'static> HistoryLedger<S> {
             .tree
             .path_to(source, target)
             .ok_or(LedgerError::InvalidNode)?;
+
+        // A path crossing pruned regions drops recorded operations —
+        // refuse rather than silently diverge.
+        if nav.hidden_revert > 0 || nav.hidden_apply > 0 {
+            return Err(LedgerError::HistoryGap);
+        }
 
         // Revert from source to LCA (exclusive).
         for &node_id in &nav.revert {
@@ -564,8 +588,20 @@ impl<S: 'static> HistoryLedger<S> {
     ///
     /// Returns [`LedgerError::InvalidNode`] if either node does not
     /// exist, [`LedgerError::NotADescendant`] if `to` is not a
-    /// descendant of `from`, or [`LedgerError::MissingOp`] if a node on
-    /// the path has no recorded operation (internal inconsistency).
+    /// descendant of `from`, [`LedgerError::HistoryGap`] if the path
+    /// crosses ancestors compressed out by bounded-history pruning
+    /// (their ops are gone — the check runs before any state change,
+    /// so a failed replay is atomic), or [`LedgerError::MissingOp`] if
+    /// a node on the path has no recorded operation (internal
+    /// inconsistency).
+    ///
+    /// # Panic semantics
+    ///
+    /// The cursor is moved to `from` before `restore` and the apply
+    /// loop run. If `restore` or any `ChangeOp::apply` panics, the
+    /// panic propagates and the cursor remains at `from` with
+    /// `self.state` partially advanced — callers wanting rollback
+    /// semantics must implement them in their own ops.
     ///
     /// # Example
     ///
@@ -608,6 +644,13 @@ impl<S: 'static> HistoryLedger<S> {
 
         if !nav.revert.is_empty() {
             return Err(LedgerError::NotADescendant);
+        }
+
+        // Pruning may have compressed ancestors out of the from → to
+        // path; their ops are gone, so replaying only the surviving
+        // ops would silently diverge. Detect before touching state.
+        if nav.hidden_apply > 0 {
+            return Err(LedgerError::HistoryGap);
         }
 
         self.tree
@@ -1078,5 +1121,87 @@ mod tests {
             ledger.replay(root, stale, |_| {}).unwrap_err(),
             LedgerError::InvalidNode
         );
+    }
+
+    /// H1 reproduction: bounded-history pruning compresses interior
+    /// ancestors of the active branch and drops their operations.
+    /// Replaying across the compressed region must fail loudly —
+    /// before the fix, `replay` silently applied only the surviving
+    /// ops and returned `Ok` with a divergent state.
+    #[test]
+    fn replay_across_pruned_region_returns_history_gap() {
+        let mut ledger = HistoryLedger::new(0, 4);
+        let root = ledger.root_node();
+        for i in 1..=8 {
+            ledger.commit(Box::new(AddOp(i)));
+        }
+        let tip = ledger.current_node();
+        // Interior ancestors were compressed out; the root → tip path
+        // no longer carries every recorded op.
+        assert_eq!(
+            ledger.replay(root, tip, |s| *s = 0).unwrap_err(),
+            LedgerError::HistoryGap
+        );
+    }
+
+    #[test]
+    fn jump_to_across_pruned_region_returns_history_gap() {
+        let mut ledger = HistoryLedger::new(0, 4);
+        for i in 1..=5 {
+            ledger.commit(Box::new(AddOp(i)));
+        }
+        // Reverting to the root crosses compressed-out ancestors whose
+        // ops were dropped — the jump cannot be reproduced.
+        assert_eq!(
+            ledger.jump_to(ledger.root_node()).unwrap_err(),
+            LedgerError::HistoryGap
+        );
+    }
+
+    #[test]
+    fn undo_across_pruned_gap_returns_history_gap() {
+        let mut ledger = HistoryLedger::new(0, 4);
+        for i in 1..=5 {
+            ledger.commit(Box::new(AddOp(i)));
+        }
+        // After compression the tree is root → n3(gap) → n4 → n5:
+        // two undos succeed, the third would land on the root with the
+        // dropped ops of n1/n2 still folded into the state.
+        ledger.undo().unwrap();
+        ledger.undo().unwrap();
+        assert_eq!(ledger.undo().unwrap_err(), LedgerError::HistoryGap);
+    }
+
+    /// A panic inside `ChangeOp::apply` during replay leaves the cursor
+    /// at the replay source (`from`) with a partially applied state —
+    /// documented semantics verified here.
+    #[test]
+    fn replay_panic_in_apply_leaves_cursor_at_source() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        struct PanicOnReplay(Arc<AtomicBool>);
+        impl ChangeOp<i32> for PanicOnReplay {
+            fn apply(&self, s: &mut i32) {
+                if self.0.swap(true, Ordering::Relaxed) {
+                    panic!("re-apply panics");
+                }
+                *s += 1;
+            }
+            fn revert(&self, s: &mut i32) {
+                *s -= 1;
+            }
+        }
+
+        let mut ledger = HistoryLedger::new(0, 100);
+        let root = ledger.root_node();
+        ledger.commit(Box::new(PanicOnReplay(Arc::new(AtomicBool::new(false)))));
+        let node = ledger.current_node();
+
+        let result = catch_unwind(AssertUnwindSafe(|| ledger.replay(root, node, |s| *s = 0)));
+        assert!(result.is_err(), "the panic must propagate");
+        // Cursor semantics on panic: it stays at the replay source.
+        assert_eq!(ledger.current_node(), root);
     }
 }

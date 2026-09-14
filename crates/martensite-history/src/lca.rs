@@ -72,6 +72,10 @@ pub struct HistoryNode {
     pub(crate) depth: u32,
     /// Whether this node was the most recently visited node.
     pub(crate) last_visited: u64,
+    /// Number of ancestors compressed out of the edge to `parent` by
+    /// bounded-history pruning. Each represents a dropped operation:
+    /// navigating across this edge cannot be reproduced faithfully.
+    pub(crate) gap_above: u32,
 }
 
 impl HistoryNode {
@@ -125,6 +129,30 @@ impl HistoryNode {
     #[inline]
     pub fn children(&self) -> &[NodeId] {
         &self.children
+    }
+
+    /// Returns the number of ancestors compressed out of the edge to
+    /// this node's parent by bounded-history pruning.
+    ///
+    /// Each hidden ancestor represents an operation that was dropped
+    /// and can no longer be applied or reverted — so traversing this
+    /// edge in either direction cannot reproduce the recorded state.
+    /// Zero for fresh nodes and for the root.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_history::HistoryTree;
+    ///
+    /// // A tiny bound forces compression of interior ancestors.
+    /// let mut tree = HistoryTree::new(2);
+    /// tree.append_child();
+    /// let tip = tree.append_child();
+    /// assert_eq!(tree.node(tip).unwrap().gap_above(), 1);
+    /// ```
+    #[inline]
+    pub fn gap_above(&self) -> u32 {
+        self.gap_above
     }
 }
 
@@ -193,6 +221,7 @@ impl HistoryTree {
             children: SmallVec::new(),
             depth: 0,
             last_visited: 0,
+            gap_above: 0,
         });
         Self {
             nodes,
@@ -310,6 +339,7 @@ impl HistoryTree {
             children: SmallVec::new(),
             depth,
             last_visited: visit,
+            gap_above: 0,
         });
         self.nodes[parent].children.push(id);
         self.current = id;
@@ -496,27 +526,35 @@ impl HistoryTree {
 
         let lca = self.lca(source, target)?;
 
-        // Collect revert path: source → LCA (excluding LCA).
+        // Collect revert path: source → LCA (excluding LCA). Each
+        // node's `gap_above` counts ancestors compressed out of the
+        // edge to its parent — ops that no longer exist.
         let mut revert: SmallVec<[NodeId; 64]> = SmallVec::new();
+        let mut hidden_revert: u32 = 0;
         let mut cur = Some(source);
         while let Some(id) = cur {
             if id == lca {
                 break;
             }
+            let node = &self.nodes[id];
+            hidden_revert = hidden_revert.saturating_add(node.gap_above);
             revert.push(id);
-            cur = self.nodes[id].parent;
+            cur = node.parent;
         }
 
         // Collect apply path: LCA → target (excluding LCA, including target).
         // We walk target → LCA, then reverse.
         let mut apply: SmallVec<[NodeId; 64]> = SmallVec::new();
+        let mut hidden_apply: u32 = 0;
         let mut cur = Some(target);
         while let Some(id) = cur {
             if id == lca {
                 break;
             }
+            let node = &self.nodes[id];
+            hidden_apply = hidden_apply.saturating_add(node.gap_above);
             apply.push(id);
-            cur = self.nodes[id].parent;
+            cur = node.parent;
         }
         apply.reverse();
 
@@ -524,6 +562,8 @@ impl HistoryTree {
             lca,
             revert: revert.into_vec(),
             apply: apply.into_vec(),
+            hidden_revert,
+            hidden_apply,
         })
     }
 
@@ -540,6 +580,12 @@ impl HistoryTree {
     ///
     /// Returns the IDs of all removed nodes so callers can clean up
     /// associated data (e.g., operation entries in a ledger).
+    ///
+    /// When a non-leaf node is compressed out, its children are
+    /// re-parented to its parent and their `gap_above` is incremented
+    /// by the number of dropped ancestors — so [`path_to`](Self::path_to)
+    /// can report how many operations a navigation path skips (see
+    /// [`NavPath::hidden_revert`] / [`NavPath::hidden_apply`]).
     ///
     /// # Examples
     ///
@@ -609,12 +655,19 @@ impl HistoryTree {
                         parent.children.retain(|c| *c != id);
                     }
                 }
-                // Re-parent children to the removed node's parent.
+                // Re-parent children to the removed node's parent,
+                // marking the new edge with the count of ops dropped
+                // from the compressed region (this node plus whatever
+                // was already hidden above it).
+                let removed_gap = self.nodes[id].gap_above.saturating_add(1);
                 let children: SmallVec<[NodeId; 4]> = self.nodes[id].children.clone();
                 let parent_id = self.nodes[id].parent;
                 for child in children {
                     if let Some(child_node) = self.nodes.get_mut(child) {
                         child_node.parent = parent_id;
+                        child_node.gap_above = child_node.gap_above.saturating_add(removed_gap);
+                        // Update depth for the child and its descendants.
+                        self.recompute_depth(child);
                         if let Some(parent) = parent_id {
                             self.nodes[parent].children.push(child);
                         }
@@ -645,10 +698,15 @@ impl HistoryTree {
                             parent.children.retain(|c| *c != id);
                         }
                     }
-                    // Re-parent children to the removed node's parent.
+                    // Re-parent children to the removed node's parent,
+                    // marking the new edge with the count of dropped
+                    // ops (this node plus whatever was already hidden
+                    // above it).
+                    let removed_gap = self.nodes[id].gap_above.saturating_add(1);
                     for child in children {
                         if let Some(child_node) = self.nodes.get_mut(child) {
                             child_node.parent = parent_id;
+                            child_node.gap_above = child_node.gap_above.saturating_add(removed_gap);
                             // Update depth for the child and its descendants.
                             self.recompute_depth(child);
                             if let Some(pid) = parent_id {
@@ -762,6 +820,14 @@ pub struct NavPath {
     /// Nodes to apply, in order from the LCA's child toward the
     /// target (including the target).
     pub apply: Vec<NodeId>,
+    /// Number of operations pruned out of the revert leg — ancestors
+    /// compressed away by bounded-history pruning whose recorded ops
+    /// no longer exist. When non-zero, the upward leg cannot be
+    /// reproduced faithfully.
+    pub hidden_revert: u32,
+    /// Number of operations pruned out of the apply leg. When
+    /// non-zero, the downward leg cannot be reproduced faithfully.
+    pub hidden_apply: u32,
 }
 
 #[cfg(test)]
