@@ -52,7 +52,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use martensite_core::{ArenaRestoreError, ArenaState, WidgetArena};
+use martensite_core::{ArenaRestoreError, ArenaState, Widget, WidgetArena, WidgetId};
 use martensite_history::{ChangeOp, HistoryLedger, LedgerError, NodeId};
 use martensite_reactive::{JournalGuard, ReactiveRuntime, Signal, SignalSnapshot, SourceJournal};
 use parking_lot::MutexGuard;
@@ -449,6 +449,12 @@ impl<T: Clone + Send + Sync + 'static> ChangeOp<World> for SignalWrite<T> {
     }
 }
 
+/// Reconstructs a widget object for `id` during replay when the
+/// original widget is no longer alive in the arena.
+///
+/// See [`TimeMachine::with_widget_factory`].
+pub type WidgetFactory = dyn FnMut(WidgetId) -> Option<Box<dyn Widget>> + Send;
+
 /// Hybrid command-ledger + snapshot time-travel debugger.
 ///
 /// Owns a [`World`] (widget arena + reactive runtime) and a
@@ -459,11 +465,14 @@ impl<T: Clone + Send + Sync + 'static> ChangeOp<World> for SignalWrite<T> {
 ///
 /// # Checkpoint policy
 ///
-/// A checkpoint is always captured at the root on construction. Pass a
+/// A checkpoint is always captured at the root on construction and is
+/// pinned — it is never evicted, so [`replay_to`](Self::replay_to)
+/// always has a checkpoint on the ancestor chain. Pass a
 /// `checkpoint_every` interval to [`with_checkpoint_interval`] to capture
 /// every N commits automatically, and/or call [`checkpoint`](Self::checkpoint)
 /// manually at user-meaningful boundaries. At most `max_checkpoints`
-/// checkpoints are retained; the oldest (by commit order) are evicted.
+/// checkpoints are retained; the oldest (by commit order, root excepted)
+/// are evicted.
 ///
 /// # Examples
 ///
@@ -485,10 +494,14 @@ pub struct TimeMachine {
     checkpoints: HashMap<NodeId, Checkpoint>,
     /// Auto-checkpoint interval in commits; 0 disables auto-checkpoints.
     checkpoint_every: u64,
-    /// Maximum retained checkpoints (oldest evicted first).
+    /// Maximum retained checkpoints (oldest evicted first — the root
+    /// checkpoint is pinned and never evicted).
     max_checkpoints: usize,
     /// Monotonic count of committed commands.
     commit_counter: u64,
+    /// Optional factory for reconstructing widget objects that were
+    /// removed after a checkpoint was captured.
+    widget_factory: Option<Box<WidgetFactory>>,
 }
 
 impl TimeMachine {
@@ -520,6 +533,7 @@ impl TimeMachine {
             checkpoint_every: 0,
             max_checkpoints: Self::DEFAULT_MAX_CHECKPOINTS,
             commit_counter: 0,
+            widget_factory: None,
         };
         tm.checkpoint();
         tm
@@ -587,9 +601,41 @@ impl TimeMachine {
             checkpoint_every: 0,
             max_checkpoints: Self::DEFAULT_MAX_CHECKPOINTS,
             commit_counter: 0,
+            widget_factory: None,
         };
         tm.checkpoint();
         tm
+    }
+
+    /// Registers a factory used by [`replay_to`](Self::replay_to) to
+    /// reconstruct widget objects whose `WidgetId`s appear in the
+    /// checkpoint but are no longer alive in the arena.
+    ///
+    /// Without a factory, replaying into a checkpoint that references
+    /// removed widgets fails with
+    /// [`ReplayError::Arena`](ReplayError::Arena)
+    /// ([`ArenaRestoreError::MissingWidgets`]) before any state is
+    /// mutated. The factory may be invoked during replay *validation*
+    /// (before any world mutation) to confirm every missing widget can
+    /// be reconstructed; the widgets it returns are kept and receive
+    /// their captured [`TimemachineState`] on restore.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_devtools::timemachine::{TimeMachine, World};
+    /// use martensite_core::DummyWidget;
+    /// use martensite_reactive::ReactiveRuntime;
+    ///
+    /// let tm = TimeMachine::new(World::new(Default::default(), ReactiveRuntime::new()))
+    ///     .with_widget_factory(|_id| Some(Box::new(DummyWidget)));
+    /// ```
+    pub fn with_widget_factory(
+        mut self,
+        factory: impl FnMut(WidgetId) -> Option<Box<dyn Widget>> + Send + 'static,
+    ) -> Self {
+        self.widget_factory = Some(Box::new(factory));
+        self
     }
 
     /// Returns the world (arena + reactive runtime).
@@ -688,6 +734,27 @@ impl TimeMachine {
         self.ledger.root_node()
     }
 
+    /// Returns the number of commands committed so far — the monotonic
+    /// "frame" counter recorded on each [`Checkpoint`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_devtools::timemachine::{TimeMachine, World};
+    /// use martensite_reactive::{ReactiveRuntime, Signal};
+    ///
+    /// let runtime = ReactiveRuntime::new();
+    /// let n = Signal::new_with_runtime(0i32, runtime.clone());
+    /// let mut tm = TimeMachine::new(World::new(Default::default(), runtime));
+    /// assert_eq!(tm.commit_count(), 0);
+    /// tm.set_signal(&n, 1);
+    /// assert_eq!(tm.commit_count(), 1);
+    /// ```
+    #[inline]
+    pub fn commit_count(&self) -> u64 {
+        self.commit_counter
+    }
+
     /// Commits a user-meaningful command: applies it to the world and
     /// appends it to the journal on a new history node.
     ///
@@ -722,9 +789,19 @@ impl TimeMachine {
 
     /// Commits a `Signal::set` as a journaled [`SignalWrite`] command.
     ///
-    /// The write is recorded in the history journal (revertible) *and*
-    /// the reactive source journal (audit log). Returns the new node.
+    /// The write is recorded in the history journal (revertible,
+    /// replayable) *and* the reactive [`SourceJournal`] audit log.
+    /// Returns the new node.
     ///
+    /// Note the asymmetry: only commands committed through
+    /// `commit`/`set_signal` are visible to [`replay_to`](Self::replay_to).
+    /// A direct `signal.set(...)` outside a command is captured by the
+    /// `SourceJournal` audit log but is *not* replayable — replay
+    /// restores source values from checkpoints and re-applies committed
+    /// commands only.
+    ///
+    /// `signal` must be bound to the world's runtime; passing a signal
+    /// from another runtime is a logic error (debug-asserted).
     /// # Examples
     ///
     /// ```
@@ -744,6 +821,10 @@ impl TimeMachine {
         signal: &Signal<T>,
         value: T,
     ) -> NodeId {
+        debug_assert!(
+            Arc::ptr_eq(signal.runtime(), self.world().runtime()),
+            "set_signal: signal is bound to a different ReactiveRuntime than the world's"
+        );
         self.commit(Box::new(SignalWrite::new(signal, value)))
     }
 
@@ -842,16 +923,30 @@ impl TimeMachine {
     /// restores the checkpoint's arena + signal snapshot, then
     /// re-applies every journaled command on the path forward.
     ///
-    /// Source writes made by replayed commands are applied under a
-    /// [`JournalGuard`] so they are not re-journaled; derived [`Memo`]s
-    /// recompute lazily on the next pull. Returns the node of the
-    /// checkpoint that was restored.
+    /// "Nearest" is measured by history-tree depth — the deepest
+    /// checkpointed ancestor of `target`. Source writes made by
+    /// replayed commands are applied under a [`JournalGuard`] so they
+    /// are not re-journaled; derived [`Memo`]s recompute lazily on the
+    /// next pull. Returns the node of the checkpoint that was restored.
     ///
     /// `target` must be a descendant (or self) of the nearest
     /// checkpoint — guaranteed whenever a checkpoint exists on the
     /// ancestor chain, which is always true unless
     /// [`clear_checkpoints`](Self::clear_checkpoints) ran. For
     /// backward or cross-branch scrubbing use [`jump_to`](Self::jump_to).
+    ///
+    /// # Failure atomicity
+    ///
+    /// If the checkpoint references widgets that are no longer alive,
+    /// the registered [`with_widget_factory`](Self::with_widget_factory)
+    /// is invoked during validation — before the world is touched — and
+    /// a `MissingWidgets` failure leaves the world *and* the history
+    /// cursor unchanged. A `RestoreRejected` failure (a widget refusing
+    /// its captured state) can leave partially-restored widget
+    /// internals; the signal snapshot is still installed, journal ops
+    /// are still re-applied, and the cursor lands on `target`, so the
+    /// world reflects the replayed commands except for the rejected
+    /// widget state.
     ///
     /// # Examples
     ///
@@ -872,15 +967,42 @@ impl TimeMachine {
     /// ```
     pub fn replay_to(&mut self, target: NodeId) -> Result<NodeId, ReplayError> {
         // Nearest ancestor-or-self of `target` holding a checkpoint —
-        // the ancestor with the highest frame (capture order tracks
-        // depth along any single ancestor chain).
+        // the deepest one on the ancestor chain.
         let cp_node = self
             .checkpoints
-            .iter()
-            .filter(|(node, _)| self.ledger.is_ancestor(**node, target))
-            .max_by_key(|(_, cp)| cp.frame)
-            .map(|(node, _)| *node)
+            .keys()
+            .filter(|&&node| self.ledger.is_ancestor(node, target))
+            .max_by_key(|&&node| self.ledger.depth_of(node).unwrap_or(0))
+            .copied()
             .ok_or(ReplayError::NoCheckpoint)?;
+
+        // Pre-flight: every widget the checkpoint needs must be alive or
+        // reconstructable — *before* any state is mutated or the cursor
+        // moves.
+        let missing = self
+            .world()
+            .arena()
+            .missing_snapshot_widgets(&self.checkpoints[&cp_node].arena);
+        let mut fabricated: HashMap<WidgetId, Box<dyn Widget>> = HashMap::new();
+        if !missing.is_empty() {
+            let Some(factory) = self.widget_factory.as_mut() else {
+                return Err(ReplayError::Arena(ArenaRestoreError::MissingWidgets(
+                    missing,
+                )));
+            };
+            for &id in &missing {
+                match factory(id) {
+                    Some(widget) => {
+                        fabricated.insert(id, widget);
+                    }
+                    None => {
+                        return Err(ReplayError::Arena(ArenaRestoreError::MissingWidgets(
+                            missing,
+                        )));
+                    }
+                }
+            }
+        }
 
         let runtime = Arc::clone(self.world().runtime());
         // Replayed commands must not re-journal their source writes.
@@ -890,10 +1012,18 @@ impl TimeMachine {
         let mut arena_err = None;
         self.ledger
             .replay(cp_node, target, |world| {
-                if let Err(e) = world.arena.restore_state(&checkpoint.arena) {
+                // Signals restore is infallible (dead/typed-mismatched
+                // sources are skipped) — install it first so replayed
+                // ops see the snapshot baseline even if the arena
+                // restore partially fails.
+                world.runtime.restore_signals(&checkpoint.signals);
+                let mut factory = |id: WidgetId| fabricated.remove(&id);
+                if let Err(e) = world
+                    .arena
+                    .restore_state_with(&checkpoint.arena, &mut factory)
+                {
                     arena_err = Some(e);
                 }
-                world.runtime.restore_signals(&checkpoint.signals);
             })
             .map_err(ReplayError::Ledger)?;
 
@@ -1005,6 +1135,11 @@ impl TimeMachine {
     /// the audit log of every `Signal::set`/`set_if_changed` against
     /// the world's runtime.
     ///
+    /// **Deadlock warning**: `Signal::set`/`set_if_changed` take the
+    /// journal lock while writing. Do not write any signal bound to
+    /// this runtime while holding the returned guard — the write will
+    /// block on the journal lock you already hold.
+    ///
     /// # Examples
     ///
     /// ```
@@ -1022,9 +1157,11 @@ impl TimeMachine {
         self.world().runtime().journal()
     }
 
-    /// Deterministic fingerprint of the arena's current state — the
-    /// equality primitive for replayed-state == recorded-state checks.
-    ///
+    /// Deterministic fingerprint of the arena's current state — covers
+    /// arena structure, hot/cold metadata, and widget-internal
+    /// `TimemachineState`, but **not** source-signal values. For the
+    /// replayed-state == recorded-state check, compare signal values
+    /// separately (live reads or [`Checkpoint::signals`]).
     /// # Examples
     ///
     /// ```
@@ -1042,12 +1179,16 @@ impl TimeMachine {
         self.world().arena().state_fingerprint()
     }
 
-    /// Evicts the oldest checkpoints beyond `max_checkpoints`.
+    /// Evicts the oldest checkpoints beyond `max_checkpoints`. The root
+    /// checkpoint is pinned and never evicted, so `replay_to` always
+    /// has a checkpoint on the ancestor chain.
     fn evict_checkpoints(&mut self) {
+        let root = self.ledger.root_node();
         while self.checkpoints.len() > self.max_checkpoints {
             let oldest = self
                 .checkpoints
                 .iter()
+                .filter(|(n, _)| **n != root)
                 .min_by_key(|(_, cp)| cp.frame)
                 .map(|(n, _)| *n);
             match oldest {

@@ -22,12 +22,12 @@ use std::sync::Mutex;
 
 use glam::Vec2;
 use martensite_core::{
-    DummyWidget, HotNode, LayoutConstraints, LayoutContext, Rect, TimemachineState, Widget,
-    WidgetId,
+    ArenaRestoreError, ColdNode, DummyWidget, HotNode, LayoutConstraints, LayoutContext, Rect,
+    TimemachineState, Widget, WidgetId,
 };
-use martensite_devtools::timemachine::{SignalWrite, TimeMachine, World};
+use martensite_devtools::timemachine::{ReplayError, SignalWrite, TimeMachine, World};
 use martensite_history::ChangeOp;
-use martensite_reactive::{ReactiveRuntime, Signal};
+use martensite_reactive::{Memo, ReactiveRuntime, Signal};
 use martensite_test::VirtualClock;
 
 /// Widget with journaled internal state: a tick counter plus a value
@@ -291,4 +291,174 @@ fn replay_suppression_and_branching() {
 
     // 3 user writes journaled (1, 2, 10); navigation writes suppressed.
     assert_eq!(tm.source_journal().len(), 3);
+}
+
+/// Removes a widget from the arena; `revert` re-inserts the stashed
+/// node (at a new slot — best-effort; only `apply` is exercised here).
+struct RemoveOp {
+    id: WidgetId,
+    stash: Mutex<Option<(HotNode, ColdNode)>>,
+}
+
+impl RemoveOp {
+    fn new(id: WidgetId) -> Self {
+        Self {
+            id,
+            stash: Mutex::new(None),
+        }
+    }
+}
+
+impl ChangeOp<World> for RemoveOp {
+    fn apply(&self, world: &mut World) {
+        *self.stash.lock().unwrap() = world.arena_mut().remove(self.id);
+    }
+    fn revert(&self, world: &mut World) {
+        if let Some((hot, cold)) = self.stash.lock().unwrap().take() {
+            world.arena_mut().insert(hot, cold);
+        }
+    }
+}
+
+/// Memos recompute lazily after replay restores source values — the
+/// spec's "memos recompute lazily during pull" leg: derived state is
+/// never journaled or snapshotted.
+#[test]
+fn memo_recomputes_lazily_after_replay() {
+    let runtime = ReactiveRuntime::new();
+    let src = Signal::new_with_runtime(1i32, runtime.clone());
+    let doubled = Memo::new_with_runtime(
+        {
+            let src = src.clone();
+            move || src.get() * 2
+        },
+        runtime.clone(),
+    );
+    let mut tm = TimeMachine::new(World::new(Default::default(), runtime));
+
+    let _ = src.get_untracked(); // register the source for snapshots
+    assert_eq!(doubled.get(), 2);
+
+    let a = tm.set_signal(&src, 5);
+    let _b = tm.set_signal(&src, 7);
+    assert_eq!(doubled.get(), 14);
+
+    // Restoring the source snapshot marks the memo dirty; the next
+    // pull recomputes — nothing was journaled for the memo itself.
+    tm.replay_to(a).unwrap();
+    assert_eq!(src.get_untracked(), 5);
+    assert_eq!(doubled.get(), 10, "memo recomputed from restored source");
+}
+
+/// Removing a widget after a checkpoint makes replay fail atomically
+/// (world + cursor unchanged); a registered widget factory
+/// reconstructs the widget *and* its captured internal state.
+#[test]
+fn missing_widgets_error_is_atomic_and_factory_restores_state() {
+    // --- No factory: atomic failure ---
+    let runtime = ReactiveRuntime::new();
+    let n = Signal::new_with_runtime(0i32, runtime.clone());
+    let mut arena = martensite_core::WidgetArena::new();
+    let counter = arena.insert_with_widget(
+        HotNode::default(),
+        Box::new(CounterWidget {
+            ticks: 3,
+            rng_value: 7,
+        }),
+    );
+    let mut tm = TimeMachine::new(World::new(arena, runtime));
+    // Root checkpoint captured the arena *with* the counter widget.
+
+    tm.commit(Box::new(RemoveOp::new(counter)));
+    let before_fp = tm.arena_fingerprint();
+    let before_node = tm.current_node();
+    let before_sig = n.get_untracked();
+
+    let err = tm.replay_to(tm.root_node()).unwrap_err();
+    assert!(matches!(
+        err,
+        ReplayError::Arena(ArenaRestoreError::MissingWidgets(_))
+    ));
+    assert_eq!(tm.arena_fingerprint(), before_fp, "world unchanged");
+    assert_eq!(tm.current_node(), before_node, "cursor unchanged");
+    assert_eq!(n.get_untracked(), before_sig, "signals unchanged");
+
+    // --- With a factory: reconstructed widget gets captured state ---
+    let runtime2 = ReactiveRuntime::new();
+    let mut arena2 = martensite_core::WidgetArena::new();
+    let counter2 = arena2.insert_with_widget(
+        HotNode::default(),
+        Box::new(CounterWidget {
+            ticks: 3,
+            rng_value: 7,
+        }),
+    );
+    let mut tm2 = TimeMachine::new(World::new(arena2, runtime2)).with_widget_factory(|_id| {
+        Some(Box::new(CounterWidget {
+            ticks: 999,
+            rng_value: 999,
+        }))
+    });
+    tm2.commit(Box::new(RemoveOp::new(counter2)));
+
+    tm2.replay_to(tm2.root_node()).unwrap();
+    assert!(
+        tm2.world().arena().is_alive(counter2),
+        "fabricated widget installed at its original id"
+    );
+    assert_eq!(
+        counter_widget_state(tm2.world(), counter2),
+        (3, 7),
+        "fabricated widget received its captured TimemachineState"
+    );
+}
+
+/// Checkpoint selection uses tree depth, not capture order: a manual
+/// checkpoint taken late at a *shallow* node must not outrank the
+/// genuinely nearest (deepest) ancestor checkpoint.
+#[test]
+fn replay_uses_deepest_checkpoint() {
+    let runtime = ReactiveRuntime::new();
+    let n = Signal::new_with_runtime(0i32, runtime.clone());
+    let mut tm =
+        TimeMachine::new(World::new(Default::default(), runtime)).with_checkpoint_interval(2);
+
+    let _node1 = tm.set_signal(&n, 1);
+    let node2 = tm.set_signal(&n, 2); // auto-checkpoint (depth 2)
+    let _node3 = tm.set_signal(&n, 3);
+    let node4 = tm.set_signal(&n, 4); // auto-checkpoint (depth 4)
+    let node5 = tm.set_signal(&n, 5); // no checkpoint (depth 5)
+
+    // Late manual checkpoint at the shallow node2 — highest capture
+    // frame but shallowest depth.
+    tm.jump_to(node2).unwrap();
+    tm.checkpoint();
+    tm.jump_to(node5).unwrap();
+
+    let used = tm.replay_to(node5).unwrap();
+    assert_eq!(used, node4, "deepest ancestor checkpoint wins");
+    assert_eq!(n.get_untracked(), 5);
+}
+
+/// The root checkpoint is pinned: checkpoint eviction never removes
+/// it, so `replay_to` always has a checkpoint on the ancestor chain.
+#[test]
+fn root_checkpoint_is_pinned() {
+    let runtime = ReactiveRuntime::new();
+    let n = Signal::new_with_runtime(0i32, runtime.clone());
+    let mut tm = TimeMachine::new(World::new(Default::default(), runtime))
+        .with_checkpoint_interval(1)
+        .with_max_checkpoints(2);
+
+    for i in 1..=6 {
+        tm.set_signal(&n, i);
+    }
+    assert_eq!(tm.checkpoint_count(), 2);
+    assert!(
+        tm.checkpoint_at(tm.root_node()).is_some(),
+        "root checkpoint survives eviction"
+    );
+    // Replay still works — the pinned root is always on the chain.
+    tm.replay_to(tm.current_node()).unwrap();
+    assert_eq!(n.get_untracked(), 6);
 }
