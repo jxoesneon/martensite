@@ -55,11 +55,11 @@ Tier 2 platforms compile cleanly via pure-Rust toolchains. They receive CI build
 * **CI Status:** Not yet implemented.
 
 ### Android (aarch64 / x86_64) — targeted in v0.17.0
-* **GPU Backend:** Vulkan (primary), GLES (downlevel fallback); surface destroy/recreate across `can_destroy_surfaces`/`resumed`.
+* **GPU Backend:** Vulkan (primary), GLES (downlevel fallback); surface destroy/recreate across `destroy_surfaces`/`can_create_surfaces` + `resumed`/`suspended`.
 * **Accessibility:** `accesskit_android` `InjectingAdapter` (`embedded-dex`). **Requires `GameActivity`** — `NativeActivity` breaks IME and AccessKit.
 * **IME/Input:** `GameActivity` GameText path; `Window::safe_area()` returns zeros on Android — `WindowInsets` platform code until winit lands it.
-* **Packaging:** `cdylib` + `cargo-apk2`/`xbuild`.
-* **CI Status:** Not yet implemented.
+* **Packaging:** `cdylib` + `cargo-apk2`/`xbuild` — see [android-packaging.md](android-packaging.md).
+* **CI Status:** Target-gated `cargo check --target aarch64-linux-android` verified locally; device/emulator gate not yet implemented.
 
 ### Linux (aarch64) & FreeBSD (x86_64)
 * **GPU Backend:** Vulkan / Software
