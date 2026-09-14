@@ -18,7 +18,10 @@
 
 mod common;
 
-use common::{annex_b_access_units, au_to_avcc, avcc_record, FRAME_NS, STREAM_320X240};
+use common::{
+    annex_b_access_units, au_to_avcc, avcc_record, ivf_frames, samples_dir, FRAME_NS,
+    STREAM_320X240,
+};
 use martensite_media::decoder::videotoolbox::VideoToolboxDecoder;
 use martensite_media::decoder::{DecoderConfig, EncodedPacket, VideoCodec, VideoDecoder};
 use martensite_media::surface::{HardwareHandle, VideoPixelFormat};
@@ -82,4 +85,132 @@ fn videotoolbox_decoder_decodes_real_h264_stream() {
     }
     assert_eq!(dec.stats().frames_decoded, 30);
     assert!(dec.stats().hardware_accelerated());
+}
+
+/// Number of IVF temporal units fed to the AV1 decoder — the 4K120 sample
+/// is large, so only a bounded prefix is decoded.
+const AV1_UNITS: usize = 30;
+
+/// The `av1C` record of `av1-4k120.bin` (marker/version, profile 0,
+/// level_idx 14, 8-bit 4:2:0 + the sequence-header OBU in low-overhead
+/// form). Matches what the decoder's deferred path synthesizes in-band.
+const AV1C_4K120: &[u8] = &[
+    0x81, 0x0e, 0x0c, 0x00, 0x0a, 0x0c, 0x00, 0x00, 0x00, 0x72, 0xef, 0xbf, 0xe1, 0xbc, 0x6a, 0xf9,
+    0x00, 0x40,
+];
+
+/// Loads the first [`AV1_UNITS`] temporal units of the IVF sample; `None`
+/// (with a skip line) when the gitignored sample asset is absent.
+fn av1_temporal_units() -> Option<Vec<Vec<u8>>> {
+    let path = samples_dir().join("av1-4k120.bin");
+    let data = match std::fs::read(&path) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("av1: {} unreadable ({e}); test skipped", path.display());
+            return None;
+        }
+    };
+    let units = ivf_frames(&data).expect("av1-4k120.bin is a parseable IVF stream");
+    Some(units[..AV1_UNITS.min(units.len())].to_vec())
+}
+
+/// Feeds `units` through a decoder built from `config`, draining the
+/// asynchronous output after each send and once more after end-of-stream.
+/// Returns the decoder (for stats) and the decoded frames.
+fn feed_av1(
+    config: DecoderConfig,
+    units: &[Vec<u8>],
+) -> (
+    VideoToolboxDecoder,
+    Vec<martensite_media::decoder::DecodedFrame>,
+) {
+    let mut dec = VideoToolboxDecoder::init(config)
+        .unwrap_or_else(|e| panic!("VideoToolbox AV1 init failed: {e}"));
+
+    const AV1_FRAME_NS: u64 = 1_000_000_000 / 120;
+    let mut frames = Vec::new();
+    for (i, unit) in units.iter().enumerate() {
+        let packet = EncodedPacket::new(unit.clone(), i as u64 * AV1_FRAME_NS, AV1_FRAME_NS);
+        let packet = if i == 0 { packet } else { packet.delta() };
+        dec.send_packet(&packet)
+            .unwrap_or_else(|e| panic!("temporal unit {i} rejected: {e:?}"));
+        while let Ok(Some(f)) = dec.try_recv_frame() {
+            frames.push(f);
+        }
+    }
+    dec.end_of_stream().unwrap();
+    while let Some(f) = dec.try_recv_frame().unwrap() {
+        frames.push(f);
+    }
+    (dec, frames)
+}
+
+/// Validates decoded AV1 output: nonzero count, 4K geometry, IoSurface
+/// handles, a plausible pixel format, and a hardware-accelerated backend.
+fn assert_av1_output(
+    dec: &VideoToolboxDecoder,
+    frames: &[martensite_media::decoder::DecodedFrame],
+) {
+    assert!(!frames.is_empty(), "VideoToolbox emitted no AV1 frames");
+    for frame in frames {
+        assert_eq!(frame.metadata.width, 3840);
+        assert_eq!(frame.metadata.height, 2160);
+        assert!(
+            matches!(frame.handle, HardwareHandle::IoSurface { .. }),
+            "VideoToolbox must emit zero-copy IoSurface handles"
+        );
+    }
+    assert!(
+        matches!(
+            dec.negotiated_format(),
+            VideoPixelFormat::Nv12 | VideoPixelFormat::P010
+        ),
+        "unexpected AV1 output format {:?}",
+        dec.negotiated_format()
+    );
+    assert!(dec.stats().hardware_accelerated());
+}
+
+/// AV1 through the `av1C` extension-atom bridge, deferred-init path.
+///
+/// The IVF sample carries no `av1C` extradata, so `VideoToolboxDecoder`
+/// defers session creation until the first temporal unit's sequence-header
+/// OBU, synthesizes the `AV1CodecConfigurationRecord` from it, and builds
+/// the `av01` format description through
+/// `kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms`. Every
+/// IVF temporal unit is submitted verbatim as an `av01` sample
+/// (low-overhead OBU format — no Annex-B style reframing exists for AV1).
+#[test]
+fn videotoolbox_decoder_decodes_real_av1_stream() {
+    let Some(units) = av1_temporal_units() else {
+        return;
+    };
+    let (dec, frames) = feed_av1(DecoderConfig::new(VideoCodec::Av1, 3840, 2160), &units);
+    assert_av1_output(&dec, &frames);
+    eprintln!(
+        "av1 (deferred init): {} temporal units -> {} decoded frames, \
+         format={:?} rejected={}",
+        units.len(),
+        frames.len(),
+        dec.negotiated_format(),
+        dec.stats().packets_rejected,
+    );
+}
+
+/// AV1 with `av1C` extradata supplied out-of-band: the session is created
+/// eagerly in `init`, exactly as an MP4 demuxer would drive it.
+#[test]
+fn videotoolbox_decoder_decodes_av1_with_av1c_extradata() {
+    let Some(units) = av1_temporal_units() else {
+        return;
+    };
+    let config =
+        DecoderConfig::new(VideoCodec::Av1, 3840, 2160).with_codec_config(AV1C_4K120.to_vec());
+    let (dec, frames) = feed_av1(config, &units);
+    assert_av1_output(&dec, &frames);
+    eprintln!(
+        "av1 (av1C extradata): {} temporal units -> {} decoded frames",
+        units.len(),
+        frames.len()
+    );
 }

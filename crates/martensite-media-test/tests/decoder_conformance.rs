@@ -206,7 +206,7 @@ fn full_rate_4k120_gate() {
     all(feature = "decoder-videotoolbox", target_os = "macos")
 ))]
 mod gate_4k120 {
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::time::{Duration, Instant};
 
     use martensite_media::decoder::{
@@ -216,7 +216,7 @@ mod gate_4k120 {
 
     use crate::common::{
         annex_b_access_units, au_to_avcc, au_to_hvcc, avcc_record, hevc_access_units, hvcc_record,
-        ivf_frames,
+        ivf_frames, samples_dir,
     };
 
     /// Presentation interval at the 120 fps gate rate (8.333 ms).
@@ -241,7 +241,7 @@ mod gate_4k120 {
     /// declared wedged (decoder producing nothing, queue never draining).
     const DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
     /// Window during backend probing for an async backend to surface an
-    /// early fatal error (e.g. VideoToolbox refusing a bare-AV1 stream at
+    /// early fatal error (e.g. VideoToolbox rejecting a stream at
     /// decode time rather than at `send_packet` time).
     const PROBE_WINDOW: Duration = Duration::from_millis(250);
 
@@ -334,9 +334,8 @@ mod gate_4k120 {
     ///
     /// Probing with a real send — plus a short window for asynchronous
     /// backends to report a decode-time failure — is what lets the AV1 leg
-    /// fall back from VideoToolbox's bare format-description path to the
-    /// ffmpeg (dav1d) software backend when the hardware decoder refuses
-    /// the sample.
+    /// fall back from VideoToolbox to the ffmpeg (dav1d) software backend
+    /// when the hardware decoder refuses the sample.
     ///
     /// On success the returned decoder already holds packet 0; `primed`
     /// carries a frame if one was emitted during the probe window.
@@ -636,8 +635,8 @@ mod gate_4k120 {
         );
 
         // The spec thresholds gate the hardware decode path. A leg that fell
-        // back to software (e.g. AV1, where VideoToolbox cannot build a
-        // usable format description through this backend) is measured and
+        // back to software (e.g. AV1 on hosts whose VideoToolbox cannot
+        // hardware-decode it through this backend) is measured and
         // reported with the same honesty — the numbers above are real — but
         // cannot meet a spec that itself documents software decode as
         // infeasible at 4K120, so it asserts correctness only.
@@ -707,21 +706,6 @@ mod gate_4k120 {
             Ok((queue, wall)) => report(&leg, backend, &*dec, &queue, wall),
             Err(e) => panic!("4k120 {name} leg failed: {e}"),
         }
-    }
-
-    /// Directory holding the generated `*-4k120.bin` sample assets.
-    ///
-    /// `$MARTENSITE_MEDIA_SAMPLES` overrides the default
-    /// `<workspace>/target/media-samples` location (`CARGO_MANIFEST_DIR` is
-    /// `crates/martensite-media-test`, two levels below the workspace root).
-    fn samples_dir() -> PathBuf {
-        if let Some(dir) = std::env::var_os("MARTENSITE_MEDIA_SAMPLES") {
-            return PathBuf::from(dir);
-        }
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("target")
-            .join("media-samples")
     }
 
     /// Gate entry point: one leg per codec whose sample exists on disk.

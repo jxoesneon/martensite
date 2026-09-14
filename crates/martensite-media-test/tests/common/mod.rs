@@ -218,6 +218,23 @@ fn au_to_length_prefixed(au: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Directory holding the generated `*-4k120.bin` sample assets.
+///
+/// `$MARTENSITE_MEDIA_SAMPLES` overrides the default
+/// `<workspace>/target/media-samples` location (`CARGO_MANIFEST_DIR` is
+/// `crates/martensite-media-test`, two levels below the workspace root).
+/// The samples are gitignored build artifacts — tests that need them skip
+/// gracefully when the directory or file is absent.
+pub fn samples_dir() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("MARTENSITE_MEDIA_SAMPLES") {
+        return std::path::PathBuf::from(dir);
+    }
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("target")
+        .join("media-samples")
+}
+
 /// Parses an IVF file (despite the `.bin` extension used by the sample
 /// assets) into owned per-frame payloads.
 ///
