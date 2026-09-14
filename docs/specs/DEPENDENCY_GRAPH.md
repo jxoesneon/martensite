@@ -73,6 +73,7 @@ graph TD
 
     martensite-access --> martensite-core
     martensite-access --> martensite-accesskit-winit
+    martensite-accesskit-winit -.->|optional: ios/android| martensite-access-platform
     martensite-access -.->|dev| martensite-text
 
     martensite-assets --> martensite-core
@@ -111,7 +112,8 @@ graph TD
     %% ── Tier 0 (no workspace deps) ──────────────────────────
     %% martensite-reactive, martensite-macros, martensite-cosmic-text,
     %% martensite-accesskit-winit, martensite-theme, martensite-motion,
-    %% martensite-host, martensite-clipboard-platform, martensite-media-platform
+    %% martensite-host, martensite-clipboard-platform, martensite-media-platform,
+    %% martensite-access-platform
 ```
 
 ## Non-Published Workspace Members (`publish = false`, 7 crates)
@@ -187,9 +189,6 @@ graph TD
 
 ## Planned Crates
 
-- `martensite-access-platform` **(planned v0.17.0)** — listed in earlier
-  revisions of this document but not yet implemented; no `crates/martensite-access-platform`
-  directory exists. Expected edge: `martensite-access-platform --> martensite-access`.
 - `stubs/martensite` and `stubs/martensite-ui` — `0.0.1` namespace-reservation
   stubs (`publish = false`), not workspace members, no dependencies.
 
@@ -225,12 +224,15 @@ Tier of a crate = `1 + max(tier of its workspace deps)`; unconditional
 The only crates permitted unsafe code, per `AGENTS.md` — all are leaf or
 near-leaf crates so the boundary stays at the edge of the graph:
 
+- `martensite-access-platform` (Tier 0) — `accesskit_ios` UIKit FFI /
+  `accesskit_android` JNI injection (mobile accessibility boundary)
 - `martensite-font-fallback` (Tier 3) — DirectWrite / CoreText / Fontconfig FFI
 - `martensite-clipboard-platform` (Tier 0) — NSPasteboard / Win32 / X11 FFI
 - `martensite-media-platform` (Tier 0) — IOSurface / DXGI / dmabuf FFI
 - `martensite-host` (Tier 0) — `dlopen` / `LoadLibrary` dynamic loading
 - `martensite-cosmic-text` (Tier 0) — vendored upstream fork
 - `martensite-accesskit-winit` (Tier 0) — vendored upstream fork
+- `martensite-vello` (Tier 0) — vendored `netrender-vello`/Vello 0.10 fork
 - `martensite-shell` (Tier 1) — DWM / NSVisualEffectView / Wayland CSD
 - `martensite-godot` (excluded) — GDExtension FFI
 

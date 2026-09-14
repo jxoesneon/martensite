@@ -345,3 +345,41 @@ jobs:
         if: matrix.manifest == 'crates/martensite-godot/Cargo.toml'
         run: cargo test --manifest-path crates/martensite-godot/Cargo.toml --features test-noop
 
+  target-checks:
+    name: Target Check (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: wasm32
+            os: ubuntu-latest
+            target: wasm32-unknown-unknown
+            crates: -p martensite-window -p martensite-access -p martensite-dnd -p martensite-clipboard -p martensite-text -p martensite-wgpu -p martensite
+          - name: ios-sim
+            os: macos-latest
+            target: aarch64-apple-ios-sim
+            crates: -p martensite-access-platform -p martensite-accesskit-winit -p martensite-access -p martensite-window -p martensite-wgpu -p ios_demo
+          - name: android
+            os: ubuntu-latest
+            target: aarch64-linux-android
+            crates: -p martensite-access-platform -p martensite-accesskit-winit -p martensite-access -p martensite-window -p martensite-wgpu
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "target-${{ matrix.target }}"
+      # android-activity's build script compiles C glue; point it at the
+      # runner's preinstalled NDK toolchain (API 24 floor per packaging doc).
+      - name: Configure Android NDK toolchain
+        if: matrix.name == 'android'
+        run: |
+          echo "CC_aarch64_linux_android=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "CXX_aarch64_linux_android=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+      - name: cargo check --target ${{ matrix.target }}
+        run: cargo check --target ${{ matrix.target }} --all-targets ${{ matrix.crates }}
+

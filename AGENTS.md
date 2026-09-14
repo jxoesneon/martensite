@@ -175,10 +175,13 @@ These are explicitly documented in code, not hidden:
   - `DirectWriteFontFallback` (Windows, `IDWriteFontFallback::MapCharacters`)
   - `CoreTextFontFallback` (macOS, `CTFontCreateForStringWithLanguage`)
   - `FontconfigFontFallback` (Linux, `FcFontSort`)
-- The following nine crates use `#![allow(unsafe_code)]` for
+- The following ten crates use `#![allow(unsafe_code)]` for
   platform-specific FFI or vendored upstream code. These are the ONLY
   crates in the workspace that allow unsafe code; all other crates
   maintain `unsafe_code = "deny"`.
+  - `martensite-access-platform` — mobile accessibility FFI boundary
+    (UIKit `accesskit_ios` adapter on iOS, JNI/`accesskit_android`
+    injection on Android).
   - `martensite-font-fallback` — platform FFI (DirectWrite on Windows,
     CoreText on macOS, Fontconfig on Linux).
   - `martensite-clipboard-platform` — OS clipboard FFI (macOS

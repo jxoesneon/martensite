@@ -112,6 +112,7 @@ Each DDR specifies a crate's internal algorithms, data structures, and invariant
 - [specs/DEPENDENCY_GRAPH.md](specs/DEPENDENCY_GRAPH.md) — Topological dependency DAG
 - [PUBLIC_API_DESIGN.md](PUBLIC_API_DESIGN.md) — End-user facing API contract
 - [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md) — OS/GPU/A11y/IME support matrix
+- [android-packaging.md](android-packaging.md) — Android APK packaging, GameActivity, NDK setup
 - [ERROR_HANDLING.md](ERROR_HANDLING.md) — Error types, panic policy, recovery
 - [SECURITY.md](SECURITY.md) — Threat model, supply chain, unsafe policy
 

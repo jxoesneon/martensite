@@ -104,6 +104,7 @@ jobs:
             martensite-cosmic-text
             martensite-text
             martensite-font-fallback
+            martensite-access-platform
             martensite-accesskit-winit
             martensite-access
             martensite-shell
@@ -254,6 +255,7 @@ jobs:
             martensite-cosmic-text
             martensite-text
             martensite-font-fallback
+            martensite-access-platform
             martensite-accesskit-winit
             martensite-access
             martensite-shell

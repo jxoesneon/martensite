@@ -3,13 +3,14 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: post-v0.15.0 audit remediation. v0.15.0 is released —
-tagged, published to crates.io, and released on GitHub. A follow-up
-audit pass landed fixes across CI gates, font fallback, the publish
-rate limiter, event-loop quiescence (`QuiescentApp`), the widget
-event/paint dispatch path, accessibility for widget-internal
-children, vendored `martensite-vello`, and taffy 0.14 / wasmtime 48
-upgrades. v0.16.0 is the next milestone.
+Last updated: v0.17.0 workstream review loop. v0.16.0 is released —
+tagged `v0.16.0` at `0b906a4`, all 33 crates published to crates.io
+(including first-time publishes of `martensite-vello` and
+`martensite-cosmic-text`), and a GitHub Release with changelog notes.
+The release surfaced and fixed two latent `publish.yml` bugs: the
+vendored `martensite-vello` was missing from the publish order, and
+per-crate version extraction aborted under `set -euo pipefail` for
+workspace-versioned crates. v0.17.0 is in progress.
 
 ## Active Milestone Plan (v0.14.0 → v0.17.0 → v1.0.0)
 
@@ -34,7 +35,8 @@ see ADR-0033.
   multi-plane `DmaBuf` + `import_external_planes`; `HdrMetadata`;
   `FrameQueue` drop accounting; `MediaView` decoder wiring.
   Spec: `docs/milestones/v0.16.0-media-pipeline.md`.
-  **Status: IMPLEMENTED** — VT hardware-verified on macOS (30-frame real
+  **Status: RELEASED** (tag `v0.16.0`, crates.io + GitHub Release).
+  VT hardware-verified on macOS (30-frame real
   decode through `VideoToolboxDecoder` → `IoSurface`); FFmpeg real-decode
   test on the checked-in 320x240 Annex-B fixture; MF compile-verified for
   `x86_64-pc-windows-msvc`; VAAPI compile + parser unit tests verified on
@@ -77,6 +79,33 @@ see ADR-0033.
   `accesskit_android`); hybrid command-ledger + snapshot time-travel
   debugger.
   Spec: `docs/milestones/v0.17.0-platform-expansion.md`.
+  **Status: IN REVIEW** — implemented on six parallel
+  `milestone/*` branches under `.worktrees/`, each through a
+  double-review loop (spec/API then correctness/safety):
+  - `milestone/vt-av1` — AV1 `av1C` → `CMFormatDescription` bridge
+    closes the last v0.16.0 gap: the AV1 4K120 leg now decodes through
+    VideoToolbox hardware (`hw=true`, ~120 fps on M4) instead of the
+    dav1d advisory path. Bounded deferred init, real `RequireHardware`
+    gate, HDR colour propagation.
+  - `milestone/widgets` — `OverlayLayer` + the six APG widgets;
+    incremental AccessKit updates emit popups, `Widget::tick` frame
+    hook drives tooltip hover, AT actions reach virtual/overlay nodes.
+  - `milestone/web` — wasm32 target for window/wgpu/text/clipboard/
+    dnd/access + umbrella crate; `WebA11yBridge` hidden-DOM mirror;
+    WebGPU→WebGL2→CPU `WebBackend` fallback; playwright browser gate
+    (`MARTENSITE_WEB_BROWSER=1`).
+  - `milestone/ios` — UIKit/`accesskit_ios` via new
+    `martensite-access-platform`, Metal-only backend, safe-area,
+    IME, `PointerId` u64 + `PointerKind`; ios-sim `cargo check` +
+    env-gated `harness = false` adapter test.
+  - `milestone/android` — GameActivity, `InjectingAdapter` JNI
+    boundary, Vulkan-first/GLES fallback, surface lifecycle;
+    `cargo check --target aarch64-linux-android` + env-gated device
+    test (`MARTENSITE_ANDROID_DEVICE=1`).
+  - `milestone/timemachine` — `martensite-devtools::timemachine`
+    behind `devtools-timemachine`: journal + arena/signal snapshots,
+    deepest-checkpoint restore + forward replay, `HistoryGap` error
+    across pruned regions, VirtualClock determinism tests.
 
 
 ## v0.15.0 — Engine Showcase (IN PROGRESS)

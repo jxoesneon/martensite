@@ -482,19 +482,18 @@ pub struct MartensiteInputPlugin; // forwards host input into bevy_picking
 
 ---
 
-## 26. `martensite-access-platform` (v0.17.0, planned)
-**1. Purpose:** Mobile/web accessibility bridges — `accesskit_ios`, `accesskit_android`, hidden-DOM/ARIA web bridge.
+## 26. `martensite-access-platform` (v0.17.0)
+**1. Purpose:** Mobile accessibility FFI boundary — `accesskit_ios` (iOS) and `accesskit_android` (Android). The web hidden-DOM/ARIA mirror lives in `martensite-access::web`, not this crate.
 **2. API Surface:**
 ```rust
-pub struct IosAccessAdapter;   // wraps accesskit_ios::SubclassingAdapter
-pub struct AndroidAccessAdapter; // wraps accesskit_android::InjectingAdapter
-pub struct WebAccessBridge;    // hidden-DOM/ARIA live-region mirror
+pub struct IosAdapter;        // wraps accesskit_ios::SubclassingAdapter
+pub struct AndroidAdapter;    // wraps accesskit_android::InjectingAdapter
 ```
-**3. Invariants:** AccessKit tree parity with desktop `martensite-access` semantics.
-**4. Error Handling:** `AccessPlatformError`.
-**5. Features:** `ios`, `android`, `web`.
-**6. Dependencies:** `accesskit_ios`, `accesskit_android`, `web-sys` (web), `martensite-access`.
-**7. Thread Safety:** Platform-main-thread bound.
+**3. Invariants:** AccessKit tree parity with desktop `martensite-access` semantics; all `unsafe` confined to this crate (`#![allow(unsafe_code)]`, whitelisted in `AGENTS.md`).
+**4. Error Handling:** `IosAdapterError`, `AndroidAdapterError` — structured, source-preserving.
+**5. Features:** none — modules are `cfg(target_os)`-gated.
+**6. Dependencies:** `accesskit` + target-gated `accesskit_ios` (iOS) / `accesskit_android` + `android-activity` (Android). No workspace deps (Tier 0); consumed by `martensite-accesskit-winit` via optional target-gated edge.
+**7. Thread Safety:** iOS adapters are main-thread bound (`MainThreadMarker` enforced upstream); Android `InjectingAdapter` is UI-thread postable.
 **8. Memory Layout:** N/A.
 **9. Phase:** v0.17.0.
-**10. Limitations v0.x:** `accesskit_ios` is upstream Phase-1; web bridge is minimal viable scope.
+**10. Limitations v0.x:** `accesskit_ios` is upstream Phase-1; device/simulator gates are env-gated tests (`MARTENSITE_IOS_SIM_TESTS`, `MARTENSITE_ANDROID_DEVICE`).

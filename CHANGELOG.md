@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — v0.17.0: Platform Expansion
+
+- **APG widgets + overlay layer** (`martensite`, `martensite-core`) —
+  Slider, RadioGroup/option, Dropdown/ListBox, ScrollView + scrollbars,
+  Tabs, and Tooltip widgets with ARIA APG semantics; `OverlayLayer`
+  arena-owned popup layer integrated into event routing, paint, and the
+  AccessKit tree. `Widget::tick(Duration)` frame hook drives
+  time-dependent widget state (tooltip hover delay, scroll decay);
+  `WidgetArena::tick` + `MartensiteAccessBridge::tick` are the
+  production entry points. AT actions now reach virtual internal
+  children and overlay popup nodes via `ActionTarget::{Arena, Internal,
+  Overlay}`; incremental `TreeUpdate`s emit popup open/close.
+  `FocusManager::apply_focus_request` performs focus transitions with
+  `FocusLost`/`FocusGained` dispatch.
+- **wasm32-unknown-unknown web target** — `martensite-window`,
+  `martensite-wgpu`, `martensite-text`, `martensite-clipboard`,
+  `martensite-dnd`, `martensite-access` and the umbrella `martensite`
+  crate compile for wasm. `WebBackend` selects WebGPU → WebGL2 → CPU.
+  `WebA11yBridge` (`martensite-access::web`) mirrors the AccessKit tree
+  into a hidden DOM with reparent-safe updates, shared aria-live
+  announcements, and DOM focus mirroring. `examples/web` ships a
+  trunk-based demo + `MARTENSITE_WEB_BROWSER=1` playwright gate.
+- **iOS target** — `aarch64-apple-ios` + `-sim` support across
+  window/wgpu/access crates; Metal-only backend selection; safe-area
+  accessors; winit 0.31 UIKit lifecycle + IME wrappers; `PointerId`
+  widened to `u64` with `PointerKind` (touch ids offset to avoid
+  colliding with the mouse's primary id). New
+  `martensite-access-platform` crate isolates the `accesskit_ios`
+  `SubclassingAdapter` FFI; `examples/ios_demo` is a staticlib demo
+  shell; env-gated simulator test (`MARTENSITE_IOS_SIM_TESTS=1`).
+- **Android target** — `aarch64-linux-android` support; GameActivity
+  (not NativeActivity) backend; `accesskit_android`
+  `InjectingAdapter` via `martensite-access-platform` (JNI confined to
+  the whitelisted crate); Vulkan-first with GLES fallback; surface
+  destroy/recreate lifecycle; `docs/android-packaging.md` packaging
+  guide; env-gated on-device test (`MARTENSITE_ANDROID_DEVICE=1`).
+- **Time-travel debugger** (`martensite-devtools`, feature
+  `devtools-timemachine`) — hybrid command-ledger + snapshot replay:
+  `TimeMachine` checkpoints arena + registered `Clone` source signals,
+  restores the deepest checkpoint and replays journaled ops forward;
+  journal suppression during replay; bounded `SourceJournal` ring with
+  generation counter; widget-factory reconstruction for missing
+  widgets; `HistoryGap` errors when replay crosses a pruned region —
+  replay is fail-loud, never silently divergent; VirtualClock
+  determinism tests.
+- **`target-checks` CI job** — `cargo check` for wasm32 (ubuntu),
+  ios-sim (macos) and android (ubuntu + NDK) on every push/PR.
+
+### Changed
+
+- `martensite-accesskit-winit` adapter constructors take
+  `&dyn ActiveEventLoop`/`&dyn Window` (winit 0.31 hands out
+  trait objects) — signature change on all platforms.
+- `PointerEvent` gained a `kind: PointerKind` field; `PointerId` is
+  `u64`. Both are breaking API changes.
+
 ## [0.16.0] - 2026-09-13
 
 ### Added — v0.16.0: Hardware Media Pipeline
