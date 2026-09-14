@@ -882,6 +882,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2783,6 +2793,7 @@ version = "0.16.0"
 dependencies = [
  "accesskit",
  "glam",
+ "js-sys",
  "martensite-accesskit-winit",
  "martensite-core",
  "martensite-text",
@@ -2791,6 +2802,8 @@ dependencies = [
  "unicode-bidi",
  "unicode-segmentation",
  "uuid",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -2840,8 +2853,13 @@ dependencies = [
 name = "martensite-clipboard"
 version = "0.16.0"
 dependencies = [
+ "js-sys",
  "martensite-clipboard-platform",
  "martensite-core",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -2913,7 +2931,11 @@ version = "0.16.0"
 dependencies = [
  "bitflags",
  "glam",
+ "js-sys",
  "martensite-core",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "winit",
 ]
 
@@ -3119,6 +3141,7 @@ version = "0.16.0"
 dependencies = [
  "fontdb",
  "glam",
+ "js-sys",
  "martensite-core",
  "martensite-cosmic-text",
  "parking_lot",
@@ -3130,6 +3153,9 @@ dependencies = [
  "unicode-bidi-mirroring",
  "unicode-linebreak",
  "unicode-segmentation",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "winit",
 ]
 
@@ -3175,6 +3201,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "martensite-web-example"
+version = "0.16.0"
+dependencies = [
+ "accesskit",
+ "console_error_panic_hook",
+ "js-sys",
+ "martensite-access",
+ "martensite-clipboard",
+ "martensite-dnd",
+ "martensite-text",
+ "martensite-wgpu",
+ "martensite-window",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "winit",
+]
+
+[[package]]
 name = "martensite-wgpu"
 version = "0.16.0"
 dependencies = [
@@ -3199,10 +3244,13 @@ version = "0.16.0"
 dependencies = [
  "bitflags",
  "glam",
+ "js-sys",
  "martensite-core",
  "martensite-shell",
  "slotmap",
  "tracing",
+ "wasm-bindgen",
+ "web-sys",
  "winit",
 ]
 
@@ -6413,6 +6461,7 @@ dependencies = [
  "thiserror 2.0.20",
  "wgpu-core-deps-apple",
  "wgpu-core-deps-emscripten",
+ "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
  "wgpu-naga-bridge",
@@ -6433,6 +6482,15 @@ name = "wgpu-core-deps-emscripten"
 version = "30.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98b86cf4abf524a902dd35f18ca6a3f08fc2ae9847c8f10b48e30491b1f0b86"
+dependencies = [
+ "wgpu-hal",
+]
+
+[[package]]
+name = "wgpu-core-deps-wasm"
+version = "30.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d260ca2ca8adc654f513a869bf3cac0b47f5b8d3f87803d6942015f8de597aae"
 dependencies = [
  "wgpu-hal",
 ]

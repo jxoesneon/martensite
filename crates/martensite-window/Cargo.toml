@@ -21,6 +21,27 @@ glam = { workspace = true }
 bitflags = { workspace = true }
 tracing = { workspace = true }
 
+# Web backend (`src/web.rs`): DOM canvas binding, backing-store DPI
+# scaling, and the hidden-`<input>` IME overlay. wasm-bindgen externs are
+# safe Rust — the crate's `#![forbid(unsafe_code)]` still holds.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = [
+    "CompositionEvent",
+    "CssStyleDeclaration",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "HtmlInputElement",
+    "InputEvent",
+    "Node",
+    "Window",
+] }
+
 [features]
 docs-rs = ["winit/x11"]
 

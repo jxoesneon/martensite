@@ -27,6 +27,14 @@ smallvec = { workspace = true }
 parking_lot = { workspace = true }
 tracing = { workspace = true }
 
+# Web font loading (`src/web.rs`): `fetch`-downloaded font bytes
+# registered via `fontdb::Source::Binary`.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = ["Response", "Window"] }
+
 [dev-dependencies]
 proptest = { workspace = true }
 

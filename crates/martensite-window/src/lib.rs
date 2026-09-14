@@ -63,6 +63,11 @@ pub mod hit_test;
 pub mod manager;
 pub mod quiescent;
 pub mod stylus;
+/// Web (`wasm32-unknown-unknown`) canvas backend: canvas binding,
+/// event-loop configuration, backing-store DPI scaling, and the
+/// hidden-`<input>` IME overlay.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub mod web;
 pub mod window_attributes;
 
 pub use winit::error::RequestError;

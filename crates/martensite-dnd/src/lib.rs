@@ -22,6 +22,10 @@ pub mod bridge;
 pub mod platform;
 pub mod session;
 pub mod target;
+/// Web (`wasm32-unknown-unknown`) drag-and-drop backend via the HTML5
+/// `DataTransfer` API.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub mod web;
 
 pub use bridge::{convert_winit_drop_event, DropBridge, DropInput, DropOutcome};
 pub use platform::{

@@ -36,6 +36,10 @@ pub mod resilience;
 pub mod surface;
 /// GPU theme-transition render pipeline (compiles the theme WGSL shader).
 pub mod theme_transition;
+/// Web (`wasm32-unknown-unknown`) backend selection: WebGPU vs WebGL2
+/// downlevel vs TinySkia CPU-raster fallback.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub mod web;
 
 pub use device::{GpuContext, GpuContextError};
 pub use external::{CompositeTarget, ExternalError, TakenFrame, WgpuHost};

@@ -1,0 +1,41 @@
+[package]
+name = "martensite-web-example"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "wasm32-unknown-unknown web example — exercises the v0.17.0 web platform layer (WebGPU/WebGL2/TinySkia boundary, canvas, DPI, IME, clipboard, drag-and-drop, a11y bridge)."
+publish = false
+readme = "README.md"
+
+# `cdylib` for wasm-bindgen; `rlib` so `cargo check`/`cargo test` can
+# still exercise the crate without a wasm-bindgen host.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# The whole crate body is `#![cfg(wasm32-unknown)]`; declaring the deps
+# target-gated keeps `cargo check --workspace` on the host from building
+# anything for this crate at all.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+martensite-wgpu = { workspace = true }
+martensite-window = { workspace = true }
+martensite-text = { workspace = true }
+martensite-clipboard = { workspace = true }
+martensite-dnd = { workspace = true }
+martensite-access = { workspace = true }
+accesskit = { workspace = true }
+winit = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = ["console"] }
+# Published 2023 — far outside the 7-day freshness window.
+console_error_panic_hook = "0.1"
+
+[lints]
+workspace = true

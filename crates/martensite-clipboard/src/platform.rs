@@ -599,9 +599,25 @@ fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
     Box::new(X11Clipboard::new())
 }
 
+// wasm32-unknown-unknown: the browser clipboard backend. wasm-bindgen
+// externs are safe Rust, so this crate's `#![forbid(unsafe_code)]` holds.
 #[cfg(all(
     not(feature = "platform"),
-    not(any(target_os = "windows", target_os = "macos", target_os = "linux"))
+    target_arch = "wasm32",
+    target_os = "unknown"
+))]
+fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
+    Box::new(crate::web::WebClipboard::new())
+}
+
+#[cfg(all(
+    not(feature = "platform"),
+    not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        all(target_arch = "wasm32", target_os = "unknown")
+    ))
 ))]
 fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
     Box::new(StubClipboard::new())
@@ -677,7 +693,18 @@ mod tests {
         assert_eq!(name, "x11");
         #[cfg(all(
             not(feature = "platform"),
-            not(any(target_os = "windows", target_os = "macos", target_os = "linux"))
+            target_arch = "wasm32",
+            target_os = "unknown"
+        ))]
+        assert_eq!(name, "web-navigator-clipboard");
+        #[cfg(all(
+            not(feature = "platform"),
+            not(any(
+                target_os = "windows",
+                target_os = "macos",
+                target_os = "linux",
+                all(target_arch = "wasm32", target_os = "unknown")
+            ))
         ))]
         assert_eq!(name, "stub");
         // With the `platform` feature, just assert a non-empty name — the

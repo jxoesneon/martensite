@@ -21,6 +21,22 @@ tracing = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-bidi = { workspace = true }
 
+# Web accessibility bridge (`src/web.rs`): hidden-DOM/ARIA live-region
+# announcer + focusable-role DOM mirror translating AccessKit
+# `TreeUpdate`s. wasm-bindgen externs are safe Rust — no unsafe boundary.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = [
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlElement",
+    "Node",
+    "Window",
+] }
+
 [dev-dependencies]
 glam = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
