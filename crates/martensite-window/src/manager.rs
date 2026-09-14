@@ -164,6 +164,42 @@ impl WindowEntry {
             DpiScale::new(1.0)
         }
     }
+
+    /// Returns the unobstructed inset area of the window's surface, in
+    /// physical pixels.
+    ///
+    /// This is a thin pass-through to [`Window::safe_area`]: the safe area
+    /// describes the part of the surface not occluded by hardware features
+    /// such as notches, the status bar, rounded corners, and the home
+    /// indicator. Content that must remain interactive (buttons, text)
+    /// should be laid out inside the safe area; backgrounds may cover the
+    /// whole surface.
+    ///
+    /// ## Platform-specific
+    ///
+    /// - **iOS:** Implemented — returns the `UIView` `safeAreaInsets`
+    ///   (notch/status-bar/home-indicator margins) in physical pixels.
+    /// - **macOS:** Implemented.
+    /// - **Android / Wayland / Windows / X11:** Unimplemented upstream;
+    ///   returns `(0, 0, 0, 0)`. On Android, read `WindowInsets` via
+    ///   platform code until winit lands support.
+    ///
+    /// [`Window::safe_area`]: winit::window::Window::safe_area
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(entry: &martensite_window::WindowEntry) {
+    /// let insets = entry.safe_area();
+    /// // On a notched iPhone in portrait this is typically
+    /// // top ≈ 59pt·scale, bottom ≈ 34pt·scale physical pixels.
+    /// let _ = (insets.top, insets.left, insets.bottom, insets.right);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn safe_area(&self) -> winit::dpi::PhysicalInsets<u32> {
+        self.window.safe_area()
+    }
 }
 
 /// Owns and dispatches events for every open window in the application.
@@ -414,6 +450,28 @@ impl WindowManager {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.windows.is_empty()
+    }
+
+    /// Returns the unobstructed inset area of the surface for the window
+    /// identified by `key`, or `None` if the key is stale.
+    ///
+    /// Convenience delegate for [`WindowEntry::safe_area`]. On iOS this is
+    /// the `UIView` `safeAreaInsets` (notch/status-bar/home-indicator
+    /// margins) in physical pixels; on platforms where winit does not
+    /// implement `safe_area` it returns `(0, 0, 0, 0)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_window::WindowManager;
+    ///
+    /// let mgr = WindowManager::new();
+    /// // A stale key yields `None` rather than panicking.
+    /// assert!(mgr.safe_area(martensite_window::WindowKey::default()).is_none());
+    /// ```
+    #[must_use]
+    pub fn safe_area(&self, key: WindowKey) -> Option<winit::dpi::PhysicalInsets<u32>> {
+        self.window(key).map(WindowEntry::safe_area)
     }
 
     /// Finds the [`WindowKey`] whose window matches the given [`WindowId`].

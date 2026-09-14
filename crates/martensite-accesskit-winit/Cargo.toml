@@ -41,7 +41,10 @@ accesskit_unix = { version = "0.23.0", optional = true, default-features = false
 accesskit_android = { version = "0.8.0", optional = true, features = ["embedded-dex"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
-accesskit_ios = { version = "0.2.0" }
+# The `accesskit_ios` `SubclassingAdapter` Objective-C FFI boundary lives in
+# `martensite-access-platform` (the workspace's whitelisted-unsafe mobile
+# glue crate) rather than in this vendored fork.
+martensite-access-platform = { workspace = true }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dev-dependencies.softbuffer]
 version = "0.4.8"

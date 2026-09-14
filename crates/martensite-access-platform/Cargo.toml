@@ -1,0 +1,50 @@
+[package]
+name = "martensite-access-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Platform-specific accessibility FFI glue (accesskit_ios on iOS, accesskit_android on Android) for martensite-access."
+readme = "README.md"
+
+[dependencies]
+accesskit = { workspace = true }
+
+# iOS: `accesskit_ios` `SubclassingAdapter` — dynamic Objective-C
+# subclassing of the winit `UIView` to implement UIAccessibilityContainer.
+[target.'cfg(target_os = "ios")'.dependencies]
+accesskit_ios = { version = "0.2.0" }
+
+# Android: `accesskit_android` `InjectingAdapter` + `embedded-dex` JNI glue.
+# Populated by the parallel Android workstream; the `android` module is a
+# stub until then.
+
+# The iOS smoke test uses `harness = false` so its `main` runs on the real
+# main thread — `SubclassingAdapter` unwraps `MainThreadMarker` internally
+# and cannot be constructed on a libtest worker thread. It is env-gated
+# (`MARTENSITE_IOS_SIM_TESTS=1`) and a no-op otherwise.
+[[test]]
+name = "ios_adapter"
+harness = false
+path = "tests/ios_adapter.rs"
+
+[target.'cfg(target_os = "ios")'.dev-dependencies]
+accesskit = { workspace = true }
+objc2 = "0.5.2"
+objc2-foundation = "0.2.2"
+objc2-ui-kit = "0.2.2"
+
+# This crate uses `#![allow(unsafe_code)]` at the crate level because it
+# contains platform-specific FFI to the Objective-C runtime (iOS) and JNI
+# (Android) through the AccessKit mobile adapters. The workspace-level
+# `unsafe_code = "deny"` policy is preserved for all other crates; this is
+# the narrowly scoped audited exception for mobile accessibility glue,
+# following the same pattern as `martensite-media-platform` and
+# `martensite-clipboard-platform`.
+[lints]
+workspace = true

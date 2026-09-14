@@ -17,13 +17,7 @@ The Android implementation of this adapter currently only works with [GameActivi
 
 ## Examples
 
-The `examples/` directory contains two runnable examples:
-
-- `simple` — a minimal window exposing a single accessible label.
-- `mixed_handlers` — demonstrates combining AccessKit's action handling with winit event handling.
-
-On desktop platforms, run them with `cargo run --example simple` or `cargo run --example mixed_handlers` from this crate's directory.
-
-### Running the examples on iOS
-
-Install [XcodeGen](https://github.com/yonaskolb/XcodeGen) and the iOS Rust targets, then run `xcodegen` from `examples/apple/` to generate the Xcode project. Open it in Xcode and build/run the `Simple` or `MixedHandlers` target on a device or simulator.
+This vendored fork does not carry the upstream `examples/` directory.
+For a runnable iOS shell exercising this adapter (through
+`martensite-access-platform`), see `examples/ios_demo` at the workspace
+root.

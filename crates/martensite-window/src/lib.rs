@@ -60,6 +60,8 @@ pub mod csd;
 pub mod dpi;
 pub mod event;
 pub mod hit_test;
+pub mod ime;
+pub mod lifecycle;
 pub mod manager;
 pub mod quiescent;
 pub mod stylus;
@@ -75,9 +77,10 @@ pub use dpi::DpiScale;
 pub use event::{
     convert_drop_event, convert_modifiers, convert_modifiers_state, convert_mouse_button,
     convert_window_event, DropAction, DropEvent, EventDispatchOutcome, EventRouter, ModifierKeys,
-    MouseTracker, PointerCapture, PointerEvent, PointerId, PointerState,
+    MouseTracker, PointerCapture, PointerEvent, PointerId, PointerKind, PointerState,
 };
 pub use hit_test::{AffineTransform, ClipShape, HitTestResult, HitTester, RoundedRect};
+pub use lifecycle::{surface_lifecycle, SurfaceLifecycle};
 pub use manager::{WindowEntry, WindowEventOutcome, WindowKey, WindowManager};
 pub use quiescent::{Quiescence, QuiescentApp};
 pub use window_attributes::{MacOSWindowAttributes, WindowsWindowAttributes};

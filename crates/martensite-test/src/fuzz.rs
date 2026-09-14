@@ -16,7 +16,7 @@ use martensite_focus::{FocusManager, TabNavigation};
 use martensite_reactive::{Memo, ReactiveRuntime, Signal};
 use martensite_window::event::{
     EventDispatchOutcome, EventRouter, ModifierKeys, MouseButton, PointerEvent, PointerId,
-    PointerState,
+    PointerKind, PointerState,
 };
 
 /// The subsystem selected for a failed invariant.
@@ -440,7 +440,7 @@ impl EventState {
             return Ok(());
         }
         let id = self.arena.live[rng.index(self.arena.live.len())];
-        let pointer = PointerId::new((rng.next() % 4) as u32);
+        let pointer = PointerId::new(rng.next() % 4);
         let state = match rng.next() % 3 {
             0 => PointerState::Pressed,
             1 => PointerState::Released,
@@ -448,6 +448,7 @@ impl EventState {
         };
         let event = PointerEvent {
             pointer_id: pointer,
+            kind: PointerKind::Mouse,
             position: glam::Vec2::new((rng.next() % 200) as f32, (rng.next() % 200) as f32),
             state,
             button: (state != PointerState::Moved).then_some(MouseButton::Left),

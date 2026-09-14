@@ -13,6 +13,17 @@
 //! assistive technology sends an action, the action handler decodes it and
 //! forwards it to the provided [`ActionHandler`](crate::actions::ActionHandler).
 //!
+//! ## iOS
+//!
+//! On iOS the vendored `martensite-accesskit-winit` adapter delegates to
+//! `martensite-access-platform`'s iOS wrapper around
+//! `accesskit_ios::SubclassingAdapter`, which subclasses the winit
+//! `UIView` (obtained via `RawWindowHandle::UiKit`) on the main thread
+//! before the view is shown. This is a Phase-1 integration: basic roles,
+//! names, and actions reach VoiceOver, but editable text is incomplete —
+//! `accesskit_ios` 0.2.0 does not yet implement the `UITextInput`
+//! conformance editable nodes need.
+//!
 //! ## Usage
 //!
 //! ```no_run
@@ -27,14 +38,12 @@
 //! let adapter = AccessKitAdapter::new(root);
 //! let bridge = Arc::new(MartensiteAccessBridge::new(arena, adapter));
 //!
-//! // Use with accesskit_winit::Adapter::with_direct_handlers:
-//! // accesskit_winit::Adapter::with_direct_handlers(
-//! //     &event_loop,
-//! //     &window,
-//! //     bridge.clone(),
-//! //     bridge.clone(),
-//! //     bridge.clone(),
-//! // );
+//! // Use with accesskit_winit::Adapter::with_direct_handlers. The three
+//! // handler slots each take a *separate* object implementing
+//! // ActivationHandler/ActionHandler/DeactivationHandler (the traits take
+//! // `&mut self`), so share the bridge by wrapping
+//! // `Arc<Mutex<MartensiteAccessBridge>>` in a newtype that delegates the
+//! // three traits through the lock — see `examples/ios_demo`.
 //! ```
 
 use std::sync::Arc;

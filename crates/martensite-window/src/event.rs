@@ -80,6 +80,11 @@ bitflags::bitflags! {
 /// For multi-touch, each finger is assigned a distinct id derived from winit's
 /// [`FingerId`], so concurrent touches can be tracked independently.
 ///
+/// The id is 64 bits wide because winit derives [`FingerId`] from a `usize`;
+/// on iOS it is the address of the `UITouch` object, which does not fit in
+/// 32 bits. Converted finger ids are offset by one from the raw winit value
+/// so a `FingerId` of `0` cannot alias [`PointerId::PRIMARY`].
+///
 /// [`FingerId`]: winit::event::FingerId
 ///
 /// # Examples
@@ -93,22 +98,60 @@ bitflags::bitflags! {
 /// assert_eq!(finger.get(), 3);
 /// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
-pub struct PointerId(u32);
+pub struct PointerId(u64);
 
 impl PointerId {
     /// The primary pointer id, used for mouse input and any single-pointer
     /// source that does not carry a distinct identifier.
     pub const PRIMARY: Self = Self::new(0);
 
-    /// Creates a new pointer id from a raw `u32`.
-    pub const fn new(id: u32) -> Self {
+    /// Creates a new pointer id from a raw `u64`.
+    pub const fn new(id: u64) -> Self {
         Self(id)
     }
 
-    /// Returns the raw `u32` value of this pointer id.
-    pub const fn get(self) -> u32 {
+    /// Returns the raw `u64` value of this pointer id.
+    pub const fn get(self) -> u64 {
         self.0
     }
+}
+
+/// The normalized input-source kind of a [`PointerEvent`].
+///
+/// This is the Martensite-side analogue of winit's
+/// [`PointerKind`](winit::event::PointerKind), reduced to the kind alone —
+/// the per-finger identity of a touch is carried separately by
+/// [`PointerEvent::pointer_id`].
+///
+/// The kind and pointer id are available to consumers at the
+/// window/event-routing layer (e.g. to drive pointer capture or to gate
+/// hover-only affordances on touch-driven platforms such as iOS and
+/// Android). They are intentionally *not* forwarded into the widget-level
+/// [`WidgetEvent`] vocabulary produced by [`widget_event_for_pointer`] —
+/// `WidgetEvent` lives in `martensite-core`, which cannot name
+/// window-layer types.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_window::event::PointerKind;
+///
+/// assert_eq!(PointerKind::Mouse, PointerKind::Mouse);
+/// assert_ne!(PointerKind::Touch, PointerKind::Mouse);
+/// ```
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PointerKind {
+    /// A conventional mouse pointer.
+    #[default]
+    Mouse,
+    /// A touchscreen contact (one per finger; the identity is in
+    /// [`PointerEvent::pointer_id`]).
+    Touch,
+    /// A stylus/tablet tool (e.g. Apple Pencil on iOS).
+    Tablet,
+    /// An input source winit could not classify.
+    Unknown,
 }
 
 /// The state of a pointer device in a [`PointerEvent`].
@@ -155,11 +198,12 @@ pub enum MouseButton {
 /// # Examples
 ///
 /// ```
-/// use martensite_window::event::{ModifierKeys, MouseButton, PointerEvent, PointerId, PointerState};
+/// use martensite_window::event::{ModifierKeys, MouseButton, PointerEvent, PointerId, PointerKind, PointerState};
 /// use glam::Vec2;
 ///
 /// let event = PointerEvent {
 ///     pointer_id: PointerId::PRIMARY,
+///     kind: PointerKind::Mouse,
 ///     position: Vec2::new(42.0, 17.0),
 ///     state: PointerState::Pressed,
 ///     button: Some(MouseButton::Left),
@@ -172,6 +216,15 @@ pub enum MouseButton {
 pub struct PointerEvent {
     /// The pointer (mouse or touch finger) this event belongs to.
     pub pointer_id: PointerId,
+    /// The input-source kind (mouse, touch, tablet) that produced the event.
+    ///
+    /// For [`PointerKind::Touch`], `pointer_id` identifies the individual
+    /// finger; for other kinds it is typically [`PointerId::PRIMARY`].
+    ///
+    /// The kind is consumed by window-layer routing; it is dropped when a
+    /// `PointerEvent` is converted into a `WidgetEvent` for widget
+    /// delivery.
+    pub kind: PointerKind,
     /// The pointer position in logical coordinates.
     pub position: Vec2,
     /// Whether a button was pressed, released, or the pointer merely moved.
@@ -287,6 +340,11 @@ impl PointerCapture {
 /// The tracker is keyed by [`WindowId`] so that a single instance can serve a
 /// multi-window application. It records the last-known logical pointer
 /// position and the widget currently considered hovered for each window.
+///
+/// The tracker is *not* per-pointer: it models a single hover position per
+/// window (the classic desktop mouse model). On multi-touch platforms the
+/// last touch to move wins; per-finger tracking, if needed, must key off
+/// [`PointerEvent::pointer_id`] in the event stream itself.
 ///
 /// # Examples
 ///
@@ -422,7 +480,7 @@ pub enum EventDispatchOutcome {
 /// use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, WidgetArena};
 /// use martensite_window::event::{
 ///     EventDispatchOutcome, EventRouter, ModifierKeys, MouseButton, PointerEvent, PointerId,
-///     PointerState,
+///     PointerKind, PointerState,
 /// };
 /// use martensite_window::WindowId;
 /// use glam::Vec2;
@@ -441,6 +499,7 @@ pub enum EventDispatchOutcome {
 /// let win = WindowId::from_raw(1);
 /// let event = PointerEvent {
 ///     pointer_id: PointerId::PRIMARY,
+///     kind: PointerKind::Mouse,
 ///     position: Vec2::new(50.0, 50.0),
 ///     state: PointerState::Moved,
 ///     button: None,
@@ -650,7 +709,8 @@ impl EventRouter {
     /// use glam::Vec2;
     /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
     /// use martensite_window::event::{
-    ///     EventRouter, ModifierKeys, MouseButton, PointerEvent, PointerId, PointerState,
+    ///     EventRouter, ModifierKeys, MouseButton, PointerEvent, PointerId, PointerKind,
+    ///     PointerState,
     /// };
     /// use martensite_window::WindowId;
     ///
@@ -663,6 +723,7 @@ impl EventRouter {
     /// let mut router = EventRouter::new();
     /// let event = PointerEvent {
     ///     pointer_id: PointerId::PRIMARY,
+    ///     kind: PointerKind::Mouse,
     ///     position: Vec2::new(10.0, 10.0),
     ///     state: PointerState::Pressed,
     ///     button: Some(MouseButton::Left),
@@ -910,6 +971,11 @@ pub fn convert_modifiers_state(state: &winit::keyboard::ModifiersState) -> Modif
 /// currently-tracked modifier state (see [`convert_modifiers`]) when they need
 /// it.
 ///
+/// Fields that have no `PointerEvent` counterpart are dropped: the touch
+/// `force` (3D Touch pressure) carried by touch `PointerSource`s, the
+/// `primary` flag on `PointerMoved` (redundant with
+/// [`PointerId::PRIMARY`]/per-finger ids), and `device_id`.
+///
 /// [`WindowEvent::PointerMoved`]: winit::event::WindowEvent::PointerMoved
 /// [`WindowEvent::PointerButton`]: winit::event::WindowEvent::PointerButton
 /// [`WindowEvent::ModifiersChanged`]: winit::event::WindowEvent::ModifiersChanged
@@ -945,6 +1011,7 @@ pub fn convert_window_event(event: &WindowEvent, scale: &DpiScale) -> Option<Poi
             let pos = physical_to_logical(*position, scale);
             Some(PointerEvent {
                 pointer_id: pointer_id_from_source(source),
+                kind: pointer_kind_from_source(source),
                 position: pos,
                 state: PointerState::Moved,
                 button: None,
@@ -958,13 +1025,14 @@ pub fn convert_window_event(event: &WindowEvent, scale: &DpiScale) -> Option<Poi
             ..
         } => {
             let pos = physical_to_logical(*position, scale);
-            let (pointer_id, mb) = button_source_info(button);
+            let (pointer_id, kind, mb) = button_source_info(button);
             let pointer_state = match state {
                 ElementState::Pressed => PointerState::Pressed,
                 ElementState::Released => PointerState::Released,
             };
             Some(PointerEvent {
                 pointer_id,
+                kind,
                 position: pos,
                 state: pointer_state,
                 button: mb,
@@ -1181,37 +1249,75 @@ fn physical_to_logical(position: winit::dpi::PhysicalPosition<f64>, scale: &DpiS
     )
 }
 
+/// Converts a winit [`FingerId`] into a [`PointerId`] that cannot collide
+/// with [`PointerId::PRIMARY`].
+///
+/// `FingerId::into_raw` may return `0` for a fresh touch sequence, which
+/// would alias `PointerId::PRIMARY` (mouse). Offsetting by one keeps every
+/// finger distinct from the primary pointer. `saturating_add` is used so a
+/// hypothetical `u64::MAX` raw id saturates instead of wrapping to `0`.
+///
+/// [`FingerId`]: winit::event::FingerId
+fn pointer_id_from_finger(finger_id: &winit::event::FingerId) -> PointerId {
+    PointerId::new((finger_id.into_raw() as u64).saturating_add(1))
+}
+
 /// Derives a [`PointerId`] from a winit [`PointerSource`].
 ///
 /// Mouse and tablet sources map to the primary pointer; touch sources carry a
-/// distinct id per finger.
+/// distinct id per finger. The raw [`FingerId`] value is a `usize` — on iOS
+/// the address of the `UITouch` object — so it is widened, not truncated.
 ///
 /// [`PointerSource`]: winit::event::PointerSource
+/// [`FingerId`]: winit::event::FingerId
 fn pointer_id_from_source(source: &winit::event::PointerSource) -> PointerId {
     use winit::event::PointerSource;
 
     match source {
-        PointerSource::Touch { finger_id, .. } => PointerId::new(finger_id.into_raw() as u32),
+        PointerSource::Touch { finger_id, .. } => pointer_id_from_finger(finger_id),
         // Mouse, tablet, and unknown sources share the primary pointer id.
         _ => PointerId::PRIMARY,
     }
 }
 
-/// Extracts the [`PointerId`] and normalized [`MouseButton`] from a winit
-/// [`ButtonSource`].
+/// Derives a normalized [`PointerKind`] from a winit [`PointerSource`].
+///
+/// [`PointerSource`]: winit::event::PointerSource
+fn pointer_kind_from_source(source: &winit::event::PointerSource) -> PointerKind {
+    use winit::event::PointerSource;
+
+    match source {
+        PointerSource::Mouse => PointerKind::Mouse,
+        PointerSource::Touch { .. } => PointerKind::Touch,
+        PointerSource::TabletTool { .. } => PointerKind::Tablet,
+        // `PointerSource` is `#[non_exhaustive]`; unknown and future
+        // sources map to `PointerKind::Unknown`.
+        _ => PointerKind::Unknown,
+    }
+}
+
+/// Extracts the [`PointerId`], normalized [`PointerKind`], and normalized
+/// [`MouseButton`] from a winit [`ButtonSource`].
 ///
 /// Touch presses are reported as [`MouseButton::Left`] (the conventional
 /// primary button for touch). Tablet buttons are mapped through their
 /// standard mouse-button equivalents when available.
 ///
 /// [`ButtonSource`]: winit::event::ButtonSource
-fn button_source_info(button: &winit::event::ButtonSource) -> (PointerId, Option<MouseButton>) {
+fn button_source_info(
+    button: &winit::event::ButtonSource,
+) -> (PointerId, PointerKind, Option<MouseButton>) {
     use winit::event::{ButtonSource, TabletToolButton};
 
     match button {
-        ButtonSource::Mouse(mouse) => (PointerId::PRIMARY, Some(convert_mouse_button(*mouse))),
+        ButtonSource::Mouse(mouse) => (
+            PointerId::PRIMARY,
+            PointerKind::Mouse,
+            Some(convert_mouse_button(*mouse)),
+        ),
         ButtonSource::Touch { finger_id, .. } => (
-            PointerId::new(finger_id.into_raw() as u32),
+            pointer_id_from_finger(finger_id),
+            PointerKind::Touch,
             Some(MouseButton::Left),
         ),
         ButtonSource::TabletTool {
@@ -1228,12 +1334,12 @@ fn button_source_info(button: &winit::event::ButtonSource) -> (PointerId, Option
                     _ => Some(MouseButton::Other(*raw as u8)),
                 },
             };
-            (PointerId::PRIMARY, mb)
+            (PointerId::PRIMARY, PointerKind::Tablet, mb)
         }
-        ButtonSource::Unknown(_) => (PointerId::PRIMARY, None),
+        ButtonSource::Unknown(_) => (PointerId::PRIMARY, PointerKind::Unknown, None),
         // `ButtonSource` is `#[non_exhaustive]`; future winit versions may
         // add sources. Route them to the primary pointer with no button.
-        _ => (PointerId::PRIMARY, None),
+        _ => (PointerId::PRIMARY, PointerKind::Unknown, None),
     }
 }
 
@@ -1286,6 +1392,7 @@ mod tests {
         // Event positioned over `b` should still route to captured `a`.
         let event = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(250.0, 50.0),
             state: PointerState::Moved,
             button: None,
@@ -1315,6 +1422,7 @@ mod tests {
 
         let event = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(250.0, 50.0),
             state: PointerState::Moved,
             button: None,
@@ -1347,6 +1455,7 @@ mod tests {
 
         let event = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(50.0, 50.0),
             state: PointerState::Moved,
             button: None,
@@ -1478,6 +1587,7 @@ mod tests {
         // Point over child → child wins (topmost).
         let over_child = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(75.0, 75.0),
             state: PointerState::Moved,
             button: None,
@@ -1491,6 +1601,7 @@ mod tests {
         // Point over root only → root wins.
         let over_root = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(10.0, 10.0),
             state: PointerState::Moved,
             button: None,
@@ -1516,6 +1627,7 @@ mod tests {
         // Point is over child, but capture forces routing to root.
         let event = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(75.0, 75.0),
             state: PointerState::Pressed,
             button: Some(MouseButton::Left),
@@ -1558,6 +1670,7 @@ mod tests {
         // Establish hover over the child by routing a pointer event first.
         let over_child = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(75.0, 75.0),
             state: PointerState::Moved,
             button: None,
@@ -1572,6 +1685,7 @@ mod tests {
         // Move the pointer over the root only and scroll again.
         let over_root = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(10.0, 10.0),
             state: PointerState::Moved,
             button: None,
@@ -1738,9 +1852,29 @@ mod tests {
             },
         };
         let pe = convert_window_event(&event, &scale).expect("touch moved converts");
-        assert_eq!(pe.pointer_id, PointerId::new(3));
+        // Finger ids are offset by one so raw id 0 cannot alias PRIMARY.
+        assert_eq!(pe.pointer_id, PointerId::new(4));
+        assert_eq!(pe.kind, PointerKind::Touch);
         assert_eq!(pe.state, PointerState::Moved);
         assert_eq!(pe.position, Vec2::new(10.0, 20.0));
+    }
+
+    #[test]
+    fn convert_window_event_touch_id_zero_never_primary() {
+        let scale = DpiScale::new(1.0);
+        let event = WindowEvent::PointerMoved {
+            device_id: None,
+            position: PhysicalPosition::new(1.0, 1.0),
+            primary: false,
+            source: PointerSource::Touch {
+                finger_id: FingerId::from_raw(0),
+                force: None,
+            },
+        };
+        let pe = convert_window_event(&event, &scale).expect("touch moved converts");
+        // A raw finger id of 0 must not alias the primary (mouse) pointer.
+        assert_ne!(pe.pointer_id, PointerId::PRIMARY);
+        assert_eq!(pe.pointer_id, PointerId::new(1));
     }
 
     #[test]
@@ -1759,6 +1893,7 @@ mod tests {
         assert_eq!(pe.button, Some(MouseButton::Left));
         assert_eq!(pe.position, Vec2::new(42.0, 17.0));
         assert_eq!(pe.pointer_id, PointerId::PRIMARY);
+        assert_eq!(pe.kind, PointerKind::Mouse);
     }
 
     #[test]
@@ -1792,7 +1927,8 @@ mod tests {
             is_macos_activation_click: false,
         };
         let pe = convert_window_event(&event, &scale).expect("touch button converts");
-        assert_eq!(pe.pointer_id, PointerId::new(7));
+        assert_eq!(pe.pointer_id, PointerId::new(8));
+        assert_eq!(pe.kind, PointerKind::Touch);
         assert_eq!(pe.button, Some(MouseButton::Left));
         assert_eq!(pe.state, PointerState::Pressed);
     }
@@ -1986,6 +2122,7 @@ mod tests {
 
         let event = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(50.0, 50.0),
             state: PointerState::Moved,
             button: None,
@@ -2040,6 +2177,7 @@ mod tests {
         let dead = WidgetId::from_parts(999, 1);
         let event = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(50.0, 50.0),
             state: PointerState::Moved,
             button: None,
@@ -2060,6 +2198,7 @@ mod tests {
 
         let inside = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(50.0, 50.0),
             state: PointerState::Moved,
             button: None,
@@ -2072,6 +2211,7 @@ mod tests {
 
         let outside = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(500.0, 500.0),
             state: PointerState::Moved,
             button: None,
@@ -2094,6 +2234,7 @@ mod tests {
         let mut router = EventRouter::new();
         let event = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(150.0, 150.0),
             state: PointerState::Moved,
             button: None,
@@ -2117,6 +2258,7 @@ mod tests {
 
         let over_child = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(75.0, 75.0),
             state: PointerState::Moved,
             button: None,
@@ -2128,6 +2270,7 @@ mod tests {
         // A miss clears the hovered widget for that window.
         let miss = PointerEvent {
             pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
             position: Vec2::new(500.0, 500.0),
             state: PointerState::Moved,
             button: None,
