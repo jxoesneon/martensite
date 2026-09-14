@@ -10,8 +10,9 @@
 //! only occur if the arena's own data structures are corrupted (a
 //! bug, not a user error). If such corruption occurs, panicking with
 //! a clear message is the correct behavior (fail-fast).
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::iter::FusedIterator;
+use std::time::Duration;
 
 use crate::fence::FrameFence;
 use crate::id::WidgetId;
@@ -261,8 +262,21 @@ impl WidgetArena {
     /// internal child (recursively), so widgets anywhere in the
     /// hierarchy can open, move, dismiss, or observe their popups; then
     /// runs [`OverlayLayer::layout_pass`] to resolve anchors for entries
-    /// opened this frame. Call once per frame after layout and before
-    /// painting/accessibility emission.
+    /// opened this frame. Entries opened during a widget's sync are
+    /// stamped with that widget as their [`owner`](crate::overlay::OverlayEntry::owner) —
+    /// see [`Self::remove`] for how the stamp keeps popups from
+    /// outliving dead widgets.
+    ///
+    /// Afterwards, every widget whose popup was opened, closed, or
+    /// touched by an event since the last sync is marked
+    /// `DIRTY_PAINT | DIRTY_A11Y` — popup open/close changes emitted
+    /// accessibility state (`expanded`, `controls`, `described_by`) and
+    /// must not wait for a widget event to reach an incremental
+    /// `TreeUpdate`.
+    ///
+    /// Call once per frame after layout and before
+    /// painting/accessibility emission — or drive both steps at once
+    /// via [`Self::tick`].
     ///
     /// # Examples
     ///
@@ -275,14 +289,86 @@ impl WidgetArena {
     /// ```
     pub fn sync_overlays(&mut self) {
         let mut overlay = std::mem::take(&mut self.overlay);
+        let open_before: HashSet<u64> = overlay.entries().map(|e| e.id()).collect();
         let ids: Vec<WidgetId> = self.iter_depth_first().collect();
         for id in ids {
+            overlay.set_current_owner(Some(id));
             if let Some(cold) = self.get_cold_mut(id) {
                 Self::sync_overlay_recursive(cold.widget.as_mut(), &mut overlay);
             }
         }
+        overlay.set_current_owner(None);
         overlay.layout_pass();
+        // Owners whose popup state changed: entries opened this frame
+        // carry a fresh owner stamp; entries closed (outside press,
+        // Escape, owner-driven close) or touched by popup events left
+        // their owner in the layer's dirty log.
+        let mut owners: Vec<WidgetId> = overlay
+            .entries()
+            .filter(|e| !open_before.contains(&e.id()))
+            .filter_map(|e| e.owner())
+            .collect();
+        for owner in overlay.take_dirty_owners() {
+            if !owners.contains(&owner) {
+                owners.push(owner);
+            }
+        }
         self.overlay = overlay;
+        for owner in owners {
+            self.mark_dirty(owner);
+        }
+    }
+
+    /// Drives one frame of widget state advancement plus overlay
+    /// synchronization — the production frame seam.
+    ///
+    /// Calls [`Widget::tick`] on every live arena widget and,
+    /// recursively, on its internal children; widgets that returned
+    /// `true` (animation in flight, delay countdown running) are marked
+    /// `DIRTY_PAINT | DIRTY_A11Y`. Then runs [`Self::sync_overlays`] so
+    /// effects the tick produced — a `Tooltip` finishing its hover
+    /// delay, a `ScrollView` animation completing — reconcile their
+    /// popups the same frame.
+    ///
+    /// Call once per frame from the application/windowing frame loop
+    /// (`martensite-access`'s `MartensiteAccessBridge::tick` forwards
+    /// here), before `build_paint_list` and before building an
+    /// AccessKit `TreeUpdate`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.tick(Duration::from_millis(16)); // drives widgets + overlays
+    /// ```
+    pub fn tick(&mut self, dt: Duration) {
+        let ids: Vec<WidgetId> = self.iter_depth_first().collect();
+        for id in ids {
+            let dirty = self
+                .get_cold_mut(id)
+                .map(|cold| Self::tick_recursive(cold.widget.as_mut(), dt))
+                .unwrap_or(false);
+            if dirty {
+                self.mark_dirty(id);
+            }
+        }
+        self.sync_overlays();
+    }
+
+    /// Recursive helper for [`tick`](Self::tick): ticks `widget` then
+    /// its internal children, `true` if any returned `true`.
+    fn tick_recursive(widget: &mut dyn Widget, dt: Duration) -> bool {
+        let mut dirty = widget.tick(dt);
+        for i in 0..widget.child_count() {
+            if let Some(child) = widget.child_mut(i) {
+                dirty |= Self::tick_recursive(child, dt);
+            }
+        }
+        dirty
     }
 
     /// Recursive helper for [`sync_overlays`](Self::sync_overlays).
@@ -324,6 +410,64 @@ impl WidgetArena {
     /// ```
     pub fn take_focus_request(&mut self) -> Option<WidgetId> {
         self.pending_focus.take()
+    }
+
+    /// Records a pending focus request for `id` without routing an
+    /// event — the arena-level counterpart of
+    /// [`EventResponse::CaptureFocus`].
+    ///
+    /// Used when a *virtual* node (a widget's internal child or popup
+    /// content inside an overlay entry) answers an assistive-technology
+    /// action by requesting focus: the request must resolve to the
+    /// owning arena widget, which the action dispatcher reaches via
+    /// this method. Dead widgets are ignored. Drain with
+    /// [`take_focus_request`](Self::take_focus_request) and apply
+    /// through `martensite-focus`'s `FocusManager`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.request_focus(id);
+    /// assert_eq!(arena.take_focus_request(), Some(id));
+    /// ```
+    pub fn request_focus(&mut self, id: WidgetId) {
+        if !self.is_alive(id) {
+            return;
+        }
+        self.pending_focus = Some(id);
+        if let Some(h) = self.get_hot_mut(id) {
+            h.flags |= NodeFlags::DIRTY_PAINT;
+        }
+    }
+
+    /// Marks `id` `DIRTY_PAINT | DIRTY_A11Y` — the widget's emitted
+    /// appearance and accessibility state are stale and the next frame
+    /// must repaint it and include it in an incremental `TreeUpdate`.
+    /// Dead widgets are ignored.
+    ///
+    /// Used by the accessibility action dispatcher when an action is
+    /// delivered to a virtual (internal or overlay) target: the
+    /// response mutates the owning widget's state without going through
+    /// `dispatch_event`, which would have marked it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.mark_dirty(id);
+    /// assert!(arena.get_hot(id).unwrap().flags.contains(NodeFlags::DIRTY_A11Y));
+    /// ```
+    pub fn mark_dirty(&mut self, id: WidgetId) {
+        if let Some(h) = self.get_hot_mut(id) {
+            h.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
+        }
     }
 
     /// Return the count of currently active nodes in the arena.
@@ -514,10 +658,23 @@ impl WidgetArena {
     }
 
     /// Remove a node from the arena, unparenting its children and detaching from its hierarchy.
+    ///
+    /// Overlay popups owned by the widget (stamped during
+    /// [`sync_overlays`](Self::sync_overlays)) are closed so they cannot
+    /// keep painting/hit-testing with a dead owner, and a pending focus
+    /// request naming this widget is dropped.
     pub fn remove(&mut self, id: WidgetId) -> Option<(HotNode, ColdNode)> {
         let slot = self.slots.get(id.slot_idx() as usize)?;
         if slot.generation != id.generation() {
             return None;
+        }
+
+        // 0. Orphaned state: close popups this widget owns and drop a
+        // stale focus request — a dead widget must not leave its popup
+        // painting above content or focus a non-existent node.
+        self.overlay.close_owner(id);
+        if self.pending_focus == Some(id) {
+            self.pending_focus = None;
         }
 
         // 1. Unparent all immediate children so they become clean root-level nodes
@@ -1187,7 +1344,7 @@ impl WidgetArena {
                     // repaint so a focus indicator can appear.
                     self.pending_focus = Some(id);
                     if let Some(h) = self.get_hot_mut(id) {
-                        h.flags |= NodeFlags::DIRTY_PAINT;
+                        h.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
                     }
                     return Some((id, response));
                 }
@@ -1204,19 +1361,28 @@ impl WidgetArena {
                     {
                         self.pending_focus = Some(id);
                     }
+                    // A handled event may change emitted accessibility
+                    // state (expanded, selected, value) — mark the
+                    // responder for re-emission in the next incremental
+                    // `TreeUpdate`, alongside the repaint.
                     if let Some(h) = self.get_hot_mut(id) {
-                        h.flags |= NodeFlags::DIRTY_PAINT;
+                        h.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
                     }
                     return Some((id, response));
                 }
                 other => {
-                    // `Handled` — still honour implicit press-to-focus.
+                    // `Handled` — still honour implicit press-to-focus,
+                    // and dirty-mark like the responses above: handled
+                    // events routinely mutate emitted a11y state.
                     if matches!(event, WidgetEvent::PointerPressed { .. }) {
                         if let Some(h) = self.get_hot_mut(id) {
                             if h.flags.contains(NodeFlags::FOCUSABLE) {
                                 self.pending_focus = Some(id);
                             }
                         }
+                    }
+                    if let Some(h) = self.get_hot_mut(id) {
+                        h.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
                     }
                     return Some((id, other));
                 }

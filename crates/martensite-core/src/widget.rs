@@ -2,6 +2,7 @@ use crate::node::{HotNode, Rect};
 use crate::overlay::OverlayLayer;
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use std::time::Duration;
 
 /// Minimum and maximum size bounds for layout measurement.
 ///
@@ -558,6 +559,28 @@ pub trait Widget: Send + Sync + 'static {
     ///
     /// Default: no-op (the widget owns no popups).
     fn sync_overlay(&mut self, _overlay: &mut OverlayLayer) {}
+
+    /// Advance time-dependent state by `dt`.
+    ///
+    /// Called once per frame on every live arena widget — and,
+    /// recursively, on its internal children — by
+    /// [`WidgetArena::tick`](crate::WidgetArena::tick). Widgets with
+    /// elapsed-time behaviour (a `Tooltip`'s hover delay, a
+    /// `ScrollView`'s decaying scroll animation) implement this to
+    /// move that state forward; `WidgetArena::tick` then runs
+    /// [`Self::sync_overlay`] reconciliation so effects like a tooltip
+    /// opening its popup land the same frame.
+    ///
+    /// Return `true` while a repaint (or accessibility re-emission) is
+    /// needed — e.g. an animation in flight or a delay countdown
+    /// running — so the arena can dirty-mark the widget. Return
+    /// `false` when the tick changed nothing visible.
+    ///
+    /// Default: no-op returning `false` (the widget is not
+    /// time-dependent).
+    fn tick(&mut self, _dt: Duration) -> bool {
+        false
+    }
 
     /// Whether this widget's internal children and arena children are
     /// clipped to the widget's bounds during paint traversal.

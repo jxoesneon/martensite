@@ -24,14 +24,14 @@
 //! let id = WidgetId::from_parts(0, 1);
 //!
 //! // IPC thread enqueues actions.
-//! pump.push(A11yAction::Click(id));
-//! pump.push(A11yAction::Focus(id));
+//! pump.push(A11yAction::Click(id.into()));
+//! pump.push(A11yAction::Focus(id.into()));
 //! assert_eq!(pump.pending(), 2);
 //!
 //! // Main thread drains once per frame.
 //! let batch = pump.drain();
 //! assert_eq!(batch.len(), 2);
-//! assert_eq!(batch[0], A11yAction::Click(id));
+//! assert_eq!(batch[0], A11yAction::Click(id.into()));
 //! assert!(pump.is_empty());
 //! ```
 
@@ -111,7 +111,7 @@ impl AsyncEventPump {
     ///
     /// let pump = AsyncEventPump::new();
     /// let id = WidgetId::from_parts(0, 1);
-    /// pump.push(A11yAction::Focus(id));
+    /// pump.push(A11yAction::Focus(id.into()));
     /// assert_eq!(pump.pending(), 1);
     /// ```
     pub fn push(&self, action: A11yAction) {
@@ -176,8 +176,8 @@ impl AsyncEventPump {
     ///
     /// let pump = AsyncEventPump::new();
     /// let id = WidgetId::from_parts(0, 1);
-    /// pump.push(A11yAction::Click(id));
-    /// pump.push(A11yAction::Focus(id));
+    /// pump.push(A11yAction::Click(id.into()));
+    /// pump.push(A11yAction::Focus(id.into()));
     ///
     /// let batch = pump.drain();
     /// assert_eq!(batch.len(), 2);
@@ -205,7 +205,7 @@ impl AsyncEventPump {
     ///
     /// let pump = AsyncEventPump::new();
     /// let id = WidgetId::from_parts(0, 1);
-    /// pump.push(A11yAction::Click(id));
+    /// pump.push(A11yAction::Click(id.into()));
     ///
     /// let mut arena = WidgetArena::new();
     /// let mut handler = QueuedActionDispatcher::new();
@@ -268,9 +268,9 @@ mod tests {
     fn push_increments_pending() {
         let pump = AsyncEventPump::new();
         let id = sample_id();
-        pump.push(A11yAction::Click(id));
+        pump.push(A11yAction::Click(id.into()));
         assert_eq!(pump.pending(), 1);
-        pump.push(A11yAction::Focus(id));
+        pump.push(A11yAction::Focus(id.into()));
         assert_eq!(pump.pending(), 2);
         assert!(!pump.is_empty());
     }
@@ -279,15 +279,15 @@ mod tests {
     fn drain_returns_fifo_order() {
         let pump = AsyncEventPump::new();
         let id = sample_id();
-        pump.push(A11yAction::Click(id));
-        pump.push(A11yAction::Focus(id));
-        pump.push(A11yAction::Blur(id));
+        pump.push(A11yAction::Click(id.into()));
+        pump.push(A11yAction::Focus(id.into()));
+        pump.push(A11yAction::Blur(id.into()));
 
         let batch = pump.drain();
         assert_eq!(batch.len(), 3);
-        assert_eq!(batch[0], A11yAction::Click(id));
-        assert_eq!(batch[1], A11yAction::Focus(id));
-        assert_eq!(batch[2], A11yAction::Blur(id));
+        assert_eq!(batch[0], A11yAction::Click(id.into()));
+        assert_eq!(batch[1], A11yAction::Focus(id.into()));
+        assert_eq!(batch[2], A11yAction::Blur(id.into()));
         assert!(pump.is_empty());
     }
 
@@ -302,7 +302,7 @@ mod tests {
     fn drain_can_be_called_twice() {
         let pump = AsyncEventPump::new();
         let id = sample_id();
-        pump.push(A11yAction::Click(id));
+        pump.push(A11yAction::Click(id.into()));
         let first = pump.drain();
         assert_eq!(first.len(), 1);
         let second = pump.drain();
@@ -313,9 +313,9 @@ mod tests {
     fn flush_dispatches_all_actions_to_handler() {
         let pump = AsyncEventPump::new();
         let id = sample_id();
-        pump.push(A11yAction::Click(id));
-        pump.push(A11yAction::Focus(id));
-        pump.push(A11yAction::Blur(id));
+        pump.push(A11yAction::Click(id.into()));
+        pump.push(A11yAction::Focus(id.into()));
+        pump.push(A11yAction::Blur(id.into()));
 
         let mut arena = WidgetArena::new();
         let mut handler = QueuedActionDispatcher::new();
@@ -348,14 +348,14 @@ mod tests {
         let mut handler = QueuedActionDispatcher::new();
 
         // Frame 1: two actions.
-        pump.push(A11yAction::Click(id));
-        pump.push(A11yAction::Focus(id));
+        pump.push(A11yAction::Click(id.into()));
+        pump.push(A11yAction::Focus(id.into()));
         let frame1 = pump.flush(&mut arena, &mut handler);
         assert_eq!(frame1.len(), 2);
         assert!(pump.is_empty());
 
         // Frame 2: one action.
-        pump.push(A11yAction::Blur(id));
+        pump.push(A11yAction::Blur(id.into()));
         let frame2 = pump.flush(&mut arena, &mut handler);
         assert_eq!(frame2.len(), 1);
         assert!(pump.is_empty());
@@ -376,10 +376,10 @@ mod tests {
             },
             ColdNode::default(),
         );
-        pump.push(A11yAction::Focus(target));
+        pump.push(A11yAction::Focus(target.into()));
 
         let mut handler = crate::actions::ClosureActionHandler::new(|arena, action| {
-            if let A11yAction::Focus(id) = action {
+            if let A11yAction::Focus(crate::actions::ActionTarget::Arena(id)) = action {
                 // Mutate the arena to prove we received it.
                 if let Some(hot) = arena.get_hot_mut(*id) {
                     hot.flags |= NodeFlags::HOVERED;
@@ -395,7 +395,7 @@ mod tests {
     fn debug_format_shows_pending() {
         let pump = AsyncEventPump::new();
         let id = sample_id();
-        pump.push(A11yAction::Click(id));
+        pump.push(A11yAction::Click(id.into()));
         let s = format!("{:?}", pump);
         assert!(s.contains("AsyncEventPump"));
         assert!(s.contains("1"));
@@ -407,7 +407,7 @@ mod tests {
         let id = sample_id();
         // Overfill the queue to force drops.
         for _ in 0..(MAX_QUEUE_SIZE + 3) {
-            pump.push(A11yAction::Click(id));
+            pump.push(A11yAction::Click(id.into()));
         }
         let s = format!("{:?}", pump);
         assert!(s.contains("dropped"));
@@ -421,7 +421,7 @@ mod tests {
 
         // Fill the queue exactly to capacity.
         for i in 0..MAX_QUEUE_SIZE {
-            pump.push(A11yAction::Click(id));
+            pump.push(A11yAction::Click(id.into()));
             assert_eq!(pump.pending(), i + 1, "queue should grow until full");
         }
         assert_eq!(pump.pending(), MAX_QUEUE_SIZE);
@@ -430,7 +430,7 @@ mod tests {
         // Pushing beyond capacity drops the oldest entry each time but
         // keeps the queue size capped.
         for extra in 1..=5 {
-            pump.push(A11yAction::Focus(id));
+            pump.push(A11yAction::Focus(id.into()));
             assert_eq!(
                 pump.pending(),
                 MAX_QUEUE_SIZE,
@@ -448,12 +448,12 @@ mod tests {
         // non-zero for `WidgetId::from_parts`.
         for i in 0..MAX_QUEUE_SIZE {
             let id = WidgetId::from_parts(i as u32, 1);
-            pump.push(A11yAction::Click(id));
+            pump.push(A11yAction::Click(id.into()));
         }
         // Now overflow with Focus actions carrying a sentinel id.
         let sentinel = WidgetId::from_parts(9999, 1);
         for _ in 0..3 {
-            pump.push(A11yAction::Focus(sentinel));
+            pump.push(A11yAction::Focus(sentinel.into()));
         }
 
         let batch = pump.drain();
@@ -462,14 +462,16 @@ mod tests {
 
         // The three newest entries should be the Focus(sentinel) actions.
         let tail: Vec<_> = batch.iter().rev().take(3).collect();
-        assert!(tail.iter().all(|a| **a == A11yAction::Focus(sentinel)));
+        assert!(tail
+            .iter()
+            .all(|a| **a == A11yAction::Focus(sentinel.into())));
 
         // The oldest surviving entry should be the 4th pushed Click
         // (slot indices 0, 1, 2 were dropped).
         let oldest_surviving = batch[0].clone();
         assert_eq!(
             oldest_surviving,
-            A11yAction::Click(WidgetId::from_parts(3, 1))
+            A11yAction::Click(WidgetId::from_parts(3, 1).into())
         );
     }
 

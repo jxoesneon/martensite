@@ -4,7 +4,7 @@
 //! focus and provides tab navigation (forward and reverse) through the
 //! focusable widgets in the arena.
 
-use martensite_core::{NodeFlags, WidgetArena, WidgetId};
+use martensite_core::{NodeFlags, WidgetArena, WidgetEvent, WidgetId};
 
 use crate::scope::FocusScopeStack;
 use crate::spatial::{FocusDirection, SpatialNavigator};
@@ -156,6 +156,14 @@ impl FocusManager {
     /// modal scope is active, the widget must also be within the active
     /// scope's subtree; otherwise focus is not changed (modal trapping).
     ///
+    /// **This method updates focus state only — it does not dispatch
+    /// events.** The caller must deliver
+    /// [`WidgetEvent::FocusLost`] to the previously focused widget and
+    /// [`WidgetEvent::FocusGained`] to `id` via
+    /// `WidgetArena::dispatch_event`, or use
+    /// [`apply_focus_request`](Self::apply_focus_request), which performs
+    /// the transition and the dispatch together.
+    ///
     /// # Examples
     ///
     /// ```
@@ -176,6 +184,83 @@ impl FocusManager {
             return;
         }
         self.current_focus = Some(id);
+    }
+
+    /// Applies a pending arena focus request: validates `id` as a focus
+    /// target, moves focus, **and** dispatches
+    /// [`WidgetEvent::FocusLost`] to the previously focused widget and
+    /// [`WidgetEvent::FocusGained`] to `id`.
+    ///
+    /// This is the canonical way to consume
+    /// `WidgetArena::take_focus_request` (or `EventRouter`'s
+    /// `take_focus_request` in `martensite-window`): the arena records
+    /// which widget wants focus — from `EventResponse::CaptureFocus`,
+    /// press-to-focus, or an assistive-technology `Focus` action routed
+    /// through `WidgetArena::request_focus` — and this method performs
+    /// the transition *and* the event dispatch the raw mutators
+    /// ([`set_focus`](Self::set_focus), [`tab`](Self::tab),
+    /// [`navigate`](Self::navigate), [`pop_scope`](Self::pop_scope),
+    /// [`clear_focus`](Self::clear_focus)) leave to callers.
+    ///
+    /// Returns `true` when `id` is a valid target and holds focus after
+    /// the call; a request naming the already-focused widget succeeds
+    /// without re-dispatching events.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    /// use martensite_core::{ColdNode, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let focusable = |arena: &mut WidgetArena| {
+    ///     arena.insert(
+    ///         HotNode {
+    ///             flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+    ///             ..HotNode::default()
+    ///         },
+    ///         ColdNode::default(),
+    ///     )
+    /// };
+    /// let a = focusable(&mut arena);
+    /// let b = focusable(&mut arena);
+    ///
+    /// let mut manager = FocusManager::new();
+    /// assert!(manager.apply_focus_request(&mut arena, a));
+    /// assert!(manager.apply_focus_request(&mut arena, b));
+    /// assert_eq!(manager.current_focus(), Some(b));
+    /// // Invalid targets are rejected without disturbing focus.
+    /// let dead = {
+    ///     let t = focusable(&mut arena);
+    ///     arena.remove(t);
+    ///     t
+    /// };
+    /// assert!(!manager.apply_focus_request(&mut arena, dead));
+    /// ```
+    pub fn apply_focus_request(&mut self, arena: &mut WidgetArena, id: WidgetId) -> bool {
+        if !self.is_focusable_target(arena, id) {
+            return false;
+        }
+        self.move_focus(arena, Some(id));
+        true
+    }
+
+    /// Transitions `current_focus` to `next`, dispatching
+    /// [`WidgetEvent::FocusLost`] to the previously focused widget and
+    /// [`WidgetEvent::FocusGained`] to `next`. Dead ids are skipped and
+    /// a no-change transition dispatches nothing.
+    fn move_focus(&mut self, arena: &mut WidgetArena, next: Option<WidgetId>) {
+        let prev = self.current_focus;
+        if prev == next {
+            return;
+        }
+        self.current_focus = next;
+        if let Some(prev) = prev.filter(|id| arena.is_alive(*id)) {
+            arena.dispatch_event(prev, &WidgetEvent::FocusLost);
+        }
+        if let Some(next) = next.filter(|id| arena.is_alive(*id)) {
+            arena.dispatch_event(next, &WidgetEvent::FocusGained);
+        }
     }
 
     /// Returns `true` if `id` is a valid focus target: alive, visible,
@@ -251,6 +336,10 @@ impl FocusManager {
     /// accessibility actions) where the caller has already verified
     /// the target is valid.
     ///
+    /// **Does not dispatch `FocusLost`/`FocusGained`** — the caller
+    /// must deliver those events via `WidgetArena::dispatch_event`, or
+    /// use [`apply_focus_request`](Self::apply_focus_request) instead.
+    ///
     /// # Examples
     ///
     /// ```
@@ -267,6 +356,12 @@ impl FocusManager {
     }
 
     /// Clears the current focus.
+    ///
+    /// **Does not dispatch events** — the caller must deliver
+    /// [`WidgetEvent::FocusLost`] to the previously focused widget via
+    /// `WidgetArena::dispatch_event` (capture `current_focus` before
+    /// calling). This is the correct counterpart of an AT `Blur`
+    /// action.
     ///
     /// # Examples
     ///
@@ -290,6 +385,13 @@ impl FocusManager {
     /// all focusable widgets in the arena are considered.
     ///
     /// Returns the newly focused widget ID, if any.
+    ///
+    /// **Does not dispatch `FocusLost`/`FocusGained`** — capture
+    /// `current_focus` before calling, then deliver the events via
+    /// `WidgetArena::dispatch_event` for the old and new targets.
+    /// (Arena focus *requests* instead go through
+    /// [`apply_focus_request`](Self::apply_focus_request), which
+    /// dispatches internally.)
     ///
     /// # Examples
     ///
@@ -358,6 +460,10 @@ impl FocusManager {
     /// focusable widgets within the scope. If the current focus is
     /// outside the active scope, navigation starts from the scope root
     /// instead, ensuring focus cannot drift into the modal from outside.
+    ///
+    /// **Does not dispatch `FocusLost`/`FocusGained`** — capture
+    /// `current_focus` before calling, then deliver the events via
+    /// `WidgetArena::dispatch_event` for the old and new targets.
     ///
     /// # Examples
     ///
@@ -468,6 +574,11 @@ impl FocusManager {
     /// widget within the remaining active scope (if any), then to the
     /// root container (or its first focusable descendant), and finally
     /// to the first visible focusable widget in the arena.
+    ///
+    /// **Does not dispatch `FocusLost`/`FocusGained`** — capture
+    /// `current_focus` before calling, then deliver the events via
+    /// `WidgetArena::dispatch_event` for the old widget and the
+    /// returned restore target (if any).
     ///
     /// # Examples
     ///

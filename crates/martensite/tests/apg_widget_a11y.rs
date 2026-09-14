@@ -11,11 +11,12 @@
 
 use std::time::Duration;
 
-use accesskit::{Action, Node as AccessNode, NodeId, Role};
+use accesskit::{Action, ActionRequest, Node as AccessNode, NodeId, Role};
 use glam::Vec2;
 use martensite::widgets::{
     Dropdown, RadioGroup, ScrollView, Slider, Tabs, Text, Tooltip, TOOLTIP_HOVER_GRACE_MS,
 };
+use martensite_access::actions::{dispatch_a11y_action, A11yAction, ActionTarget};
 use martensite_access::{widget_id_to_node_id, AccessKitAdapter};
 use martensite_core::widget::{LayoutConstraints, LayoutContext, Widget};
 use martensite_core::{
@@ -571,5 +572,247 @@ fn scrollview_forwards_hover_to_content() {
         seen.lock().unwrap().as_slice(),
         &["enter", "moved", "leave"],
         "hover events reach the scrollable content"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Incremental updates + overlays (HIGH-1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn incremental_update_emits_popup_opened_after_full_build() {
+    let dd = Dropdown::new(["Red", "Green", "Blue"]).label("Colour");
+    let (mut arena, root) = arena_with(dd, Rect::new(10.0, 10.0, 160.0, 32.0));
+    arena
+        .overlay_mut()
+        .set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+    let mut adapter = AccessKitAdapter::new(root);
+
+    // Initial full build: combobox closed, no popup in the tree.
+    let update = adapter.build_update(&mut arena);
+    let (_, combo) = find_node(&update, |n| n.role() == Role::ComboBox).unwrap();
+    assert_eq!(combo.is_expanded(), Some(false));
+    assert!(find_node(&update, |n| n.role() == Role::ListBox).is_none());
+    assert!(
+        adapter.build_incremental_update(&mut arena).is_none(),
+        "nothing dirty — no incremental update"
+    );
+
+    // AT Expand opens the popup; the arena's overlay sync stamps the
+    // owner and dirty-marks it for re-emission.
+    arena.dispatch_event(root, &WidgetEvent::SemanticAction(SemanticAction::Expand));
+    arena.sync_overlays();
+    assert_eq!(arena.overlay().len(), 1, "popup open in arena overlay");
+
+    // The incremental update carries the popup subtree and refreshed
+    // relations — it must not be invisible to the adapter.
+    let update = adapter
+        .build_incremental_update(&mut arena)
+        .expect("popup open forces an incremental update");
+    let (listbox_id, listbox) =
+        find_node(&update, |n| n.role() == Role::ListBox).expect("listbox emitted incrementally");
+    assert!(find_all(&update, |n| n.role() == Role::ListBoxOption).len() == 3);
+    let _ = listbox;
+
+    // The popup root is attached to the tree root's children, and the
+    // re-emitted combobox resolves aria-controls → the listbox.
+    let tree_root = widget_id_to_node_id(root);
+    let (_, tree_root_node) = update
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == tree_root)
+        .expect("tree root re-emitted");
+    assert!(
+        tree_root_node.children().contains(listbox_id),
+        "popup root appended to tree root children"
+    );
+    let (_, combo) = find_node(&update, |n| n.role() == Role::ComboBox).unwrap();
+    assert_eq!(combo.is_expanded(), Some(true));
+    assert_eq!(combo.controls(), &[*listbox_id]);
+
+    // Closing the popup produces another update whose root children no
+    // longer list the popup — and the closed entry's virtual ids are
+    // pruned from resolution.
+    arena.dispatch_event(root, &WidgetEvent::SemanticAction(SemanticAction::Collapse));
+    arena.sync_overlays();
+    assert!(arena.overlay().is_empty());
+    let update = adapter
+        .build_incremental_update(&mut arena)
+        .expect("popup close forces an incremental update");
+    let (_, tree_root_node) = update
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == tree_root)
+        .expect("tree root re-emitted on close");
+    assert!(!tree_root_node.children().contains(listbox_id));
+    assert!(
+        adapter.resolve_overlay(*listbox_id).is_none(),
+        "closed popup's virtual ids are pruned"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// AT action routing to virtual targets (HIGH-3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn at_action_on_virtual_option_reaches_handler() {
+    let group = RadioGroup::new(["Alpha", "Beta", "Gamma"]);
+    let (mut arena, root) = arena_with(group, Rect::new(0.0, 0.0, 300.0, 30.0));
+    let mut adapter = AccessKitAdapter::new(root);
+    let update = adapter.build_update(&mut arena);
+    let radios = find_all(&update, |n| n.role() == Role::RadioButton);
+    assert_eq!(radios.len(), 3);
+
+    // Decode an AT Click aimed at the third option's *virtual* node —
+    // the path that previously failed `node_id_to_widget_id` and was
+    // dropped.
+    let request = ActionRequest {
+        action: Action::Click,
+        target_node: radios[2].0,
+        target_tree: accesskit::TreeId::ROOT,
+        data: None,
+    };
+    let action = adapter
+        .decode_action(&arena, &request)
+        .expect("virtual-node action decodes");
+    assert!(
+        matches!(&action, A11yAction::Click(ActionTarget::Internal(o, p))
+            if *o == root && !p.is_empty()),
+        "decoded as an internal target of the radio group: {action:?}"
+    );
+
+    // Route it through the semantic dispatcher: the option parks the
+    // activation on its owner, which `dispatch_a11y_action` drains via
+    // `a11y_prepare`.
+    dispatch_a11y_action(&mut arena, &action);
+
+    let update = adapter.build_update(&mut arena);
+    let checked: Vec<bool> = find_all(&update, |n| n.role() == Role::RadioButton)
+        .iter()
+        .map(|(_, n)| n.toggled() == Some(accesskit::Toggled::True))
+        .collect();
+    assert_eq!(checked, vec![false, false, true]);
+}
+
+#[test]
+fn at_action_on_popup_option_commits_selection() {
+    let dd = Dropdown::new(["Red", "Green", "Blue"]);
+    let (mut arena, root) = arena_with(dd, Rect::new(10.0, 10.0, 160.0, 32.0));
+    arena
+        .overlay_mut()
+        .set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+    let mut adapter = AccessKitAdapter::new(root);
+    adapter.build_update(&mut arena);
+
+    // Open the popup through the arena path.
+    arena.dispatch_event(root, &WidgetEvent::SemanticAction(SemanticAction::Expand));
+    arena.sync_overlays();
+    let update = adapter.build_update(&mut arena);
+    let options = find_all(&update, |n| n.role() == Role::ListBoxOption);
+    assert_eq!(options.len(), 3);
+
+    // AT Click on the "Blue" option's overlay virtual node.
+    let request = ActionRequest {
+        action: Action::Click,
+        target_node: options[2].0,
+        target_tree: accesskit::TreeId::ROOT,
+        data: None,
+    };
+    let action = adapter
+        .decode_action(&arena, &request)
+        .expect("overlay-node action decodes");
+    assert!(
+        matches!(&action, A11yAction::Click(ActionTarget::Overlay(_, _))),
+        "decoded as an overlay target: {action:?}"
+    );
+
+    dispatch_a11y_action(&mut arena, &action);
+
+    // The commit reached the owning dropdown via the shared slot and
+    // was drained by the dispatch's `a11y_prepare` on the owner.
+    let update = adapter.build_update(&mut arena);
+    let (_, combo) = find_node(&update, |n| n.role() == Role::ComboBox).unwrap();
+    assert_eq!(combo.value(), Some("Blue"));
+}
+
+// ---------------------------------------------------------------------------
+// Arena-hosted tooltip ticking (HIGH-2 / MEDIUM-6)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn arena_tick_shows_tooltip_after_hover_delay() {
+    let tip = Tooltip::new(Text::new("Save"), "tip").delay_ms(500);
+    let (mut arena, root) = arena_with(tip, Rect::new(10.0, 10.0, 100.0, 40.0));
+    arena
+        .overlay_mut()
+        .set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+    let mut adapter = AccessKitAdapter::new(root);
+    adapter.build_update(&mut arena);
+
+    // Pointer enters the trigger — the tooltip starts its hover delay
+    // but cannot advance it until a frame tick reaches the widget.
+    arena.dispatch_event(root, &WidgetEvent::PointerEnter);
+    arena.tick(Duration::from_millis(400));
+    assert!(
+        arena.overlay().is_empty(),
+        "delay not yet reached — no popup"
+    );
+
+    // One more frame crosses the delay: `arena.tick` advances the
+    // widget and syncs overlays, so the popup opens the same frame.
+    arena.tick(Duration::from_millis(100));
+    assert_eq!(
+        arena.overlay().len(),
+        1,
+        "arena-hosted tooltip opened its popup via the frame seam"
+    );
+    let entry = arena.overlay().entries().next().unwrap();
+    assert_eq!(entry.owner(), Some(root), "popup stamped with its owner");
+
+    // The emitted tree wires aria-describedby to the bubble.
+    let update = adapter.build_update(&mut arena);
+    let (bubble_id, _) = find_node(&update, |n| n.role() == Role::Tooltip).expect("bubble emitted");
+    assert!(
+        find_node(&update, |n| n.described_by().contains(bubble_id)).is_some(),
+        "trigger has aria-describedby → bubble"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Arena removal cleanup (MEDIUM-4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn remove_closes_owned_popup_and_clears_focus_request() {
+    let dd = Dropdown::new(["A", "B"]);
+    let (mut arena, root) = arena_with(dd, Rect::new(10.0, 10.0, 160.0, 32.0));
+    arena
+        .overlay_mut()
+        .set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+    arena.dispatch_event(root, &WidgetEvent::SemanticAction(SemanticAction::Expand));
+    arena.sync_overlays();
+    assert_eq!(arena.overlay().len(), 1);
+    assert_eq!(
+        arena.overlay().entries().next().unwrap().owner(),
+        Some(root)
+    );
+
+    // A focus request naming the soon-to-be-removed widget must not
+    // outlive it either.
+    arena.request_focus(root);
+    assert_eq!(arena.take_focus_request(), Some(root));
+    arena.request_focus(root);
+
+    arena.remove(root);
+
+    assert!(
+        arena.overlay().is_empty(),
+        "removing the owner closed its popup"
+    );
+    assert_eq!(
+        arena.take_focus_request(),
+        None,
+        "stale focus request cleared on remove"
     );
 }

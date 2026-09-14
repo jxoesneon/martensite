@@ -13,7 +13,7 @@
 
 use martensite::widgets::{Button, CheckBox, Container, Flex, Stack, Text, TextInput};
 use martensite_access::{
-    actions::{decode_action_request, A11yAction, ActionHandler, QueuedActionDispatcher},
+    actions::{A11yAction, ActionHandler, QueuedActionDispatcher},
     properties::AccessibilityBuilder,
     widget_id_to_node_id, AccessKitAdapter,
 };
@@ -199,8 +199,9 @@ fn action_dispatch_click_resolves_to_widget() {
         data: None,
     };
 
-    let action = decode_action_request(&arena, &request, &accesskit::TreeId::ROOT).unwrap();
-    assert_eq!(action, A11yAction::Click(id));
+    let adapter = AccessKitAdapter::new(id);
+    let action = adapter.decode_action(&arena, &request).unwrap();
+    assert_eq!(action, A11yAction::Click(id.into()));
 }
 
 #[test]
@@ -219,8 +220,9 @@ fn action_dispatch_focus_resolves_to_widget() {
         data: None,
     };
 
-    let action = decode_action_request(&arena, &request, &accesskit::TreeId::ROOT).unwrap();
-    assert_eq!(action, A11yAction::Focus(id));
+    let adapter = AccessKitAdapter::new(id);
+    let action = adapter.decode_action(&arena, &request).unwrap();
+    assert_eq!(action, A11yAction::Focus(id.into()));
 }
 
 #[test]
@@ -233,13 +235,13 @@ fn action_dispatch_queued_handler() {
     );
 
     let mut dispatcher = QueuedActionDispatcher::new();
-    dispatcher.handle_action(&mut arena, &A11yAction::Click(id));
-    dispatcher.handle_action(&mut arena, &A11yAction::Focus(id));
+    dispatcher.handle_action(&mut arena, &A11yAction::Click(id.into()));
+    dispatcher.handle_action(&mut arena, &A11yAction::Focus(id.into()));
 
     let actions = dispatcher.drain();
     assert_eq!(actions.len(), 2);
-    assert_eq!(actions[0], A11yAction::Click(id));
-    assert_eq!(actions[1], A11yAction::Focus(id));
+    assert_eq!(actions[0], A11yAction::Click(id.into()));
+    assert_eq!(actions[1], A11yAction::Focus(id.into()));
 }
 
 // ===========================================================================

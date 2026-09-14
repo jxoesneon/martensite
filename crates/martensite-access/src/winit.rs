@@ -146,6 +146,33 @@ impl MartensiteAccessBridge {
         inner.adapter.build_incremental_update(&mut inner.arena)
     }
 
+    /// Drives one frame of widget state and overlay synchronization —
+    /// forwards to [`WidgetArena::tick`].
+    ///
+    /// Call once per frame from the event loop (e.g. on
+    /// `AboutToWait`/`RedrawRequested`), before
+    /// [`Self::build_incremental_update`] or painting: this advances
+    /// time-dependent widgets (`Tooltip` hover delays, `ScrollView`
+    /// animations) and reconciles their popups in the arena-owned
+    /// `OverlayLayer` via `WidgetArena::sync_overlays`, so the next
+    /// `TreeUpdate` sees opened popups and updated relations.
+    ///
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use martensite_access::winit::MartensiteAccessBridge;
+    /// use martensite_access::AccessKitAdapter;
+    /// use martensite_core::WidgetArena;
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert(Default::default(), Default::default());
+    /// let bridge = MartensiteAccessBridge::new(arena, AccessKitAdapter::new(root));
+    /// // Once per frame, before building updates:
+    /// bridge.tick(Duration::from_millis(16));
+    /// ```
+    pub fn tick(&self, dt: std::time::Duration) {
+        self.with_arena_mut(|arena, _| arena.tick(dt));
+    }
+
     /// Processes all accessibility actions that were enqueued since the last
     /// call, dispatching them in a single batch to the registered
     /// [`MartensiteActionHandler`].
@@ -156,9 +183,12 @@ impl MartensiteAccessBridge {
     /// actions arriving on the platform IPC thread are batched and
     /// processed on the main thread without re-entrancy.
     ///
-    /// Returns the actions that were processed, in FIFO order. If no
-    /// handler is registered, the actions are still drained (and returned)
-    /// but not dispatched.
+    /// Returns the actions that were processed, in FIFO order. When no
+    /// handler is registered, each action is dispatched into the arena
+    /// with [`dispatch_a11y_action`](crate::actions::dispatch_a11y_action)
+    /// — the default semantic-action pipeline that routes arena and
+    /// virtual (internal/overlay) targets to their widgets. Register a
+    /// handler only to observe or override that dispatch.
     ///
     /// # Examples
     ///
@@ -203,6 +233,14 @@ impl MartensiteAccessBridge {
                 // `guard` is dropped here, releasing the lock until the
                 // next action.
             }
+        } else {
+            // Default dispatch: without a registered handler, route each
+            // action through the semantic-action pipeline so AT requests
+            // still reach their widgets — including virtual targets.
+            for action in &batch {
+                let mut guard = self.inner.lock();
+                crate::actions::dispatch_a11y_action(&mut guard.arena, action);
+            }
         }
 
         // Put the handler back. If another thread called
@@ -237,9 +275,10 @@ impl ActionHandler for MartensiteAccessBridge {
         // batched processing on the main thread. This returns immediately,
         // avoiding re-entrancy and long IPC-thread stalls. The application's
         // event loop drains the queue via `process_pending_actions` once
-        // per frame.
-        let tree_id = inner.adapter.tree_id();
-        let action = crate::actions::decode_action_request(&inner.arena, &request, &tree_id);
+        // per frame. The adapter resolves the target `NodeId` — including
+        // virtual nodes for widget-internal children and overlay popups —
+        // so actions on them are not dropped.
+        let action = inner.adapter.decode_action(&inner.arena, &request);
 
         if let Some(action) = action {
             self.pump.push(action);
@@ -325,7 +364,7 @@ mod tests {
         // Process the batch — the handler should now receive the action.
         let processed = bridge_mut.process_pending_actions();
         assert_eq!(processed.len(), 1);
-        assert_eq!(processed[0], crate::actions::A11yAction::Focus(id));
+        assert_eq!(processed[0], crate::actions::A11yAction::Focus(id.into()));
         assert!(bridge_mut.pump().is_empty());
     }
 
@@ -465,7 +504,7 @@ mod tests {
         bridge_mut.do_action(make_request(accesskit::Action::Click));
         let second = bridge_mut.process_pending_actions();
         assert_eq!(second.len(), 1);
-        assert_eq!(second[0], crate::actions::A11yAction::Click(id));
+        assert_eq!(second[0], crate::actions::A11yAction::Click(id.into()));
     }
 
     #[test]

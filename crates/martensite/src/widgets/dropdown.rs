@@ -699,24 +699,7 @@ impl Dropdown {
     /// assert_eq!(overlay.len(), 1);
     /// ```
     pub fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
-        // A popup option committed a selection (click or AT Click).
-        let committed = self
-            .shared
-            .lock()
-            .expect("popup state poisoned")
-            .committed
-            .take();
-        if let Some(index) = committed {
-            self.commit(index);
-        }
-        // Popup-side hover moved the highlight — mirror it so
-        // aria-activedescendant follows the pointer.
-        let popup_highlight = self
-            .shared
-            .lock()
-            .expect("popup state poisoned")
-            .highlighted;
-        self.highlighted = popup_highlight.min(self.options.len().saturating_sub(1));
+        self.drain_shared_state();
         // The layer dismissed our popup (outside press / Escape).
         if let Some(id) = self.popup_id {
             if !overlay.is_open(id) {
@@ -742,6 +725,31 @@ impl Dropdown {
         state.options = self.options.clone();
         state.selected = self.selected;
         state.highlighted = self.highlighted;
+    }
+
+    /// Applies state the popup wrote into the shared slot: a committed
+    /// selection (click or AT `Click` on an option) is committed here,
+    /// and popup-side highlight changes are mirrored so
+    /// `aria-activedescendant` follows the pointer.
+    fn drain_shared_state(&mut self) {
+        // A popup option committed a selection (click or AT Click).
+        let committed = self
+            .shared
+            .lock()
+            .expect("popup state poisoned")
+            .committed
+            .take();
+        if let Some(index) = committed {
+            self.commit(index);
+        }
+        // Popup-side hover moved the highlight — mirror it so
+        // aria-activedescendant follows the pointer.
+        let popup_highlight = self
+            .shared
+            .lock()
+            .expect("popup state poisoned")
+            .highlighted;
+        self.highlighted = popup_highlight.min(self.options.len().saturating_sub(1));
     }
 }
 
@@ -797,6 +805,14 @@ impl Widget for Dropdown {
         }
     }
 
+    fn a11y_prepare(&mut self) {
+        // AT activations delivered to popup options (an `Action::Click`
+        // on a ListBoxOption virtual node) write into the shared slot;
+        // drain them here so the emitted tree reflects the commit even
+        // when the action bypassed `sync_overlay`.
+        self.drain_shared_state();
+    }
+
     fn a11y_fixup(
         &self,
         _emitted: &mut Vec<A11yEmittedNode>,
@@ -843,6 +859,13 @@ impl Widget for Dropdown {
                 EventResponse::CaptureFocus
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
+                // While the popup is open this branch is normally
+                // unreachable: the arena-owned OverlayLayer consumes
+                // `Escape` first (dismissing the topmost popup), and
+                // `sync_overlay` reconciles `self.open` via the
+                // dismissal queue. It's kept for ownerless-embedded use
+                // — a Dropdown driven without arena overlay routing —
+                // where no layer intercepts the key.
                 "Escape" => {
                     if self.open {
                         self.close();

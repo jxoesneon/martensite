@@ -1025,6 +1025,12 @@ impl Widget for ScrollView {
         let _ = cx;
     }
 
+    fn tick(&mut self, dt: std::time::Duration) -> bool {
+        // The decaying scroll/rubber-band animation — `update` returns
+        // `true` while a repaint is needed.
+        self.update(dt.as_secs_f32())
+    }
+
     fn child_count(&self) -> usize {
         3
     }

@@ -583,6 +583,17 @@ impl Widget for Tooltip {
         Tooltip::sync_overlay(self, overlay);
     }
 
+    fn tick(&mut self, dt: std::time::Duration) -> bool {
+        // Delegate to the inherent method — same delegation pattern as
+        // `sync_overlay` — then report whether time-dependent work is
+        // in flight: the hover-delay countdown, a `shown` transition,
+        // or the hoverable grace countdown all need the next frame's
+        // repaint / a11y re-emission and overlay sync.
+        let was_shown = self.shown;
+        Tooltip::tick(self, dt);
+        self.shown != was_shown || self.hovered || self.leaving
+    }
+
     fn child_count(&self) -> usize {
         1
     }

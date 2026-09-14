@@ -52,6 +52,7 @@ use std::collections::VecDeque;
 use glam::Vec2;
 
 use crate::arena::paint_widget_recursive;
+use crate::id::WidgetId;
 use crate::node::{HotNode, Rect};
 use crate::paint::PaintList;
 use crate::widget::{
@@ -107,6 +108,13 @@ pub struct OverlayEntry {
     needs_layout: bool,
     /// The popup's widget tree, painted above window content.
     content: Box<dyn Widget>,
+    /// The arena widget that opened this popup, stamped by
+    /// [`OverlayLayer::open`] while `WidgetArena::sync_overlays` is
+    /// driving the owner's [`Widget::sync_overlay`]. `None` for popups
+    /// opened directly on the layer (outside a widget sync). Lets the
+    /// arena dirty-mark owners when their popups close or change, and
+    /// close orphaned popups when an owner is removed.
+    owner: Option<WidgetId>,
 }
 
 impl OverlayEntry {
@@ -135,6 +143,13 @@ impl OverlayEntry {
     pub fn content_mut(&mut self) -> &mut dyn Widget {
         &mut *self.content
     }
+
+    /// The arena widget that opened this popup, if it was opened while
+    /// [`WidgetArena::sync_overlays`](crate::WidgetArena::sync_overlays)
+    /// was driving that widget's [`Widget::sync_overlay`].
+    pub fn owner(&self) -> Option<WidgetId> {
+        self.owner
+    }
 }
 
 /// Z-ordered collection of in-window popup surfaces.
@@ -150,6 +165,20 @@ pub struct OverlayLayer {
     /// FIFO of entry ids dismissed by [`Self::dispatch_event`]
     /// (outside press or Escape), for owners that poll for closure.
     dismissed: VecDeque<u64>,
+    /// Owners of entries that were closed (any path) or received an
+    /// event since the last drain — drained by
+    /// `WidgetArena::sync_overlays` to dirty-mark the owning widgets so
+    /// their emitted a11y state tracks the popup.
+    dirty_owners: VecDeque<Option<WidgetId>>,
+    /// `true` while popup contents may have changed since the last
+    /// accessibility emission — set on event delivery and close/open so
+    /// incremental updates re-emit open popups. Drained by the
+    /// `martensite-access` adapter via [`Self::take_content_dirty`].
+    content_dirty: bool,
+    /// The widget whose [`Widget::sync_overlay`] is currently running
+    /// under `WidgetArena::sync_overlays`; stamped onto entries opened
+    /// during that call.
+    current_owner: Option<WidgetId>,
     /// Entry currently holding overlay-level pointer capture.
     capture: Option<u64>,
 }
@@ -178,6 +207,9 @@ impl OverlayLayer {
             next_id: 1,
             viewport: Rect::default(),
             dismissed: VecDeque::new(),
+            dirty_owners: VecDeque::new(),
+            content_dirty: false,
+            current_owner: None,
             capture: None,
         }
     }
@@ -238,7 +270,9 @@ impl OverlayLayer {
             resolved: Rect::default(),
             needs_layout: true,
             content,
+            owner: self.current_owner,
         });
+        self.content_dirty = true;
         id
     }
 
@@ -263,15 +297,56 @@ impl OverlayLayer {
         if self.capture == Some(id) {
             self.capture = None;
         }
-        let before = self.entries.len();
-        self.entries.retain(|e| e.id != id);
-        self.entries.len() != before
+        if let Some(position) = self.entries.iter().position(|e| e.id == id) {
+            let entry = self.entries.remove(position);
+            self.note_dirty_owner(entry.owner);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Closes every popup owned by `owner` (stamped at `open` while the
+    /// arena was syncing that widget) and returns how many were closed.
+    /// Called by `WidgetArena::remove` so a dead widget cannot leave an
+    /// orphaned popup painting and hit-testing above content.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::{OverlayAnchor, OverlayLayer};
+    /// use martensite_core::{DummyWidget, Rect, WidgetId};
+    ///
+    /// let mut layer = OverlayLayer::new();
+    /// // Direct opens are ownerless — nothing to close here.
+    /// layer.open(
+    ///     Box::new(DummyWidget),
+    ///     OverlayAnchor::Pointer(glam::Vec2::ZERO),
+    /// );
+    /// assert_eq!(layer.close_owner(WidgetId::from_parts(0, 1)), 0);
+    /// assert_eq!(layer.len(), 1);
+    /// ```
+    pub fn close_owner(&mut self, owner: WidgetId) -> usize {
+        let ids: Vec<u64> = self
+            .entries
+            .iter()
+            .filter(|e| e.owner == Some(owner))
+            .map(|e| e.id)
+            .collect();
+        for id in &ids {
+            self.close(*id);
+        }
+        ids.len()
     }
 
     /// Closes every open popup.
     pub fn clear(&mut self) {
+        let owners: Vec<Option<WidgetId>> = self.entries.iter().map(|e| e.owner).collect();
         self.entries.clear();
         self.capture = None;
+        for owner in owners {
+            self.note_dirty_owner(owner);
+        }
     }
 
     /// Returns `true` if a popup with `id` is currently open.
@@ -338,8 +413,10 @@ impl OverlayLayer {
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
+        let owner = entry.owner;
         entry.content = content;
         entry.needs_layout = true;
+        self.note_dirty_owner(owner);
         true
     }
 
@@ -348,8 +425,10 @@ impl OverlayLayer {
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
+        let owner = entry.owner;
         entry.anchor = anchor;
         entry.needs_layout = true;
+        self.note_dirty_owner(owner);
         true
     }
 
@@ -402,6 +481,58 @@ impl OverlayLayer {
     /// ```
     pub fn take_dismissed(&mut self) -> Option<u64> {
         self.dismissed.pop_front()
+    }
+
+    /// Records that `owner`'s popup state changed (popup closed, or
+    /// popup content received an event) so `WidgetArena::sync_overlays`
+    /// can dirty-mark it for repaint and accessibility re-emission.
+    /// Bounded: stale marks beyond the cap are dropped — a missed mark
+    /// only delays re-emission by a frame since `sync_overlays`
+    /// reconciles open/closed sets each pass.
+    fn note_dirty_owner(&mut self, owner: Option<WidgetId>) {
+        const CAP: usize = 64;
+        if self.dirty_owners.len() >= CAP {
+            self.dirty_owners.pop_front();
+        }
+        self.dirty_owners.push_back(owner);
+        self.content_dirty = true;
+    }
+
+    /// Drains the owners whose popup state changed since the last
+    /// drain. Called by `WidgetArena::sync_overlays`.
+    pub(crate) fn take_dirty_owners(&mut self) -> Vec<WidgetId> {
+        self.dirty_owners.drain(..).flatten().collect()
+    }
+
+    /// `true` while popup contents may have changed since the flag was
+    /// last drained — set when an entry opens, closes, or receives an
+    /// event. The `martensite-access` adapter consults this before
+    /// deciding an incremental update has nothing to emit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::{OverlayAnchor, OverlayLayer};
+    /// use martensite_core::{DummyWidget, Rect};
+    ///
+    /// let mut layer = OverlayLayer::new();
+    /// assert!(!layer.take_content_dirty());
+    /// layer.open(
+    ///     Box::new(DummyWidget),
+    ///     OverlayAnchor::Pointer(glam::Vec2::ZERO),
+    /// );
+    /// assert!(layer.take_content_dirty());
+    /// assert!(!layer.take_content_dirty());
+    /// ```
+    pub fn take_content_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.content_dirty)
+    }
+
+    /// Stamps subsequent [`open`](Self::open) calls with `owner`.
+    /// Called by `WidgetArena::sync_overlays` around each widget's
+    /// `sync_overlay` so popups remember which arena widget owns them.
+    pub(crate) fn set_current_owner(&mut self, owner: Option<WidgetId>) {
+        self.current_owner = owner;
     }
 
     /// Measure, place, and lay out every entry that needs it.
@@ -581,6 +712,7 @@ impl OverlayLayer {
         if let Some(captured) = self.capture {
             if let Some(index) = self.entries.iter().position(|e| e.id == captured) {
                 let entry = &mut self.entries[index];
+                let owner = entry.owner;
                 let mut cx = EventContext {
                     event,
                     bounds: entry.resolved,
@@ -588,6 +720,7 @@ impl OverlayLayer {
                 let response = entry.content.event(&mut cx);
                 let id = entry.id;
                 self.apply_capture_response(id, response);
+                self.note_dirty_owner(owner);
                 return swallow_ignored(response);
             }
             self.capture = None;
@@ -598,6 +731,7 @@ impl OverlayLayer {
             for index in (0..self.entries.len()).rev() {
                 if self.entries[index].resolved.contains(position) {
                     let entry = &mut self.entries[index];
+                    let owner = entry.owner;
                     let mut cx = EventContext {
                         event,
                         bounds: entry.resolved,
@@ -605,6 +739,7 @@ impl OverlayLayer {
                     let response = entry.content.event(&mut cx);
                     let id = entry.id;
                     self.apply_capture_response(id, response);
+                    self.note_dirty_owner(owner);
                     return swallow_ignored(response);
                 }
             }
@@ -614,8 +749,7 @@ impl OverlayLayer {
                 // Record every dismissed id — owners reconcile their
                 // own state via `take_dismissed`.
                 self.dismissed.extend(self.entries.iter().map(|e| e.id));
-                self.entries.clear();
-                self.capture = None;
+                self.clear();
                 return EventResponse::Ignored;
             }
         }
