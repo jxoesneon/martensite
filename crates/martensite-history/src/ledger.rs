@@ -87,6 +87,10 @@ pub enum LedgerError {
     NoUndo,
     /// There is nothing to redo (no children on the current branch).
     NoRedo,
+    /// The replay source node is not an ancestor of the target node, so
+    /// reaching the target would require reverting operations rather
+    /// than applying them forward.
+    NotADescendant,
 }
 
 impl std::fmt::Display for LedgerError {
@@ -95,6 +99,9 @@ impl std::fmt::Display for LedgerError {
             LedgerError::InvalidNode => write!(f, "invalid history node"),
             LedgerError::NoUndo => write!(f, "nothing to undo"),
             LedgerError::NoRedo => write!(f, "nothing to redo"),
+            LedgerError::NotADescendant => {
+                write!(f, "replay source is not an ancestor of the target")
+            }
         }
     }
 }
@@ -479,6 +486,116 @@ impl<S: 'static> HistoryLedger<S> {
         Ok(())
     }
 
+    /// Returns `true` if `ancestor` equals `node` or lies on the path
+    /// from `node` up to the root.
+    ///
+    /// Returns `false` if either node ID is invalid (e.g., pruned).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use martensite_history::{HistoryLedger, ChangeOp};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// let root = ledger.root_node();
+    /// ledger.commit(Box::new(AddOp(5)));
+    /// let tip = ledger.current_node();
+    /// assert!(ledger.is_ancestor(root, tip));
+    /// assert!(ledger.is_ancestor(tip, tip));
+    /// assert!(!ledger.is_ancestor(tip, root));
+    /// ```
+    pub fn is_ancestor(&self, ancestor: NodeId, node: NodeId) -> bool {
+        let mut cur = Some(node);
+        while let Some(id) = cur {
+            if id == ancestor {
+                return true;
+            }
+            cur = self.tree.node(id).and_then(|n| n.parent);
+        }
+        false
+    }
+
+    /// Snapshot-assisted replay: installs restored state at `from`, then
+    /// re-applies every operation on the tree path from `from` to `to`.
+    ///
+    /// Unlike [`jump_to`](Self::jump_to), this never calls
+    /// [`ChangeOp::revert`]: `from` must be an ancestor of `to` (or equal
+    /// to it) and the `restore` closure is responsible for making
+    /// `self.state` match the recorded state at `from` — typically a
+    /// checkpoint captured by a time-travel debugger. The cursor ends at
+    /// `to`.
+    ///
+    /// Returns [`LedgerError::InvalidNode`] if either node does not
+    /// exist, or [`LedgerError::NotADescendant`] if `to` is not a
+    /// descendant of `from`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use martensite_history::{ChangeOp, HistoryLedger, LedgerError};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// let root = ledger.root_node();
+    /// ledger.commit(Box::new(AddOp(5)));  // A
+    /// let a = ledger.current_node();
+    /// ledger.commit(Box::new(AddOp(3)));  // B: state = 8
+    ///
+    /// // Replay from a snapshot of the root state instead of undoing.
+    /// ledger.replay(root, a, |s| *s = 0).unwrap();
+    /// assert_eq!(*ledger.state(), 5);
+    /// assert_eq!(ledger.current_node(), a);
+    ///
+    /// // Replaying backward (to an ancestor) is rejected.
+    /// assert_eq!(
+    ///     ledger.replay(a, root, |_| {}).unwrap_err(),
+    ///     LedgerError::NotADescendant
+    /// );
+    /// ```
+    pub fn replay(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        restore: impl FnOnce(&mut S),
+    ) -> Result<(), LedgerError> {
+        let nav = self
+            .tree
+            .path_to(from, to)
+            .ok_or(LedgerError::InvalidNode)?;
+
+        if !nav.revert.is_empty() {
+            return Err(LedgerError::NotADescendant);
+        }
+
+        self.tree
+            .set_current(from)
+            .map_err(|_| LedgerError::InvalidNode)?;
+        restore(&mut self.state);
+
+        for &node_id in &nav.apply {
+            if let Some(op) = self.ops.get(&node_id) {
+                op.apply(&mut self.state);
+            } else {
+                debug_assert!(false, "missing op for node {:?}", node_id);
+            }
+        }
+
+        self.tree
+            .set_current(to)
+            .map_err(|_| LedgerError::InvalidNode)
+    }
+
     /// Returns the children of the current node (available redo branches).
     ///
     /// # Examples
@@ -818,6 +935,10 @@ mod tests {
         assert_eq!(LedgerError::InvalidNode.to_string(), "invalid history node");
         assert_eq!(LedgerError::NoUndo.to_string(), "nothing to undo");
         assert_eq!(LedgerError::NoRedo.to_string(), "nothing to redo");
+        assert_eq!(
+            LedgerError::NotADescendant.to_string(),
+            "replay source is not an ancestor of the target"
+        );
     }
 
     #[test]
@@ -825,5 +946,98 @@ mod tests {
         let mut ledger = HistoryLedger::new(0, 100);
         *ledger.state_mut() = 42;
         assert_eq!(*ledger.state(), 42);
+    }
+
+    #[test]
+    fn is_ancestor_walks_parent_chain() {
+        let mut ledger = HistoryLedger::new(0, 100);
+        let root = ledger.root_node();
+        ledger.commit(Box::new(AddOp(1))); // A
+        let a = ledger.current_node();
+        ledger.commit(Box::new(AddOp(2))); // B
+        let b = ledger.current_node();
+
+        assert!(ledger.is_ancestor(root, b));
+        assert!(ledger.is_ancestor(a, b));
+        assert!(ledger.is_ancestor(b, b));
+        assert!(!ledger.is_ancestor(b, a));
+        assert!(!ledger.is_ancestor(b, root));
+    }
+
+    #[test]
+    fn is_ancestor_rejects_invalid_nodes() {
+        let mut ledger = HistoryLedger::new(0, 4);
+        let root = ledger.root_node();
+        // Prune the root by overfilling the tree.
+        for i in 0..8 {
+            ledger.commit(Box::new(AddOp(i)));
+        }
+        let tip = ledger.current_node();
+        // A stale NodeId is never reported as an ancestor.
+        let stale = NodeId::default();
+        assert!(!ledger.is_ancestor(stale, tip));
+        assert!(!ledger.is_ancestor(tip, stale));
+        // The (possibly pruned) root also reports false rather than
+        // panicking when it no longer exists.
+        let _ = ledger.is_ancestor(root, tip);
+    }
+
+    #[test]
+    fn replay_reapplies_forward_path() {
+        let mut ledger = HistoryLedger::new(0, 100);
+        let root = ledger.root_node();
+        ledger.commit(Box::new(AddOp(5))); // A: 5
+        let a = ledger.current_node();
+        ledger.commit(Box::new(AddOp(3))); // B: 8
+        let b = ledger.current_node();
+        assert_eq!(*ledger.state(), 8);
+
+        // Restore a synthetic snapshot of the root state, then replay
+        // forward to B. The applied ops must reproduce the recorded
+        // state without calling `revert`.
+        ledger.replay(root, b, |s| *s = 0).unwrap();
+        assert_eq!(*ledger.state(), 8);
+        assert_eq!(ledger.current_node(), b);
+
+        // Replaying to the same node only restores.
+        ledger.replay(a, a, |s| *s = 5).unwrap();
+        assert_eq!(*ledger.state(), 5);
+        assert_eq!(ledger.current_node(), a);
+    }
+
+    #[test]
+    fn replay_rejects_backward_and_cross_branch_targets() {
+        let mut ledger = HistoryLedger::new(0, 100);
+        let root = ledger.root_node();
+        ledger.commit(Box::new(AddOp(5))); // A
+        let a = ledger.current_node();
+        ledger.commit(Box::new(AddOp(3))); // B
+        ledger.undo().unwrap(); // back to A
+        ledger.commit(Box::new(AddOp(10))); // C on a sibling branch
+        let c = ledger.current_node();
+
+        // B is not a descendant of C (they are on sibling branches).
+        assert_eq!(
+            ledger.replay(c, a, |_| {}).unwrap_err(),
+            LedgerError::NotADescendant
+        );
+        // Ancestor-to-descendant across the branch point is fine.
+        ledger.replay(root, c, |s| *s = 0).unwrap();
+        assert_eq!(*ledger.state(), 15);
+    }
+
+    #[test]
+    fn replay_rejects_invalid_nodes() {
+        let mut ledger = HistoryLedger::new(0, 100);
+        let stale = NodeId::default();
+        let root = ledger.root_node();
+        assert_eq!(
+            ledger.replay(stale, root, |_| {}).unwrap_err(),
+            LedgerError::InvalidNode
+        );
+        assert_eq!(
+            ledger.replay(root, stale, |_| {}).unwrap_err(),
+            LedgerError::InvalidNode
+        );
     }
 }
