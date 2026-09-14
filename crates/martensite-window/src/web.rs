@@ -244,7 +244,10 @@ impl WebWindowAttributes {
 #[must_use]
 pub fn window_canvas(window: &dyn winit::window::Window) -> Option<HtmlCanvasElement> {
     use winit::platform::web::WindowExtWeb;
-    window.canvas().map(|canvas| canvas.clone())
+    // `canvas()` returns `Ref<'_, HtmlCanvasElement>`; `canvas.clone()`
+    // would resolve to `Ref::clone` (the inherent method on the guard),
+    // so deref first to clone the DOM element itself.
+    window.canvas().map(|canvas| (*canvas).clone())
 }
 
 /// Configures `event_loop` for the web render model.
@@ -495,12 +498,14 @@ impl HiddenImeInput {
         let listen = |input: &HtmlInputElement,
                       kind: &'static str,
                       handler: &ImeHandler,
-                      map: fn(&web_sys::Event) -> ImeEvent,
+                      map: fn(&web_sys::Event) -> Option<ImeEvent>,
                       closures: &mut EventClosures|
          -> Result<(), WebError> {
             let handler = std::rc::Rc::clone(handler);
             let closure = Closure::wrap(Box::new(move |event: web_sys::Event| {
-                (handler.borrow_mut())(map(&event));
+                if let Some(mapped) = map(&event) {
+                    (handler.borrow_mut())(mapped);
+                }
             }) as Box<dyn FnMut(web_sys::Event)>);
             input
                 .add_event_listener_with_callback(kind, closure.as_ref().unchecked_ref())
@@ -513,7 +518,7 @@ impl HiddenImeInput {
             &input,
             "compositionstart",
             &handler,
-            |_| ImeEvent::CompositionStart,
+            |_| Some(ImeEvent::CompositionStart),
             &mut closures,
         )?;
         listen(
@@ -521,12 +526,16 @@ impl HiddenImeInput {
             "compositionupdate",
             &handler,
             |event| {
-                ImeEvent::CompositionUpdate(
+                // An empty `data` here is a real update — the composition
+                // string was deleted back to empty — so it is forwarded
+                // (unlike the suppressed composition-phase `input`
+                // events below).
+                Some(ImeEvent::CompositionUpdate(
                     event
                         .dyn_ref::<CompositionEvent>()
                         .and_then(|e| e.data())
                         .unwrap_or_default(),
-                )
+                ))
             },
             &mut closures,
         )?;
@@ -535,12 +544,12 @@ impl HiddenImeInput {
             "compositionend",
             &handler,
             |event| {
-                ImeEvent::CompositionEnd(
+                Some(ImeEvent::CompositionEnd(
                     event
                         .dyn_ref::<CompositionEvent>()
                         .and_then(|e| e.data())
                         .unwrap_or_default(),
-                )
+                ))
             },
             &mut closures,
         )?;
@@ -550,20 +559,22 @@ impl HiddenImeInput {
             &handler,
             |event| {
                 // `input` fires during composition too; those reports are
-                // already covered by compositionupdate, so suppress
-                // composition-phase input events to avoid double inserts.
+                // already covered by compositionupdate. Suppress them
+                // entirely rather than emitting a synthetic empty
+                // `CompositionUpdate`, which would flicker/clear the
+                // composition preview in consumers.
                 let composing = event
                     .dyn_ref::<web_sys::InputEvent>()
                     .map(|e| e.is_composing())
                     .unwrap_or(false);
                 if composing {
-                    return ImeEvent::CompositionUpdate(String::new());
+                    return None;
                 }
                 let data = event
                     .dyn_ref::<web_sys::InputEvent>()
                     .and_then(|e| e.data())
                     .unwrap_or_default();
-                ImeEvent::InsertText(data)
+                Some(ImeEvent::InsertText(data))
             },
             &mut closures,
         )?;

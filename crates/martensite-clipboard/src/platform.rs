@@ -522,7 +522,16 @@ pub fn default_platform_clipboard() -> Box<dyn PlatformClipboard> {
 // platform crate defines its own `ClipboardBackend` trait (to avoid a cyclic
 // dependency); we adapt it to `PlatformClipboard` via the
 // `PlatformBackendAdapter` wrapper below.
-#[cfg(feature = "platform")]
+//
+// The wasm32-unknown-unknown target is excluded here on purpose: the web
+// backend (`crate::web::WebClipboard`) is always the right choice in the
+// browser — `native_backend()` has no wasm implementation and would only
+// fall back to the stub — so the wasm arm below wins regardless of the
+// `platform` feature.
+#[cfg(all(
+    feature = "platform",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
     if let Some(backend) = martensite_clipboard_platform::native_backend() {
         return Box::new(PlatformBackendAdapter(backend));
@@ -538,10 +547,19 @@ fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
 /// This is the bridge between the FFI-only `ClipboardBackend` trait (which
 /// lives in the platform crate to avoid a cyclic dependency) and the safe
 /// `ClipboardService` / `PlatformClipboard` traits defined in this crate.
-#[cfg(feature = "platform")]
+///
+/// Compiled out on wasm: the browser backend always wins there (see the
+/// `cfg_default_platform_clipboard` arms below).
+#[cfg(all(
+    feature = "platform",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 struct PlatformBackendAdapter(Box<dyn martensite_clipboard_platform::ClipboardBackend>);
 
-#[cfg(feature = "platform")]
+#[cfg(all(
+    feature = "platform",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 impl ClipboardService for PlatformBackendAdapter {
     fn set_contents(&mut self, item: &ClipboardItem) {
         // Clear first, then write each offered representation.
@@ -566,7 +584,10 @@ impl ClipboardService for PlatformBackendAdapter {
     }
 }
 
-#[cfg(feature = "platform")]
+#[cfg(all(
+    feature = "platform",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 impl PlatformClipboard for PlatformBackendAdapter {
     fn platform_name(&self) -> &str {
         self.0.platform_name()
@@ -601,11 +622,9 @@ fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
 
 // wasm32-unknown-unknown: the browser clipboard backend. wasm-bindgen
 // externs are safe Rust, so this crate's `#![forbid(unsafe_code)]` holds.
-#[cfg(all(
-    not(feature = "platform"),
-    target_arch = "wasm32",
-    target_os = "unknown"
-))]
+// This arm is unconditional on the `platform` feature: the platform crate
+// has no wasm backend, so on wasm the web backend always wins.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 fn cfg_default_platform_clipboard() -> Box<dyn PlatformClipboard> {
     Box::new(crate::web::WebClipboard::new())
 }

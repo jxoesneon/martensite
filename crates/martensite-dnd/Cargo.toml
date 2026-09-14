@@ -34,6 +34,11 @@ web-sys = { workspace = true, features = [
     "File",
     "FileList",
     "HtmlElement",
+    # `DragEvent::client_x`/`client_y` are defined on the `MouseEvent`
+    # supertype in web-sys — required by `event_position`. Declared
+    # explicitly so the crate does not rely on feature unification from
+    # winit-web's own web-sys flags.
+    "MouseEvent",
 ] }
 
 [lints]

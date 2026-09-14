@@ -15,7 +15,9 @@
 //! * **Live-region announcer** — a separate `aria-live="polite"`
 //!   element; nodes carrying [`accesskit::Live`] emit their text there
 //!   when it changes, and [`announce`](WebA11yBridge::announce) lets
-//!   callers announce directly.
+//!   callers announce directly. The shared region is the *single*
+//!   announcement channel: `aria-live` is deliberately not mirrored onto
+//!   individual elements, which would double-announce the same change.
 //! * **Action return path** — DOM `click`/`focus`/`blur` events on
 //!   mirrored elements are translated back into
 //!   [`accesskit::ActionRequest`]s delivered to a caller-installed
@@ -150,7 +152,9 @@ pub fn aria_role(role: Role) -> Option<&'static str> {
         Role::Slider => "slider",
         Role::Link => "link",
         Role::Image | Role::Canvas => "img",
-        Role::Label | Role::TextRun | Role::Paragraph | Role::LineBreak => "text",
+        // `role="text"` is a non-standard WebKit-only token; Label/
+        // TextRun/Paragraph/LineBreak carry their text as element content
+        // instead and get no role (handled in the no-token arm below).
         Role::List | Role::DescriptionList => "list",
         Role::ListItem => "listitem",
         Role::ListBox => "listbox",
@@ -167,11 +171,16 @@ pub fn aria_role(role: Role) -> Option<&'static str> {
         Role::Tooltip => "tooltip",
         Role::Dialog | Role::AlertDialog => "dialog",
         Role::Alert => "alert",
-        Role::Status | Role::Timer => "status",
+        Role::Status => "status",
         Role::Log => "log",
         Role::Marquee => "marquee",
         Role::ProgressIndicator => "progressbar",
-        Role::ScrollBar | Role::Splitter => "separator",
+        Role::Timer => "timer",
+        // ScrollBar has a dedicated ARIA role; only Splitter is the
+        // generic "separator" (a focusable splitter is still
+        // separator+aria-valuenow, which the value mirroring covers).
+        Role::ScrollBar => "scrollbar",
+        Role::Splitter => "separator",
         Role::ScrollView | Role::Section | Role::Region => "region",
         Role::Meter => "meter",
         Role::Group | Role::GenericContainer | Role::Pane | Role::RowGroup => "group",
@@ -185,9 +194,12 @@ pub fn aria_role(role: Role) -> Option<&'static str> {
         Role::Banner => "banner",
         Role::Complementary => "complementary",
         Role::ContentInfo => "contentinfo",
-        Role::Footer => "contentinfo",
-        Role::Header | Role::SectionHeader | Role::TitleBar => "banner",
-        Role::SectionFooter => "contentinfo",
+        // "banner"/"contentinfo" are page-scoped landmarks — wrong for
+        // AccessKit's section-scoped Header/Footer/SectionFooter. Section
+        // headers map to "heading" (+ aria-level via the level property);
+        // Footer/SectionFooter and TitleBar have no fitting token and get
+        // no role.
+        Role::Header | Role::SectionHeader => "heading",
         Role::Main => "main",
         Role::Navigation => "navigation",
         Role::Search => "search",
@@ -217,7 +229,14 @@ pub fn aria_role(role: Role) -> Option<&'static str> {
         Role::GraphicsDocument => "graphics-document",
         Role::GraphicsObject => "graphics-object",
         Role::GraphicsSymbol => "graphics-symbol",
-        Role::Audio
+        Role::Label
+        | Role::TextRun
+        | Role::Paragraph
+        | Role::LineBreak
+        | Role::Footer
+        | Role::SectionFooter
+        | Role::TitleBar
+        | Role::Audio
         | Role::Video
         | Role::PluginObject
         | Role::EmbeddedObject
@@ -270,8 +289,12 @@ struct MirrorEntry {
     element: HtmlElement,
     /// Child node ids as of the last update that mentioned this parent.
     children: Vec<u64>,
-    /// Last text announced through this node's `aria-live` setting.
+    /// Last text announced through the shared live-region announcer for
+    /// this node (nodes carrying `Live::Polite`/`Live::Assertive`).
     live_text: Option<String>,
+    /// Whether the node supports `Action::Focus` — governs `tabindex`
+    /// handling in [`WebA11yBridge::set_focus`].
+    focusable: bool,
     /// DOM listeners (click/focus/blur) kept alive for the element's
     /// lifetime.
     _closures: Vec<Closure<dyn FnMut(web_sys::Event)>>,
@@ -310,6 +333,11 @@ pub struct WebA11yBridge {
     entries: HashMap<u64, MirrorEntry>,
     /// DOM focus bookkeeping: the node currently mirrored as focused.
     focused: Option<u64>,
+    /// When `false`, [`set_focus`](Self::set_focus) updates `tabindex`
+    /// but does not call `element.focus()` — used to suspend DOM focus
+    /// mirroring while an IME composition holds focus on the hidden
+    /// input overlay.
+    dom_focus_enabled: bool,
     /// Shared handler slot for action requests from DOM events.
     shared: Rc<RefCell<Shared>>,
     /// The document used to create elements (kept for `update`).
@@ -359,11 +387,9 @@ impl WebA11yBridge {
         container
             .set_attribute("data-martensite-a11y-mirror", "")
             .map_err(|e| WebA11yError::from_js(&e))?;
-        // The mirror must remain visible to AT — it is the tree — but it
-        // is not itself a landmark.
-        container
-            .set_attribute("aria-label", "Application UI")
-            .map_err(|e| WebA11yError::from_js(&e))?;
+        // The container carries no role and no aria-label (a label on a
+        // role-less element is ignored by most AT); the tree's own root
+        // node provides the semantic entry point.
 
         let live: HtmlElement = document
             .create_element("div")
@@ -386,6 +412,7 @@ impl WebA11yBridge {
             live,
             entries: HashMap::new(),
             focused: None,
+            dom_focus_enabled: true,
             shared: Rc::new(RefCell::new(Shared {
                 action_handler: Box::new(|_| {}),
             })),
@@ -510,7 +537,7 @@ impl WebA11yBridge {
             let id = node_id.0;
             let focused = self.focused == Some(id);
             let entry = self.entry_for(id)?;
-            Self::apply_node(&entry.element, node, focused);
+            entry.focusable = Self::apply_node(&entry.element, node, focused);
             new_children.insert(id, node.children().iter().map(|c| c.0).collect());
             // Live-region mirroring: announce changed text on nodes
             // carrying a `live` property.
@@ -563,6 +590,27 @@ impl WebA11yBridge {
 
         // Phase 3: detach children that disappeared from their parent's
         // list, then purge fully-orphaned subtrees.
+        //
+        // A child missing from its old parent's new list may have been
+        // re-parented in this same update — Phase 2 already moved its
+        // element. Purging it anyway would destroy the moved subtree's
+        // element, `entries` record, and listeners permanently. `claimed`
+        // therefore covers every id still referenced by a parent list —
+        // new lists from this update plus the stored lists of parents the
+        // update did not touch — and the tree root, which hangs off the
+        // container rather than any parent's list.
+        let mut claimed: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        for children in new_children.values() {
+            claimed.extend(children.iter().copied());
+        }
+        for (id, entry) in &self.entries {
+            if !new_children.contains_key(id) {
+                claimed.extend(entry.children.iter().copied());
+            }
+        }
+        if let Some(tree) = &update.tree {
+            claimed.insert(tree.root.0);
+        }
         for (parent_id, children) in &new_children {
             let stale: Vec<u64> = self
                 .entries
@@ -572,7 +620,7 @@ impl WebA11yBridge {
                         .children
                         .iter()
                         .copied()
-                        .filter(|c| !children.contains(c))
+                        .filter(|c| !children.contains(c) && !claimed.contains(c))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -580,7 +628,7 @@ impl WebA11yBridge {
                 if let Some(child_entry) = self.entries.get(&child_id) {
                     child_entry.element.remove();
                 }
-                self.purge_subtree(child_id);
+                self.purge_subtree(child_id, &claimed);
             }
             if let Some(parent_entry) = self.entries.get_mut(parent_id) {
                 parent_entry.children = children.clone();
@@ -592,9 +640,37 @@ impl WebA11yBridge {
         Ok(())
     }
 
+    /// Suspends or resumes DOM focus mirroring.
+    ///
+    /// While `enabled` is `false`, [`set_focus`](Self::set_focus) still
+    /// tracks the focused node and maintains roving `tabindex`, but does
+    /// not call `element.focus()`. Use this when another element must
+    /// keep DOM focus — e.g. a `martensite_window::web::HiddenImeInput`
+    /// overlay holding focus during an IME composition, where a
+    /// mirror-side `focus()` would steal focus back and cancel the
+    /// in-flight composition. The default is `true`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(bridge: &mut martensite_access::web::WebA11yBridge) {
+    /// bridge.set_dom_focus_enabled(false); // IME overlay owns DOM focus
+    /// bridge.set_dom_focus_enabled(true);
+    /// # }
+    /// ```
+    pub fn set_dom_focus_enabled(&mut self, enabled: bool) {
+        self.dom_focus_enabled = enabled;
+    }
+
     /// Mirrors `focus` as the DOM-focused element: `tabindex="0"` and
-    /// `element.focus()`; every other focusable element gets
-    /// `tabindex="-1"` (roving tabindex).
+    /// `element.focus()`; every other *focusable* element gets
+    /// `tabindex="-1"` (roving tabindex) and non-focusable elements keep
+    /// no `tabindex` at all — the same policy [`apply_node`](Self::update)
+    /// applies, so a focus change never pushes a non-focusable mirror
+    /// element into the tab order.
+    ///
+    /// DOM `focus()` is only invoked while
+    /// [`dom_focus_enabled`](Self::set_dom_focus_enabled) is `true`.
     ///
     /// # Examples
     ///
@@ -609,12 +685,18 @@ impl WebA11yBridge {
         }
         self.focused = Some(node_id.0);
         for (id, entry) in &self.entries {
-            let _ = entry
-                .element
-                .set_attribute("tabindex", if *id == node_id.0 { "0" } else { "-1" });
+            if *id == node_id.0 {
+                let _ = entry.element.set_attribute("tabindex", "0");
+            } else if entry.focusable {
+                let _ = entry.element.set_attribute("tabindex", "-1");
+            } else {
+                let _ = entry.element.remove_attribute("tabindex");
+            }
         }
-        if let Some(entry) = self.entries.get(&node_id.0) {
-            entry.element.focus().ok();
+        if self.dom_focus_enabled {
+            if let Some(entry) = self.entries.get(&node_id.0) {
+                entry.element.focus().ok();
+            }
         }
     }
 
@@ -669,6 +751,7 @@ impl WebA11yBridge {
                     element,
                     children: Vec::new(),
                     live_text: None,
+                    focusable: false,
                     _closures: closures,
                 },
             );
@@ -676,18 +759,25 @@ impl WebA11yBridge {
         Ok(self.entries.get_mut(&id).expect("just inserted"))
     }
 
-    /// Recursively removes a subtree's mirror entries.
-    fn purge_subtree(&mut self, id: u64) {
+    /// Recursively removes a subtree's mirror entries, skipping ids in
+    /// `claimed` — children re-parented elsewhere in the same update have
+    /// already been moved by Phase 2 and their subtrees must survive.
+    fn purge_subtree(&mut self, id: u64, claimed: &std::collections::HashSet<u64>) {
+        if claimed.contains(&id) {
+            return;
+        }
         if let Some(entry) = self.entries.remove(&id) {
             entry.element.remove();
             for child_id in entry.children {
-                self.purge_subtree(child_id);
+                self.purge_subtree(child_id, claimed);
             }
         }
     }
 
-    /// Writes a node's ARIA properties to `element`.
-    fn apply_node(element: &HtmlElement, node: &Node, focused: bool) {
+    /// Writes a node's ARIA properties to `element`, returning whether
+    /// the node supports `Action::Focus` (stored on the entry for
+    /// [`set_focus`](Self::set_focus)'s roving-tabindex policy).
+    fn apply_node(element: &HtmlElement, node: &Node, focused: bool) -> bool {
         if let Some(role) = aria_role(node.role()) {
             let _ = element.set_attribute("role", role);
         } else {
@@ -745,22 +835,11 @@ impl WebA11yBridge {
         } else {
             let _ = element.remove_attribute("aria-level");
         }
-        match node.live() {
-            Some(Live::Polite) => {
-                let _ = element.set_attribute("aria-live", "polite");
-            }
-            Some(Live::Assertive) => {
-                let _ = element.set_attribute("aria-live", "assertive");
-            }
-            _ => {
-                let _ = element.remove_attribute("aria-live");
-            }
-        }
-        if node.is_live_atomic() {
-            let _ = element.set_attribute("aria-atomic", "true");
-        } else {
-            let _ = element.remove_attribute("aria-atomic");
-        }
+        // `node.live()`/`is_live_atomic()` are deliberately NOT mirrored
+        // onto the element: live-region text changes are announced
+        // through the shared announcer element (`update` phase 1), which
+        // is the single announcement channel. Mirroring `aria-live` here
+        // too would double-announce every live-node change.
         if node.is_busy() {
             let _ = element.set_attribute("aria-busy", "true");
         } else {
@@ -795,6 +874,7 @@ impl WebA11yBridge {
             // Non-focusable nodes leave the tab order entirely.
             let _ = element.remove_attribute("tabindex");
         }
+        focusable
     }
 }
 

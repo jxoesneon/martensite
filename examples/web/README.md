@@ -39,11 +39,34 @@ wasm-bindgen --target web --out-dir examples/web/pkg \
 python3 -m http.server --directory examples/web 8080
 ```
 
-### Compile check only (what CI does)
+### Compile check only
 
 ```sh
 cargo check -p martensite-web-example --target wasm32-unknown-unknown
 ```
+
+This is the compile boundary the wasm layer is verified against. A
+dedicated wasm CI job is **not wired yet** — it is added at milestone
+integration; until then run the check above locally before touching the
+web backends.
+
+### Headless-browser gate (spec §5)
+
+`tests/browser_gate.rs` is the §5 Web gate artifact: a `#[ignore]`-gated
+test that `trunk serve`s the example and drives headless Chromium via
+playwright, asserting the wasm entry point starts, a GPU backend is
+selected, the a11y mirror exists, and the `aria-live` announcement
+lands. It runs only with `MARTENSITE_WEB_BROWSER=1` in the environment
+(and `trunk`, `node`/`npm` installed) — the same opt-in convention as
+`MARTENSITE_MEDIA_4K120`:
+
+```sh
+MARTENSITE_WEB_BROWSER=1 cargo test -p martensite-web-example \
+  --test browser_gate -- --ignored --nocapture
+```
+
+CI does not run this; the manual checklist below is the no-tooling
+equivalent.
 
 ## Smoke-test checklist (browser devtools console)
 

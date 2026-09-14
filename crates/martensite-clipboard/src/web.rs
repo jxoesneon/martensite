@@ -19,9 +19,12 @@
 //! bridge:
 //!
 //! * `set_contents` records the item in an in-process cache **and**
-//!   schedules a fire-and-forget `writeText` for the `text/plain`
-//!   representation (browsers only accept text/HTML writes from a gesture
-//!   anyway — the write is attempted, failure is traced, never fatal).
+//!   schedules a `writeText` for the `text/plain` representation
+//!   (browsers only accept text/HTML writes from a gesture anyway — the
+//!   write is attempted, failure is traced, never fatal). Writes are
+//!   funneled through a FIFO queue drained by a single task so two
+//!   fire-and-forget `writeText` promises can never resolve out of order
+//!   and leave stale text on the OS clipboard.
 //! * `get_contents`/`available_types` serve from the cache — the browser
 //!   does not allow enumerating clipboard contents synchronously.
 //! * Real reads go through the inherent async methods
@@ -40,7 +43,9 @@
 //! cb.set_contents(&martensite_clipboard::ClipboardItem::new().offer_text("hi"));
 //! ```
 
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -111,6 +116,12 @@ pub struct WebClipboard {
     /// `ClipboardService` read path serves from here because the browser
     /// cannot be queried synchronously.
     cache: HashMap<String, Vec<u8>>,
+    /// FIFO of `writeText` payloads awaiting the browser. Drained
+    /// sequentially by one task so `set_contents`/`clear` writes cannot
+    /// race and resolve out of order.
+    write_queue: Rc<RefCell<VecDeque<String>>>,
+    /// `true` while a drain task is awaiting a `writeText` promise.
+    write_draining: Rc<Cell<bool>>,
 }
 
 impl Default for WebClipboard {
@@ -135,6 +146,8 @@ impl WebClipboard {
         Self {
             clipboard: browser_clipboard(),
             cache: HashMap::new(),
+            write_queue: Rc::new(RefCell::new(VecDeque::new())),
+            write_draining: Rc::new(Cell::new(false)),
         }
     }
 
@@ -215,6 +228,37 @@ impl WebClipboard {
             .map_err(|e| WebClipboardError::Rejected(js_err(&e)))?;
         Ok(())
     }
+
+    /// Enqueues `text` for a fire-and-forget `writeText`.
+    ///
+    /// A single spawned task drains the queue in order; without this,
+    /// two overlapping `writeText` promises could resolve out of order
+    /// and leave an older payload on the OS clipboard. Rejections are
+    /// traced, never fatal.
+    fn enqueue_write(&self, text: String) {
+        let Some(clipboard) = self.clipboard.clone() else {
+            return;
+        };
+        self.write_queue.borrow_mut().push_back(text);
+        if self.write_draining.replace(true) {
+            // A drain task is already running and will pick the entry up.
+            return;
+        }
+        let queue = Rc::clone(&self.write_queue);
+        let draining = Rc::clone(&self.write_draining);
+        wasm_bindgen_futures::spawn_local(async move {
+            loop {
+                // The borrow ends before `.await` — wasm is
+                // single-threaded, so no other drain runs concurrently.
+                let next = queue.borrow_mut().pop_front();
+                let Some(text) = next else { break };
+                if let Err(e) = JsFuture::from(clipboard.write_text(&text)).await {
+                    tracing::debug!("navigator.clipboard.write_text rejected: {e:?}");
+                }
+            }
+            draining.set(false);
+        });
+    }
 }
 
 impl ClipboardService for WebClipboard {
@@ -232,12 +276,8 @@ impl ClipboardService for WebClipboard {
         // Fire-and-forget the browser write for the text representation.
         // `writeText` outside a gesture rejects — that is expected (the
         // cache still records the contents) and only traced, not fatal.
-        if let (Some(clipboard), Some(text)) = (self.clipboard.clone(), text) {
-            wasm_bindgen_futures::spawn_local(async move {
-                if let Err(e) = JsFuture::from(clipboard.write_text(&text)).await {
-                    tracing::debug!("navigator.clipboard.write_text rejected: {e:?}");
-                }
-            });
+        if let Some(text) = text {
+            self.enqueue_write(text);
         }
     }
 
@@ -251,11 +291,13 @@ impl ClipboardService for WebClipboard {
 
     fn clear(&mut self) {
         self.cache.clear();
-        if let Some(clipboard) = self.clipboard.clone() {
-            wasm_bindgen_futures::spawn_local(async move {
-                let _ = JsFuture::from(clipboard.write_text("")).await;
-            });
-        }
+        // The Async Clipboard API has no real "clear"; writing the empty
+        // string is the closest equivalent and matches the desktop
+        // `clear()` contract. It typically rejects outside a transient
+        // user gesture — the guaranteed effect is the cache clear. The
+        // write goes through the same serialized queue so a pending
+        // `set_contents` write cannot resolve *after* the clear.
+        self.enqueue_write(String::new());
     }
 }
 

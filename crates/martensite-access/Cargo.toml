@@ -36,6 +36,10 @@ web-sys = { workspace = true, features = [
     "Node",
     "Window",
 ] }
+# accesskit 0.25 depends on uuid (default-features = false); on
+# wasm32-unknown-unknown uuid refuses to compile without an explicit RNG
+# source. `js` routes through wasm-bindgen — already in this dep set.
+uuid = { version = "1", features = ["js"] }
 
 [dev-dependencies]
 glam = { workspace = true }
