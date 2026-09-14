@@ -2901,9 +2901,14 @@ dependencies = [
 name = "martensite-devtools"
 version = "0.16.0"
 dependencies = [
+ "glam",
  "kurbo",
  "martensite-core",
+ "martensite-history",
+ "martensite-reactive",
  "martensite-render",
+ "martensite-test",
+ "parking_lot",
  "tracing",
 ]
 
