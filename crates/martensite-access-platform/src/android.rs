@@ -55,30 +55,52 @@ const GAME_ACTIVITY_SURFACE_VIEW_SIGNATURE: &str =
 pub struct AndroidAdapterError {
     /// The JNI operation that failed, for diagnostics.
     context: &'static str,
-    /// The underlying JNI error.
-    source: JniError,
+    /// The underlying JNI error, when the failure came from JNI itself
+    /// (`None` when the surface-view field resolved but held `null`).
+    source: Option<JniError>,
 }
 
 impl AndroidAdapterError {
     fn new(context: &'static str, source: JniError) -> Self {
-        Self { context, source }
+        Self {
+            context,
+            source: Some(source),
+        }
+    }
+
+    /// The `mSurfaceView` field resolved but was `null` — the activity is
+    /// GameActivity-shaped but has not created its surface view yet, or
+    /// the view hierarchy was torn down before adapter construction.
+    fn null_surface_view() -> Self {
+        Self {
+            context: "GameActivity.mSurfaceView (null)",
+            source: None,
+        }
     }
 }
 
 impl std::fmt::Display for AndroidAdapterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "android accessibility adapter creation failed at {context}: {source}",
-            context = self.context,
-            source = self.source
-        )
+        match &self.source {
+            Some(source) => write!(
+                f,
+                "android accessibility adapter creation failed at {context}: {source}",
+                context = self.context,
+            ),
+            None => write!(
+                f,
+                "android accessibility adapter creation failed at {context}",
+                context = self.context
+            ),
+        }
     }
 }
 
 impl std::error::Error for AndroidAdapterError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
+        self.source
+            .as_ref()
+            .map(|e| e as &(dyn std::error::Error + 'static))
     }
 }
 
@@ -161,6 +183,13 @@ impl AndroidAdapter {
                 let _ = env.exception_clear();
                 AndroidAdapterError::new("GameActivity.mSurfaceView", e)
             })?;
+        // A resolved-but-null field is legal Java state (surface view not
+        // yet created or already torn down); handing a null `JObject` to
+        // `InjectingAdapter::new` would panic inside upstream JNI calls
+        // with no context, so surface it as a structured error instead.
+        if view.is_null() {
+            return Err(AndroidAdapterError::null_surface_view());
+        }
         let adapter = InjectingAdapter::new(&mut env, &view, activation_handler, action_handler);
         Ok(Self { adapter })
     }

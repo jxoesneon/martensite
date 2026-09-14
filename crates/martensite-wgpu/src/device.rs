@@ -115,19 +115,7 @@ async fn request_platform_adapter(
         if force_fallback_adapter {
             adapters.retain(|adapter| adapter.get_info().device_type == wgpu::DeviceType::Cpu);
         }
-        // Rank Vulkan above every other backend; within a backend, apply
-        // the requested power preference.
-        adapters.sort_by(|a, b| {
-            let score = |adapter: &wgpu::Adapter| {
-                let info = adapter.get_info();
-                let backend_rank = u8::from(info.backend == wgpu::Backend::Vulkan);
-                (
-                    backend_rank,
-                    power_score(info.device_type, power_preference),
-                )
-            };
-            score(b).cmp(&score(a))
-        });
+        rank_adapters(&mut adapters, power_preference);
         return adapters.into_iter().next().ok_or_else(|| {
             GpuContextError::NoAdapter(
                 "no Vulkan or GLES adapter was enumerated on Android".to_string(),
@@ -146,17 +134,54 @@ async fn request_platform_adapter(
         .map_err(|e| GpuContextError::NoAdapter(e.to_string()))
 }
 
+/// Stable-sorts `adapters` by platform preference, most-desired first.
+///
+/// On Android, Vulkan adapters rank above every other backend (Vulkan is
+/// first-class; GLES is the downlevel fallback). Everywhere — and within
+/// a backend tier — the requested [`wgpu::PowerPreference`] breaks ties
+/// via [`power_score`]. Shared by [`request_platform_adapter`] and
+/// [`GpuContext::enumerate_adapters`] so the diagnostic listing reflects
+/// the same ordering the constructor picks from.
+fn rank_adapters(adapters: &mut [wgpu::Adapter], power_preference: wgpu::PowerPreference) {
+    adapters.sort_by(|a, b| {
+        let score = |adapter: &wgpu::Adapter| {
+            let info = adapter.get_info();
+            let backend_rank =
+                u8::from(cfg!(target_os = "android") && info.backend == wgpu::Backend::Vulkan);
+            (
+                backend_rank,
+                power_score(info.device_type, power_preference),
+            )
+        };
+        score(b).cmp(&score(a))
+    });
+}
+
 /// Returns the device descriptor used to request a logical device from
 /// `adapter`.
 ///
 /// GLES adapters get [`wgpu::Limits::downlevel_defaults`]: the GLES
 /// backend cannot honor the desktop default limits, so the downlevel
-/// limit set is the portable choice for the Android GLES fallback. All
-/// other backends use wgpu's defaults.
+/// limit set is the portable choice for the Android GLES fallback.
+///
+/// Other adapters on Android request exactly `adapter.limits()`: the
+/// enumerate-then-pick path does not apply limit buckets (unlike
+/// `request_adapter` with `apply_limit_buckets`), and low-end Vulkan
+/// adapters can sit below wgpu's defaults — a default `required_limits`
+/// request would fail `request_device` on hardware that is otherwise
+/// usable. Requesting the advertised limits grants full capability and
+/// always validates. Non-Android adapters keep wgpu's defaults, matching
+/// the desktop `request_adapter` + `apply_limit_buckets` behavior.
 fn device_descriptor_for(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
     let mut descriptor = wgpu::DeviceDescriptor::default();
-    if adapter.get_info().backend == wgpu::Backend::Gl {
-        descriptor.required_limits = wgpu::Limits::downlevel_defaults();
+    match adapter.get_info().backend {
+        wgpu::Backend::Gl => {
+            descriptor.required_limits = wgpu::Limits::downlevel_defaults();
+        }
+        _ if cfg!(target_os = "android") => {
+            descriptor.required_limits = adapter.limits();
+        }
+        _ => {}
     }
     descriptor
 }
@@ -461,13 +486,15 @@ impl GpuContext {
         Ok(())
     }
 
-    /// Enumerates every adapter currently visible to the instance, ordered by
-    /// the supplied power preference.
+    /// Enumerates every adapter currently visible to the instance across
+    /// [`platform_backends`], in the same order [`request_platform_adapter`]
+    /// would pick from.
     ///
-    /// The returned vector is sorted so that adapters best matching the
-    /// requested power preference appear first. This is useful for diagnostic
-    /// UI and for the recovery FSM, which must re-enumerate adapters after a
-    /// device loss.
+    /// The returned vector is sorted so that the most-desired adapters
+    /// appear first: on Android, Vulkan ranks above GLES; everywhere, the
+    /// requested power preference breaks ties. This is useful for
+    /// diagnostic UI and for the recovery FSM, which must re-enumerate
+    /// adapters after a device loss.
     ///
     /// # Examples
     ///
@@ -485,14 +512,10 @@ impl GpuContext {
         power_preference: wgpu::PowerPreference,
     ) -> Vec<wgpu::Adapter> {
         let mut adapters = pollster::block_on(instance.enumerate_adapters(platform_backends()));
-        // Stable sort by a power-preference score so the most-desired adapter
-        // ends up first without disturbing the relative order of equal-score
-        // adapters returned by the backend.
-        adapters.sort_by(|a, b| {
-            let sa = power_score(a.get_info().device_type, power_preference);
-            let sb = power_score(b.get_info().device_type, power_preference);
-            sb.cmp(&sa)
-        });
+        // Shared ranking: Vulkan-first on Android, power preference within
+        // a backend tier — identical to the order request_platform_adapter
+        // picks from.
+        rank_adapters(&mut adapters, power_preference);
         adapters
     }
 

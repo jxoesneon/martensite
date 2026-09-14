@@ -197,6 +197,11 @@ kept; only the window/surface objects are tied to the `ANativeWindow`.
   exercising the real `GameActivity.mSurfaceView` → `InjectingAdapter`
   injection path. It only does meaningful work when run on-device
   (`cargo apk test` / `x test` under a GameActivity process); host runs
-  print a skip line, matching the 4K120 gate pattern. An APK-level
-  end-to-end run (window + surface + IME) remains a manual step pending
-  a packaged example app.
+  print a skip line, matching the 4K120 gate pattern. `cargo apk test`
+  requires `[package.metadata.android]` manifest metadata on the tested
+  crate and runs libtest inside the activity on unattached JVM worker
+  threads — the gate attaches via `attach_current_thread` and prefers
+  `-- --test-threads=1`. When `ndk-context` exposes no VM/activity
+  (not a GameActivity process) the gate skips rather than fails. An
+  APK-level end-to-end run (window + surface + IME) remains a manual
+  step pending a packaged example app.

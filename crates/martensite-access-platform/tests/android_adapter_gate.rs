@@ -7,7 +7,14 @@
 //! on a CI host still skips cleanly.
 //!
 //! Run it on-device under a GameActivity process, e.g. via `cargo apk test`
-//! (cargo-apk2) or `x test` (xbuild). The gate body mirrors
+//! (cargo-apk2) or `x test` (xbuild). `cargo apk test` requires the crate
+//! under test to carry `[package.metadata.android]` manifest metadata —
+//! the same table documented for the app manifest in
+//! `docs/android-packaging.md` — and runs libtest *inside* the activity,
+//! so test bodies execute on unattached JVM worker threads (the gate
+//! attaches via `attach_current_thread`; prefer `-- --test-threads=1`
+//! when adding further JNI tests so they do not race the UI thread).
+//! The gate body mirrors
 //! `android::AndroidAdapter::new` step-for-step — JavaVM resolution,
 //! `GameActivity.mSurfaceView` (`InputEnabledSurfaceView`) lookup, and
 //! `InjectingAdapter` construction — so a pass proves the exact path the
@@ -70,27 +77,41 @@ mod gate {
 
     /// The real gate body, compiled only for on-device test runs.
     ///
+    /// Returns early — rather than failing — when `ndk-context` carries
+    /// no VM/activity handles: that means the test binary is not running
+    /// inside a GameActivity process (e.g. a bare `cargo test` on-device
+    /// shell without an activity), which is an environment problem, not
+    /// an injection-path failure.
+    ///
     /// # Panics
     ///
-    /// Panics — i.e. the gate fails — when any step of the production
-    /// injection path fails: missing JavaVM/context, a `mSurfaceView`
-    /// field that does not resolve (the NativeActivity signature), a
-    /// null surface view, or an injection failure inside
+    /// Panics — i.e. the gate genuinely fails — when the process IS a
+    /// GameActivity but a step of the production injection path fails:
+    /// a `mSurfaceView` field that does not resolve (the NativeActivity
+    /// signature), a null surface view, or an injection failure inside
     /// `InjectingAdapter::new`.
     pub fn run() {
         let ctx = ndk_context::android_context();
-        assert!(!ctx.vm().is_null(), "ndk-context JavaVM must be set");
-        assert!(
-            !ctx.context().is_null(),
-            "ndk-context activity jobject must be set"
-        );
+        if ctx.vm().is_null() || ctx.context().is_null() {
+            eprintln!(
+                "ndk-context exposes no VM/activity — not running inside a \
+                 GameActivity process; gate skipped"
+            );
+            return;
+        }
 
         // SAFETY: `ndk_context::android_context().vm()` is the
         // process-wide `JavaVM*` published by `android-activity` at
         // startup; it outlives the activity and is valid for the entire
         // process lifetime.
         let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }.expect("JavaVM::from_raw");
-        let mut env = vm.get_env().expect("JNI env for the test thread");
+        // libtest runs this gate on a worker thread that is NOT attached
+        // to the JVM — `JavaVM::get_env` would fail with
+        // `ThreadDetached`. `attach_current_thread` attaches the thread
+        // and returns a guard that detaches on drop.
+        let mut env = vm
+            .attach_current_thread()
+            .expect("attach test thread to the JVM");
 
         // SAFETY: `android_context().context()` is the activity's global
         // `jobject` reference published alongside the VM; valid for the
@@ -117,6 +138,8 @@ mod gate {
         // `InjectingAdapter` services `AccessibilityNodeInfo` requests on
         // the UI thread, so constructing it here proves delegate
         // injection works on this device.
+        // `env` is an `AttachGuard`; `&mut env` deref-coerces to the
+        // `&mut JNIEnv` the adapter constructor expects.
         let mut adapter = InjectingAdapter::new(&mut env, &view, NoopActivation, NoopAction);
         // An empty, well-formed update: no nodes, no tree structure, root
         // tree id, focus on the (unused) zero node.
