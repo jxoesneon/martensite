@@ -218,15 +218,33 @@ fn au_to_length_prefixed(au: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Directory holding the generated `*-4k120.bin` sample assets.
+///
+/// `$MARTENSITE_MEDIA_SAMPLES` overrides the default
+/// `<workspace>/target/media-samples` location (`CARGO_MANIFEST_DIR` is
+/// `crates/martensite-media-test`, two levels below the workspace root).
+/// The samples are gitignored build artifacts — tests that need them skip
+/// gracefully when the directory or file is absent.
+pub fn samples_dir() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("MARTENSITE_MEDIA_SAMPLES") {
+        return std::path::PathBuf::from(dir);
+    }
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("target")
+        .join("media-samples")
+}
+
 /// Parses an IVF file (despite the `.bin` extension used by the sample
-/// assets) into owned per-frame payloads.
+/// assets) into owned per-frame payloads, requiring the codec fourcc at
+/// offset 8 to match `fourcc` (e.g. `b"AV01"`).
 ///
 /// IVF is a trivial container: a fixed-size header opening with the `DKIF`
 /// signature, then a sequence of `[u32 LE size][u64 LE pts][payload]` frame
-/// records. Returns `None` when the signature is absent or no complete frame
-/// is present; a truncated tail record simply stops parsing.
-pub fn ivf_frames(file: &[u8]) -> Option<Vec<Vec<u8>>> {
-    if file.len() < 32 || file[..4] != *b"DKIF" {
+/// records. Returns `None` when the signature or fourcc is wrong or no
+/// complete frame is present; a truncated tail record simply stops parsing.
+pub fn ivf_frames(file: &[u8], fourcc: &[u8; 4]) -> Option<Vec<Vec<u8>>> {
+    if file.len() < 32 || file[..4] != *b"DKIF" || file[8..12] != *fourcc {
         return None;
     }
     // The header size is a u16 LE at offset 6 (32 in every conforming file);

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added — v0.17.0: Platform Expansion
 
+- **AV1 hardware decode via VideoToolbox** (macOS,
+  `decoder-videotoolbox`) — since CoreMedia has no
+  `CMVideoFormatDescriptionCreateFromAV1ParameterSets`, the `av01`
+  format description is built with `CMVideoFormatDescriptionCreate`
+  plus a `SampleDescriptionExtensionAtoms` dictionary carrying the
+  `AV1CodecConfigurationRecord` as an `av1C` atom (the FFmpeg/
+  WebKit/Chromium path). `decoder::av1` parses low-overhead OBUs and
+  sequence headers, synthesizes `av1C` in-band when `codec_config` is
+  absent (bounded deferred buffer), and propagates colour signalling
+  into `ColorPrimaries`/`TransferFunction`/`YCbCrMatrix`/
+  `FullRangeVideo` extensions so HDR streams surface `HdrSideData`.
+  Samples are `av01` temporal units (low-overhead OBU format).
+  Verified on Apple M4: 4K120 AV1 decodes through VideoToolbox
+  hardware — 1800/1800 frames at 120.1 fps, 0.000% loss.
 - **APG widgets + overlay layer** (`martensite`, `martensite-core`) —
   Slider, RadioGroup/option, Dropdown/ListBox, ScrollView + scrollbars,
   Tabs, and Tooltip widgets with ARIA APG semantics; `OverlayLayer`
@@ -142,6 +156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   120.0 fps with 0.000% drops and ~0.015% dispatch CPU; the AV1 leg
   falls back to dav1d software (~119.8 fps; advisory only — no
   av1C→`CMFormatDescription` bridge exists in objc2-core-media 0.3.2).
+  *(Superseded — see Unreleased: the `av1C` bridge now exists and the
+  AV1 leg decodes through VideoToolbox hardware.)*
 
 ### Fixed
 
