@@ -266,7 +266,7 @@ pub struct InlineTextCache {
     /// Four inline constraint/size slots: `(width_constraint, measured_width, measured_height)`.
     entries: [(f32, f32, f32); 4],
     /// Ring-buffer cursor for FIFO replacement when all 4 slots are occupied.
-    cursor: usize,
+    pub(crate) cursor: usize,
 }
 
 impl InlineTextCache {

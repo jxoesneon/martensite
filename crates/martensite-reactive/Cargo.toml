@@ -21,5 +21,13 @@ tracing = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 
+[features]
+default = []
+# Records `Signal::set` source writes in a per-runtime [`journal`] with a
+# monotonic index, and registers type-erased source accessors so
+# `martensite-devtools` snapshots can capture and restore signal values.
+# Everything compiles out when disabled — zero production overhead.
+devtools-timemachine = []
+
 [lints]
 workspace = true

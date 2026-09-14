@@ -26,5 +26,13 @@ slotmap = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 
+[features]
+default = []
+# Arena state snapshots (`ArenaState`, `Widget::timemachine_snapshot`/
+# `timemachine_restore`, `state_fingerprint`) used by
+# `martensite-devtools` time-travel debugging. Compiles out entirely
+# when disabled — zero production overhead.
+devtools-timemachine = []
+
 [lints]
 workspace = true

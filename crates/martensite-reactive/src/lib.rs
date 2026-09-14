@@ -6,6 +6,8 @@
 
 pub mod cycle;
 pub mod effect;
+#[cfg(feature = "devtools-timemachine")]
+pub mod journal;
 pub mod memo;
 pub mod runtime;
 pub mod scheduler;
@@ -13,6 +15,8 @@ pub mod signal;
 
 pub use cycle::{CycleError, NodeColor};
 pub use effect::Effect;
+#[cfg(feature = "devtools-timemachine")]
+pub use journal::{JournalGuard, SignalSnapshot, SourceJournal, WriteRecord};
 pub use memo::Memo;
 pub use runtime::{
     batch, create_effect, create_memo, create_signal, flush, NodeEvaluator, ReactiveError,
@@ -25,6 +29,8 @@ pub use signal::{Signal, SignalId};
 pub mod prelude {
     pub use crate::cycle::{CycleError, NodeColor};
     pub use crate::effect::Effect;
+    #[cfg(feature = "devtools-timemachine")]
+    pub use crate::journal::{JournalGuard, SignalSnapshot, SourceJournal, WriteRecord};
     pub use crate::memo::Memo;
     pub use crate::runtime::{
         batch, create_effect, create_memo, create_signal, flush, ReactiveError, ReactiveRuntime,

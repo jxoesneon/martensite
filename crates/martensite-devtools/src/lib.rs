@@ -32,6 +32,8 @@
 #![deny(missing_docs)]
 
 pub mod hud;
+#[cfg(feature = "devtools-timemachine")]
+pub mod timemachine;
 pub mod tracy;
 
 #[cfg(test)]

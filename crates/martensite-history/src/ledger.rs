@@ -87,6 +87,19 @@ pub enum LedgerError {
     NoUndo,
     /// There is nothing to redo (no children on the current branch).
     NoRedo,
+    /// The replay source node is not an ancestor of the target node, so
+    /// reaching the target would require reverting operations rather
+    /// than applying them forward.
+    NotADescendant,
+    /// A node on the replay path has no recorded operation — internal
+    /// inconsistency (non-root nodes always carry an op). Indicates a
+    /// corrupt ledger.
+    MissingOp,
+    /// The navigation path crosses a region where bounded-history
+    /// pruning compressed out ancestors and dropped their operations.
+    /// The requested transition cannot be reproduced faithfully —
+    /// failing loudly rather than silently diverging.
+    HistoryGap,
 }
 
 impl std::fmt::Display for LedgerError {
@@ -95,6 +108,15 @@ impl std::fmt::Display for LedgerError {
             LedgerError::InvalidNode => write!(f, "invalid history node"),
             LedgerError::NoUndo => write!(f, "nothing to undo"),
             LedgerError::NoRedo => write!(f, "nothing to redo"),
+            LedgerError::NotADescendant => {
+                write!(f, "replay source is not an ancestor of the target")
+            }
+            LedgerError::MissingOp => {
+                write!(f, "replay path node has no recorded operation")
+            }
+            LedgerError::HistoryGap => {
+                write!(f, "navigation path crosses pruned history")
+            }
         }
     }
 }
@@ -369,6 +391,12 @@ impl<S: 'static> HistoryLedger<S> {
         if self.tree.current_depth() == 0 {
             return Err(LedgerError::NoUndo);
         }
+        // The edge to the parent may skip ancestors compressed out by
+        // pruning: reverting only this node's op would land on the
+        // parent with the dropped ops still folded into the state.
+        if self.tree.node(current).map(|n| n.gap_above).unwrap_or(0) > 0 {
+            return Err(LedgerError::HistoryGap);
+        }
         if let Some(op) = self.ops.get(&current) {
             op.revert(&mut self.state);
         } else {
@@ -411,6 +439,10 @@ impl<S: 'static> HistoryLedger<S> {
             .max_by_key(|&c| self.tree.node(c).map(|n| n.last_visited).unwrap_or(0))
             .ok_or(LedgerError::NoRedo)?;
 
+        // Reaching the child may require ops compressed out by pruning.
+        if self.tree.node(best).map(|n| n.gap_above).unwrap_or(0) > 0 {
+            return Err(LedgerError::HistoryGap);
+        }
         self.tree.move_to_child(best);
         let current = self.tree.current();
         if let Some(op) = self.ops.get(&current) {
@@ -459,6 +491,12 @@ impl<S: 'static> HistoryLedger<S> {
             .path_to(source, target)
             .ok_or(LedgerError::InvalidNode)?;
 
+        // A path crossing pruned regions drops recorded operations —
+        // refuse rather than silently diverge.
+        if nav.hidden_revert > 0 || nav.hidden_apply > 0 {
+            return Err(LedgerError::HistoryGap);
+        }
+
         // Revert from source to LCA (exclusive).
         for &node_id in &nav.revert {
             if let Some(op) = self.ops.get(&node_id) {
@@ -477,6 +515,163 @@ impl<S: 'static> HistoryLedger<S> {
             .set_current(target)
             .map_err(|_| LedgerError::InvalidNode)?;
         Ok(())
+    }
+
+    /// Returns `true` if `ancestor` equals `node` or lies on the path
+    /// from `node` up to the root.
+    ///
+    /// Returns `false` if either node ID is invalid (e.g., pruned).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use martensite_history::{HistoryLedger, ChangeOp};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// let root = ledger.root_node();
+    /// ledger.commit(Box::new(AddOp(5)));
+    /// let tip = ledger.current_node();
+    /// assert!(ledger.is_ancestor(root, tip));
+    /// assert!(ledger.is_ancestor(tip, tip));
+    /// assert!(!ledger.is_ancestor(tip, root));
+    /// ```
+    pub fn is_ancestor(&self, ancestor: NodeId, node: NodeId) -> bool {
+        let mut cur = Some(node);
+        while let Some(id) = cur {
+            if id == ancestor {
+                return true;
+            }
+            cur = self.tree.node(id).and_then(|n| n.parent);
+        }
+        false
+    }
+
+    /// Returns the depth of `node` in the history tree (root = 0), or
+    /// `None` if the node does not exist.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use martensite_history::{HistoryLedger, ChangeOp};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// assert_eq!(ledger.depth_of(ledger.root_node()), Some(0));
+    /// ledger.commit(Box::new(AddOp(1)));
+    /// assert_eq!(ledger.depth_of(ledger.current_node()), Some(1));
+    /// assert_eq!(ledger.depth_of(martensite_history::NodeId::default()), None);
+    /// ```
+    pub fn depth_of(&self, node: NodeId) -> Option<u32> {
+        self.tree.node(node).map(|n| n.depth)
+    }
+
+    /// Snapshot-assisted replay: installs restored state at `from`, then
+    /// re-applies every operation on the tree path from `from` to `to`.
+    ///
+    /// Unlike [`jump_to`](Self::jump_to), this never calls
+    /// [`ChangeOp::revert`]: `from` must be an ancestor of `to` (or equal
+    /// to it) and the `restore` closure is responsible for making
+    /// `self.state` match the recorded state at `from` — typically a
+    /// checkpoint captured by a time-travel debugger. The cursor ends at
+    /// `to`.
+    ///
+    /// Returns [`LedgerError::InvalidNode`] if either node does not
+    /// exist, [`LedgerError::NotADescendant`] if `to` is not a
+    /// descendant of `from`, [`LedgerError::HistoryGap`] if the path
+    /// crosses ancestors compressed out by bounded-history pruning
+    /// (their ops are gone — the check runs before any state change,
+    /// so a failed replay is atomic), or [`LedgerError::MissingOp`] if
+    /// a node on the path has no recorded operation (internal
+    /// inconsistency).
+    ///
+    /// # Panic semantics
+    ///
+    /// The cursor is moved to `from` before `restore` and the apply
+    /// loop run. If `restore` or any `ChangeOp::apply` panics, the
+    /// panic propagates and the cursor remains at `from` with
+    /// `self.state` partially advanced — callers wanting rollback
+    /// semantics must implement them in their own ops.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use martensite_history::{ChangeOp, HistoryLedger, LedgerError};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// let root = ledger.root_node();
+    /// ledger.commit(Box::new(AddOp(5)));  // A
+    /// let a = ledger.current_node();
+    /// ledger.commit(Box::new(AddOp(3)));  // B: state = 8
+    ///
+    /// // Replay from a snapshot of the root state instead of undoing.
+    /// ledger.replay(root, a, |s| *s = 0).unwrap();
+    /// assert_eq!(*ledger.state(), 5);
+    /// assert_eq!(ledger.current_node(), a);
+    ///
+    /// // Replaying backward (to an ancestor) is rejected.
+    /// assert_eq!(
+    ///     ledger.replay(a, root, |_| {}).unwrap_err(),
+    ///     LedgerError::NotADescendant
+    /// );
+    /// ```
+    pub fn replay(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        restore: impl FnOnce(&mut S),
+    ) -> Result<(), LedgerError> {
+        let nav = self
+            .tree
+            .path_to(from, to)
+            .ok_or(LedgerError::InvalidNode)?;
+
+        if !nav.revert.is_empty() {
+            return Err(LedgerError::NotADescendant);
+        }
+
+        // Pruning may have compressed ancestors out of the from → to
+        // path; their ops are gone, so replaying only the surviving
+        // ops would silently diverge. Detect before touching state.
+        if nav.hidden_apply > 0 {
+            return Err(LedgerError::HistoryGap);
+        }
+
+        self.tree
+            .set_current(from)
+            .map_err(|_| LedgerError::InvalidNode)?;
+        restore(&mut self.state);
+
+        for &node_id in &nav.apply {
+            if let Some(op) = self.ops.get(&node_id) {
+                op.apply(&mut self.state);
+            } else {
+                // Non-root nodes always carry an op; a gap means the
+                // ops map and tree have diverged — surface it rather
+                // than silently producing a divergent replay.
+                return Err(LedgerError::MissingOp);
+            }
+        }
+
+        self.tree
+            .set_current(to)
+            .map_err(|_| LedgerError::InvalidNode)
     }
 
     /// Returns the children of the current node (available redo branches).
@@ -818,6 +1013,14 @@ mod tests {
         assert_eq!(LedgerError::InvalidNode.to_string(), "invalid history node");
         assert_eq!(LedgerError::NoUndo.to_string(), "nothing to undo");
         assert_eq!(LedgerError::NoRedo.to_string(), "nothing to redo");
+        assert_eq!(
+            LedgerError::NotADescendant.to_string(),
+            "replay source is not an ancestor of the target"
+        );
+        assert_eq!(
+            LedgerError::MissingOp.to_string(),
+            "replay path node has no recorded operation"
+        );
     }
 
     #[test]
@@ -825,5 +1028,180 @@ mod tests {
         let mut ledger = HistoryLedger::new(0, 100);
         *ledger.state_mut() = 42;
         assert_eq!(*ledger.state(), 42);
+    }
+
+    #[test]
+    fn is_ancestor_walks_parent_chain() {
+        let mut ledger = HistoryLedger::new(0, 100);
+        let root = ledger.root_node();
+        ledger.commit(Box::new(AddOp(1))); // A
+        let a = ledger.current_node();
+        ledger.commit(Box::new(AddOp(2))); // B
+        let b = ledger.current_node();
+
+        assert!(ledger.is_ancestor(root, b));
+        assert!(ledger.is_ancestor(a, b));
+        assert!(ledger.is_ancestor(b, b));
+        assert!(!ledger.is_ancestor(b, a));
+        assert!(!ledger.is_ancestor(b, root));
+    }
+
+    #[test]
+    fn is_ancestor_rejects_invalid_nodes() {
+        let mut ledger = HistoryLedger::new(0, 4);
+        let root = ledger.root_node();
+        // Prune the root by overfilling the tree.
+        for i in 0..8 {
+            ledger.commit(Box::new(AddOp(i)));
+        }
+        let tip = ledger.current_node();
+        // A stale NodeId is never reported as an ancestor.
+        let stale = NodeId::default();
+        assert!(!ledger.is_ancestor(stale, tip));
+        assert!(!ledger.is_ancestor(tip, stale));
+        // The (possibly pruned) root also reports false rather than
+        // panicking when it no longer exists.
+        let _ = ledger.is_ancestor(root, tip);
+    }
+
+    #[test]
+    fn replay_reapplies_forward_path() {
+        let mut ledger = HistoryLedger::new(0, 100);
+        let root = ledger.root_node();
+        ledger.commit(Box::new(AddOp(5))); // A: 5
+        let a = ledger.current_node();
+        ledger.commit(Box::new(AddOp(3))); // B: 8
+        let b = ledger.current_node();
+        assert_eq!(*ledger.state(), 8);
+
+        // Restore a synthetic snapshot of the root state, then replay
+        // forward to B. The applied ops must reproduce the recorded
+        // state without calling `revert`.
+        ledger.replay(root, b, |s| *s = 0).unwrap();
+        assert_eq!(*ledger.state(), 8);
+        assert_eq!(ledger.current_node(), b);
+
+        // Replaying to the same node only restores.
+        ledger.replay(a, a, |s| *s = 5).unwrap();
+        assert_eq!(*ledger.state(), 5);
+        assert_eq!(ledger.current_node(), a);
+    }
+
+    #[test]
+    fn replay_rejects_backward_and_cross_branch_targets() {
+        let mut ledger = HistoryLedger::new(0, 100);
+        let root = ledger.root_node();
+        ledger.commit(Box::new(AddOp(5))); // A
+        let a = ledger.current_node();
+        ledger.commit(Box::new(AddOp(3))); // B
+        ledger.undo().unwrap(); // back to A
+        ledger.commit(Box::new(AddOp(10))); // C on a sibling branch
+        let c = ledger.current_node();
+
+        // B is not a descendant of C (they are on sibling branches).
+        assert_eq!(
+            ledger.replay(c, a, |_| {}).unwrap_err(),
+            LedgerError::NotADescendant
+        );
+        // Ancestor-to-descendant across the branch point is fine.
+        ledger.replay(root, c, |s| *s = 0).unwrap();
+        assert_eq!(*ledger.state(), 15);
+    }
+
+    #[test]
+    fn replay_rejects_invalid_nodes() {
+        let mut ledger = HistoryLedger::new(0, 100);
+        let stale = NodeId::default();
+        let root = ledger.root_node();
+        assert_eq!(
+            ledger.replay(stale, root, |_| {}).unwrap_err(),
+            LedgerError::InvalidNode
+        );
+        assert_eq!(
+            ledger.replay(root, stale, |_| {}).unwrap_err(),
+            LedgerError::InvalidNode
+        );
+    }
+
+    /// H1 reproduction: bounded-history pruning compresses interior
+    /// ancestors of the active branch and drops their operations.
+    /// Replaying across the compressed region must fail loudly —
+    /// before the fix, `replay` silently applied only the surviving
+    /// ops and returned `Ok` with a divergent state.
+    #[test]
+    fn replay_across_pruned_region_returns_history_gap() {
+        let mut ledger = HistoryLedger::new(0, 4);
+        let root = ledger.root_node();
+        for i in 1..=8 {
+            ledger.commit(Box::new(AddOp(i)));
+        }
+        let tip = ledger.current_node();
+        // Interior ancestors were compressed out; the root → tip path
+        // no longer carries every recorded op.
+        assert_eq!(
+            ledger.replay(root, tip, |s| *s = 0).unwrap_err(),
+            LedgerError::HistoryGap
+        );
+    }
+
+    #[test]
+    fn jump_to_across_pruned_region_returns_history_gap() {
+        let mut ledger = HistoryLedger::new(0, 4);
+        for i in 1..=5 {
+            ledger.commit(Box::new(AddOp(i)));
+        }
+        // Reverting to the root crosses compressed-out ancestors whose
+        // ops were dropped — the jump cannot be reproduced.
+        assert_eq!(
+            ledger.jump_to(ledger.root_node()).unwrap_err(),
+            LedgerError::HistoryGap
+        );
+    }
+
+    #[test]
+    fn undo_across_pruned_gap_returns_history_gap() {
+        let mut ledger = HistoryLedger::new(0, 4);
+        for i in 1..=5 {
+            ledger.commit(Box::new(AddOp(i)));
+        }
+        // After compression the tree is root → n3(gap) → n4 → n5:
+        // two undos succeed, the third would land on the root with the
+        // dropped ops of n1/n2 still folded into the state.
+        ledger.undo().unwrap();
+        ledger.undo().unwrap();
+        assert_eq!(ledger.undo().unwrap_err(), LedgerError::HistoryGap);
+    }
+
+    /// A panic inside `ChangeOp::apply` during replay leaves the cursor
+    /// at the replay source (`from`) with a partially applied state —
+    /// documented semantics verified here.
+    #[test]
+    fn replay_panic_in_apply_leaves_cursor_at_source() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        struct PanicOnReplay(Arc<AtomicBool>);
+        impl ChangeOp<i32> for PanicOnReplay {
+            fn apply(&self, s: &mut i32) {
+                if self.0.swap(true, Ordering::Relaxed) {
+                    panic!("re-apply panics");
+                }
+                *s += 1;
+            }
+            fn revert(&self, s: &mut i32) {
+                *s -= 1;
+            }
+        }
+
+        let mut ledger = HistoryLedger::new(0, 100);
+        let root = ledger.root_node();
+        ledger.commit(Box::new(PanicOnReplay(Arc::new(AtomicBool::new(false)))));
+        let node = ledger.current_node();
+
+        let result = catch_unwind(AssertUnwindSafe(|| ledger.replay(root, node, |s| *s = 0)));
+        assert!(result.is_err(), "the panic must propagate");
+        // Cursor semantics on panic: it stays at the replay source.
+        assert_eq!(ledger.current_node(), root);
     }
 }

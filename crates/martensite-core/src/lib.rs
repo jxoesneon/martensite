@@ -30,6 +30,9 @@ pub mod node;
 /// The [`PaintList`](paint::PaintList) command stream vocabulary produced by
 /// the widget paint pass and consumed by render backends.
 pub mod paint;
+/// Arena state snapshots and fingerprints for time-travel debugging.
+#[cfg(feature = "devtools-timemachine")]
+pub mod snapshot;
 /// Widget trait and rendering/layout/event context types.
 pub mod widget;
 
@@ -41,6 +44,8 @@ pub use paint::{
     FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintCommand, PaintList,
     PaintSegment, PathBuilder,
 };
+#[cfg(feature = "devtools-timemachine")]
+pub use snapshot::{ArenaRestoreError, ArenaState, TimemachineState};
 pub use widget::{
     AccessibilityContext, DummyWidget, EventContext, EventResponse, LayoutConstraints,
     LayoutContext, PaintContext, PointerButton, Widget, WidgetEvent,
