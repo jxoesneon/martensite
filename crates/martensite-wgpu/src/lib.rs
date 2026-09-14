@@ -37,7 +37,7 @@ pub mod surface;
 /// GPU theme-transition render pipeline (compiles the theme WGSL shader).
 pub mod theme_transition;
 
-pub use device::{GpuContext, GpuContextError};
+pub use device::{new_instance, platform_backends, GpuContext, GpuContextError};
 pub use external::{CompositeTarget, ExternalError, TakenFrame, WgpuHost};
 pub use interop::{
     create_video_texture_view, video_texture_views, FormatNegotiator, VideoPipelineUniforms,

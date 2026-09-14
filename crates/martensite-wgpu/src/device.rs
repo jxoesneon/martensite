@@ -51,6 +51,116 @@ impl std::fmt::Display for GpuContextError {
 
 impl std::error::Error for GpuContextError {}
 
+/// Returns the `wgpu` backends used on this platform.
+///
+/// On Android this is `VULKAN | GL` — Vulkan is first-class and OpenGL
+/// ES is the downlevel fallback for devices whose drivers lack usable
+/// Vulkan support. On every other platform all compiled-in backends are
+/// used, matching `wgpu::Instance::default()`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::device::platform_backends;
+/// use martensite_wgpu::wgpu;
+///
+/// assert!(platform_backends().contains(wgpu::Backends::VULKAN));
+/// ```
+#[must_use]
+pub fn platform_backends() -> wgpu::Backends {
+    if cfg!(target_os = "android") {
+        wgpu::Backends::VULKAN | wgpu::Backends::GL
+    } else {
+        wgpu::Backends::all()
+    }
+}
+
+/// Creates a `wgpu::Instance` restricted to [`platform_backends`].
+///
+/// On Android this limits the instance to Vulkan + GLES; elsewhere it is
+/// equivalent to `wgpu::Instance::default()`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_wgpu::device::new_instance;
+///
+/// let instance = new_instance();
+/// ```
+#[must_use]
+pub fn new_instance() -> wgpu::Instance {
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = platform_backends();
+    wgpu::Instance::new(descriptor)
+}
+
+/// Requests an adapter honoring the platform's backend preference.
+///
+/// On Android, adapters are enumerated across [`platform_backends`] and
+/// Vulkan adapters are ranked above GLES (Vulkan first-class, GLES
+/// downlevel fallback), then by [`power_score`]. `compatible_surface`
+/// is honored by dropping adapters that cannot present to it. On other
+/// platforms this is equivalent to `Instance::request_adapter`.
+async fn request_platform_adapter(
+    instance: &wgpu::Instance,
+    power_preference: wgpu::PowerPreference,
+    compatible_surface: Option<&wgpu::Surface<'_>>,
+    force_fallback_adapter: bool,
+) -> Result<wgpu::Adapter, GpuContextError> {
+    if cfg!(target_os = "android") {
+        let mut adapters = instance.enumerate_adapters(platform_backends()).await;
+        if let Some(surface) = compatible_surface {
+            adapters.retain(|adapter| adapter.is_surface_supported(surface));
+        }
+        if force_fallback_adapter {
+            adapters.retain(|adapter| adapter.get_info().device_type == wgpu::DeviceType::Cpu);
+        }
+        // Rank Vulkan above every other backend; within a backend, apply
+        // the requested power preference.
+        adapters.sort_by(|a, b| {
+            let score = |adapter: &wgpu::Adapter| {
+                let info = adapter.get_info();
+                let backend_rank = u8::from(info.backend == wgpu::Backend::Vulkan);
+                (
+                    backend_rank,
+                    power_score(info.device_type, power_preference),
+                )
+            };
+            score(b).cmp(&score(a))
+        });
+        return adapters.into_iter().next().ok_or_else(|| {
+            GpuContextError::NoAdapter(
+                "no Vulkan or GLES adapter was enumerated on Android".to_string(),
+            )
+        });
+    }
+
+    instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference,
+            compatible_surface,
+            force_fallback_adapter,
+            apply_limit_buckets: true,
+        })
+        .await
+        .map_err(|e| GpuContextError::NoAdapter(e.to_string()))
+}
+
+/// Returns the device descriptor used to request a logical device from
+/// `adapter`.
+///
+/// GLES adapters get [`wgpu::Limits::downlevel_defaults`]: the GLES
+/// backend cannot honor the desktop default limits, so the downlevel
+/// limit set is the portable choice for the Android GLES fallback. All
+/// other backends use wgpu's defaults.
+fn device_descriptor_for(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
+    let mut descriptor = wgpu::DeviceDescriptor::default();
+    if adapter.get_info().backend == wgpu::Backend::Gl {
+        descriptor.required_limits = wgpu::Limits::downlevel_defaults();
+    }
+    descriptor
+}
+
 /// A complete, ready-to-use GPU context.
 ///
 /// `GpuContext` owns the four core `wgpu` resources required for compute-based
@@ -142,18 +252,17 @@ impl GpuContext {
     pub fn with_power_preference(
         power_preference: wgpu::PowerPreference,
     ) -> Result<Self, GpuContextError> {
-        let instance = wgpu::Instance::default();
+        let instance = new_instance();
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter = pollster::block_on(request_platform_adapter(
+            &instance,
             power_preference,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-            apply_limit_buckets: true,
-        }))
-        .map_err(|e| GpuContextError::NoAdapter(e.to_string()))?;
+            None,
+            false,
+        ))?;
 
         let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+            pollster::block_on(adapter.request_device(&device_descriptor_for(&adapter)))
                 .map_err(|e| GpuContextError::DeviceRequestFailed(e.to_string()))?;
 
         let adapter_info = adapter.get_info();
@@ -191,18 +300,17 @@ impl GpuContext {
     /// assert!(ctx.is_ok() || ctx.is_err());
     /// ```
     pub fn with_cpu_fallback() -> Result<Self, GpuContextError> {
-        let instance = wgpu::Instance::default();
+        let instance = new_instance();
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-            apply_limit_buckets: true,
-        }))
-        .map_err(|e| GpuContextError::NoAdapter(e.to_string()))?;
+        let adapter = pollster::block_on(request_platform_adapter(
+            &instance,
+            wgpu::PowerPreference::LowPower,
+            None,
+            true,
+        ))?;
 
         let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+            pollster::block_on(adapter.request_device(&device_descriptor_for(&adapter)))
                 .map_err(|e| GpuContextError::DeviceRequestFailed(e.to_string()))?;
 
         let adapter_info = adapter.get_info();
@@ -256,18 +364,16 @@ impl GpuContext {
         instance: &wgpu::Instance,
         surface: &wgpu::Surface<'_>,
     ) -> Result<Self, GpuContextError> {
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(surface),
-                force_fallback_adapter: false,
-                apply_limit_buckets: true,
-            })
-            .await
-            .map_err(|e| GpuContextError::NoAdapter(e.to_string()))?;
+        let adapter = request_platform_adapter(
+            instance,
+            wgpu::PowerPreference::HighPerformance,
+            Some(surface),
+            false,
+        )
+        .await?;
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&device_descriptor_for(&adapter))
             .await
             .map_err(|e| GpuContextError::DeviceRequestFailed(e.to_string()))?;
 
@@ -280,6 +386,46 @@ impl GpuContext {
             queue: Arc::new(queue),
             adapter_info,
         })
+    }
+
+    /// Creates a `wgpu` presentation surface for a window target.
+    ///
+    /// This is a thin pass-through to [`wgpu::Instance::create_surface`]
+    /// on this context's instance, so the surface shares the instance the
+    /// adapter and device came from — required by `wgpu` for
+    /// `for_surface`-compatible adapters to present to it.
+    ///
+    /// On Android the winit window's `RawWindowHandle::AndroidNdk`
+    /// (`ANativeWindow*`) is consumed directly: the Vulkan backend
+    /// creates a `VK_KHR_android_surface` and the GLES backend an
+    /// `EGLSurface`. Create the surface inside
+    /// `ApplicationHandler::can_create_surfaces` — the `ANativeWindow`
+    /// does not exist before then — and drop it before the window in
+    /// `destroy_surfaces`.
+    ///
+    /// `ApplicationHandler::can_create_surfaces`: winit::application::ApplicationHandler::can_create_surfaces
+    /// `destroy_surfaces`: winit::application::ApplicationHandler::destroy_surfaces
+    ///
+    /// # Errors
+    ///
+    /// Returns [`wgpu::CreateSurfaceError`] if the target's window or
+    /// display handle cannot be consumed by any enabled backend.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::device::GpuContext;
+    /// use martensite_wgpu::wgpu;
+    ///
+    /// # fn example(ctx: &GpuContext, target: wgpu::SurfaceTarget<'static>) {
+    /// let surface = ctx.create_surface(target).expect("surface");
+    /// # }
+    /// ```
+    pub fn create_surface<'window>(
+        &self,
+        target: impl Into<wgpu::SurfaceTarget<'window>>,
+    ) -> Result<wgpu::Surface<'window>, wgpu::CreateSurfaceError> {
+        self.instance.create_surface(target)
     }
 
     /// Recreates the logical device and command queue from the current adapter.
@@ -306,7 +452,7 @@ impl GpuContext {
     pub fn recreate_device_and_queue(&mut self) -> Result<(), GpuContextError> {
         let (device, queue) = pollster::block_on(
             self.adapter
-                .request_device(&wgpu::DeviceDescriptor::default()),
+                .request_device(&device_descriptor_for(&self.adapter)),
         )
         .map_err(|e| GpuContextError::DeviceRequestFailed(e.to_string()))?;
 
