@@ -277,7 +277,11 @@ jobs:
           for crate in "${CRATES[@]}"; do
             # Vendored crates (martensite-vello, martensite-cosmic-text) pin
             # their own version rather than inheriting the workspace version.
-            crate_version=$(grep -m1 '^version *= *"' "crates/${crate}/Cargo.toml" | sed 's/^version *= *"\(.*\)".*/\1/')
+            # The awk window restricts the version read to the [package]
+            # table — dep tables like [dependencies.windows] also carry
+            # `version = "..."` lines that must not be picked up.
+            crate_version=$(awk '/^\[package\]/{p=1;next} /^\[/{p=0} p' "crates/${crate}/Cargo.toml" \
+              | sed -n 's/^version *= *"\(.*\)"/\1/p' | head -1)
             TARGET_VERSION="${crate_version:-$WORKSPACE_VERSION}"
             # Pre-check: query crates.io API for the crate's max published
             # version (max_version includes pre-releases, which the vendored
