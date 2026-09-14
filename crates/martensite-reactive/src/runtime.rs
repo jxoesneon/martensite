@@ -755,6 +755,11 @@ impl ReactiveRuntime {
     /// journaled (no capturable previous value); [`Memo`](crate::Memo)
     /// recomputation is never journaled — derived values recompute lazily.
     ///
+    /// **Deadlock warning**: `Signal::set`/`set_if_changed` take the
+    /// journal lock while writing. Do not call `set` on any signal
+    /// bound to this runtime while holding the returned guard — the
+    /// write will block on the journal lock you already hold.
+    ///
     /// # Examples
     ///
     /// ```
@@ -799,10 +804,16 @@ impl ReactiveRuntime {
 
     /// Captures a [`SignalSnapshot`] of every registered source signal.
     ///
-    /// Signals register a type-erased accessor at construction when
-    /// their payload is `Clone`; dropped signals are skipped and their
-    /// accessors pruned. Entries are sorted by [`SignalId`] so snapshot
-    /// iteration order is deterministic.
+    /// Sources register a type-erased accessor **lazily** — on their
+    /// first `Clone`-bounded read or write (`get`, `get_untracked`,
+    /// `set_if_changed`), because only `Clone` payloads can be copied
+    /// out of storage. Consequence: a source that has never been read
+    /// or `set_if_changed` is absent from the snapshot and is *not*
+    /// restored by [`restore_signals`](Self::restore_signals). Sources
+    /// wired into [`Memo`](crate::Memo)/[`Effect`](crate::Effect)
+    /// evaluation register on their first pull. Dropped signals are
+    /// skipped and their accessors pruned. Entries are sorted by
+    /// [`SignalId`] so snapshot iteration order is deterministic.
     ///
     /// # Examples
     ///
@@ -812,6 +823,9 @@ impl ReactiveRuntime {
     /// let runtime = ReactiveRuntime::new();
     /// let a = runtime.create_signal(1i32);
     /// let b = runtime.create_signal(String::from("x"));
+    /// // Sources register lazily on their first read.
+    /// let _ = a.get_untracked();
+    /// let _ = b.get_untracked();
     ///
     /// let snapshot = runtime.snapshot_signals();
     /// assert_eq!(snapshot.len(), 2);
@@ -851,6 +865,7 @@ impl ReactiveRuntime {
     ///
     /// let runtime = ReactiveRuntime::new();
     /// let count = runtime.create_signal(0i32);
+    /// let _ = count.get_untracked(); // register the source
     /// let snapshot = runtime.snapshot_signals();
     ///
     /// count.set(42);

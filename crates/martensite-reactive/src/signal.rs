@@ -221,6 +221,13 @@ impl<T: Send + Sync + 'static> Signal<T> {
     /// by [`ReactiveRuntime::suppress_journal`] the write is applied but
     /// not recorded.
     ///
+    /// Note: the [`SourceJournal`] is an *audit log* only — a write
+    /// recorded here is not a history command and is invisible to
+    /// time-travel replay. Scrubbing with
+    /// `martensite_devtools::timemachine` replays commands committed to
+    /// the command journal (e.g. `TimeMachine::set_signal`/`commit`),
+    /// not raw `Signal::set` calls.
+    ///
     /// # Examples
     ///
     /// ```
@@ -232,12 +239,14 @@ impl<T: Send + Sync + 'static> Signal<T> {
     /// ```
     #[cfg(feature = "devtools-timemachine")]
     pub fn set(&self, val: T) {
-        {
+        let previous = {
             let mut guard = self.value.write();
-            let previous = std::mem::replace(&mut *guard, val);
-            self.runtime
-                .record_source_write(self.id, Box::new(previous));
-        }
+            std::mem::replace(&mut *guard, val)
+        };
+        // Journaled outside the signal write lock so the journal
+        // critical section never nests inside a signal's lock.
+        self.runtime
+            .record_source_write(self.id, Box::new(previous));
         self.runtime.mark_dirty(self.id);
     }
 }
@@ -341,19 +350,31 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> Signal<T> {
     pub fn set_if_changed(&self, val: T) -> bool {
         #[cfg(feature = "devtools-timemachine")]
         self.ensure_source_access();
+        #[cfg(feature = "devtools-timemachine")]
+        let mut previous = None;
         let changed = {
             let mut guard = self.value.write();
             if *guard != val {
-                let _previous = std::mem::replace(&mut *guard, val);
                 #[cfg(feature = "devtools-timemachine")]
-                self.runtime
-                    .record_source_write(self.id, Box::new(_previous));
+                {
+                    previous = Some(std::mem::replace(&mut *guard, val));
+                }
+                #[cfg(not(feature = "devtools-timemachine"))]
+                {
+                    *guard = val;
+                }
                 true
             } else {
                 false
             }
         };
 
+        #[cfg(feature = "devtools-timemachine")]
+        if let Some(previous) = previous {
+            // Journaled outside the signal write lock (see `set`).
+            self.runtime
+                .record_source_write(self.id, Box::new(previous));
+        }
         if changed {
             self.runtime.mark_dirty(self.id);
         }
