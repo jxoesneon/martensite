@@ -91,6 +91,10 @@ pub enum LedgerError {
     /// reaching the target would require reverting operations rather
     /// than applying them forward.
     NotADescendant,
+    /// A node on the replay path has no recorded operation — internal
+    /// inconsistency (non-root nodes always carry an op). Indicates a
+    /// corrupt ledger.
+    MissingOp,
 }
 
 impl std::fmt::Display for LedgerError {
@@ -101,6 +105,9 @@ impl std::fmt::Display for LedgerError {
             LedgerError::NoRedo => write!(f, "nothing to redo"),
             LedgerError::NotADescendant => {
                 write!(f, "replay source is not an ancestor of the target")
+            }
+            LedgerError::MissingOp => {
+                write!(f, "replay path node has no recorded operation")
             }
         }
     }
@@ -521,6 +528,30 @@ impl<S: 'static> HistoryLedger<S> {
         false
     }
 
+    /// Returns the depth of `node` in the history tree (root = 0), or
+    /// `None` if the node does not exist.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use martensite_history::{HistoryLedger, ChangeOp};
+    ///
+    /// struct AddOp(i32);
+    /// impl ChangeOp<i32> for AddOp {
+    ///     fn apply(&self, s: &mut i32) { *s += self.0; }
+    ///     fn revert(&self, s: &mut i32) { *s -= self.0; }
+    /// }
+    ///
+    /// let mut ledger = HistoryLedger::new(0, 100);
+    /// assert_eq!(ledger.depth_of(ledger.root_node()), Some(0));
+    /// ledger.commit(Box::new(AddOp(1)));
+    /// assert_eq!(ledger.depth_of(ledger.current_node()), Some(1));
+    /// assert_eq!(ledger.depth_of(martensite_history::NodeId::default()), None);
+    /// ```
+    pub fn depth_of(&self, node: NodeId) -> Option<u32> {
+        self.tree.node(node).map(|n| n.depth)
+    }
+
     /// Snapshot-assisted replay: installs restored state at `from`, then
     /// re-applies every operation on the tree path from `from` to `to`.
     ///
@@ -532,8 +563,9 @@ impl<S: 'static> HistoryLedger<S> {
     /// `to`.
     ///
     /// Returns [`LedgerError::InvalidNode`] if either node does not
-    /// exist, or [`LedgerError::NotADescendant`] if `to` is not a
-    /// descendant of `from`.
+    /// exist, [`LedgerError::NotADescendant`] if `to` is not a
+    /// descendant of `from`, or [`LedgerError::MissingOp`] if a node on
+    /// the path has no recorded operation (internal inconsistency).
     ///
     /// # Example
     ///
@@ -587,7 +619,10 @@ impl<S: 'static> HistoryLedger<S> {
             if let Some(op) = self.ops.get(&node_id) {
                 op.apply(&mut self.state);
             } else {
-                debug_assert!(false, "missing op for node {:?}", node_id);
+                // Non-root nodes always carry an op; a gap means the
+                // ops map and tree have diverged — surface it rather
+                // than silently producing a divergent replay.
+                return Err(LedgerError::MissingOp);
             }
         }
 
@@ -938,6 +973,10 @@ mod tests {
         assert_eq!(
             LedgerError::NotADescendant.to_string(),
             "replay source is not an ancestor of the target"
+        );
+        assert_eq!(
+            LedgerError::MissingOp.to_string(),
+            "replay path node has no recorded operation"
         );
     }
 
