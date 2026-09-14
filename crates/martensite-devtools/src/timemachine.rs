@@ -189,6 +189,9 @@ pub struct Checkpoint {
     signals: SignalSnapshot,
     /// `WidgetArena::state_fingerprint` at capture time.
     arena_fingerprint: u64,
+    /// Capture-order counter — deterministic eviction tie-break when
+    /// two checkpoints share `frame`.
+    seq: u64,
 }
 
 impl Checkpoint {
@@ -440,11 +443,25 @@ impl<T: Clone + Send + Sync + 'static> SignalWrite<T> {
 }
 
 impl<T: Clone + Send + Sync + 'static> ChangeOp<World> for SignalWrite<T> {
-    fn apply(&self, _world: &mut World) {
+    fn apply(&self, world: &mut World) {
+        // A foreign-runtime signal would write to a runtime whose
+        // journal is NOT suppressed by the replay guard — refuse
+        // loudly rather than leak an unjournaled mutation.
+        assert!(
+            std::sync::Arc::ptr_eq(self.signal.runtime(), world.runtime()),
+            "SignalWrite applied to a World whose ReactiveRuntime differs \
+             from the signal's — the replay journal guard cannot suppress \
+             a foreign runtime"
+        );
         self.signal.set(self.new.clone());
     }
 
-    fn revert(&self, _world: &mut World) {
+    fn revert(&self, world: &mut World) {
+        assert!(
+            std::sync::Arc::ptr_eq(self.signal.runtime(), world.runtime()),
+            "SignalWrite reverted against a World whose ReactiveRuntime \
+             differs from the signal's"
+        );
         self.signal.set(self.previous.clone());
     }
 }
@@ -499,6 +516,8 @@ pub struct TimeMachine {
     max_checkpoints: usize,
     /// Monotonic count of committed commands.
     commit_counter: u64,
+    /// Monotonic checkpoint capture counter (eviction tie-break).
+    checkpoint_seq: u64,
     /// Optional factory for reconstructing widget objects that were
     /// removed after a checkpoint was captured.
     widget_factory: Option<Box<WidgetFactory>>,
@@ -533,6 +552,7 @@ impl TimeMachine {
             checkpoint_every: 0,
             max_checkpoints: Self::DEFAULT_MAX_CHECKPOINTS,
             commit_counter: 0,
+            checkpoint_seq: 0,
             widget_factory: None,
         };
         tm.checkpoint();
@@ -601,6 +621,7 @@ impl TimeMachine {
             checkpoint_every: 0,
             max_checkpoints: Self::DEFAULT_MAX_CHECKPOINTS,
             commit_counter: 0,
+            checkpoint_seq: 0,
             widget_factory: None,
         };
         tm.checkpoint();
@@ -777,6 +798,13 @@ impl TimeMachine {
     /// assert_eq!(n.get_untracked(), 7);
     /// assert_eq!(tm.current_node(), node);
     /// ```
+    ///
+    /// # Caveats
+    ///
+    /// The replay journal guard only suppresses the *world's* runtime.
+    /// Custom ops must not write signals bound to a different
+    /// `ReactiveRuntime` — [`SignalWrite`] enforces this with a panic,
+    /// and so should any hand-rolled op.
     pub fn commit(&mut self, op: Box<dyn ChangeOp<World>>) -> NodeId {
         self.ledger.commit(op);
         let node = self.ledger.current_node();
@@ -801,7 +829,14 @@ impl TimeMachine {
     /// commands only.
     ///
     /// `signal` must be bound to the world's runtime; passing a signal
-    /// from another runtime is a logic error (debug-asserted).
+    /// from another runtime panics — the replay journal guard could
+    /// not suppress that runtime's journal during replay.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `signal` is bound to a different [`ReactiveRuntime`]
+    /// than the world's.
+    ///
     /// # Examples
     ///
     /// ```
@@ -821,7 +856,7 @@ impl TimeMachine {
         signal: &Signal<T>,
         value: T,
     ) -> NodeId {
-        debug_assert!(
+        assert!(
             Arc::ptr_eq(signal.runtime(), self.world().runtime()),
             "set_signal: signal is bound to a different ReactiveRuntime than the world's"
         );
@@ -830,6 +865,10 @@ impl TimeMachine {
 
     /// Captures a [`Checkpoint`] at the current history node. Returns
     /// the checkpointed node.
+    ///
+    /// The signal snapshot is **not atomic** against concurrent
+    /// `Signal::set` writers on the same runtime — call this from a
+    /// quiescent point (e.g., between frames on the UI thread).
     ///
     /// # Examples
     ///
@@ -854,7 +893,9 @@ impl TimeMachine {
             arena_fingerprint: world.arena.state_fingerprint(),
             arena: world.arena.snapshot_state(),
             signals: world.runtime.snapshot_signals(),
+            seq: self.checkpoint_seq,
         };
+        self.checkpoint_seq += 1;
         self.checkpoints.insert(node, checkpoint);
         self.evict_checkpoints();
         node
@@ -948,6 +989,24 @@ impl TimeMachine {
     /// world reflects the replayed commands except for the rejected
     /// widget state.
     ///
+    /// A `target` that no longer exists (e.g., pruned) returns
+    /// `ReplayError::Ledger(LedgerError::InvalidNode)` — *not*
+    /// `NoCheckpoint`. A path crossing history compressed by
+    /// bounded-ledger pruning returns
+    /// `ReplayError::Ledger(LedgerError::HistoryGap)` before any state
+    /// change.
+    ///
+    /// # Concurrency and panic semantics
+    ///
+    /// The signal snapshot/restore is **not atomic** against
+    /// concurrent signal writes: writers racing `replay_to` on the
+    /// same runtime can interleave with the restore. `TimeMachine` is
+    /// a single-threaded devtool surface — drive it from the UI
+    /// thread. If the arena restore or a replayed `ChangeOp::apply`
+    /// panics, the panic propagates and the history cursor stays at
+    /// the checkpoint node with the world partially advanced (see
+    /// [`HistoryLedger::replay`]).
+    ///
     /// # Examples
     ///
     /// ```
@@ -966,6 +1025,18 @@ impl TimeMachine {
     /// assert_eq!(n.get_untracked(), 2);
     /// ```
     pub fn replay_to(&mut self, target: NodeId) -> Result<NodeId, ReplayError> {
+        // An invalid (e.g., pruned) target is an InvalidNode error,
+        // not a missing checkpoint.
+        if self.ledger.depth_of(target).is_none() {
+            return Err(ReplayError::Ledger(LedgerError::InvalidNode));
+        }
+
+        // Suppress source-write journaling for the whole replay —
+        // including factory reconstruction and the restore, which may
+        // themselves touch signals.
+        let runtime = Arc::clone(self.world().runtime());
+        let _guard = runtime.suppress_journal();
+
         // Nearest ancestor-or-self of `target` holding a checkpoint —
         // the deepest one on the ancestor chain.
         let cp_node = self
@@ -1004,10 +1075,6 @@ impl TimeMachine {
             }
         }
 
-        let runtime = Arc::clone(self.world().runtime());
-        // Replayed commands must not re-journal their source writes.
-        let _guard = runtime.suppress_journal();
-
         let checkpoint = &self.checkpoints[&cp_node];
         let mut arena_err = None;
         self.ledger
@@ -1038,6 +1105,10 @@ impl TimeMachine {
     /// this can move backward and across branches. Source writes made by
     /// reverted/re-applied commands run under a [`JournalGuard`] and are
     /// not journaled.
+    ///
+    /// Returns [`LedgerError::HistoryGap`] if the path crosses history
+    /// compressed out by bounded-ledger pruning — the dropped ops can
+    /// no longer be applied or reverted.
     ///
     /// # Examples
     ///
@@ -1181,7 +1252,9 @@ impl TimeMachine {
 
     /// Evicts the oldest checkpoints beyond `max_checkpoints`. The root
     /// checkpoint is pinned and never evicted, so `replay_to` always
-    /// has a checkpoint on the ancestor chain.
+    /// has a checkpoint on the ancestor chain. Eviction order is
+    /// deterministic: `(frame, seq)` — capture order breaks `frame`
+    /// ties so HashMap iteration order is never observed.
     fn evict_checkpoints(&mut self) {
         let root = self.ledger.root_node();
         while self.checkpoints.len() > self.max_checkpoints {
@@ -1189,7 +1262,7 @@ impl TimeMachine {
                 .checkpoints
                 .iter()
                 .filter(|(n, _)| **n != root)
-                .min_by_key(|(_, cp)| cp.frame)
+                .min_by_key(|(_, cp)| (cp.frame, cp.seq))
                 .map(|(n, _)| *n);
             match oldest {
                 Some(node) => {

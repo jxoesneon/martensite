@@ -26,7 +26,7 @@ use martensite_core::{
     TimemachineState, Widget, WidgetId,
 };
 use martensite_devtools::timemachine::{ReplayError, SignalWrite, TimeMachine, World};
-use martensite_history::ChangeOp;
+use martensite_history::{ChangeOp, LedgerError};
 use martensite_reactive::{Memo, ReactiveRuntime, Signal};
 use martensite_test::VirtualClock;
 
@@ -461,4 +461,84 @@ fn root_checkpoint_is_pinned() {
     // Replay still works — the pinned root is always on the chain.
     tm.replay_to(tm.current_node()).unwrap();
     assert_eq!(n.get_untracked(), 6);
+}
+
+/// H1 reproduction: bounded history pruning compresses interior
+/// ancestors of the active branch and drops their ops. Replaying
+/// through the compressed region must return `LedgerError::HistoryGap`
+/// — before the fix, `replay_to` silently applied only the surviving
+/// ops and reported success.
+#[test]
+fn replay_across_pruned_region_errors() {
+    let runtime = ReactiveRuntime::new();
+    let n = Signal::new_with_runtime(0i32, runtime.clone());
+    let mut tm = TimeMachine::with_max_nodes(World::new(Default::default(), runtime), 4);
+
+    let mut tip = tm.root_node();
+    for i in 1..=8 {
+        tip = tm.set_signal(&n, i);
+    }
+
+    let err = tm.replay_to(tip).unwrap_err();
+    assert!(
+        matches!(err, ReplayError::Ledger(LedgerError::HistoryGap)),
+        "expected HistoryGap, got {err:?}"
+    );
+    // The world and history cursor are untouched by the failed replay.
+    assert_eq!(n.get_untracked(), 8);
+    assert_eq!(tm.current_node(), tip);
+}
+
+/// A widget that snapshots state but always rejects it on restore —
+/// exercises `RestoreRejected` propagating out of `replay_to`.
+struct RejectWidget;
+
+impl Widget for RejectWidget {
+    fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+        Vec2::ZERO
+    }
+    fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+    fn timemachine_snapshot(&self) -> Option<Box<dyn TimemachineState>> {
+        Some(Box::new(CounterState {
+            ticks: 0,
+            rng_value: 0,
+        }))
+    }
+    fn timemachine_restore(&mut self, _state: &dyn TimemachineState) -> bool {
+        false
+    }
+}
+
+/// When a widget rejects its captured state, `replay_to` returns the
+/// `Arena` error and the cursor stays at the checkpoint node (the
+/// restore aborts before forward ops run).
+#[test]
+fn restore_rejected_inside_replay_returns_arena_error() {
+    struct InsertOp;
+    impl ChangeOp<World> for InsertOp {
+        fn apply(&self, world: &mut World) {
+            world
+                .arena_mut()
+                .insert_with_widget(HotNode::default(), Box::new(RejectWidget));
+        }
+        fn revert(&self, _world: &mut World) {}
+    }
+
+    let runtime = ReactiveRuntime::new();
+    let mut tm = TimeMachine::new(World::new(Default::default(), runtime));
+    let node = tm.commit(Box::new(InsertOp));
+    // Checkpoint at the current node captures the RejectWidget's
+    // (acceptable) snapshot.
+    assert_eq!(tm.checkpoint(), node);
+
+    let err = tm.replay_to(node).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ReplayError::Arena(ArenaRestoreError::RestoreRejected(_))
+        ),
+        "expected RestoreRejected, got {err:?}"
+    );
+    // The cursor stays at the checkpoint that failed to restore.
+    assert_eq!(tm.current_node(), node);
 }
