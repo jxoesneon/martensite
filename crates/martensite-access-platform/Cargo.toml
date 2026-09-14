@@ -1,0 +1,41 @@
+[package]
+name = "martensite-access-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Platform-specific accessibility FFI glue (accesskit_ios on iOS, accesskit_android on Android) for martensite-access."
+readme = "README.md"
+
+[dependencies]
+accesskit = { workspace = true }
+
+# iOS: `accesskit_ios` `SubclassingAdapter` — dynamic Objective-C
+# subclassing of the winit `UIView` to implement UIAccessibilityContainer.
+[target.'cfg(target_os = "ios")'.dependencies]
+accesskit_ios = { version = "0.2.0" }
+
+# Android: `accesskit_android` `InjectingAdapter` + `embedded-dex` JNI glue.
+# Populated by the parallel Android workstream; the `android` module is a
+# stub until then.
+
+[features]
+docs-rs = []
+
+[package.metadata.docs.rs]
+features = ["docs-rs"]
+
+# This crate uses `#![allow(unsafe_code)]` at the crate level because it
+# contains platform-specific FFI to the Objective-C runtime (iOS) and JNI
+# (Android) through the AccessKit mobile adapters. The workspace-level
+# `unsafe_code = "deny"` policy is preserved for all other crates; this is
+# the narrowly scoped audited exception for mobile accessibility glue,
+# following the same pattern as `martensite-media-platform` and
+# `martensite-clipboard-platform`.
+[lints]
+workspace = true

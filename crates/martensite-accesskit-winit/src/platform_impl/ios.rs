@@ -5,12 +5,16 @@
 use crate::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use accesskit::{ActionHandler, ActivationHandler, DeactivationHandler, TreeUpdate};
-use accesskit_ios::SubclassingAdapter;
+use martensite_access_platform::ios::IosAdapter;
 use winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::Window};
 
 /// Platform-specific AccessKit adapter for winit.
+///
+/// The `accesskit_ios` `SubclassingAdapter` Objective-C FFI boundary is
+/// delegated to [`IosAdapter`] in `martensite-access-platform`, the
+/// workspace's whitelisted-unsafe mobile glue crate.
 pub struct Adapter {
-    adapter: SubclassingAdapter,
+    adapter: IosAdapter,
 }
 
 impl Adapter {
@@ -22,14 +26,16 @@ impl Adapter {
         deactivation_handler: impl 'static + DeactivationHandler,
     ) -> Self {
         let view = match window.window_handle().unwrap().as_raw() {
-            RawWindowHandle::UiKit(handle) => handle.ui_view.as_ptr(),
+            RawWindowHandle::UiKit(handle) => handle.ui_view,
             _ => unreachable!(),
         };
 
         // SAFETY: The view pointer comes from a valid winit window handle
         // and is passed directly to the AccessKit iOS subclassing adapter.
+        // `Adapter::new` is invoked on the main thread inside
+        // `can_create_surfaces`, before the application first renders.
         let adapter = unsafe {
-            SubclassingAdapter::new(
+            IosAdapter::new(
                 view,
                 activation_handler,
                 action_handler,
@@ -40,9 +46,7 @@ impl Adapter {
     }
 
     pub fn update_if_active(&mut self, updater: impl FnOnce() -> TreeUpdate) {
-        if let Some(events) = self.adapter.update_if_active(updater) {
-            events.raise();
-        }
+        self.adapter.update_if_active(updater);
     }
 
     pub fn process_event(&mut self, _window: &impl Window, _event: &WindowEvent) {}

@@ -13,6 +13,17 @@
 //! assistive technology sends an action, the action handler decodes it and
 //! forwards it to the provided [`ActionHandler`](crate::actions::ActionHandler).
 //!
+//! ## iOS
+//!
+//! On iOS the vendored `martensite-accesskit-winit` adapter delegates to
+//! `martensite-access-platform`'s iOS wrapper around
+//! `accesskit_ios::SubclassingAdapter`, which subclasses the winit
+//! `UIView` (obtained via `RawWindowHandle::UiKit`) on the main thread
+//! before the view is shown. This is a Phase-1 integration: basic roles,
+//! names, and actions reach VoiceOver, but editable text is incomplete —
+//! `accesskit_ios` 0.2.0 does not yet implement the `UITextInput`
+//! conformance editable nodes need.
+//!
 //! ## Usage
 //!
 //! ```no_run

@@ -37,7 +37,7 @@ use martensite_dnd::{
 use martensite_text::{ImePositioner, ScrollKinematics, Viewport};
 use martensite_window::event::{
     EventDispatchOutcome, EventRouter, ModifierKeys, MouseButton, MouseTracker, PointerCapture,
-    PointerEvent, PointerId, PointerState,
+    PointerEvent, PointerId, PointerKind, PointerState,
 };
 use martensite_window::{AffineTransform, HitTester, WindowId};
 
@@ -60,6 +60,7 @@ fn insert_hit_testable(arena: &mut WidgetArena, bounds: Rect) -> WidgetId {
 fn moved_event(x: f32, y: f32) -> PointerEvent {
     PointerEvent {
         pointer_id: PointerId::PRIMARY,
+        kind: PointerKind::Mouse,
         position: Vec2::new(x, y),
         state: PointerState::Moved,
         button: None,
@@ -71,6 +72,7 @@ fn moved_event(x: f32, y: f32) -> PointerEvent {
 fn pressed_event(x: f32, y: f32) -> PointerEvent {
     PointerEvent {
         pointer_id: PointerId::PRIMARY,
+        kind: PointerKind::Mouse,
         position: Vec2::new(x, y),
         state: PointerState::Pressed,
         button: Some(MouseButton::Left),

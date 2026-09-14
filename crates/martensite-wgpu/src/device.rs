@@ -97,6 +97,86 @@ pub struct GpuContext {
 }
 
 impl GpuContext {
+    /// Returns the [`wgpu::Backends`] set appropriate for the target
+    /// platform.
+    ///
+    /// - **iOS:** [`wgpu::Backends::METAL`] — UIKit windows are backed by
+    ///   `CAMetalLayer`, and Metal is the only GPU API available on the
+    ///   platform. Restricting the instance avoids enumerating backends
+    ///   (Vulkan, GLES) that can never surface an adapter there.
+    /// - **All other platforms:** [`wgpu::Backends::all`] — adapter
+    ///   enumeration picks whichever compiled-in backend is present.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::device::GpuContext;
+    ///
+    /// // On iOS this is `Backends::METAL`; elsewhere `Backends::all()`.
+    /// let backends = GpuContext::platform_backends();
+    /// assert!(!backends.is_empty());
+    /// ```
+    #[must_use]
+    pub const fn platform_backends() -> wgpu::Backends {
+        #[cfg(target_os = "ios")]
+        {
+            wgpu::Backends::METAL
+        }
+        #[cfg(not(target_os = "ios"))]
+        {
+            wgpu::Backends::all()
+        }
+    }
+
+    /// Builds a [`wgpu::InstanceDescriptor`] using
+    /// [`platform_backends`](Self::platform_backends) for the backend set.
+    ///
+    /// This is the iOS-correct counterpart of
+    /// `wgpu::InstanceDescriptor::new_without_display_handle()`: identical
+    /// except `backends` is `METAL` instead of `all()` when targeting
+    /// `aarch64-apple-ios(-sim)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_wgpu::device::GpuContext;
+    ///
+    /// let desc = GpuContext::instance_descriptor();
+    /// assert_eq!(desc.backends, GpuContext::platform_backends());
+    /// ```
+    #[must_use]
+    pub fn instance_descriptor() -> wgpu::InstanceDescriptor {
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = Self::platform_backends();
+        desc
+    }
+
+    /// Creates a [`wgpu::Instance`] restricted to
+    /// [`platform_backends`](Self::platform_backends).
+    ///
+    /// On iOS the instance only enables the Metal backend; elsewhere this
+    /// is equivalent to [`wgpu::Instance::default`]. Surfaces created from
+    /// the returned instance work with UIKit `CAMetalLayer`-backed winit
+    /// windows on iOS.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no backend feature for the active target platform is
+    /// enabled in the `wgpu` build — the workspace manifest enables the
+    /// `metal` backend unconditionally, so this cannot happen on iOS.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::device::GpuContext;
+    ///
+    /// let instance = GpuContext::create_instance();
+    /// ```
+    #[must_use]
+    pub fn create_instance() -> wgpu::Instance {
+        wgpu::Instance::new(Self::instance_descriptor())
+    }
+
     /// Creates a new [`GpuContext`] by requesting a high-performance adapter
     /// and its associated device and queue.
     ///
@@ -142,7 +222,7 @@ impl GpuContext {
     pub fn with_power_preference(
         power_preference: wgpu::PowerPreference,
     ) -> Result<Self, GpuContextError> {
-        let instance = wgpu::Instance::default();
+        let instance = Self::create_instance();
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference,
@@ -191,7 +271,7 @@ impl GpuContext {
     /// assert!(ctx.is_ok() || ctx.is_err());
     /// ```
     pub fn with_cpu_fallback() -> Result<Self, GpuContextError> {
-        let instance = wgpu::Instance::default();
+        let instance = Self::create_instance();
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,

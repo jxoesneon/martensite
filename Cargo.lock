@@ -2408,6 +2408,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f0fb0570afe1fed943c5c3d4102d5358592d8625fda6a0007fdbe65a92fba96"
 
 [[package]]
+name = "ios_demo"
+version = "0.16.0"
+dependencies = [
+ "martensite-window",
+ "winit",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2794,15 +2802,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "martensite-access-platform"
+version = "0.16.0"
+dependencies = [
+ "accesskit",
+ "accesskit_ios",
+]
+
+[[package]]
 name = "martensite-accesskit-winit"
 version = "0.16.0"
 dependencies = [
  "accesskit",
  "accesskit_android",
- "accesskit_ios",
  "accesskit_macos",
  "accesskit_unix",
  "accesskit_windows",
+ "martensite-access-platform",
  "raw-window-handle",
  "softbuffer",
  "winit",

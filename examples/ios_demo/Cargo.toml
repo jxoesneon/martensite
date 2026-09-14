@@ -1,0 +1,28 @@
+[package]
+name = "ios_demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "iOS demo shell for Martensite — winit 0.31 UIKit lifecycle, safe area, touch, IME."
+publish = false
+readme = "README.md"
+
+[lib]
+# `staticlib` produces `libios_demo.a` for linking into an Xcode /
+# cargo-mobile2 app target; `rlib` keeps the crate usable by host tooling
+# (`cargo check`/`cargo test`) on desktop.
+name = "ios_demo"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+martensite-window = { workspace = true }
+winit = { workspace = true }
+
+[lints]
+workspace = true
