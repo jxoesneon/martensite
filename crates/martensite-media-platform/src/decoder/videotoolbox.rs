@@ -20,8 +20,15 @@
 //!   (Annex-B). This is best-effort: hardware decoders may refuse to emit
 //!   frames until they have seen VPS/SPS/PPS in the stream.
 //! - AV1 has no `CMVideoFormatDescriptionCreateFromAV1ParameterSets`
-//!   equivalent in `objc2-core-media` 0.3.2, so `av1C` extradata is ignored
-//!   and a bare format description is used.
+//!   equivalent; the `av01` format description is instead built with
+//!   `CMVideoFormatDescriptionCreate` plus an extensions dictionary carrying
+//!   the `AV1CodecConfigurationRecord` as a `SampleDescriptionExtensionAtoms`
+//!   `av1C` atom — the same bridge FFmpeg (`videotoolbox_av1.c`), WebKit, and
+//!   Chromium use. With `codec_config` the record is used verbatim; without
+//!   it session creation is deferred until the first access unit carrying a
+//!   sequence-header OBU arrives, and the record is synthesized in-band.
+//!   Samples are temporal units in low-overhead OBU format (the `av01`
+//!   sample-entry framing — no Annex-B style conversion exists for AV1).
 //! - VP9 is rejected up front: although `kCMVideoCodecType_VP9` exists, no
 //!   CoreMedia helper builds a `vpcC` format description and VideoToolbox's
 //!   VP9 support is not usable through this path.
@@ -60,6 +67,7 @@ use objc2_core_media::{
     kCMFormatDescriptionExtension_ContentLightLevelInfo,
     kCMFormatDescriptionExtension_FullRangeVideo,
     kCMFormatDescriptionExtension_MasteringDisplayColorVolume,
+    kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms,
     kCMFormatDescriptionExtension_TransferFunction,
     kCMFormatDescriptionTransferFunction_ITU_R_2020,
     kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG,
@@ -87,6 +95,7 @@ use objc2_video_toolbox::{
     VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord, VTDecompressionSession,
 };
 
+use crate::decoder::av1;
 use crate::decoder::{
     DecodeError, DecodeStats, DecodedFrame, DecoderBackend, DecoderConfig, EncodedPacket,
     HdrSideData, VideoCodec,
@@ -129,6 +138,24 @@ extern "C-unwind" {
         num_values: isize,
         key_callbacks: *const c_void,
         value_callbacks: *const c_void,
+    ) -> *mut c_void;
+    /// Creates an immutable `CFData` object copying `length` bytes from
+    /// `bytes`. Returns a `+1` reference.
+    ///
+    /// Vendored for the AV1 path: `objc2-core-foundation` is not a direct
+    /// dependency, so the `av1C` atom payload handed to CoreMedia is wrapped
+    /// through this shim (see the module-level CoreFoundation note).
+    fn CFDataCreate(allocator: *const c_void, bytes: *const u8, length: isize) -> *mut c_void;
+    /// Creates a `CFString` from a NUL-terminated C string in `encoding`
+    /// (`kCFStringEncodingUTF8` = `0x08000100`). Returns a `+1` reference.
+    ///
+    /// Vendored for the AV1 path: the `av1C` atom-dictionary key has no
+    /// exported `kCMFormatDescription*` constant — FFmpeg/WebKit use
+    /// `CFSTR("av1C")` — so the key string is constructed through this shim.
+    fn CFStringCreateWithCString(
+        allocator: *const c_void,
+        c_str: *const core::ffi::c_char,
+        encoding: u32,
     ) -> *mut c_void;
 }
 
@@ -581,31 +608,43 @@ unsafe fn parse_hdr_side_data(desc: &CMFormatDescription) -> Option<HdrSideData>
 // Decoder-specification dictionary helper.
 // ---------------------------------------------------------------------------
 
-/// Builds a single-entry `CFDictionary` `{key: value}` with the standard
-/// `kCFType*` callbacks (keys and values are retained).
+/// Builds a `CFDictionary` from `(key, value)` pairs with the standard
+/// `kCFType*` callbacks (keys and values are retained, so caller-owned `+1`
+/// references may be released once the dictionary exists).
 ///
 /// Returns the raw `+1` dictionary pointer, or `None` on failure.
 ///
 /// # Safety
 ///
-/// `key` and `value` must be valid `CFTypeRef`s.
-unsafe fn cf_dict_one(key: *const c_void, value: *const c_void) -> Option<NonNull<c_void>> {
-    let keys = [key];
-    let values = [value];
-    // SAFETY: `keys`/`values` are arrays of one valid CFTypeRef each; the
-    // callback-table globals are the standard kCFType* tables exported by
-    // CoreFoundation. The returned pointer is a +1 object owned by us.
+/// Every key and value in `entries` must be a valid `CFTypeRef`.
+unsafe fn cf_dict(entries: &[(*const c_void, *const c_void)]) -> Option<NonNull<c_void>> {
+    let keys: Vec<*const c_void> = entries.iter().map(|&(k, _)| k).collect();
+    let values: Vec<*const c_void> = entries.iter().map(|&(_, v)| v).collect();
+    // SAFETY: `keys`/`values` are parallel non-empty arrays of valid
+    // CFTypeRefs; the callback-table globals are the standard kCFType* tables
+    // exported by CoreFoundation. The returned pointer is a +1 object owned
+    // by us.
     let dict = unsafe {
         CFDictionaryCreate(
             std::ptr::null(),
             keys.as_ptr(),
             values.as_ptr(),
-            1,
+            entries.len() as isize,
             (&raw const kCFTypeDictionaryKeyCallBacks).cast::<c_void>(),
             (&raw const kCFTypeDictionaryValueCallBacks).cast::<c_void>(),
         )
     };
     NonNull::new(dict)
+}
+
+/// Builds a single-entry `CFDictionary` `{key: value}`; see [`cf_dict`].
+///
+/// # Safety
+///
+/// `key` and `value` must be valid `CFTypeRef`s.
+unsafe fn cf_dict_one(key: *const c_void, value: *const c_void) -> Option<NonNull<c_void>> {
+    // SAFETY: forwarded caller invariants.
+    unsafe { cf_dict(&[(key, value)]) }
 }
 
 /// A `CFTypeRef` static reference as a raw pointer.
@@ -750,6 +789,31 @@ unsafe extern "C-unwind" fn decompression_output_callback(
 // VideoToolboxDecoder
 // ---------------------------------------------------------------------------
 
+/// A live decode pipeline: the `VTDecompressionSession` plus the format
+/// description it was created with (retained so `CMSampleBuffer` creation
+/// can reference the same description).
+struct LiveSession {
+    /// The decompression session (`+1` CF object).
+    session: CfOwned<VTDecompressionSession>,
+    /// The video format description the session was created with.
+    format_desc: CfOwned<CMFormatDescription>,
+}
+
+/// AV1 deferred-init state: everything needed to build the session once a
+/// sequence-header OBU arrives in-band (used only when `codec_config` is
+/// absent — there is no out-of-band `av1C` to seed the format description).
+struct DeferredAv1 {
+    /// `DecoderConfig::width`, used when the sequence header yields no size.
+    width: u32,
+    /// `DecoderConfig::height`, used when the sequence header yields no size.
+    height: u32,
+    /// `DecoderConfig::allow_software`, honoured when the session is built.
+    allow_software: bool,
+    /// Packets accepted before the sequence header arrived; replayed in
+    /// order once the session exists.
+    buffered: Vec<EncodedPacket>,
+}
+
 /// Hardware video decoder backed by a `VTDecompressionSession`.
 ///
 /// Decoded frames are emitted as [`HardwareHandle::IoSurface`] handles; import
@@ -767,19 +831,20 @@ unsafe extern "C-unwind" fn decompression_output_callback(
 /// assert!(decoder.is_ok());
 /// ```
 pub struct VideoToolboxDecoder {
-    /// The decompression session (`+1` CF object).
-    session: CfOwned<VTDecompressionSession>,
-    /// The video format description the session was created with.
-    format_desc: CfOwned<CMFormatDescription>,
+    /// The live session. `None` only in deferred AV1 mode, until the first
+    /// sequence-header OBU arrives.
+    live: Option<LiveSession>,
+    /// Deferred AV1 init state (`Some` iff `live` is `None`).
+    deferred: Option<DeferredAv1>,
     /// State shared with the output callback via `decompressionOutputRefCon`.
-    /// Declared before `session` matters not — `Drop` invalidates the session
+    /// Declared before `live` matters not — `Drop` invalidates the session
     /// (draining all callbacks) before any field is released.
     state: Arc<CallbackState>,
     /// Whether a keyframe has been accepted since creation/last flush.
     seen_keyframe: bool,
     /// Decode-path telemetry.
     stats: DecodeStats,
-    /// HDR side-data parsed from the format description at creation.
+    /// HDR side-data parsed from the format description at session creation.
     hdr: Option<HdrSideData>,
 }
 
@@ -807,9 +872,10 @@ impl VideoToolboxDecoder {
     ///
     /// Returns [`MediaError`] (converted from [`DecodeError`]) when the codec
     /// is unsupported, the extradata is malformed, or session creation fails.
+    /// An AV1 config without `codec_config` always succeeds here — session
+    /// creation is deferred to [`send_packet`](Self::send_packet), which
+    /// reports the failure once the sequence header arrives.
     pub fn create(config: &DecoderConfig) -> Result<Self, MediaError> {
-        let format_desc = create_format_description(config)?;
-
         let state = Arc::new(CallbackState {
             inner: Mutex::new(SharedState {
                 queue: VecDeque::new(),
@@ -823,11 +889,24 @@ impl VideoToolboxDecoder {
             }),
         });
 
-        let session = create_session(format_desc.get(), &state, config.allow_software)?;
+        // AV1 without extradata has no out-of-band av1C record to seed the
+        // format description with; session creation is deferred until the
+        // first sequence-header OBU arrives in-band (`send_packet`).
+        let deferred_av1 = config.codec == VideoCodec::Av1 && config.codec_config.is_none();
 
-        // SAFETY: `format_desc` is a valid, live CMFormatDescription.
-        let hdr = unsafe { parse_hdr_side_data(format_desc.get()) };
-        lock(&state.inner).hdr.clone_from(&hdr);
+        let mut live = None;
+        let mut hdr = None;
+        if !deferred_av1 {
+            let format_desc = create_format_description(config)?;
+            let session = create_session(format_desc.get(), &state, config.allow_software)?;
+            // SAFETY: `format_desc` is a valid, live CMFormatDescription.
+            hdr = unsafe { parse_hdr_side_data(format_desc.get()) };
+            lock(&state.inner).hdr.clone_from(&hdr);
+            live = Some(LiveSession {
+                session,
+                format_desc,
+            });
+        }
 
         let stats = DecodeStats {
             backend: Some(DecoderBackend::VideoToolbox),
@@ -835,8 +914,13 @@ impl VideoToolboxDecoder {
         };
 
         Ok(Self {
-            session,
-            format_desc,
+            live,
+            deferred: deferred_av1.then(|| DeferredAv1 {
+                width: config.width,
+                height: config.height,
+                allow_software: config.allow_software,
+                buffered: Vec::new(),
+            }),
             state,
             seen_keyframe: false,
             stats,
@@ -868,6 +952,88 @@ impl VideoToolboxDecoder {
             self.seen_keyframe = true;
         }
 
+        if self.live.is_none() {
+            return self.send_packet_deferred_av1(packet);
+        }
+        self.submit(packet)
+    }
+
+    /// `send_packet` path for deferred AV1 init (`codec_config` absent).
+    ///
+    /// Packets are buffered until a temporal unit carrying a sequence-header
+    /// OBU arrives; the `av1C` record is then synthesized from it, the live
+    /// session is created, and the buffered packets are replayed in order —
+    /// mirroring how a demuxer would deliver `av1C` extradata plus `av01`
+    /// samples. Buffered packets count toward `packets_received` only once
+    /// they are actually submitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError`] when the sequence header is malformed or
+    /// session creation fails (e.g. no hardware decoder and software decode
+    /// disallowed).
+    fn send_packet_deferred_av1(&mut self, packet: &EncodedPacket) -> Result<(), MediaError> {
+        let Some(deferred) = &mut self.deferred else {
+            // `live` is `None` iff `deferred` is `Some`; unreachable unless a
+            // future state machine violates that invariant.
+            return Err(DecodeError::Fatal("decoder session was never created".to_string()).into());
+        };
+        let Some(seq_obu) = av1::sequence_header_obu(&packet.data) else {
+            // No sequence header yet — buffer and wait for the temporal unit
+            // that carries one. An AV1 decoder cannot emit frames before it
+            // anyway.
+            deferred.buffered.push(packet.clone());
+            return Ok(());
+        };
+        let Some(seq) = av1::parse_sequence_header(seq_obu.payload) else {
+            return Err(DecodeError::StreamCorrupt(
+                "malformed AV1 sequence header OBU".to_string(),
+            )
+            .into());
+        };
+        let record = av1::codec_config_record(&seq_obu, &seq);
+        let buffered = std::mem::take(&mut deferred.buffered);
+        let (width, height, allow_software) =
+            (deferred.width, deferred.height, deferred.allow_software);
+
+        // The sequence header's coded size is authoritative; fall back to
+        // the configured dimensions when the header yielded zero.
+        let width = seq.max_frame_width.max(width);
+        let height = seq.max_frame_height.max(height);
+
+        let format_desc = create_av1_format_description(&record, width as i32, height as i32)?;
+        let session = create_session(format_desc.get(), &self.state, allow_software)?;
+        // SAFETY: `format_desc` is a valid, live CMFormatDescription.
+        let hdr = unsafe { parse_hdr_side_data(format_desc.get()) };
+        lock(&self.state.inner).hdr.clone_from(&hdr);
+        self.hdr.clone_from(&hdr);
+
+        self.live = Some(LiveSession {
+            session,
+            format_desc,
+        });
+        self.deferred = None;
+
+        for buffered_packet in buffered {
+            self.submit(&buffered_packet)?;
+        }
+        self.submit(packet)
+    }
+
+    /// Submits one access unit to the live decompression session: the packet
+    /// is copied into a `CMBlockBuffer`/`CMSampleBuffer` and passed to
+    /// `VTDecompressionSessionDecodeFrame` with asynchronous decompression
+    /// enabled. Deferred-AV1 packets are routed here only once the session
+    /// exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError`] (converted from [`DecodeError`]) on
+    /// CoreMedia/VideoToolbox failures, or when no session exists.
+    fn submit(&mut self, packet: &EncodedPacket) -> Result<(), MediaError> {
+        let Some(live) = &self.live else {
+            return Err(DecodeError::Fatal("decoder session was never created".to_string()).into());
+        };
         let len = packet.data.len();
         let block_buffer = create_block_buffer(&packet.data)?;
 
@@ -909,7 +1075,7 @@ impl VideoToolboxDecoder {
                 true,
                 None,
                 std::ptr::null_mut(),
-                Some(self.format_desc.get()),
+                Some(live.format_desc.get()),
                 1,
                 1,
                 &raw const timing,
@@ -936,7 +1102,7 @@ impl VideoToolboxDecoder {
         // asynchronous delivery, so the local buffers may be released when
         // this call returns.
         let status = unsafe {
-            self.session.get().decode_frame(
+            live.session.get().decode_frame(
                 sample_buffer.get(),
                 VTDecodeFrameFlags::Frame_EnableAsynchronousDecompression,
                 std::ptr::null_mut(),
@@ -1003,13 +1169,17 @@ impl VideoToolboxDecoder {
     /// Returns [`MediaError`] (converted from [`DecodeError::Fatal`]) when the
     /// session reports a failure while draining.
     pub fn flush(&mut self) -> Result<(), MediaError> {
-        // SAFETY: the session is live; both are documented drain entry points
-        // callable from any thread.
-        let (finish_status, wait_status) = unsafe {
-            (
-                self.session.get().finish_delayed_frames(),
-                self.session.get().wait_for_asynchronous_frames(),
-            )
+        // SAFETY: the session (if created) is live; both are documented
+        // drain entry points callable from any thread.
+        let (finish_status, wait_status) = if let Some(live) = &self.live {
+            unsafe {
+                (
+                    live.session.get().finish_delayed_frames(),
+                    live.session.get().wait_for_asynchronous_frames(),
+                )
+            }
+        } else {
+            (0, 0)
         };
         {
             let mut shared = lock(&self.state.inner);
@@ -1020,6 +1190,11 @@ impl VideoToolboxDecoder {
             for _ in 0..dropped {
                 self.stats.record_rejection();
             }
+        }
+        // A flush resets stream state: packets buffered while waiting for
+        // the AV1 sequence header are stale input, not a reorder backlog.
+        if let Some(deferred) = &mut self.deferred {
+            deferred.buffered.clear();
         }
         self.seen_keyframe = false;
         let status = if finish_status != 0 {
@@ -1050,11 +1225,15 @@ impl VideoToolboxDecoder {
     /// Returns [`MediaError`] (converted from [`DecodeError::Fatal`]) when the
     /// session reports a failure while draining.
     pub fn end_of_stream(&mut self) -> Result<(), MediaError> {
-        // SAFETY: the session is live; both are documented drain entry
-        // points callable from any thread.
-        let status = unsafe {
-            self.session.get().finish_delayed_frames();
-            self.session.get().wait_for_asynchronous_frames()
+        // SAFETY: the session (if created) is live; both are documented
+        // drain entry points callable from any thread.
+        let status = if let Some(live) = &self.live {
+            unsafe {
+                live.session.get().finish_delayed_frames();
+                live.session.get().wait_for_asynchronous_frames()
+            }
+        } else {
+            0
         };
         if status != 0 {
             return Err(DecodeError::Fatal(format!(
@@ -1089,13 +1268,15 @@ impl VideoToolboxDecoder {
 
 impl Drop for VideoToolboxDecoder {
     fn drop(&mut self) {
-        // SAFETY: the session is live. Draining + invalidating guarantees no
-        // output callback can still run (and touch `state`'s refcon pointer)
-        // after this point.
-        unsafe {
-            self.session.get().finish_delayed_frames();
-            self.session.get().wait_for_asynchronous_frames();
-            self.session.get().invalidate();
+        if let Some(live) = &self.live {
+            // SAFETY: the session is live. Draining + invalidating guarantees
+            // no output callback can still run (and touch `state`'s refcon
+            // pointer) after this point.
+            unsafe {
+                live.session.get().finish_delayed_frames();
+                live.session.get().wait_for_asynchronous_frames();
+                live.session.get().invalidate();
+            }
         }
     }
 }
@@ -1164,8 +1345,18 @@ fn create_format_description(
                 )
             }
         }
-        // AV1: `objc2-core-media` 0.3.2 has no av1C → CMFormatDescription
-        // bridge, and Annex-B / deferred mode uses the bare description.
+        // AV1 with an `av1C` record: the `av01` description is built through
+        // the SampleDescriptionExtensionAtoms bridge (no parameter-set
+        // helper exists for AV1).
+        (VideoCodec::Av1, Some(record)) => {
+            return create_av1_format_description(
+                record,
+                config.width as i32,
+                config.height as i32,
+            );
+        }
+        // Bare codec/dimensions description: deferred (Annex-B) H.264/HEVC,
+        // or any codec/extradata combination not handled above.
         _ => {
             // SAFETY: `raw` is a valid out-pointer; width/height of 0 mean
             // "derive from stream" and are passed through to CoreMedia.
@@ -1185,6 +1376,102 @@ fn create_format_description(
     if status != 0 {
         return Err(DecodeError::Fatal(format!(
             "CMVideoFormatDescriptionCreate failed: OSStatus {status}"
+        )));
+    }
+    // SAFETY: on success `raw` is a +1 CMFormatDescription we own.
+    unsafe { CfOwned::from_owned(raw.cast_mut()) }
+        .ok_or_else(|| DecodeError::Fatal("null CMFormatDescription".to_string()))
+}
+
+/// Wraps `bytes` in a `+1` `CFData` object.
+fn create_cf_data(bytes: &[u8]) -> Option<CfOwned<c_void>> {
+    // SAFETY: `bytes` points to `bytes.len()` readable bytes; a null
+    // allocator selects kCFAllocatorDefault. The result is a +1 object.
+    let data = unsafe { CFDataCreate(std::ptr::null(), bytes.as_ptr(), bytes.len() as isize) };
+    // SAFETY: +1 Create-rule object on success.
+    unsafe { CfOwned::from_owned(data) }
+}
+
+/// Wraps `s` in a `+1` `CFString` (UTF-8). `s` must not contain interior
+/// NUL bytes (caller supplies fixed ASCII literals).
+fn create_cf_string(s: &str) -> Option<CfOwned<c_void>> {
+    const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+    let c_str = std::ffi::CString::new(s).ok()?;
+    // SAFETY: `c_str` is a valid NUL-terminated C string that outlives the
+    // call (the created CFString copies it); a null allocator selects
+    // kCFAllocatorDefault. The result is a +1 object.
+    let string = unsafe {
+        CFStringCreateWithCString(std::ptr::null(), c_str.as_ptr(), K_CF_STRING_ENCODING_UTF8)
+    };
+    // SAFETY: +1 Create-rule object on success.
+    unsafe { CfOwned::from_owned(string) }
+}
+
+/// Builds an `av01` `CMVideoFormatDescription` from an
+/// `AV1CodecConfigurationRecord` (`record`).
+///
+/// There is no `CMVideoFormatDescriptionCreateFromAV1ParameterSets`, so the
+/// record is carried as the `av1C` payload of the
+/// `kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms`
+/// dictionary — the path FFmpeg's `videotoolbox_av1.c`, WebKit
+/// (`CMUtilities.mm`), and Chromium (`video_toolbox_av1_accelerator.cc`)
+/// all use.
+fn create_av1_format_description(
+    record: &[u8],
+    width: i32,
+    height: i32,
+) -> Result<CfOwned<CMFormatDescription>, DecodeError> {
+    if !av1::is_valid_av1c(record) {
+        return Err(DecodeError::StreamCorrupt(
+            "malformed av1C record".to_string(),
+        ));
+    }
+    let atom_key = create_cf_string("av1C")
+        .ok_or_else(|| DecodeError::Fatal("CFStringCreateWithCString failed".to_string()))?;
+    let atom_data = create_cf_data(record)
+        .ok_or_else(|| DecodeError::Fatal("CFDataCreate failed".to_string()))?;
+    // SAFETY: both arguments are valid +1 CFTypeRefs we own; the dictionary
+    // retains them (kCFType callbacks), so they may be dropped after.
+    let atoms = unsafe {
+        cf_dict_one(
+            atom_key.ptr.as_ptr().cast_const(),
+            atom_data.ptr.as_ptr().cast_const(),
+        )
+    }
+    .ok_or_else(|| DecodeError::Fatal("CFDictionaryCreate (av1C atoms) failed".to_string()))?;
+    // SAFETY: the extension key is a global CFString and `atoms` is a valid
+    // +1 CFDictionary we own; the extensions dictionary retains it.
+    let extensions = unsafe {
+        cf_dict_one(
+            cf_key_ptr(kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms),
+            atoms.as_ptr().cast(),
+        )
+    }
+    .ok_or_else(|| DecodeError::Fatal("CFDictionaryCreate (extensions) failed".to_string()))?;
+
+    let mut raw: *const CMFormatDescription = std::ptr::null();
+    // SAFETY: `extensions` is a valid CFDictionary borrowed for the call
+    // (CoreMedia deep-copies the extensions); `raw` is a valid out-pointer
+    // receiving a +1 CMFormatDescription on success.
+    let status = unsafe {
+        CMVideoFormatDescriptionCreate(
+            None,
+            kCMVideoCodecType_AV1,
+            width,
+            height,
+            Some(&*extensions.as_ptr().cast()),
+            NonNull::from(&mut raw),
+        )
+    };
+    // SAFETY: `extensions`/`atoms` are +1 CF objects we own; balanced
+    // releases (the dictionaries retained their contents at creation).
+    unsafe {
+        CFRelease(extensions.as_ptr());
+        CFRelease(atoms.as_ptr());
+    }
+    if status != 0 {
+        return Err(DecodeError::Fatal(format!(
+            "CMVideoFormatDescriptionCreate (av01) failed: OSStatus {status}"
         )));
     }
     // SAFETY: on success `raw` is a +1 CMFormatDescription we own.

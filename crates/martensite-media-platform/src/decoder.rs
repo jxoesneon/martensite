@@ -22,6 +22,9 @@
 use crate::surface::{HardwareHandle, MediaError, VideoFrameMetadata};
 
 #[cfg(all(feature = "decoder-videotoolbox", target_os = "macos"))]
+mod av1;
+
+#[cfg(all(feature = "decoder-videotoolbox", target_os = "macos"))]
 pub mod videotoolbox;
 
 #[cfg(all(feature = "decoder-mf", target_os = "windows"))]
