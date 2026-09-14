@@ -375,7 +375,11 @@ impl WidgetArena {
         }
 
         // Rebuild cold storage in snapshot order, reusing live widgets
-        // and fabricated replacements.
+        // and fabricated replacements. Every snapshot id resolves
+        // exactly once — ids were validated unique above, and each is
+        // either alive (moved into `widgets`) or present in
+        // `fabricated` — so the `else` below is defensive and
+        // unreachable; it exists only so the loop stays total.
         let mut cold_nodes = Vec::with_capacity(state.cold.len());
         for (i, entry) in state.cold.iter().enumerate() {
             let id = ids[i];
