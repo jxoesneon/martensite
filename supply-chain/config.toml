@@ -16,6 +16,9 @@ audit-as-crates-io = false
 [policy.martensite-access]
 audit-as-crates-io = false
 
+[policy.martensite-access-platform]
+audit-as-crates-io = false
+
 [policy.martensite-accesskit-winit]
 audit-as-crates-io = false
 
@@ -95,6 +98,9 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy.martensite-theme]
+audit-as-crates-io = false
+
+[policy.martensite-vello]
 audit-as-crates-io = false
 
 [policy.martensite-wgpu]
@@ -252,7 +258,7 @@ version = "0.72.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.bitflags]]
-version = "2.13.1"
+version = "2.13.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.block-buffer]]
@@ -276,7 +282,7 @@ version = "1.25.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.bytemuck_derive]]
-version = "1.12.0"
+version = "1.12.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.bytes]]
@@ -316,7 +322,7 @@ version = "0.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.cc]]
-version = "1.4.5"
+version = "1.4.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.cesu8]]
@@ -356,15 +362,15 @@ version = "1.9.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap]]
-version = "4.6.6"
+version = "4.6.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_builder]]
-version = "4.6.6"
+version = "4.6.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_lex]]
-version = "1.1.0"
+version = "1.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.color]]
@@ -377,6 +383,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.concurrent-queue]]
 version = "2.5.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.console_error_panic_hook]]
+version = "0.1.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.core-foundation]]
@@ -412,7 +422,7 @@ version = "0.3.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.crc32fast]]
-version = "1.5.1"
+version = "1.5.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.criterion]]
@@ -839,6 +849,10 @@ criteria = "safe-to-deploy"
 version = "0.10.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.itertools]]
+version = "0.13.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.itoa]]
 version = "1.0.18"
 criteria = "safe-to-deploy"
@@ -916,7 +930,7 @@ version = "0.2.16"
 criteria = "safe-to-deploy"
 
 [[exemptions.libredox]]
-version = "0.1.23"
+version = "0.1.24"
 criteria = "safe-to-deploy"
 
 [[exemptions.linebender_resource_handle]]
@@ -1316,7 +1330,7 @@ version = "0.2.37"
 criteria = "safe-to-deploy"
 
 [[exemptions.proc-macro-crate]]
-version = "2.0.0"
+version = "2.0.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.proc-macro-crate]]
@@ -1560,7 +1574,7 @@ version = "1.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.smallvec]]
-version = "1.16.0"
+version = "1.16.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.smithay-client-toolkit]]
@@ -1692,7 +1706,7 @@ version = "1.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.tinyvec]]
-version = "1.13.2"
+version = "1.13.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio]]
@@ -1700,7 +1714,7 @@ version = "1.53.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml]]
-version = "0.8.23"
+version = "0.8.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml]]
@@ -1708,19 +1722,15 @@ version = "0.9.12+spec-1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml_datetime]]
-version = "0.6.11"
+version = "0.6.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml_edit]]
-version = "0.20.7"
+version = "0.20.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml_edit]]
-version = "0.22.27"
-criteria = "safe-to-deploy"
-
-[[exemptions.toml_edit]]
-version = "0.25.13+spec-1.1.0"
+version = "0.25.15+spec-1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml_parser]]
@@ -1776,7 +1786,7 @@ version = "2.5.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.uuid]]
-version = "1.26.0"
+version = "1.26.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.vello_encoding]]
@@ -1892,6 +1902,10 @@ version = "30.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.wgpu-core-deps-emscripten]]
+version = "30.0.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.wgpu-core-deps-wasm]]
 version = "30.0.1"
 criteria = "safe-to-deploy"
 
