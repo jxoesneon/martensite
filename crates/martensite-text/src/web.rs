@@ -16,8 +16,12 @@
 //!   [`fetch_and_load_font`].
 //!
 //! Both paths funnel into [`FontManager::load_font_data`], which parses
-//! via swash inside `catch_unwind`, so a malformed download cannot abort
-//! the wasm module.
+//! via swash. On native targets that parse is wrapped in
+//! `catch_unwind`, so malformed font data is skipped rather than
+//! crashing — **on `wasm32-unknown-unknown` that hardening is inert**:
+//! `panic=abort` means a panic traps the module and `catch_unwind`
+//! never runs, so a malformed font can still take down the page. Treat
+//! fetched fonts as untrusted input.
 //!
 //! COOP/COEP note: under `Cross-Origin-Embedder-Policy: require-corp`,
 //! cross-origin font URLs must carry a `Cross-Origin-Resource-Policy`
@@ -108,7 +112,8 @@ pub fn bundled_font_manager(fonts: &[&'static [u8]]) -> FontManager {
 ///
 /// This is a convenience wrapper over [`FontManager::load_font_data`] for
 /// `include_bytes!`-style `'static` slices; it shares that method's
-/// `catch_unwind` hardening against malformed font data.
+/// `catch_unwind` hardening against malformed font data — inert on wasm
+/// (`panic=abort`), where malformed data can still trap the module.
 ///
 /// # Examples
 ///

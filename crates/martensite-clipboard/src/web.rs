@@ -204,6 +204,11 @@ impl WebClipboard {
     /// The write is allowed inside transient user gestures (and, on most
     /// browsers, requires the document to be focused).
     ///
+    /// This caller-driven write intentionally bypasses the FIFO queue
+    /// that serializes the implicit `set_contents`/`clear` writes: it is
+    /// awaited inside the caller's gesture, so no ordering guarantee
+    /// relative to queued fire-and-forget writes is provided or needed.
+    ///
     /// # Errors
     ///
     /// [`WebClipboardError::Unavailable`] when the API is absent,

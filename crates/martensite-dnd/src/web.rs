@@ -129,17 +129,49 @@ impl std::fmt::Debug for DropCapture {
 /// as their listeners are registered.
 type EventClosures = Vec<Closure<dyn FnMut(web_sys::Event)>>;
 
+/// User-callback cell: `Option` so [`emit_outcome`] can take the handler
+/// out before invoking it.
+type OutcomeCell = RefCell<Option<Box<dyn FnMut(DropOutcome)>>>;
+
 /// Internal shared state for the DOM listener closures.
+///
+/// Each piece lives in its own cell rather than one `RefCell<Shared>`:
+/// the DOM handlers invoke user code (the `on_outcome` callback and,
+/// inside [`DropBridge::handle`], registered `DropTarget`s), and any
+/// callback that calls back into the listener — `take_drop`,
+/// `last_transfer_id`, `set_on_outcome` — must not hit an outstanding
+/// `borrow_mut` and panic. Note `with_bridge` borrows the `bridge` cell,
+/// so `DropTarget` callbacks (which run *inside* `handle`) still cannot
+/// re-enter the bridge itself — that is an inherent `&mut` boundary,
+/// not a bug.
 struct Shared {
-    bridge: DropBridge,
+    bridge: RefCell<DropBridge>,
     /// Captured drop payloads keyed by transfer serial.
-    captures: HashMap<i64, DropCapture>,
+    captures: RefCell<HashMap<i64, DropCapture>>,
     /// Serial assigned to the most recent `drop`.
-    last_serial: Option<i64>,
+    last_serial: Cell<Option<i64>>,
     /// Monotonic transfer-id counter.
     next_serial: Cell<i64>,
     /// User callback receiving every [`DropOutcome`].
-    on_outcome: Box<dyn FnMut(DropOutcome)>,
+    on_outcome: OutcomeCell,
+}
+
+/// Invokes the `on_outcome` callback with no borrows held.
+///
+/// The handler is taken out of its cell, invoked, and reinstalled — so
+/// it may call any listener method, including `set_on_outcome` (a new
+/// handler installed mid-dispatch wins), without a double-borrow panic.
+/// A DOM event that re-enters dispatch while the slot is empty is
+/// dropped rather than queued.
+fn emit_outcome(shared: &Shared, outcome: DropOutcome) {
+    let mut cb = shared.on_outcome.borrow_mut().take();
+    if let Some(f) = cb.as_mut() {
+        f(outcome);
+    }
+    let mut slot = shared.on_outcome.borrow_mut();
+    if slot.is_none() {
+        *slot = cb;
+    }
 }
 
 /// Attaches HTML5 drag-and-drop listeners to a DOM element and drives a
@@ -164,7 +196,7 @@ struct Shared {
 /// ```
 #[derive(Clone)]
 pub struct WebDropListener {
-    shared: Rc<RefCell<Shared>>,
+    shared: Rc<Shared>,
     /// The element the listeners are attached to (kept for `detach`).
     element: EventTarget,
     /// Kept alive for the lifetime of `self` so the DOM listeners stay
@@ -246,13 +278,13 @@ impl WebDropListener {
     /// # }
     /// ```
     pub fn attach(element: &EventTarget) -> Result<Self, WebDndError> {
-        let shared = Rc::new(RefCell::new(Shared {
-            bridge: DropBridge::new(),
-            captures: HashMap::new(),
-            last_serial: None,
+        let shared = Rc::new(Shared {
+            bridge: RefCell::new(DropBridge::new()),
+            captures: RefCell::new(HashMap::new()),
+            last_serial: Cell::new(None),
             next_serial: Cell::new(1),
-            on_outcome: Box::new(|_| {}),
-        }));
+            on_outcome: RefCell::new(None),
+        });
 
         let mut closures: EventClosures = Vec::new();
 
@@ -280,12 +312,17 @@ impl WebDropListener {
                     let Some(transfer) = drag.data_transfer() else {
                         return;
                     };
-                    let outcome = shared.borrow_mut().bridge.handle(DropInput::Entered {
+                    // A new drag session supersedes any previous drop's
+                    // captures — clear them so `captures` cannot grow
+                    // without bound across drags.
+                    shared.captures.borrow_mut().clear();
+                    shared.last_serial.set(None);
+                    let outcome = shared.bridge.borrow_mut().handle(DropInput::Entered {
                         available_types: transfer_types(&transfer),
                         position: Some(event_position(drag)),
                         action: proposed_action(&transfer.effect_allowed()),
                     });
-                    (shared.borrow_mut().on_outcome)(outcome);
+                    emit_outcome(&shared, outcome);
                 }),
                 &mut closures,
             )?;
@@ -304,7 +341,7 @@ impl WebDropListener {
                     let Some(transfer) = drag.data_transfer() else {
                         return;
                     };
-                    let outcome = shared.borrow_mut().bridge.handle(DropInput::Moved {
+                    let outcome = shared.bridge.borrow_mut().handle(DropInput::Moved {
                         position: event_position(drag),
                         action: proposed_action(&transfer.effect_allowed()),
                     });
@@ -314,7 +351,7 @@ impl WebDropListener {
                     } else {
                         transfer.set_drop_effect("none");
                     }
-                    (shared.borrow_mut().on_outcome)(outcome);
+                    emit_outcome(&shared, outcome);
                 }),
                 &mut closures,
             )?;
@@ -333,15 +370,17 @@ impl WebDropListener {
                     let Some(transfer) = drag.data_transfer() else {
                         return;
                     };
-                    let mut shared_mut = shared.borrow_mut();
-                    let serial = shared_mut.next_serial.get();
-                    shared_mut.next_serial.set(serial + 1);
-                    shared_mut.captures.insert(serial, capture_drop(&transfer));
-                    shared_mut.last_serial = Some(serial);
-                    let outcome = shared_mut.bridge.handle(DropInput::Dropped {
+                    let serial = shared.next_serial.get();
+                    shared.next_serial.set(serial + 1);
+                    shared
+                        .captures
+                        .borrow_mut()
+                        .insert(serial, capture_drop(&transfer));
+                    shared.last_serial.set(Some(serial));
+                    let outcome = shared.bridge.borrow_mut().handle(DropInput::Dropped {
                         action: proposed_action(&transfer.effect_allowed()),
                     });
-                    (shared_mut.on_outcome)(outcome);
+                    emit_outcome(&shared, outcome);
                 }),
                 &mut closures,
             )?;
@@ -354,9 +393,8 @@ impl WebDropListener {
                 "dragleave",
                 Box::new(move |event: web_sys::Event| {
                     let _ = event;
-                    let mut shared_mut = shared.borrow_mut();
-                    let outcome = shared_mut.bridge.handle(DropInput::Left);
-                    (shared_mut.on_outcome)(outcome);
+                    let outcome = shared.bridge.borrow_mut().handle(DropInput::Left);
+                    emit_outcome(&shared, outcome);
                 }),
                 &mut closures,
             )?;
@@ -372,6 +410,10 @@ impl WebDropListener {
     /// Installs the callback invoked with each [`DropOutcome`] produced
     /// by DOM drag events.
     ///
+    /// The callback runs with no listener borrows held, so it may call
+    /// back into the listener (`take_drop`, `last_transfer_id`, even
+    /// `set_on_outcome`) freely.
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -380,11 +422,16 @@ impl WebDropListener {
     /// # }
     /// ```
     pub fn set_on_outcome(&self, callback: impl FnMut(DropOutcome) + 'static) {
-        self.shared.borrow_mut().on_outcome = Box::new(callback);
+        *self.shared.on_outcome.borrow_mut() = Some(Box::new(callback));
     }
 
     /// Returns a shared handle to the internal [`DropBridge`] so callers
     /// can register [`crate::DropTarget`]s and inspect sessions.
+    ///
+    /// The bridge is mutably borrowed for the duration of `f`; `f` must
+    /// not call `with_bridge` again (or run inside a `DropTarget`
+    /// callback, which already holds the bridge borrow). Other listener
+    /// methods (`take_drop`, `set_on_outcome`, …) are fine.
     ///
     /// # Examples
     ///
@@ -396,7 +443,7 @@ impl WebDropListener {
     /// # }
     /// ```
     pub fn with_bridge<R>(&self, f: impl FnOnce(&mut DropBridge) -> R) -> R {
-        f(&mut self.shared.borrow_mut().bridge)
+        f(&mut self.shared.bridge.borrow_mut())
     }
 
     /// Returns the [`PlatformTransferId`] serial of the most recent
@@ -414,10 +461,7 @@ impl WebDropListener {
     /// ```
     #[must_use]
     pub fn last_transfer_id(&self) -> Option<PlatformTransferId> {
-        self.shared
-            .borrow()
-            .last_serial
-            .map(PlatformTransferId::new)
+        self.shared.last_serial.get().map(PlatformTransferId::new)
     }
 
     /// Removes and returns the [`DropCapture`] stored under `id`, if any.
@@ -432,7 +476,7 @@ impl WebDropListener {
     /// ```
     #[must_use]
     pub fn take_drop(&self, id: PlatformTransferId) -> Option<DropCapture> {
-        self.shared.borrow_mut().captures.remove(&id.into_raw())
+        self.shared.captures.borrow_mut().remove(&id.into_raw())
     }
 
     /// Detaches all registered listeners from the element.

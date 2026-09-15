@@ -295,17 +295,25 @@ struct MirrorEntry {
     /// Whether the node supports `Action::Focus` — governs `tabindex`
     /// handling in [`WebA11yBridge::set_focus`].
     focusable: bool,
+    /// Whether the element currently carries text content (set for
+    /// text-leaf roles) — tracked so a role change off a leaf clears it
+    /// instead of leaving stale text behind.
+    has_text: bool,
     /// DOM listeners (click/focus/blur) kept alive for the element's
     /// lifetime.
     _closures: Vec<Closure<dyn FnMut(web_sys::Event)>>,
 }
 
-/// The shared mutable state the DOM event closures write into.
-struct Shared {
-    /// Callback for AT-driven actions (click/focus/blur on mirrored
-    /// elements).
-    action_handler: Box<dyn FnMut(ActionRequest)>,
-}
+/// The action-request handler slot shared with the DOM event closures.
+///
+/// `Option` so dispatch can *take* the handler out before invoking it —
+/// the DOM closures then run user code with no borrow held, so a handler
+/// may call back into the bridge (`set_action_handler`, `update`, …)
+/// without a `RefCell` double-borrow panic. This matters even without
+/// explicit reentrancy: `element.focus()` dispatches the DOM `focus`
+/// event *synchronously*, so `update` → `set_focus` → `focus()` would
+/// otherwise re-enter a closure while its `borrow_mut` is still live.
+type ActionHandler = Rc<RefCell<Option<Box<dyn FnMut(ActionRequest)>>>>;
 
 /// The minimal viable web accessibility bridge.
 ///
@@ -333,13 +341,22 @@ pub struct WebA11yBridge {
     entries: HashMap<u64, MirrorEntry>,
     /// DOM focus bookkeeping: the node currently mirrored as focused.
     focused: Option<u64>,
+    /// The DOM element last given `tabindex="0"`/`focus()` — tracked
+    /// separately from `focused` so a *re-created* entry under the same
+    /// id still gets focus reapplied instead of hitting the early
+    /// return.
+    focused_element: Option<HtmlElement>,
+    /// The currently attached tree root (its element hangs off
+    /// `container`), so a root change can detach the old root.
+    root: Option<u64>,
     /// When `false`, [`set_focus`](Self::set_focus) updates `tabindex`
     /// but does not call `element.focus()` — used to suspend DOM focus
     /// mirroring while an IME composition holds focus on the hidden
     /// input overlay.
     dom_focus_enabled: bool,
-    /// Shared handler slot for action requests from DOM events.
-    shared: Rc<RefCell<Shared>>,
+    /// Handler slot for action requests from DOM events (see
+    /// [`ActionHandler`] for why it is an `Option` cell).
+    action_handler: ActionHandler,
     /// The document used to create elements (kept for `update`).
     document: Document,
 }
@@ -412,10 +429,10 @@ impl WebA11yBridge {
             live,
             entries: HashMap::new(),
             focused: None,
+            focused_element: None,
+            root: None,
             dom_focus_enabled: true,
-            shared: Rc::new(RefCell::new(Shared {
-                action_handler: Box::new(|_| {}),
-            })),
+            action_handler: Rc::new(RefCell::new(None)),
             document,
         })
     }
@@ -434,7 +451,7 @@ impl WebA11yBridge {
     /// # }
     /// ```
     pub fn set_action_handler(&self, handler: impl FnMut(ActionRequest) + 'static) {
-        self.shared.borrow_mut().action_handler = Box::new(handler);
+        *self.action_handler.borrow_mut() = Some(Box::new(handler));
     }
 
     /// Returns the hidden container element (for tests/inspection).
@@ -483,8 +500,9 @@ impl WebA11yBridge {
     /// Announces `text` through the shared `aria-live` region.
     ///
     /// The region is rewritten in place; repeated identical announcements
-    /// get a trailing zero-width space to defeat DOM text-no-change dedup
-    /// in screen readers.
+    /// alternate a trailing zero-width space on/off so *every* call
+    /// produces a DOM text mutation — a fixed suffix would only defeat
+    /// the screen reader's text-no-change dedup once.
     ///
     /// # Examples
     ///
@@ -494,15 +512,19 @@ impl WebA11yBridge {
     /// # }
     /// ```
     pub fn announce(&self, text: &str) {
-        // Alternating suffix so announcing the same string twice still
-        // produces a text mutation AT will surface.
         let current = self.live.text_content().unwrap_or_default();
-        let suffix = if current.trim_end_matches('\u{200B}') == text.trim_end_matches('\u{200B}') {
-            "\u{200B}"
+        let next = if current.trim_end_matches('\u{200B}') == text {
+            // Same logical text again: toggle the ZWSP so the DOM text
+            // changes every time.
+            if current.ends_with('\u{200B}') {
+                text.to_string()
+            } else {
+                format!("{text}\u{200B}")
+            }
         } else {
-            ""
+            text.to_string()
         };
-        self.live.set_text_content(Some(&format!("{text}{suffix}")));
+        self.live.set_text_content(Some(&next));
     }
 
     /// Applies a [`TreeUpdate`]: creates/updates mirror elements,
@@ -538,11 +560,22 @@ impl WebA11yBridge {
             let focused = self.focused == Some(id);
             let entry = self.entry_for(id)?;
             entry.focusable = Self::apply_node(&entry.element, node, focused);
+            // Text-bearing leaf roles carry their text as element
+            // content; a node that re-roles away from a text leaf gets
+            // its stale text cleared.
+            let is_text_leaf = matches!(node.role(), Role::Label | Role::TextRun | Role::Paragraph);
+            if is_text_leaf {
+                entry.element.set_text_content(node_text(node).as_deref());
+                entry.has_text = true;
+            } else if entry.has_text {
+                entry.element.set_text_content(None);
+                entry.has_text = false;
+            }
             new_children.insert(id, node.children().iter().map(|c| c.0).collect());
             // Live-region mirroring: announce changed text on nodes
             // carrying a `live` property.
-            if let Some(live_kind) = node.live() {
-                if live_kind != Live::Off {
+            match node.live() {
+                Some(live_kind) if live_kind != Live::Off => {
                     if let Some(text) = node_text(node) {
                         if entry.live_text.as_deref() != Some(text.as_str()) {
                             entry.live_text = Some(text.clone());
@@ -550,6 +583,10 @@ impl WebA11yBridge {
                         }
                     }
                 }
+                // Live dropped/turned off: forget the announced baseline
+                // so a later re-enable re-announces instead of diffing
+                // against stale text.
+                _ => entry.live_text = None,
             }
         }
         for (text, live_kind) in announcements {
@@ -562,6 +599,10 @@ impl WebA11yBridge {
             let _ = self.live.set_attribute("aria-live", level);
             self.announce(&text);
         }
+        // Restore the resting level so a finished assertive announcement
+        // doesn't leave the region stuck on assertive for later
+        // `announce` calls.
+        let _ = self.live.set_attribute("aria-live", "polite");
 
         // Phase 2: rewire parent→child edges. Elements whose parent no
         // longer lists them are detached; their subtrees are purged.
@@ -595,18 +636,17 @@ impl WebA11yBridge {
         // re-parented in this same update — Phase 2 already moved its
         // element. Purging it anyway would destroy the moved subtree's
         // element, `entries` record, and listeners permanently. `claimed`
-        // therefore covers every id still referenced by a parent list —
-        // new lists from this update plus the stored lists of parents the
-        // update did not touch — and the tree root, which hangs off the
-        // container rather than any parent's list.
+        // therefore covers every id this update still references: all
+        // new parent→child lists plus the tree root, which hangs off the
+        // container rather than any parent's list. Stored `children` of
+        // parents the update did not touch are deliberately *not*
+        // consulted — a move always includes the new parent in the
+        // update, so a reference surviving only in stale bookkeeping is
+        // not a real claim, and honouring it would leak mirror elements
+        // whose node was deleted after moving.
         let mut claimed: std::collections::HashSet<u64> = std::collections::HashSet::new();
         for children in new_children.values() {
             claimed.extend(children.iter().copied());
-        }
-        for (id, entry) in &self.entries {
-            if !new_children.contains_key(id) {
-                claimed.extend(entry.children.iter().copied());
-            }
         }
         if let Some(tree) = &update.tree {
             claimed.insert(tree.root.0);
@@ -633,6 +673,24 @@ impl WebA11yBridge {
             if let Some(parent_entry) = self.entries.get_mut(parent_id) {
                 parent_entry.children = children.clone();
             }
+        }
+
+        // Root handoff: a replaced root is not in any parent's child
+        // list — its parent is the container — so Phase 3 never sees it.
+        // Detach and purge it here when the update no longer references
+        // it (a demoted-but-still-present old root is claimed and keeps
+        // its already-moved element).
+        if let Some(tree) = &update.tree {
+            let new_root = tree.root.0;
+            if let Some(old_root) = self.root {
+                if old_root != new_root && !claimed.contains(&old_root) {
+                    if let Some(entry) = self.entries.get(&old_root) {
+                        entry.element.remove();
+                    }
+                    self.purge_subtree(old_root, &claimed);
+                }
+            }
+            self.root = Some(new_root);
         }
 
         // Phase 4: focus.
@@ -680,10 +738,15 @@ impl WebA11yBridge {
     /// # }
     /// ```
     pub fn set_focus(&mut self, node_id: NodeId) {
-        if self.focused == Some(node_id.0) {
+        // Early-out only when the same id *and* the same element are
+        // still focused — an entry purged and re-created under the same
+        // id owns a fresh element that needs tabindex/focus reapplied.
+        let element = self.entries.get(&node_id.0).map(|e| e.element.clone());
+        if self.focused == Some(node_id.0) && self.focused_element == element {
             return;
         }
         self.focused = Some(node_id.0);
+        self.focused_element = element;
         for (id, entry) in &self.entries {
             if *id == node_id.0 {
                 let _ = entry.element.set_attribute("tabindex", "0");
@@ -715,6 +778,8 @@ impl WebA11yBridge {
             entry.element.remove();
         }
         self.focused = None;
+        self.focused_element = None;
+        self.root = None;
     }
 
     /// Fetches (creating if needed) the mirror entry for `id`.
@@ -731,14 +796,31 @@ impl WebA11yBridge {
                 ("focus", Action::Focus),
                 ("blur", Action::Blur),
             ] {
-                let shared = Rc::clone(&self.shared);
+                let handler = Rc::clone(&self.action_handler);
                 let closure = Closure::wrap(Box::new(move |_: web_sys::Event| {
-                    (shared.borrow_mut().action_handler)(ActionRequest {
-                        action,
-                        target_tree: TreeId::ROOT,
-                        target_node: NodeId(id),
-                        data: None,
-                    });
+                    // Take-and-reinstall: the handler runs with no borrow
+                    // held, so it may call `set_action_handler` or trigger
+                    // synchronous DOM events (e.g. `focus()` inside
+                    // `set_focus`) that re-enter a sibling closure without
+                    // a RefCell double-borrow panic. An event arriving
+                    // while the slot is empty (mid-dispatch reentrancy) is
+                    // dropped rather than recursed into.
+                    let mut cb = handler.borrow_mut().take();
+                    if let Some(f) = cb.as_mut() {
+                        f(ActionRequest {
+                            action,
+                            // The mirror models a single tree; multi-tree
+                            // sources are out of scope for the minimal
+                            // bridge, so `target_tree` is always ROOT.
+                            target_tree: TreeId::ROOT,
+                            target_node: NodeId(id),
+                            data: None,
+                        });
+                    }
+                    let mut slot = handler.borrow_mut();
+                    if slot.is_none() {
+                        *slot = cb;
+                    }
                 }) as Box<dyn FnMut(web_sys::Event)>);
                 element
                     .add_event_listener_with_callback(kind, closure.as_ref().unchecked_ref())
@@ -752,6 +834,7 @@ impl WebA11yBridge {
                     children: Vec::new(),
                     live_text: None,
                     focusable: false,
+                    has_text: false,
                     _closures: closures,
                 },
             );
@@ -860,11 +943,8 @@ impl WebA11yBridge {
         } else {
             let _ = element.remove_attribute("aria-readonly");
         }
-        // Text-bearing leaf roles get real text so screen readers can
-        // announce them without relying on aria-label alone.
-        if matches!(node.role(), Role::Label | Role::TextRun | Role::Paragraph) {
-            element.set_text_content(node_text(node).as_deref());
-        }
+        // Text content for leaf roles is handled by the caller (it needs
+        // `MirrorEntry::has_text` to clear stale text on a role change).
         let focusable = node.supports_action(Action::Focus);
         if focused {
             let _ = element.set_attribute("tabindex", "0");

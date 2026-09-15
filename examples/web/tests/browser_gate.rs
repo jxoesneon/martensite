@@ -4,9 +4,10 @@
 //! `#[ignore]`-gated per the repo convention for hardware/environment-
 //! dependent gates (cf. `MARTENSITE_MEDIA_4K120` in
 //! `martensite-media-test`). The gate runs only when
-//! `MARTENSITE_WEB_BROWSER=1` is set in the environment — automated CI
-//! does not run it; CI exercises the compile boundary
-//! (`cargo check --target wasm32-unknown-unknown`).
+//! `MARTENSITE_WEB_BROWSER=1` is set in the environment — it is a local
+//! /self-hosted-runner check. CI compiles the wasm boundary separately
+//! via the `target-checks` wasm32 job (added on `main` at milestone
+//! integration); it does not drive a browser.
 //!
 //! # Prerequisites (self-hosted runner / local run)
 //!

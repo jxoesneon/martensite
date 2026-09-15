@@ -45,10 +45,10 @@ python3 -m http.server --directory examples/web 8080
 cargo check -p martensite-web-example --target wasm32-unknown-unknown
 ```
 
-This is the compile boundary the wasm layer is verified against. A
-dedicated wasm CI job is **not wired yet** — it is added at milestone
-integration; until then run the check above locally before touching the
-web backends.
+This is the compile boundary the wasm layer is verified against. CI
+covers it via the `target-checks` wasm32 job (added on `main` at
+milestone integration); until this branch lands there, run the check
+above locally before touching the web backends.
 
 ### Headless-browser gate (spec §5)
 

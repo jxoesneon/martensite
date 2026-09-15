@@ -383,7 +383,12 @@ pub enum ImeEvent {
 
 /// Shared [`ImeEvent`] handler slot: DOM closures dispatch into it, and
 /// [`HiddenImeInput::set_on_ime`] swaps the boxed callable.
-type ImeHandler = std::rc::Rc<std::cell::RefCell<Box<dyn FnMut(ImeEvent)>>>;
+///
+/// `Option` so dispatch can take the handler out before invoking it —
+/// the callback then runs with no borrow held and may call
+/// `set_on_ime` (or trigger DOM events re-entering a sibling listener)
+/// without a `RefCell` double-borrow panic.
+type ImeHandler = std::rc::Rc<std::cell::RefCell<Option<Box<dyn FnMut(ImeEvent)>>>>;
 
 /// The retained DOM listener set: `Closure`s must be owned for as long
 /// as their listeners are registered.
@@ -413,6 +418,16 @@ type EventClosures = Vec<Closure<dyn FnMut(web_sys::Event)>>;
 /// DOM element, not through winit's window event stream. Callers forward
 /// [`ImeEvent`]s into their own text-input pipeline (e.g.
 /// `martensite_text::ime`).
+///
+/// # Known caveats
+///
+/// * While the overlay holds DOM focus, raw `keydown`/`keyup` events
+///   land on the `<input>` and are **not** forwarded — non-composition
+///   keys (arrows, shortcuts) are invisible to the app until
+///   [`blur`](Self::blur) returns focus to the canvas.
+/// * `input` events whose `data` is null — paste/drop insertion,
+///   deletions, undo/redo — are suppressed rather than reported; see the
+///   `input` listener in [`new`](Self::new).
 ///
 /// # Examples
 ///
@@ -491,7 +506,7 @@ impl HiddenImeInput {
             .set_attribute("aria-hidden", "true")
             .map_err(|e| WebError::from_js(&e))?;
 
-        let handler: ImeHandler = std::rc::Rc::new(std::cell::RefCell::new(Box::new(|_| {})));
+        let handler: ImeHandler = std::rc::Rc::new(std::cell::RefCell::new(None));
 
         let mut closures: EventClosures = Vec::new();
 
@@ -504,7 +519,18 @@ impl HiddenImeInput {
             let handler = std::rc::Rc::clone(handler);
             let closure = Closure::wrap(Box::new(move |event: web_sys::Event| {
                 if let Some(mapped) = map(&event) {
-                    (handler.borrow_mut())(mapped);
+                    // Take-and-reinstall: the handler runs with no borrow
+                    // held, so it may call `set_on_ime` without a
+                    // double-borrow panic. An event arriving while the
+                    // slot is empty (mid-dispatch reentrancy) is dropped.
+                    let mut cb = handler.borrow_mut().take();
+                    if let Some(f) = cb.as_mut() {
+                        f(mapped);
+                    }
+                    let mut slot = handler.borrow_mut();
+                    if slot.is_none() {
+                        *slot = cb;
+                    }
                 }
             }) as Box<dyn FnMut(web_sys::Event)>);
             input
@@ -558,23 +584,27 @@ impl HiddenImeInput {
             "input",
             &handler,
             |event| {
+                let input_event = event.dyn_ref::<web_sys::InputEvent>()?;
                 // `input` fires during composition too; those reports are
                 // already covered by compositionupdate. Suppress them
                 // entirely rather than emitting a synthetic empty
                 // `CompositionUpdate`, which would flicker/clear the
                 // composition preview in consumers.
-                let composing = event
-                    .dyn_ref::<web_sys::InputEvent>()
-                    .map(|e| e.is_composing())
-                    .unwrap_or(false);
-                if composing {
+                if input_event.is_composing() {
                     return None;
                 }
-                let data = event
-                    .dyn_ref::<web_sys::InputEvent>()
-                    .and_then(|e| e.data())
-                    .unwrap_or_default();
-                Some(ImeEvent::InsertText(data))
+                // `data` is null for non-insert inputs
+                // (`insertFromPaste`/`insertFromDrop`, `deleteContent*`,
+                // `historyUndo`/`historyRedo`, …). Paste into the hidden
+                // input is deliberately not forwarded — canvas apps take
+                // paste through `navigator.clipboard` — and deletes on
+                // the always-empty input carry no payload, so both are
+                // dropped instead of surfacing a spurious empty
+                // `InsertText`.
+                match input_event.data() {
+                    Some(data) if !data.is_empty() => Some(ImeEvent::InsertText(data)),
+                    _ => None,
+                }
             },
             &mut closures,
         )?;
@@ -592,6 +622,10 @@ impl HiddenImeInput {
 
     /// Installs the handler invoked for every [`ImeEvent`].
     ///
+    /// Events dispatched before the first `set_on_ime` are dropped. The
+    /// handler runs with no internal borrow held, so it may call
+    /// `set_on_ime` again safely.
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -600,7 +634,7 @@ impl HiddenImeInput {
     /// # }
     /// ```
     pub fn set_on_ime(&self, handler: impl FnMut(ImeEvent) + 'static) {
-        *self.handler.borrow_mut() = Box::new(handler);
+        *self.handler.borrow_mut() = Some(Box::new(handler));
     }
 
     /// Moves the hidden input over the insertion point.

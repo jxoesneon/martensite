@@ -33,7 +33,22 @@ winit = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 js-sys = { workspace = true }
-web-sys = { workspace = true, features = ["console"] }
+# All web-sys features this crate actually uses are declared directly —
+# it must not rely on feature unification from transitive deps. (The
+# supertype chain — Element/Node/EventTarget — is pulled in by
+# HtmlCanvasElement/HtmlElement but listed anyway for clarity.)
+web-sys = { workspace = true, features = [
+    "console",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "File",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "Node",
+    "Window",
+] }
 # Published 2023 — far outside the 7-day freshness window.
 console_error_panic_hook = "0.1"
 
