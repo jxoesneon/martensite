@@ -68,6 +68,15 @@ fn docking_zero_alloc_split_merge() {
     let _ = tree.split_leaf(root, SplitDirection::Vertical, 0.5, make_panel(1));
     tree.merge(root).unwrap();
 
+    // Two measured windows: the first absorbs any residual one-shot
+    // allocations elsewhere in the test process (harness internals, TLS
+    // setup on the test thread), the second asserts the steady state.
+    // A real regression allocates on every split/merge, so the second
+    // window would show thousands of allocations, not a handful.
+    for _ in 0..10_000 {
+        let _ = tree.split_leaf(root, SplitDirection::Vertical, 0.5, make_panel(1));
+        tree.merge(root).unwrap();
+    }
     let before = ALLOC_COUNT.load(Ordering::SeqCst);
     for _ in 0..10_000 {
         let _ = tree.split_leaf(root, SplitDirection::Vertical, 0.5, make_panel(1));
