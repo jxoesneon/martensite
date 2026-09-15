@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Martensite — web smoke test</title>
+    <!--
+      COOP/COEP note: these headers are NOT required for this example.
+      They only matter for `crossOriginIsolated` contexts (SharedArrayBuffer
+      / wasm threads), which Martensite's single-threaded wasm build does
+      not use. If a future multithreaded build needs them, serve with:
+        Cross-Origin-Opener-Policy: same-origin
+        Cross-Origin-Embedder-Policy: require-corp
+      Under COEP=require-corp, cross-origin font fetches would then need a
+      Cross-Origin-Resource-Policy response header.
+    -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #101014; }
+      #martensite-canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <!--
+      The winit window binds to this canvas via
+      `martensite_window::web::WebWindowAttributes::with_canvas`.
+    -->
+    <canvas id="martensite-canvas" width="800" height="600"></canvas>
+    <!-- trunk build hook: `trunk serve` picks up the wasm crate here. -->
+    <link data-trunk rel="rust" data-wasm-opt="0" />
+  </body>
+</html>

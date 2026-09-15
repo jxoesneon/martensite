@@ -38,6 +38,11 @@ pub mod line_break;
 pub mod shaping;
 /// Unicode vertical text layout (UAX #50) and coordinate transformation.
 pub mod vertical;
+/// Web (`wasm32-unknown-unknown`) font loading: bundled
+/// `fontdb::Source::Binary` fonts and `fetch`-loaded font sources. There
+/// are no system fonts on the web.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub mod web;
 
 pub use bidi::{BidiDirection, BidiMirrorMap, BidiParagraph, BidiResolved, BidiRun};
 pub use cache::{

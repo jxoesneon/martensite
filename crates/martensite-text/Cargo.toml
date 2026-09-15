@@ -27,7 +27,22 @@ smallvec = { workspace = true }
 parking_lot = { workspace = true }
 tracing = { workspace = true }
 
-[dev-dependencies]
+# Web font loading (`src/web.rs`): `fetch`-downloaded font bytes
+# registered via `fontdb::Source::Binary`.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = ["Response", "Window"] }
+# Re-declared here to add the `wasm-web` feature on wasm only (features
+# union with the [dependencies] entry for this target): it enables
+# `sys-locale/js` so cosmic-text's locale detection reads
+# `navigator.language` instead of falling back to `en-US` (spec §4.3).
+cosmic-text = { workspace = true, features = ["wasm-web"] }
+
+# proptest pulls `wait-timeout`, which has no wasm backend — property
+# tests only run on host targets.
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
 proptest = { workspace = true }
 
 [features]

@@ -29,6 +29,12 @@ pub mod properties;
 pub mod pump;
 /// Incremental semantic tree synchronization.
 pub mod tree;
+/// Web (`wasm32-unknown-unknown`) accessibility bridge: minimal viable
+/// hidden-DOM/ARIA mirror translating [`TreeUpdate`]s, per milestone
+/// §4.3 (option a). No upstream AccessKit web adapter exists; this is
+/// the committed replacement.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub mod web;
 pub mod winit;
 
 /// Android (GameActivity) adapter wiring.

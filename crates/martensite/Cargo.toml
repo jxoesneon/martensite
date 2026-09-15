@@ -42,8 +42,12 @@ taffy = { workspace = true }
 [dev-dependencies]
 martensite-test = { workspace = true }
 martensite-devtools = { workspace = true }
-martensite-plugin = { workspace = true }
 parking_lot = { workspace = true }
+
+# `martensite-plugin` pulls wasmtime (the plugin host runtime), which
+# cannot build for wasm32-unknown-unknown — plugins are host-side.
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
+martensite-plugin = { workspace = true }
 
 [features]
 default = []

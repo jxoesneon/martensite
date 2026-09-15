@@ -18,5 +18,28 @@ glam = { workspace = true }
 bitflags = { workspace = true }
 winit = { workspace = true }
 
+# Web backend (`src/web.rs`): HTML5 `DataTransfer` drop-target wiring.
+# winit-web does not translate DOM drag events, so listeners are attached
+# directly; all safe Rust.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = [
+    "Blob",
+    "DataTransfer",
+    "DragEvent",
+    "Event",
+    "EventTarget",
+    "File",
+    "FileList",
+    "HtmlElement",
+    # `DragEvent::client_x`/`client_y` are defined on the `MouseEvent`
+    # supertype in web-sys — required by `event_position`. Declared
+    # explicitly so the crate does not rely on feature unification from
+    # winit-web's own web-sys flags.
+    "MouseEvent",
+] }
+
 [lints]
 workspace = true

@@ -31,6 +31,26 @@ glam = { workspace = true }
 accesskit_winit = { workspace = true, features = ["accesskit_android"] }
 winit = { workspace = true, features = ["android-game-activity"] }
 
+# Web accessibility bridge (`src/web.rs`): hidden-DOM/ARIA live-region
+# announcer + focusable-role DOM mirror translating AccessKit
+# `TreeUpdate`s. wasm-bindgen externs are safe Rust — no unsafe boundary.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = [
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlElement",
+    "Node",
+    "Window",
+] }
+# accesskit 0.25 depends on uuid (default-features = false); on
+# wasm32-unknown-unknown uuid refuses to compile without an explicit RNG
+# source. `js` routes through wasm-bindgen — already in this dep set.
+uuid = { version = "1", features = ["js"] }
+
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }
 martensite-text = { workspace = true }

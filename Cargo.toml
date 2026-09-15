@@ -41,6 +41,7 @@ members = [
     "examples/engine_embed",
     "examples/industrial_dashboard",
     "examples/ios_demo",
+    "examples/web",
     "benches/bench_suite",
 ]
 
@@ -108,7 +109,13 @@ martensite-engine-bridge = { version = "0.16.0", path = "crates/martensite-engin
 # target platform (vulkan on Linux/Android, metal on macOS/iOS, dx12 on
 # Windows, webgpu on wasm). Without at least one backend, Instance::default()
 # panics, which breaks ignored GPU tests in CI.
-wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12", "gles", "webgpu"] }
+# `webgl` is inert on native targets (wgpu's `webgl` cfg is wasm-only) and
+# enables the WebGL2 downlevel backend on wasm32. `fragile-send-sync-non-atomic
+# -wasm` is wgpu's sanctioned mechanism for `Send`/`Sync` wgpu handle types on
+# single-threaded wasm (no `atomics` target-feature); without it every handle
+# wraps `Rc`/`RefCell` and downstream `Send + Sync` bounds fail to compile on
+# wasm32. Both features are no-ops for the desktop build.
+wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12", "gles", "webgpu", "webgl", "fragile-send-sync-non-atomic-wasm"] }
 # NOTE: official `vello` 0.10 depends on wgpu 29, which is incompatible with the
 # workspace's wgpu 30 (the two major versions cannot coexist as a single type).
 # `martensite-vello` is a vendored copy of `netrender-vello` 0.10 — itself a
@@ -167,6 +174,17 @@ objc2 = "0.6"
 # registration). Used by `martensite-shell` under the `wayland-backend` feature,
 # cfg-gated to Linux. `zbus` 5.x was published well over 7 days ago.
 zbus = { version = "5", default-features = false }
+
+# Web (wasm32-unknown-unknown) bindings — only consumed through
+# `cfg(target_arch = "wasm32")` target dependencies in member crates, so
+# the desktop build never links them. wasm-bindgen 0.2.128 / web-sys
+# 0.3.105 / wasm-bindgen-futures 0.4.78 / js-sys 0.3.105 were published
+# 2026-09-04 and are already pinned in the lockfile (used by wgpu and
+# winit-web), so no fresh crate enters the graph.
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
+js-sys = "0.3"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

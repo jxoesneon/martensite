@@ -687,6 +687,10 @@ impl ScrollKinematics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // proptest is a non-wasm dev-dependency (`wait-timeout` has no wasm
+    // backend), so the import and the `proptest!` block are gated out on
+    // wasm test builds.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     use proptest::prelude::*;
 
     fn viewport_full() -> Rect {
@@ -893,6 +897,7 @@ mod tests {
         assert_eq!(kin.velocity(), Vec2::ZERO);
     }
 
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     proptest! {
         #[test]
         fn result_always_finite(vx in any::<f32>(), vy in any::<f32>(), dt_secs in 0.0f32..100.0) {

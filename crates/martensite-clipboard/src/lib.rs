@@ -53,6 +53,10 @@
 
 pub mod clipboard;
 pub mod platform;
+/// Web (`wasm32-unknown-unknown`) clipboard backend bridging
+/// `navigator.clipboard` to [`ClipboardService`].
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub mod web;
 
 pub use clipboard::{
     canonicalize_mime, ClipboardItem, ClipboardPayload, ClipboardService, InMemoryClipboard,
