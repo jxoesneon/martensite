@@ -10,11 +10,11 @@
 //! - [`WidgetArena`] hot/cold state (structure, bounds, metadata, and
 //!   widget-internal [`TimemachineState`](martensite_core::TimemachineState)),
 //! - [`ReactiveRuntime`] source-signal values (via
-//!   [`SignalSnapshot`](martensite_reactive::SignalSnapshot)).
+//!   [`SignalSnapshot`]).
 //!
 //! [`TimeMachine::replay_to`] restores the nearest ancestor checkpoint
 //! and re-applies the journal forward — never reverting — while a
-//! [`JournalGuard`](martensite_reactive::JournalGuard) suppresses
+//! [`JournalGuard`] suppresses
 //! re-journaling of replayed source writes. [`Memo`](martensite_reactive::Memo)s
 //! are derived state and recompute lazily during the pull phase; only
 //! source writes are journaled.
@@ -485,7 +485,7 @@ pub type WidgetFactory = dyn FnMut(WidgetId) -> Option<Box<dyn Widget>> + Send;
 /// A checkpoint is always captured at the root on construction and is
 /// pinned — it is never evicted, so [`replay_to`](Self::replay_to)
 /// always has a checkpoint on the ancestor chain. Pass a
-/// `checkpoint_every` interval to [`with_checkpoint_interval`] to capture
+/// `checkpoint_every` interval to [`with_checkpoint_interval`](Self::with_checkpoint_interval) to capture
 /// every N commits automatically, and/or call [`checkpoint`](Self::checkpoint)
 /// manually at user-meaningful boundaries. At most `max_checkpoints`
 /// checkpoints are retained; the oldest (by commit order, root excepted)
@@ -634,12 +634,12 @@ impl TimeMachine {
     ///
     /// Without a factory, replaying into a checkpoint that references
     /// removed widgets fails with
-    /// [`ReplayError::Arena`](ReplayError::Arena)
+    /// [`ReplayError::Arena`]
     /// ([`ArenaRestoreError::MissingWidgets`]) before any state is
     /// mutated. The factory may be invoked during replay *validation*
     /// (before any world mutation) to confirm every missing widget can
     /// be reconstructed; the widgets it returns are kept and receive
-    /// their captured [`TimemachineState`] on restore.
+    /// their captured [`TimemachineState`](martensite_core::TimemachineState) on restore.
     ///
     /// # Examples
     ///
@@ -967,7 +967,7 @@ impl TimeMachine {
     /// "Nearest" is measured by history-tree depth — the deepest
     /// checkpointed ancestor of `target`. Source writes made by
     /// replayed commands are applied under a [`JournalGuard`] so they
-    /// are not re-journaled; derived [`Memo`]s recompute lazily on the
+    /// are not re-journaled; derived [`Memo`](martensite_reactive::Memo)s recompute lazily on the
     /// next pull. Returns the node of the checkpoint that was restored.
     ///
     /// `target` must be a descendant (or self) of the nearest

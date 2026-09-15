@@ -304,7 +304,7 @@ impl ApplicationHandler for IosDemoApp {
 /// Builds the [`EventLoop`] and runs [`IosDemoApp`].
 ///
 /// On iOS this calls `UIApplicationMain` internally and **never returns**;
-/// it is the body of the exported [`martensite_ios_demo_main`] entry
+/// it is the body of the exported `martensite_ios_demo_main` entry
 /// point. On desktop it returns when the window closes, which makes the
 /// same handler smoke-testable from a host binary.
 ///

@@ -4,26 +4,26 @@
 //! platform layer (milestone §4.3). It wires every web backend added in
 //! this milestone into one runnable page:
 //!
-//! * **GPU** — [`gpu::create_instance`] +
-//!   [`gpu::gpu_context_for_web`] perform the real
-//!   `navigator.gpu` probe and report which [`gpu::WebBackend`] was
+//! * **GPU** — `gpu::create_instance` +
+//!   `gpu::gpu_context_for_web` perform the real
+//!   `navigator.gpu` probe and report which `gpu::WebBackend` was
 //!   selected (`WebGpu` → Vello-capable, `WebGl2`/`CpuRaster` → TinySkia
 //!   CPU raster, per the enforced boundary in `martensite-wgpu::web`).
 //!   A clear-color frame proves the surface/device actually work.
-//! * **Window/canvas** — [`win_web::WebWindowAttributes`] binds the
+//! * **Window/canvas** — `win_web::WebWindowAttributes` binds the
 //!   `<canvas id="martensite-canvas">` from `index.html`;
-//!   [`win_web::sync_canvas_backing_store`] keeps the backing store
-//!   DPI-scaled; [`win_web::configure_web_event_loop`] +
-//!   [`win_web::spawn_app`] drive the `ControlFlow::Poll`/rAF model.
-//! * **IME** — a [`win_web::HiddenImeInput`] overlay logs composition
+//!   `win_web::sync_canvas_backing_store` keeps the backing store
+//!   DPI-scaled; `win_web::configure_web_event_loop` +
+//!   `win_web::spawn_app` drive the `ControlFlow::Poll`/rAF model.
+//! * **IME** — a `win_web::HiddenImeInput` overlay logs composition
 //!   events.
 //! * **Clipboard** — clicking the canvas writes `text/plain` through
-//!   [`martensite_clipboard::web::WebClipboard`]'s async API.
-//! * **Drag-and-drop** — [`WebDropListener`] accepts file/text drops on
+//!   `martensite_clipboard::web::WebClipboard`'s async API.
+//! * **Drag-and-drop** — `WebDropListener` accepts file/text drops on
 //!   the canvas and logs the captured payload.
-//! * **Fonts** — [`text_web::fetch_and_load_font`] tries
+//! * **Fonts** — `text_web::fetch_and_load_font` tries
 //!   `assets/fonts/font.ttf` (see the README for how to supply one).
-//! * **Accessibility** — [`WebA11yBridge`] mirrors a tiny AccessKit tree
+//! * **Accessibility** — `WebA11yBridge` mirrors a tiny AccessKit tree
 //!   (root web area + one focusable button) into the hidden DOM/ARIA
 //!   mirror and announces load through the `aria-live` region.
 //!

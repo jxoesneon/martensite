@@ -16,7 +16,7 @@
 //! - **Desktop:** the standard IME candidate-window contract applies.
 //!
 //! The helpers here are thin wrappers over
-//! [`Window::request_ime_update`](winit::window::Window::request_ime_update)
+//! [`Window::request_ime_update`]
 //! that keep callers free of the `ImeRequest`/`ImeEnableRequest`
 //! boilerplate while preserving winit's capability contract.
 //!

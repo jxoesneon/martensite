@@ -768,7 +768,7 @@ impl ReactiveRuntime {
     ///
     /// The journal records every `Signal::set` and `Signal::set_if_changed`
     /// write with a monotonic index. `Signal::update` mutations are not
-    /// journaled (no capturable previous value); [`Memo`](crate::Memo)
+    /// journaled (no capturable previous value); [`Memo`]
     /// recomputation is never journaled — derived values recompute lazily.
     ///
     /// **Deadlock warning**: `Signal::set`/`set_if_changed` take the
@@ -833,7 +833,7 @@ impl ReactiveRuntime {
     /// out of storage. Consequence: a source that has never been read
     /// or `set_if_changed` is absent from the snapshot and is *not*
     /// restored by [`restore_signals`](Self::restore_signals). Sources
-    /// wired into [`Memo`](crate::Memo)/[`Effect`](crate::Effect)
+    /// wired into [`Memo`]/[`Effect`]
     /// evaluation register on their first pull. Dropped signals are
     /// skipped and their accessors pruned. Entries are sorted by
     /// [`SignalId`] so snapshot iteration order is deterministic.
@@ -882,7 +882,7 @@ impl ReactiveRuntime {
     /// Each restored value is written directly into the signal's storage
     /// (bypassing `Signal::set`, so no journal records are produced) and
     /// the signal is marked dirty *without* flushing — downstream
-    /// [`Memo`](crate::Memo)s and effects recompute lazily during the
+    /// [`Memo`]s and effects recompute lazily during the
     /// pull phase. Signals that were dropped or whose payload type
     /// mismatches are skipped. Returns the number of signals restored.
     ///

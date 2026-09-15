@@ -563,7 +563,7 @@ impl GpuContext {
     }
 
     /// Enumerates every adapter currently visible to the instance across
-    /// [`platform_backends`], in the same order [`request_platform_adapter`]
+    /// [`platform_backends`], in the same order `request_platform_adapter`
     /// would pick from.
     ///
     /// The returned vector is sorted so that the most-desired adapters

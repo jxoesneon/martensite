@@ -1275,8 +1275,8 @@ impl WidgetArena {
     ///   responding node [`NodeFlags::DIRTY_PAINT`].
     /// - Within a node, the widget's own `event` implementation governs
     ///   internal children (the trait default forwards to
-    ///   [`Widget::child_mut`](crate::Widget::child_mut) in reverse order,
-    ///   gated on [`Widget::child_bounds`](crate::Widget::child_bounds)).
+    ///   [`Widget::child_mut`] in reverse order,
+    ///   gated on [`Widget::child_bounds`]).
     ///
     /// Returns the terminal response, or `Ignored` if the event bubbled
     /// past the root.
@@ -1430,7 +1430,7 @@ impl WidgetArena {
     /// widget's own `paint` emits its chrome first, then internal
     /// children (via the `Widget::child_count`/`child`/`child_bounds`
     /// protocol), then arena children in sibling order. Popups open in
-    /// the arena-owned [`OverlayLayer`](crate::overlay::OverlayLayer)
+    /// the arena-owned [`OverlayLayer`]
     /// are appended last — above all window content.
     ///
     /// # Examples

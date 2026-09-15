@@ -5,7 +5,7 @@
 //! `martensite_devtools::timemachine`:
 //!
 //! - [`SourceJournal`] — a monotonic record of every `Signal::set` (and
-//!   `Signal::set_if_changed`) write against a [`ReactiveRuntime`]. Each
+//!   `Signal::set_if_changed`) write against a [`ReactiveRuntime`](crate::ReactiveRuntime). Each
 //!   [`WriteRecord`] stores the signal's *previous* value, captured via
 //!   in-place replacement, so recording imposes no `Clone` bound on the
 //!   payload type. `Signal::update` mutations cannot produce an old
@@ -24,7 +24,7 @@
 //! # Replay suppression
 //!
 //! While a replay is in flight, replayed commands must not re-journal
-//! themselves. [`ReactiveRuntime::suppress_journal`] returns a RAII
+//! themselves. [`ReactiveRuntime::suppress_journal`](crate::ReactiveRuntime::suppress_journal) returns a RAII
 //! [`JournalGuard`] that suppresses recording until dropped — the
 //! `debug::disable`-style guard of the determinism contract.
 //!
@@ -114,9 +114,9 @@ impl std::fmt::Debug for WriteRecord {
 
 /// Monotonic journal of `Signal::set` source writes on one runtime.
 ///
-/// Obtained via [`ReactiveRuntime::journal`]. Recording is suppressed
+/// Obtained via [`ReactiveRuntime::journal`](crate::ReactiveRuntime::journal). Recording is suppressed
 /// while a [`JournalGuard`] is alive (see
-/// [`ReactiveRuntime::suppress_journal`]).
+/// [`ReactiveRuntime::suppress_journal`](crate::ReactiveRuntime::suppress_journal)).
 ///
 /// The journal is a bounded ring: at most
 /// [`DEFAULT_MAX_RECORDS`](SourceJournal::DEFAULT_MAX_RECORDS) records
@@ -403,7 +403,7 @@ impl SourceJournal {
 
 /// RAII guard that suppresses source-write journaling while alive.
 ///
-/// Created by [`ReactiveRuntime::suppress_journal`]. Guards nest: the
+/// Created by [`ReactiveRuntime::suppress_journal`](crate::ReactiveRuntime::suppress_journal). Guards nest: the
 /// journal resumes recording only when every outstanding guard has been
 /// dropped. This is the `debug::disable`-style guard of the replay
 /// determinism contract — signal writes performed by replayed commands
@@ -473,8 +473,8 @@ pub(crate) struct SourceAccess {
 
 /// A type-erased capture of all registered source-signal values.
 ///
-/// Produced by [`ReactiveRuntime::snapshot_signals`] and consumed by
-/// [`ReactiveRuntime::restore_signals`]. Entries are sorted by
+/// Produced by [`ReactiveRuntime::snapshot_signals`](crate::ReactiveRuntime::snapshot_signals) and consumed by
+/// [`ReactiveRuntime::restore_signals`](crate::ReactiveRuntime::restore_signals). Entries are sorted by
 /// [`SignalId`] for deterministic iteration order.
 ///
 /// # Examples

@@ -220,15 +220,15 @@ impl<T: Send + Sync + 'static> Signal<T> {
     }
 
     /// Overwrites the stored value, journals the previous value in the
-    /// runtime's [`SourceJournal`](crate::journal::SourceJournal), and
+    /// runtime's `SourceJournal`, and
     /// flags downstream subscribers dirty.
     ///
     /// The previous value is captured via in-place replacement, so no
     /// `Clone` bound is required on `T`. When journaling is suppressed
-    /// by [`ReactiveRuntime::suppress_journal`] the write is applied but
+    /// by `ReactiveRuntime::suppress_journal` the write is applied but
     /// not recorded.
     ///
-    /// Note: the [`SourceJournal`] is an *audit log* only — a write
+    /// Note: the `SourceJournal` is an *audit log* only — a write
     /// recorded here is not a history command and is invisible to
     /// time-travel replay. Scrubbing with
     /// `martensite_devtools::timemachine` replays commands committed to

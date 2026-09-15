@@ -402,7 +402,7 @@ pub struct A11yEmittedNode {
 }
 
 /// A read-only reference to a node emitted for an
-/// [`OverlayLayer`](crate::overlay::OverlayLayer) popup subtree, handed
+/// [`OverlayLayer`] popup subtree, handed
 /// to [`Widget::a11y_fixup`] so a widget can resolve the `NodeId`s of
 /// popups it opened — e.g. a combobox wiring
 /// `aria-activedescendant` to one of its listbox options.
@@ -527,7 +527,7 @@ pub trait Widget: Send + Sync + 'static {
     /// internal children (mutable — relations such as
     /// `aria-describedby` or `aria-controls` can be patched onto them);
     /// `overlay_nodes` lists the `NodeId`s minted for every popup
-    /// currently open in the [`OverlayLayer`](crate::overlay::OverlayLayer)
+    /// currently open in the [`OverlayLayer`]
     /// (read-only — popups are emitted separately); `this_node` is the
     /// widget's own node. Use this hook for `aria-activedescendant`,
     /// `aria-controls`, and `aria-describedby`, which cannot be set

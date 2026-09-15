@@ -10,7 +10,7 @@
 //! - **Hover**: the popup appears after a configurable delay
 //!   ([`Tooltip::tick`], default 700 ms) once the pointer enters the
 //!   trigger, and hides on hover exit — the framework dispatches
-//!   [`WidgetEvent::PointerEnter`]/[`WidgetEvent::PointerLeave`] at the
+//!   [`WidgetEvent::PointerEnter`](martensite_core::WidgetEvent::PointerEnter)/[`WidgetEvent::PointerLeave`](martensite_core::WidgetEvent::PointerLeave) at the
 //!   hover boundary.
 //! - **Focus**: keyboard focus shows the tooltip immediately;
 //!   `FocusLost` hides it.
@@ -96,7 +96,7 @@ const RADIUS: f64 = 4.0;
 /// The popup surface for a [`Tooltip`] — a `Role::Tooltip` bubble.
 ///
 /// `Tooltip` opens one of these in the
-/// [`OverlayLayer`](martensite_core::overlay::OverlayLayer); it is
+/// [`OverlayLayer`]; it is
 /// public so custom popup code can reuse it.
 ///
 /// # Examples

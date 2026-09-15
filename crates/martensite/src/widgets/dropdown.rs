@@ -5,7 +5,7 @@
 //! - The widget emits `Role::ComboBox` with `aria-haspopup="listbox"`,
 //!   `aria-expanded`, the selected option's text as its value, and
 //!   `aria-activedescendant` + `aria-controls` wired to the popup
-//!   (via [`Widget::a11y_fixup`] against overlay node ids).
+//!   (via [`Widget::a11y_fixup`](martensite_core::Widget::a11y_fixup) against overlay node ids).
 //! - The popup is a `Role::ListBox` of `Role::ListBoxOption` children
 //!   living in the [`OverlayLayer`](martensite_core::overlay::OverlayLayer),
 //!   placed below the combobox (flipping above near the bottom edge)
