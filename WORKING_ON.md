@@ -3,7 +3,7 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.17.0 workstream review loop. v0.16.0 is released —
+Last updated: v0.17.0 merged to main and CI-green on `247cfd8`.
 tagged `v0.16.0` at `0b906a4`, all 33 crates published to crates.io
 (including first-time publishes of `martensite-vello` and
 `martensite-cosmic-text`), and a GitHub Release with changelog notes.
@@ -81,9 +81,14 @@ see ADR-0033.
   `accesskit_android`); hybrid command-ledger + snapshot time-travel
   debugger.
   Spec: `docs/milestones/v0.17.0-platform-expansion.md`.
-  **Status: IN REVIEW** — implemented on six parallel
-  `milestone/*` branches under `.worktrees/`, each through a
-  double-review loop (spec/API then correctness/safety):
+  **Status: MERGED & CI-GREEN** — all six workstreams implemented on
+  `milestone/*` branches, each through a double-review loop (spec/API
+  then correctness/safety), merged into `main` at `431d4aa`..`247cfd8`.
+  All local gates pass (fmt, clippy default + all-features, workspace
+  tests, doctests, `cargo doc -D warnings`, deny, audit, vet) and all
+  CI workflows are green on `247cfd8`, including the new
+  `target-checks` matrix (wasm32, ios-sim, android). Release tag
+  `v0.17.0` + crates.io publish remain pending user request.
   - `milestone/vt-av1` — AV1 `av1C` → `CMFormatDescription` bridge
     closes the last v0.16.0 gap: the AV1 4K120 leg now decodes through
     VideoToolbox hardware (`hw=true`, ~120 fps on M4) instead of the
