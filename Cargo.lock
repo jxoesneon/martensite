@@ -423,7 +423,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "bench_suite"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "criterion",
  "martensite",
@@ -702,7 +702,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-martensite"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "martensite-host",
  "tempfile",
@@ -1485,7 +1485,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
 name = "engine_embed"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "martensite",
  "martensite-engine-bridge",
@@ -2352,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "industrial_dashboard"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "martensite",
 ]
@@ -2420,7 +2420,7 @@ checksum = "2f0fb0570afe1fed943c5c3d4102d5358592d8625fda6a0007fdbe65a92fba96"
 
 [[package]]
 name = "ios_demo"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "accesskit",
  "martensite-access",
@@ -2778,7 +2778,7 @@ checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 
 [[package]]
 name = "martensite"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "accesskit",
  "glam",
@@ -2812,7 +2812,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-access"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "accesskit",
  "glam",
@@ -2832,7 +2832,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-access-platform"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "accesskit",
  "accesskit_android",
@@ -2846,7 +2846,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-accesskit-winit"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2860,7 +2860,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-assets"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "martensite-core",
  "martensite-reactive",
@@ -2873,7 +2873,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-blessed"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "martensite-access",
  "martensite-core",
@@ -2888,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-clipboard"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "js-sys",
  "martensite-clipboard-platform",
@@ -2901,14 +2901,14 @@ dependencies = [
 
 [[package]]
 name = "martensite-clipboard-platform"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "windows 0.61.3",
 ]
 
 [[package]]
 name = "martensite-core"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "accesskit",
  "bitflags",
@@ -2954,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-devtools"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "glam",
  "kurbo",
@@ -2969,7 +2969,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-dnd"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "bitflags",
  "glam",
@@ -2983,7 +2983,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-engine-bridge"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "martensite-core",
  "parking_lot",
@@ -2992,7 +2992,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-focus"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "glam",
  "martensite-core",
@@ -3001,7 +3001,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-font-fallback"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "core-foundation",
  "core-text",
@@ -3014,7 +3014,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-history"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "martensite-core",
  "martensite-reactive",
@@ -3024,7 +3024,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-host"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "libloading",
  "tempfile",
@@ -3032,7 +3032,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-l10n"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "fluent-bundle",
  "fluent-langneg 0.14.2",
@@ -3043,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-layout"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "glam",
  "martensite-core",
@@ -3052,11 +3052,11 @@ dependencies = [
 
 [[package]]
 name = "martensite-macros"
-version = "0.16.0"
+version = "0.17.0"
 
 [[package]]
 name = "martensite-media"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "bytemuck",
  "glam",
@@ -3067,7 +3067,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-media-platform"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cros-libva",
  "drm 0.12.0",
@@ -3085,7 +3085,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-media-test"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "martensite-media",
  "martensite-media-platform",
@@ -3095,14 +3095,14 @@ dependencies = [
 
 [[package]]
 name = "martensite-motion"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "glam",
 ]
 
 [[package]]
 name = "martensite-plugin"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "martensite-core",
  "martensite-reactive",
@@ -3115,7 +3115,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-reactive"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "parking_lot",
  "proptest",
@@ -3126,7 +3126,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-render"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "kurbo",
  "martensite-core",
@@ -3142,7 +3142,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-render-test"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "kurbo",
  "martensite-render",
@@ -3153,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-shell"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "block2 0.6.2",
  "martensite-theme",
@@ -3164,7 +3164,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-test"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "arbitrary",
  "glam",
@@ -3179,7 +3179,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-text"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "fontdb",
  "glam",
@@ -3218,7 +3218,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-theme"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "bytemuck",
  "naga 30.0.1",
@@ -3244,7 +3244,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-web-example"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "accesskit",
  "console_error_panic_hook",
@@ -3263,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-wgpu"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "bytemuck",
  "glam",
@@ -3282,7 +3282,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-window"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "bitflags",
  "glam",

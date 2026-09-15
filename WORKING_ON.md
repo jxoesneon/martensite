@@ -88,7 +88,8 @@ see ADR-0033.
   tests, doctests, `cargo doc -D warnings`, deny, audit, vet) and all
   CI workflows are green on `247cfd8`, including the new
   `target-checks` matrix (wasm32, ios-sim, android). Release tag
-  `v0.17.0` + crates.io publish remain pending user request.
+  `v0.17.0` + crates.io publish are in flight via the gated
+  `publish.yml` pipeline.
   - `milestone/vt-av1` — AV1 `av1C` → `CMFormatDescription` bridge
     closes the last v0.16.0 gap: the AV1 4K120 leg now decodes through
     VideoToolbox hardware (`hw=true`, ~120 fps on M4) instead of the
