@@ -3,14 +3,12 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.17.0 merged to main and CI-green on `247cfd8`.
-tagged `v0.16.0` at `0b906a4`, all 33 crates published to crates.io
-(including first-time publishes of `martensite-vello` and
-`martensite-cosmic-text`), and a GitHub Release with changelog notes.
-The release surfaced and fixed two latent `publish.yml` bugs: the
-vendored `martensite-vello` was missing from the publish order, and
-per-crate version extraction aborted under `set -euo pipefail` for
-workspace-versioned crates. v0.17.0 is in progress.
+Last updated: v0.17.0 released — tagged `v0.17.0` at `480c33d`,
+31 crates published to crates.io at 0.17.0 (including first-time
+`martensite-access-platform`; `martensite-vello` and
+`martensite-cosmic-text` correctly skipped at their pinned versions),
+GitHub Release created with changelog notes. All gates green: full CI
+pipeline on the tag, then gated publish.
 
 ## Active Milestone Plan (v0.14.0 → v0.17.0 → v1.0.0)
 
@@ -81,15 +79,14 @@ see ADR-0033.
   `accesskit_android`); hybrid command-ledger + snapshot time-travel
   debugger.
   Spec: `docs/milestones/v0.17.0-platform-expansion.md`.
-  **Status: MERGED & CI-GREEN** — all six workstreams implemented on
+  **Status: RELEASED** — all six workstreams implemented on
   `milestone/*` branches, each through a double-review loop (spec/API
-  then correctness/safety), merged into `main` at `431d4aa`..`247cfd8`.
-  All local gates pass (fmt, clippy default + all-features, workspace
-  tests, doctests, `cargo doc -D warnings`, deny, audit, vet) and all
-  CI workflows are green on `247cfd8`, including the new
-  `target-checks` matrix (wasm32, ios-sim, android). Release tag
-  `v0.17.0` + crates.io publish are in flight via the gated
-  `publish.yml` pipeline.
+  then correctness/safety), merged into `main` at `431d4aa`..`247cfd8`,
+  tagged `v0.17.0` at `480c33d` and published (31 crates at 0.17.0 +
+  GitHub Release). All local gates pass (fmt, clippy default +
+  all-features, workspace tests, doctests, `cargo doc -D warnings`,
+  deny, audit, vet) and all CI workflows are green, including the new
+  `target-checks` matrix (wasm32, ios-sim, android).
   - `milestone/vt-av1` — AV1 `av1C` → `CMFormatDescription` bridge
     closes the last v0.16.0 gap: the AV1 4K120 leg now decodes through
     VideoToolbox hardware (`hw=true`, ~120 fps on M4) instead of the
