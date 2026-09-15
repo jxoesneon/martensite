@@ -27,6 +27,10 @@ pub mod fence;
 pub mod id;
 /// Hot and cold node representations for cache-friendly scene graph storage.
 pub mod node;
+/// In-window overlay (popup) layer: z-ordered popups painted above
+/// content, with anchor placement, viewport clamping, and
+/// outside-click/`Escape` dismissal.
+pub mod overlay;
 /// The [`PaintList`](paint::PaintList) command stream vocabulary produced by
 /// the widget paint pass and consumed by render backends.
 pub mod paint;
@@ -40,6 +44,7 @@ pub use arena::{ArenaError, BreadthFirstIter, Children, DepthFirstIter, SubtreeI
 pub use fence::{FrameFence, FrameGuard, DEFAULT_LEASE_TIMEOUT};
 pub use id::{SurfaceId, WidgetId};
 pub use node::{ColdNode, HotNode, InlineTextCache, NodeFlags, Rect};
+pub use overlay::{OverlayAnchor, OverlayEntry, OverlayLayer};
 pub use paint::{
     FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintCommand, PaintList,
     PaintSegment, PathBuilder,
@@ -47,8 +52,9 @@ pub use paint::{
 #[cfg(feature = "devtools-timemachine")]
 pub use snapshot::{ArenaRestoreError, ArenaState, TimemachineState};
 pub use widget::{
-    AccessibilityContext, DummyWidget, EventContext, EventResponse, LayoutConstraints,
-    LayoutContext, PaintContext, PointerButton, Widget, WidgetEvent,
+    A11yEmittedNode, AccessibilityContext, DummyWidget, EventContext, EventResponse,
+    LayoutConstraints, LayoutContext, OverlayA11yRef, PaintContext, PointerButton, SemanticAction,
+    Widget, WidgetEvent,
 };
 
 #[cfg(test)]

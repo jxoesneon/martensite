@@ -461,6 +461,14 @@ impl VelloRenderer {
                     self.clip_depth += 1;
                 }
             }
+            PaintCommand::PopClip => {
+                // Restore the clip to what it was before the most recent
+                // push; a pop on an empty stack is a documented no-op.
+                if self.clip_depth > 0 {
+                    self.scene.pop_layer();
+                    self.clip_depth -= 1;
+                }
+            }
             PaintCommand::DrawText(point, text, size, color) => {
                 // Full text shaping and glyph rasterization requires font
                 // atlas integration deferred to v0.3.0. Here we approximate

@@ -15,8 +15,11 @@
 //! stale coordinate boundaries. The adapter itself is not `Sync`; it is
 //! intended to be used on the UI thread.
 
-use accesskit::{Node, NodeId, TreeInfo, TreeUpdate};
-use martensite_core::{NodeFlags, Rect as MartensiteRect, Widget, WidgetArena, WidgetId};
+use accesskit::{Action, ActionData, Node, NodeId, TreeInfo, TreeUpdate};
+use martensite_core::{
+    A11yEmittedNode, NodeFlags, OverlayA11yRef, OverlayEntry, OverlayLayer, Rect as MartensiteRect,
+    Widget, WidgetArena, WidgetId,
+};
 use std::collections::HashMap;
 
 use crate::{node_id_to_widget_id, rect_to_accesskit, widget_id_to_node_id};
@@ -33,6 +36,17 @@ struct InternalPath {
     owner: WidgetId,
     /// Indices of nested `Widget::child` calls from the owner down to
     /// the target internal widget.
+    indices: Vec<u32>,
+}
+
+/// Key for a virtual [`NodeId`] minted for a node inside an overlay
+/// popup subtree — the overlay analogue of [`InternalPath`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct OverlayPath {
+    /// The overlay entry id, as returned by `OverlayLayer::open`.
+    entry: u64,
+    /// Indices of nested `Widget::child` calls from the popup's content
+    /// root down to the target widget; empty for the popup root.
     indices: Vec<u32>,
 }
 
@@ -77,6 +91,26 @@ pub struct AccessKitAdapter {
     /// Reverse lookup from a virtual [`NodeId`] to its internal path,
     /// used by [`resolve_internal`](Self::resolve_internal).
     internal_targets: HashMap<NodeId, InternalPath>,
+    /// Virtual [`NodeId`]s allocated for overlay popup content, keyed by
+    /// `(entry id, path inside the popup)`. Shares the `next_internal`
+    /// mint with `internal_ids` — all virtual ids live in the
+    /// generation-0 space.
+    overlay_ids: HashMap<OverlayPath, NodeId>,
+    /// Reverse lookup from a virtual [`NodeId`] to its overlay path,
+    /// used by [`resolve_overlay`](Self::resolve_overlay).
+    overlay_targets: HashMap<NodeId, OverlayPath>,
+    /// NodeId references for every node emitted inside overlay popups
+    /// during the current build, handed to `Widget::a11y_fixup` so
+    /// widgets can wire `aria-activedescendant` and similar relations
+    /// into their popups.
+    overlay_refs: Vec<OverlayA11yRef>,
+    /// Root `NodeId`s of the overlay popups emitted during the current
+    /// build; appended to the tree root's children.
+    overlay_roots: Vec<NodeId>,
+    /// Entry ids of popups open when the last update was built —
+    /// compared against the live set in `build_incremental_update` to
+    /// detect popup open/close (which changes the root's children).
+    last_open_entries: std::collections::HashSet<u64>,
     /// Next virtual `NodeId` to allocate (counts up in generation-0
     /// space).
     next_internal: u32,
@@ -98,6 +132,11 @@ impl AccessKitAdapter {
             toolkit_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             internal_ids: HashMap::new(),
             internal_targets: HashMap::new(),
+            overlay_ids: HashMap::new(),
+            overlay_targets: HashMap::new(),
+            overlay_refs: Vec::new(),
+            overlay_roots: Vec::new(),
+            last_open_entries: std::collections::HashSet::new(),
             next_internal: 1,
         }
     }
@@ -142,10 +181,107 @@ impl AccessKitAdapter {
     /// includes the complete tree structure. Use this for the initial
     /// tree submission or when a large portion of the tree has changed.
     ///
+    /// Popups open in the arena-owned [`OverlayLayer`]
+    /// ([`WidgetArena::overlay`](martensite_core::WidgetArena::overlay))
+    /// are emitted automatically as top-level virtual nodes; use
+    /// [`build_update_with_overlay`](Self::build_update_with_overlay)
+    /// to additionally emit a standalone layer managed outside the
+    /// arena.
+    ///
     /// After this call, the `DIRTY_A11Y` flags on all emitted nodes are
     /// cleared and `last_emitted_focus` is updated.
     pub fn build_update(&mut self, arena: &mut WidgetArena) -> TreeUpdate {
+        self.build_update_impl(arena, None)
+    }
+
+    /// Builds a full [`TreeUpdate`] that additionally emits every popup
+    /// currently open in `overlay` as a virtual-node subtree rooted at
+    /// the tree root — the accessibility view of the in-window
+    /// [`OverlayLayer`].
+    ///
+    /// Each popup's content root becomes a child of the tree root
+    /// (painted above window content, so appended last in z-order);
+    /// its internal children are emitted beneath it with ids minted
+    /// from the same generation-0 virtual space as widget-internal
+    /// children. Before each widget's node is finalized, its
+    /// `Widget::a11y_fixup` hook runs so it can wire relations into
+    /// popups it owns (`aria-activedescendant`, `aria-describedby`).
+    /// `resolve_overlay` maps the emitted virtual ids back to
+    /// `(entry id, path)` pairs for action dispatch.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_access::AccessKitAdapter;
+    /// use martensite_core::{OverlayAnchor, OverlayLayer, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert(Default::default(), Default::default());
+    /// let mut adapter = AccessKitAdapter::new(root);
+    /// let mut overlay = OverlayLayer::new();
+    ///
+    /// let update = adapter.build_update_with_overlay(&mut arena, &overlay);
+    /// assert!(!update.nodes.is_empty());
+    /// ```
+    pub fn build_update_with_overlay(
+        &mut self,
+        arena: &mut WidgetArena,
+        overlay: &OverlayLayer,
+    ) -> TreeUpdate {
+        self.build_update_impl(arena, Some(overlay))
+    }
+
+    /// Shared implementation of [`Self::build_update`] and
+    /// [`Self::build_update_with_overlay`].
+    fn build_update_impl(
+        &mut self,
+        arena: &mut WidgetArena,
+        overlay: Option<&OverlayLayer>,
+    ) -> TreeUpdate {
+        self.overlay_roots.clear();
+        self.overlay_refs.clear();
+
+        // Let widgets apply pending assistive-technology activations
+        // before anything is emitted.
+        let ids: Vec<WidgetId> = arena.iter_subtree(self.root).collect();
+        for id in ids {
+            if let Some(cold) = arena.get_cold_mut(id) {
+                cold.widget.a11y_prepare();
+            }
+        }
+        // Popup content gets the same chance: parked AT activations on
+        // popup-internal widgets must be drained before emission.
+        let entry_ids: Vec<u64> = arena.overlay().entries().map(|e| e.id()).collect();
+        for id in entry_ids {
+            if let Some(entry) = arena.overlay_mut().entry_mut(id) {
+                entry.content_mut().a11y_prepare();
+            }
+        }
+
         let mut nodes = Vec::new();
+
+        // Emit open popups first so `Widget::a11y_fixup` calls during the
+        // arena walk can resolve their ids through `overlay_refs`. The
+        // arena-owned layer is always included; an external layer passed
+        // to `build_update_with_overlay` is emitted after it.
+        let mut open: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        for entry in arena.overlay().entries() {
+            let (root_id, mut emitted) = self.emit_overlay_entry(entry);
+            nodes.append(&mut emitted);
+            self.overlay_roots.push(root_id);
+            open.insert(entry.id());
+        }
+        if let Some(layer) = overlay {
+            for entry in layer.entries() {
+                let (root_id, mut emitted) = self.emit_overlay_entry(entry);
+                nodes.append(&mut emitted);
+                self.overlay_roots.push(root_id);
+                open.insert(entry.id());
+            }
+        }
+        self.overlay_ids.retain(|p, _| open.contains(&p.entry));
+        self.overlay_targets.retain(|_, p| open.contains(&p.entry));
+        self.last_open_entries = open;
 
         for widget_id in arena.iter_subtree(self.root) {
             let Some((hot, cold)) = arena.get_both(widget_id) else {
@@ -155,18 +291,27 @@ impl AccessKitAdapter {
             let mut node = self.build_node(widget_id, hot.bounds, cold, arena);
             // Internal children are "inside" the widget's own subtree and
             // precede arena children, matching paint order.
+            let mut emitted = Vec::new();
             let mut children = Vec::new();
             self.build_internal_children(
                 widget_id,
                 &*cold.widget,
                 &mut Vec::new(),
-                &mut nodes,
+                &mut emitted,
                 &mut children,
             );
             children.extend(arena.children(widget_id).map(widget_id_to_node_id));
+            // Overlay popups are top-level surfaces: attach their roots
+            // to the tree root, painted above everything else.
+            if widget_id == self.root {
+                children.extend(self.overlay_roots.iter().copied());
+            }
             if !children.is_empty() {
                 node.set_children(children);
             }
+            cold.widget
+                .a11y_fixup(&mut emitted, &self.overlay_refs, &mut node);
+            nodes.extend(emitted.into_iter().map(|e| (e.id, e.node)));
             nodes.push((node_id, node));
         }
 
@@ -221,8 +366,23 @@ impl AccessKitAdapter {
     ///
     /// After this call, the `DIRTY_A11Y` flags on emitted nodes are
     /// cleared and `last_emitted_focus` is updated.
+    ///
+    /// Overlay popups are tracked too: when the set of open entries in
+    /// the arena-owned [`OverlayLayer`] changed since the last update
+    /// (or popup contents report dirtiness), the tree root is included
+    /// so its `children` list gains/loses the popup roots, and every
+    /// open popup subtree is re-emitted — `aria-controls`,
+    /// `aria-activedescendant`, and `aria-describedby` relations wired
+    /// by `Widget::a11y_fixup` resolve against the freshly minted ids.
     pub fn build_incremental_update(&mut self, arena: &mut WidgetArena) -> Option<TreeUpdate> {
         let focus_changed = self.focus != self.last_emitted_focus;
+
+        // Detect popup set changes and popup-internal dirtiness — both
+        // force an update even when no arena node is flagged dirty.
+        let open_now: std::collections::HashSet<u64> =
+            arena.overlay().entries().map(|e| e.id()).collect();
+        let overlay_set_changed = open_now != self.last_open_entries;
+        let overlay_content_dirty = arena.overlay_mut().take_content_dirty();
 
         // Collect the set of widget IDs to emit: dirty nodes, their
         // ancestors, and the focused node (if focus changed).
@@ -252,11 +412,46 @@ impl AccessKitAdapter {
             }
         }
 
-        if to_emit.is_empty() && !focus_changed {
+        // A popup opening/closing changes the tree root's children list.
+        if overlay_set_changed {
+            to_emit.insert(self.root);
+        }
+
+        if to_emit.is_empty() && !focus_changed && !overlay_content_dirty {
             return None;
         }
 
+        // Apply pending AT activations on the widgets being emitted —
+        // and on popup content, which is always re-emitted below so its
+        // state and `overlay_refs` stay current.
+        for id in &to_emit {
+            if let Some(cold) = arena.get_cold_mut(*id) {
+                cold.widget.a11y_prepare();
+            }
+        }
+        let entry_ids: Vec<u64> = arena.overlay().entries().map(|e| e.id()).collect();
+        for id in entry_ids {
+            if let Some(entry) = arena.overlay_mut().entry_mut(id) {
+                entry.content_mut().a11y_prepare();
+            }
+        }
+
+        // Emit open popups first so `a11y_fixup` during the arena walk
+        // resolves their ids through `overlay_refs`, and prune virtual
+        // ids minted for entries that are no longer open.
+        self.overlay_roots.clear();
+        self.overlay_refs.clear();
         let mut nodes = Vec::new();
+        for entry in arena.overlay().entries() {
+            let (root_id, mut emitted) = self.emit_overlay_entry(entry);
+            nodes.append(&mut emitted);
+            self.overlay_roots.push(root_id);
+        }
+        self.overlay_ids.retain(|p, _| open_now.contains(&p.entry));
+        self.overlay_targets
+            .retain(|_, p| open_now.contains(&p.entry));
+        self.last_open_entries = open_now;
+
         for widget_id in arena.iter_subtree(self.root) {
             if !to_emit.contains(&widget_id) {
                 continue;
@@ -266,18 +461,27 @@ impl AccessKitAdapter {
             };
             let node_id = widget_id_to_node_id(widget_id);
             let mut node = self.build_node(widget_id, hot.bounds, cold, arena);
+            let mut emitted = Vec::new();
             let mut children = Vec::new();
             self.build_internal_children(
                 widget_id,
                 &*cold.widget,
                 &mut Vec::new(),
-                &mut nodes,
+                &mut emitted,
                 &mut children,
             );
             children.extend(arena.children(widget_id).map(widget_id_to_node_id));
+            // Overlay popups attach to the tree root — re-listing them
+            // here is what opens/closes their subtree for the AT.
+            if widget_id == self.root {
+                children.extend(self.overlay_roots.iter().copied());
+            }
             if !children.is_empty() {
                 node.set_children(children);
             }
+            cold.widget
+                .a11y_fixup(&mut emitted, &self.overlay_refs, &mut node);
+            nodes.extend(emitted.into_iter().map(|e| (e.id, e.node)));
             nodes.push((node_id, node));
         }
 
@@ -377,9 +581,9 @@ impl AccessKitAdapter {
     }
 
     /// Emits AccessKit nodes for a widget's internal children — and
-    /// their internal children, recursively — appending each
-    /// `(NodeId, Node)` pair to `nodes` and each child id to
-    /// `out_children` in child order.
+    /// their internal children, recursively — collecting each into
+    /// `emitted` (as [`A11yEmittedNode`] so `Widget::a11y_fixup` can
+    /// patch them) and each child id to `out_children` in child order.
     ///
     /// Internal children have no arena node and no `ColdNode`, so their
     /// node is built from `Role::Unknown`, their layout-cached
@@ -390,7 +594,7 @@ impl AccessKitAdapter {
         owner: WidgetId,
         widget: &dyn Widget,
         prefix: &mut Vec<u32>,
-        nodes: &mut Vec<(NodeId, Node)>,
+        emitted: &mut Vec<A11yEmittedNode>,
         out_children: &mut Vec<NodeId>,
     ) {
         for i in 0..widget.child_count() {
@@ -414,15 +618,163 @@ impl AccessKitAdapter {
             // Recurse so grandchildren attach to this node, not the
             // arena owner.
             let mut grandchildren = Vec::new();
-            self.build_internal_children(owner, child, prefix, nodes, &mut grandchildren);
+            self.build_internal_children(owner, child, prefix, emitted, &mut grandchildren);
             if !grandchildren.is_empty() {
                 node.set_children(grandchildren);
             }
+            let path = prefix.clone();
             prefix.pop();
 
-            nodes.push((id, node));
+            emitted.push(A11yEmittedNode { path, id, node });
             out_children.push(id);
         }
+    }
+
+    /// Returns an existing virtual [`NodeId`] for an overlay popup node,
+    /// minting a new one from the shared generation-0 space on first
+    /// use.
+    fn overlay_node_id(&mut self, path: OverlayPath) -> NodeId {
+        if let Some(id) = self.overlay_ids.get(&path) {
+            return *id;
+        }
+        let id = NodeId(u64::from(self.next_internal));
+        self.next_internal = self
+            .next_internal
+            .checked_add(1)
+            .expect("virtual NodeId space exhausted");
+        self.overlay_targets.insert(id, path.clone());
+        self.overlay_ids.insert(path, id);
+        id
+    }
+
+    /// Emits one overlay popup subtree: the entry's content root plus
+    /// its internal children, recursively. Returns the popup root's
+    /// `NodeId` and every emitted `(NodeId, Node)` pair (descendants
+    /// first, root last). Each node's `(entry, path)` reference is
+    /// recorded in `overlay_refs` for `Widget::a11y_fixup` lookups.
+    fn emit_overlay_entry(&mut self, entry: &OverlayEntry) -> (NodeId, Vec<(NodeId, Node)>) {
+        let entry_id = entry.id();
+        let root_id = self.overlay_node_id(OverlayPath {
+            entry: entry_id,
+            indices: Vec::new(),
+        });
+
+        let mut node = Node::new(accesskit::Role::Unknown);
+        let b = entry.bounds();
+        if b.width() > 0.0 && b.height() > 0.0 {
+            node.set_bounds(rect_to_accesskit(b));
+        }
+        entry.content().accessibility(&mut node);
+
+        let mut emitted = Vec::new();
+        let mut children = Vec::new();
+        self.build_overlay_children(
+            entry_id,
+            entry.content(),
+            &mut Vec::new(),
+            &mut emitted,
+            &mut children,
+        );
+        if !children.is_empty() {
+            node.set_children(children);
+        }
+        self.overlay_refs.push(OverlayA11yRef {
+            entry: entry_id,
+            path: Vec::new(),
+            id: root_id,
+        });
+        // Popup content gets the same post-emission fixup hook arena
+        // widgets do, so it can wire relations onto its descendants.
+        entry
+            .content()
+            .a11y_fixup(&mut emitted, &self.overlay_refs, &mut node);
+        emitted.push(A11yEmittedNode {
+            path: Vec::new(),
+            id: root_id,
+            node,
+        });
+        (
+            root_id,
+            emitted.into_iter().map(|e| (e.id, e.node)).collect(),
+        )
+    }
+
+    /// Emits AccessKit nodes for an overlay entry's internal children,
+    /// recursively — the popup analogue of
+    /// [`build_internal_children`](Self::build_internal_children), keyed
+    /// by `(entry id, path)` and recording [`OverlayA11yRef`]s.
+    fn build_overlay_children(
+        &mut self,
+        entry: u64,
+        widget: &dyn Widget,
+        prefix: &mut Vec<u32>,
+        nodes: &mut Vec<A11yEmittedNode>,
+        out_children: &mut Vec<NodeId>,
+    ) {
+        for i in 0..widget.child_count() {
+            let Some(child) = widget.child(i) else {
+                continue;
+            };
+            prefix.push(i as u32);
+            let id = self.overlay_node_id(OverlayPath {
+                entry,
+                indices: prefix.clone(),
+            });
+
+            let mut node = Node::new(accesskit::Role::Unknown);
+            if let Some(b) = widget.child_bounds(i) {
+                if b.width() > 0.0 && b.height() > 0.0 {
+                    node.set_bounds(rect_to_accesskit(b));
+                }
+            }
+            child.accessibility(&mut node);
+
+            let mut grandchildren = Vec::new();
+            self.build_overlay_children(entry, child, prefix, nodes, &mut grandchildren);
+            if !grandchildren.is_empty() {
+                node.set_children(grandchildren);
+            }
+            self.overlay_refs.push(OverlayA11yRef {
+                entry,
+                path: prefix.clone(),
+                id,
+            });
+            let path = prefix.clone();
+            prefix.pop();
+
+            nodes.push(A11yEmittedNode { path, id, node });
+            out_children.push(id);
+        }
+    }
+
+    /// Resolves a virtual [`NodeId`] minted for overlay popup content
+    /// to the popup's entry id and the `Widget::child` index path
+    /// inside it. Returns `None` for arena nodes and widget-internal
+    /// virtual ids — use [`resolve`](Self::resolve) /
+    /// [`resolve_internal`](Self::resolve_internal) for those. Action
+    /// dispatch on a popup target walks the path through
+    /// `OverlayLayer::widget_at_mut`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_access::{widget_id_to_node_id, AccessKitAdapter};
+    /// use martensite_core::{HotNode, OverlayLayer, WidgetArena};
+    /// # use martensite_core::ColdNode;
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert(HotNode::default(), ColdNode::default());
+    /// let mut adapter = AccessKitAdapter::new(root);
+    /// let overlay = OverlayLayer::new();
+    /// let _ = adapter.build_update_with_overlay(&mut arena, &overlay);
+    ///
+    /// // Arena node ids are not overlay targets.
+    /// assert!(adapter.resolve_overlay(widget_id_to_node_id(root)).is_none());
+    /// ```
+    pub fn resolve_overlay(&self, node_id: NodeId) -> Option<(u64, &[u32])> {
+        self.overlay_targets
+            .get(&node_id)
+            .map(|path| (path.entry, path.indices.as_slice()))
     }
 
     /// Resolves a virtual [`NodeId`] minted for a widget-internal child
@@ -495,12 +847,67 @@ impl AccessKitAdapter {
     /// Decodes an incoming AccessKit `ActionRequest` into an
     /// [`A11yAction`](crate::actions::A11yAction), validating that the
     /// request targets this adapter's tree.
+    ///
+    /// The `target_node` is resolved through this adapter's emission
+    /// maps into an [`ActionTarget`](crate::actions::ActionTarget):
+    /// an arena widget for ordinary node ids, an
+    /// [`Internal`](crate::actions::ActionTarget::Internal) `(owner,
+    /// path)` pair for widget-internal virtual ids, or an
+    /// [`Overlay`](crate::actions::ActionTarget::Overlay) `(entry,
+    /// path)` pair for popup virtual ids — so assistive-technology
+    /// actions on virtual nodes (radio options, popup listbox items)
+    /// are not dropped.
+    ///
+    /// Returns `None` when the request names a different tree, an
+    /// unresolvable or dead target, or malformed action data (e.g.
+    /// `SetValue` without `Value`/`NumericValue`).
     pub fn decode_action(
         &self,
         arena: &WidgetArena,
         request: &accesskit::ActionRequest,
     ) -> Option<crate::actions::A11yAction> {
-        crate::actions::decode_action_request(arena, request, &self.tree_id)
+        use crate::actions::{A11yAction, ActionTarget};
+
+        if request.target_tree != self.tree_id {
+            return None;
+        }
+
+        let target = if let Some(id) = self.resolve(arena, request.target_node) {
+            ActionTarget::Arena(id)
+        } else if let Some((owner, path)) = self.resolve_internal(request.target_node) {
+            if !arena.is_alive(owner) {
+                return None;
+            }
+            ActionTarget::Internal(owner, path.to_vec())
+        } else if let Some((entry, path)) = self.resolve_overlay(request.target_node) {
+            arena.overlay().entry(entry)?;
+            ActionTarget::Overlay(entry, path.to_vec())
+        } else {
+            return None;
+        };
+
+        Some(match request.action {
+            Action::Click => A11yAction::Click(target),
+            Action::Focus => A11yAction::Focus(target),
+            Action::Blur => A11yAction::Blur(target),
+            Action::SetValue => {
+                let value = match &request.data {
+                    Some(ActionData::Value(v)) => v.to_string(),
+                    Some(ActionData::NumericValue(n)) => n.to_string(),
+                    // Malformed: SetValue requires Value or NumericValue.
+                    _ => return None,
+                };
+                A11yAction::SetValue(target, value)
+            }
+            Action::Increment => A11yAction::Increment(target),
+            Action::Decrement => A11yAction::Decrement(target),
+            Action::Expand => A11yAction::Expand(target),
+            Action::Collapse => A11yAction::Collapse(target),
+            Action::HideTooltip => A11yAction::HideTooltip(target),
+            Action::ShowTooltip => A11yAction::ShowTooltip(target),
+            Action::ShowContextMenu => A11yAction::ShowContextMenu(target),
+            other => A11yAction::Other(target, other, request.data.clone()),
+        })
     }
 }
 

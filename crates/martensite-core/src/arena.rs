@@ -10,14 +10,16 @@
 //! only occur if the arena's own data structures are corrupted (a
 //! bug, not a user error). If such corruption occurs, panicking with
 //! a clear message is the correct behavior (fail-fast).
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::iter::FusedIterator;
+use std::time::Duration;
 
 use crate::fence::FrameFence;
 use crate::id::WidgetId;
 use crate::node::{ColdNode, HotNode, NodeFlags};
+use crate::overlay::OverlayLayer;
 use crate::paint::PaintList;
-use crate::widget::{EventContext, EventResponse, PaintContext, WidgetEvent};
+use crate::widget::{EventContext, EventResponse, PaintContext, Widget, WidgetEvent};
 
 /// Error variants for arena tree operations and synchronization.
 ///
@@ -142,6 +144,15 @@ pub struct WidgetArena {
     pub(crate) dense_to_slot: Vec<u32>,
     /// Strict FIFO queue distributing recycled slot indices.
     pub(crate) free_slots: VecDeque<u32>,
+    /// In-window popup layer owned by the arena. Popups are painted
+    /// after arena content in [`build_paint_list`](Self::build_paint_list),
+    /// offered input before arena hit-testing by `martensite-window`'s
+    /// `EventRouter`, and emitted into the AccessKit tree by
+    /// `martensite-access`'s `AccessKitAdapter`.
+    overlay: OverlayLayer,
+    /// The most recent widget that asked for keyboard focus —
+    /// drained by [`take_focus_request`](Self::take_focus_request).
+    pending_focus: Option<WidgetId>,
 }
 
 impl std::fmt::Debug for WidgetArena {
@@ -196,6 +207,266 @@ impl WidgetArena {
             cold_nodes: Vec::with_capacity(capacity),
             dense_to_slot: Vec::with_capacity(capacity),
             free_slots: VecDeque::new(),
+            overlay: OverlayLayer::new(),
+            pending_focus: None,
+        }
+    }
+
+    /// Returns the arena-owned in-window [`OverlayLayer`].
+    ///
+    /// The layer holds popups opened by widgets (e.g. `Dropdown`,
+    /// `Tooltip`) through [`Widget::sync_overlay`]. Popups live outside
+    /// the widget hierarchy but participate in painting, routed input,
+    /// and accessibility: [`build_paint_list`](Self::build_paint_list)
+    /// appends them after arena content, `martensite-window`'s
+    /// `EventRouter` offers pointer/scroll/Escape input to the layer
+    /// before arena hit-testing, and `martensite-access`'s
+    /// `AccessKitAdapter` emits them as top-level virtual nodes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::WidgetArena;
+    ///
+    /// let arena = WidgetArena::new();
+    /// assert!(arena.overlay().is_empty());
+    /// ```
+    pub fn overlay(&self) -> &OverlayLayer {
+        &self.overlay
+    }
+
+    /// Returns a mutable reference to the arena-owned [`OverlayLayer`].
+    ///
+    /// Set the viewport with
+    /// [`OverlayLayer::set_viewport`](crate::overlay::OverlayLayer::set_viewport)
+    /// before any popup opens so placement clamping has meaningful
+    /// bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{Rect, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena
+    ///     .overlay_mut()
+    ///     .set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+    /// ```
+    pub fn overlay_mut(&mut self) -> &mut OverlayLayer {
+        &mut self.overlay
+    }
+
+    /// Drives one frame of overlay synchronization.
+    ///
+    /// Calls [`Widget::sync_overlay`] on every live widget **and** every
+    /// internal child (recursively), so widgets anywhere in the
+    /// hierarchy can open, move, dismiss, or observe their popups; then
+    /// runs [`OverlayLayer::layout_pass`] to resolve anchors for entries
+    /// opened this frame. Entries opened during a widget's sync are
+    /// stamped with that widget as their [`owner`](crate::overlay::OverlayEntry::owner) —
+    /// see [`Self::remove`] for how the stamp keeps popups from
+    /// outliving dead widgets.
+    ///
+    /// Afterwards, every widget whose popup was opened, closed, or
+    /// touched by an event since the last sync is marked
+    /// `DIRTY_PAINT | DIRTY_A11Y` — popup open/close changes emitted
+    /// accessibility state (`expanded`, `controls`, `described_by`) and
+    /// must not wait for a widget event to reach an incremental
+    /// `TreeUpdate`.
+    ///
+    /// Call once per frame after layout and before
+    /// painting/accessibility emission — or drive both steps at once
+    /// via [`Self::tick`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.sync_overlays(); // no popups — cheap no-op
+    /// ```
+    pub fn sync_overlays(&mut self) {
+        let mut overlay = std::mem::take(&mut self.overlay);
+        let open_before: HashSet<u64> = overlay.entries().map(|e| e.id()).collect();
+        let ids: Vec<WidgetId> = self.iter_depth_first().collect();
+        for id in ids {
+            overlay.set_current_owner(Some(id));
+            if let Some(cold) = self.get_cold_mut(id) {
+                Self::sync_overlay_recursive(cold.widget.as_mut(), &mut overlay);
+            }
+        }
+        overlay.set_current_owner(None);
+        overlay.layout_pass();
+        // Owners whose popup state changed: entries opened this frame
+        // carry a fresh owner stamp; entries closed (outside press,
+        // Escape, owner-driven close) or touched by popup events left
+        // their owner in the layer's dirty log.
+        let mut owners: Vec<WidgetId> = overlay
+            .entries()
+            .filter(|e| !open_before.contains(&e.id()))
+            .filter_map(|e| e.owner())
+            .collect();
+        for owner in overlay.take_dirty_owners() {
+            if !owners.contains(&owner) {
+                owners.push(owner);
+            }
+        }
+        self.overlay = overlay;
+        for owner in owners {
+            self.mark_dirty(owner);
+        }
+    }
+
+    /// Drives one frame of widget state advancement plus overlay
+    /// synchronization — the production frame seam.
+    ///
+    /// Calls [`Widget::tick`] on every live arena widget and,
+    /// recursively, on its internal children; widgets that returned
+    /// `true` (animation in flight, delay countdown running) are marked
+    /// `DIRTY_PAINT | DIRTY_A11Y`. Then runs [`Self::sync_overlays`] so
+    /// effects the tick produced — a `Tooltip` finishing its hover
+    /// delay, a `ScrollView` animation completing — reconcile their
+    /// popups the same frame.
+    ///
+    /// Call once per frame from the application/windowing frame loop
+    /// (`martensite-access`'s `MartensiteAccessBridge::tick` forwards
+    /// here), before `build_paint_list` and before building an
+    /// AccessKit `TreeUpdate`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.tick(Duration::from_millis(16)); // drives widgets + overlays
+    /// ```
+    pub fn tick(&mut self, dt: Duration) {
+        let ids: Vec<WidgetId> = self.iter_depth_first().collect();
+        for id in ids {
+            let dirty = self
+                .get_cold_mut(id)
+                .map(|cold| Self::tick_recursive(cold.widget.as_mut(), dt))
+                .unwrap_or(false);
+            if dirty {
+                self.mark_dirty(id);
+            }
+        }
+        self.sync_overlays();
+    }
+
+    /// Recursive helper for [`tick`](Self::tick): ticks `widget` then
+    /// its internal children, `true` if any returned `true`.
+    fn tick_recursive(widget: &mut dyn Widget, dt: Duration) -> bool {
+        let mut dirty = widget.tick(dt);
+        for i in 0..widget.child_count() {
+            if let Some(child) = widget.child_mut(i) {
+                dirty |= Self::tick_recursive(child, dt);
+            }
+        }
+        dirty
+    }
+
+    /// Recursive helper for [`sync_overlays`](Self::sync_overlays).
+    fn sync_overlay_recursive(widget: &mut dyn Widget, overlay: &mut OverlayLayer) {
+        widget.sync_overlay(overlay);
+        for i in 0..widget.child_count() {
+            if let Some(child) = widget.child_mut(i) {
+                Self::sync_overlay_recursive(child, overlay);
+            }
+        }
+    }
+
+    /// Drains the pending keyboard-focus request, if any.
+    ///
+    /// A request is recorded when a widget answers an event with
+    /// [`EventResponse::CaptureFocus`], or when a `PointerPressed` is
+    /// handled by a node carrying [`NodeFlags::FOCUSABLE`]
+    /// (press-to-focus). The request names the arena widget that
+    /// responded — even when the responder was an internal child, the
+    /// request resolves to its arena owner.
+    ///
+    /// Applying it is the app's responsibility: pass the id to
+    /// `martensite-focus`'s `FocusManager::set_focus`, then dispatch
+    /// [`WidgetEvent::FocusLost`] to the previously focused widget and
+    /// [`WidgetEvent::FocusGained`] to the new one via
+    /// [`dispatch_event`](Self::dispatch_event).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags = NodeFlags::VISIBLE | NodeFlags::FOCUSABLE;
+    /// let id = arena.insert_with_widget(hot, Box::new(DummyWidget));
+    ///
+    /// assert_eq!(arena.take_focus_request(), None);
+    /// ```
+    pub fn take_focus_request(&mut self) -> Option<WidgetId> {
+        self.pending_focus.take()
+    }
+
+    /// Records a pending focus request for `id` without routing an
+    /// event — the arena-level counterpart of
+    /// [`EventResponse::CaptureFocus`].
+    ///
+    /// Used when a *virtual* node (a widget's internal child or popup
+    /// content inside an overlay entry) answers an assistive-technology
+    /// action by requesting focus: the request must resolve to the
+    /// owning arena widget, which the action dispatcher reaches via
+    /// this method. Dead widgets are ignored. Drain with
+    /// [`take_focus_request`](Self::take_focus_request) and apply
+    /// through `martensite-focus`'s `FocusManager`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.request_focus(id);
+    /// assert_eq!(arena.take_focus_request(), Some(id));
+    /// ```
+    pub fn request_focus(&mut self, id: WidgetId) {
+        if !self.is_alive(id) {
+            return;
+        }
+        self.pending_focus = Some(id);
+        if let Some(h) = self.get_hot_mut(id) {
+            h.flags |= NodeFlags::DIRTY_PAINT;
+        }
+    }
+
+    /// Marks `id` `DIRTY_PAINT | DIRTY_A11Y` — the widget's emitted
+    /// appearance and accessibility state are stale and the next frame
+    /// must repaint it and include it in an incremental `TreeUpdate`.
+    /// Dead widgets are ignored.
+    ///
+    /// Used by the accessibility action dispatcher when an action is
+    /// delivered to a virtual (internal or overlay) target: the
+    /// response mutates the owning widget's state without going through
+    /// `dispatch_event`, which would have marked it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.mark_dirty(id);
+    /// assert!(arena.get_hot(id).unwrap().flags.contains(NodeFlags::DIRTY_A11Y));
+    /// ```
+    pub fn mark_dirty(&mut self, id: WidgetId) {
+        if let Some(h) = self.get_hot_mut(id) {
+            h.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
         }
     }
 
@@ -387,10 +658,23 @@ impl WidgetArena {
     }
 
     /// Remove a node from the arena, unparenting its children and detaching from its hierarchy.
+    ///
+    /// Overlay popups owned by the widget (stamped during
+    /// [`sync_overlays`](Self::sync_overlays)) are closed so they cannot
+    /// keep painting/hit-testing with a dead owner, and a pending focus
+    /// request naming this widget is dropped.
     pub fn remove(&mut self, id: WidgetId) -> Option<(HotNode, ColdNode)> {
         let slot = self.slots.get(id.slot_idx() as usize)?;
         if slot.generation != id.generation() {
             return None;
+        }
+
+        // 0. Orphaned state: close popups this widget owns and drop a
+        // stale focus request — a dead widget must not leave its popup
+        // painting above content or focus a non-existent node.
+        self.overlay.close_owner(id);
+        if self.pending_focus == Some(id) {
+            self.pending_focus = None;
         }
 
         // 1. Unparent all immediate children so they become clean root-level nodes
@@ -1016,6 +1300,27 @@ impl WidgetArena {
     /// assert_eq!(arena.dispatch_event(root, &event), EventResponse::Ignored);
     /// ```
     pub fn dispatch_event(&mut self, target: WidgetId, event: &WidgetEvent) -> EventResponse {
+        self.dispatch_event_ex(target, event)
+            .map(|(_, response)| response)
+            .unwrap_or(EventResponse::Ignored)
+    }
+
+    /// Like [`Self::dispatch_event`], but also reports the arena node
+    /// that produced the terminal response.
+    ///
+    /// Event routers need the responder's [`WidgetId`] to apply
+    /// [`EventResponse::CapturePointer`] /
+    /// [`EventResponse::ReleasePointer`] to the widget that actually
+    /// handled the event — which may be an ancestor of the hit target
+    /// after bubbling — rather than to the hit target itself.
+    ///
+    /// Returns `Some((responder, response))` when a widget handled the
+    /// event, or `None` if it bubbled past the root.
+    pub fn dispatch_event_ex(
+        &mut self,
+        target: WidgetId,
+        event: &WidgetEvent,
+    ) -> Option<(WidgetId, EventResponse)> {
         let mut current = Some(target);
         while let Some(id) = current {
             let Some(hot) = self.get_hot(id) else {
@@ -1031,18 +1336,91 @@ impl WidgetArena {
                 break;
             };
             let mut cx = EventContext { event, bounds };
-            match cold.widget.event(&mut cx) {
+            let response = cold.widget.event(&mut cx);
+            match response {
                 EventResponse::Ignored => current = parent,
-                EventResponse::RequestRepaint => {
+                EventResponse::CaptureFocus => {
+                    // Explicit focus request: record the responder and
+                    // repaint so a focus indicator can appear.
+                    self.pending_focus = Some(id);
                     if let Some(h) = self.get_hot_mut(id) {
-                        h.flags |= NodeFlags::DIRTY_PAINT;
+                        h.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
                     }
-                    return EventResponse::RequestRepaint;
+                    return Some((id, response));
                 }
-                response => return response,
+                EventResponse::RequestRepaint
+                | EventResponse::CapturePointer
+                | EventResponse::ReleasePointer => {
+                    // Press-to-focus: a handled press on a focusable
+                    // node requests focus implicitly, matching
+                    // platform mousedown-to-focus conventions.
+                    if matches!(event, WidgetEvent::PointerPressed { .. })
+                        && self
+                            .get_hot(id)
+                            .is_some_and(|h| h.flags.contains(NodeFlags::FOCUSABLE))
+                    {
+                        self.pending_focus = Some(id);
+                    }
+                    // A handled event may change emitted accessibility
+                    // state (expanded, selected, value) — mark the
+                    // responder for re-emission in the next incremental
+                    // `TreeUpdate`, alongside the repaint.
+                    if let Some(h) = self.get_hot_mut(id) {
+                        h.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
+                    }
+                    return Some((id, response));
+                }
+                other => {
+                    // `Handled` — still honour implicit press-to-focus,
+                    // and dirty-mark like the responses above: handled
+                    // events routinely mutate emitted a11y state.
+                    if matches!(event, WidgetEvent::PointerPressed { .. }) {
+                        if let Some(h) = self.get_hot_mut(id) {
+                            if h.flags.contains(NodeFlags::FOCUSABLE) {
+                                self.pending_focus = Some(id);
+                            }
+                        }
+                    }
+                    if let Some(h) = self.get_hot_mut(id) {
+                        h.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
+                    }
+                    return Some((id, other));
+                }
             }
         }
-        EventResponse::Ignored
+        None
+    }
+
+    /// Walks a `Widget::child_mut` index path from an arena widget to a
+    /// nested internal child, returning it mutably.
+    ///
+    /// Used to deliver accessibility actions to internal targets: the
+    /// adapter's `resolve_internal` yields `(owner, path)` pairs and
+    /// this reaches the widget at that path — the internal analogue of
+    /// `OverlayLayer::widget_at_mut`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// // `DummyWidget` has no internal children — only the empty path resolves.
+    /// assert!(arena.internal_widget_mut(root, &[]).is_some());
+    /// assert!(arena.internal_widget_mut(root, &[0]).is_none());
+    /// ```
+    pub fn internal_widget_mut(
+        &mut self,
+        owner: WidgetId,
+        path: &[u32],
+    ) -> Option<&mut dyn crate::Widget> {
+        let cold = self.get_cold_mut(owner)?;
+        let mut widget: &mut dyn crate::Widget = &mut *cold.widget;
+        for &index in path {
+            widget = widget.child_mut(index as usize)?;
+        }
+        Some(widget)
     }
 
     /// Record the visible subtree rooted at `root` into `list`, in
@@ -1051,7 +1429,9 @@ impl WidgetArena {
     /// For each arena node: invisible subtrees are skipped entirely, the
     /// widget's own `paint` emits its chrome first, then internal
     /// children (via the `Widget::child_count`/`child`/`child_bounds`
-    /// protocol), then arena children in sibling order.
+    /// protocol), then arena children in sibling order. Popups open in
+    /// the arena-owned [`OverlayLayer`](crate::overlay::OverlayLayer)
+    /// are appended last — above all window content.
     ///
     /// # Examples
     ///
@@ -1072,6 +1452,8 @@ impl WidgetArena {
     /// ```
     pub fn build_paint_list(&self, root: WidgetId, list: &mut PaintList) {
         self.paint_node(root, list);
+        // In-window popups paint above everything else.
+        self.overlay.paint(list);
     }
 
     /// Recursive helper for [`WidgetArena::build_paint_list`].
@@ -1088,12 +1470,33 @@ impl WidgetArena {
 
         paint_widget_recursive(&*cold.widget, hot.bounds, list);
 
+        // Arena children honour the node's `CLIPS_CHILDREN` flag: their
+        // paint commands are wrapped in a clip for the node bounds.
+        // (`Widget::clips_children` governs *internal* children inside
+        // `paint_widget_recursive`.)
+        let clip_children = hot.flags.contains(NodeFlags::CLIPS_CHILDREN);
+        if clip_children {
+            list.push_clip(rect_to_kurbo(hot.bounds));
+        }
         let mut child = hot.first_child;
         while let Some(child_id) = child {
             self.paint_node(child_id, list);
             child = self.get_hot(child_id).and_then(|h| h.next_sibling);
         }
+        if clip_children {
+            list.pop_clip();
+        }
     }
+}
+
+/// Convert a [`crate::Rect`] to the `kurbo` rectangle paint commands use.
+pub(crate) fn rect_to_kurbo(rect: crate::Rect) -> kurbo::Rect {
+    kurbo::Rect::new(
+        f64::from(rect.min_x()),
+        f64::from(rect.min_y()),
+        f64::from(rect.max_x()),
+        f64::from(rect.max_y()),
+    )
 }
 
 /// Paint a widget and its internal children recursively.
@@ -1101,15 +1504,34 @@ impl WidgetArena {
 /// Emits the widget's own chrome via `paint`, then recurses into each
 /// internal child using the child's layout-assigned bounds. Internal
 /// children have no arena nodes, so this walk is driven entirely by the
-/// `Widget::child_count`/`child`/`child_bounds` protocol.
-fn paint_widget_recursive(widget: &dyn crate::Widget, bounds: crate::Rect, list: &mut PaintList) {
+/// `Widget::child_count`/`child`/`child_bounds` protocol. When
+/// [`Widget::clips_children`](crate::Widget::clips_children) reports
+/// `true` the recursion is wrapped in a
+/// [`PaintCommand::ClipRect`](crate::PaintCommand::ClipRect) /
+/// [`PaintCommand::PopClip`](crate::PaintCommand::PopClip) pair for
+/// `bounds`.
+///
+/// `pub(crate)` so the [`OverlayLayer`](crate::overlay::OverlayLayer)
+/// can paint popup content through the same walk.
+pub(crate) fn paint_widget_recursive(
+    widget: &dyn crate::Widget,
+    bounds: crate::Rect,
+    list: &mut PaintList,
+) {
     let mut cx = PaintContext { list, bounds };
     widget.paint(&mut cx);
+    let clip = widget.clips_children();
+    if clip {
+        cx.list.push_clip(rect_to_kurbo(bounds));
+    }
     for i in 0..widget.child_count() {
         let (Some(child), Some(child_bounds)) = (widget.child(i), widget.child_bounds(i)) else {
             continue;
         };
         paint_widget_recursive(child, child_bounds, &mut *cx.list);
+    }
+    if clip {
+        cx.list.pop_clip();
     }
 }
 

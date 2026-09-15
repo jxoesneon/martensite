@@ -378,16 +378,6 @@ impl WindowManager {
         self.windows.drain().collect()
     }
 
-    /// Returns the unobstructed inset area for the window identified by
-    /// `key`, or `None` if the key is stale.
-    ///
-    /// See [`WindowEntry::safe_area`] — on Android this is zero insets on
-    /// every edge until winit exposes `WindowInsets`.
-    #[must_use]
-    pub fn safe_area(&self, key: WindowKey) -> Option<winit::dpi::PhysicalInsets<u32>> {
-        self.window(key).map(WindowEntry::safe_area)
-    }
-
     /// Returns a shared reference to the [`WindowEntry`] for `key`, or
     /// `None` if the key is stale.
     #[inline]

@@ -124,7 +124,6 @@ cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite
 fontdb = { version = "0.24", default-features = false }
 accesskit = { version = "0.25" }
 accesskit_winit = { package = "martensite-accesskit-winit", version = "0.16.0", path = "crates/martensite-accesskit-winit" }
-martensite-access-platform = { version = "0.16.0", path = "crates/martensite-access-platform" }
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }
 # Win32/COM FFI for DWM system materials and Snap Layouts (martensite-shell).
 # Version 0.61.3 was published 2025-06-12 (well over 7 days ago).

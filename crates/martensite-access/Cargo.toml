@@ -20,6 +20,7 @@ parking_lot = { workspace = true }
 tracing = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-bidi = { workspace = true }
+glam = { workspace = true }
 
 # Android: `accesskit_winit`'s `accesskit_android` feature selects the
 # `InjectingAdapter` backend (the JNI glue lives in the audited-unsafe
@@ -31,7 +32,6 @@ accesskit_winit = { workspace = true, features = ["accesskit_android"] }
 winit = { workspace = true, features = ["android-game-activity"] }
 
 [dev-dependencies]
-glam = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 martensite-text = { workspace = true }
 
