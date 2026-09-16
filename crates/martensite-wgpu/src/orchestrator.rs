@@ -190,6 +190,25 @@ pub struct RenderOrchestrator {
     /// `CpuFrame`, this asks the owning `Engine` for `to_pixmap(token)`
     /// (wired from `ExternalEngines::cpu_frame_for`).
     cpu_frame_resolver: Option<CpuFrameResolver>,
+    /// Advisory on-screen compliance audit. When `Some`, every `render`
+    /// call lints the paint list for WCAG violations (undersized text,
+    /// insufficient contrast) and reports each unique finding once via
+    /// `tracing`. Enabled by default in debug builds; see
+    /// [`RenderOrchestrator::enable_paint_audit`].
+    paint_audit: Option<PaintAuditState>,
+    /// Dedup set for per-frame external-composite warnings — keyed by
+    /// `(surface_id, site)` so a surface with no frames yet warns once
+    /// instead of once per frame. An entry is removed when the same
+    /// site later succeeds, so a genuine regression re-warns.
+    external_warned: std::collections::HashSet<(u64, u8)>,
+}
+
+/// Live state for the orchestrator's paint-compliance audit.
+struct PaintAuditState {
+    /// Thresholds and display scale factor for the audit.
+    config: martensite_access::paint_audit::PaintAuditConfig,
+    /// Per-frame dedup so findings do not re-log at frame rate.
+    reporter: martensite_access::paint_audit::LintReporter,
 }
 
 /// One pooled Vello segment texture: storage target + cached
@@ -294,6 +313,17 @@ impl RenderOrchestrator {
             bridge: None,
             pre_present_notify: None,
             cpu_frame_resolver: None,
+            // Advisory WCAG audit is on in debug builds — release builds
+            // pay nothing. Apps opt out via `disable_paint_audit`.
+            paint_audit: if cfg!(debug_assertions) {
+                Some(PaintAuditState {
+                    config: martensite_access::paint_audit::PaintAuditConfig::default(),
+                    reporter: martensite_access::paint_audit::LintReporter::new(),
+                })
+            } else {
+                None
+            },
+            external_warned: std::collections::HashSet::new(),
         })
     }
 
@@ -314,6 +344,61 @@ impl RenderOrchestrator {
     /// ```
     pub fn with_default_config(width: u32, height: u32) -> Result<Self, OrchestratorError> {
         Self::new(width, height, OrchestratorConfig::default())
+    }
+
+    /// Enables the advisory paint-compliance audit with the given
+    /// configuration. The audit runs on every [`render`](Self::render)
+    /// call and reports each unique finding once via `tracing`. It is
+    /// enabled by default in debug builds (`debug_assertions`) and off in
+    /// release builds.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_access::paint_audit::PaintAuditConfig;
+    /// use martensite_wgpu::orchestrator::{OrchestratorConfig, RenderOrchestrator};
+    ///
+    /// let mut o = RenderOrchestrator::new(100, 100, OrchestratorConfig::default()).unwrap();
+    /// o.enable_paint_audit(PaintAuditConfig::default().with_scale_factor(2.0));
+    /// ```
+    pub fn enable_paint_audit(&mut self, config: martensite_access::paint_audit::PaintAuditConfig) {
+        self.paint_audit = Some(PaintAuditState {
+            config,
+            reporter: martensite_access::paint_audit::LintReporter::new(),
+        });
+    }
+
+    /// Disables the paint-compliance audit entirely.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::{OrchestratorConfig, RenderOrchestrator};
+    ///
+    /// let mut o = RenderOrchestrator::new(100, 100, OrchestratorConfig::default()).unwrap();
+    /// o.disable_paint_audit();
+    /// ```
+    pub fn disable_paint_audit(&mut self) {
+        self.paint_audit = None;
+    }
+
+    /// Sets the display scale factor used by the paint-compliance audit.
+    /// No-op when the audit is disabled. Call this whenever the window's
+    /// scale factor changes so device-pixel font sizes are judged against
+    /// the correct logical-point thresholds.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::{OrchestratorConfig, RenderOrchestrator};
+    ///
+    /// let mut o = RenderOrchestrator::new(100, 100, OrchestratorConfig::default()).unwrap();
+    /// o.set_audit_scale_factor(2.0);
+    /// ```
+    pub fn set_audit_scale_factor(&mut self, scale_factor: f64) {
+        if let Some(audit) = &mut self.paint_audit {
+            audit.config.scale_factor = scale_factor as f32;
+        }
     }
 
     /// Renders a [`PaintList`] using the appropriate backend.
@@ -342,6 +427,13 @@ impl RenderOrchestrator {
     /// # }
     /// ```
     pub fn render(&mut self, paint_list: &PaintList, recovery: &RecoveryMachine) {
+        // Advisory compliance audit — inspects what is actually about to
+        // be painted. Never blocks; findings are deduped and reported via
+        // `tracing::warn`.
+        if let Some(audit) = &mut self.paint_audit {
+            let lints = martensite_access::paint_audit::audit_paint_list(paint_list, &audit.config);
+            audit.reporter.report(&lints);
+        }
         let use_cpu = self.config.prefer_cpu
             || (self.config.allow_software_fallback && recovery.is_fallback_cpu());
         // Derive the clear mode from the active backdrop mode so the
@@ -1431,7 +1523,9 @@ impl RenderOrchestrator {
                     clip,
                 } => {
                     let Some(host) = &self.external_host else {
-                        tracing::warn!("no external host — marker skipped");
+                        if self.external_warned.insert((u64::MAX, 3)) {
+                            tracing::warn!("no external host — marker skipped");
+                        }
                         continue;
                     };
                     let sid = *surface_id;
@@ -1457,14 +1551,17 @@ impl RenderOrchestrator {
                             Ok(Some(taken)) => {
                                 releases.push((sid, taken.slot));
                                 took = true;
+                                self.external_warned.remove(&(sid.0, 0));
                             }
                             Ok(None) => {}
                             Err(err) => {
-                                tracing::warn!(
-                                    error = %err,
-                                    surface_id = surface_id.0,
-                                    "external ring composite skipped"
-                                );
+                                if self.external_warned.insert((sid.0, 0)) {
+                                    tracing::warn!(
+                                        error = %err,
+                                        surface_id = surface_id.0,
+                                        "external ring composite skipped"
+                                    );
+                                }
                             }
                         }
                     }
@@ -1480,13 +1577,17 @@ impl RenderOrchestrator {
                             *rect,
                             *clip,
                         ) {
-                            Ok(()) => {}
+                            Ok(()) => {
+                                self.external_warned.remove(&(sid.0, 1));
+                            }
                             Err(err) => {
-                                tracing::warn!(
-                                    error = %err,
-                                    surface_id = surface_id.0,
-                                    "external composite skipped"
-                                );
+                                if self.external_warned.insert((sid.0, 1)) {
+                                    tracing::warn!(
+                                        error = %err,
+                                        surface_id = surface_id.0,
+                                        "external composite skipped"
+                                    );
+                                }
                             }
                         }
                     }
@@ -1504,12 +1605,14 @@ impl RenderOrchestrator {
                 let mut reg = bridge.lock();
                 for (sid, slot) in releases {
                     if let Err(err) = reg.release(sid, slot) {
-                        tracing::warn!(
-                            error = %err,
-                            surface_id = sid.0,
-                            slot,
-                            "external slot release failed"
-                        );
+                        if self.external_warned.insert((sid.0, 2)) {
+                            tracing::warn!(
+                                error = %err,
+                                surface_id = sid.0,
+                                slot,
+                                "external slot release failed"
+                            );
+                        }
                     }
                 }
             }

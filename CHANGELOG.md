@@ -5,6 +5,34 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **On-screen paint-compliance audit** (`martensite-access::paint_audit`)
+  — inspects the recorded `PaintList` each frame and reports WCAG 2.2
+  violations via `tracing`: undersized text (scale-factor corrected),
+  insufficient text contrast against the resolved painted backdrop
+  (1.4.3), non-text stroke contrast (1.4.11, 3:1), text painted fully
+  outside its clip region or occluded by a later opaque fill, and
+  overlapping text runs. Wired into `RenderOrchestrator::render`; on by
+  default in debug builds, zero-cost in release, opt-out via
+  `disable_paint_audit` / per-check `PaintAuditConfig` flags. Adds a
+  `martensite-wgpu → martensite-access` dependency edge (publish order
+  updated accordingly).
+
+### Fixed
+
+- `viewport_showcase`: AppKit/winit cross-thread deadlock that left the
+  window invisible (ready-waker now signals via `EventLoopProxy`
+  instead of a synchronous off-main `request_redraw`); demo text now
+  renders real glyphs through `shape_text` + `DrawGlyphRun` instead of
+  `DrawText`'s rectangle approximation.
+- `publish.yml`: Unix archive step used a relative second `tar -C`
+  (resolved against the first `-C` directory), failing all five Unix
+  binary legs on `v0.18.0`; added a `binaries_tag` repair dispatch to
+  attach archives to an existing release.
+
 ## [0.18.0] - 2026-09-16
 
 ### Added — v0.18.0: Production Hardening & Dogfooding

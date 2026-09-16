@@ -24,6 +24,9 @@ pub mod adapter;
 pub mod caret;
 /// Automated WCAG 2.2 AA/AAA accessibility evaluation and Section 508 VPAT verification.
 pub mod compliance;
+/// On-screen compliance audit over `PaintList` command streams —
+/// advisory warnings for undersized text and contrast violations.
+pub mod paint_audit;
 pub mod properties;
 /// Asynchronous, batched accessibility event pump.
 pub mod pump;

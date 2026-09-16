@@ -27,7 +27,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use martensite::core::{HotNode, LayoutContext, Rect, Widget};
+use martensite::core::{
+    FontResource, GlyphInstance, GlyphRun, HotNode, LayoutContext, Rect, Widget,
+};
+use martensite::text::{shape_text, FontManager};
 use martensite::widgets::external::{ExternalEngine, ExternalEngines};
 use martensite_bevy::bevy::prelude::{Mesh3d, Query, Res, Time, Transform, With};
 use martensite_bevy::{bevy, BevyEngine};
@@ -35,7 +38,7 @@ use martensite_engine_bridge::{
     BridgeHandle, EngineContext, EngineEvent, FrameToken, PointerButton, SurfaceId,
 };
 use martensite_godot::host::GodotEngine;
-use martensite_render::{PaintList, Point, Rect as PaintRect};
+use martensite_render::{PaintCommand, PaintList, Point, Rect as PaintRect};
 use martensite_wgpu::{
     BackdropMode, GpuContext, OrchestratorConfig, PresentModePreference, RecoveryMachine,
     RenderOrchestrator, SurfaceWrapper,
@@ -43,7 +46,7 @@ use martensite_wgpu::{
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ButtonSource, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{NativeKeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -52,9 +55,9 @@ const MARGIN: f32 = 24.0;
 /// Height of the header strip above the panels.
 const HEADER_H: f32 = 44.0;
 /// Gap under the header reserved for per-panel captions.
-const CAPTION_H: f32 = 22.0;
+const CAPTION_H: f32 = 30.0;
 /// Height of the footer strip below the panels.
-const FOOTER_H: f32 = 28.0;
+const FOOTER_H: f32 = 34.0;
 /// Horizontal gap between the two viewports.
 const GUTTER: f32 = 20.0;
 /// Loopback address the host listens on for Godot `FrameMsg`s. Launch
@@ -252,10 +255,19 @@ struct App {
     recovery: RecoveryMachine,
     /// Set on init/resize/scale change; cleared once layout runs.
     needs_layout: bool,
+    /// Cross-thread wake signal for producer threads. `wake_up` never
+    /// blocks on the main queue — the actual `request_redraw` runs in
+    /// `proxy_wake_up` back on the event thread.
+    proxy: EventLoopProxy,
+    /// System font discovery + shaping state for the UI chrome text.
+    /// `DrawText` is only a bounding-box approximation in the render
+    /// backends; real glyph outlines go through `DrawGlyphRun`, which
+    /// needs shaped glyphs plus the font bytes resolved here.
+    fonts: FontManager,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(proxy: EventLoopProxy) -> Self {
         let bridge = BridgeHandle::new();
         let bevy_surface = bridge.lock().register();
         let godot_surface = bridge.lock().register();
@@ -293,7 +305,57 @@ impl App {
             godot_widget: None,
             recovery: RecoveryMachine::new(),
             needs_layout: true,
+            proxy,
+            fonts: FontManager::new(),
         }
+    }
+
+    /// Shapes `text` and emits `DrawGlyphRun` commands — the real-glyph
+    /// path. One run per (line, font) segment, same as `Text::paint`:
+    /// `origin` is the top-left of the text block, `line_y` carries the
+    /// baseline offset, and each run carries its resolved font bytes so
+    /// the Vello backend rasterizes outlines instead of boxes.
+    fn push_shaped_text(
+        fonts: &mut FontManager,
+        list: &mut PaintList,
+        origin: Point,
+        text: &str,
+        size: f32,
+        color: [u8; 4],
+        max_width: Option<f32>,
+    ) -> f64 {
+        let mut block_bottom = f64::from(origin.y);
+        for line in shape_text(fonts, text, size, size * 1.25, max_width) {
+            block_bottom = f64::from(origin.y as f32 + line.line_y + size * 1.25);
+            let baseline_y = origin.y as f32 + line.line_y;
+            let mut run = GlyphRun::new(size, color);
+            let mut run_font = None;
+            for g in &line.glyphs {
+                if run_font.is_some_and(|prev| prev != g.font_id) {
+                    if let Some((data, index)) = fonts.font_data(run_font.unwrap()) {
+                        run.set_font(FontResource::new(data, index));
+                    }
+                    list.push_glyph_run(run);
+                    run = GlyphRun::new(g.font_size, color);
+                }
+                run.font_size = g.font_size;
+                run_font = Some(g.font_id);
+                run.push(GlyphInstance::new(
+                    origin.x as f32 + g.x,
+                    baseline_y + g.y,
+                    u32::from(g.glyph_id),
+                    g.w,
+                    line.line_height,
+                ));
+            }
+            if run_font.is_some() && !run.is_empty() {
+                if let Some((data, index)) = fonts.font_data(run_font.unwrap()) {
+                    run.set_font(FontResource::new(data, index));
+                }
+                list.push_glyph_run(run);
+            }
+        }
+        block_bottom
     }
 
     /// Hit-test `pos` (window physical pixels) against the laid-out
@@ -336,6 +398,7 @@ impl App {
             godot_streaming,
             godot_status,
             needs_layout,
+            fonts,
             ..
         } = self
         else {
@@ -398,6 +461,13 @@ impl App {
         let bevy_bounds = panel_rects.get(bevy_surface).copied().unwrap_or_default();
         let godot_bounds = panel_rects.get(godot_surface).copied().unwrap_or_default();
 
+        // Text is specified in logical points and converted to device
+        // pixels — the paint audit judges `px / scale_factor` against the
+        // 12pt floor, so sizing in pt keeps the UI compliant at any DPI.
+        let scale = window.scale_factor() as f32;
+        let s = f64::from(scale);
+        let px = |pt: f32| pt * scale;
+
         let mut list = PaintList::new();
         list.push_fill_rect(PaintRect::new(0.0, 0.0, w, h), [15, 17, 23, 255]);
         // Header strip + title.
@@ -405,30 +475,42 @@ impl App {
             PaintRect::new(m, m, w - m, m + f64::from(HEADER_H)),
             [24, 27, 36, 255],
         );
-        list.push_text(
-            Point::new(m + 14.0, m + 13.0),
-            "Engine Showcase — real engine adapters, one bridge".to_string(),
-            18.0,
+        Self::push_shaped_text(
+            fonts,
+            &mut list,
+            Point::new(
+                m + 14.0,
+                m + (f64::from(HEADER_H) - 20.0 * s).max(0.0) / 2.0,
+            ),
+            "Engine Showcase — real engine adapters, one bridge",
+            px(16.0),
             [208, 214, 230, 255],
+            None,
         );
         // Panel captions (drawn above each viewport's top edge).
-        list.push_text(
+        Self::push_shaped_text(
+            fonts,
+            &mut list,
             Point::new(
                 f64::from(bevy_bounds.min_x()),
-                f64::from(bevy_bounds.min_y()) - 18.0,
+                f64::from(bevy_bounds.min_y()) - 15.0 * s,
             ),
-            "Bevy — PBR viewport (same-device wgpu, zero-copy)".to_string(),
-            13.0,
+            "Bevy — PBR viewport (same-device wgpu, zero-copy)",
+            px(12.0),
             [140, 180, 235, 255],
+            None,
         );
-        list.push_text(
+        Self::push_shaped_text(
+            fonts,
+            &mut list,
             Point::new(
                 f64::from(godot_bounds.min_x()),
-                f64::from(godot_bounds.min_y()) - 18.0,
+                f64::from(godot_bounds.min_y()) - 15.0 * s,
             ),
-            "Godot — SubViewport frames via transport".to_string(),
-            13.0,
+            "Godot — SubViewport frames via transport",
+            px(12.0),
             [140, 235, 180, 255],
+            None,
         );
         // Panel outlines.
         list.push_stroke_rect(to_paint_rect(bevy_bounds), 1.0, [70, 110, 180, 255]);
@@ -437,21 +519,31 @@ impl App {
         // External marker, only until the first real frame lands.
         if !*godot_streaming {
             list.push_fill_rect(to_paint_rect(godot_bounds), [22, 24, 32, 255]);
+            // Clip the status text to the panel so long strings cannot
+            // overflow the viewport bounds.
+            list.push_clip(to_paint_rect(godot_bounds));
             let gx = f64::from(godot_bounds.min_x());
             let gy = f64::from(godot_bounds.min_y());
             let gh = f64::from(godot_bounds.height());
-            list.push_text(
-                Point::new(gx + 16.0, gy + gh * 0.5 - 12.0),
-                format!("Godot — {godot_status}"),
-                15.0,
+            let status_bottom = Self::push_shaped_text(
+                fonts,
+                &mut list,
+                Point::new(gx + 16.0, gy + gh * 0.5 - 19.0 * s),
+                &format!("Godot — {godot_status}"),
+                px(14.0),
                 [150, 160, 180, 255],
+                Some((godot_bounds.width() - 32.0).max(1.0)),
             );
-            list.push_text(
-                Point::new(gx + 16.0, gy + gh * 0.5 + 12.0),
-                "build the cdylib: cargo build -p martensite-godot".to_string(),
-                12.0,
-                [110, 118, 138, 255],
+            Self::push_shaped_text(
+                fonts,
+                &mut list,
+                Point::new(gx + 16.0, status_bottom + 8.0 * s),
+                "build the cdylib: cargo build -p martensite-godot",
+                px(12.0),
+                [150, 158, 178, 255],
+                Some((godot_bounds.width() - 32.0).max(1.0)),
             );
+            list.commands.push(PaintCommand::PopClip);
         }
         // The two External markers in z-order: Bevy first, Godot second.
         bevy_panel.record_paint(&mut list);
@@ -462,12 +554,14 @@ impl App {
             PaintRect::new(0.0, h - f64::from(FOOTER_H), w, h),
             [20, 22, 30, 255],
         );
-        list.push_text(
-            Point::new(m, h - f64::from(FOOTER_H) + 7.0),
-            "click a viewport to focus input — pointer, wheel and keys forward as EngineEvents"
-                .to_string(),
-            13.0,
-            [120, 128, 150, 255],
+        Self::push_shaped_text(
+            fonts,
+            &mut list,
+            Point::new(m, h - f64::from(FOOTER_H) + 5.0),
+            "click a viewport to focus input — pointer, wheel and keys forward as EngineEvents",
+            px(12.0),
+            [150, 158, 178, 255],
+            None,
         );
 
         // 5. Composite + present. `render` splits the list at both
@@ -503,7 +597,7 @@ impl ApplicationHandler for App {
         let window: Arc<dyn Window> = event_loop
             .create_window(
                 WindowAttributes::default()
-                    .with_title("Martensite — Engine Showcase (v0.15.0)")
+                    .with_title("Martensite — Engine Showcase (v0.18.0)")
                     .with_surface_size(PhysicalSize::new(1600, 940)),
             )
             .expect("create window")
@@ -555,6 +649,10 @@ impl ApplicationHandler for App {
             notify_window.pre_present_notify();
         })));
 
+        // Paint-compliance audit: on by default in debug builds; the
+        // scale factor converts device-px font sizes to logical points.
+        orchestrator.set_audit_scale_factor(window.scale_factor());
+
         // CPU-fallback raster source: the bound engines' `to_pixmap`
         // (Godot ships a CpuFrame alongside every frame; Bevy reads back
         // the slot texture on demand).
@@ -567,11 +665,16 @@ impl ApplicationHandler for App {
         })));
 
         // Producer → host wake: every published frame schedules a
-        // repaint. The waker runs under the registry lock — it must only
-        // signal, never re-lock the bridge.
-        let waker_window = Arc::clone(&window);
+        // repaint. The waker runs on the producer thread under the
+        // registry lock — it must only signal, never block. Calling
+        // `Window::request_redraw` here would synchronously dispatch to
+        // the main queue while the main thread is blocked in
+        // `Engine::render` waiting on this same thread's reply — a
+        // deadlock. `EventLoopProxy::wake_up` is an async signal; the
+        // real `request_redraw` runs in `proxy_wake_up`.
+        let waker_proxy = self.proxy.clone();
         self.bridge.set_ready_waker(Some(Box::new(move |_surface| {
-            waker_window.request_redraw();
+            waker_proxy.wake_up();
         })));
 
         // The Bevy engine: `RenderCreation::Manual` inside the adapter
@@ -654,6 +757,9 @@ impl ApplicationHandler for App {
                 // re-pushes the bridge viewports at the new scale.
                 if let Some(window) = &self.window {
                     let scale = window.scale_factor();
+                    if let Some(orchestrator) = &mut self.orchestrator {
+                        orchestrator.set_audit_scale_factor(scale);
+                    }
                     if let Some(widget) = &mut self.bevy_widget {
                         widget.set_scale_factor(scale);
                     }
@@ -761,13 +867,29 @@ impl ApplicationHandler for App {
             _ => {}
         }
     }
+
+    /// Producer wake delivered on the event thread — schedule the
+    /// repaint here where `request_redraw` is cheap and safe.
+    fn proxy_wake_up(&mut self, _event_loop: &dyn ActiveEventLoop) {
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The paint-compliance audit reports via `tracing::warn` — install a
+    // subscriber so findings are actually visible (RUST_LOG overrides).
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+        )
+        .init();
     let event_loop = EventLoop::new()?;
     // Poll keeps the producer cadence continuous; each RedrawRequested
     // re-arms the next, and Fifo-present acquisition paces the loop.
     event_loop.set_control_flow(ControlFlow::Poll);
-    event_loop.run_app(App::new())?;
+    let proxy = event_loop.create_proxy();
+    event_loop.run_app(App::new(proxy))?;
     Ok(())
 }

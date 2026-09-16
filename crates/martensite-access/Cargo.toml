@@ -21,6 +21,7 @@ tracing = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-bidi = { workspace = true }
 glam = { workspace = true }
+kurbo = { workspace = true }
 
 # Android: `accesskit_winit`'s `accesskit_android` feature selects the
 # `InjectingAdapter` backend (the JNI glue lives in the audited-unsafe

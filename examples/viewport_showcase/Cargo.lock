@@ -21,6 +21,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "accesskit_android"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "929aff36b0d3dd22ddb59191989d5293ed958294d7728bd6c2ec9778f73414aa"
+dependencies = [
+ "accesskit 0.25.0",
+ "accesskit_consumer",
+ "jni 0.21.1",
+ "log",
+]
+
+[[package]]
 name = "accesskit_atspi_common"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -134,13 +146,14 @@ dependencies = [
  "android-properties",
  "bitflags",
  "cc",
- "jni",
+ "jni 0.22.4",
  "libc",
  "log",
  "ndk",
  "ndk-context",
  "ndk-sys",
  "num_enum",
+ "simd_cesu8",
  "thiserror 2.0.20",
 ]
 
@@ -1450,6 +1463,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cesu8"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2635,6 +2654,22 @@ dependencies = [
 
 [[package]]
 name = "jni"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a87aa2bb7d2af34197c04845522473242e1aa17c12f4935d5856491a7fb8c97"
+dependencies = [
+ "cesu8",
+ "cfg-if",
+ "combine",
+ "jni-sys 0.3.1",
+ "log",
+ "thiserror 1.0.69",
+ "walkdir",
+ "windows-sys 0.45.0",
+]
+
+[[package]]
+name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5efd9a482cf3a427f00d6b35f14332adc7902ce91efb778580e180ff90fa3498"
@@ -2885,15 +2920,17 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "martensite"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "accesskit 0.25.0",
  "glam 0.33.7",
  "kurbo",
  "martensite-access",
  "martensite-assets",
+ "martensite-blessed",
  "martensite-clipboard",
  "martensite-core",
+ "martensite-devtools",
  "martensite-dnd",
  "martensite-engine-bridge",
  "martensite-focus",
@@ -2905,6 +2942,7 @@ dependencies = [
  "martensite-motion",
  "martensite-reactive",
  "martensite-render",
+ "martensite-shell",
  "martensite-text",
  "martensite-theme",
  "martensite-wgpu",
@@ -2914,33 +2952,50 @@ dependencies = [
 
 [[package]]
 name = "martensite-access"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "accesskit 0.25.0",
+ "glam 0.33.7",
+ "js-sys",
+ "kurbo",
  "martensite-accesskit-winit",
  "martensite-core",
  "parking_lot",
  "tracing",
  "unicode-bidi",
  "unicode-segmentation",
+ "uuid",
+ "wasm-bindgen",
+ "web-sys",
+ "winit",
+]
+
+[[package]]
+name = "martensite-access-platform"
+version = "0.18.0"
+dependencies = [
+ "accesskit 0.25.0",
+ "accesskit_android",
+ "accesskit_ios",
+ "android-activity",
 ]
 
 [[package]]
 name = "martensite-accesskit-winit"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "accesskit 0.25.0",
- "accesskit_ios",
  "accesskit_macos",
  "accesskit_unix",
  "accesskit_windows",
+ "martensite-access-platform",
  "raw-window-handle",
  "winit",
 ]
 
 [[package]]
 name = "martensite-assets"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "martensite-core",
  "naga 30.0.1",
@@ -2951,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-bevy"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "bevy",
  "martensite-engine-bridge",
@@ -2960,15 +3015,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "martensite-clipboard"
-version = "0.16.0"
+name = "martensite-blessed"
+version = "0.18.0"
 dependencies = [
  "martensite-core",
+ "martensite-render",
+ "martensite-text",
+ "slab",
+ "smallvec",
+]
+
+[[package]]
+name = "martensite-clipboard"
+version = "0.18.0"
+dependencies = [
+ "js-sys",
+ "martensite-core",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
 name = "martensite-core"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "accesskit 0.25.0",
  "bitflags",
@@ -3004,18 +3075,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "martensite-devtools"
+version = "0.18.0"
+dependencies = [
+ "martensite-core",
+ "tracing",
+]
+
+[[package]]
 name = "martensite-dnd"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "bitflags",
  "glam 0.33.7",
+ "js-sys",
  "martensite-core",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "winit",
 ]
 
 [[package]]
 name = "martensite-engine-bridge"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "martensite-core",
  "parking_lot",
@@ -3024,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-focus"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "glam 0.33.7",
  "martensite-core",
@@ -3033,7 +3116,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-godot"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "godot",
  "martensite-core",
@@ -3043,7 +3126,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-history"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "martensite-core",
  "martensite-reactive",
@@ -3053,7 +3136,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-l10n"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "fluent-bundle",
  "fluent-langneg 0.14.2",
@@ -3064,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-layout"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "glam 0.33.7",
  "martensite-core",
@@ -3073,11 +3156,11 @@ dependencies = [
 
 [[package]]
 name = "martensite-macros"
-version = "0.16.0"
+version = "0.18.0"
 
 [[package]]
 name = "martensite-media"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.7",
@@ -3088,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-media-platform"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "drm 0.12.0",
  "objc2 0.6.4",
@@ -3101,14 +3184,14 @@ dependencies = [
 
 [[package]]
 name = "martensite-motion"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "glam 0.33.7",
 ]
 
 [[package]]
 name = "martensite-reactive"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "parking_lot",
  "slotmap",
@@ -3118,7 +3201,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-render"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "kurbo",
  "martensite-core",
@@ -3134,17 +3217,18 @@ dependencies = [
 
 [[package]]
 name = "martensite-shell"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "martensite-theme",
 ]
 
 [[package]]
 name = "martensite-text"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "fontdb",
  "glam 0.33.7",
+ "js-sys",
  "martensite-core",
  "martensite-cosmic-text",
  "parking_lot",
@@ -3155,12 +3239,15 @@ dependencies = [
  "unicode-bidi-mirroring",
  "unicode-linebreak",
  "unicode-segmentation",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "winit",
 ]
 
 [[package]]
 name = "martensite-theme"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "bytemuck",
 ]
@@ -3184,10 +3271,11 @@ dependencies = [
 
 [[package]]
 name = "martensite-wgpu"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.7",
+ "martensite-access",
  "martensite-core",
  "martensite-engine-bridge",
  "martensite-media",
@@ -3202,14 +3290,17 @@ dependencies = [
 
 [[package]]
 name = "martensite-window"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "bitflags",
  "glam 0.33.7",
+ "js-sys",
  "martensite-core",
  "martensite-shell",
  "slotmap",
  "tracing",
+ "wasm-bindgen",
+ "web-sys",
  "winit",
 ]
 
@@ -4726,7 +4817,10 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
 dependencies = [
+ "js-sys",
  "libc",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -5205,7 +5299,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "viewport_showcase"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "martensite",
  "martensite-bevy",
@@ -5214,6 +5308,7 @@ dependencies = [
  "martensite-render",
  "martensite-wgpu",
  "pollster",
+ "tracing-subscriber",
  "wgpu",
  "winit",
 ]
@@ -5520,6 +5615,7 @@ dependencies = [
  "thiserror 2.0.20",
  "wgpu-core-deps-apple",
  "wgpu-core-deps-emscripten",
+ "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
  "wgpu-naga-bridge",
@@ -5540,6 +5636,15 @@ name = "wgpu-core-deps-emscripten"
 version = "30.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98b86cf4abf524a902dd35f18ca6a3f08fc2ae9847c8f10b48e30491b1f0b86"
+dependencies = [
+ "wgpu-hal",
+]
+
+[[package]]
+name = "wgpu-core-deps-wasm"
+version = "30.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d260ca2ca8adc654f513a869bf3cac0b47f5b8d3f87803d6942015f8de597aae"
 dependencies = [
  "wgpu-hal",
 ]
@@ -5828,6 +5933,15 @@ dependencies = [
 
 [[package]]
 name = "windows-sys"
+version = "0.45.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75283be5efb2831d37ea142365f009c02ec203cd29a3ebecbc093d52315b66d0"
+dependencies = [
+ "windows-targets 0.42.2",
+]
+
+[[package]]
+name = "windows-sys"
 version = "0.59.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
@@ -5851,6 +5965,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link 0.2.1",
+]
+
+[[package]]
+name = "windows-targets"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e5180c00cd44c9b1c88adb3693291f1cd93605ded80c250a75d472756b4d071"
+dependencies = [
+ "windows_aarch64_gnullvm 0.42.2",
+ "windows_aarch64_msvc 0.42.2",
+ "windows_i686_gnu 0.42.2",
+ "windows_i686_msvc 0.42.2",
+ "windows_x86_64_gnu 0.42.2",
+ "windows_x86_64_gnullvm 0.42.2",
+ "windows_x86_64_msvc 0.42.2",
 ]
 
 [[package]]
@@ -5906,6 +6035,12 @@ dependencies = [
 
 [[package]]
 name = "windows_aarch64_gnullvm"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "597a5118570b68bc08d8d59125332c54f1ba9d9adeedeef5b99b02ba2b0698f8"
+
+[[package]]
+name = "windows_aarch64_gnullvm"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a4622180e7a0ec044bb555404c800bc9fd9ec262ec147edd5989ccd0c02cd3"
@@ -5918,6 +6053,12 @@ checksum = "a9d8416fa8b42f5c947f8482c43e7d89e73a173cead56d044f6a56104a6d1b53"
 
 [[package]]
 name = "windows_aarch64_msvc"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e08e8864a60f06ef0d0ff4ba04124db8b0fb3be5776a5cd47641e942e58c4d43"
+
+[[package]]
+name = "windows_aarch64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09ec2a7bb152e2252b53fa7803150007879548bc709c039df7627cabbd05d469"
@@ -5927,6 +6068,12 @@ name = "windows_aarch64_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9d782e804c2f632e395708e99a94275910eb9100b2114651e04744e9b125006"
+
+[[package]]
+name = "windows_i686_gnu"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c61d927d8da41da96a81f029489353e68739737d3beca43145c8afec9a31a84f"
 
 [[package]]
 name = "windows_i686_gnu"
@@ -5954,6 +6101,12 @@ checksum = "fa7359d10048f68ab8b09fa71c3daccfb0e9b559aed648a8f95469c27057180c"
 
 [[package]]
 name = "windows_i686_msvc"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44d840b6ec649f480a41c8d80f9c65108b92d89345dd94027bfe06ac444d1060"
+
+[[package]]
+name = "windows_i686_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "240948bc05c5e7c6dabba28bf89d89ffce3e303022809e73deaefe4f6ec56c66"
@@ -5963,6 +6116,12 @@ name = "windows_i686_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e7ac75179f18232fe9c285163565a57ef8d3c89254a30685b57d83a38d326c2"
+
+[[package]]
+name = "windows_x86_64_gnu"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8de912b8b8feb55c064867cf047dda097f92d51efad5b491dfb98f6bbb70cb36"
 
 [[package]]
 name = "windows_x86_64_gnu"
@@ -5978,6 +6137,12 @@ checksum = "9c3842cdd74a865a8066ab39c8a7a473c0778a3f29370b5fd6b4b9aa7df4a499"
 
 [[package]]
 name = "windows_x86_64_gnullvm"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26d41b46a36d453748aedef1486d5c7a85db22e56aff34643984ea85514e94a3"
+
+[[package]]
+name = "windows_x86_64_gnullvm"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24d5b23dc417412679681396f2b49f3de8c1473deb516bd34410872eff51ed0d"
@@ -5987,6 +6152,12 @@ name = "windows_x86_64_gnullvm"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ffa179e2d07eee8ad8f57493436566c7cc30ac536a3379fdf008f47f6bb7ae1"
+
+[[package]]
+name = "windows_x86_64_msvc"
+version = "0.42.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9aec5da331524158c6d1a4ac0ab1541149c0b9505fde06423b02f5ef0106b9f0"
 
 [[package]]
 name = "windows_x86_64_msvc"

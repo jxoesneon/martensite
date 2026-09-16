@@ -2823,6 +2823,7 @@ dependencies = [
  "accesskit",
  "glam",
  "js-sys",
+ "kurbo",
  "martensite-accesskit-winit",
  "martensite-core",
  "martensite-text",
@@ -3273,6 +3274,7 @@ version = "0.18.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "martensite-access",
  "martensite-core",
  "martensite-engine-bridge",
  "martensite-media",

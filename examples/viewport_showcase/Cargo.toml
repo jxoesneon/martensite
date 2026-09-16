@@ -39,6 +39,8 @@ winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11"
 # `RenderCreation::Manual` — the zero-copy path requires exactly one wgpu.
 wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12", "gles", "webgpu"] }
 pollster = "1.0"
+# Surfaces the paint-compliance audit's `tracing::warn` findings.
+tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 
 # The workspace lint table is unreachable from an excluded crate, so the
 # same lints are declared here explicitly.

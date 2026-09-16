@@ -17,6 +17,10 @@ martensite-core = { workspace = true }
 martensite-render = { workspace = true }
 martensite-media = { workspace = true }
 martensite-engine-bridge = { workspace = true }
+# Paint-compliance audit hook: `RenderOrchestrator::render` runs
+# `martensite_access::paint_audit` over each paint list (debug builds by
+# default) and reports WCAG violations via `tracing`.
+martensite-access = { workspace = true }
 # Unconditional: `interop::platform_import` re-exports
 # `martensite_media_platform::{import_external_texture, import_cpu_memory,
 # ImportTextureDescriptor}` without any `cfg` gate, so the dependency
