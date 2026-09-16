@@ -184,6 +184,13 @@ where
     /// vector that is rebuilt only when the sort changes. When a filter is
     /// active the filtered index is reordered to match.
     ///
+    /// **Comparator semantics:** `comparator` always expresses the
+    /// *ascending* order of the rows (e.g. `|a, b| a.cmp(b)`), regardless of
+    /// `direction`. [`ColumnSort::Descending`] applies
+    /// [`Ordering::reverse`] to the comparator's result — it does not change
+    /// which order the comparator itself should encode. Writing `b.cmp(a)`
+    /// with `Descending` double-reverses and produces ascending order.
+    ///
     /// # Examples
     ///
     /// ```
@@ -676,6 +683,12 @@ impl<R> std::fmt::Debug for RowFilter<R> {
 /// Selections are stored as a [`SmallVec`] of [`Range<usize>`] so that up to
 /// four disjoint ranges live inline without heap allocation.
 ///
+/// **Index space:** all row indices are *storage* indices — positions in the
+/// row vector passed to [`DataTable::new`], not display positions. After a
+/// sort or filter reorders the display, a stored `Range` still covers the
+/// same storage rows, so a range selection can include rows that are
+/// currently filtered out or displayed far apart.
+///
 /// # Examples
 ///
 /// ```
@@ -741,6 +754,12 @@ impl SelectionModel {
     /// Extends the selection from its anchor to `row` inclusive.
     ///
     /// If no anchor is set this is equivalent to [`select`](Self::select).
+    ///
+    /// `row` (and the stored anchor) are *storage* indices into the row
+    /// vector, not display positions: when a [`DataTable`] sort or filter
+    /// has reordered the visible rows, the resulting `Range` spans storage
+    /// indices and may select rows that are filtered out or were never
+    /// displayed between the anchor and target on screen.
     ///
     /// # Examples
     ///
@@ -872,6 +891,55 @@ pub enum KeyAction {
     CtrlHome,
     /// Move focus to the last row regardless of scroll position.
     CtrlEnd,
+}
+
+impl KeyAction {
+    /// Maps a framework logical key name plus modifier state to the
+    /// corresponding navigation action.
+    ///
+    /// `key` is the same string delivered in
+    /// `martensite_core::WidgetEvent::KeyPressed.key` — the logical key name
+    /// convention shared with winit's `NamedKey` (`"ArrowUp"`,
+    /// `"ArrowDown"`, `"PageUp"`, `"PageDown"`, `"Home"`, `"End"`). `shift`
+    /// and `ctrl` come from the host's modifier tracking (e.g.
+    /// `martensite_window::event::Modifiers`); modifier combinations without
+    /// a dedicated variant fall back to the unmodified action, and
+    /// unrecognized keys return `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_blessed::data_table::KeyAction;
+    ///
+    /// assert_eq!(
+    ///     KeyAction::from_key_name("ArrowDown", false, false),
+    ///     Some(KeyAction::Down)
+    /// );
+    /// assert_eq!(
+    ///     KeyAction::from_key_name("ArrowDown", true, false),
+    ///     Some(KeyAction::ShiftDown)
+    /// );
+    /// assert_eq!(
+    ///     KeyAction::from_key_name("Home", false, true),
+    ///     Some(KeyAction::CtrlHome)
+    /// );
+    /// assert_eq!(KeyAction::from_key_name("F5", false, false), None);
+    /// ```
+    pub fn from_key_name(key: &str, shift: bool, ctrl: bool) -> Option<Self> {
+        Some(match (key, shift, ctrl) {
+            ("ArrowUp", true, _) => Self::ShiftUp,
+            ("ArrowDown", true, _) => Self::ShiftDown,
+            ("Home", _, true) => Self::CtrlHome,
+            ("End", _, true) => Self::CtrlEnd,
+            ("ArrowUp", ..) => Self::Up,
+            ("ArrowDown", ..) => Self::Down,
+            ("PageUp", ..) => Self::PageUp,
+            ("PageDown", ..) => Self::PageDown,
+            ("Home", ..) => Self::Home,
+            ("End", ..) => Self::End,
+            _ => return None,
+        })
+    }
 }
 
 /// Configuration for a single [`DataTable`] column.

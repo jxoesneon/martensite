@@ -165,6 +165,12 @@ pub struct NodeId(pub u32);
 /// children vertically (top/bottom). `Vertical` describes a vertical divider
 /// line that places the two children side by side (left/right).
 ///
+/// **Naming note:** the variant names the *divider line's* orientation, not
+/// the children's arrangement — so `Horizontal` produces a top/bottom stack
+/// and `Vertical` a left/right pair. This matches
+/// [`Rect::split_horizontal`]/[`Rect::split_vertical`], which cut along the
+/// named axis.
+///
 /// # Examples
 ///
 /// ```
