@@ -6,7 +6,7 @@ This document outlines the formal performance characteristics, empirical benchma
 
 ## 1. Comparative Ecosystem Overview
 
-The following evaluation contrasts Martensite against existing desktop and native GUI toolkits based on standardized benchmark criteria and empirical ecosystem audits:
+The following evaluation contrasts Martensite against existing desktop and native GUI toolkits. See the sourcing note below the table: competitor figures are internal estimates, not published measurements.
 
 | Metric / Capability | Martensite (v0.11.0) | egui (v0.29) | Iced (v0.13) | Slint (v1.8) | GPUI (Zed 2026) | Tauri v2 (WebView2) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -20,6 +20,18 @@ The following evaluation contrasts Martensite against existing desktop and nativ
 | **Zero-Copy 4K HDR Video** | **< 0.1ms CPU (DXGI/P010)** | CPU Copy required | CPU Copy required | Unsupported | macOS only | Web video element |
 | **Hot Reload Turnaround** | **< 350 ms (cdylib split)** | Full rebuild | Full rebuild | Live preview (DSL) | Rebuild required | ~100 ms (Vite HMR) |
 | **Binary Size (Stripped)** | **~9.5 MB (Pure Rust)** | ~4.5 MB | ~11.0 MB | ~14.0 MB | ~24.0 MB | ~18.0 MB + WebView |
+
+> **Sourcing note (v0.18.0 honesty pass):** Quantitative cells in the
+> competitor columns of this table — propagation times, frame rates,
+> idle CPU percentages, binary sizes — are **internal estimates
+> (unverified)**, extrapolated from each framework's publicly documented
+> architecture (immediate vs. retained mode, update model, renderer).
+> No published methodology exists in the upstream projects for these
+> workloads, so the figures must not be cited as measured comparisons;
+> they are directional only. Qualitative cells (architecture, renderer,
+> accessibility status) reflect publicly documented project facts.
+> Martensite-column cells are measured by the suites in §2 or are
+> milestone targets, per each suite's Enforcement line.
 
 ---
 
@@ -151,24 +163,25 @@ CI runners use shared `ubuntu-latest` agents, so the executable strict gates in 
 ## 5. Competitive Baselines — egui/iced-Comparable Primitives (v0.18.0)
 
 The `competitive_*` benchmarks in `benches/bench_suite` measure the
-Martensite primitives that correspond to workloads competitor frameworks
-publish numbers for. **No competitor crates are linked**: egui, iced,
-Slint, and GPUI are not in the dependency tree — this is a methodological
-requirement (competitor frameworks must not enter the lockfile), not a
-measurement of them.
+Martensite primitives that correspond to the workload classes the
+competitor columns of §1 estimate. **No competitor crates are linked**:
+egui, iced, Slint, and GPUI are not in the dependency tree — this is a
+methodological requirement (competitor frameworks must not enter the
+lockfile), not a measurement of them.
 
 ### Methodology and honest limits
 
 - The **Martensite column** is measured by Criterion on the machine
   documented below each table (release profile, 30 samples,
   `--measurement-time 3`). Numbers vary by host.
-- The **competitor columns** cite published or previously documented
-  figures (§1 table; vendor benchmarks). They come from *different
-  harnesses, different machines, and different workloads definitions* —
-  they are **directional only** and cannot be used to claim parity or
-  superiority.
-- Where no published figure exists, the cell says "no published figure"
-  rather than inventing one.
+- The **competitor columns** carry **internal estimates (unverified)**
+  extrapolated from each framework's documented architecture — the §1
+  sourcing note applies here too. No published methodology exists in
+  the upstream projects for these workloads, and no competitor
+  framework was measured by us. The figures are **directional only**
+  and cannot be used to claim parity or superiority.
+- Where not even an internal estimate is defensible, the cell says
+  "no published figure" rather than inventing one.
 
 ### Measurement host (this table)
 
@@ -178,7 +191,7 @@ expected to differ from the `†` reference values above.
 
 ### Results
 
-| Workload (equivalent primitive) | Martensite (measured, M4) | egui v0.29 (documented) | iced v0.13 (documented) | Slint v1.8 (documented) | GPUI (documented) |
+| Workload (equivalent primitive) | Martensite (measured, M4) | egui v0.29 (internal estimate — unverified) | iced v0.13 (internal estimate — unverified) | Slint v1.8 (internal estimate — unverified) | GPUI (internal estimate — unverified) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | State propagation — 10k-node DAG, one set→resolve (`signal_propagation_10k`) | **0.97 ms** | N/A (immediate mode) | ~4.2 ms (message tree) | ~1.6 ms | ~1.1 ms |
 | State propagation — 200-memo fan-out, one set→resolve (`competitive_signal_fan_out_200`) | **22 µs** | per-frame re-eval (no published figure) | update→view per message (no published figure) | no published figure | no published figure |
@@ -186,14 +199,15 @@ expected to differ from the `†` reference values above.
 | Layout — single leaf style change + recompute (`competitive_layout_1k/recompute_after_leaf_change`) | **~180 µs** | same cost class as full pass (immediate mode) | no published figure | no published figure | no published figure |
 | Text shaping — 500 distinct ~30-char labels, cold path (`competitive_text_shaping/labels_500_cold`) | **4.6 ms** (≈9.3 µs/label) | own text layout (no published figure) | cosmic-text — same engine family | no published figure | no published figure |
 | Text shaping — ~2.7 KB paragraph wrap @480px (`competitive_text_shaping/paragraph_wrap_480px`) | **385 µs** | no published figure | cosmic-text — same engine family | no published figure | no published figure |
-| Virtualized scroll — 1M rows, one scroll step + visible-window iteration (`competitive_virtualized_scroll_1m`) | **~19 ns** | qualitative: severe frame drops at 1M rows (§1) | qualitative: ~60 FPS (§1) | qualitative: ~90 FPS (§1) | custom required (§1) |
+| Virtualized scroll — 1M rows, one scroll step + visible-window iteration (`competitive_virtualized_scroll_1m`) | **~19 ns** | qualitative: severe frame drops at 1M rows (§1 estimate) | qualitative: ~60 FPS (§1 estimate) | qualitative: ~90 FPS (§1 estimate) | custom required (§1 estimate) |
 
 ### Per-benchmark notes
 
 - **10k DAG propagation**: Martensite's 0.97 ms on this M4 host vs the
   0.68 ms reference (Ryzen 5900X, §4) — same order of magnitude across
-  hosts. The iced figure (~4.2 ms) measures its message-tree update,
-  not a signal DAG; the comparison is workload-level only.
+  hosts. The iced figure (~4.2 ms) is an internal estimate of
+  message-tree update cost, not a published measurement, and it does
+  not model a signal DAG; the comparison is workload-level only.
 - **Layout**: `two_pass_compute` (11.2 µs) reflects Taffy's
   unchanged-subtree caching on a steady-state tree — the number most
   relevant to a 60/120 FPS frame budget. `recompute_after_leaf_change`
@@ -208,7 +222,8 @@ expected to differ from the `†` reference values above.
   warm.
 - **Virtualized scroll**: ~19 ns per scroll step + 40-row window
   iteration confirms the O(1)/zero-allocation claim on the model path.
-  It does not include rasterization — the §1 competitor figures are
-  end-to-end frame times and are listed as qualitative only.
+  It does not include rasterization — the §1 competitor estimates
+  describe end-to-end frame behaviour and are listed as qualitative
+  only.
 - **Run command**: `cargo bench -p bench_suite --bench bench_suite` —
   all `competitive_*` groups run alongside the gated milestone suites.

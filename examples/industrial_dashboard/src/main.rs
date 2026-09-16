@@ -113,11 +113,14 @@ use martensite_devtools::hud::{DiagnosticHud, FrameTiming};
 //     that bug. Fix candidate: take comparator for the requested direction
 //     directly, or document "comparator is always the ascending order".
 //
-// F15. `is_focusable_target` requires FOCUSABLE **and** VISIBLE flags —
-//     `FOCUSABLE` alone silently fails `set_focus`. The flag pair is
-//     documented only in the private helper's doctest. Fix candidate:
-//     `apply_focus_request` returns bool, but the raw `set_focus` should
-//     too.
+// F15. (Remark on F9 — docs-visibility note, not a doc gap.)
+//     `is_focusable_target` requires FOCUSABLE **and** VISIBLE flags —
+//     `FOCUSABLE` alone silently fails `set_focus`. The flag pair IS
+//     stated in the public `FocusManager::set_focus` rustdoc ("alive,
+//     visible, focusable, and not inert") and shown in its doctest; the
+//     friction is that the requirement only bites as a silent no-op at
+//     runtime (F9's finding). Fix candidate is F9's: have `set_focus`
+//     return `bool`/`Result` like `apply_focus_request` does.
 // ---------------------------------------------------------------------------
 
 /// One row of the process-metrics table. Kept POD so 1M rows stay cheap.
@@ -188,15 +191,23 @@ fn build_widget_tree() -> (WidgetArena, WidgetId, Vec<WidgetId>) {
     (arena, root, focusable)
 }
 
-/// Exercises the two-pass Taffy layout engine over the arena tree.
-fn run_layout_pass(root: WidgetId, panel_count: usize) {
+/// Exercises the widget-aware two-pass Taffy layout engine over the arena
+/// tree: syncs the Taffy topology from the arena, measures leaf widgets
+/// through `Widget::measure`, computes, then applies bounds back via
+/// `Widget::layout` — the full sync→measure→apply round-trip.
+fn run_layout_pass(arena: &mut WidgetArena, root: WidgetId) {
     // F11: `martensite::layout::Size` (geometry) shadows `taffy::Size<T>` —
     // `Style.size` and `compute(available)` cannot name their Size types via
     // the facade. `constraints_to_available` is the facade-side escape hatch.
     use martensite::layout::{constraints_to_available, Constraints, Display, LayoutEngine, Style};
     let mut engine = LayoutEngine::new();
-    // F8: register keyed by WidgetId, compute keyed by taffy NodeId.
-    let root_node = engine
+    // F8 note: `compute` takes a taffy NodeId while `register_node` is keyed
+    // by WidgetId — but `compute_with_widgets` is the WidgetId-keyed entry
+    // point that already exists for the whole pipeline, so no id-space
+    // bridging is needed here. Pre-registering the root with an explicit
+    // style is fine: `sync_from_arena` preserves already-registered styles
+    // and defaults only the new ones.
+    engine
         .register_node(
             root,
             Style {
@@ -206,14 +217,15 @@ fn run_layout_pass(root: WidgetId, panel_count: usize) {
         )
         .expect("register root");
     engine
-        .compute(
-            root_node,
+        .compute_with_widgets(
+            arena,
+            root,
             constraints_to_available(Constraints::tight(1600.0, 900.0)),
         )
         .expect("compute layout");
     println!(
-        "  layout: {} panels registered, two-pass compute OK",
-        panel_count
+        "  layout: {} nodes synced+measured, bounds applied to arena",
+        engine.node_count()
     );
 }
 
@@ -443,7 +455,7 @@ fn main() {
     );
 
     // -- 3. Taffy two-pass layout ------------------------------------------
-    run_layout_pass(root, focusable.len());
+    run_layout_pass(&mut arena, root);
 
     // -- 4. BSP docking -----------------------------------------------------
     // F4: DockPanel wants u64; WidgetId::to_u64() is the manual bridge.

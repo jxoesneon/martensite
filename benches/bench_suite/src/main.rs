@@ -379,10 +379,11 @@ fn bench_diamond_reactive_network(c: &mut Criterion) {
 // =========================================================================
 //
 // These benchmarks measure the Martensite primitives that correspond to
-// the workloads competitor frameworks publish numbers for. They are NOT
-// cross-framework benchmarks: egui/iced run their own harnesses, so the
-// results are directional comparisons only (see docs/BENCHMARKS.md §5).
-// No competitor crates are linked — the lockfile stays clean.
+// the workload classes compared in docs/BENCHMARKS.md §1/§5. They are
+// NOT cross-framework benchmarks: no competitor framework is measured
+// (competitor figures are internal estimates — see the §1 sourcing
+// note), so the results are directional only. No competitor crates are
+// linked — the lockfile stays clean.
 
 /// Builds a 1,051-node widget tree inside `LayoutEngine`:
 /// 1 root column + 50 row containers + 1,000 leaf cells (50 × 20).
@@ -442,7 +443,7 @@ fn setup_layout_tree() -> (martensite_layout::LayoutEngine, taffy::NodeId) {
             .set_children(row, &leaf_wids)
             .expect("set row children");
         // Style the leaves AFTER set_children (register_node re-applies
-        // the given style to an already-registered id — see F11 note in
+        // the given style to an already-registered id — see F8 note in
         // examples/industrial_dashboard).
         for (j, &w) in leaf_wids.iter().enumerate() {
             engine
