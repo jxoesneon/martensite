@@ -39,28 +39,28 @@ Tier 1 platforms are guaranteed to compile, link, and render with 100% feature p
 
 Tier 2 platforms compile cleanly via pure-Rust toolchains. They receive CI build checks but may not have fully verified hardware rendering pipelines in continuous integration.
 
-### WebAssembly (wasm32-unknown-unknown) — shipped in v0.17.0, compile-verified
+### WebAssembly (wasm32-unknown-unknown) — shipped in v0.17.0; compile-verified + headless-browser smoke gate passed
 * **GPU Backend:** WebGPU (Primary — required for Vello compute), WebGL2 (downlevel, TinySkia raster fallback only)
 * **Accessibility:** **No upstream AccessKit web adapter exists.** v0.17.0 ships `WebA11yBridge`, a hidden-DOM/ARIA mirror; full DOM mirroring is post-1.0 hardening.
 * **IME Support:** Hidden `<input>` overlay (canvas has no native IME).
 * **Fonts:** Bundled via `fontdb::Source::Binary` + `fetch`; no system fonts.
 * **Limitations:** Multi-threading requires `SharedArrayBuffer` (COOP/COEP headers). Clipboard is async + user-gesture gated. File system access is emulated or restricted.
 * **Browser floor:** Chrome/Edge 113+ (WebGPU), Firefox 141+ (Windows), Safari 26 (partial). Non-WebGPU browsers render via TinySkia.
-* **CI Status:** `cargo check --target wasm32-unknown-unknown` runs on every push (`target-checks` job). **Browser-runtime verification (`MARTENSITE_WEB_BROWSER` playwright gate) has not yet executed — this platform is compile-verified only.**
+* **CI Status:** `cargo check --target wasm32-unknown-unknown` runs on every push (`target-checks` job). **Browser-runtime gate executed 2026-09-15 (macOS 26.5.2, Apple Silicon):** `MARTENSITE_WEB_BROWSER=1` playwright gate (`examples/web/tests/browser_gate.rs`) passed under headless Chromium 140 — trunk-built wasm loaded, GPU backend decision logged, `data-martensite-a11y-mirror` present, `aria-live` load announcement landed. Scope: startup, GPU-backend selection, and the a11y mirror only — clipboard, IME, and drag-and-drop paths are still covered only by the manual checklist in `examples/web/README.md`.
 
-### iOS (aarch64) — shipped in v0.17.0, compile-verified
+### iOS (aarch64) — shipped in v0.17.0; compile-verified + simulator a11y-adapter smoke passed
 * **GPU Backend:** Metal via `wgpu`; `wgpu::Surface` created in `can_create_surfaces`.
 * **Accessibility:** `accesskit_ios` `SubclassingAdapter` — **upstream Phase-1 maturity** (basic traits/properties; editable text incomplete).
 * **Input:** Unified winit 0.31 `Pointer*` events; `Window::safe_area()` implemented.
 * **Packaging:** `staticlib`/`cdylib` + Xcode project (`cargo-mobile2`).
-* **CI Status:** `cargo check --target aarch64-apple-ios-sim` runs on every push (`target-checks` job). **Simulator/device runtime verification (`MARTENSITE_IOS_SIM_TESTS` gate) has not yet executed — this platform is compile-verified only.**
+* **CI Status:** `cargo check --target aarch64-apple-ios-sim` runs on every push (`target-checks` job). **Simulator runtime gate executed 2026-09-15:** `MARTENSITE_IOS_SIM_TESTS=1` adapter smoke test (`crates/martensite-access-platform/tests/ios_adapter.rs`) run via `xcrun simctl spawn` on an iPhone 17 Pro simulator (iOS 26.4) — `IosAdapter` subclassed a real `UIView`, `accessibilityElements` exported the materialized AccessKit node, PASS. Scope: AccessKit adapter injection and element enumeration on the simulator — no VoiceOver, no rendering, no physical-device coverage.
 
 ### Android (aarch64 / x86_64) — shipped in v0.17.0, compile-verified
 * **GPU Backend:** Vulkan (primary), GLES (downlevel fallback); surface destroy/recreate across `destroy_surfaces`/`can_create_surfaces` + `resumed`/`suspended`.
 * **Accessibility:** `accesskit_android` `InjectingAdapter` (`embedded-dex`). **Requires `GameActivity`** — `NativeActivity` breaks IME and AccessKit.
 * **IME/Input:** `GameActivity` GameText path; `Window::safe_area()` returns zeros on Android — `WindowInsets` platform code until winit lands it.
 * **Packaging:** `cdylib` + `cargo-apk2`/`xbuild` — see [android-packaging.md](android-packaging.md).
-* **CI Status:** `cargo check --target aarch64-linux-android` runs on every push (`target-checks` job). **On-device/emulator runtime verification (`MARTENSITE_ANDROID_DEVICE` gate) has not yet executed — this platform is compile-verified only.**
+* **CI Status:** `cargo check --target aarch64-linux-android` runs on every push (`target-checks` job). **On-device/emulator runtime verification (`MARTENSITE_ANDROID_DEVICE` gate) attempted 2026-09-15 and descoped:** the gate must run inside a GameActivity APK process (`cargo apk test`/xbuild + `[package.metadata.android]` manifest metadata), which is not provisioned for `martensite-access-platform`, and the host could not boot an emulator anyway (AVD `Medium_Phone_API_36.1` launch failed — insufficient disk space; an earlier boot reached adb `unauthorized` before shutdown). This platform remains compile-verified only.
 
 ### Linux (aarch64) & FreeBSD (x86_64)
 * **GPU Backend:** Vulkan / Software

@@ -190,8 +190,8 @@ let update = bridge.build_incremental_update(); // Option<TreeUpdate>
 | macOS | NSAccessibility via `accesskit_macos` | CI build-verified |
 | Linux | AT-SPI2 via `accesskit_unix` | CI build-verified |
 | iOS | `accesskit_ios` `SubclassingAdapter` | runtime-verified on the iOS simulator (`MARTENSITE_IOS_SIM_TESTS` adapter smoke test) |
-| Android | `accesskit_android` `InjectingAdapter` (GameActivity only) | compile-verified; device gate env-gated (`MARTENSITE_ANDROID_DEVICE`) |
-| Web | `WebA11yBridge` hidden-DOM/ARIA mirror | minimal bridge — **not** a full AccessKit adapter |
+| Android | `accesskit_android` `InjectingAdapter` (GameActivity only) | compile-verified; device gate attempted and descoped (needs a GameActivity APK harness — see `PLATFORM_SUPPORT.md`) |
+| Web | `WebA11yBridge` hidden-DOM/ARIA mirror | minimal bridge — **not** a full AccessKit adapter; headless-Chromium smoke gate passed (`MARTENSITE_WEB_BROWSER`) |
 
 What these tests *cannot* tell you: real screen-reader UX (focus
 order, announcement timing, verbosity). The AT-harness legs
