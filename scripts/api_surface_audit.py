@@ -23,16 +23,22 @@ Each crate is documented twice:
 Items that only appear in the feature pass are marked with the enabling
 feature set; EXPERIMENTAL classification comes from ``EXPERIMENTAL_RULES``
 (path regexes per crate) and ``CRATE_TIER`` (crate-level classification for
-vendored forks). The merged result replaces the text between
+vendored forks). Re-export aliases are resolved through the rustdoc
+``paths``/``index`` tables to their canonical target item and *inherit*
+that item's tier — otherwise module-scoped rules (``::docking(::|$)``)
+never match root aliases like ``martensite_blessed::DockArea``, whose
+paths drop the module segment. The merged result replaces the text between
 
     <!-- BEGIN GENERATED: api-surface --> / <!-- END GENERATED -->
 
 in docs/API_SURFACE_AUDIT.md. Run from anywhere:
 
-    python3 scripts/api_surface_audit.py [--skip-docgen]
+    python3 scripts/api_surface_audit.py [--skip-docgen] [--strict]
 
 ``--skip-docgen`` reuses the rustdoc JSON already in ``target/doc/*.json``
-(after a manual doc pass) instead of invoking cargo. Requires python3 only.
+(after a manual doc pass) instead of invoking cargo. ``--strict`` exits
+nonzero when any crate fails doc generation instead of only noting the
+failure in the output. Requires python3 only.
 """
 
 from __future__ import annotations
@@ -222,16 +228,86 @@ def rustdoc_json(crate: dict, features: str | None) -> Path | None:
     return json_path
 
 
-def load_items(json_path: Path) -> tuple[dict[str, str], dict[str, str]]:
-    """Return ({public_path: kind}, {reexport_path: source}) for the crate's
+def qualify_source(source: str, module: str, crate: str,
+                   externs: set[str]) -> tuple[str, str]:
+    """Resolve a `use` item's ``source`` (as written) into a
+    crate-qualified path plus the crate that path belongs to.
+
+    Rust `use` paths are relative to the module containing the item unless
+    they start with ``crate``, ``self``, ``super``, or an extern crate
+    name. The qualified path preserves intermediate module segments that
+    canonical resolution drops: ``pub use chart::Point`` at the root of
+    ``martensite_blessed`` *transits* the experimental ``chart`` module
+    even though the item itself resolves to ``kurbo::point::Point``.
+    """
+    head, _, rest = source.partition("::")
+    if head == "crate":
+        return (f"{crate}::{rest}" if rest else crate), crate
+    if head == "self":
+        return (f"{module}::{rest}" if rest else module), crate
+    if head == "super":
+        parent = module.rpartition("::")[0] or crate
+        return (f"{parent}::{rest}" if rest else parent), crate
+    if head in externs or head == crate:
+        return source, head
+    return f"{module}::{source}", crate
+
+
+def resolve_use(doc: dict, u: dict) -> tuple[str | None, str | None]:
+    """Follow a `use` item's target Id to its canonical path.
+
+    Returns ``(canonical_path, defining_crate)`` — the defining crate named
+    in rustdoc form (underscored, e.g. ``martensite_blessed``) — or
+    ``(None, None)`` when the target cannot be resolved. ``use`` → ``use``
+    chains are followed until a non-``use`` item is reached.
+    """
+    idx = doc["index"]
+    tid = u.get("id")
+    seen: set[str] = set()
+    while tid is not None and str(tid) not in seen:
+        seen.add(str(tid))
+        target = idx.get(str(tid))
+        if target is not None and "use" in target["inner"]:
+            tid = target["inner"]["use"].get("id")
+            continue
+        summary = doc["paths"].get(str(tid))
+        if summary is None:
+            break
+        cpath = "::".join(summary["path"])
+        cid = summary["crate_id"]
+        if cid == 0:
+            ccrate = idx[str(doc["root"])]["name"]
+        else:
+            ccrate = doc.get("external_crates", {}).get(str(cid), {}).get("name")
+        return cpath, ccrate
+    return None, None
+
+
+def load_items(json_path: Path) -> tuple[dict[str, str], dict[str, dict]]:
+    """Return ({public_path: kind}, {reexport_path: meta}) for the crate's
     own public items.
 
     `paths` gives each defined item's canonical path. Re-exports (`pub use`)
     are separate index items and are collected by walking the public module
     tree, since they create additional nameable surface (this is how the
-    `martensite` umbrella crate's API is actually reached). The second dict
-    records each re-export's source path so classification rules written
-    against canonical paths still apply to umbrella re-exports.
+    `martensite` umbrella crate's API is actually reached). For each
+    re-export, `meta` records:
+
+    - ``src`` — the source path as written in the `use` item (relative,
+      e.g. ``ring_buffer::PluginRuntime``, so not directly rule-matchable),
+    - ``qsrc`` / ``qsrc_crate`` — the source path *qualified* into the
+      using module's scope (``chart::Point`` at the crate root becomes
+      ``martensite_blessed::chart::Point``), so transit through an
+      experimental module is visible even when the item's canonical path
+      leaves the crate,
+    - ``target`` — the *resolved* canonical path of the re-exported item
+      (e.g. ``martensite_plugin::ring_buffer::PluginRuntime``), and
+    - ``target_crate`` — the crate defining that item.
+
+    The resolved target lets an alias inherit the canonical item's
+    classification: module-scoped EXPERIMENTAL_RULES (``::docking(::|$)``)
+    match the canonical path but never the alias path, which drops the
+    module segment.
     """
     doc = json.loads(json_path.read_text())
     idx = doc["index"]
@@ -254,7 +330,8 @@ def load_items(json_path: Path) -> tuple[dict[str, str], dict[str, str]]:
     mod_path = {iid: "::".join(p["path"])
                 for iid, p in doc["paths"].items()
                 if p["crate_id"] == 0 and p["kind"] == "module"}
-    reexport_src: dict[str, str] = {}
+    reexport_meta: dict[str, dict] = {}
+    externs = {v["name"] for v in doc.get("external_crates", {}).values()}
     for iid, item in idx.items():
         if "module" not in item["inner"] or iid not in mod_path:
             continue
@@ -265,14 +342,20 @@ def load_items(json_path: Path) -> tuple[dict[str, str], dict[str, str]]:
             if child["visibility"] != "public":
                 continue
             u = child["inner"]["use"]
+            cpath, ccrate = resolve_use(doc, u)
+            qsrc, qcrate = qualify_source(u["source"], mod_path[iid],
+                                          crate_name, externs)
             if u.get("is_glob"):
                 path = f"{mod_path[iid]}::* (from {u['source']})"
                 items.setdefault(path, "reexport_glob")
             else:
                 path = f"{mod_path[iid]}::{u['name']}"
                 items.setdefault(path, "reexport")
-            reexport_src[path] = u["source"]
-    return items, reexport_src
+            reexport_meta.setdefault(
+                path, {"src": u["source"], "qsrc": qsrc,
+                       "qsrc_crate": qcrate, "target": cpath,
+                       "target_crate": ccrate})
+    return items, reexport_meta
 
 
 def load_deprecated(json_path: Path) -> list[str]:
@@ -286,28 +369,86 @@ def load_deprecated(json_path: Path) -> list[str]:
     return sorted(out)
 
 
-def classify(crate: str, path: str, src: str | None = None) -> str:
-    tier = CRATE_TIER.get(crate)
-    if tier == "VENDORED":
-        return "VENDORED"
-    if tier == "EXPERIMENTAL":
-        return "EXPERIMENTAL"
-    for pattern, _why in EXPERIMENTAL_RULES.get(crate, []):
-        if re.search(pattern, path) or (src and re.search(pattern, src)):
+def _tier_of(crate: str, path: str) -> str | None:
+    """Tier implied by `path` living in `crate` (underscored or hyphenated
+    crate name), or None when no rule/tier matches."""
+    key = crate.replace("_", "-")
+    tier = CRATE_TIER.get(key)
+    if tier:
+        return tier
+    for pattern, _why in EXPERIMENTAL_RULES.get(key, []):
+        if re.search(pattern, path):
             return "EXPERIMENTAL"
+    return None
+
+
+def classify(crate: str, path: str, info: dict | None = None) -> str:
+    """Classify one public path. `info` is the per-item dict built by
+    `merge_into`/`load_items` (kind/feature plus, for re-exports, `src`,
+    `qsrc`/`qsrc_crate`, `target`/`target_crate`)."""
+    info = info or {}
+    tier = _tier_of(crate, path)
+    if tier:
+        return tier
+    src = info.get("src")
+    for pattern, _why in EXPERIMENTAL_RULES.get(crate, []):
+        if src and re.search(pattern, src):
+            return "EXPERIMENTAL"
+    # Transit check: the as-written source path may pass through an
+    # experimental module even when the item's canonical path does not —
+    # `pub use chart::Point` at the root of `martensite_blessed` reaches
+    # `kurbo::point::Point`, but the alias is part of the experimental
+    # `chart` surface.
+    qsrc = info.get("qsrc")
+    if qsrc:
+        qtier = _tier_of(info.get("qsrc_crate") or crate, qsrc)
+        if qtier:
+            return qtier
+    # Inheritance: a re-export alias takes the tier of the canonical item
+    # it resolves to. Module-scoped rules are written against canonical
+    # paths; the alias path (e.g. `martensite_blessed::Chart`) drops the
+    # module segment (`chart`), so without this step every root alias of
+    # an experimental module would be misclassified STABLE.
+    target = info.get("target")
+    if target:
+        ttier = _tier_of(info.get("target_crate") or crate, target)
+        if ttier:
+            return ttier
     return "STABLE"
 
 
-def module_of(crate: str, path: str) -> str:
+def module_of(path: str) -> str:
     parts = path.split("::")
     return parts[1] if len(parts) > 2 else "(crate root)"
 
 
+def whole_crate_alias_caveats(items: dict[str, dict]) -> list[str]:
+    """One caveat string per alias re-exporting an entire crate root whose
+    crate is only *partially* experimental — the alias's own tag cannot
+    reflect the experimental sub-surface reachable through it (the
+    individual sub-paths are not enumerated in this crate's JSON)."""
+    out = []
+    for path, i in items.items():
+        target, tcrate = i.get("target"), i.get("target_crate")
+        if not target or "::" in target:
+            continue  # not a crate-root alias
+        rules = EXPERIMENTAL_RULES.get((tcrate or "").replace("_", "-"))
+        if not rules:
+            continue
+        whys = "; ".join(sorted({w for _p, w in rules}))
+        out.append(f"`{path}` re-exports the whole of `{target}`, which "
+                   f"contains experimental sub-surface ({whys}) not "
+                   "reflected in the alias's stable tag.")
+    return sorted(out)
+
+
 def emit_crate(crate: str, version: str, items: dict[str, dict],
                deprecated: list[str]) -> str:
-    """items: {path: {'kind': kind, 'feature': str|None, 'src': str|None}}"""
+    """items: {path: {'kind': kind, 'feature': str|None, 'src': str|None,
+    'qsrc': str|None, 'qsrc_crate': str|None, 'target': str|None,
+    'target_crate': str|None}}"""
     total = len(items)
-    cls = {p: classify(crate, p, i.get("src")) for p, i in items.items()}
+    cls = {p: classify(crate, p, i) for p, i in items.items()}
     stable = [p for p in items if cls[p] == "STABLE"]
     experimental = [p for p in items if cls[p] == "EXPERIMENTAL"]
     vendored = [p for p in items if cls[p] == "VENDORED"]
@@ -331,11 +472,16 @@ def emit_crate(crate: str, version: str, items: dict[str, dict],
     if CRATE_TIER.get(crate) == "VENDORED":
         lines.append("Vendored upstream fork: the entire surface tracks its "
                      "upstream project and is EXPERIMENTAL until the "
-                     "maintenance policy in §5 pins a re-sync contract.")
+                     "maintenance policy in `API_FREEZE_AUDIT.md` §5 pins a "
+                     "re-sync contract.")
         lines.append("")
     elif CRATE_TIER.get(crate) == "EXPERIMENTAL":
         lines.append("Whole crate classified EXPERIMENTAL (young integration "
                      "surface, expected to settle during the RC line).")
+        lines.append("")
+
+    for caveat in whole_crate_alias_caveats(items):
+        lines.append(f"Caveat: {caveat}")
         lines.append("")
 
     def fmt(path: str) -> str:
@@ -352,7 +498,7 @@ def emit_crate(crate: str, version: str, items: dict[str, dict],
     else:
         by_mod: dict[str, list[str]] = defaultdict(list)
         for path in items:
-            by_mod[module_of(crate, path)].append(path)
+            by_mod[module_of(path)].append(path)
         lines.append(f"Large surface — digest by module "
                      f"(> {LIST_LIMIT} items):")
         lines.append("")
@@ -390,6 +536,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--skip-docgen", action="store_true",
                     help="reuse existing target/doc/*.json")
+    ap.add_argument("--strict", action="store_true",
+                    help="exit nonzero if any crate fails doc generation")
     args = ap.parse_args()
 
     crates = cargo_metadata()
@@ -397,11 +545,24 @@ def main() -> int:
 
     per_crate: dict[str, dict[str, dict]] = {}
     deprecated: dict[str, list[str]] = {}
-    versions: dict[str, str] = {}
     failed: list[str] = []
 
+    def merge_into(merged: dict[str, dict], json_path: Path,
+                   feature: str | None) -> None:
+        got, meta = load_items(json_path)
+        for path, kind in got.items():
+            if path in merged:
+                continue
+            m = meta.get(path, {})
+            merged[path] = {"kind": kind, "feature": feature,
+                            "src": m.get("src"),
+                            "qsrc": m.get("qsrc"),
+                            "qsrc_crate": m.get("qsrc_crate"),
+                            "target": m.get("target"),
+                            "target_crate": m.get("target_crate")}
+
     for c in crates:
-        name, versions[name] = c["name"], c["version"]
+        name = c["name"]
         merged: dict[str, dict] = {}
 
         if args.skip_docgen:
@@ -416,21 +577,14 @@ def main() -> int:
             per_crate[name] = {}
             continue
 
-        base_items, base_src = load_items(default_json)
-        for path, kind in base_items.items():
-            merged[path] = {"kind": kind, "feature": None,
-                            "src": base_src.get(path)}
+        merge_into(merged, default_json, None)
         deprecated[name] = load_deprecated(default_json)
 
         feats = EXTRA_FEATURES.get(name)
         if feats and not args.skip_docgen:
             feat_json = rustdoc_json(c, feats)
             if feat_json is not None:
-                feat_items, feat_src = load_items(feat_json)
-                for path, kind in feat_items.items():
-                    if path not in merged:
-                        merged[path] = {"kind": kind, "feature": feats,
-                                        "src": feat_src.get(path)}
+                merge_into(merged, feat_json, feats)
         print(f"  {name}: {len(merged)} items")
         per_crate[name] = merged
 
@@ -441,7 +595,7 @@ def main() -> int:
            "(stable + `RUSTC_BOOTSTRAP`); do not edit between the markers._",
            ""]
     grand = sum(len(v) for v in per_crate.values())
-    n_cls = Counter(classify(c, p, i.get("src"))
+    n_cls = Counter(classify(c, p, i)
                     for c, items in per_crate.items()
                     for p, i in items.items())
     out.append(f"**Workspace total: {grand} public items, "
@@ -457,11 +611,13 @@ def main() -> int:
             out.append(f"| `{name}` | — | — | — | — | doc generation "
                        "failed on this host |")
             continue
-        c_cls = Counter(classify(name, p, i.get("src"))
-                        for p, i in items.items())
+        c_cls = Counter(classify(name, p, i) for p, i in items.items())
         note = {"VENDORED": "vendored fork",
                 "EXPERIMENTAL": "crate-level experimental"}.get(
                     CRATE_TIER.get(name), "")
+        if whole_crate_alias_caveats(items):
+            note = (note + "; " if note else "") + \
+                "crate-root aliases expose experimental sub-surface"
         out.append(f"| `{name}` | {len(items)} | {c_cls['STABLE']} | "
                    f"{c_cls['EXPERIMENTAL']} | {c_cls['VENDORED']} | "
                    f"{note} |")
@@ -491,6 +647,7 @@ def main() -> int:
     print(f"wrote {DOC_OUT}")
     if failed:
         print("FAILED crates:", ", ".join(failed), file=sys.stderr)
+        return 1 if args.strict else 0
     return 0
 
 

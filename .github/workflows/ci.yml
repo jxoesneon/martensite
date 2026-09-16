@@ -406,7 +406,7 @@ jobs:
   #      (it uses `version.workspace = true`). Only vello
   #      (0.10.0-martensite.1) and cosmic-text (0.19.0-martensite.1)
   #      carry `-martensite.N` prerelease versions off the workspace
-  #      bump cadence. Checking all 33 publishable crates against
+  #      bump cadence. Checking all 30 non-vendored publishable crates against
   #      crates.io baselines is feasible only because each matrix leg
   #      is an independent parallel job; a serial `--workspace` run
   #      would not fit in the pipeline.
