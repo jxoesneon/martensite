@@ -164,6 +164,14 @@ impl FocusManager {
     /// [`apply_focus_request`](Self::apply_focus_request), which performs
     /// the transition and the dispatch together.
     ///
+    /// **Note:** this method *silently no-ops* when `id` is not a valid
+    /// focus target — e.g. a [`HotNode`](martensite_core::HotNode) missing
+    /// [`NodeFlags::FOCUSABLE`]
+    /// or [`NodeFlags::VISIBLE`], a dead widget, or a widget outside the
+    /// active modal scope. No error or log is produced. Use
+    /// [`try_set_focus`](Self::try_set_focus) when the caller needs to
+    /// know whether focus actually moved.
+    ///
     /// # Examples
     ///
     /// ```
@@ -184,6 +192,47 @@ impl FocusManager {
             return;
         }
         self.current_focus = Some(id);
+    }
+
+    /// Sets focus to the given widget, reporting whether focus moved.
+    ///
+    /// Identical to [`set_focus`](Self::set_focus) — same target
+    /// validation, same no-dispatch semantics — but returns `true` when
+    /// `id` was a valid focus target and holds focus after the call, and
+    /// `false` when the request was rejected (widget dead, missing
+    /// [`NodeFlags::FOCUSABLE`] or [`NodeFlags::VISIBLE`], inert, or
+    /// outside the active modal scope).
+    ///
+    /// Prefer this over [`set_focus`](Self::set_focus) whenever a failed
+    /// focus request should be observable rather than silently ignored.
+    /// For the full transition including
+    /// [`WidgetEvent::FocusLost`]/[`WidgetEvent::FocusGained`] dispatch,
+    /// use [`apply_focus_request`](Self::apply_focus_request).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::FocusManager;
+    /// use martensite_core::{WidgetArena, HotNode, ColdNode, NodeFlags};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE;
+    /// let id = arena.insert(hot, ColdNode::default());
+    /// // A widget without FOCUSABLE is rejected, observably.
+    /// let plain = arena.insert(HotNode::default(), ColdNode::default());
+    ///
+    /// let mut manager = FocusManager::new();
+    /// assert!(!manager.try_set_focus(&mut arena, plain));
+    /// assert!(manager.try_set_focus(&mut arena, id));
+    /// assert_eq!(manager.current_focus(), Some(id));
+    /// ```
+    pub fn try_set_focus(&mut self, arena: &mut WidgetArena, id: WidgetId) -> bool {
+        if !self.is_focusable_target(arena, id) {
+            return false;
+        }
+        self.current_focus = Some(id);
+        true
     }
 
     /// Applies a pending arena focus request: validates `id` as a focus
