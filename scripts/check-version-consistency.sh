@@ -85,7 +85,7 @@ check_snippet() { # <file> <crate-dir> <found-version>
     [ "$ver" = "$actual" ] || \
         err "$file: snippet version \"$ver\" for $(basename "$dir") (actual $actual)"
 }
-snippet_files() { grep -rlE 'martensite[a-z0-9_-]* *= *["{]' README.md docs crates/*/README.md 2>/dev/null || true; }
+snippet_files() { grep -rlE 'martensite[a-z0-9_-]* *= *["{]' README.md docs crates/*/README.md crates/*/src/lib.rs 2>/dev/null || true; }
 while IFS= read -r f; do
     # Form A: `name = "V"` bare, or `martensite-name = { ..., version = "V" }`.
     while IFS= read -r m; do

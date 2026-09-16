@@ -25,10 +25,11 @@
 //! This crate carries `#![forbid(unsafe_code)]`, so none of that FFI can
 //! live here. The platform backends in this module are therefore **safe
 //! stubs** that document the intended integration point and fall back to
-//! [`StubClipboard`] behavior. The real, `unsafe` FFI bindings are deferred
-//! to a future milestone and will live in a separate crate (or behind a
-//! feature gate that opts out of `forbid(unsafe_code)`) so that this crate
-//! remains a safe, auditable dependency.
+//! [`StubClipboard`] behavior. The real backends live in the separate
+//! `martensite-clipboard-platform` crate (NSPasteboard / Win32 / X11 FFI
+//! plus a Wayland `wl-clipboard` subprocess backend), which is wired in
+//! when the `platform` Cargo feature is enabled; this crate remains a
+//! safe, auditable dependency either way.
 //!
 //! # Examples
 //!
@@ -492,16 +493,18 @@ impl PlatformClipboard for X11Clipboard {
 /// | `linux` | (no `wayland`) | `X11Clipboard` |
 /// | other | — | [`StubClipboard`] |
 ///
-/// Every backend is currently a **safe stub** (see the [module
-/// docs](crate::platform)): real OS clipboard FFI requires `unsafe` code,
-/// which is forbidden by this crate's `#![forbid(unsafe_code)]` attribute.
-/// The stubs return empty/`None` for reads and silently discard writes.
-/// Real platform integration will be provided by a separate FFI crate in a
-/// future milestone. For Martensite v0.5.0 the usable implementations are
-/// [`crate::InMemoryClipboard`] (for tests and headless environments) and
-/// [`StubClipboard`] (the platform-agnostic fallback). This is a deliberate
-/// design decision, not a missing feature — the returned clipboard is
-/// always usable and never panics.
+/// Without the `platform` Cargo feature every backend is a **safe stub**
+/// (see the [module docs](crate::platform)): real OS clipboard FFI requires
+/// `unsafe` code, which is forbidden by this crate's
+/// `#![forbid(unsafe_code)]` attribute. The stubs return empty/`None` for
+/// reads and silently discard writes. With `platform` enabled, this
+/// function delegates to `martensite-clipboard-platform::native_backend`
+/// (NSPasteboard / Win32 / X11 FFI, or the Wayland `wl-clipboard`
+/// subprocess backend) and only falls back to [`StubClipboard`] when no
+/// native backend is available. [`crate::InMemoryClipboard`] remains the
+/// choice for tests and headless environments. This is a deliberate design
+/// decision, not a missing feature — the returned clipboard is always
+/// usable and never panics.
 ///
 /// # Examples
 ///

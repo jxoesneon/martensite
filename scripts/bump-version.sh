@@ -118,7 +118,7 @@ echo "manifests synced"
 #    `{ package = "martensite-foo", version = "V" }` -> crate's real version.
 # ---------------------------------------------------------------------------
 for f in $(grep -rlE '(martensite[a-z0-9_-]*|cargo-martensite) *= *["{]' \
-            README.md docs crates/*/README.md 2>/dev/null); do
+            README.md docs crates/*/README.md crates/*/src/lib.rs 2>/dev/null); do
     awk -v ws="$WS_VER" '
         function pkgver(dir,   line, v) {
             v = ""

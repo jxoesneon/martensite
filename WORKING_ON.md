@@ -133,9 +133,12 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   `industrial_dashboard` workstation demo + egui/iced benchmark
   baselines; four tutorials; reproducible builds; migration-guide
   refresh. Spec: `docs/milestones/v0.18.0-production-hardening.md`.
-  **Status: IN PROGRESS** — workstreams on `milestone/{api-freeze,
-  hardening,dogfood,docs-honesty,binaries}` through the double-review
-  loop; binaries, dogfood, and hardening merged to main.
+  **Status: PENDING COUNCIL SIGNOFF** — all six workstreams merged to
+  main (api-freeze, hardening, dogfood, docs-honesty, binaries, and the
+  W6 dogfood-API-friction fixes). Council review found and fixed one
+  release blocker: the `martensite::blessed` facade alias added a
+  `martensite → martensite-blessed` dependency edge, so the publish
+  order in `publish.yml`/`RELEASE_PROCESS.md` now ships blessed first.
 - **v0.19.0 Distribution** — prebuilt `cargo-martensite` binaries,
   WiX/DMG/Flatpak installers, Ed25519 signed updates, build
   attestations. Tentatively scoped; may be descoped to post-1.0 by
@@ -374,10 +377,11 @@ All four v0.12.0 deliverables are implemented and verified:
 
 The following audit items were resolved during this cycle:
 - §1.3 Host dynamic loading — resolved (guest cdylib lifecycle tests).
-- §1.4 Platform clipboard/DnD — partially resolved (Windows/X11 round-trip
-  tests added; CI-only verification for non-macOS).
-- §1.6 Test quality red flags — partially resolved (shader, rendering, and
-  VFS sleep tests fixed; clipboard and Tracy sleeps remain).
+- §1.4 Platform clipboard/DnD — resolved (Windows/X11 round-trip tests
+  added; Wayland `wl-clipboard` backend landed in v0.18.0; non-macOS
+  runtime verification is CI-only).
+- §1.6 Test quality red flags — resolved (shader, rendering, VFS,
+  clipboard, and Tracy sleeps all converted to bounded polling).
 - §1.7 Official Unicode conformance suites — resolved (BiDi corpora
   vendored, 100% pass).
 - §11.6 BiDi Unicode test suite — resolved (100% pass on both corpora).
@@ -547,8 +551,9 @@ unit tests. The only real reload test (`tests/hot_reload_latency.rs:88`) was
 
 ### 1.4 Platform clipboard/DnD only tested on macOS
 
-**Status:** Partially resolved — Windows/X11 round-trip tests added; CI-only
-verification for Windows/Linux. No Wayland backend yet.
+**Status:** Resolved (v0.18.0) — Windows/X11 round-trip tests added; a
+Wayland backend now exists via `wl-copy`/`wl-paste` subprocesses with
+bounded waits (see `martensite-clipboard-platform/src/wayland.rs`).
 
 `martensite-clipboard-platform` has real clipboard round-trips on macOS.
 Windows and X11 now have real OS round-trip tests (write/read/clear,
@@ -580,7 +585,10 @@ clipboard.
   clipboard tests on `windows-latest` and `ubuntu-latest` (with Xvfb).
 
 **Remaining:**
-- No Linux Wayland clipboard backend is visible; X11 only.
+- Wayland clipboard runtime verification is CI-only — the backend is
+  compile-verified (`x86_64-unknown-linux-gnu` check + doc build pass)
+  and unit-tested for backend selection, but real `wl-copy`/`wl-paste`
+  round-trips have not run on a Wayland session.
 - Windows/X11 real-OS tests are CI-only (not locally verified on macOS).
 
 ### 1.5 Performance gates not enforced
@@ -616,16 +624,16 @@ and not an implementation regression.
 - `docs/BENCHMARKS.md` now distinguishes enforced, regression-gate,
   informational, and manual/platform-specific suites with a summary table.
 
-**Remaining:**
+**Resolved (v0.18.0):** all three remaining gates now run in the CI
+`performance-gates` job (`.github/workflows/ci.yml`) under
+`MARTENSITE_STRICT_BENCH=1`:
 
-- v0.9.0 hot reload: `<350 ms`.
-  - `crates/martensite-host/tests/hot_reload_latency.rs:92` (ignored).
-  - Still `#[ignore]`-gated; no CI assertion.
-- v0.6.0 theme-transition: zero allocation not measured.
-  - No automated gate.
-- v0.9.0 Tracy overhead: `<0.1 ms/frame`.
-  - `crates/martensite-devtools/src/tracy.rs:557` (ignored).
-  - Still `#[ignore]`-gated; no CI assertion.
+- v0.9.0 hot reload `<350 ms` — `hot_reload_latency` runs
+  `--ignored` in CI.
+- v0.6.0 theme-transition zero-alloc — `theme_transition_zero_alloc`
+  (new gate, `--ignored` in CI).
+- v0.9.0 Tracy overhead `<0.1 ms/frame` — tracy overhead test runs
+  `--ignored` in CI.
 
 **Recommended action:**
 - Monitor CI results for the milestone-target gates. If CI fails, investigate
@@ -747,9 +755,13 @@ the two versions, the build will break. Even if it compiles, carrying two
 
 `martensite-blessed` depended on the top-level `martensite` crate
 (`crates/martensite-blessed/Cargo.toml:16`), which was unusual for a "blessed
-widget set" and created a tight coupling. `martensite` does not depend back
-on `martensite-blessed`, so there was no cycle, but the dependency direction
-was unusual.
+widget set" and created a tight coupling. At the time `martensite` did not
+depend back on `martensite-blessed`, so there was no cycle, but the
+dependency direction was unusual. **Update (v0.18.0):** the
+`martensite::blessed` facade alias added in W6 now makes `martensite`
+depend on `martensite-blessed` (still acyclic — blessed's umbrella
+dependency was removed); the publish order was updated to ship
+`martensite-blessed` first.
 
 **Resolution:**
 - Audited the crate source: no `martensite::*` imports were found.

@@ -70,8 +70,9 @@ fn main() {
 
 | Feature | Description | Default |
 | :--- | :--- | :--- |
-| `default` | Standard clipboard service implementations. | Yes |
-| `wayland` | Enables Linux Wayland data device protocol integration. | Yes |
+| `default` | Standard clipboard service implementations (safe stubs unless `platform` is enabled). | Yes |
+| `wayland` | Selects the safe `WaylandClipboard` stub type on Linux. | No |
+| `platform` | Real OS clipboard via `martensite-clipboard-platform` (NSPasteboard / Win32 / X11 FFI; Wayland via `wl-copy`/`wl-paste` when `WAYLAND_DISPLAY` is set). | No |
 
 ---
 

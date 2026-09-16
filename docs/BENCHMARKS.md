@@ -100,7 +100,7 @@ Benchmarks are maintained in [`benches/bench_suite`](../benches/bench_suite) and
 Benchmark integrity is enforced via GitHub Actions on every pull request and release tag. Two CI jobs enforce performance gates:
 
 1. **`benchmarks` job** — runs `cargo bench -p bench_suite --bench bench_suite -- --test` with `MARTENSITE_STRICT_BENCH=1`. This executes the Criterion bench suite in test mode, which triggers the strict exit-gate assertions embedded in each benchmark function.
-2. **`performance-gates` job** — runs `cargo test --release --workspace --benches -- --ignored` with `MARTENSITE_STRICT_BENCH=1`. This runs all `#[ignore]`-gated performance tests (including the layout regression gates) in release mode with strict assertions enabled.
+2. **`performance-gates` job** — runs the `#[ignore]`-gated performance tests in release mode with `MARTENSITE_STRICT_BENCH=1`, via per-crate invocations (`cargo test --release -p <crate> --lib`/`--test <target> -- --ignored`) covering the layout regression gates, devtools/Tracy overhead, docking and rubber-band zero-alloc gates, theme-transition zero-alloc, and hot-reload latency. See the `performance-gates` job in `.github/workflows/ci.yml` for the exact command list.
 
 ### Enforcement status summary
 
@@ -141,8 +141,14 @@ regressions before merging into `main`.
 # Criterion bench suite (enforced strict gates)
 cargo bench -p bench_suite --bench bench_suite -- --test
 
-# All ignored perf tests with strict mode (release required for layout gates)
-MARTENSITE_STRICT_BENCH=1 cargo test --release --workspace --benches -- --ignored
+# All ignored perf tests with strict mode (release required for layout gates).
+# Mirrors the CI `performance-gates` job — the workspace `--benches` selector
+# does not cover lib/integration-test gates, so run per crate:
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-layout --lib -- --ignored
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-blessed --test docking_zero_alloc -- --ignored
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-motion --test rubber_band_zero_alloc -- --ignored
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-theme --test theme_transition_zero_alloc -- --ignored
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-host --test hot_reload_latency -- --ignored
 
 # Informational only (prints timing, no assertions)
 cargo test --release -p martensite-layout --lib -- --ignored --nocapture

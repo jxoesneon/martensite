@@ -120,8 +120,8 @@ jobs:
             martensite-assets
             martensite-devtools
             martensite-plugin
-            martensite
             martensite-blessed
+            martensite
           )
           for crate in "${CRATES[@]}"; do
             echo "Packaging $crate..."
@@ -240,6 +240,9 @@ jobs:
           # martensite-clipboard-platform must come before martensite-clipboard.
           # martensite-font-fallback must come before martensite.
           # martensite-shell must come before martensite-window.
+          # martensite-blessed must come before martensite (the
+          # `martensite::blessed` facade re-export makes martensite
+          # depend on martensite-blessed).
           CRATES=(
             martensite-reactive
             martensite-macros
@@ -272,8 +275,8 @@ jobs:
             martensite-assets
             martensite-devtools
             martensite-plugin
-            martensite
             martensite-blessed
+            martensite
           )
 
           published=0

@@ -150,19 +150,24 @@ fn capture_stdout(command: &mut Command, timeout: Duration) -> Option<Vec<u8>> {
         let _ = child.wait();
         return None;
     };
-    let reader = std::thread::spawn(move || {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
         // The pipe hits EOF when the child exits (or is killed on
         // timeout), so this thread always winds down on its own even
         // if we do not join it below.
         let _ = stdout.read_to_end(&mut buf);
-        buf
+        let _ = tx.send(buf);
     });
     let status = wait_with_timeout(&mut child, timeout)?;
     if !status.success() {
         return None;
     }
-    reader.join().ok()
+    // recv_timeout bounds the join: a grandchild that inherited the
+    // stdout write fd would otherwise hold the pipe past EOF and block
+    // `join` forever. On timeout the thread is detached; it exits when
+    // the inherited fd finally closes.
+    rx.recv_timeout(timeout).ok()
 }
 
 /// Returns `true` if `binary` runs `--version` successfully within
@@ -270,14 +275,31 @@ impl ClipboardBackend for WaylandBackend {
             .spawn()
             .map(|mut child| {
                 use std::io::Write;
-                // `take` moves stdin out of the child; dropping it here
-                // closes the write end so wl-copy observes EOF. Without
+                // `take` moves stdin out of the child; the writer thread
+                // drops it after writing so wl-copy observes EOF. Without
                 // this, stdin stays open in `child` while `wait` blocks
                 // on a wl-copy that is still waiting for more input.
+                //
+                // The write runs on a helper thread because `write_all`
+                // can block past `COMMAND_TIMEOUT` if a wedged wl-copy
+                // never drains its pipe (payload larger than the pipe
+                // buffer). If the child is killed on timeout, its pipe
+                // read end closes and the blocked writer fails with
+                // EPIPE; the `recv_timeout` join bounds even the case
+                // where a grandchild inherited the read end.
+                let (tx, rx) = std::sync::mpsc::channel();
                 if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(bytes);
+                    let payload = bytes.to_vec();
+                    std::thread::spawn(move || {
+                        let _ = stdin.write_all(&payload);
+                        let _ = tx.send(());
+                    });
+                } else {
+                    drop(tx);
                 }
-                wait_with_timeout(&mut child, COMMAND_TIMEOUT)
+                let status = wait_with_timeout(&mut child, COMMAND_TIMEOUT);
+                let _ = rx.recv_timeout(COMMAND_TIMEOUT);
+                status
             });
     }
 

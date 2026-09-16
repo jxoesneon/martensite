@@ -68,8 +68,8 @@ Due to the strict workspace constraints and inter-crate dependencies, the publis
 29. `martensite-assets`
 30. `martensite-devtools`
 31. `martensite-plugin`
-32. `martensite`
-33. `martensite-blessed`
+32. `martensite-blessed`
+33. `martensite`
 *(Not published: `crates/martensite-bevy`, `crates/martensite-godot`,
 `crates/martensite-media-test`, `crates/martensite-render-test`,
 `crates/martensite-text-reference`, `tools/cargo-martensite`, all of

@@ -33,8 +33,11 @@ web-sys = { workspace = true, features = ["Clipboard", "Navigator", "Window"] }
 
 [features]
 default = []
-# Enables Wayland data-device clipboard integration on Linux.
-# When disabled on Linux, the X11 stub is selected instead.
+# Selects the safe `WaylandClipboard` stub type on Linux (names the
+# intended integration point; discards writes). Real Wayland clipboard
+# support comes from the `platform` feature below, whose
+# `martensite-clipboard-platform` backend probes `wl-copy`/`wl-paste`
+# automatically when `WAYLAND_DISPLAY` is set.
 wayland = []
 # Enables real OS clipboard integration via `martensite-clipboard-platform`.
 # When disabled, all platform backends fall back to safe stubs.
