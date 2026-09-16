@@ -68,6 +68,13 @@ deprecation and MSRV rules in [`DEPRECATION_POLICY.md`](DEPRECATION_POLICY.md).
   item granularity enumerated here anyway) and upstream attributes inside
   the vendored `martensite-vello` fork (already VENDORED wholesale). No
   STABLE top-level item is hidden.
+- Re-export aliases inherit the strictest tier along their spelled path,
+  so the same item can legitimately carry different tiers by path:
+  `martensite_core::PointerButton` is STABLE while
+  `martensite::prelude::PointerButton` is EXPERIMENTAL because that alias
+  routes through `martensite_engine_bridge`. The EXPERIMENTAL tag on the
+  alias means the alias path itself is not frozen — not that the item
+  changed.
 
 ### Stability gating (reconciling milestone spec §4.1)
 

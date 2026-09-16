@@ -246,8 +246,14 @@ def qualify_source(source: str, module: str, crate: str,
     if head == "self":
         return (f"{module}::{rest}" if rest else module), crate
     if head == "super":
-        parent = module.rpartition("::")[0] or crate
-        return (f"{parent}::{rest}" if rest else parent), crate
+        parent = module
+        while head == "super":
+            parent = parent.rpartition("::")[0] or crate
+            if not rest:
+                return parent, crate
+            head, _, rest = rest.partition("::")
+        tail = f"{head}::{rest}" if rest else head
+        return f"{parent}::{tail}", crate
     if head in externs or head == crate:
         return source, head
     return f"{module}::{source}", crate
@@ -343,6 +349,12 @@ def load_items(json_path: Path) -> tuple[dict[str, str], dict[str, dict]]:
                 continue
             u = child["inner"]["use"]
             cpath, ccrate = resolve_use(doc, u)
+            if cpath is None:
+                # Unresolvable target (e.g. a #[doc(hidden)] item stripped
+                # from the JSON) silently falls back to STABLE — flag it.
+                sys.stderr.write(
+                    f"warn: {crate_name}: unresolvable re-export "
+                    f"{u.get('name')} <- {u.get('source')}\n")
             qsrc, qcrate = qualify_source(u["source"], mod_path[iid],
                                           crate_name, externs)
             if u.get("is_glob"):
