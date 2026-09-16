@@ -103,6 +103,7 @@ Benchmark integrity is enforced via GitHub Actions on every pull request and rel
 | 7. Virtualized table | — | — | 0 alloc/frame | **Informational only** — not implemented |
 | 8. Video passthrough | — | — | < 0.10 ms CPU | **Manual / platform-specific** — needs GPU |
 | 9. Plugin ring buffer | — | — | < 0.08 ms | **Informational only** — not implemented |
+| 10. Competitive baselines | `bench_suite` (`competitive_*`) | — | — | **Informational only** — directional comparisons, no assertions (see §5) |
 
 ### Categories
 
@@ -146,3 +147,68 @@ Reference numbers (e.g., `0.68 ms`, `1.14 ms`) are measured on a dedicated, idle
 - **Toolchain:** Rust stable (workspace `rust-version` or later)
 
 CI runners use shared `ubuntu-latest` agents, so the executable strict gates in `benches/bench_suite` are intentionally looser (e.g., `5.0 ms` for 10k DAG propagation) to avoid noise. Reference numbers should not be compared directly to CI medians.
+
+## 5. Competitive Baselines — egui/iced-Comparable Primitives (v0.18.0)
+
+The `competitive_*` benchmarks in `benches/bench_suite` measure the
+Martensite primitives that correspond to workloads competitor frameworks
+publish numbers for. **No competitor crates are linked**: egui, iced,
+Slint, and GPUI are not in the dependency tree — this is a methodological
+requirement (competitor frameworks must not enter the lockfile), not a
+measurement of them.
+
+### Methodology and honest limits
+
+- The **Martensite column** is measured by Criterion on the machine
+  documented below each table (release profile, 30 samples,
+  `--measurement-time 3`). Numbers vary by host.
+- The **competitor columns** cite published or previously documented
+  figures (§1 table; vendor benchmarks). They come from *different
+  harnesses, different machines, and different workloads definitions* —
+  they are **directional only** and cannot be used to claim parity or
+  superiority.
+- Where no published figure exists, the cell says "no published figure"
+  rather than inventing one.
+
+### Measurement host (this table)
+
+Apple M4 (arm64), 16 GB, macOS 26.5.2, rustc 1.98.1, release profile.
+This is *not* the §4 reference Ryzen 9 5900X box; absolute numbers are
+expected to differ from the `†` reference values above.
+
+### Results
+
+| Workload (equivalent primitive) | Martensite (measured, M4) | egui v0.29 (documented) | iced v0.13 (documented) | Slint v1.8 (documented) | GPUI (documented) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| State propagation — 10k-node DAG, one set→resolve (`signal_propagation_10k`) | **0.97 ms** | N/A (immediate mode) | ~4.2 ms (message tree) | ~1.6 ms | ~1.1 ms |
+| State propagation — 200-memo fan-out, one set→resolve (`competitive_signal_fan_out_200`) | **22 µs** | per-frame re-eval (no published figure) | update→view per message (no published figure) | no published figure | no published figure |
+| Layout — 1,051-node tree, two-pass compute, warm (`competitive_layout_1k/two_pass_compute`) | **11.2 µs** | re-layouts full tree every frame (no published figure) | recomputes layout per view pass (no published figure) | no published figure | no published figure |
+| Layout — single leaf style change + recompute (`competitive_layout_1k/recompute_after_leaf_change`) | **~180 µs** | same cost class as full pass (immediate mode) | no published figure | no published figure | no published figure |
+| Text shaping — 500 distinct ~30-char labels, cold path (`competitive_text_shaping/labels_500_cold`) | **4.6 ms** (≈9.3 µs/label) | own text layout (no published figure) | cosmic-text — same engine family | no published figure | no published figure |
+| Text shaping — ~2.7 KB paragraph wrap @480px (`competitive_text_shaping/paragraph_wrap_480px`) | **385 µs** | no published figure | cosmic-text — same engine family | no published figure | no published figure |
+| Virtualized scroll — 1M rows, one scroll step + visible-window iteration (`competitive_virtualized_scroll_1m`) | **~19 ns** | qualitative: severe frame drops at 1M rows (§1) | qualitative: ~60 FPS (§1) | qualitative: ~90 FPS (§1) | custom required (§1) |
+
+### Per-benchmark notes
+
+- **10k DAG propagation**: Martensite's 0.97 ms on this M4 host vs the
+  0.68 ms reference (Ryzen 5900X, §4) — same order of magnitude across
+  hosts. The iced figure (~4.2 ms) measures its message-tree update,
+  not a signal DAG; the comparison is workload-level only.
+- **Layout**: `two_pass_compute` (11.2 µs) reflects Taffy's
+  unchanged-subtree caching on a steady-state tree — the number most
+  relevant to a 60/120 FPS frame budget. `recompute_after_leaf_change`
+  (~180 µs, wide distribution) is the truer "a property changed" cost:
+  Taffy recomputes from the root. Both are reported rather than picking
+  the flattering one.
+- **Text shaping**: iced 0.13 also sits on cosmic-text, making this the
+  closest-to-apples row in the table — remaining deltas are harness and
+  cache layers (Martensite's Tier-1/Tier-2 caches are not exercised by
+  `shape_text`'s cold path), not the shaper itself. 9.3 µs per short
+  label on the cold path is the number a real frame pays before caches
+  warm.
+- **Virtualized scroll**: ~19 ns per scroll step + 40-row window
+  iteration confirms the O(1)/zero-allocation claim on the model path.
+  It does not include rasterization — the §1 competitor figures are
+  end-to-end frame times and are listed as qualitative only.
+- **Run command**: `cargo bench -p bench_suite --bench bench_suite` —
+  all `competitive_*` groups run alongside the gated milestone suites.

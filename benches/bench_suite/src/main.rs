@@ -374,10 +374,265 @@ fn bench_diamond_reactive_network(c: &mut Criterion) {
     group.finish();
 }
 
+// =========================================================================
+// v0.18.0 competitive baselines — egui/iced-comparable shared primitives
+// =========================================================================
+//
+// These benchmarks measure the Martensite primitives that correspond to
+// the workloads competitor frameworks publish numbers for. They are NOT
+// cross-framework benchmarks: egui/iced run their own harnesses, so the
+// results are directional comparisons only (see docs/BENCHMARKS.md §5).
+// No competitor crates are linked — the lockfile stays clean.
+
+/// Builds a 1,051-node widget tree inside `LayoutEngine`:
+/// 1 root column + 50 row containers + 1,000 leaf cells (50 × 20).
+///
+/// WidgetIds are minted directly with `WidgetId::from_parts` — the engine
+/// only needs the id as a map key, no `WidgetArena` is required for a
+/// pure layout-throughput measurement.
+fn setup_layout_tree() -> (martensite_layout::LayoutEngine, taffy::NodeId) {
+    use martensite_layout::{Display, LayoutEngine};
+    use taffy::prelude::*;
+    let mut engine = LayoutEngine::new();
+    let root_wid = WidgetId::from_parts(0, 1);
+    let root = engine
+        .register_node(
+            root_wid,
+            Style {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: Size {
+                    width: length(0.0),
+                    height: length(4.0),
+                },
+                ..Default::default()
+            },
+        )
+        .expect("register root");
+
+    let row_wids: Vec<WidgetId> = (1..=50u32).map(|i| WidgetId::from_parts(i, 1)).collect();
+    engine
+        .set_children(root_wid, &row_wids)
+        .expect("set root children");
+
+    let mut next = 51u32;
+    for &row in &row_wids {
+        engine
+            .register_node(
+                row,
+                Style {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    gap: Size {
+                        width: length(6.0),
+                        height: length(0.0),
+                    },
+                    ..Default::default()
+                },
+            )
+            .expect("register row");
+        let leaf_wids: Vec<WidgetId> = (0..20)
+            .map(|_| {
+                let w = WidgetId::from_parts(next, 1);
+                next += 1;
+                w
+            })
+            .collect();
+        engine
+            .set_children(row, &leaf_wids)
+            .expect("set row children");
+        // Style the leaves AFTER set_children (register_node re-applies
+        // the given style to an already-registered id — see F11 note in
+        // examples/industrial_dashboard).
+        for (j, &w) in leaf_wids.iter().enumerate() {
+            engine
+                .register_node(
+                    w,
+                    Style {
+                        size: Size {
+                            width: length(24.0 + (j % 5) as f32 * 8.0),
+                            height: length(16.0),
+                        },
+                        ..Default::default()
+                    },
+                )
+                .expect("style leaf");
+        }
+    }
+    (engine, root)
+}
+
+/// Competitive baseline 1: two-pass layout throughput on a ~1k-node tree.
+///
+/// Comparable workload: a full retained/immediate layout pass over a
+/// realistic panel (50 rows × 20 cells). egui re-layouts every widget
+/// every frame; iced recomputes its widget-tree layout on each view pass.
+fn bench_layout_1k_widget_tree(c: &mut Criterion) {
+    use martensite_layout::{constraints_to_available, Constraints};
+    let mut group = c.benchmark_group("competitive_layout_1k");
+    group.throughput(Throughput::Elements(1_051));
+
+    group.bench_function("two_pass_compute", |b| {
+        let (mut engine, root) = setup_layout_tree();
+        let avail = constraints_to_available(Constraints::tight(1600.0, 900.0));
+        b.iter(|| {
+            engine.compute(root, avail).expect("compute");
+        });
+    });
+
+    // "Relayout" in immediate-mode terms: identical second pass after
+    // mutating one leaf's style — Taffy recomputes from root.
+    group.bench_function("recompute_after_leaf_change", |b| {
+        let (mut engine, root) = setup_layout_tree();
+        let avail = constraints_to_available(Constraints::tight(1600.0, 900.0));
+        engine.compute(root, avail).expect("warm compute");
+        let leaf = WidgetId::from_parts(51, 1);
+        let mut flip = false;
+        b.iter(|| {
+            flip = !flip;
+            engine
+                .register_node(
+                    leaf,
+                    taffy::prelude::Style {
+                        size: taffy::prelude::Size {
+                            width: taffy::prelude::length(if flip { 24.0 } else { 40.0 }),
+                            height: taffy::prelude::length(16.0),
+                        },
+                        ..Default::default()
+                    },
+                )
+                .expect("restyle leaf");
+            engine.compute(root, avail).expect("recompute");
+        });
+    });
+    group.finish();
+}
+
+/// Competitive baseline 2: UI-scale signal fan-out.
+///
+/// One root signal feeding 200 derived memos — the scale of a real
+/// dashboard's per-frame state propagation (vs. the 10k-node milestone
+/// gate). Comparable workload: iced's update→view re-evaluation per
+/// message, egui's per-frame immediate re-run.
+fn bench_signal_fan_out_200(c: &mut Criterion) {
+    let runtime = ReactiveRuntime::new();
+    let root = runtime.create_signal(0u64);
+    let memos: Vec<Memo<u64>> = (0..200)
+        .map(|i| {
+            let r = root.clone();
+            runtime.create_memo(move || r.get().wrapping_add(i))
+        })
+        .collect();
+    root.set(1);
+    for (i, m) in memos.iter().enumerate() {
+        assert_eq!(m.get(), 1 + i as u64);
+    }
+
+    let mut counter = 1u64;
+    let mut group = c.benchmark_group("competitive_signal_fan_out_200");
+    group.throughput(Throughput::Elements(200));
+    group.bench_function("set_and_resolve", |b| {
+        b.iter(|| {
+            counter = counter.wrapping_add(1);
+            root.set(counter);
+            let mut acc = 0u64;
+            for m in &memos {
+                acc = acc.wrapping_add(m.get());
+            }
+            black_box(acc);
+        });
+    });
+    group.finish();
+}
+
+/// Competitive baseline 3: text shaping throughput.
+///
+/// Comparable workload: per-frame label shaping plus one wrapped
+/// paragraph. Note iced 0.13 also sits on cosmic-text, so this is the
+/// closest-to-apples comparison in the suite — remaining differences are
+/// harness overhead and cache layers, not the shaper.
+fn bench_text_shaping(c: &mut Criterion) {
+    use martensite_text::{shape_text, FontManager};
+    let mut manager = FontManager::new();
+
+    // 500 realistic label strings (~30 chars), the scale of a dense
+    // dashboard's visible text per frame.
+    let labels: Vec<String> = (0..500)
+        .map(|i| {
+            format!(
+                "core {:02}  load {:.1}%  pid {}",
+                i % 64,
+                (i % 100) as f32,
+                1000 + i
+            )
+        })
+        .collect();
+
+    let paragraph: String = (0..40)
+        .map(|i| format!("Sensor {i} reports nominal throughput across the monitored segment; "))
+        .collect();
+
+    let mut group = c.benchmark_group("competitive_text_shaping");
+    group.throughput(Throughput::Elements(500));
+    group.bench_function("labels_500_cold", |b| {
+        b.iter(|| {
+            for s in &labels {
+                black_box(shape_text(&mut manager, black_box(s), 16.0, 20.0, None));
+            }
+        });
+    });
+    group.throughput(Throughput::Elements(paragraph.len() as u64));
+    group.bench_function("paragraph_wrap_480px", |b| {
+        b.iter(|| {
+            black_box(shape_text(
+                &mut manager,
+                black_box(&paragraph),
+                16.0,
+                20.0,
+                Some(480.0),
+            ));
+        });
+    });
+    group.finish();
+}
+
+/// Competitive baseline 4: virtualized scroll on a 1M-row table.
+///
+/// Comparable workload: egui `ScrollArea`/`Grid` visible-row culling and
+/// iced `scrollable` viewport math. The Martensite claim is O(1) per
+/// scroll step with zero allocation in `visible_rows`.
+fn bench_virtualized_scroll_1m(c: &mut Criterion) {
+    use martensite_blessed::DataTable;
+    let mut table = DataTable::new(vec![0_u64; 1_000_000], 22.0);
+    table.set_viewport_height(880.0);
+    assert_eq!(table.visible_range().len(), 40);
+
+    let mut group = c.benchmark_group("competitive_virtualized_scroll_1m");
+    group.throughput(Throughput::Elements(1_000_000));
+    group.bench_function("scroll_step_plus_visible_window", |b| {
+        let mut dir = 1.0f32;
+        b.iter(|| {
+            dir = -dir;
+            table.scroll_by(220.0 * dir);
+            let mut visited = 0usize;
+            for (idx, row) in table.visible_rows() {
+                black_box((idx, row));
+                visited += 1;
+            }
+            black_box(visited);
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_signal_propagation_10k,
     bench_arena_operations_10k,
-    bench_diamond_reactive_network
+    bench_diamond_reactive_network,
+    bench_layout_1k_widget_tree,
+    bench_signal_fan_out_200,
+    bench_text_shaping,
+    bench_virtualized_scroll_1m
 );
 criterion_main!(benches);

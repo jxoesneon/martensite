@@ -427,8 +427,12 @@ version = "0.17.0"
 dependencies = [
  "criterion",
  "martensite",
+ "martensite-blessed",
  "martensite-core",
+ "martensite-layout",
  "martensite-reactive",
+ "martensite-text",
+ "taffy",
 ]
 
 [[package]]
@@ -2355,6 +2359,9 @@ name = "industrial_dashboard"
 version = "0.17.0"
 dependencies = [
  "martensite",
+ "martensite-blessed",
+ "martensite-devtools",
+ "martensite-shell",
 ]
 
 [[package]]
