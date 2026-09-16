@@ -1,6 +1,6 @@
 [package]
 name = "martensite-bevy"
-version = "0.17.0"
+version = "0.18.0"
 edition = "2024"
 # Bevy main at the pinned rev declares rust-version 1.96 (`bevy`) / 1.95
 # (`bevy_ecs`, `bevy_reflect`); the crate inherits the highest bound.
@@ -60,8 +60,8 @@ bevy = { git = "https://github.com/bevyengine/bevy", rev = "5036d978a294a3fbb1c4
     # free of C toolchains.
     "zstd_rust",
 ] }
-martensite-engine-bridge = { path = "../martensite-engine-bridge", version = "0.17.0" }
-martensite-wgpu = { path = "../martensite-wgpu", version = "0.17.0" }
+martensite-engine-bridge = { path = "../martensite-engine-bridge", version = "0.18.0" }
+martensite-wgpu = { path = "../martensite-wgpu", version = "0.18.0" }
 wgpu = "30"
 
 [dev-dependencies]

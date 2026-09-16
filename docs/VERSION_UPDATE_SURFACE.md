@@ -26,7 +26,7 @@ vendored forks are therefore handled correctly by the same rule.
 | `crates/martensite-bevy/Cargo.toml` | `[package].version` + `martensite-*` dep versions | Excluded from default workspace; literal versions. |
 | `crates/martensite-godot/Cargo.toml` | same | Excluded; literal versions. |
 | `examples/viewport_showcase/Cargo.toml` | same | Excluded; literal versions. |
-| `README.md` | `martensite = "X.Y.Z"` install snippet | Root install instructions. |
+| `README.md` | `martensite = "0.18.0"` install snippet | Root install instructions. |
 | `crates/*/README.md` | `martensite-* = "X.Y.Z"` install snippets | Publish to crates.io — the most visible drift surface (was 0.7.0/0.14.0 at 0.17.0). |
 | `docs/*.md` | `martensite* = "V"` snippets inside code fences | e.g. `android-packaging.md`. Provenance text ("implemented in v0.17.0") is *not* matched — see §3. |
 | `Cargo.lock` | `[[package]] version` | Regenerated via `cargo metadata`. |

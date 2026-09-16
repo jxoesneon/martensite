@@ -34,7 +34,7 @@ Add `martensite-access` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-access = "0.17.0"
+martensite-access = "0.18.0"
 ```
 
 Configuring an accessible node:

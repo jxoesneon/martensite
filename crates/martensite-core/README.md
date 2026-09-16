@@ -41,7 +41,7 @@ Add `martensite-core` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-core = "0.17.0"
+martensite-core = "0.18.0"
 ```
 
 Managing an interface tree in the arena:

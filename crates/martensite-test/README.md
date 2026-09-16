@@ -35,7 +35,7 @@ Add `martensite-test` to your `[dev-dependencies]`:
 
 ```toml
 [dev-dependencies]
-martensite-test = "0.17.0"
+martensite-test = "0.18.0"
 ```
 
 Testing animations and time-dependent logic with `VirtualClock`:

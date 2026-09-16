@@ -84,7 +84,7 @@ sync_dep_lines() { # <file> <path-prefix-for-relative-paths>
                     v = ws; break
                 }
                 else if (inp && line ~ /^version[ \t]*=/) {
-                    sub(/.*"/, "", line); sub(/".*/, "", line); v = line; break
+                    sub(/^[^"]*"/, "", line); sub(/".*/, "", line); v = line; break
                 }
             }
             close(p "/Cargo.toml")
@@ -129,7 +129,7 @@ for f in $(grep -rlE '(martensite[a-z0-9_-]*|cargo-martensite) *= *["{]' \
                     v = ws; break
                 }
                 else if (inp && line ~ /^version[ \t]*=/) {
-                    sub(/.*"/, "", line); sub(/".*/, "", line); v = line; break
+                    sub(/^[^"]*"/, "", line); sub(/".*/, "", line); v = line; break
                 }
             }
             close(dir "/Cargo.toml")

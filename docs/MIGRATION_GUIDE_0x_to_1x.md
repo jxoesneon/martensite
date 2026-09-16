@@ -168,7 +168,7 @@ aspirational and never shipped. The current API is:
 
 ## Migrating a 0.x application — checklist
 
-1. Pin `martensite = "0.17.0"` (and `winit = "0.31.0-beta.3"` if you wire
+1. Pin `martensite = "0.18.0"` (and `winit = "0.31.0-beta.3"` if you wire
    the event loop yourself — it must match the workspace pin).
 2. Replace `Rc<RefCell<...>>` widget graphs with `WidgetArena` +
    `WidgetId`; move shared state into `Signal<T>`.
