@@ -83,8 +83,13 @@ deliberate final state for the pre-freeze line:
      `serde`, `devtools-timemachine`, `render`, `accesskit_android`,
      `windows-backend`, `macos-backend`, `wayland-backend`,
      `decoder`, `decoder-videotoolbox`, `decoder-mf`, `decoder-vaapi`,
-     `decoder-ffmpeg`, `docs-rs` — every item reachable only through these
-     flags is tagged `feature …` in the generated audit.
+     `decoder-ffmpeg` — items reachable only through these flags are
+     tagged `feature …` in the generated audit where enumerable on the
+     macOS doc host (items behind `decoder-ffmpeg`, `decoder-vaapi`,
+     `windows-backend`, `wayland-backend`, and vello's `hot_reload` are
+     not — see the caveats in `API_SURFACE_AUDIT.md` §1). `docs-rs` is
+     deliberately absent from this list: it is docs.rs build metadata,
+     not an API gate (see Non-feature-flags below).
   2. **Documented EXPERIMENTAL classification** for ungated items (e.g.,
      `martensite-wgpu::resilience`, `martensite-blessed::docking`,
      `martensite-plugin::runtime`), each with a stated rationale.
@@ -116,14 +121,22 @@ Mechanical enforcement is wired in `.github/workflows/ci.yml`
 - **Baseline:** the crates.io registry default — each crate is compared
   against its most recently published version (v0.17.0 at audit time).
 - **Matrix:** all 30 non-vendored publishable crates, one parallel job
-  each. Vendored forks are excluded (their `-martensite.N` versions do not
-  follow the workspace bump cadence).
+  each. Vendored forks are excluded because their surface tracks
+  upstream and is re-synced rather than frozen (§5) — that rationale
+  alone covers `martensite-accesskit-winit`, which uses
+  `version.workspace = true`; only vello (0.10.0-martensite.1) and
+  cosmic-text (0.19.0-martensite.1) carry `-martensite.N` versions off
+  the workspace bump cadence.
 - **Strictness:** advisory while `version == baseline` (mid-cycle 0.x
   development permits breaking changes); blocking once the manifest
   version is bumped past the baseline — i.e. on `release/*` PRs, tag
   pushes, and the `publish.yml` gate (`workflow_call`).
-- **Coverage caveat:** default features only; feature-gated API is outside
-  the checked surface (documented inline in the job).
+- **Coverage caveat:** the job passes `--default-features` explicitly —
+  a bare `cargo semver-checks -p <crate>` applies an
+  all-features-except-unstable heuristic that would pull in
+  `decoder-ffmpeg`/`decoder-vaapi` and fail on missing libva/ffmpeg
+  system packages. Feature-gated API remains outside the checked
+  surface (documented inline in the job).
 
 ## 5. Vendored-Fork Maintenance Policy
 

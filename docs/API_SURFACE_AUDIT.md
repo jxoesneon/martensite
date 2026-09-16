@@ -74,8 +74,8 @@ explicit flag". The recorded convention — rationale in
   already grants to all of 0.x). Mechanical gating exists only where an
   opt-in Cargo feature already exposes the items — those carry a
   `feature …` tag in the lists below. The remaining EXPERIMENTAL items
-  (210 at this audit) rely on the documented classification plus the
-  changelog-notice rules in `DEPRECATION_POLICY.md` §1/§3; per-item
+  (see the generated totals below) rely on the documented classification
+  plus the changelog-notice rules in `DEPRECATION_POLICY.md` §1/§3; per-item
   `unstable-*` gates pre-1.0 would duplicate a guarantee SemVer already
   withholds, without additional enforcement.
 - **Post-1.0, incubating API ships behind an explicit opt-in gate.**

@@ -400,12 +400,16 @@ jobs:
   #
   #   1. Scope: all non-vendored publishable crates (30). The three vendored
   #      forks (martensite-vello, martensite-cosmic-text,
-  #      martensite-accesskit-winit) are excluded — their surface tracks
-  #      upstream and their versions carry `-martensite.N` prerelease tags
-  #      that do not follow the workspace bump cadence. Checking all 33
-  #      publishable crates against crates.io baselines is feasible only
-  #      because each matrix leg is an independent parallel job; a serial
-  #      `--workspace` run would not fit in the pipeline.
+  #      martensite-accesskit-winit) are excluded because their surface
+  #      tracks upstream and is re-synced rather than frozen — the
+  #      accesskit-winit exclusion is on that vendored rationale alone
+  #      (it uses `version.workspace = true`). Only vello
+  #      (0.10.0-martensite.1) and cosmic-text (0.19.0-martensite.1)
+  #      carry `-martensite.N` prerelease versions off the workspace
+  #      bump cadence. Checking all 33 publishable crates against
+  #      crates.io baselines is feasible only because each matrix leg
+  #      is an independent parallel job; a serial `--workspace` run
+  #      would not fit in the pipeline.
   #   2. Strictness: the check is *blocking* only once the workspace version
   #      has been bumped past the published baseline — i.e. on release
   #      branches, tag pushes, and the publish gate (workflow_call). While
@@ -414,10 +418,14 @@ jobs:
   #      (continue-on-error) instead of failing the build.
   #
   # Feature-gated API (vello backend, decoder-*, devtools-timemachine, shell
-  # backends) is not covered: the check runs with default features because
-  # `--all-features` needs platform system libraries and cfg-gated targets
-  # that don't exist on this runner. Full-coverage checks can be run locally
-  # with `cargo semver-checks --workspace --all-features` on a Linux host
+  # backends) is not covered: the check runs with explicit
+  # `--default-features` — without the flag, cargo-semver-checks applies an
+  # all-features-except-unstable heuristic that would pull in
+  # decoder-ffmpeg/decoder-vaapi and fail for want of libva/ffmpeg dev
+  # packages. `--all-features` is likewise out: it needs platform system
+  # libraries and cfg-gated targets that don't exist on this runner.
+  # Full-coverage checks can be run locally with
+  # `cargo semver-checks --workspace --all-features` on a Linux host
   # with the CI system packages installed.
   semver-checks:
     name: Semver Checks (${{ matrix.crate }})
@@ -483,10 +491,14 @@ jobs:
         id: gate
         run: |
           WS_VER=$(awk '/^\[workspace\.package\]/{p=1;next}/^\[/{p=0}p&&/^version/{gsub(/"/,"",$3);print $3;exit}' Cargo.toml)
-          BASE=$(curl -fsSL -A "martensite-ci (https://github.com/jxoesneon/martensite)" \
+          # `( ... ) || true` keeps a curl/grep failure (e.g. a crate never
+          # published to crates.io) from aborting the step under
+          # `bash -eo pipefail`; the empty-BASE → strict=true path below
+          # is the intended fallback. Same idiom as publish.yml.
+          BASE=$( (curl -fsSL -A "martensite-ci (https://github.com/jxoesneon/martensite)" \
             "https://crates.io/api/v1/crates/${{ matrix.crate }}" \
             | grep -oE '"max_version":"[^"]*"' | head -1 \
-            | sed 's/.*:"//;s/"$//')
+            | sed 's/.*:"//;s/"$//') || true )
           echo "workspace=${WS_VER} baseline=${BASE:-<none>}"
           if [ -z "$BASE" ] || [ "$WS_VER" != "$BASE" ]; then
             echo "strict=true" >> "$GITHUB_OUTPUT"
@@ -501,5 +513,5 @@ jobs:
           # warnings that would abort rustdoc generation for reasons
           # unrelated to API changes.
           RUSTFLAGS: ""
-        run: cargo semver-checks -p ${{ matrix.crate }}
+        run: cargo semver-checks -p ${{ matrix.crate }} --default-features
 
