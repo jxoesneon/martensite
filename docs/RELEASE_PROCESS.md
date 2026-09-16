@@ -71,6 +71,43 @@ Martensite uses the **Keep a Changelog** format.
 * Before release, the Release Manager updates `CHANGELOG.md` with explicit categories: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
 * The GitHub Release notes are generated from the changelog and must explicitly list the `MSRV`.
 
+### Pre-built `cargo-martensite` Binaries
+
+After the `github-release` job creates the release, the `release-binaries`
+job in `.github/workflows/publish.yml` builds `cargo-martensite` on a
+per-platform matrix and attaches one archive per target to the release.
+Archives are named `cargo-martensite-<version>-<target>.<ext>`, where
+`<version>` is read from the git tag (`v` prefix stripped — never
+hardcoded) and `<ext>` is `tar.gz` on Unix and `zip` on Windows. Each
+archive is flat — the `cargo-martensite` binary plus the `LICENSE-APACHE`
+and `LICENSE-MIT` texts — and is accompanied by a `<asset>.sha256`
+checksum file in `sha256sum -c` compatible format.
+
+| Target | Runner | Notes |
+| :--- | :--- | :--- |
+| `x86_64-apple-darwin` | `macos-latest` | Cross-built via `rustup` target. |
+| `aarch64-apple-darwin` | `macos-latest` | Native. |
+| `x86_64-pc-windows-msvc` | `windows-latest` | Native. |
+| `aarch64-pc-windows-msvc` | `windows-latest` | `continue-on-error` while ARM64 MSVC support is verified. |
+| `x86_64-unknown-linux-gnu` | `ubuntu-latest` | Native. |
+| `aarch64-unknown-linux-gnu` | `ubuntu-latest` | Cross-built with `gcc-aarch64-linux-gnu` linker. |
+| `x86_64-unknown-linux-musl` | `ubuntu-latest` | Static binary via `musl-gcc`. |
+
+`aarch64-unknown-linux-musl` is intentionally absent: Ubuntu ships no
+`gcc-aarch64-linux-musl` cross toolchain, so x86_64-only musl coverage is
+a deliberate scope decision (an aarch64 musl leg can be added later via
+`cross` if demand warrants it).
+
+A terminal `verify-release-assets` job then asserts every
+non-experimental archive and checksum landed on the release; the
+experimental `aarch64-pc-windows-msvc` asset only produces a warning when
+absent. The archives are **unsigned** — integrity is provided by the
+SHA-256 checksums only. Code signing, notarization, and build
+attestations are deferred to milestone v0.19.0 (§4.2 native installers,
+§4.4 provenance). If a binaries run partially fails, "Re-run failed jobs"
+on the workflow run recovers it: the failed legs rebuild and re-upload
+their assets, then verification re-runs.
+
 ## 6. MSRV Bump Policy
 
 * MSRV (Minimum Supported Rust Version) bumps are treated as **minor version bumps**.
