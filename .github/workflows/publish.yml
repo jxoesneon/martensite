@@ -594,7 +594,8 @@ jobs:
           set -euo pipefail
           TAG="${{ inputs.binaries_tag || github.ref_name }}"
           VERSION=${TAG#v}
-          assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          # No checkout in this job — gh needs -R to resolve the repo.
+          assets=$(gh release view "$TAG" -R "${{ github.repository }}" --json assets --jq '.assets[].name')
           echo "Release assets:"
           echo "$assets"
 
