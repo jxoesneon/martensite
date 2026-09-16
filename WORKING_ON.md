@@ -10,12 +10,15 @@ Last updated: v0.17.0 released — tagged `v0.17.0` at `480c33d`,
 GitHub Release created with changelog notes. All gates green: full CI
 pipeline on the tag, then gated publish.
 
-## Active Milestone Plan (v0.14.0 → v0.17.0 → v1.0.0)
+## Active Milestone Plan (v0.18.0 → v0.19.0 → v1.0.0-rc → v1.0.0)
 
 Competitive feature-coverage research (egui 0.35, iced 0.14, Xilem,
 Floem, Vizia, Slint 1.16, Makepad, GPUI, Dioxus) re-scoped the roadmap
-into four milestones. Direction A (host-mode embedding) is confirmed —
-see ADR-0033.
+through v0.17.0. Post-release reconciliation assigned the three divergent
+v1.0.0 definitions (milestone doc, `PROJECT.md` Phase 18, `INDEX.md`
+diagram) into the sequence below. Direction A (host-mode embedding) is
+confirmed — see ADR-0033. v1.0.0 ships through a release-candidate line;
+no API changes land between `v1.0.0-rc.1` and the stable tag.
 
 - **v0.14.0 External Surface Foundation** — generic external-texture
   widget + `martensite-engine-bridge` (`Engine`/`Frame`/`FrameSync`),
@@ -111,9 +114,31 @@ see ADR-0033.
     behind `devtools-timemachine`: journal + arena/signal snapshots,
     deepest-checkpoint restore + forward replay, `HistoryGap` error
     across pruned regions, VirtualClock determinism tests.
+- **v0.18.0 Production Hardening & Dogfooding** — no new feature
+  surface. Public API audit + `unstable-*` inventory +
+  `cargo-semver-checks` in CI; verification-honesty pass (every
+  env-gated leg run on real infrastructure or formally descoped with
+  downgraded claims); residual hardening (`martensite-vello` `todo!()`
+  paths, Windows font-fallback exclusion, Wayland clipboard gap,
+  fixed test sleeps, remaining perf gates); vendored-fork/dependency
+  hygiene (winit 0.31 stable tracking, `accesskit-winit` removal plan,
+  naga dedup, Bevy pin); dogfooding via the full
+  `industrial_dashboard` workstation demo + egui/iced benchmark
+  baselines; four tutorials; reproducible builds; migration-guide
+  refresh. Spec: `docs/milestones/v0.18.0-production-hardening.md`.
+  **Status: PLANNED — next milestone.**
+- **v0.19.0 Distribution** — prebuilt `cargo-martensite` binaries,
+  WiX/DMG/Flatpak installers, Ed25519 signed updates, build
+  attestations. Tentatively scoped; may be descoped to post-1.0 by
+  ADR without blocking the RC.
+  Spec: `docs/milestones/v0.19.0-distribution.md`.
+- **v1.0.0-rc.N → v1.0.0** — release-candidate line: full gated
+  publish + ≥2-week soak, `cargo-semver-checks` clean vs last `0.x`,
+  then the stable tag. Spec (single source of truth for v1.0.0
+  scope): `docs/milestones/v1.0.0-production-release.md`.
 
 
-## v0.15.0 — Engine Showcase (IN PROGRESS)
+## v0.15.0 — Engine Showcase (RELEASED)
 
 - `martensite-bevy` — host-mode zero-copy Bevy viewport: the host's
   `wgpu::Device`/`Queue` are injected via `RenderCreation::manual`

@@ -188,7 +188,7 @@
 
 ## v0.15.0 — Engine Showcase
 *Detailed Specification:* [docs/milestones/v0.15.0-engine-showcase.md](milestones/v0.15.0-engine-showcase.md)
-**Status:** In progress.
+**Status:** SHIPPED (v0.15.0 released on crates.io).
 **Entry Criteria:** v0.14.0 complete.
 **Deliverables:**
 - `martensite-bevy`: headless Bevy app (`WinitPlugin` disabled), `RenderCreation::Manual` device injection, `RenderTarget::TextureView` viewport, input forwarding via `bevy_picking` `PointerInput`.
@@ -200,6 +200,7 @@
 
 ## v0.16.0 — Hardware Media Pipeline
 *Detailed Specification:* [docs/milestones/v0.16.0-media-pipeline.md](milestones/v0.16.0-media-pipeline.md)
+**Status:** SHIPPED (v0.16.0 released on crates.io; 4K120 H.264/HEVC/AV1 hardware-verified on Apple M4).
 **Entry Criteria:** v0.14.0 complete.
 **Deliverables:**
 - `martensite-media` `VideoDecoder` trait + `FrameQueue` + `HdrMetadata`.
@@ -211,6 +212,7 @@
 
 ## v0.17.0 — Platform Expansion
 *Detailed Specification:* [docs/milestones/v0.17.0-platform-expansion.md](milestones/v0.17.0-platform-expansion.md)
+**Status:** SHIPPED (v0.17.0 released on crates.io, 31 crates published).
 **Entry Criteria:** v0.14.0–v0.16.0 complete.
 **Deliverables:**
 - Widget breadth: slider, radio group, dropdown/listbox, scrollview (chaining + anchoring), tabs, tooltip — full ARIA APG + AccessKit contracts; new overlay/popup layer.
@@ -221,15 +223,40 @@
 **Key Risks:** Web accessibility has no upstream adapter; `accesskit_winit` fork must track winit 0.31; Android safe-area not in winit.
 **Mitigations:** Scope web a11y to minimal viable bridge; keep vendored fork maintained; Android `WindowInsets` platform code.
 
+## v0.18.0 — Production Hardening & Dogfooding
+*Detailed Specification:* [docs/milestones/v0.18.0-production-hardening.md](milestones/v0.18.0-production-hardening.md)
+**Status:** PLANNED. No new feature surface — converts breadth into verified depth.
+**Entry Criteria:** v0.17.0 released; roadmap reconciliation committed.
+**Deliverables:**
+- Public API surface audit + `unstable-*` flag inventory + `cargo-semver-checks` in CI.
+- Verification-honesty pass: every env-gated leg (web playwright, iOS sim, Android device, MF/DXGI, VAAPI, 4K120 non-Apple, AT harness, 48h fuzz) run on real infrastructure or formally descoped with claims downgraded.
+- Residual hardening: `martensite-vello` `todo!()` paths, Windows font-fallback/DirectWrite exclusion, Wayland clipboard gap, fixed test sleeps, remaining perf gates (hot-reload <350ms, Tracy <0.1ms/frame).
+- Vendored-fork/dependency hygiene: `winit` 0.31 stable tracking, `accesskit-winit` removal plan, naga dedup, Bevy pin policy.
+- Dogfooding: `examples/industrial_dashboard` grown to full workstation demo; benchmark baselines vs egui/iced in `docs/BENCHMARKS.md`.
+- Four end-to-end tutorials; reproducible builds on three OSes; migration guide refresh.
+**Exit Criteria:** SemVer gate active and clean; zero `todo!()` in shipping non-doc code; no silently-deferred verification gates; tagged and published through the gated pipeline.
+**Key Risks:** Hardware-bound legs can't be provisioned — formal descope with downgraded claims is the accepted path.
+
+## v0.19.0 — Distribution
+*Detailed Specification:* [docs/milestones/v0.19.0-distribution.md](milestones/v0.19.0-distribution.md)
+**Status:** TENTATIVELY SCOPED — may be descoped to post-1.0 by ADR.
+**Entry Criteria:** v0.18.0 released; scope confirmed by ADR.
+**Deliverables:**
+- Pre-built `cargo-martensite` binaries on GitHub Releases (macOS/Windows/Linux, x86_64 + aarch64).
+- WiX `.msi`, signed/notarized `.dmg`, Flatpak bundle.
+- Ed25519-signed update manifests + verification path.
+- SLSA-style build attestations.
+**Exit Criteria:** Installers built in CI on tag; signed-update manifest verified end-to-end; artifacts attached to the GitHub Release.
+**Key Risks:** Apple Developer account for notarization; scope may exceed the pre-RC window — descope path is explicitly allowed.
+
 ## v1.0.0 — Production Stability
 *Detailed Specification:* [docs/milestones/v1.0.0-production-release.md](milestones/v1.0.0-production-release.md)
-**Entry Criteria:** v0.10.0 complete. Zero known critical bugs.
+**Release sequence:** `v0.18.0` → `v0.19.0` → `v1.0.0-rc.N` (≥2-week soak, full gated publish, no API changes after rc.1) → `v1.0.0`.
+**Entry Criteria:** v0.18.0 (+ v0.19.0 unless descoped) released; RC published through the gated pipeline with zero gate failures; every env-gated leg executed or formally descoped; `cargo-semver-checks` clean.
 **Deliverables:**
-- API Freeze.
-- Full docs.rs coverage (100%).
-- Crates.io publication.
-- GitHub Release.
-**Exit Criteria:** Project live on crates.io, zero `todo!()`, complete test coverage.
-**Estimated LOC additions:** 0 (Documentation only).
-**Key Risks:** Breaking changes identified post-publication.
-**Mitigations:** Aggressive beta-testing period during v0.10.0 with industrial dashboard example.
+- SemVer 2.0 API freeze enforced mechanically by `cargo-semver-checks`.
+- Full docs.rs coverage (100%), migration guide finalized, platform-support doc accurate.
+- Security audit sign-off (`cargo audit` + `cargo vet` + `cargo deny` clean).
+- Crates.io GA + GitHub Release with prebuilt CLI binaries.
+**Exit Criteria:** Zero warnings; zero `todo!()` in shipping non-doc code; 100% test pass on both feature sets; publish pipeline green on the tag.
+**Key Risks:** Freezing APIs never exercised by real consumers — mitigated by v0.18.0 dogfooding and the RC soak.

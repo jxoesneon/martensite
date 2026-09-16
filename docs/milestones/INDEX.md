@@ -24,7 +24,10 @@ graph TD
     M14 --> M15["v0.15.0: Engine Showcase<br/>(Bevy Host-Mode Viewport, Godot GDExtension Readback)"]
     M15 --> M16["v0.16.0: Hardware Media Pipeline<br/>(Platform Decoders, Multi-Plane Import, 4K120 Gate)"]
     M16 --> M17["v0.17.0: Platform Expansion<br/>(Widget Breadth, Web/WASM, iOS/Android, Time-Travel Debug)"]
-    M17 --> M18["v1.0.0: Production Stability & Distribution<br/>(API Freeze, WiX/DMG/Flatpak, Ed25519 Updates, Crates.io)"]
+    M17 --> M18["v0.18.0: Production Hardening & Dogfooding<br/>(API Audit, SemVer Tooling, Verification Honesty, Baselines)"]
+    M18 --> M19["v0.19.0: Distribution<br/>(WiX/DMG/Flatpak, Ed25519 Updates, Prebuilt CLI)"]
+    M19 --> M20["v1.0.0-rc.N: Release Candidate<br/>(Full Gated Publish, Two-Week Soak, SemVer Gate)"]
+    M20 --> M21["v1.0.0: Production Stability<br/>(API Freeze, Crates.io GA)"]
 ```
 
 ---
@@ -50,7 +53,10 @@ graph TD
 | **v0.15.0** | [v0.15.0-engine-showcase.md](v0.15.0-engine-showcase.md) | `martensite-bevy`, `martensite-godot`, `martensite-engine-bridge` | Bevy host-mode viewport (`RenderCreation::Manual` + `RenderTarget::TextureView`), Godot 4 GDExtension readback path (zero-copy requires upstream Godot patches — documented) | Bevy viewport at 120fps zero-copy; Godot viewport via async readback with published throughput |
 | **v0.16.0** | [v0.16.0-media-pipeline.md](v0.16.0-media-pipeline.md) | `martensite-media`, `martensite-media-platform` | Platform hardware decoders (VideoToolbox / Media Foundation / VAAPI), multi-plane NV12/P010 import fix, `HdrMetadata` flow, `FrameQueue` drop accounting | 4K 120fps playback with <0.1% frame drops and <1% CPU dispatch on GPU reference runner |
 | **v0.17.0** | [v0.17.0-platform-expansion.md](v0.17.0-platform-expansion.md) | `martensite` widgets, `martensite-wgpu`, `martensite-window`, `martensite-access`, `martensite-devtools` | Slider/radio/dropdown/scrollview/tabs/tooltip with ARIA APG contracts, overlay layer, wasm32 + iOS + Android targets, hybrid command-ledger time-travel debugger | Six widgets pass APG + AccessKit conformance; wasm render via WebGPU; iOS/Android example apps; deterministic journal+snapshot replay |
-| **v1.0.0** | [v1.0.0-production-release.md](v1.0.0-production-release.md) | Complete Workspace (33+ crates) | Public API freeze, 100% docs.rs coverage, security audit sign-off | Zero compiler warnings; cargo audit clean; Crates.io release |
+| **v0.18.0** | [v0.18.0-production-hardening.md](v0.18.0-production-hardening.md) | Workspace-wide, `martensite-vello`, `examples/industrial_dashboard`, `benches/bench_suite` | API surface audit + `cargo-semver-checks`, verification-honesty pass, residual hardening, dogfooding + egui/iced baselines | SemVer gate active; every env-gated leg run or formally descoped; zero `todo!()` in shipping code |
+| **v0.19.0** | [v0.19.0-distribution.md](v0.19.0-distribution.md) | `cargo-martensite`, release workflows | WiX/DMG/Flatpak installers, Ed25519 signed updates, prebuilt CLI binaries (tentatively scoped; descopable by ADR) | Installers built in CI on tag; signed-update manifest verified end-to-end |
+| **v1.0.0-rc.N** | [v1.0.0-production-release.md](v1.0.0-production-release.md) §3 | Complete Workspace | Release-candidate line: full gated publish + ≥2-week soak; no API changes between rc.1 and stable | RC publishes through `publish.yml` with zero gate failures; `cargo-semver-checks` clean vs last `0.x` |
+| **v1.0.0** | [v1.0.0-production-release.md](v1.0.0-production-release.md) | Complete Workspace (32+ crates) | Public API freeze, 100% docs.rs coverage, security audit sign-off | Zero compiler warnings; cargo audit/vet/deny clean; Crates.io release |
 
 ---
 

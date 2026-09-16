@@ -1,10 +1,19 @@
 # API Freeze Audit — v0.11.0
 
-## Status: FROZEN for v0.11.0
+## Status: SUPERSEDED — full re-audit scheduled for v0.18.0
 
 This document records the API freeze audit performed after the v0.11.0
 release. All public APIs in the workspace have been reviewed for stability,
 documentation coverage, and safety.
+
+**Staleness note (post-v0.17.0):** this audit predates the v0.12.0–v0.17.0
+milestones. The unsafe-exception list below names six crates; the current
+authoritative list in `AGENTS.md` names **ten** (adds
+`martensite-access-platform`, `martensite-media-platform` was already
+present, `martensite-shell`, `martensite-vello`, and `martensite-godot`).
+A full API-surface re-audit with `cargo-semver-checks` enforcement is
+scheduled in `docs/milestones/v0.18.0-production-hardening.md` §4.1.
+Until then, `AGENTS.md` is the authoritative unsafe-exception list.
 
 ## Lint Enforcement
 
@@ -22,14 +31,18 @@ All workspace crates inherit these lints via `[lints] workspace = true`.
 
 #### `#![forbid(unsafe_code)]` (strictest — cannot be overridden)
 
-All crates except the six audited FFI exceptions below use
+All crates except the audited FFI exceptions listed in `AGENTS.md`
+(six at audit time, ten today) use
 `#![forbid(unsafe_code)]` at the crate level.
 
 #### `#![allow(unsafe_code)]` (audited FFI exceptions)
 
-Six crates use `#![allow(unsafe_code)]` for platform-specific FFI or
-vendored upstream code. These are the ONLY crates in the workspace that
-allow unsafe code:
+At the time of this audit, six crates used `#![allow(unsafe_code)]` for
+platform-specific FFI or vendored upstream code. **The current count is
+ten — see `AGENTS.md` for the authoritative list** (adds
+`martensite-access-platform`, `martensite-shell`, `martensite-vello`,
+`martensite-godot`; `martensite-accesskit-winit` remains temporary pending
+upstream winit 0.31 support). The six original entries:
 
 1. **`martensite-font-fallback`** — platform FFI (DirectWrite, CoreText, Fontconfig)
 2. **`martensite-clipboard-platform`** — OS clipboard FFI (NSPasteboard, Win32, X11)
