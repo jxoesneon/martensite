@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+"""Enumerate the public API surface of every publishable Martensite crate and
+regenerate the machine-managed section of docs/API_SURFACE_AUDIT.md.
+
+How it works
+------------
+For every workspace member whose Cargo.toml does not set ``publish = false``
+the script runs
+
+    RUSTC_BOOTSTRAP=1 cargo doc -p <crate> --no-deps \
+        -Z unstable-options --output-format json
+
+(``RUSTC_BOOTSTRAP`` lets stable rustdoc emit its unstable JSON format; the
+script only consumes it, it never ships in any build path.)
+
+Each crate is documented twice:
+
+1. a *default-features* pass, and
+2. a *feature* pass enabling the crate's optional public features
+   (``EXTRA_FEATURES`` below), so feature-gated API items are counted and
+   tagged with the feature that exposes them.
+
+Items that only appear in the feature pass are marked with the enabling
+feature set; EXPERIMENTAL classification comes from ``EXPERIMENTAL_RULES``
+(path regexes per crate) and ``CRATE_TIER`` (crate-level classification for
+vendored forks). The merged result replaces the text between
+
+    <!-- BEGIN GENERATED: api-surface --> / <!-- END GENERATED -->
+
+in docs/API_SURFACE_AUDIT.md. Run from anywhere:
+
+    python3 scripts/api_surface_audit.py [--skip-docgen]
+
+``--skip-docgen`` reuses the rustdoc JSON already in ``target/doc/*.json``
+(after a manual doc pass) instead of invoking cargo. Requires python3 only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DOC_OUT = ROOT / "docs" / "API_SURFACE_AUDIT.md"
+TARGET_DOC = ROOT / "target" / "doc"
+
+BEGIN = "<!-- BEGIN GENERATED: api-surface -->"
+END = "<!-- END GENERATED: api-surface -->"
+
+# ---------------------------------------------------------------------------
+# Per-crate extra feature sets for the second doc pass. Keep this list in sync
+# with each crate's [features] table; platform-only features whose system
+# dependencies cannot be installed on a documentation host (decoder-ffmpeg,
+# decoder-vaapi, hot_reload, windows/wayland shell backends) are intentionally
+# absent — those items are feature-gated leaves inside modules that are
+# already classified EXPERIMENTAL.
+# ---------------------------------------------------------------------------
+EXTRA_FEATURES: dict[str, str] = {
+    # NOTE: the `decoder` umbrella feature pulls decoder-ffmpeg + decoder-vaapi
+    # (ffmpeg-next, cros-libva), which need system libraries a doc host may not
+    # have. Enumerate the portable backends instead; the umbrella adds no API
+    # items of its own.
+    "martensite": "native-fallback,test-noop,decoder-videotoolbox,decoder-mf",
+    "martensite-accesskit-winit": "accesskit_android",
+    "martensite-assets": "reactive",
+    "martensite-blessed": "serde",
+    "martensite-clipboard": "platform,wayland",
+    "martensite-core": "devtools-timemachine",
+    "martensite-cosmic-text": "--all-features",
+    "martensite-devtools": "render,devtools-timemachine",
+    "martensite-engine-bridge": "test-noop",
+    "martensite-media": "decoder-videotoolbox,decoder-mf,test-noop",
+    "martensite-media-platform": "decoder-videotoolbox,decoder-mf",
+    "martensite-reactive": "devtools-timemachine",
+    "martensite-render": "vello",
+    "martensite-shell": "macos-backend",
+    "martensite-vello": "wgpu,wgpu_default,bump_estimate,debug_layers,wgpu-profiler",
+    "martensite-wgpu": "vello,test-noop",
+}
+
+# ---------------------------------------------------------------------------
+# Crate-level classification. Vendored forks track upstream APIs and are
+# EXPERIMENTAL by definition — their surface changes when upstream re-syncs.
+# ---------------------------------------------------------------------------
+CRATE_TIER: dict[str, str] = {
+    "martensite-cosmic-text": "VENDORED",
+    "martensite-vello": "VENDORED",
+    "martensite-accesskit-winit": "VENDORED",
+    "martensite-access-platform": "EXPERIMENTAL",
+    "martensite-engine-bridge": "EXPERIMENTAL",
+    "martensite-host": "EXPERIMENTAL",
+}
+
+# Path-prefix rules marking EXPERIMENTAL items inside otherwise stable crates.
+# Each entry is (regex matched against the canonical `a::b::C` path, reason).
+EXPERIMENTAL_RULES: dict[str, list[tuple[str, str]]] = {
+    "martensite-wgpu": [
+        (r"::resilience(::|$)", "device-loss recovery API added in v0.11.0, still hardening"),
+        (r"::theme_transition(::|$)", "zero-allocation theme transitions, perf-gated and young"),
+        (r"::external(::|$)", "external-engine embedding bridge surface (v0.17.0)"),
+        (r"::web(::|$)", "wasm/web backend glue, compile-verified only"),
+    ],
+    "martensite-media": [
+        (r"::decoder(::|$)|decoder", "decoder pipeline added in v0.16.0, hardware-verified backends pending"),
+    ],
+    "martensite-media-platform": [
+        (r"::decoder(::|$)|decoder", "decoder wire types/backends added in v0.16.0"),
+        (r"import_", "hardware surface import FFI; wgpu-hal API still evolving"),
+    ],
+    "martensite-plugin": [
+        (r"::runtime(::|$)", "plugin runtime ABI added in v0.11.0, ecosystem immature"),
+        (r"::ring_buffer(::|$)", "plugin IPC ring buffer, part of the runtime ABI"),
+        (r"::security(::|$)", "plugin sandbox/policy surface, ecosystem immature"),
+    ],
+    "martensite-blessed": [
+        (r"::docking(::|$)", "docking workspace framework added in v0.15.0"),
+        (r"::code_editor(::|$)", "complex widget, API still settling"),
+        (r"::data_table(::|$)", "complex widget, API still settling"),
+        (r"::chart(::|$)", "complex widget, API still settling"),
+        (r"::audio_waveform(::|$)", "complex widget, API still settling"),
+    ],
+    "martensite-devtools": [
+        (r"::timemachine(::|$)", "time-travel debugging behind devtools-timemachine (v0.17.0)"),
+    ],
+    "martensite-core": [
+        (r"::snapshot(::|$)|timemachine|Timemachine|Arena(State|RestoreError)",
+         "devtools-timemachine arena snapshot/restore surface"),
+    ],
+    "martensite-reactive": [
+        (r"journal|Journal|SignalSnapshot|WriteRecord",
+         "devtools-timemachine write journal + signal snapshots"),
+    ],
+    "martensite-assets": [
+        (r"ReactiveVfsWatcher|::reactive(::|$)",
+         "reactive VFS watcher behind the `reactive` feature"),
+    ],
+    "martensite-shell": [
+        (r"::platform_impl(::|$)", "per-OS shell backends behind platform features"),
+        (r"::status_notifier(::|$)", "StatusNotifierItem tray protocol, Linux-only"),
+    ],
+    "martensite": [
+        (r"::devtools|::hot_reload|::external", "umbrella re-exports of experimental subsystems"),
+        (r"decoder", "decoder pipeline added in v0.16.0"),
+        (r"::widgets::external", "external-engine widget embedding (v0.17.0)"),
+    ],
+    "martensite-window": [
+        (r"::web(::|$)", "wasm/web backend glue, compile-verified only"),
+        (r"::stylus(::|$)", "Kalman stylus filtering, latency-gated and young"),
+        (r"::csd(::|$)|csd_region", "client-side decoration hit-testing, young shell surface"),
+    ],
+}
+
+# Item kinds (rustdoc JSON `kind`) reported in the audit, and how they are
+# grouped in the per-crate digest. `variant` is folded into the enum count.
+KIND_LABEL = {
+    "struct": "structs",
+    "enum": "enums",
+    "trait": "traits",
+    "function": "functions",
+    "constant": "constants",
+    "static": "statics",
+    "type_alias": "type aliases",
+    "module": "modules",
+    "macro": "macros",
+    "union": "unions",
+    "proc_attribute": "proc-macro attributes",
+    "proc_derive": "proc-macro derives",
+    "proc_function": "proc-macro functions",
+    "trait_alias": "trait aliases",
+    "reexport": "re-exports",
+    "reexport_glob": "glob re-exports",
+}
+LIST_LIMIT = 160  # above this, emit a per-module digest instead of full list
+
+
+def cargo_metadata() -> list[dict]:
+    out = subprocess.run(
+        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    )
+    meta = json.loads(out.stdout)
+    crates = []
+    for pkg in meta["packages"]:
+        manifest = Path(pkg["manifest_path"])
+        if ROOT / "crates" not in manifest.parents:
+            continue  # tools/, examples/, benches/, stubs are out of scope
+        if pkg.get("publish") == []:  # publish = false
+            continue
+        lib = next((t["name"] for t in pkg["targets"]
+                    if "lib" in t["kind"] or "proc-macro" in t["kind"]),
+                   pkg["name"].replace("-", "_"))
+        crates.append({"name": pkg["name"], "version": pkg["version"],
+                       "lib": lib, "manifest": manifest})
+    crates.sort(key=lambda c: c["name"])
+    return crates
+
+
+def rustdoc_json(crate: dict, features: str | None) -> Path | None:
+    """Doc one crate, return the path to its rustdoc JSON (or None)."""
+    cmd = ["cargo", "doc", "-p", crate["name"], "--no-deps",
+           "-Z", "unstable-options", "--output-format", "json"]
+    if features:
+        if features == "--all-features":
+            cmd.append("--all-features")
+        else:
+            cmd += ["--features", features]
+    env = dict(__import__("os").environ, RUSTC_BOOTSTRAP="1")
+    proc = subprocess.run(cmd, cwd=ROOT, env=env,
+                          capture_output=True, text=True)
+    json_path = TARGET_DOC / (crate["lib"] + ".json")
+    if proc.returncode != 0 or not json_path.exists():
+        tail = proc.stderr.strip().splitlines()
+        sys.stderr.write(f"  ! doc failed for {crate['name']} "
+                         f"({features or 'default'}): "
+                         f"{tail[-1] if tail else 'no json emitted'}\n")
+        return None
+    return json_path
+
+
+def load_items(json_path: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Return ({public_path: kind}, {reexport_path: source}) for the crate's
+    own public items.
+
+    `paths` gives each defined item's canonical path. Re-exports (`pub use`)
+    are separate index items and are collected by walking the public module
+    tree, since they create additional nameable surface (this is how the
+    `martensite` umbrella crate's API is actually reached). The second dict
+    records each re-export's source path so classification rules written
+    against canonical paths still apply to umbrella re-exports.
+    """
+    doc = json.loads(json_path.read_text())
+    idx = doc["index"]
+    crate_name = idx[str(doc["root"])]["name"]
+    items: dict[str, str] = {}
+    for entry in doc["paths"].values():
+        if entry["crate_id"] != 0:
+            continue
+        path = "::".join(entry["path"])
+        if path == crate_name:
+            continue  # the crate root itself
+        kind = entry["kind"]
+        if kind == "variant":
+            continue  # counted with the parent enum
+        if kind not in KIND_LABEL:
+            continue
+        items[path] = kind
+
+    # Public re-exports: parent module path + the use item's name.
+    mod_path = {iid: "::".join(p["path"])
+                for iid, p in doc["paths"].items()
+                if p["crate_id"] == 0 and p["kind"] == "module"}
+    reexport_src: dict[str, str] = {}
+    for iid, item in idx.items():
+        if "module" not in item["inner"] or iid not in mod_path:
+            continue
+        for child_id in item["inner"]["module"].get("items", []):
+            child = idx.get(str(child_id))
+            if child is None or "use" not in child["inner"]:
+                continue
+            if child["visibility"] != "public":
+                continue
+            u = child["inner"]["use"]
+            if u.get("is_glob"):
+                path = f"{mod_path[iid]}::* (from {u['source']})"
+                items.setdefault(path, "reexport_glob")
+            else:
+                path = f"{mod_path[iid]}::{u['name']}"
+                items.setdefault(path, "reexport")
+            reexport_src[path] = u["source"]
+    return items, reexport_src
+
+
+def load_deprecated(json_path: Path) -> list[str]:
+    doc = json.loads(json_path.read_text())
+    paths = {iid: p["path"] for iid, p in doc["paths"].items()
+             if p["crate_id"] == 0}
+    out = []
+    for iid, item in doc["index"].items():
+        if item.get("deprecation") and iid in paths:
+            out.append("::".join(paths[iid]))
+    return sorted(out)
+
+
+def classify(crate: str, path: str, src: str | None = None) -> str:
+    tier = CRATE_TIER.get(crate)
+    if tier == "VENDORED":
+        return "VENDORED"
+    if tier == "EXPERIMENTAL":
+        return "EXPERIMENTAL"
+    for pattern, _why in EXPERIMENTAL_RULES.get(crate, []):
+        if re.search(pattern, path) or (src and re.search(pattern, src)):
+            return "EXPERIMENTAL"
+    return "STABLE"
+
+
+def module_of(crate: str, path: str) -> str:
+    parts = path.split("::")
+    return parts[1] if len(parts) > 2 else "(crate root)"
+
+
+def emit_crate(crate: str, version: str, items: dict[str, dict],
+               deprecated: list[str]) -> str:
+    """items: {path: {'kind': kind, 'feature': str|None, 'src': str|None}}"""
+    total = len(items)
+    cls = {p: classify(crate, p, i.get("src")) for p, i in items.items()}
+    stable = [p for p in items if cls[p] == "STABLE"]
+    experimental = [p for p in items if cls[p] == "EXPERIMENTAL"]
+    vendored = [p for p in items if cls[p] == "VENDORED"]
+
+    counts = Counter(KIND_LABEL[i["kind"]] for i in items.values())
+    count_s = ", ".join(f"{v} {k}" for k, v in sorted(counts.items())) or "—"
+
+    lines = [f"### `{crate}` (v{version})", ""]
+    lines.append(
+        f"**{total} public items** — {len(stable)} stable, "
+        f"{len(experimental)} experimental"
+        + (f", {len(vendored)} vendored-upstream" if vendored else "")
+        + f". Categories: {count_s}.")
+    lines.append("")
+
+    rules = EXPERIMENTAL_RULES.get(crate, [])
+    if rules:
+        whys = sorted({w for _p, w in rules})
+        lines.append("Experimental areas: " + "; ".join(whys) + ".")
+        lines.append("")
+    if CRATE_TIER.get(crate) == "VENDORED":
+        lines.append("Vendored upstream fork: the entire surface tracks its "
+                     "upstream project and is EXPERIMENTAL until the "
+                     "maintenance policy in §5 pins a re-sync contract.")
+        lines.append("")
+    elif CRATE_TIER.get(crate) == "EXPERIMENTAL":
+        lines.append("Whole crate classified EXPERIMENTAL (young integration "
+                     "surface, expected to settle during the RC line).")
+        lines.append("")
+
+    def fmt(path: str) -> str:
+        i = items[path]
+        tag = {"STABLE": "stable", "EXPERIMENTAL": "experimental",
+               "VENDORED": "vendored"}[cls[path]]
+        feat = f", feature `{i['feature']}`" if i["feature"] else ""
+        kind = KIND_LABEL[i["kind"]]
+        return f"- `{path}` — {kind}, {tag}{feat}"
+
+    if total <= LIST_LIMIT:
+        for path in sorted(items):
+            lines.append(fmt(path))
+    else:
+        by_mod: dict[str, list[str]] = defaultdict(list)
+        for path in items:
+            by_mod[module_of(crate, path)].append(path)
+        lines.append(f"Large surface — digest by module "
+                     f"(> {LIST_LIMIT} items):")
+        lines.append("")
+        lines.append("| Module | Items | Stable | Experimental | Kinds |")
+        lines.append("| :--- | ---: | ---: | ---: | :--- |")
+        for mod in sorted(by_mod):
+            members = by_mod[mod]
+            n_stable = sum(1 for p in members if cls[p] == "STABLE")
+            n_exp = sum(1 for p in members if cls[p] == "EXPERIMENTAL")
+            n_ven = sum(1 for p in members if cls[p] == "VENDORED")
+            kinds = ", ".join(
+                f"{v} {k}" for k, v in sorted(
+                    Counter(KIND_LABEL[items[p]["kind"]] for p in members)
+                    .items()))
+            exp_s = f"{n_exp}" + (f" (+{n_ven} vendored)" if n_ven else "")
+            lines.append(f"| `{mod}` | {len(members)} | {n_stable} | "
+                         f"{exp_s} | {kinds} |")
+        lines.append("")
+        lines.append("<details><summary>Full item list</summary>")
+        lines.append("")
+        for path in sorted(items):
+            lines.append(fmt(path))
+        lines.append("")
+        lines.append("</details>")
+
+    if deprecated:
+        lines.append("")
+        lines.append("Deprecated items: "
+                     + ", ".join(f"`{d}`" for d in deprecated))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--skip-docgen", action="store_true",
+                    help="reuse existing target/doc/*.json")
+    args = ap.parse_args()
+
+    crates = cargo_metadata()
+    print(f"{len(crates)} publishable crates under crates/")
+
+    per_crate: dict[str, dict[str, dict]] = {}
+    deprecated: dict[str, list[str]] = {}
+    versions: dict[str, str] = {}
+    failed: list[str] = []
+
+    for c in crates:
+        name, versions[name] = c["name"], c["version"]
+        merged: dict[str, dict] = {}
+
+        if args.skip_docgen:
+            default_json = TARGET_DOC / (c["lib"] + ".json")
+            if not default_json.exists():
+                default_json = None
+        else:
+            default_json = rustdoc_json(c, None)
+
+        if default_json is None:
+            failed.append(name)
+            per_crate[name] = {}
+            continue
+
+        base_items, base_src = load_items(default_json)
+        for path, kind in base_items.items():
+            merged[path] = {"kind": kind, "feature": None,
+                            "src": base_src.get(path)}
+        deprecated[name] = load_deprecated(default_json)
+
+        feats = EXTRA_FEATURES.get(name)
+        if feats and not args.skip_docgen:
+            feat_json = rustdoc_json(c, feats)
+            if feat_json is not None:
+                feat_items, feat_src = load_items(feat_json)
+                for path, kind in feat_items.items():
+                    if path not in merged:
+                        merged[path] = {"kind": kind, "feature": feats,
+                                        "src": feat_src.get(path)}
+        print(f"  {name}: {len(merged)} items")
+        per_crate[name] = merged
+
+    # ---- render -------------------------------------------------------------
+    out = [BEGIN, "",
+           f"_{len(per_crate)} publishable crates. Generated by "
+           "`python3 scripts/api_surface_audit.py` from rustdoc JSON "
+           "(stable + `RUSTC_BOOTSTRAP`); do not edit between the markers._",
+           ""]
+    grand = sum(len(v) for v in per_crate.values())
+    total_exp = sum(1 for c, items in per_crate.items()
+                    for p, i in items.items()
+                    if classify(c, p, i.get("src")) != "STABLE")
+    out.append(f"**Workspace total: {grand} public items, "
+               f"{grand - total_exp} stable / {total_exp} experimental-or-"
+               "vendored.**")
+    out.append("")
+    out.append("| Crate | Items | Stable | Experimental | Notes |")
+    out.append("| :--- | ---: | ---: | ---: | :--- |")
+    for c in crates:
+        name = c["name"]
+        items = per_crate.get(name, {})
+        if name in failed:
+            out.append(f"| `{name}` | — | — | — | doc generation failed "
+                       "on this host |")
+            continue
+        n_s = sum(1 for p, i in items.items()
+                  if classify(name, p, i.get("src")) == "STABLE")
+        n_e = len(items) - n_s
+        note = {"VENDORED": "vendored fork",
+                "EXPERIMENTAL": "crate-level experimental"}.get(
+                    CRATE_TIER.get(name), "")
+        out.append(f"| `{name}` | {len(items)} | {n_s} | {n_e} | {note} |")
+    out.append("")
+
+    for c in crates:
+        name = c["name"]
+        if name in failed:
+            out.append(f"### `{name}` (v{c['version']})")
+            out.append("")
+            out.append("Rustdoc generation failed on this host; enumerate "
+                       "on a host with the crate's system dependencies.")
+            out.append("")
+            continue
+        out.append(emit_crate(name, c["version"], per_crate[name],
+                              deprecated.get(name, [])))
+    out.append(END)
+
+    doc = DOC_OUT.read_text() if DOC_OUT.exists() else ""
+    block = "\n".join(out)
+    if BEGIN in doc and END in doc:
+        doc = re.sub(re.escape(BEGIN) + ".*?" + re.escape(END),
+                     lambda _m: block, doc, flags=re.S)
+    else:
+        doc = doc.rstrip() + "\n\n" + block + "\n"
+    DOC_OUT.write_text(doc)
+    print(f"wrote {DOC_OUT}")
+    if failed:
+        print("FAILED crates:", ", ".join(failed), file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
