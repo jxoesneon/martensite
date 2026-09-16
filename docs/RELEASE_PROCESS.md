@@ -40,28 +40,40 @@ Due to the strict workspace constraints and inter-crate dependencies, the publis
 1. `martensite-reactive`
 2. `martensite-macros`
 3. `martensite-core`
-4. `martensite-layout`
-5. `martensite-media`
-6. `martensite-render`
-7. `martensite-wgpu`
-8. `martensite-cosmic-text`
-9. `martensite-text`
-10. `martensite-access`
-11. `martensite-window`
-12. `martensite-focus`
-13. `martensite-clipboard`
-14. `martensite-dnd`
-15. `martensite-theme`
-16. `martensite-test`
-17. `martensite-motion`
-18. `martensite-history`
-19. `martensite-l10n`
-20. `martensite-assets`
-21. `martensite-devtools`
-22. `martensite-plugin`
-23. `martensite`
-24. `martensite-blessed`
-*(Not published: `examples/industrial_dashboard`, `examples/engine_embed`, `benches/bench_suite`, `crates/martensite-bevy`, `crates/martensite-godot`, `examples/viewport_showcase`)*
+4. `martensite-host`
+5. `martensite-layout`
+6. `martensite-vello`
+7. `martensite-render`
+8. `martensite-theme`
+9. `martensite-media-platform`
+10. `martensite-media`
+11. `martensite-engine-bridge`
+12. `martensite-wgpu`
+13. `martensite-cosmic-text`
+14. `martensite-text`
+15. `martensite-font-fallback`
+16. `martensite-access-platform`
+17. `martensite-accesskit-winit`
+18. `martensite-access`
+19. `martensite-shell`
+20. `martensite-window`
+21. `martensite-focus`
+22. `martensite-clipboard-platform`
+23. `martensite-clipboard`
+24. `martensite-dnd`
+25. `martensite-test`
+26. `martensite-motion`
+27. `martensite-history`
+28. `martensite-l10n`
+29. `martensite-assets`
+30. `martensite-devtools`
+31. `martensite-plugin`
+32. `martensite`
+33. `martensite-blessed`
+*(Not published: `crates/martensite-bevy`, `crates/martensite-godot`,
+`crates/martensite-media-test`, `crates/martensite-render-test`,
+`crates/martensite-text-reference`, `tools/cargo-martensite`, all of
+`examples/` and `benches/`)*
 
 > **Note:** `cargo-semver-checks` must be run (locally or in CI) before any publish tag to verify that public API changes are reflected in the version bump. The `publish.yml` workflow embeds all CI gates as `needs:` on the `publish` job, and dry-run packaging is performed with `cargo package --allow-dirty --no-verify` before real uploads.
 

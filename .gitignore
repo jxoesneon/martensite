@@ -22,3 +22,7 @@ tests/snapshots/diffs/
 # Local cache
 .fastembed_cache/
 .ciel/
+
+# Web example build artifacts (trunk dist/ and wasm-bindgen pkg/ output)
+examples/web/dist/
+examples/web/pkg/
