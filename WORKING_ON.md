@@ -101,15 +101,22 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   - `milestone/web` — wasm32 target for window/wgpu/text/clipboard/
     dnd/access + umbrella crate; `WebA11yBridge` hidden-DOM mirror;
     WebGPU→WebGL2→CPU `WebBackend` fallback; playwright browser gate
-    (`MARTENSITE_WEB_BROWSER=1`).
+    (`MARTENSITE_WEB_BROWSER=1`). **Gate PASSED** on this host during
+    v0.18.0: headless Chromium 140 run verified startup, GPU backend
+    decision, a11y mirror, and aria-live announcement.
   - `milestone/ios` — UIKit/`accesskit_ios` via new
     `martensite-access-platform`, Metal-only backend, safe-area,
     IME, `PointerId` u64 + `PointerKind`; ios-sim `cargo check` +
-    env-gated `harness = false` adapter test.
+    env-gated `harness = false` adapter test. **Gate PASSED** during
+    v0.18.0 via `xcrun simctl spawn` on a booted iPhone simulator —
+    `IosAdapter` subclassed a real UIView and exported a11y elements.
   - `milestone/android` — GameActivity, `InjectingAdapter` JNI
     boundary, Vulkan-first/GLES fallback, surface lifecycle;
     `cargo check --target aarch64-linux-android` + env-gated device
-    test (`MARTENSITE_ANDROID_DEVICE=1`).
+    test (`MARTENSITE_ANDROID_DEVICE=1`). Gate remains unrun:
+    needs a GameActivity APK harness (no cargo-apk2/xbuild
+    provisioning) and the local AVD failed to boot; formally
+    descoped to compile-verified in `docs/PLATFORM_SUPPORT.md`.
   - `milestone/timemachine` — `martensite-devtools::timemachine`
     behind `devtools-timemachine`: journal + arena/signal snapshots,
     deepest-checkpoint restore + forward replay, `HistoryGap` error
@@ -126,7 +133,9 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   `industrial_dashboard` workstation demo + egui/iced benchmark
   baselines; four tutorials; reproducible builds; migration-guide
   refresh. Spec: `docs/milestones/v0.18.0-production-hardening.md`.
-  **Status: PLANNED — next milestone.**
+  **Status: IN PROGRESS** — workstreams on `milestone/{api-freeze,
+  hardening,dogfood,docs-honesty,binaries}` through the double-review
+  loop; binaries, dogfood, and hardening merged to main.
 - **v0.19.0 Distribution** — prebuilt `cargo-martensite` binaries,
   WiX/DMG/Flatpak installers, Ed25519 signed updates, build
   attestations. Tentatively scoped; may be descoped to post-1.0 by
