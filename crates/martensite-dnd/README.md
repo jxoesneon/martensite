@@ -34,7 +34,7 @@ Add `martensite-dnd` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-dnd = "0.7.0"
+martensite-dnd = "0.17.0"
 ```
 
 Registering a drop target and managing effects:

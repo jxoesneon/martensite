@@ -36,7 +36,7 @@ Add `martensite-reactive` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-reactive = "0.7.0"
+martensite-reactive = "0.17.0"
 ```
 
 Using signals, derived memos, and transactional batching:

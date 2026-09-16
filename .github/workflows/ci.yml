@@ -46,6 +46,14 @@ jobs:
       - name: Clippy Lints (all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  version-consistency:
+    name: Version Surface Consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check version surfaces
+        run: bash scripts/check-version-consistency.sh
+
   purity-and-bans:
     name: Supply-Chain Gate (cargo-deny)
     runs-on: ubuntu-latest

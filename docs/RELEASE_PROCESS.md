@@ -18,7 +18,22 @@ Prior to `1.0.0`, minor versions (`0.x.0`) may contain breaking changes, though 
 * `release/0.x`: Stabilization branches for minor releases. Only bugfixes and documentation are cherry-picked here.
 * `hotfix/*`: Emergency patches for severe regressions or security issues on published versions.
 
-## 3. Topologically Sorted Publication Sequence
+## 3. Version Bump Procedure
+
+All version-bearing surfaces are automated — see
+[`VERSION_UPDATE_SURFACE.md`](VERSION_UPDATE_SURFACE.md) for the full
+inventory. On every release:
+
+```sh
+scripts/bump-version.sh X.Y.Z          # set + sync all auto-bump surfaces
+# update CHANGELOG.md with the new section (manual — release notes)
+scripts/check-version-consistency.sh   # verify every surface
+```
+
+`check-version-consistency.sh` also runs in CI on every push
+(`version-consistency` job), so drift fails the build before a tag is cut.
+
+## 4. Topologically Sorted Publication Sequence
 
 Due to the strict workspace constraints and inter-crate dependencies, the publishable crates must be published in the exact bottom-up leaf-first topological order encoded in `.github/workflows/publish.yml`. `examples` and `benches` are excluded from crates.io.
 
@@ -50,18 +65,18 @@ Due to the strict workspace constraints and inter-crate dependencies, the publis
 
 > **Note:** `cargo-semver-checks` must be run (locally or in CI) before any publish tag to verify that public API changes are reflected in the version bump. The `publish.yml` workflow embeds all CI gates as `needs:` on the `publish` job, and dry-run packaging is performed with `cargo package --allow-dirty --no-verify` before real uploads.
 
-## 4. Changelog & GitHub Releases
+## 5. Changelog & GitHub Releases
 
 Martensite uses the **Keep a Changelog** format.
 * Before release, the Release Manager updates `CHANGELOG.md` with explicit categories: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
 * The GitHub Release notes are generated from the changelog and must explicitly list the `MSRV`.
 
-## 5. MSRV Bump Policy
+## 6. MSRV Bump Policy
 
 * MSRV (Minimum Supported Rust Version) bumps are treated as **minor version bumps**.
 * A 6-month public notice must be provided in the changelog before a planned MSRV bump.
 
-## 6. Yanking Policy
+## 7. Yanking Policy
 
 Crates will only be yanked from crates.io in two scenarios:
 1. **Critical Security Vulnerability:** (See `SECURITY.md`).

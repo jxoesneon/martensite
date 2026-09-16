@@ -35,7 +35,7 @@ Add `martensite-render` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-render = "0.14.0"
+martensite-render = "0.17.0"
 ```
 
 Recording draw commands and rasterizing to a software buffer:

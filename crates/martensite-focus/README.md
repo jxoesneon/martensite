@@ -38,7 +38,7 @@ Add `martensite-focus` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-focus = "0.7.0"
+martensite-focus = "0.17.0"
 ```
 
 Configuring spatial navigation:
