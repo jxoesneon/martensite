@@ -63,10 +63,7 @@ impl std::error::Error for WaylandError {}
 ///     }
 /// }
 /// ```
-pub struct WaylandBackend {
-    /// Cached available types from the last `available_types` call.
-    cached_types: Vec<String>,
-}
+pub struct WaylandBackend;
 
 impl WaylandBackend {
     /// Creates a new Wayland clipboard backend.
@@ -96,9 +93,7 @@ impl WaylandBackend {
         if result.is_err() {
             return Err(WaylandError::NoClipboard);
         }
-        Ok(Self {
-            cached_types: Vec::new(),
-        })
+        Ok(Self)
     }
 
     /// Checks if the Wayland clipboard backend is available.
@@ -185,7 +180,6 @@ impl ClipboardBackend for WaylandBackend {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
-        self.cached_types.clear();
     }
 
     fn platform_name(&self) -> &str {

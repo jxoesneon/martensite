@@ -10,7 +10,9 @@
 // - `unsafe_code`: upstream uses `unsafe` for trusted shader module creation.
 // - `missing_docs`: upstream does not document every public item.
 // - `clippy::all` / `clippy::todo`: upstream code style differs from
-//   workspace conventions and retains `todo!()` stubs.
+//   workspace conventions. (The upstream `todo!()` stubs in the CPU
+//   dispatch path were replaced with `Error::UnsupportedCpuShaderBinding`
+//   for v0.18.0 hardening.)
 // - `rustdoc::broken_intra_doc_links`: upstream links don't resolve in the
 //   vendored context.
 // - `unfulfilled_lint_expectations`: upstream `#[expect(single_use_lifetimes)]`
@@ -299,6 +301,16 @@ pub enum Error {
     #[cfg(feature = "wgpu")]
     #[error("Buffer '{0}' is not available but used for {1}")]
     UnavailableBufferUsed(&'static str, &'static str),
+    /// A resource bound to a CPU shader dispatch cannot be materialized for
+    /// CPU execution.
+    ///
+    /// CPU shader bindings only support whole buffers whose contents are
+    /// CPU-resident (uploaded in the same recording, or produced by a prior
+    /// CPU dispatch). Image bindings and ranges over GPU-resident buffers are
+    /// unsupported because this engine never reads data back from the GPU.
+    #[cfg(feature = "wgpu")]
+    #[error("Resource '{0}' cannot be bound to a CPU shader: {1}")]
+    UnsupportedCpuShaderBinding(&'static str, &'static str),
     /// Failed to async map a buffer.
     /// See [`wgpu::BufferAsyncError`] for more information.
     #[cfg(feature = "wgpu")]

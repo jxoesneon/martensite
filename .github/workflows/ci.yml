@@ -238,6 +238,8 @@ jobs:
           cargo test --release -p martensite-blessed --test docking_zero_alloc -- --ignored
           # Rubber-band scroller zero-alloc gate.
           cargo test --release -p martensite-motion --test rubber_band_zero_alloc -- --ignored
+          # Theme-transition zero-alloc gate (per-frame uniform path).
+          cargo test --release -p martensite-theme --test theme_transition_zero_alloc -- --ignored
           # Hot-reload pipeline latency gate (<350 ms); spawns a nested
           # `cargo build` of a minimal guest cdylib — no network needed.
           cargo test --release -p martensite-host --test hot_reload_latency -- --ignored
@@ -277,7 +279,12 @@ jobs:
       - name: Run shell unit tests (windows-backend)
         run: cargo test -p martensite-shell --features windows-backend --lib
       - name: Build workspace (windows-backend)
-        run: cargo build --workspace --features martensite-shell/windows-backend --exclude martensite-text-reference --exclude martensite-font-fallback
+        # martensite-text-reference is permanently excluded: it is a
+        # publish=false Pango/Cairo reference-oracle crate whose system
+        # libraries (glib/pango/cairo via pkg-config) do not exist on
+        # Windows runners. martensite-font-fallback rejoins the build —
+        # its windows 0.61 DirectWrite mismatch was fixed in e15f1ea.
+        run: cargo build --workspace --features martensite-shell/windows-backend --exclude martensite-text-reference
       - name: Clippy (windows-backend)
         run: cargo clippy -p martensite-shell --features windows-backend --all-targets -- -D warnings
 
