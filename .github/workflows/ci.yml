@@ -526,5 +526,8 @@ jobs:
           # warnings that would abort rustdoc generation for reasons
           # unrelated to API changes.
           RUSTFLAGS: ""
-        run: cargo semver-checks -p ${{ matrix.crate }} --default-features
+        # --manifest-path rather than -p: the stubs/ namespace-reservation
+        # crates reuse real names (stubs/martensite collides with
+        # crates/martensite) and -p resolution is ambiguous for them.
+        run: cargo semver-checks --manifest-path crates/${{ matrix.crate }}/Cargo.toml --default-features
 

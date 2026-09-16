@@ -134,7 +134,7 @@ Mechanical enforcement is wired in `.github/workflows/ci.yml`
   version is bumped past the baseline — i.e. on `release/*` PRs, tag
   pushes, and the `publish.yml` gate (`workflow_call`).
 - **Coverage caveat:** the job passes `--default-features` explicitly —
-  a bare `cargo semver-checks -p <crate>` applies an
+  a bare `cargo semver-checks` applies an
   all-features-except-unstable heuristic that would pull in
   `decoder-ffmpeg`/`decoder-vaapi` and fail on missing libva/ffmpeg
   system packages. Feature-gated API remains outside the checked
