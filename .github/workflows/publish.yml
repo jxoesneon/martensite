@@ -387,7 +387,7 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [publish]
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     permissions:
       contents: write
     steps:
@@ -442,7 +442,7 @@ jobs:
     needs: [github-release]
     # Binaries are uploaded to the release created by the github-release
     # job, so this only runs on real tag pushes once the release exists.
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     continue-on-error: ${{ matrix.experimental || false }}
     permissions:
       contents: write
@@ -496,14 +496,25 @@ jobs:
           fi
 
       - name: Build cargo-martensite
-        run: cargo build --release -p cargo-martensite --target ${{ matrix.target }}
+        run: cargo build --release --locked -p cargo-martensite --target ${{ matrix.target }}
 
       - name: Package archive (Unix)
         if: runner.os != 'Windows'
         run: |
           ASSET="cargo-martensite-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.tar.gz"
           mkdir -p dist
-          tar -czf "dist/$ASSET" -C "target/${{ matrix.target }}/release" cargo-martensite
+          # -C switches directory for the file arguments that follow it, so
+          # the archive stays flat: binary + license texts at the root.
+          tar -czf "dist/$ASSET" \
+            -C "target/${{ matrix.target }}/release" cargo-martensite \
+            -C "tools/cargo-martensite" LICENSE-APACHE LICENSE-MIT
+          cd dist
+          # GNU coreutils name on Linux; BSD/macOS ships shasum instead.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ASSET" > "$ASSET.sha256"
+          else
+            shasum -a 256 "$ASSET" > "$ASSET.sha256"
+          fi
 
       - name: Package archive (Windows)
         if: runner.os == 'Windows'
@@ -511,10 +522,77 @@ jobs:
         run: |
           $asset = "cargo-martensite-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip"
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path "target/${{ matrix.target }}/release/cargo-martensite.exe" -DestinationPath "dist/$asset"
+          Compress-Archive -DestinationPath "dist/$asset" -Path `
+            "target/${{ matrix.target }}/release/cargo-martensite.exe", `
+            "tools/cargo-martensite/LICENSE-APACHE", `
+            "tools/cargo-martensite/LICENSE-MIT"
+          $hash = (Get-FileHash "dist/$asset" -Algorithm SHA256).Hash.ToLower()
+          # sha256sum-compatible "<hash>  <filename>" format, no BOM.
+          "$hash  $asset" | Out-File -FilePath "dist/$asset.sha256" -Encoding ascii
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           files: dist/*
+
+  # ──────────────────────────────────────────────────────────
+  # VERIFY — assert every expected archive landed on the release
+  # ──────────────────────────────────────────────────────────
+
+  verify-release-assets:
+    name: Verify Release Assets
+    runs-on: ubuntu-latest
+    # github-release must be a direct need so its result is readable in
+    # the `if` expression below.
+    needs: [github-release, release-binaries]
+    # always(): run even when a matrix leg failed so the missing assets
+    # are reported explicitly instead of the pipeline going silently red.
+    # The startsWith guard matches the other release jobs and also covers
+    # a workflow_dispatch run against a tag ref.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.github-release.result == 'success' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Assert all release assets exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=${GITHUB_REF#refs/tags/v}
+          assets=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
+          echo "Release assets:"
+          echo "$assets"
+
+          # Non-experimental matrix legs. The zip/tar.gz split mirrors the
+          # packaging steps in release-binaries.
+          missing=0
+          for target in \
+            x86_64-apple-darwin \
+            aarch64-apple-darwin \
+            x86_64-pc-windows-msvc \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu \
+            x86_64-unknown-linux-musl
+          do
+            if [ "$target" = "x86_64-pc-windows-msvc" ]; then
+              asset="cargo-martensite-${VERSION}-${target}.zip"
+            else
+              asset="cargo-martensite-${VERSION}-${target}.tar.gz"
+            fi
+            for file in "$asset" "$asset.sha256"; do
+              if ! grep -qx "$file" <<< "$assets"; then
+                echo "::error::missing release asset: $file"
+                missing=1
+              fi
+            done
+          done
+
+          # aarch64-pc-windows-msvc is experimental (continue-on-error), so
+          # an absent archive is a warning rather than a failure.
+          experimental_asset="cargo-martensite-${VERSION}-aarch64-pc-windows-msvc.zip"
+          if ! grep -qx "$experimental_asset" <<< "$assets"; then
+            echo "::warning::experimental asset absent: $experimental_asset"
+          fi
+
+          [ "$missing" -eq 0 ]
