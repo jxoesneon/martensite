@@ -124,11 +124,15 @@ If your `Cargo.toml` or code references the upstreams, substitute:
 |---|---|---|
 | `accesskit_winit` 0.34 | `martensite-accesskit-winit` | Patched for winit 0.31.0-beta.3; temporary — removed once upstream supports winit 0.31. |
 | `netrender-vello` / `vello` 0.10 | `martensite-vello` | Byte-compatible republish built against wgpu 30. |
-| `cosmic-text` | `martensite-cosmic-text` | Vendored fork; patch discipline in `docs/milestones/v0.18.0-production-hardening.md` §4.5. |
+| `cosmic-text` | `martensite-cosmic-text` | Vendored fork with `fontdb` 0.24 ahead of upstream; patch discipline in `docs/VENDORED_FORKS.md`. |
 
-The vendored crates opt out of the doc-example requirement via
+`martensite-vello` and `martensite-cosmic-text` opt out of the
+doc-example requirement via
 `#![allow(missing_docs)]`/`#![allow(rustdoc::broken_intra_doc_links)]` —
 they are upstream code, not Martensite API surface.
+`martensite-accesskit-winit` is internal-only (do not depend on it
+outside the workspace). The full maintenance policy is in
+`docs/VENDORED_FORKS.md`.
 
 ## Corrections to the previous revision
 
