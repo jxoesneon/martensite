@@ -18,6 +18,14 @@ autobins = false
 martensite = { workspace = true }
 martensite-core = { workspace = true }
 martensite-reactive = { workspace = true }
+# v0.18.0 competitive baselines: layout throughput, text shaping,
+# virtualized table scroll. `taffy` is needed to name `taffy::Size`/
+# `taffy::Style` directly — `martensite::layout::Size` shadows the taffy
+# re-export (see F11 in examples/industrial_dashboard).
+martensite-layout = { workspace = true }
+martensite-text = { workspace = true }
+martensite-blessed = { workspace = true }
+taffy = { workspace = true }
 criterion = { workspace = true }
 
 [lints]

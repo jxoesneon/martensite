@@ -13,8 +13,20 @@ description = "Industrial dashboard example application for Martensite."
 readme = "README.md"
 publish = false
 
+[features]
+default = []
+# Enable the devtools diagnostic HUD pass (`DiagnosticHud`, frame
+# histogram). Off by default so the headless example stays dependency-light.
+devtools = ["dep:martensite-devtools"]
+
 [dependencies]
 martensite = { workspace = true }
+# Blessed production widgets: DataTable + DockTree + Chart + CodeEditor.
+# F3: not re-exported through the `martensite` facade — direct dep required.
+martensite-blessed = { workspace = true }
+# Shell chrome (backdrop material resolution, stub controller).
+martensite-shell = { workspace = true }
+martensite-devtools = { workspace = true, optional = true }
 
 [lints]
 workspace = true
