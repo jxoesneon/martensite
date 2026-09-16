@@ -30,6 +30,15 @@
 //! Because these are heavy native dependencies, this crate is isolated
 //! from normal consumers and is opt-in via the workspace member list. It
 //! is `publish = false`.
+//!
+//! # Platform support
+//!
+//! This crate is **Linux-only** and is permanently excluded from the
+//! Windows workspace build (`--exclude martensite-text-reference` in the
+//! `shell-windows-integration` CI job): `pango`/`cairo`/`glib` are bound
+//! through `pkg-config`, which is not provisioned on Windows runners, and
+//! the crate exists solely as a DSSIM reference oracle for Linux CI. This
+//! is a deliberate, permanent exclusion — not a portability TODO.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

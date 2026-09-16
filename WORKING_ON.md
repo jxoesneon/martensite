@@ -610,7 +610,7 @@ and not an implementation regression.
 **Remaining:**
 
 - v0.9.0 hot reload: `<350 ms`.
-  - `crates/cargo-martensite/tests/hot_reload_latency.rs:88` (ignored).
+  - `crates/martensite-host/tests/hot_reload_latency.rs:92` (ignored).
   - Still `#[ignore]`-gated; no CI assertion.
 - v0.6.0 theme-transition: zero allocation not measured.
   - No automated gate.
@@ -626,9 +626,9 @@ and not an implementation regression.
 
 ### 1.6 Test quality red flags
 
-**Status:** Partially resolved — shader and rendering tests now validate
-semantic behavior; vfs watcher sleeps replaced with bounded waits;
-clipboard and Tracy sleeps remain.
+**Status:** Resolved — shader and rendering tests now validate semantic
+behavior; all fixed sleeps (vfs watcher, clipboard, Tracy) have been
+replaced with bounded waits or removed.
 
 **Resolved:**
 
@@ -646,12 +646,15 @@ clipboard and Tracy sleeps remain.
    uses fixed `std::thread::sleep` calls; watcher tests now use bounded
    `park_timeout`-based polling loops with deadlines that fail on
    timeout instead of sleeping for a fixed duration.
+4. **Sleeps in tests (clipboard, Tracy)** —
+   `martensite-clipboard/src/clipboard.rs` lazy-payload deadline waits now
+   use `mpsc::recv_timeout` on a detached producer thread (see
+   `run_with_deadline`), and the `martensite-devtools/src/tracy.rs`
+   overhead gate measures wall-clock instrumentation cost directly;
+   neither uses fixed `thread::sleep` calls anymore.
 
-**Remaining:**
-
-- `martensite-clipboard/src/clipboard.rs:738` (`thread::sleep(200ms)`)
-  and `martensite-devtools/src/tracy.rs:557` still use fixed sleeps;
-  these are environment-dependent and can be flaky on slow CI runners.
+**Remaining:** None — all previously flagged fixed sleeps have been
+replaced with bounded waits.
 
 ### 1.7 Official Unicode conformance suites not integrated
 

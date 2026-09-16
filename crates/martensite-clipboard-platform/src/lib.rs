@@ -4,7 +4,9 @@
 //!
 //! - **macOS**: `NSPasteboard` via the Objective-C runtime
 //! - **Windows**: Win32 clipboard API (`OpenClipboard`, `SetClipboardData`, …)
-//! - **Linux**: X11 `CLIPBOARD` selection via raw `libX11` FFI
+//! - **Linux**: X11 `CLIPBOARD` selection via raw `libX11` FFI, plus a
+//!   Wayland backend implemented via the `wl-clipboard` command-line
+//!   utility (selected automatically when `WAYLAND_DISPLAY` is set)
 //!
 //! # Architecture
 //!
@@ -29,6 +31,9 @@
 //! - NSPasteboard: <https://developer.apple.com/documentation/appkit/nspasteboard>
 //! - Win32 clipboard: <https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard>
 //! - X11 selections: <https://www.x.org/releases/current/doc/xlib/xlib.pdf#selections>
+//!
+//! The `wayland` module contains no `unsafe` code; it drives the
+//! `wl-clipboard` subprocess instead of linking `libwayland-client`.
 
 #![allow(unsafe_code)]
 #![forbid(missing_docs)]
@@ -38,6 +43,9 @@ pub mod macos;
 
 #[cfg(target_os = "windows")]
 pub mod windows;
+
+#[cfg(target_os = "linux")]
+pub mod wayland;
 
 #[cfg(target_os = "linux")]
 pub mod x11;
@@ -137,7 +145,10 @@ pub trait ClipboardBackend {
 ///
 /// On macOS this returns a [`MacosBackend`](macos::MacosBackend).
 /// On Windows this returns a [`Win32Backend`](windows::Win32Backend).
-/// On Linux this returns an [`X11Backend`](x11::X11Backend).
+/// On Linux this returns a [`WaylandBackend`](wayland::WaylandBackend) when
+/// running under a Wayland compositor (`WAYLAND_DISPLAY` is set) and the
+/// `wl-clipboard` utility is installed; otherwise it falls back to an
+/// [`X11Backend`](x11::X11Backend), which also covers XWayland sessions.
 ///
 /// # Examples
 ///
@@ -164,6 +175,13 @@ pub fn native_backend() -> Option<Box<dyn ClipboardBackend>> {
     }
     #[cfg(target_os = "linux")]
     {
+        // Prefer the Wayland backend under a Wayland compositor; it only
+        // initializes when `WAYLAND_DISPLAY` is set and `wl-clipboard` is
+        // installed. X11 remains the fallback (including XWayland).
+        if let Ok(backend) = wayland::WaylandBackend::new() {
+            #[allow(clippy::needless_return)]
+            return Some(Box::new(backend));
+        }
         #[allow(clippy::needless_return)]
         return Some(Box::new(x11::X11Backend::new()));
     }

@@ -9,7 +9,7 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 homepage.workspace = true
-description = "OS-native clipboard backends (NSPasteboard, Win32, X11) for martensite-clipboard."
+description = "OS-native clipboard backends (NSPasteboard, Win32, X11, Wayland via wl-clipboard) for martensite-clipboard."
 readme = "README.md"
 
 [dependencies]

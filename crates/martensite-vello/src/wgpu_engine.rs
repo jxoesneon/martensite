@@ -377,6 +377,12 @@ impl WgpuEngine {
         ShaderId(id)
     }
 
+    /// Executes all commands in `recording` in order.
+    ///
+    /// Note: this method is not atomic. On `Err`, `self.bind_map` may be
+    /// partially mutated — commands recorded before the failing command
+    /// have already run, so their uploads, materializations, and pending
+    /// clears remain in place.
     pub fn run_recording(
         &mut self,
         device: &Device,
@@ -548,7 +554,7 @@ impl WgpuEngine {
                             // command buffer submission completes (and, in WebGPU, the async
                             // mapping operations on the buffers completes).
                             let resources =
-                                transient_map.create_cpu_resources(&mut self.bind_map, bindings);
+                                transient_map.create_cpu_resources(&mut self.bind_map, bindings)?;
                             (cpu_shader.shader)(x, &resources);
                         }
                         ShaderKind::Wgpu(wgpu_shader) => {
@@ -595,15 +601,32 @@ impl WgpuEngine {
                         ShaderKind::Cpu(cpu_shader) => {
                             // Same consideration as above about running the CPU shader synchronously.
                             let n_wg;
-                            if let CpuBinding::BufferRW(b) = self.bind_map.get_cpu_buf(proxy.id) {
-                                let slice = b.borrow();
-                                let indirect: &[u32] = bytemuck::cast_slice(&slice);
-                                n_wg = indirect[0];
-                            } else {
-                                panic!("indirect buffer missing from bind map");
+                            match self.bind_map.get_cpu_buf(proxy)? {
+                                CpuBinding::BufferRW(b) => {
+                                    let slice = b.borrow();
+                                    // The indirect dispatch size is a u32
+                                    // at the start of the buffer; reject
+                                    // buffers too small to hold it instead
+                                    // of panicking on the index.
+                                    let Some(first) = slice.get(..4) else {
+                                        return Err(Error::UnsupportedCpuShaderBinding(
+                                            proxy.name,
+                                            "indirect buffer too small",
+                                        ));
+                                    };
+                                    // from_ne_bytes avoids cast_slice's
+                                    // formal alignment precondition.
+                                    n_wg = u32::from_ne_bytes(first.try_into().unwrap());
+                                }
+                                _ => {
+                                    return Err(Error::UnsupportedCpuShaderBinding(
+                                        proxy.name,
+                                        "indirect dispatch buffer is not a CPU buffer",
+                                    ));
+                                }
                             }
                             let resources =
-                                transient_map.create_cpu_resources(&mut self.bind_map, bindings);
+                                transient_map.create_cpu_resources(&mut self.bind_map, bindings)?;
                             (cpu_shader.shader)(n_wg, &resources);
                         }
                         ShaderKind::Wgpu(wgpu_shader) => {
@@ -730,11 +753,28 @@ impl WgpuEngine {
                         match &buf.buffer {
                             MaterializedBuffer::Gpu(b) => encoder.clear_buffer(b, *offset, *size),
                             MaterializedBuffer::Cpu(b) => {
-                                let mut slice = &mut b.borrow_mut()[*offset as usize..];
-                                if let Some(size) = size {
-                                    slice = &mut slice[..*size as usize];
+                                // `offset`/`size` come from the recording
+                                // and can exceed the buffer or the usize
+                                // range; reject out-of-bounds clears
+                                // instead of panicking on the subslice.
+                                let mut borrow = b.borrow_mut();
+                                let start = usize::try_from(*offset).ok();
+                                let end = match size {
+                                    Some(size) => usize::try_from(*size)
+                                        .ok()
+                                        .and_then(|size| start.and_then(|s| s.checked_add(size))),
+                                    None => Some(borrow.len()),
+                                };
+                                let slice = start.zip(end).and_then(|(s, e)| borrow.get_mut(s..e));
+                                match slice {
+                                    Some(slice) => slice.fill(0),
+                                    None => {
+                                        return Err(Error::UnsupportedCpuShaderBinding(
+                                            proxy.name,
+                                            "clear range is out of bounds",
+                                        ));
+                                    }
                                 }
-                                slice.fill(0);
                             }
                         }
                     } else {
@@ -902,23 +942,41 @@ impl BindMap {
 
     /// Get a CPU buffer.
     ///
-    /// Panics if buffer is not present or is on GPU.
-    fn get_cpu_buf(&self, id: ResourceId) -> CpuBinding<'_> {
-        match &self.buf_map[&id].buffer {
-            MaterializedBuffer::Cpu(b) => CpuBinding::BufferRW(b),
-            _ => panic!("getting cpu buffer, but it's on gpu"),
+    /// Returns an error if the buffer is not present or was materialized on
+    /// the GPU.
+    fn get_cpu_buf(&self, proxy: &BufferProxy) -> Result<CpuBinding<'_>> {
+        match self.buf_map.get(&proxy.id).map(|b| &b.buffer) {
+            Some(MaterializedBuffer::Cpu(b)) => Ok(CpuBinding::BufferRW(b)),
+            Some(MaterializedBuffer::Gpu(_)) => Err(Error::UnsupportedCpuShaderBinding(
+                proxy.name,
+                "buffer was already materialized on the GPU",
+            )),
+            None => Err(Error::UnavailableBufferUsed(
+                proxy.name,
+                "cpu shader dispatch",
+            )),
         }
     }
 
-    fn materialize_cpu_buf(&mut self, buf: &BufferProxy) {
-        self.buf_map.entry(buf.id).or_insert_with(|| {
-            let buffer = MaterializedBuffer::Cpu(RefCell::new(vec![0; buf.size as usize]));
-            BindMapBuffer {
-                buffer,
-                // TODO: do we need to cfg this?
-                label: buf.name,
+    fn materialize_cpu_buf(&mut self, buf: &BufferProxy) -> Result<()> {
+        match self.buf_map.entry(buf.id) {
+            Entry::Occupied(entry) => match &entry.get().buffer {
+                MaterializedBuffer::Cpu(_) => Ok(()),
+                MaterializedBuffer::Gpu(_) => Err(Error::UnsupportedCpuShaderBinding(
+                    buf.name,
+                    "buffer was already materialized on the GPU",
+                )),
+            },
+            Entry::Vacant(entry) => {
+                let buffer = MaterializedBuffer::Cpu(RefCell::new(vec![0; buf.size as usize]));
+                entry.insert(BindMapBuffer {
+                    buffer,
+                    // TODO: do we need to cfg this?
+                    label: buf.name,
+                });
+                Ok(())
             }
-        });
+        }
     }
 
     fn insert_image(&mut self, id: ResourceId, image: Texture, image_view: TextureView) {
@@ -1214,7 +1272,7 @@ impl<'a> TransientBindMap<'a> {
         &self,
         bind_map: &'a mut BindMap,
         bindings: &[ResourceProxy],
-    ) -> Vec<CpuBinding<'_>> {
+    ) -> Result<Vec<CpuBinding<'_>>> {
         // First pass is mutable; create buffers as needed
         for resource in bindings {
             match resource {
@@ -1225,10 +1283,23 @@ impl<'a> TransientBindMap<'a> {
                     size: _,
                 } => match self.bufs.get(&proxy.id) {
                     Some(TransientBuf::Cpu(_)) => (),
-                    Some(TransientBuf::Gpu(_)) => panic!("buffer was already materialized on GPU"),
-                    _ => bind_map.materialize_cpu_buf(proxy),
+                    Some(TransientBuf::Gpu(_)) => {
+                        return Err(Error::UnsupportedCpuShaderBinding(
+                            proxy.name,
+                            "buffer was already materialized on the GPU",
+                        ));
+                    }
+                    _ => bind_map.materialize_cpu_buf(proxy)?,
                 },
-                ResourceProxy::Image(_) => todo!(),
+                // Images cannot be bound to CPU shaders: the engine never
+                // reads texture data back from the GPU, and CPU materialization
+                // of images was never implemented upstream.
+                ResourceProxy::Image(proxy) => {
+                    return Err(Error::UnsupportedCpuShaderBinding(
+                        proxy.name,
+                        "image resources cannot be materialized on the CPU",
+                    ));
+                }
             }
         }
         // Second pass takes immutable references
@@ -1236,11 +1307,41 @@ impl<'a> TransientBindMap<'a> {
             .iter()
             .map(|resource| match resource {
                 ResourceProxy::Buffer(buf) => match self.bufs.get(&buf.id) {
-                    Some(TransientBuf::Cpu(b)) => CpuBinding::Buffer(b),
-                    _ => bind_map.get_cpu_buf(buf.id),
+                    Some(TransientBuf::Cpu(b)) => Ok(CpuBinding::Buffer(b)),
+                    _ => bind_map.get_cpu_buf(buf),
                 },
-                ResourceProxy::BufferRange { .. } => todo!(),
-                ResourceProxy::Image(_) => todo!(),
+                ResourceProxy::BufferRange {
+                    proxy,
+                    offset,
+                    size,
+                } => match self.bufs.get(&proxy.id) {
+                    // A range of a CPU-resident buffer binds as a sub-slice.
+                    Some(TransientBuf::Cpu(b)) => {
+                        let range = offset
+                            .checked_add(*size)
+                            .and_then(|end| {
+                                let start = usize::try_from(*offset).ok()?;
+                                let end = usize::try_from(end).ok()?;
+                                b.get(start..end)
+                            })
+                            .ok_or(Error::UnsupportedCpuShaderBinding(
+                                proxy.name,
+                                "buffer range is out of bounds",
+                            ))?;
+                        Ok(CpuBinding::Buffer(range))
+                    }
+                    // A range over a `RefCell`-backed or GPU-resident buffer
+                    // cannot be expressed as a `CpuBinding` slice.
+                    _ => Err(Error::UnsupportedCpuShaderBinding(
+                        proxy.name,
+                        "buffer ranges can only bind transient (in-recording upload) buffers",
+                    )),
+                },
+                // Unreachable: the first pass above already rejects image
+                // bindings with `UnsupportedCpuShaderBinding`.
+                ResourceProxy::Image(_) => {
+                    unreachable!("image bindings are rejected in the first pass")
+                }
             })
             .collect()
     }

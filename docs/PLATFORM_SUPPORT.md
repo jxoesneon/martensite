@@ -31,7 +31,7 @@ Tier 1 platforms are guaranteed to compile, link, and render with 100% feature p
 * **Accessibility:** AT-SPI2 via AccessKit over `zbus`
 * **IME Support:** Wayland (zwp_text_input_v3), X11 (XIM fallback)
 * **Drag and Drop:** Wayland / X11 generic
-* **Clipboard:** Wayland / X11 primary/clipboard buffers
+* **Clipboard:** X11 `CLIPBOARD` selection (raw `libX11` FFI); Wayland via the `wl-clipboard` utility when `WAYLAND_DISPLAY` is set and `wl-copy`/`wl-paste` are installed (X11/XWayland fallback otherwise). No in-process `wl_data_device` backend — see `martensite-clipboard-platform` README.
 * **Known Limitations:** Proprietary NVIDIA drivers on some Wayland compositors may require fallback to software.
 * **CI Status:** Fully verified (Build + Lavapipe headless rendering)
 
