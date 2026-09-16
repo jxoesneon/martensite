@@ -160,8 +160,9 @@ for f in $(grep -rlE '(martensite[a-z0-9_-]*|cargo-martensite) *= *["{]' \
                     }
                 }
             }
-            # bare form: name = "V"
-            else if (match(line, /^(martensite[a-z0-9_-]*|cargo-martensite) *= *"[^"]*"/)) {
+            # bare form: name = "V" — anywhere on the line, including
+            # inline-code mentions like `martensite = "0.17"`.
+            else if (match(line, /(martensite[a-z0-9_-]*|cargo-martensite) *= *"[^"]*"/)) {
                 seg = substr(line, RSTART, RLENGTH)
                 name = seg; sub(/ *=.*/, "", name)
                 d = dirfor(name)
