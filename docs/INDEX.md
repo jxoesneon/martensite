@@ -125,6 +125,9 @@ Each DDR specifies a crate's internal algorithms, data structures, and invariant
 - [TESTING_STRATEGY.md](TESTING_STRATEGY.md) — Test taxonomy, benchmarks, quality gate
 - [RELEASE_PROCESS.md](RELEASE_PROCESS.md) — Publication order, SemVer, changelog
 - [MIGRATION_GUIDE_0x_to_1x.md](MIGRATION_GUIDE_0x_to_1x.md) — 0.x → 1.0 migration
+- [VENDORED_FORKS.md](VENDORED_FORKS.md) — Vendored-fork maintenance policy (vello, cosmic-text, accesskit-winit, naga dedup, Bevy pin)
+- [REPRODUCIBLE_BUILDS.md](REPRODUCIBLE_BUILDS.md) — Build determinism pins, variance sources, local verification
+- [tutorials/](tutorials/README.md) — End-to-end tutorials (setup, reactive state, custom widgets, accessibility validation)
 
 ---
 
