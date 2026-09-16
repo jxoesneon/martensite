@@ -8,7 +8,7 @@ This document outlines the formal performance characteristics, empirical benchma
 
 The following evaluation contrasts Martensite against existing desktop and native GUI toolkits. See the sourcing note below the table: competitor figures are internal estimates, not published measurements.
 
-| Metric / Capability | Martensite (v0.11.0) | egui (v0.29) | Iced (v0.13) | Slint (v1.8) | GPUI (Zed 2026) | Tauri v2 (WebView2) |
+| Metric / Capability | Martensite (v0.17.0) | egui (v0.29) | Iced (v0.13) | Slint (v1.8) | GPUI (Zed 2026) | Tauri v2 (WebView2) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Architecture** | Retained Signal Arena | Immediate Mode | Elm Architecture (TEA) | Reactive DSL | Retained GPU Tree | Webview Hybrid |
 | **Vector Renderer** | Vello (Compute Shaders) | Triangles (Tessellator) | wgpu / TinySkia | Software / FemtoVG | Metal / Vulkan Direct | Chromium / WebKit |

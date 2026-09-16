@@ -609,7 +609,7 @@ fn bench_virtualized_scroll_1m(c: &mut Criterion) {
     assert_eq!(table.visible_range().len(), 40);
 
     let mut group = c.benchmark_group("competitive_virtualized_scroll_1m");
-    group.throughput(Throughput::Elements(1_000_000));
+    group.throughput(Throughput::Elements(1));
     group.bench_function("scroll_step_plus_visible_window", |b| {
         let mut dir = 1.0f32;
         b.iter(|| {

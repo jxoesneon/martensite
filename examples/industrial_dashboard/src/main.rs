@@ -301,11 +301,15 @@ fn run_grid_pass(rows: Vec<MetricRow>) {
         table.display_row_count()
     );
     // F10: keys arrive as framework KeyAction, consumer maps winit→action.
+    // F16: SelectionModel::extend_to builds a Range over raw *storage* row
+    // indices — after sort+filter reorder the display, a shift-range selects
+    // mostly filtered-out, never-displayed rows. Selection ranges should be
+    // display-index-based or the API should say otherwise.
     table.handle_key(KeyAction::PageDown);
     table.handle_key(KeyAction::ShiftDown);
     table.handle_key(KeyAction::ShiftDown);
     println!(
-        "  grid: focused_row={:?}, selected={} after PgDn+Shift↓×2",
+        "  grid: focused_row={:?}, selected={} after PgDn+Shift↓×2 (storage-index range — F16)",
         table.focused_row(),
         table.selection().selected_count()
     );
@@ -381,8 +385,9 @@ fn run_focus_pass(arena: &mut WidgetArena, root: WidgetId, focusable: &[WidgetId
     }
     let hits = order.iter().filter(|o| o.is_some()).count();
     println!(
-        "  focus: tab-chain walked {hits}/{} focusable widgets",
-        focusable.len() + 1
+        "  focus: tab-chain walked {hits}/{} stops across {} focusable widgets",
+        focusable.len() + 1,
+        focusable.len()
     );
 }
 
