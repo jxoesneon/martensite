@@ -74,9 +74,9 @@ jobs:
     needs:
       - validate
       - ci
-    # Only publish on actual tag pushes (not workflow_dispatch dry-runs
-    # unless explicitly requested).
-    if: ${{ github.event_name == 'push' || github.event.inputs.dry_run != 'true' }}
+    # The job always runs when its needs pass; the *publish step* is gated
+    # to actual tag pushes (or an explicit dry_run=false dispatch). On a
+    # dry_run dispatch the job still verifies every crate packages cleanly.
     steps:
       - uses: actions/checkout@v5
 
@@ -129,6 +129,7 @@ jobs:
           done
 
       - name: Publish to crates.io
+        if: ${{ github.event_name == 'push' || github.event.inputs.dry_run != 'true' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
@@ -527,8 +528,10 @@ jobs:
             "tools/cargo-martensite/LICENSE-APACHE", `
             "tools/cargo-martensite/LICENSE-MIT"
           $hash = (Get-FileHash "dist/$asset" -Algorithm SHA256).Hash.ToLower()
-          # sha256sum-compatible "<hash>  <filename>" format, no BOM.
-          "$hash  $asset" | Out-File -FilePath "dist/$asset.sha256" -Encoding ascii
+          # sha256sum-compatible "<hash>  <filename>" format. WriteAllText
+          # keeps LF line endings — Out-File would emit CRLF, which breaks
+          # `sha256sum -c`/`shasum -c` for users verifying on Unix.
+          [IO.File]::WriteAllText("$PWD/dist/$asset.sha256", "$hash  $asset`n")
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v3
@@ -581,7 +584,7 @@ jobs:
               asset="cargo-martensite-${VERSION}-${target}.tar.gz"
             fi
             for file in "$asset" "$asset.sha256"; do
-              if ! grep -qx "$file" <<< "$assets"; then
+              if ! grep -qxF "$file" <<< "$assets"; then
                 echo "::error::missing release asset: $file"
                 missing=1
               fi
@@ -591,8 +594,10 @@ jobs:
           # aarch64-pc-windows-msvc is experimental (continue-on-error), so
           # an absent archive is a warning rather than a failure.
           experimental_asset="cargo-martensite-${VERSION}-aarch64-pc-windows-msvc.zip"
-          if ! grep -qx "$experimental_asset" <<< "$assets"; then
-            echo "::warning::experimental asset absent: $experimental_asset"
-          fi
+          for file in "$experimental_asset" "$experimental_asset.sha256"; do
+            if ! grep -qxF "$file" <<< "$assets"; then
+              echo "::warning::experimental asset absent: $file"
+            fi
+          done
 
           [ "$missing" -eq 0 ]
