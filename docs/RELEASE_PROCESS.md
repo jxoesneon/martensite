@@ -71,6 +71,25 @@ Martensite uses the **Keep a Changelog** format.
 * Before release, the Release Manager updates `CHANGELOG.md` with explicit categories: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
 * The GitHub Release notes are generated from the changelog and must explicitly list the `MSRV`.
 
+### Pre-built `cargo-martensite` Binaries
+
+After the `github-release` job creates the release, the `release-binaries`
+job in `.github/workflows/publish.yml` builds `cargo-martensite` on a
+per-platform matrix and attaches one archive per target to the release.
+Archives are named `cargo-martensite-<version>-<target>.<ext>`, where
+`<version>` is read from the git tag (`v` prefix stripped — never
+hardcoded) and `<ext>` is `tar.gz` on Unix and `zip` on Windows.
+
+| Target | Runner | Notes |
+| :--- | :--- | :--- |
+| `x86_64-apple-darwin` | `macos-latest` | Cross-built via `rustup` target. |
+| `aarch64-apple-darwin` | `macos-latest` | Native. |
+| `x86_64-pc-windows-msvc` | `windows-latest` | Native. |
+| `aarch64-pc-windows-msvc` | `windows-latest` | `continue-on-error` while ARM64 MSVC support is verified. |
+| `x86_64-unknown-linux-gnu` | `ubuntu-latest` | Native. |
+| `aarch64-unknown-linux-gnu` | `ubuntu-latest` | Cross-built with `gcc-aarch64-linux-gnu` linker. |
+| `x86_64-unknown-linux-musl` | `ubuntu-latest` | Static binary via `musl-gcc`. |
+
 ## 6. MSRV Bump Policy
 
 * MSRV (Minimum Supported Rust Version) bumps are treated as **minor version bumps**.

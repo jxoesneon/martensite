@@ -430,3 +430,91 @@ jobs:
           prerelease: false
           # CHANGELOG.md is the canonical source of release notes.
           generate_release_notes: false
+
+  # ──────────────────────────────────────────────────────────
+  # RELEASE BINARIES — build cargo-martensite for every supported
+  # platform and attach the archives to the GitHub Release
+  # ──────────────────────────────────────────────────────────
+
+  release-binaries:
+    name: Release Binary (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    needs: [github-release]
+    # Binaries are uploaded to the release created by the github-release
+    # job, so this only runs on real tag pushes once the release exists.
+    if: ${{ github.event_name == 'push' }}
+    continue-on-error: ${{ matrix.experimental || false }}
+    permissions:
+      contents: write
+    strategy:
+      # A single-leg failure must not cancel the other platform builds.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          # ARM64 Windows builds from the x64 MSVC toolchain; kept
+          # non-blocking until its toolchain support is verified in CI.
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            experimental: true
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      # cargo-martensite is pure Rust with no C dependencies, so the Linux
+      # cross targets only need a matching gcc linker — no `cross` container.
+      - name: Install Linux cross-linker
+        if: ${{ runner.os == 'Linux' && matrix.target != 'x86_64-unknown-linux-gnu' }}
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get update
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          elif [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+            sudo apt-get update
+            sudo apt-get install -y musl-tools
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build cargo-martensite
+        run: cargo build --release -p cargo-martensite --target ${{ matrix.target }}
+
+      - name: Package archive (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          ASSET="cargo-martensite-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.tar.gz"
+          mkdir -p dist
+          tar -czf "dist/$ASSET" -C "target/${{ matrix.target }}/release" cargo-martensite
+
+      - name: Package archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $asset = "cargo-martensite-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "target/${{ matrix.target }}/release/cargo-martensite.exe" -DestinationPath "dist/$asset"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*
