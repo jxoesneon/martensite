@@ -32,6 +32,9 @@ martensite-l10n = { workspace = true }
 martensite-media = { workspace = true }
 martensite-engine-bridge = { workspace = true }
 martensite-macros = { workspace = true }
+martensite-blessed = { workspace = true }
+martensite-shell = { workspace = true }
+martensite-devtools = { workspace = true }
 # Optional: OS-native font fallback providers (DirectWrite, CoreText, Fontconfig).
 martensite-font-fallback = { workspace = true, optional = true }
 accesskit = { workspace = true }
@@ -41,7 +44,6 @@ taffy = { workspace = true }
 
 [dev-dependencies]
 martensite-test = { workspace = true }
-martensite-devtools = { workspace = true }
 parking_lot = { workspace = true }
 
 # `martensite-plugin` pulls wasmtime (the plugin host runtime), which
