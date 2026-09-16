@@ -49,9 +49,14 @@ deprecation and the release that may remove the item.
   project default and exceptions require a changelog `Changed` entry
   calling out the early removal.
 - **Post-1.0:** two full minor release cycles, with a floor of 6 months of
-  calendar time, whichever is longer. An item deprecated in `1.x.0` may be
-  removed no earlier than `1.(x+2).0` and no sooner than 6 months after the
-  `1.x.0` release date. Removal never happens in a patch release.
+  calendar time, whichever is longer (per
+  `docs/governance/GOVERNANCE.md` §3.3). An item deprecated in `1.x.0`
+  becomes *eligible* for removal no earlier than `1.(x+2).0` and no sooner
+  than 6 months after the `1.x.0` release date — but per GOVERNANCE.md
+  §3.3 removal itself ships **only on a major version boundary** (e.g.
+  `2.0.0`, with migration documentation). The notice period sets
+  eligibility; it never authorizes removal on the 1.x line. Removal never
+  happens in a minor or patch release.
 
 ## 3. Removal Rules
 
@@ -94,6 +99,29 @@ deprecation and the release that may remove the item.
   (`docs/RELEASE_PROCESS.md` §5).
 - New crates added to the workspace inherit the workspace MSRV; they may
   not declare a higher `rust-version` without following the bump policy.
+
+### Consistency note: GOVERNANCE §5 vs RELEASE_PROCESS §6
+
+Two documents define the MSRV baseline differently, and the tension is
+pre-existing (it predates this policy):
+
+- `docs/governance/GOVERNANCE.md` §5 sets a **rolling stable-3 baseline**:
+  the MSRV tracks the current stable compiler plus the preceding three
+  stable releases — an approximately 4.5-month window — with bumps gated
+  on Core & Layout WG approval and "advance notice in release notes"
+  (no fixed notice length).
+- `docs/RELEASE_PROCESS.md` §6 (and this document) require an MSRV bump
+  to ship as a **minor release** preceded by a **6-month public notice**
+  in the changelog.
+
+These can conflict: tracking a ~4.5-month rolling window can demand a
+bump sooner than a 6-month notice permits, and the charter does not say
+which constraint wins when they diverge. **This needs a governance
+amendment.** The recorded recommendation is to adopt the 6-month notice
+as the stronger constraint — i.e., treat the rolling stable-3 window as
+the target ceiling and schedule each bump six months ahead so it lands
+inside the window — rather than letting the rolling rule silently
+override the notice period.
 
 ## 5. Audit Trail
 

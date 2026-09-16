@@ -441,29 +441,30 @@ def main() -> int:
            "(stable + `RUSTC_BOOTSTRAP`); do not edit between the markers._",
            ""]
     grand = sum(len(v) for v in per_crate.values())
-    total_exp = sum(1 for c, items in per_crate.items()
-                    for p, i in items.items()
-                    if classify(c, p, i.get("src")) != "STABLE")
+    n_cls = Counter(classify(c, p, i.get("src"))
+                    for c, items in per_crate.items()
+                    for p, i in items.items())
     out.append(f"**Workspace total: {grand} public items, "
-               f"{grand - total_exp} stable / {total_exp} experimental-or-"
-               "vendored.**")
+               f"{n_cls['STABLE']} stable / {n_cls['EXPERIMENTAL']} "
+               f"experimental / {n_cls['VENDORED']} vendored.**")
     out.append("")
-    out.append("| Crate | Items | Stable | Experimental | Notes |")
-    out.append("| :--- | ---: | ---: | ---: | :--- |")
+    out.append("| Crate | Items | Stable | Experimental | Vendored | Notes |")
+    out.append("| :--- | ---: | ---: | ---: | ---: | :--- |")
     for c in crates:
         name = c["name"]
         items = per_crate.get(name, {})
         if name in failed:
-            out.append(f"| `{name}` | — | — | — | doc generation failed "
-                       "on this host |")
+            out.append(f"| `{name}` | — | — | — | — | doc generation "
+                       "failed on this host |")
             continue
-        n_s = sum(1 for p, i in items.items()
-                  if classify(name, p, i.get("src")) == "STABLE")
-        n_e = len(items) - n_s
+        c_cls = Counter(classify(name, p, i.get("src"))
+                        for p, i in items.items())
         note = {"VENDORED": "vendored fork",
                 "EXPERIMENTAL": "crate-level experimental"}.get(
                     CRATE_TIER.get(name), "")
-        out.append(f"| `{name}` | {len(items)} | {n_s} | {n_e} | {note} |")
+        out.append(f"| `{name}` | {len(items)} | {c_cls['STABLE']} | "
+                   f"{c_cls['EXPERIMENTAL']} | {c_cls['VENDORED']} | "
+                   f"{note} |")
     out.append("")
 
     for c in crates:
