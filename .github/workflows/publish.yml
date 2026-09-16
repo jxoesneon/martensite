@@ -19,6 +19,10 @@ on:
         options:
           - "true"
           - "false"
+      binaries_tag:
+        description: "Repair mode: tag whose release should receive binaries (e.g. v0.18.0). Skips validate/CI/publish; checks out the tag and uploads archives to its existing release."
+        required: false
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -32,6 +36,7 @@ jobs:
   validate:
     name: Validate Release Metadata
     runs-on: ubuntu-latest
+    if: ${{ !inputs.binaries_tag }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -62,6 +67,7 @@ jobs:
 
   ci:
     name: CI
+    if: ${{ !inputs.binaries_tag }}
     uses: ./.github/workflows/ci.yml
 
   # ──────────────────────────────────────────────────────────
@@ -71,6 +77,7 @@ jobs:
   publish:
     name: Publish Crates (Dependency Order)
     runs-on: ubuntu-latest
+    if: ${{ !inputs.binaries_tag }}
     needs:
       - validate
       - ci
@@ -100,13 +107,13 @@ jobs:
             martensite-media-platform
             martensite-media
             martensite-engine-bridge
+            martensite-accesskit-winit
+            martensite-access
             martensite-wgpu
             martensite-cosmic-text
             martensite-text
             martensite-font-fallback
             martensite-access-platform
-            martensite-accesskit-winit
-            martensite-access
             martensite-shell
             martensite-window
             martensite-focus
@@ -243,6 +250,9 @@ jobs:
           # martensite-blessed must come before martensite (the
           # `martensite::blessed` facade re-export makes martensite
           # depend on martensite-blessed).
+          # martensite-accesskit-winit and martensite-access must come
+          # before martensite-wgpu (the paint-compliance audit hook makes
+          # wgpu depend on access, and access depends on accesskit-winit).
           CRATES=(
             martensite-reactive
             martensite-macros
@@ -255,13 +265,13 @@ jobs:
             martensite-media-platform
             martensite-media
             martensite-engine-bridge
+            martensite-accesskit-winit
+            martensite-access
             martensite-wgpu
             martensite-cosmic-text
             martensite-text
             martensite-font-fallback
             martensite-access-platform
-            martensite-accesskit-winit
-            martensite-access
             martensite-shell
             martensite-window
             martensite-focus
@@ -391,7 +401,7 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [publish]
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && !inputs.binaries_tag }}
     permissions:
       contents: write
     steps:
@@ -445,8 +455,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: [github-release]
     # Binaries are uploaded to the release created by the github-release
-    # job, so this only runs on real tag pushes once the release exists.
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    # job, so this normally only runs on real tag pushes once the release
+    # exists. Repair mode (binaries_tag input) skips the publish chain and
+    # attaches archives to an already-existing release.
+    if: >-
+      ${{ always() &&
+          (startsWith(github.ref, 'refs/tags/v') || inputs.binaries_tag != '') &&
+          needs.github-release.result != 'failure' &&
+          needs.github-release.result != 'cancelled' }}
     continue-on-error: ${{ matrix.experimental || false }}
     permissions:
       contents: write
@@ -474,6 +490,9 @@ jobs:
             target: x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Repair mode builds the tagged source, not the dispatch ref.
+          ref: ${{ inputs.binaries_tag || github.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -482,7 +501,9 @@ jobs:
       - name: Extract version from tag
         id: version
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        run: |
+          TAG="${{ inputs.binaries_tag || github.ref_name }}"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       # cargo-martensite is pure Rust with no C dependencies, so the Linux
       # cross targets only need a matching gcc linker — no `cross` container.
@@ -509,9 +530,11 @@ jobs:
           mkdir -p dist
           # -C switches directory for the file arguments that follow it, so
           # the archive stays flat: binary + license texts at the root.
+          # The second -C must be absolute — it resolves relative to the
+          # first -C's directory, not the checkout root.
           tar -czf "dist/$ASSET" \
             -C "target/${{ matrix.target }}/release" cargo-martensite \
-            -C "tools/cargo-martensite" LICENSE-APACHE LICENSE-MIT
+            -C "$GITHUB_WORKSPACE/tools/cargo-martensite" LICENSE-APACHE LICENSE-MIT
           cd dist
           # GNU coreutils name on Linux; BSD/macOS ships shasum instead.
           if command -v sha256sum >/dev/null 2>&1; then
@@ -539,7 +562,7 @@ jobs:
       - name: Upload release asset
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ inputs.binaries_tag || github.ref_name }}
           files: dist/*
 
   # ──────────────────────────────────────────────────────────
@@ -554,9 +577,13 @@ jobs:
     needs: [github-release, release-binaries]
     # always(): run even when a matrix leg failed so the missing assets
     # are reported explicitly instead of the pipeline going silently red.
-    # The startsWith guard matches the other release jobs and also covers
-    # a workflow_dispatch run against a tag ref.
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.github-release.result == 'success' }}
+    # In repair mode github-release is skipped — the release must already
+    # exist — so only tag pushes require its result.
+    if: >-
+      ${{ always() &&
+          (startsWith(github.ref, 'refs/tags/v') || inputs.binaries_tag != '') &&
+          needs.github-release.result != 'failure' &&
+          needs.github-release.result != 'cancelled' }}
     permissions:
       contents: read
     steps:
@@ -565,8 +592,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          VERSION=${GITHUB_REF#refs/tags/v}
-          assets=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
+          TAG="${{ inputs.binaries_tag || github.ref_name }}"
+          VERSION=${TAG#v}
+          assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           echo "Release assets:"
           echo "$assets"
 
