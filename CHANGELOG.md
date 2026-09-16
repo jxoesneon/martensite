@@ -5,6 +5,109 @@ All notable changes to Martensite are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-09-16
+
+### Added — v0.18.0: Production Hardening & Dogfooding
+
+- **API surface audit + freeze tooling** — `scripts/api_surface_audit.py`
+  machine-enumerates the public API of all 33 publishable crates into
+  `docs/API_SURFACE_AUDIT.md` (1,605 nameable items: 1,177 stable / 289
+  experimental / 139 vendored). Re-export aliases inherit the strictest
+  stability tier along both the spelled path and the resolved canonical
+  target. `docs/API_FREEZE_AUDIT.md` rewritten for v0.18.0;
+  `docs/DEPRECATION_POLICY.md` documents the notice/deprecation/MSRV
+  (1.89.0) rules and the post-1.0 `unstable-*` gating convention.
+- **`cargo-semver-checks` in CI** — per-crate matrix over the 30
+  non-vendored publishable crates, comparing against the crates.io
+  baseline with `--default-features` (the tool's
+  all-features-except-unstable heuristic would otherwise require
+  FFmpeg/libva system libraries). Advisory while `version == baseline`;
+  blocking once the release bump lands (release PRs, tags, publish gate).
+- **Wayland clipboard backend** (`martensite-clipboard-platform`) —
+  `wl-copy`/`wl-paste` subprocess backend selected automatically when
+  `WAYLAND_DISPLAY` names a live socket (X11/XWayland fallback
+  otherwise). Every subprocess invocation is bounded: stdin writes run
+  on a helper thread, stdout is drained concurrently, children are
+  killed and reaped on timeout. Compile-verified on Linux; runtime
+  verification is CI-only (see §7 descope register in the milestone doc).
+- **Version-surface automation** — `scripts/bump-version.sh` syncs every
+  version-bearing surface (manifests, workspace deps, excluded
+  manifests, README/docs/`lib.rs` doc snippets, CHANGELOG, Cargo.lock);
+  `scripts/check-version-consistency.sh` verifies them in CI. Initial
+  run caught and repaired 22 stale install snippets.
+- **Prebuilt `cargo-martensite` binaries** — the `release-binaries` job
+  in `publish.yml` builds per-target archives (macOS x86_64/aarch64,
+  Windows x86_64/aarch64-experimental, Linux x86_64/aarch64 GNU,
+  x86_64 musl) with SHA-256 checksums and license files, attaches them
+  to the GitHub Release, and `verify-release-assets` fails the pipeline
+  if any non-experimental asset is missing.
+- **Workstation dogfooding demo** — `examples/industrial_dashboard`
+  exercises reactive signals/memos, theme, widget arena, layout,
+  docking, 1M-row virtualized data table, mock-NV12 media view, charts,
+  code editor, focus management, shell backdrop, and devtools HUD
+  against real public APIs.
+- **Competitive benchmark baselines** — `benches/bench_suite` gains
+  `competitive_layout_1k`, `competitive_signal_fan_out_200`,
+  `competitive_text_shaping`, and `competitive_virtualized_scroll_1m`
+  groups; `docs/BENCHMARKS.md` publishes results with competitor
+  figures honestly labeled as internal estimates.
+- **Facade & ergonomics fixes from dogfooding** — `martensite::{blessed,
+  shell, devtools}` crate aliases; widened prelude (reactive runtime,
+  theme types); `FocusManager::try_set_focus` (bool-returning variant of
+  the silent `set_focus`); `KeyAction::from_key_name` adapter;
+  shell backdrop material resolvers re-exported at the crate root.
+- **Four tutorials** — `docs/tutorials/`: project setup, reactive state,
+  custom widget, accessibility validation; verified against the
+  v0.17.0/0.18.0 API.
+- **New policy docs** — `VENDORED_FORKS.md` (re-sync cadence, patch
+  discipline), `REPRODUCIBLE_BUILDS.md` (limitations stated honestly),
+  `VERSION_UPDATE_SURFACE.md`, refreshed `MIGRATION_GUIDE_0x_to_1x.md`
+  and `PLATFORM_SUPPORT.md` with per-platform executed-vs-descoped
+  status.
+
+### Changed
+
+- **Publish order** — `martensite-blessed` now publishes before
+  `martensite`: the `martensite::blessed` facade alias introduced a real
+  dependency edge (caught by council review).
+- **Vello CPU engine hardening** (`martensite-vello`) — the three
+  production `todo!()` panic paths are now `Result`-based errors
+  (`Error::UnsupportedCpuShaderBinding`); CPU indirect-dispatch buffers
+  are size-checked; CPU clear ranges are bounds-checked.
+- **Test sleeps eliminated** — `martensite-clipboard` and
+  `martensite-devtools::tracy` fixed sleeps replaced with bounded
+  polling.
+- **Windows font-fallback** — `martensite-font-fallback` updated for the
+  `windows` 0.61 DirectWrite API and rejoined the Windows build;
+  `martensite-text-reference` remains excluded (publish=false
+  Pango/Cairo oracle crate).
+- **Performance gates in CI** — hot-reload `<350 ms`, Tracy overhead,
+  docking/rubber-band/theme-transition zero-alloc, and layout regression
+  gates now run in the `performance-gates` job under
+  `MARTENSITE_STRICT_BENCH=1`.
+
+### Verification
+
+- Web playwright gate **executed** (headless Chromium 140): startup,
+  GPU backend decision, a11y mirror, aria-live announcement.
+- iOS simulator gate **executed** (`simctl spawn`, iPhone 17 Pro /
+  iOS 26.4): real UIView subclassing, AccessKit element export.
+- Android runtime **descoped**: no GameActivity APK harness; AVD failed
+  to boot. Compile-verified only.
+- 48h fuzz soak, VAAPI runtime decode, Windows MF/DXGI runtime decode,
+  and non-Apple 4K120 formally descoped for this milestone — see the
+  milestone spec §7 register. Claims are downgraded, not hidden.
+
+### Fixed
+
+- Wayland clipboard `wl-copy` deadlock: stdin was never closed before
+  `wait()`, hanging every clipboard write; now taken, written on a
+  helper thread, and dropped before the bounded wait.
+- API audit misclassified 78 re-export aliases as stable (experimental
+  canonical targets); alias tier inheritance corrected.
+- Docs: `HotNode` intra-doc link, `PointerKind::Pen` phantom variant,
+  nonexistent `--port` dev-server flag, fabricated competitor citations.
+
 ## [0.17.0] - 2026-09-15
 
 ### Added — v0.17.0: Platform Expansion

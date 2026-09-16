@@ -486,11 +486,13 @@ jobs:
         with:
           tool: cargo-semver-checks
       # martensite-font-fallback's baseline crate links fontconfig-sys on
-      # Linux; the .pc file lives in the -dev package.
-      - name: Install fontconfig headers (font-fallback baseline build)
+      # Linux; the .pc file lives in the -dev package. martensite-access
+      # (via accesskit_winit → winit) builds wayland-sys, which needs the
+      # Wayland dev headers — same install as the ignored-tests job.
+      - name: Install fontconfig + Wayland headers (baseline builds)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig1-dev
+          sudo apt-get install -y libfontconfig1-dev libwayland-dev
       # Blocking only once the manifest version exceeds the published
       # baseline (release bump landed). While versions match, report
       # advisory-only so permitted mid-cycle API changes don't go red.
