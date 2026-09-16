@@ -165,12 +165,22 @@ impl Render {
             }
             Some(proxy) => {
                 recording.free_image(*proxy);
-                let new_proxy = ImageProxy::new(atlas_width, atlas_height, ImageFormat::Rgba8);
+                let new_proxy = ImageProxy::new(
+                    atlas_width,
+                    atlas_height,
+                    ImageFormat::Rgba8,
+                    "vello.image_atlas",
+                );
                 *persistent_image_atlas = Some(new_proxy);
                 (new_proxy, AtlasProxyAction::Resized)
             }
             None => {
-                let proxy = ImageProxy::new(atlas_width, atlas_height, ImageFormat::Rgba8);
+                let proxy = ImageProxy::new(
+                    atlas_width,
+                    atlas_height,
+                    ImageFormat::Rgba8,
+                    "vello.image_atlas",
+                );
                 *persistent_image_atlas = Some(proxy);
                 (proxy, AtlasProxyAction::Created)
             }
@@ -506,7 +516,12 @@ impl Render {
         recording.free_resource(draw_monoid_buf);
         recording.free_resource(bin_header_buf);
         recording.free_resource(path_buf);
-        let out_image = ImageProxy::new(params.width, params.height, ImageFormat::Rgba8);
+        let out_image = ImageProxy::new(
+            params.width,
+            params.height,
+            ImageFormat::Rgba8,
+            "vello.output",
+        );
         let blend_spill_buf = BufferProxy::new(
             buffer_sizes.blend_spill.size_in_bytes().into(),
             "vello.blend_spill",

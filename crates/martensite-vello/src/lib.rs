@@ -701,6 +701,7 @@ impl Renderer {
                 params.width,
                 params.height,
                 recording::ImageFormat::Rgba8,
+                "vello.debug_target",
             );
             if let Some(captured) = result.captured {
                 let bump = result.bump.as_ref().unwrap();

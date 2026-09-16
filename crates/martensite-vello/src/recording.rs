@@ -47,6 +47,8 @@ pub struct ImageProxy {
     pub height: u32,
     pub format: ImageFormat,
     pub id: ResourceId,
+    /// A human-readable identifier for the image, used in error messages.
+    pub name: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -147,7 +149,7 @@ impl Recording {
         data: impl Into<Vec<u8>>,
     ) -> ImageProxy {
         let data = data.into();
-        let image_proxy = ImageProxy::new(width, height, format);
+        let image_proxy = ImageProxy::new(width, height, format, "image");
         self.push(Command::UploadImage(image_proxy, data));
         image_proxy
     }
@@ -260,13 +262,14 @@ impl ImageFormat {
 }
 
 impl ImageProxy {
-    pub fn new(width: u32, height: u32, format: ImageFormat) -> Self {
+    pub fn new(width: u32, height: u32, format: ImageFormat, name: &'static str) -> Self {
         let id = ResourceId::next();
         Self {
             width,
             height,
             format,
             id,
+            name,
         }
     }
 }
@@ -277,7 +280,7 @@ impl ResourceProxy {
     }
 
     pub fn new_image(width: u32, height: u32, format: ImageFormat) -> Self {
-        Self::Image(ImageProxy::new(width, height, format))
+        Self::Image(ImageProxy::new(width, height, format, "image"))
     }
 
     pub fn as_buf(&self) -> Option<&BufferProxy> {
