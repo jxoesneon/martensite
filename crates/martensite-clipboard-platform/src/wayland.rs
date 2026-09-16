@@ -88,6 +88,11 @@ impl std::error::Error for WaylandError {}
 /// name cannot be resolved because `XDG_RUNTIME_DIR` is unset.
 fn display_socket() -> Option<std::path::PathBuf> {
     let display = std::path::PathBuf::from(std::env::var_os("WAYLAND_DISPLAY")?);
+    // An empty WAYLAND_DISPLAY is a dead display, not a relative name —
+    // joining it would yield XDG_RUNTIME_DIR itself (which exists).
+    if display.as_os_str().is_empty() {
+        return None;
+    }
     if display.is_absolute() {
         Some(display)
     } else {
@@ -114,7 +119,13 @@ fn wait_with_timeout(child: &mut Child, timeout: Duration) -> Option<ExitStatus>
                 }
                 std::thread::sleep(POLL_INTERVAL);
             }
-            Err(_) => return None,
+            Err(_) => {
+                // OS-level error polling the child — still attempt to reap
+                // it so we don't leave a zombie.
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
         }
     }
 }

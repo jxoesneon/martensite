@@ -614,8 +614,9 @@ impl WgpuEngine {
                                             "indirect buffer too small",
                                         ));
                                     };
-                                    let indirect: &[u32] = bytemuck::cast_slice(first);
-                                    n_wg = indirect[0];
+                                    // from_ne_bytes avoids cast_slice's
+                                    // formal alignment precondition.
+                                    n_wg = u32::from_ne_bytes(first.try_into().unwrap());
                                 }
                                 _ => {
                                     return Err(Error::UnsupportedCpuShaderBinding(
