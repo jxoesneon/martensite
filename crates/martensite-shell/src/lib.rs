@@ -47,8 +47,8 @@ pub mod snap;
 pub mod status_notifier;
 
 pub use backdrop::{
-    BackdropController, BackdropMaterial, BackdropMode, StubBackdropController, VibrancyMaterial,
-    Window,
+    resolve_backdrop_material, resolve_vibrancy_material, BackdropController, BackdropMaterial,
+    BackdropMode, StubBackdropController, VibrancyMaterial, Window,
 };
 pub use event::{ShellEvent, ShellEventQueue};
 pub use snap::SnapLayout;
