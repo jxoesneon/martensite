@@ -398,3 +398,127 @@ jobs:
       - name: cargo check --target ${{ matrix.target }}
         run: cargo check --target ${{ matrix.target }} --all-targets ${{ matrix.crates }}
 
+  # Mechanical API-freeze enforcement (milestone v0.18.0 §4.1).
+  #
+  # Baseline strategy: cargo-semver-checks' registry default — every crate is
+  # compared against its most recently published crates.io version (v0.17.0
+  # today). Two design points keep this gate honest without breaking the
+  # pipeline:
+  #
+  #   1. Scope: all non-vendored publishable crates (30). The three vendored
+  #      forks (martensite-vello, martensite-cosmic-text,
+  #      martensite-accesskit-winit) are excluded because their surface
+  #      tracks upstream and is re-synced rather than frozen — the
+  #      accesskit-winit exclusion is on that vendored rationale alone
+  #      (it uses `version.workspace = true`). Only vello
+  #      (0.10.0-martensite.1) and cosmic-text (0.19.0-martensite.1)
+  #      carry `-martensite.N` prerelease versions off the workspace
+  #      bump cadence. Checking all 30 non-vendored publishable crates against
+  #      crates.io baselines is feasible only because each matrix leg
+  #      is an independent parallel job; a serial `--workspace` run
+  #      would not fit in the pipeline.
+  #   2. Strictness: the check is *blocking* only once the workspace version
+  #      has been bumped past the published baseline — i.e. on release
+  #      branches, tag pushes, and the publish gate (workflow_call). While
+  #      `version == baseline` mid-cycle, breaking changes are permitted
+  #      under 0.x semver policy, so failures are reported advisory-only
+  #      (continue-on-error) instead of failing the build.
+  #
+  # Feature-gated API (vello backend, decoder-*, devtools-timemachine, shell
+  # backends) is not covered: the check runs with explicit
+  # `--default-features` — without the flag, cargo-semver-checks applies an
+  # all-features-except-unstable heuristic that would pull in
+  # decoder-ffmpeg/decoder-vaapi and fail for want of libva/ffmpeg dev
+  # packages. `--all-features` is likewise out: it needs platform system
+  # libraries and cfg-gated targets that don't exist on this runner.
+  # Full-coverage checks can be run locally with
+  # `cargo semver-checks --workspace --all-features` on a Linux host
+  # with the CI system packages installed.
+  semver-checks:
+    name: Semver Checks (${{ matrix.crate }})
+    runs-on: ubuntu-latest
+    # Mirrors the `adapters` job pattern: skip on ordinary PRs to keep them
+    # fast; still runs on main pushes, tags, the publish gate, and
+    # release/* PRs where a bumped version makes the gate strict.
+    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release/')
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - martensite
+          - martensite-access
+          - martensite-access-platform
+          - martensite-assets
+          - martensite-blessed
+          - martensite-clipboard
+          - martensite-clipboard-platform
+          - martensite-core
+          - martensite-devtools
+          - martensite-dnd
+          - martensite-engine-bridge
+          - martensite-focus
+          - martensite-font-fallback
+          - martensite-history
+          - martensite-host
+          - martensite-l10n
+          - martensite-layout
+          - martensite-macros
+          - martensite-media
+          - martensite-media-platform
+          - martensite-motion
+          - martensite-plugin
+          - martensite-reactive
+          - martensite-render
+          - martensite-shell
+          - martensite-test
+          - martensite-text
+          - martensite-theme
+          - martensite-wgpu
+          - martensite-window
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "semver-${{ matrix.crate }}"
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+      # martensite-font-fallback's baseline crate links fontconfig-sys on
+      # Linux; the .pc file lives in the -dev package.
+      - name: Install fontconfig headers (font-fallback baseline build)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev
+      # Blocking only once the manifest version exceeds the published
+      # baseline (release bump landed). While versions match, report
+      # advisory-only so permitted mid-cycle API changes don't go red.
+      - name: Determine gate strictness
+        id: gate
+        run: |
+          WS_VER=$(awk '/^\[workspace\.package\]/{p=1;next}/^\[/{p=0}p&&/^version/{gsub(/"/,"",$3);print $3;exit}' Cargo.toml)
+          # `( ... ) || true` keeps a curl/grep failure (e.g. a crate never
+          # published to crates.io) from aborting the step under
+          # `bash -eo pipefail`; the empty-BASE → strict=true path below
+          # is the intended fallback. Same idiom as publish.yml.
+          BASE=$( (curl -fsSL -A "martensite-ci (https://github.com/jxoesneon/martensite)" \
+            "https://crates.io/api/v1/crates/${{ matrix.crate }}" \
+            | grep -oE '"max_version":"[^"]*"' | head -1 \
+            | sed 's/.*:"//;s/"$//') || true )
+          echo "workspace=${WS_VER} baseline=${BASE:-<none>}"
+          if [ -z "$BASE" ] || [ "$WS_VER" != "$BASE" ]; then
+            echo "strict=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "strict=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check ${{ matrix.crate }} against crates.io baseline
+        continue-on-error: ${{ steps.gate.outputs.strict != 'true' }}
+        env:
+          # The workflow-wide RUSTFLAGS "-D warnings" must not apply to the
+          # *baseline* crate build: upstream-published sources may emit
+          # warnings that would abort rustdoc generation for reasons
+          # unrelated to API changes.
+          RUSTFLAGS: ""
+        run: cargo semver-checks -p ${{ matrix.crate }} --default-features
+
