@@ -120,8 +120,10 @@ Mechanical enforcement is wired in `.github/workflows/ci.yml`
 
 - **Baseline:** the crates.io registry default — each crate is compared
   against its most recently published version (v0.17.0 at audit time).
-- **Matrix:** all 30 non-vendored publishable crates, one parallel job
-  each. Vendored forks are excluded because their surface tracks
+- **Matrix:** the 29 non-vendored publishable crates with a library
+  target, one parallel job each. `martensite-macros` is excluded as
+  proc-macro-only (no semver-checkable API surface). Vendored forks are
+  excluded because their surface tracks
   upstream and is re-synced rather than frozen (§5) — that rationale
   alone covers `martensite-accesskit-winit`, which uses
   `version.workspace = true`; only vello (0.10.0-martensite.1) and

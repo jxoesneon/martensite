@@ -405,7 +405,9 @@ jobs:
   # today). Two design points keep this gate honest without breaking the
   # pipeline:
   #
-  #   1. Scope: all non-vendored publishable crates (30). The three vendored
+  #   1. Scope: all non-vendored publishable crates with a library target
+  #      (29 — martensite-macros is proc-macro-only and excluded). The
+  #      three vendored
   #      forks (martensite-vello, martensite-cosmic-text,
   #      martensite-accesskit-winit) are excluded because their surface
   #      tracks upstream and is re-synced rather than frozen — the
@@ -413,7 +415,7 @@ jobs:
   #      (it uses `version.workspace = true`). Only vello
   #      (0.10.0-martensite.1) and cosmic-text (0.19.0-martensite.1)
   #      carry `-martensite.N` prerelease versions off the workspace
-  #      bump cadence. Checking all 30 non-vendored publishable crates against
+  #      bump cadence. Checking all 29 non-vendored publishable crates against
   #      crates.io baselines is feasible only because each matrix leg
   #      is an independent parallel job; a serial `--workspace` run
   #      would not fit in the pipeline.
@@ -462,7 +464,9 @@ jobs:
           - martensite-host
           - martensite-l10n
           - martensite-layout
-          - martensite-macros
+          # martensite-macros is a proc-macro crate: no library target,
+          # no semver-checkable API surface ("no crates with library
+          # targets selected"). Excluded deliberately, not forgotten.
           - martensite-media
           - martensite-media-platform
           - martensite-motion
