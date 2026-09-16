@@ -145,6 +145,12 @@ cargo bench -p bench_suite --bench bench_suite -- --test
 # Mirrors the CI `performance-gates` job — the workspace `--benches` selector
 # does not cover lib/integration-test gates, so run per crate:
 MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-layout --lib -- --ignored
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-wgpu --lib -- --ignored
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-render --features vello -- --ignored
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-devtools --lib -- --ignored
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite --lib -- --ignored
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-window --lib -- --ignored
+MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-blessed --lib -- --ignored
 MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-blessed --test docking_zero_alloc -- --ignored
 MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-motion --test rubber_band_zero_alloc -- --ignored
 MARTENSITE_STRICT_BENCH=1 cargo test --release -p martensite-theme --test theme_transition_zero_alloc -- --ignored

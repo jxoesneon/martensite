@@ -162,13 +162,14 @@ impl PlatformClipboard for StubClipboard {
 /// stub** that forwards to [`StubClipboard`]: every read returns [`None`] and
 /// every write is silently discarded.
 ///
-/// Real platform integration will be provided by a separate FFI crate in a
-/// future milestone, keeping this crate a safe, auditable dependency. For
-/// Martensite v0.5.0 the usable implementations are [`crate::InMemoryClipboard`]
-/// (for tests and headless environments) and [`StubClipboard`] (the
-/// platform-agnostic fallback). This is a deliberate design decision, not a
-/// missing feature — see the [module docs](crate::platform) for the full
-/// rationale.
+/// Real platform integration is provided by the `martensite-clipboard-platform`
+/// crate when the `platform` feature is enabled (see
+/// [`default_platform_clipboard`]); the stub
+/// remains the fallback when it is not, keeping this crate a safe, auditable
+/// dependency. [`crate::InMemoryClipboard`] (for tests and headless
+/// environments) and [`StubClipboard`] (the platform-agnostic fallback) are
+/// always usable. This is a deliberate design decision, not a missing feature —
+/// see the [module docs](crate::platform) for the full rationale.
 ///
 /// # Examples
 ///
@@ -243,13 +244,14 @@ impl PlatformClipboard for WindowsOleClipboard {
 /// stub** that forwards to [`StubClipboard`]: every read returns [`None`]
 /// and every write is silently discarded.
 ///
-/// Real platform integration will be provided by a separate FFI crate in a
-/// future milestone, keeping this crate a safe, auditable dependency. For
-/// Martensite v0.5.0 the usable implementations are [`crate::InMemoryClipboard`]
-/// (for tests and headless environments) and [`StubClipboard`] (the
-/// platform-agnostic fallback). This is a deliberate design decision, not a
-/// missing feature — see the [module docs](crate::platform) for the full
-/// rationale.
+/// Real platform integration is provided by the `martensite-clipboard-platform`
+/// crate when the `platform` feature is enabled (see
+/// [`default_platform_clipboard`]); the stub
+/// remains the fallback when it is not, keeping this crate a safe, auditable
+/// dependency. [`crate::InMemoryClipboard`] (for tests and headless
+/// environments) and [`StubClipboard`] (the platform-agnostic fallback) are
+/// always usable. This is a deliberate design decision, not a missing feature —
+/// see the [module docs](crate::platform) for the full rationale.
 ///
 /// # Examples
 ///
@@ -324,13 +326,14 @@ impl PlatformClipboard for NsPasteboardClipboard {
 /// stub** that forwards to [`StubClipboard`]: every read returns [`None`]
 /// and every write is silently discarded.
 ///
-/// Real platform integration will be provided by a separate FFI crate in a
-/// future milestone, keeping this crate a safe, auditable dependency. For
-/// Martensite v0.5.0 the usable implementations are [`crate::InMemoryClipboard`]
-/// (for tests and headless environments) and [`StubClipboard`] (the
-/// platform-agnostic fallback). This is a deliberate design decision, not a
-/// missing feature — see the [module docs](crate::platform) for the full
-/// rationale.
+/// Real platform integration is provided by the `martensite-clipboard-platform`
+/// crate when the `platform` feature is enabled (see
+/// [`default_platform_clipboard`]); the stub
+/// remains the fallback when it is not, keeping this crate a safe, auditable
+/// dependency. [`crate::InMemoryClipboard`] (for tests and headless
+/// environments) and [`StubClipboard`] (the platform-agnostic fallback) are
+/// always usable. This is a deliberate design decision, not a missing feature —
+/// see the [module docs](crate::platform) for the full rationale.
 ///
 /// Enabled only on Linux when the `wayland` feature is active.
 ///
@@ -408,13 +411,14 @@ impl PlatformClipboard for WaylandClipboard {
 /// [`StubClipboard`]: every read returns [`None`] and every write is
 /// silently discarded.
 ///
-/// Real platform integration will be provided by a separate FFI crate in a
-/// future milestone, keeping this crate a safe, auditable dependency. For
-/// Martensite v0.5.0 the usable implementations are [`crate::InMemoryClipboard`]
-/// (for tests and headless environments) and [`StubClipboard`] (the
-/// platform-agnostic fallback). This is a deliberate design decision, not a
-/// missing feature — see the [module docs](crate::platform) for the full
-/// rationale.
+/// Real platform integration is provided by the `martensite-clipboard-platform`
+/// crate when the `platform` feature is enabled (see
+/// [`default_platform_clipboard`]); the stub
+/// remains the fallback when it is not, keeping this crate a safe, auditable
+/// dependency. [`crate::InMemoryClipboard`] (for tests and headless
+/// environments) and [`StubClipboard`] (the platform-agnostic fallback) are
+/// always usable. This is a deliberate design decision, not a missing feature —
+/// see the [module docs](crate::platform) for the full rationale.
 ///
 /// Selected on Linux when the `wayland` feature is **not** active.
 ///
