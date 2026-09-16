@@ -17,73 +17,81 @@
 //! Run with the devtools HUD enabled:
 //! `cargo run -p industrial_dashboard --features devtools`
 
-use martensite::prelude::*;
-use martensite_blessed::{
+use martensite::blessed::{
     data_table::{ColumnConfig, ColumnSort, KeyAction, RowFilter},
     Chart, CodeEditor, DataTable, DockPanel, DockTree, LineSeries, Point, SplitDirection,
 };
+use martensite::prelude::*;
 
 #[cfg(feature = "devtools")]
-use martensite_devtools::hud::{DiagnosticHud, FrameTiming};
+use martensite::devtools::hud::{DiagnosticHud, FrameTiming};
 
 // ---------------------------------------------------------------------------
 // FRICTION LOG (pre-freeze fix candidates)
 // ---------------------------------------------------------------------------
 //
-// F1. `ReactiveRuntime` is not in `martensite::prelude` — only `Signal`/`Memo`
-//     are. `Signal::new()` silently binds to a global default runtime while
-//     `runtime.create_signal()` binds to an explicit one; signals on
-//     different runtimes cannot form dependencies. A consumer greps
-//     `martensite::prelude::*`, finds `Signal`, and never learns the runtime
-//     exists. Fix candidate: re-export `ReactiveRuntime` + the free
-//     `create_signal`/`create_memo`/`batch` fns in the prelude.
+// F1. `ReactiveRuntime` was not in `martensite::prelude` — only
+//     `Signal`/`Memo` were. `Signal::new()` silently binds to a global
+//     default runtime while `runtime.create_signal()` binds to an explicit
+//     one; signals on different runtimes cannot form dependencies.
+//     → RESOLVED v0.18.0: prelude now re-exports `ReactiveRuntime`,
+//       `ReactiveError`, `Effect`, and the free `create_signal`/
+//       `create_memo`/`create_effect`/`batch`/`flush` fns.
 //
-// F2. `martensite::prelude` exports `Oklab` but not `Theme`/`TokenKey`/
+// F2. `martensite::prelude` exported `Oklab` but not `Theme`/`TokenKey`/
 //     `ThemeToken` — the two things a consumer actually sets tokens with.
-//     The path `martensite::theme::tokens::TokenKey` is three levels deep.
+//     → RESOLVED v0.18.0: `Theme`/`ThemeToken`/`TokenKey` are in the prelude
+//       (and `martensite::theme::TokenKey` resolves via the theme root).
 //
-// F3. `martensite-blessed`, `martensite-shell`, `martensite-devtools` are not
-//     re-exported from the `martensite` facade at all (unlike the other 16
-//     subsystems) — the facade doc lists subsystems but a consumer can't
-//     `martensite::blessed::DataTable`. Extra direct deps are required.
+// F3. `martensite-blessed`, `martensite-shell`, `martensite-devtools` were
+//     not re-exported from the `martensite` facade at all (unlike the other
+//     subsystems). → RESOLVED v0.18.0: `martensite::blessed`,
+//     `martensite::shell`, `martensite::devtools` aliases added; this demo
+//     now imports through them.
 //
 // F4. `DockPanel::new(widget_id: u64, ...)` takes a raw `u64` while every
 //     other subsystem passes `WidgetId` around. The bridge is
 //     `WidgetId::to_u64()`/`from_u64()` — it works, but the type-safe
-//     boundary is on the consumer. Fix candidate: `DockPanel::new` should
-//     accept `WidgetId` (or a generic `Into<u64>` is not enough — losing
-//     generation info invites ABA misuse).
+//     boundary is on the consumer. → DEFERRED to pre-RC: accepting
+//     `WidgetId` is a signature change; tracked in
+//     docs/API_FREEZE_AUDIT.md "Known API friction".
 //
 // F5. Name/unit collision: `martensite_core::Rect{origin:Vec2,size:Vec2}`
 //     (f32) vs `martensite_blessed::Rect{x:f64,y:f64,width,height}` — two
 //     `Rect` types with different fields AND different float widths.
-//     Importing both in one file forces an alias. Fix candidate: unify on
-//     the core Rect or rename the docking one (`DockRect`).
+//     Importing both in one file forces an alias. → DEFERRED to pre-RC:
+//     unifying or renaming is breaking; tracked in the audit doc.
 //
 // F6. `ColumnConfig` is the odd one out API-wise: `Text`/`Flex`/`Container`/
 //     `MediaView` all have builder methods (`fn font_size(self)->Self`), but
 //     `ColumnConfig::set_width/set_sortable` take `&mut self` and return `()`,
-//     forcing `let mut col` ceremony. Fix candidate: add `with_*` builders.
+//     forcing `let mut col` ceremony. → DEFERRED to pre-RC: `with_*`
+//     builders are additive but were kept out of the freeze batch; tracked
+//     in the audit doc.
 //
 // F7. `SplitDirection::Horizontal` means "horizontal divider → children
 //     stacked top/bottom" — correct once read, but every first-time reader
-//     guesses "horizontal split = side by side". `Rect::split_horizontal`
-//     agrees with the enum, so the model is consistent; only the naming
-//     intuition is off. Document or rename (`DividerOrientation`?).
+//     guesses "horizontal split = side by side". → RESOLVED v0.18.0 (docs):
+//     the enum's rustdoc now calls out that the variant names the divider
+//     line's orientation, not the child arrangement.
 //
 // F8. `LayoutEngine::compute` takes a taffy `NodeId` while `register_node`
 //     is keyed by `WidgetId` — two id spaces in adjacent calls; you must
-//     `lookup_node(widget_id)` before `compute`. Fix candidate: a
-//     `compute_for_widget(WidgetId, ...)` convenience.
+//     `lookup_node(widget_id)` before `compute`. → DEFERRED to pre-RC: a
+//     `compute_for_widget(WidgetId, ...)` convenience is tracked in the
+//     audit doc. (`compute_with_widgets` already covers the full-pipeline
+//     case used below.)
 //
 // F9. `FocusManager::set_focus` silently does nothing if the HotNode lacks
-//     `NodeFlags::FOCUSABLE` — no error, no log. Discovering this costs a
-//     debugging session. Fix candidate: return `bool` or `Result`.
+//     `NodeFlags::FOCUSABLE` — no error, no log. → RESOLVED v0.18.0:
+//     `try_set_focus(arena, id) -> bool` reports whether focus moved, and
+//     `set_focus`'s rustdoc now flags the silent no-op.
 //
 // F10. `DataTable::handle_key` takes a framework `KeyAction` enum, not a
-//     winit `KeyEvent` — every consumer writes the same keymap. Reasonable
-//     decoupling, but a `KeyAction::from_winit(&KeyEvent)` helper in
-//     `martensite-window` would save the boilerplate.
+//     winit `KeyEvent` — every consumer writes the same keymap.
+//     → RESOLVED v0.18.0: `KeyAction::from_key_name(key, shift, ctrl)`
+//      maps the framework's logical key names (winit `NamedKey` strings)
+//      to actions without a winit dependency edge.
 //
 // F11. Re-export shadowing: `martensite::layout::Size` is the crate's own
 //     non-generic geometry Size, which shadows `taffy::Size<T>` from the
@@ -91,36 +99,34 @@ use martensite_devtools::hud::{DiagnosticHud, FrameTiming};
 //     to name `taffy::Size<Dimension>`/`taffy::Size<AvailableSpace>` —
 //     `Style.size` and `compute(available)` become unnameable without a
 //     direct taffy dep. Workaround used below: `constraints_to_available`
-//     + `Style::default()`. Fix candidate: rename geometry Size
-//     (`GeometrySize`/`Bounds`?) or re-export taffy Size under a distinct
-//     name.
+//     + `Style::default()`. → DEFERRED to pre-RC: renaming geometry `Size`
+//     is breaking; tracked in the audit doc.
 //
-// F12. `resolve_backdrop_material`/`resolve_vibrancy_material` are `pub`
+// F12. `resolve_backdrop_material`/`resolve_vibrancy_material` were `pub`
 //     but NOT re-exported at the `martensite_shell` root — only reachable
-//     as `martensite_shell::backdrop::resolve_*`. Inconsistent with the
-//     flat re-export the crate does for everything else.
+//     as `martensite_shell::backdrop::resolve_*`. → RESOLVED v0.18.0: both
+//     are re-exported at the shell root (and reachable via
+//     `martensite::shell::resolve_*` through the facade).
 //
 // F13. `StubBackdropController::mode()` is a trait method
 //     (`BackdropController`), so `ctrl.mode()` fails to resolve until the
 //     trait is imported — fine Rust, but the stub's public surface has no
 //     inherent methods at all, which trips consumers copying doctest
-//     patterns.
+//     patterns. → PARTIALLY ADDRESSED: `BackdropController` is already at
+//     the shell root (now also `martensite::shell::BackdropController`);
+//     inherent-method ergonomics deferred to pre-RC.
 //
 // F14. `DataTable::sort_by(col, direction, cmp)` inverts the comparator
 //     for `Descending` — so the comparator must be written ASCENDING
 //     (`a.cmp(b)`), and a "natural" `b.cmp(a)` + `Descending` silently
 //     produces ascending output. This demo's first version shipped exactly
-//     that bug. Fix candidate: take comparator for the requested direction
-//     directly, or document "comparator is always the ascending order".
+//     that bug. → RESOLVED v0.18.0 (docs): `sort_by` rustdoc now states
+//     the comparator always encodes ascending order.
 //
 // F15. (Remark on F9 — docs-visibility note, not a doc gap.)
 //     `is_focusable_target` requires FOCUSABLE **and** VISIBLE flags —
-//     `FOCUSABLE` alone silently fails `set_focus`. The flag pair IS
-//     stated in the public `FocusManager::set_focus` rustdoc ("alive,
-//     visible, focusable, and not inert") and shown in its doctest; the
-//     friction is that the requirement only bites as a silent no-op at
-//     runtime (F9's finding). Fix candidate is F9's: have `set_focus`
-//     return `bool`/`Result` like `apply_focus_request` does.
+//     `FOCUSABLE` alone silently fails `set_focus`. → RESOLVED v0.18.0
+//     with F9: `try_set_focus` makes the rejection observable.
 // ---------------------------------------------------------------------------
 
 /// One row of the process-metrics table. Kept POD so 1M rows stay cheap.
@@ -148,10 +154,11 @@ fn gen_rows(n: usize) -> Vec<MetricRow> {
 fn build_widget_tree() -> (WidgetArena, WidgetId, Vec<WidgetId>) {
     let mut arena = WidgetArena::new();
 
-    // F2 in action: Theme/TokenKey live outside the prelude.
+    // F2 resolved: TokenKey is in the prelude; `default_dark` still lives
+    // under theme::tokens.
     let theme = martensite::theme::tokens::default_dark();
     let bg = theme
-        .color(martensite::theme::tokens::TokenKey::BackgroundColor)
+        .color(TokenKey::BackgroundColor)
         .unwrap_or(Oklab::from_srgb(0.08, 0.09, 0.11));
 
     let root = arena.insert_with_widget(
@@ -166,8 +173,9 @@ fn build_widget_tree() -> (WidgetArena, WidgetId, Vec<WidgetId>) {
         ),
     );
 
-    // Focusable leaf widgets for the keyboard-navigation pass (F9: the
-    // FOCUSABLE flag must be set on the HotNode before insert).
+    // Focusable leaf widgets for the keyboard-navigation pass (F9/F15:
+    // the FOCUSABLE flag must be set on the HotNode before insert, and
+    // try_set_focus below now reports rejection).
     let mut focusable = Vec::new();
     for (name, widget) in [
         (
@@ -300,11 +308,14 @@ fn run_grid_pass(rows: Vec<MetricRow>) {
         "  grid: {} alert rows after filter",
         table.display_row_count()
     );
-    // F10: keys arrive as framework KeyAction, consumer maps winit→action.
-    // F16: SelectionModel::extend_to builds a Range over raw *storage* row
-    // indices — after sort+filter reorder the display, a shift-range selects
-    // mostly filtered-out, never-displayed rows. Selection ranges should be
-    // display-index-based or the API should say otherwise.
+    // F10 resolved: KeyAction::from_key_name maps framework key names.
+    // F16 documented: SelectionModel::extend_to builds a Range over raw
+    // *storage* row indices — after sort+filter reorder the display, a
+    // shift-range selects mostly filtered-out, never-displayed rows.
+    assert_eq!(
+        KeyAction::from_key_name("PageDown", false, false),
+        Some(KeyAction::PageDown)
+    );
     table.handle_key(KeyAction::PageDown);
     table.handle_key(KeyAction::ShiftDown);
     table.handle_key(KeyAction::ShiftDown);
@@ -377,8 +388,9 @@ fn run_focus_pass(arena: &mut WidgetArena, root: WidgetId, focusable: &[WidgetId
     use martensite::focus::{FocusManager, TabNavigation};
     let mut fm = FocusManager::new();
     fm.set_root(root);
-    // F9: returns nothing on success; silent no-op without FOCUSABLE flag.
-    fm.set_focus(arena, focusable[0]);
+    // F9 resolved: try_set_focus reports whether focus actually moved;
+    // set_focus still exists for the fire-and-forget path.
+    assert!(fm.try_set_focus(arena, focusable[0]));
     let mut order = vec![fm.current_focus()];
     for _ in 0..focusable.len() {
         order.push(fm.tab(arena, TabNavigation::Forward));
@@ -395,11 +407,11 @@ fn run_focus_pass(arena: &mut WidgetArena, root: WidgetId, focusable: &[WidgetId
 /// NSVisualEffectView involved).
 fn run_shell_pass() {
     use martensite::theme::tokens::default_dark;
-    // F12: resolver fns are pub but not re-exported at the shell root.
-    let material = martensite_shell::backdrop::resolve_backdrop_material(&default_dark());
+    // F12 resolved: resolver fns are re-exported at the shell root.
+    let material = martensite::shell::resolve_backdrop_material(&default_dark());
     // F13: `mode()` lives on the `BackdropController` trait — import required.
-    use martensite_shell::BackdropController;
-    let ctrl = martensite_shell::StubBackdropController::new();
+    use martensite::shell::BackdropController;
+    let ctrl = martensite::shell::StubBackdropController::new();
     println!(
         "  shell: dark theme → backdrop material {material:?}, stub controller mode {:?}",
         ctrl.mode()
@@ -432,9 +444,9 @@ fn main() {
     println!("Industrial Workstation — Martensite dogfooding build-up\n");
 
     // -- 1. Signals-driven state ------------------------------------------
-    // F1: Signal::new binds to the implicit global runtime; an explicit
-    // ReactiveRuntime is available at martensite::reactive but absent from
-    // the prelude.
+    // F1 resolved: Signal::new still binds to the implicit global runtime,
+    // but ReactiveRuntime + the explicit create_* fns are now in the
+    // prelude — an explicit runtime is one import away.
     let cpu_load = Signal::new(0.42_f64);
     let load_pct = Memo::new({
         let s = cpu_load.clone();
@@ -467,7 +479,7 @@ fn main() {
     let panel_ids: Vec<u64> = focusable.iter().map(|id| id.to_u64()).collect();
     let dock = build_dock_tree(&panel_ids);
     let rects: Vec<_> = dock
-        .panel_rects(martensite_blessed::Rect::new(0.0, 0.0, 1600.0, 900.0))
+        .panel_rects(martensite::blessed::Rect::new(0.0, 0.0, 1600.0, 900.0))
         .collect();
     println!(
         "  dock: {} panels across {} nodes",
@@ -476,7 +488,7 @@ fn main() {
     );
     for (nid, r) in &rects {
         let panel = dock.node(*nid).unwrap();
-        if let martensite_blessed::DockNode::Leaf { panel } = panel {
+        if let martensite::blessed::DockNode::Leaf { panel } = panel {
             println!(
                 "    - \"{}\" @ {:.0}x{:.0}+{:.0},{:.0}",
                 panel.title(),
@@ -535,7 +547,7 @@ mod tests {
     fn dock_tree_rects_cover_surface() {
         let dock = build_dock_tree(&[1, 2, 3]);
         let total: f64 = dock
-            .panel_rects(martensite_blessed::Rect::new(0.0, 0.0, 1600.0, 900.0))
+            .panel_rects(martensite::blessed::Rect::new(0.0, 0.0, 1600.0, 900.0))
             .map(|(_, r)| r.width * r.height)
             .sum();
         assert!((total - 1600.0 * 900.0).abs() < 1.0);

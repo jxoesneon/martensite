@@ -169,6 +169,55 @@ superseded by the machine enumeration in `API_SURFACE_AUDIT.md`.
 - **MSRV:** 1.89.0; bumps are minor-version events with 6-month changelog
   notice (`RELEASE_PROCESS.md` §6, `DEPRECATION_POLICY.md` §4).
 
+## 8. Known API Friction (deferred to pre-RC)
+
+The v0.18.0 dogfooding example (`examples/industrial_dashboard`) produced
+a verified API-friction log (F1–F16, documented inline in that crate's
+`main.rs`). The additive/non-breaking subset was fixed for v0.18.0:
+
+- **F1** — `martensite::prelude` now re-exports `ReactiveRuntime`,
+  `ReactiveError`, `Effect`, `create_signal`, `create_memo`,
+  `create_effect`, `batch`, and `flush` alongside `Signal`/`Memo`.
+- **F2** — `Theme`, `ThemeToken`, and `TokenKey` are in the prelude
+  (previously only `Oklab`).
+- **F3** — the facade now re-exports `martensite::blessed`,
+  `martensite::shell`, and `martensite::devtools`, matching the other
+  subsystem aliases.
+- **F7** — `SplitDirection` rustdoc now states explicitly that the
+  variant names the divider line's orientation (`Horizontal` → top/bottom
+  children), not the child arrangement.
+- **F9/F15** — `FocusManager::try_set_focus(arena, id) -> bool` reports
+  whether focus actually moved; `set_focus` retains its `()` signature
+  and its rustdoc now flags the silent no-op on missing
+  `FOCUSABLE`/`VISIBLE` flags.
+- **F10** — `KeyAction::from_key_name(key, shift, ctrl)` maps the
+  framework's logical key names (winit `NamedKey` strings, as carried by
+  `WidgetEvent::KeyPressed.key`) to table navigation actions with no new
+  dependency edge.
+- **F12** — `martensite_shell` re-exports `resolve_backdrop_material`
+  and `resolve_vibrancy_material` at the crate root, matching its flat
+  re-export convention.
+- **F14** — `DataTable::sort_by` rustdoc now states the comparator always
+  encodes *ascending* order and `Descending` reverses it.
+- **F16** — `SelectionModel`/`extend_to` rustdoc now states that ranges
+  are storage-index-based, so a reordered/filtered display can leave
+  selected rows that are filtered out or non-contiguous on screen.
+
+The following findings were **deferred to the pre-RC window** — they are
+design decisions or breaking changes, not v0.18.0 blockers:
+
+| ID  | Finding | Why deferred |
+|-----|---------|--------------|
+| F4  | `DockPanel::new` takes `u64`, not `WidgetId` | Signature change; `WidgetId` carries generation info and the right shape (typed id vs `Into<u64>`) needs a pre-RC decision to avoid ABA-prone `from_u64` bridges. |
+| F5  | `martensite_core::Rect` (f32, origin/size) vs `martensite_blessed::Rect` (f64, x/y/w/h) | Unifying or renaming (`DockRect`?) is breaking; affects every docking consumer. |
+| F6  | `ColumnConfig` has `set_*`/`&mut` API where siblings use builders | `with_*` builders are additive but churn the surface; bundled with the pre-RC ergonomics pass. |
+| F8  | `LayoutEngine::compute` takes taffy `NodeId` while `register_node` is keyed by `WidgetId` | `compute_with_widgets` already covers the whole-pipeline case; a `compute_for_widget` convenience is additive but was kept out of the freeze batch. |
+| F11 | `martensite::layout::Size` shadows `taffy::Size<T>` | Renaming geometry `Size` is breaking; re-exporting taffy's under a distinct name is a naming decision for pre-RC. |
+| F13 | `StubBackdropController` has no inherent methods; `mode()` needs `BackdropController` in scope | The trait is already root-exported (now also `martensite::shell::BackdropController`); whether the stub gains inherent convenience methods is a pre-RC ergonomics decision. |
+
+These items are recorded here so the pre-RC API review has a canonical
+list; none of them block the v0.18.0 freeze.
+
 ## Audit Date
 
 2026-10 (v0.18.0 milestone, workstream W1)
