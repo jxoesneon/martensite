@@ -47,7 +47,7 @@ at 1.0.0:
   trait-object references.
 - **Pointer events.** `martensite_window::event::PointerId` is now a
   `u64` newtype (was `u32`), and `PointerEvent` carries a
-  `kind: PointerKind` field (`Mouse`/`Touch`/`Pen`). Touch ids are
+  `kind: PointerKind` field (`Mouse`/`Touch`/`Tablet`/`Unknown`). Touch ids are
   offset so they cannot collide with the mouse's primary id. Match
   sites constructing `PointerEvent` literally need the new field.
 - **Mobile accessibility FFI moved.** iOS/Android adapter glue moved

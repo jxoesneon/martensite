@@ -25,8 +25,9 @@ subsystem crates under `martensite::*` — `core`, `reactive`, `layout`,
 `dnd`, `theme`, `motion`, `history`, `l10n`, `media`, `macros` — plus a
 `prelude` module that also pulls in the engine-bridge types, so a single
 dependency is enough. (`martensite-assets`, `martensite-plugin`,
-`martensite-test`, and `martensite-devtools` are dependencies but are
-not re-exported as `martensite::*` modules.)
+`martensite-test`, and `martensite-devtools` are pulled in as
+dev-dependencies of the umbrella crate — downstream users never receive
+them — and are not re-exported as `martensite::*` modules.)
 
 ## 2. A minimal program
 
@@ -65,7 +66,8 @@ metadata; use `arena.insert(hot, cold)` directly when you need
 ## 3. A real windowed application
 
 There is no `App::run` convenience runner in v0.17.0 — `App::build()`
-produces an `AppConfig` consumed by the render pipeline, and the event
+returns an `AppBuilder` whose `.build()` produces the `AppConfig`
+consumed by the render pipeline, and the event
 loop is wired explicitly through `winit`'s `ApplicationHandler`. The
 canonical skeleton (adapted from the `martensite-window` crate docs):
 
@@ -147,7 +149,9 @@ cargo martensite --version   # prints the toolchain version
 cargo martensite build       # one-shot: build the guest crate as a cdylib
 cargo martensite dev         # watch src/ and rebuild on change (default: --watch)
 cargo martensite dev --no-watch   # single build cycle, no watcher
-cargo martensite dev --port 9000  # bind the dev server to a custom port (default 8765)
+cargo martensite dev --port 9000  # parsed and echoed (default 8765); no dev
+                                  # server binds a socket today — the flag is
+                                  # reserved for the planned dev-server mode
 cargo martensite dev --package my_guest   # build a crate other than the current package
 ```
 

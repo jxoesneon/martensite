@@ -16,7 +16,8 @@ Tier 1 platforms are guaranteed to compile, link, and render with 100% feature p
 * **IME Support:** Full native candidate window placement
 * **Drag and Drop:** Full OLE D&D (files, text, image buffers)
 * **Clipboard:** Delayed multi-MIME rendering
-* **CI Status:** Fully verified (Build + Lavapipe headless rendering)
+* **CI Status:** Build + tests on `windows-latest` (shell integration job);
+  Lavapipe headless rendering runs on the Linux CI leg, not Windows
 
 ### macOS 12+ (aarch64 / x86_64)
 * **GPU Backend:** Metal (Primary via `wgpu`), Software Fallback

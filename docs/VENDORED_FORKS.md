@@ -29,15 +29,22 @@ accepted outcome; silent drift is not.
 2. **Version suffix.** Vendored releases use the
    `<upstream-version>-martensite.<n>` scheme so the provenance is
    visible in `Cargo.lock` and on crates.io.
-3. **Lint exemptions are deliberate and per-crate.**
-   `martensite-vello` and `martensite-cosmic-text` carry
+3. **Lint exemptions are deliberate and per-crate; upstream lint
+   configurations are preserved verbatim.** `martensite-vello` carries
    `#![allow(unsafe_code)]`, `#![allow(missing_docs)]`,
-   `#![allow(clippy::all)]`, and
-   `#![allow(rustdoc::broken_intra_doc_links)]`;
+   `#![allow(clippy::all)]`, `#![allow(clippy::todo)]` (upstream
+   `todo!()` stubs retained — the v0.18.0 hardening replaced the
+   reachable ones; remaining stubs are upstream-dead paths),
+   `#![allow(rustdoc::broken_intra_doc_links)]`, and
+   `#![allow(unfulfilled_lint_expectations)]` (rust issue #129255).
+   `martensite-cosmic-text` preserves upstream's full lint table —
+   the same four blanket allows plus upstream's own allow/deny/warn
+   set (`clippy::unwrap_used`, `indexing_slicing`,
+   `arithmetic_side_effects`, and friends; see its `lib.rs`).
    `martensite-accesskit-winit` carries only `#![allow(unsafe_code)]`
-   (for the platform-adapter FFI upstream requires). These are the only
-   vendored exemptions — upstream code, not Martensite API surface — and
-   no new exemptions may be added.
+   (for the platform-adapter FFI upstream requires). These exemptions
+   cover upstream code, not Martensite API surface, and no new
+   exemptions may be added.
 4. **License retention.** Upstream `LICENSE-*` files ship in each
    vendored crate directory and must not be removed.
 5. **Local patches are documented in the crate README** (why the fork
@@ -60,7 +67,7 @@ accepted outcome; silent drift is not.
 
 The workspace uses `naga` 30 (via wgpu 30). `naga` 29.0.4 enters the
 graph through `vello_shaders` 0.10.0, a *registry* dependency of
-`martensite-vello` (naga 29 is a build-dependency for shader
+`martensite-vello` (naga 29 is used by `vello_shaders` for shader
 translation). Two naga majors in the lockfile is accepted interim
 state: dedup is **blocked on upstream** — either `vello_shaders`
 ships a naga-30 build, or `vello` itself is replaced per the exit

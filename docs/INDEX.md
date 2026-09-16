@@ -1,7 +1,7 @@
 # Martensite — Documentation Index
 
 **Repository:** https://github.com/jxoesneon/martensite  
-**Build:** `cargo check --workspace` ✅ (Rust 1.98.1, 0 errors)  
+**Build:** `cargo check --workspace` (see CI for the authoritative gate)  
 **Spec State:** Complete — all ADRs, DDRs, and process docs written for v1.0.0
 
 ---
@@ -164,6 +164,15 @@ Detailed per-milestone architectural specifications, entry/exit criteria, and ve
 - [milestones/v0.8.0-media-hdr.md](milestones/v0.8.0-media-hdr.md) — v0.8.0 Media & Advanced GPU (NV12/P010 Zero-Copy, Display EOTF)
 - [milestones/v0.9.0-developer-experience.md](milestones/v0.9.0-developer-experience.md) — v0.9.0 Developer Experience (Tracy, Hot-Reload, Headless CI)
 - [milestones/v0.10.0-plugins-ecosystem.md](milestones/v0.10.0-plugins-ecosystem.md) — v0.10.0 Hardening, Plugins & Ecosystem (Wasmtime, Blessed Widgets)
+- [milestones/v0.11.0-typography-a11y.md](milestones/v0.11.0-typography-a11y.md) — v0.11.0 Typography & Accessibility
+- [milestones/v0.12.0-blessed-kinematics.md](milestones/v0.12.0-blessed-kinematics.md) — v0.12.0 Blessed Widgets & Kinematics
+- [milestones/v0.13.0-modern-shell.md](milestones/v0.13.0-modern-shell.md) — v0.13.0 Modern Shell
+- [milestones/v0.14.0-external-surfaces.md](milestones/v0.14.0-external-surfaces.md) — v0.14.0 External Surfaces
+- [milestones/v0.15.0-engine-showcase.md](milestones/v0.15.0-engine-showcase.md) — v0.15.0 Engine Showcase
+- [milestones/v0.16.0-media-pipeline.md](milestones/v0.16.0-media-pipeline.md) — v0.16.0 Hardware Media Pipeline
+- [milestones/v0.17.0-platform-expansion.md](milestones/v0.17.0-platform-expansion.md) — v0.17.0 Platform Expansion
+- [milestones/v0.18.0-production-hardening.md](milestones/v0.18.0-production-hardening.md) — v0.18.0 Production Hardening & Dogfooding
+- [milestones/v0.19.0-distribution.md](milestones/v0.19.0-distribution.md) — v0.19.0 Distribution
 - [milestones/v1.0.0-production-release.md](milestones/v1.0.0-production-release.md) — v1.0.0 Production Stability (API Freeze, docs.rs, Crates.io)
 
 ---
