@@ -25,7 +25,7 @@
 //! Every subprocess invocation is bounded: `wl-paste` asks the current
 //! selection owner for its data over the Wayland wire, and a hung owner
 //! would otherwise block `read()` forever. Children that outlive
-//! [`COMMAND_TIMEOUT`] are killed. This mirrors the X11 backend, which
+//! `COMMAND_TIMEOUT` are killed. This mirrors the X11 backend, which
 //! bounds its `SelectionNotify` wait to a ~100 ms poll budget.
 //!
 //! # Safety
