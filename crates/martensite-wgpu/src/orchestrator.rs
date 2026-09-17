@@ -200,6 +200,8 @@ pub struct RenderOrchestrator {
     /// `(surface_id, site)` so a surface with no frames yet warns once
     /// instead of once per frame. An entry is removed when the same
     /// site later succeeds, so a genuine regression re-warns.
+    /// Only `dispatch_pending` (vello) reads this.
+    #[cfg(feature = "vello")]
     external_warned: std::collections::HashSet<(u64, u8)>,
 }
 
@@ -323,6 +325,7 @@ impl RenderOrchestrator {
             } else {
                 None
             },
+            #[cfg(feature = "vello")]
             external_warned: std::collections::HashSet::new(),
         })
     }
