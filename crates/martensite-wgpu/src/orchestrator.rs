@@ -405,6 +405,10 @@ impl RenderOrchestrator {
     pub fn set_audit_scale_factor(&mut self, scale_factor: f64) {
         if let Some(audit) = &mut self.paint_audit {
             audit.config.scale_factor = scale_factor as f32;
+            // A scale change shifts every measured size — fingerprints
+            // recorded under the old scale would suppress legitimately
+            // new findings, so re-arm the reporter.
+            audit.reporter.reset();
         }
     }
 
@@ -690,13 +694,17 @@ impl RenderOrchestrator {
         self.backdrop_mode = mode;
         surface.configure(device, adapter, width, height, mode)?;
         // Keep the drawable size current — the paint audit's OutOfFrame
-        // check resolves against it.
+        // check resolves against it, and the CPU fallback rasterizes at
+        // this size.
         self.frame_size = (width, height);
+        if !self.tinyskia.resize(width, height) {
+            tracing::warn!("tinyskia resize to {width}x{height} failed — CPU fallback may present stale frames");
+        }
         Ok(())
     }
 
     /// Updates the drawable frame size used by the paint audit's
-    /// `OutOfFrame` check.
+    /// `OutOfFrame` check and the CPU fallback's raster buffer.
     ///
     /// Call this when the render target resizes through a path other
     /// than [`configure_surface`](Self::configure_surface) — for
@@ -704,6 +712,9 @@ impl RenderOrchestrator {
     /// `resize` method.
     pub fn set_frame_size(&mut self, width: u32, height: u32) {
         self.frame_size = (width, height);
+        if !self.tinyskia.resize(width, height) {
+            tracing::warn!("tinyskia resize to {width}x{height} failed — CPU fallback may present stale frames");
+        }
     }
 
     /// Renders the most recently built frame to a WGPU surface and presents it.

@@ -37,7 +37,7 @@ use martensite::window::WindowId;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowAttributes};
 
@@ -113,7 +113,6 @@ struct App {
     chrome: TextPainter,
     recovery: RecoveryMachine,
     needs_layout: bool,
-    cursor: PhysicalPosition<f64>,
     last_frame: Instant,
     started: Instant,
     frame_ms: f64,
@@ -122,7 +121,7 @@ struct App {
 }
 
 impl App {
-    fn new(_proxy: EventLoopProxy) -> Self {
+    fn new() -> Self {
         Self {
             scale: Signal::new(1.0f32),
             cpu: Signal::new(0.42f64),
@@ -146,7 +145,6 @@ impl App {
             chrome: TextPainter::new(),
             recovery: RecoveryMachine::new(),
             needs_layout: true,
-            cursor: PhysicalPosition::new(0.0, 0.0),
             last_frame: Instant::now(),
             started: Instant::now(),
             frame_ms: 0.0,
@@ -189,7 +187,11 @@ impl App {
         ];
         for (i, widget) in widgets.into_iter().enumerate() {
             let mut hot = HotNode::default();
-            hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE;
+            // F21 — hit-testing is opt-in: without HIT_TEST_ENABLED the
+            // router reports every node Unhandled and pointer/scroll
+            // input silently dies. Required for click-sort, row
+            // selection, caret placement, and wheel scrolling.
+            hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
             let mut cold = ColdNode::new(widget);
             cold.debug_name = Some(self.panel_names[i]);
             let id = arena.insert(hot, cold);
@@ -204,15 +206,17 @@ impl App {
         self.panels = panels;
         self.focus = focus;
         // Focus lands on the grid first — it is the hero panel.
+        // `apply_focus_request` (not `try_set_focus`) so FocusGained
+        // actually dispatches to the widget (F22).
         if let (Some(arena), Some(first)) = (&mut self.arena, panels[0]) {
-            self.focus.try_set_focus(arena, first);
+            self.focus.apply_focus_request(arena, first);
         }
     }
 
     /// Applies the dock tree's panel rects to the arena — the docking
-    /// model is the geometry authority (no Taffy on panels; its
-    /// two-pass path is exercised by the header strip and by the
-    /// headless mode).
+    /// model is the sole geometry authority in windowed mode (header
+    /// and status strips are hand-painted chrome; Taffy's two-pass
+    /// path is exercised only by `--headless`).
     fn apply_dock_layout(&mut self) {
         let (Some(arena), Some(window)) = (&mut self.arena, &self.window) else {
             return;
@@ -284,17 +288,39 @@ impl App {
         );
 
         // KPI chips — measured first so the title/subtitle get the real
-        // remaining width instead of a fraction guess (wrap collisions).
-        let kpis = [
-            ("CPU", format!("{:.0}%", self.cpu.get() * 100.0), pal.accent),
+        // remaining width instead of a fraction guess. At narrow widths
+        // the least important chips drop off (UPTIME, then PROCS) rather
+        // than squeezing the title to zero — graceful degradation.
+        let mut kpis = vec![
+            ("UPTIME", uptime, pal.text_muted),
+            ("PROCS", fmt_count(1_000_000), pal.text),
             (
                 "MEM",
                 format!("{:.0}%", self.mem.get() * 100.0),
                 pal.accent2,
             ),
-            ("PROCS", fmt_count(1_000_000), pal.text),
-            ("UPTIME", uptime, pal.text_muted),
+            ("CPU", format!("{:.0}%", self.cpu.get() * 100.0), pal.accent),
         ];
+        // Least important first — pop until the title keeps ~180pt.
+        let min_title_w = 180.0 * sd;
+        loop {
+            let chips_w: f64 = kpis
+                .iter()
+                .map(|(label, value, _)| {
+                    f64::from(
+                        text.measure(value, 14.0 * s)
+                            .max(text.measure(label, 12.0 * s)),
+                    ) + 20.0 * sd
+                        + 8.0 * sd
+                })
+                .sum();
+            let text_w = (w - m - 16.0 * sd - chips_w) - (m + 16.0 * sd) - 8.0 * sd;
+            if text_w >= min_title_w || kpis.len() <= 1 {
+                break;
+            }
+            kpis.remove(0);
+        }
+        kpis.reverse(); // back to CPU-first order for layout below
         let chips_w: f64 = kpis
             .iter()
             .map(|(label, value, _)| {
@@ -306,21 +332,31 @@ impl App {
             })
             .sum();
         let text_w = ((w - m - 16.0 * sd - chips_w) - (m + 16.0 * sd) - 8.0 * sd).max(1.0);
+        let title = text.fit(
+            "MARTENSITE — INDUSTRIAL WORKSTATION",
+            14.0 * s,
+            text_w as f32,
+        );
         text.push(
             list,
             Point::new(m + 16.0 * sd, m + 9.0 * sd),
-            "MARTENSITE — INDUSTRIAL WORKSTATION",
+            &title,
             14.0 * s,
             pal.text,
-            Some(text_w as f32),
+            None,
+        );
+        let subtitle = text.fit(
+            "windowed dogfood — dock · grid · telemetry · editor · media",
+            12.0 * s,
+            text_w as f32,
         );
         text.push(
             list,
             Point::new(m + 16.0 * sd, m + 28.0 * sd),
-            "windowed dogfood — dock · grid · telemetry · editor · media",
+            &subtitle,
             12.0 * s,
             Palette::alpha(pal.text, 200),
-            Some(text_w as f32),
+            None,
         );
 
         let mut kx = w - m - 16.0 * sd;
@@ -370,16 +406,23 @@ impl App {
             "Tab focus · click sort/select · F alerts · Space pause · focus: {focused_name} · {:.1}ms",
             self.frame_ms
         );
-        // Reserve room on the right for the devtools label (when built
-        // with `--features devtools`) so the two never collide.
-        let hints_w = (w - 2.0 * m - 24.0 * sd - 260.0 * sd).max(1.0);
+        // Reserve room on the right for the devtools label (only when
+        // built with `--features devtools`) so the two never collide.
+        #[cfg(feature = "devtools")]
+        let reserve = 260.0 * sd;
+        #[cfg(not(feature = "devtools"))]
+        let reserve = 0.0;
+        let hints_w = (w - 2.0 * m - 24.0 * sd - reserve).max(1.0);
+        // fit, not wrap — a wrapped second line would overflow the
+        // bar's fixed height and collide with nothing to clip it.
+        let hints = text.fit(&hints, 12.0 * s, hints_w as f32);
         text.push(
             list,
             Point::new(m + 12.0 * sd, sb_y + 6.0 * sd),
             &hints,
             12.0 * s,
             Palette::alpha(pal.text, 200),
-            Some(hints_w as f32),
+            None,
         );
         #[cfg(feature = "devtools")]
         if self.hud.is_enabled() {
@@ -617,7 +660,6 @@ impl ApplicationHandler for App {
             WindowEvent::PointerMoved {
                 position, primary, ..
             } => {
-                self.cursor = position;
                 if primary {
                     self.dispatch_pointer(position, PointerState::Moved, None);
                 }
@@ -676,7 +718,12 @@ impl ApplicationHandler for App {
                         TabNavigation::Forward
                     };
                     if let Some(arena) = &mut self.arena {
-                        self.focus.tab(arena, dir);
+                        // `tab` returns the next candidate without
+                        // dispatching — `apply_focus_request` performs
+                        // the FocusLost/FocusGained transition (F22).
+                        if let Some(next) = self.focus.tab(arena, dir) {
+                            self.focus.apply_focus_request(arena, next);
+                        }
                     }
                     return;
                 }
@@ -723,12 +770,6 @@ impl ApplicationHandler for App {
             _ => {}
         }
     }
-
-    fn proxy_wake_up(&mut self, _event_loop: &dyn ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
-    }
 }
 
 impl App {
@@ -768,7 +809,7 @@ impl App {
     /// them to the FocusManager so Tab order and click focus agree.
     fn sync_focus(&mut self) {
         if let (Some(arena), Some(id)) = (&mut self.arena, self.router.take_focus_request()) {
-            self.focus.try_set_focus(arena, id);
+            self.focus.apply_focus_request(arena, id);
         }
     }
 }
@@ -783,7 +824,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    let proxy = event_loop.create_proxy();
-    event_loop.run_app(App::new(proxy))?;
+    event_loop.run_app(App::new())?;
     Ok(())
 }

@@ -36,6 +36,9 @@
 //!
 //! [`PaintLintKind::UnknownBackdrop`]: crate::paint_audit::PaintLintKind::UnknownBackdrop
 //! [`PaintAuditConfig::report_unknown_backdrop`]: crate::paint_audit::PaintAuditConfig::report_unknown_backdrop
+//! [`PaintLintKind::ClipOverflow`]: crate::paint_audit::PaintLintKind::ClipOverflow
+//! [`PaintLintKind::OutOfFrame`]: crate::paint_audit::PaintLintKind::OutOfFrame
+//! [`PaintAuditConfig::frame`]: crate::paint_audit::PaintAuditConfig::frame
 //!
 //! The audit is advisory — it reports, it never blocks rendering. Font
 //! sizes in a paint list are device pixels; 1pt is approximated as one
@@ -244,14 +247,19 @@ pub struct PaintLint {
 
 impl PaintLint {
     /// Stable identity for deduplication: same kind at the same anchor
-    /// with the same detail hashes equal.
+    /// with the same detail hashes equal. Digits are excluded from the
+    /// detail hash — measured values (px overflow, contrast ratios)
+    /// jitter frame to frame and would mint a fresh fingerprint for
+    /// what is conceptually the same finding.
     fn fingerprint(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.kind.hash(&mut h);
         ((self.anchor.0 * 4.0) as i64).hash(&mut h);
         ((self.anchor.1 * 4.0) as i64).hash(&mut h);
-        self.detail.hash(&mut h);
+        for c in self.detail.chars().filter(|c| !c.is_ascii_digit()) {
+            c.hash(&mut h);
+        }
         h.finish()
     }
 }
@@ -293,38 +301,67 @@ fn contains4(rect: [f32; 4], p: (f64, f64)) -> bool {
     x >= rect[0] && y >= rect[1] && x < rect[0] + rect[2] && y < rect[1] + rect[3]
 }
 
-/// Resolves the painted backdrop under `anchor` by walking the commands
-/// emitted before the text top-down, compositing every containing solid
-/// fill until opacity is reached. A containing gradient encountered
-/// before opacity is reached makes the backdrop unresolvable — a
-/// gradient has no single luminance.
-fn resolve_backdrop(commands: &[PaintCommand], anchor: (f64, f64)) -> Backdrop {
+/// One fill command's audit record — its coverage shape, color, and
+/// the clip that was active when it was emitted. A fill clipped away
+/// from a point never rendered there, so both checks must pass.
+struct FillRec {
+    /// Command index in the paint list (ordering).
+    idx: usize,
+    shape: FillShape,
+    color: ColorRgba,
+    clip: Option<Rect>,
+}
+
+/// The coverage geometry of a recorded fill.
+enum FillShape {
+    /// `FillRect` — kurbo rect.
+    Rect(Rect),
+    /// `BlurredRect` — `[x, y, w, h]` array.
+    Quad([f32; 4]),
+    /// Linear/radial gradient — no single luminance, so a covering one
+    /// makes the backdrop unresolvable rather than contributing color.
+    Gradient(Rect),
+}
+
+impl FillRec {
+    /// True when `p` lies inside both the fill's shape and the clip
+    /// that was active when it emitted — a fill clipped away from `p`
+    /// produced no output there.
+    fn covers(&self, p: (f64, f64)) -> bool {
+        if self.clip.is_some_and(|c| !contains(&c, p)) {
+            return false;
+        }
+        match self.shape {
+            FillShape::Rect(r) | FillShape::Gradient(r) => contains(&r, p),
+            FillShape::Quad(a) => contains4(a, p),
+        }
+    }
+}
+
+/// Resolves the painted backdrop under `anchor` from the fills emitted
+/// before command `before`, compositing containing solids until
+/// opacity is reached. A containing gradient encountered before opacity
+/// makes the backdrop unresolvable — a gradient has no single
+/// luminance. Fills whose clip excluded `anchor` are skipped: they
+/// never painted there.
+fn resolve_backdrop(fills: &[FillRec], before: usize, anchor: (f64, f64)) -> Backdrop {
     let mut acc: Option<ColorRgba> = None;
-    for cmd in commands.iter().rev() {
-        match cmd {
-            PaintCommand::FillRect(rect, color) if contains(rect, anchor) => {
-                let c = rgba_u8(*color);
+    for rec in fills.iter().rev() {
+        if rec.idx >= before || !rec.covers(anchor) {
+            continue;
+        }
+        match rec.shape {
+            FillShape::Gradient(_) => {
+                if acc.is_none_or(|c| c.a < 0.999) {
+                    return Backdrop::Unknown;
+                }
+            }
+            _ => {
                 acc = Some(match acc {
-                    None => c,
-                    Some(top) => top.composite_over(c),
+                    None => rec.color,
+                    Some(top) => top.composite_over(rec.color),
                 });
             }
-            PaintCommand::BlurredRect { rect, color, .. } if contains4(*rect, anchor) => {
-                let c = rgba_f32(*color);
-                acc = Some(match acc {
-                    None => c,
-                    Some(top) => top.composite_over(c),
-                });
-            }
-            // A gradient nearer than the accumulated surface
-            // contributes color the audit cannot resolve.
-            PaintCommand::FillLinearGradient(rect, ..)
-            | PaintCommand::FillRadialGradient(rect, ..)
-                if contains(rect, anchor) && acc.is_none_or(|c| c.a < 0.999) =>
-            {
-                return Backdrop::Unknown;
-            }
-            _ => {}
         }
         if acc.is_some_and(|c| c.a >= 0.999) {
             return Backdrop::Resolved(acc.unwrap());
@@ -375,10 +412,7 @@ fn probe_text(point: &Point, text: &str, size: f32, color: [u8; 4]) -> TextProbe
     );
     TextProbe {
         bounds,
-        anchor: (
-            point.x + f64::from(size) * 0.5,
-            point.y + f64::from(size) * 0.5,
-        ),
+        anchor: ((bounds.x0 + bounds.x1) * 0.5, (bounds.y0 + bounds.y1) * 0.5),
         font_px: size,
         color: rgba_u8(color),
         excerpt: text.chars().take(24).collect(),
@@ -413,10 +447,7 @@ fn probe_glyph_run(run: &GlyphRun) -> Option<TextProbe> {
             f64::from(x1),
             f64::from(bottom),
         ),
-        anchor: (
-            f64::from((x0 + x1) * 0.5),
-            f64::from((top + baseline) * 0.5),
-        ),
+        anchor: (f64::from((x0 + x1) * 0.5), f64::from((top + bottom) * 0.5)),
         font_px: run.font_size,
         color: rgba_u8(run.color),
         excerpt: format!("{} glyphs", run.glyphs.len()),
@@ -460,6 +491,10 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
     // (command index, probe, clip active at record time) for every text
     // command — reused by the occlusion, overlap and bounds passes below.
     let mut texts: Vec<(usize, TextProbe, Option<Rect>)> = Vec::new();
+    // Every fill command in order — backdrop resolution and occlusion
+    // testing are clip-aware, so each records the clip active when it
+    // emitted.
+    let mut fills: Vec<FillRec> = Vec::new();
     for (i, cmd) in list.commands.iter().enumerate() {
         match cmd {
             PaintCommand::ClipRect(r) | PaintCommand::ClipRoundedRect(r, _) => {
@@ -473,6 +508,25 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
         // Effective clip is the intersection of every active region.
         let clip = clip_stack.iter().copied().reduce(|a, b| a.intersect(b));
         match cmd {
+            PaintCommand::FillRect(rect, color) => fills.push(FillRec {
+                idx: i,
+                shape: FillShape::Rect(*rect),
+                color: rgba_u8(*color),
+                clip,
+            }),
+            PaintCommand::BlurredRect { rect, color, .. } => fills.push(FillRec {
+                idx: i,
+                shape: FillShape::Quad(*rect),
+                color: rgba_f32(*color),
+                clip,
+            }),
+            PaintCommand::FillLinearGradient(rect, ..)
+            | PaintCommand::FillRadialGradient(rect, ..) => fills.push(FillRec {
+                idx: i,
+                shape: FillShape::Gradient(*rect),
+                color: ColorRgba::new(0.0, 0.0, 0.0, 0.0),
+                clip,
+            }),
             PaintCommand::DrawText(point, text, size, color) => {
                 texts.push((i, probe_text(point, text, *size, *color), clip));
             }
@@ -483,12 +537,12 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
             }
             PaintCommand::StrokeRect(rect, _, color) if config.check_ui_component_contrast => {
                 let anchor = ((rect.x0 + rect.x1) * 0.5, rect.y0);
-                check_stroke(&mut lints, &list.commands[..i], anchor, *color, "rect");
+                check_stroke(&mut lints, &fills, i, anchor, *color, "rect");
             }
             PaintCommand::StrokePath(path, _, color) if config.check_ui_component_contrast => {
                 let bb = path.bounding_box();
                 let anchor = ((bb.x0 + bb.x1) * 0.5, bb.y0);
-                check_stroke(&mut lints, &list.commands[..i], anchor, *color, "path");
+                check_stroke(&mut lints, &fills, i, anchor, *color, "path");
             }
             _ => {}
         }
@@ -526,7 +580,7 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 ),
             });
         }
-        match resolve_backdrop(&list.commands[..i], probe.anchor) {
+        match resolve_backdrop(&fills, i, probe.anchor) {
             Backdrop::Resolved(bg) => {
                 let size_class = if size_pt >= LARGE_TEXT_PT {
                     TextSize::Large
@@ -571,14 +625,18 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
         // merely covers clipped-away pixels does not read as occlusion.
         let visible = clip.map_or(probe.bounds, |c| probe.bounds.intersect(c));
         let renders = visible.width() > 0.0 && visible.height() > 0.0;
-        let visible_anchor = (
-            (visible.x0 + visible.x1) * 0.5,
-            (visible.y0 + visible.y1) * 0.5,
-        );
-        if config.check_text_visibility
-            && renders
-            && occluded_by_later_fill(&list.commands[i + 1..], visible_anchor)
-        {
+        // Five-sample probe: center plus the four quarter-points. A
+        // fill covering only part of the text leaves a visible sample,
+        // so partial cover no longer reads as full occlusion.
+        let (w, h) = (visible.width(), visible.height());
+        let samples = [
+            (visible.x0 + w * 0.5, visible.y0 + h * 0.5),
+            (visible.x0 + w * 0.25, visible.y0 + h * 0.25),
+            (visible.x1 - w * 0.25, visible.y0 + h * 0.25),
+            (visible.x0 + w * 0.25, visible.y1 - h * 0.25),
+            (visible.x1 - w * 0.25, visible.y1 - h * 0.25),
+        ];
+        if config.check_text_visibility && renders && occluded_by_later_fill(&fills, i, &samples) {
             lints.push(PaintLint {
                 kind: PaintLintKind::OccludedText,
                 severity: LintSeverity::Warning,
@@ -685,19 +743,19 @@ fn fully_outside(inner: &Rect, clip: &Rect) -> bool {
 }
 
 /// WCAG 1.4.11 check for one stroked shape: resolves the backdrop at
-/// `anchor` (a point on the stroke's edge) and requires 3:1.
+/// `anchor` (a point on the stroke's edge) and requires 3:1 against
+/// the stroke's *composited* color — a translucent stroke is judged by
+/// what it actually looks like, not its nominal paint color.
 fn check_stroke(
     lints: &mut Vec<PaintLint>,
-    prior: &[PaintCommand],
+    fills: &[FillRec],
+    before: usize,
     anchor: (f64, f64),
     color: [u8; 4],
     shape: &str,
 ) {
     let fg = rgba_u8(color);
-    if fg.a < 0.999 {
-        return;
-    }
-    let Backdrop::Resolved(bg) = resolve_backdrop(prior, anchor) else {
+    let Backdrop::Resolved(bg) = resolve_backdrop(fills, before, anchor) else {
         return;
     };
     let ratio = contrast_ratio(fg.composite_over(bg), bg);
@@ -709,25 +767,28 @@ fn check_stroke(
             measured: Some(ratio),
             required: Some(3.0),
             detail: format!(
-                "stroked {shape} contrast {ratio:.2}:1 below 3:1 (WCAG 1.4.11 non-text)"
+                "stroked {shape} contrast {ratio:.2}:1 below 3:1 (WCAG 1.4.11 non-text) @ ({:.0}, {:.0})",
+                anchor.0, anchor.1
             ),
         });
     }
 }
 
-/// True when an opaque fill painted after index `i` covers `anchor`.
-/// The caller passes an anchor inside the text's *visible* region
-/// (bounds ∩ clip), so clipped-away pixels never count as covered. The
-/// covering fill's own clip is still not modeled — a fill clipped away
-/// from the anchor may over-report, the conservative direction.
-fn occluded_by_later_fill(later: &[PaintCommand], anchor: (f64, f64)) -> bool {
-    later.iter().any(|cmd| match cmd {
-        PaintCommand::FillRect(rect, color) => contains(rect, anchor) && color[3] == 255,
-        PaintCommand::BlurredRect { rect, color, .. } => {
-            contains4(*rect, anchor) && color[3] >= 0.999
-        }
-        _ => false,
-    })
+/// True when every point in `points` is covered by a later opaque
+/// non-gradient fill. `FillRec::covers` already respects the covering
+/// fill's own clip, so a fill clipped away from a sample can't count.
+/// Probing several samples (not just the center) keeps a fill that
+/// covers only part of the text from reading as full occlusion.
+fn occluded_by_later_fill(fills: &[FillRec], after: usize, points: &[(f64, f64)]) -> bool {
+    !points.is_empty()
+        && points.iter().all(|p| {
+            fills.iter().any(|rec| {
+                rec.idx > after
+                    && rec.color.a >= 0.999
+                    && !matches!(rec.shape, FillShape::Gradient(_))
+                    && rec.covers(*p)
+            })
+        })
 }
 
 /// Deduplicating reporter for [`PaintLint`]s.

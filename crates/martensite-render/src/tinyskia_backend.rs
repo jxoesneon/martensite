@@ -98,6 +98,34 @@ impl TinySkiaBackend {
         })
     }
 
+    /// Resizes the backing pixel buffer, clearing any accumulated
+    /// clip state.
+    ///
+    /// Returns `false` when the requested dimensions are invalid (zero
+    /// or beyond [`tiny_skia`] allocation limits); the existing buffer
+    /// is left untouched in that case.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_render::TinySkiaBackend;
+    ///
+    /// let mut backend = TinySkiaBackend::new(64, 64).expect("64x64 pixmap");
+    /// assert!(backend.resize(128, 96));
+    /// assert_eq!((backend.width(), backend.height()), (128, 96));
+    /// assert!(!backend.resize(0, 96));
+    /// ```
+    pub fn resize(&mut self, width: u32, height: u32) -> bool {
+        let Some(pixmap) = Pixmap::new(width, height) else {
+            return false;
+        };
+        self.width = width;
+        self.height = height;
+        self.pixmap = pixmap;
+        self.clip_stack.clear();
+        true
+    }
+
     /// Returns the width of the backing pixel buffer.
     ///
     /// # Examples

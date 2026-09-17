@@ -104,6 +104,33 @@ where
         self.clamp_scroll();
     }
 
+    /// Sets the row height in logical pixels, preserving the scroll
+    /// position in rows.
+    ///
+    /// The scroll offset is stored in pixels; on a row-height change it
+    /// is rescaled so the same row stays at the top of the viewport —
+    /// the correct behavior for a display scale-factor change.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_blessed::DataTable;
+    /// let mut table = DataTable::new(vec![0_u8; 1000], 20.0);
+    /// table.set_viewport_height(100.0);
+    /// table.scroll_by(200.0);
+    /// table.set_row_height(40.0);
+    /// // Same top row: 200/20 = 400/40 = 10.
+    /// assert_eq!(table.visible_range().start, 10);
+    /// ```
+    pub fn set_row_height(&mut self, height: f32) {
+        let new = valid_nonnegative(f64::from(height));
+        if self.row_height > 0.0 && new > 0.0 && new != self.row_height {
+            self.scroll_offset *= new / self.row_height;
+        }
+        self.row_height = new;
+        self.clamp_scroll();
+    }
+
     /// Scrolls by a logical-pixel delta and returns the resulting offset.
     pub fn scroll_by(&mut self, delta: f32) -> f32 {
         let delta = f64::from(delta);

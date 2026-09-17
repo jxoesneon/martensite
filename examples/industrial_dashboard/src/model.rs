@@ -151,10 +151,11 @@ impl Palette {
     /// Hairline stroke for panel frames and separators. `BorderColor`
     /// (l 0.35) only reaches ~2.2:1 against `surface` — below the 3:1
     /// WCAG 1.4.11 floor our own paint audit enforces — so borders use
-    /// the muted-text token at ~43% opacity, which composites to ≈3.3:1
-    /// on `surface` while still reading as a hairline, not a fill.
+    /// the muted-text token at full strength: a 1px stroke still reads
+    /// as a hairline, and the audit composites it to ≈3.5:1 on `raised`
+    /// (translucent variants measured only 1.9:1).
     pub fn hairline(&self) -> [u8; 4] {
-        Self::alpha(self.text_muted, 110)
+        self.text_muted
     }
 
     /// Selected-row tint: `PrimaryColor` (l 0.65) is too bright to sit
@@ -168,20 +169,20 @@ impl Palette {
 /// The editor panel's initial buffer — reads like a real Martensite
 /// consumer so the syntax-highlight spans exercise every `TokenKind`.
 pub const EDITOR_SOURCE: &str = "\
-// workstation.toml — dogfooding consumer config
+# workstation.toml — dogfooding consumer config
 [window]
 title = \"Industrial Workstation\"
-scale = 2.0            // physical px per logical pt
+scale = 2.0            # physical px per logical pt
 
 [dock]
-grid = 0.58            // BSP ratio, left leaf
-telemetry = 0.55       // top of right column
+grid = 0.58            # BSP ratio, left leaf
+telemetry = 0.55       # top of right column
 
 [telemetry]
-source = \"cpu_load\"    // Signal<f64> → LineSeries
-history = 240          // samples retained
+source = \"cpu_load\"    # Signal<f64> → LineSeries
+history = 240          # samples retained
 paused = false
 
 [access]
-audit = \"advisory\"     // WCAG paint lints on in debug
+audit = \"advisory\"     # WCAG paint lints on in debug
 ";

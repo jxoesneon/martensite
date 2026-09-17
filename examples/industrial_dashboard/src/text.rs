@@ -88,16 +88,27 @@ impl TextPainter {
     /// the content below — the audit's `TextOverlap` check catches the
     /// wrap, but fitting first keeps the layout deterministic.
     pub fn fit(&mut self, text: &str, size: f32, max: f32) -> String {
-        if self.measure(text, size) <= max {
-            return text.to_string();
-        }
         let ell = "…";
         let ew = self.measure(ell, size);
-        let mut s = String::from(text);
-        while !s.is_empty() && self.measure(&s, size) + ew > max {
-            s.pop();
+        // Single shape pass — cut at the first glyph whose right edge
+        // would leave no room for the ellipsis (avoids the O(n²)
+        // measure-per-pop loop).
+        let mut cut = None;
+        for line in shape_text(&mut self.fonts, text, size, size * 1.25, None) {
+            for g in &line.glyphs {
+                if g.x + g.w > max - ew {
+                    cut = Some(g.start);
+                    break;
+                }
+            }
+            if cut.is_some() {
+                break;
+            }
         }
-        format!("{s}{ell}")
+        match cut {
+            None => text.to_string(),
+            Some(byte) => format!("{}{ell}", &text[..byte]),
+        }
     }
 
     /// Advance width of `text` at `size` — used for right-aligned columns

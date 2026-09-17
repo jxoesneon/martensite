@@ -24,6 +24,22 @@
 //!      as `MartensiteAccessBridge`). Interior mutability for paint-time
 //!      shaping is a real consumer need — a shared painter in
 //!      `PaintContext` is a pre-freeze API candidate.
+//! F20. `blessed::Rect` is (x, y, width, height) while `core::Rect`/
+//!      `kurbo::Rect` are (x0, y0, x1, y1) — passing a dock rect's
+//!      `bottom` as `height` silently doubled every panel's extent
+//!      under the status bar. The two conventions existing side by side
+//!      is a real trap for consumers mixing the layers.
+//! F21. `HotNode::default()` has empty flags — no `VISIBLE`, no
+//!      `HIT_TEST_ENABLED`. Without VISIBLE the paint walker skips the
+//!      whole subtree (empty window, no error); without HIT_TEST the
+//!      router never delivers pointer or scroll events (dead UI, no
+//!      error). Both defaults fail silently — flag-inclusion would be
+//!      a kinder default for interactive nodes.
+//! F22. `FocusManager::try_set_focus` and `tab` update focus state but
+//!      do not dispatch `FocusLost`/`FocusGained` — only
+//!      `apply_focus_request` does. Focus rings and editor carets stay
+//!      dark when the app uses the cheaper calls; the dispatch-vs-set
+//!      split is easy to miss.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -36,7 +52,7 @@ use martensite::blessed::data_table::{ColumnConfig, ColumnSort, KeyAction, RowFi
 use martensite::blessed::{Chart, CodeEditor, DataTable, LineSeries, Point as CPoint, TokenKind};
 use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
-    Rect, Widget, WidgetEvent,
+    Rect, SemanticAction, Widget, WidgetEvent,
 };
 use martensite::media::surface::{VideoPixelFormat, VideoSurface};
 use martensite::prelude::*;
@@ -45,6 +61,12 @@ use martensite::widgets::media::{MediaView, VideoFit};
 
 use crate::model::{alert_count, gen_rows, MetricRow, Palette, EDITOR_SOURCE};
 use crate::text::{SpanColor, TextPainter};
+
+/// Title-bar height in logical pt — one constant for the chrome paint
+/// and every hit-zone/layout computation that subtracts it.
+const TITLE_H: f32 = 28.0;
+/// Grid column-header band height in logical pt.
+const GRID_HEADER_H: f32 = 26.0;
 
 fn to_paint(rect: Rect) -> martensite::render::Rect {
     martensite::render::Rect::new(
@@ -77,9 +99,17 @@ fn panel_chrome(
     let b = to_paint(bounds);
     let s = f64::from(scale);
     list.push_fill_rect(b, pal.surface);
-    let title_h = 28.0 * s;
+    let title_h = f64::from(TITLE_H) * s;
     list.push_fill_rect(krect(b.x0, b.y0, b.width(), title_h), pal.raised);
-    let title_fit = painter.fit(title, 12.0 * scale, (b.width() * 0.52).max(1.0) as f32);
+    // Below ~120pt the right label is dropped — two ellipsized strings
+    // butted together read worse than one clean title.
+    let show_right = !right.is_empty() && b.width() >= 120.0 * s;
+    let title_slot = if show_right {
+        b.width() * 0.52
+    } else {
+        b.width() - 24.0 * s
+    };
+    let title_fit = painter.fit(title, 12.0 * scale, title_slot.max(1.0) as f32);
     painter.push(
         list,
         Point::new(b.x0 + 12.0 * s, b.y0 + 6.0 * s),
@@ -88,7 +118,7 @@ fn panel_chrome(
         pal.text,
         None,
     );
-    if !right.is_empty() {
+    if show_right {
         let right_fit = painter.fit(right, 12.0 * scale, (b.width() * 0.42).max(1.0) as f32);
         let w = painter.measure(&right_fit, 12.0 * scale);
         painter.push(
@@ -182,6 +212,9 @@ impl GridPanel {
     }
 
     /// Column (x, width) in device px; the last column stretches.
+    /// Columns that can't fit inside the panel are dropped rightmost-
+    /// first rather than painted past the clip — a real table collapses
+    /// under pressure instead of lying about its extent.
     fn column_layout(&self) -> Vec<(f32, f32)> {
         let pad = 12.0 * self.s();
         let mut x = self.bounds.min_x() + pad;
@@ -194,26 +227,49 @@ impl GridPanel {
             .collect();
         let mut cols = Vec::with_capacity(widths.len());
         for (i, w) in widths.iter().enumerate() {
-            let w = if i == widths.len() - 1 {
-                (inner_right - x).max(40.0 * self.s())
+            if i == widths.len() - 1 {
+                // Stretch column — only if at least ~40pt remains.
+                let w = inner_right - x;
+                if w < 40.0 * self.s() {
+                    break;
+                }
+                cols.push((x, w));
             } else {
-                *w
-            };
-            cols.push((x, w));
-            x += w;
+                if x + w > inner_right {
+                    break;
+                }
+                cols.push((x, *w));
+                x += w;
+            }
         }
         cols
     }
 
-    fn header_bottom(&self) -> f32 {
-        self.bounds.min_y() + 28.0 * self.s() + 26.0 * self.s()
+    /// The column-header band: below the title bar + hairline, above
+    /// `rows_top`. Sorting clicks are only meaningful inside this band —
+    /// the title bar above it must not sort.
+    fn header_band(&self) -> (f32, f32) {
+        let s = self.s();
+        let top = self.bounds.min_y() + TITLE_H * s + 1.0;
+        (top, top + GRID_HEADER_H * s + 1.0)
+    }
+
+    /// `rows_top` in window coordinates — matches the painter exactly
+    /// (title + hairline + column-header band + hairline).
+    fn rows_top(&self) -> f32 {
+        let s = self.s();
+        self.bounds.min_y() + TITLE_H * s + 1.0 + GRID_HEADER_H * s + 1.0
     }
 
     /// Storage index of the row at window-y `y`, via the visible window
     /// (display position → storage through the same mapping the painter
     /// uses — `visible_rows` yields storage indices).
     fn row_at(&self, y: f32) -> Option<usize> {
-        let rel = y - self.header_bottom();
+        // Rows slide by the fractional scroll remainder — the painter
+        // draws row n at `n·row_h - frac`, so hit-testing must add frac
+        // back before dividing.
+        let frac = self.table.scroll_offset() % self.row_h();
+        let rel = y - self.rows_top() + frac;
         if rel < 0.0 {
             return None;
         }
@@ -251,8 +307,12 @@ impl Widget for GridPanel {
 
     fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
-        self.table
-            .set_viewport_height((bounds.size.y - 28.0 * self.s() - 26.0 * self.s()).max(0.0));
+        // Re-arm the model's row height from the live scale signal —
+        // `set_row_height` preserves the scroll position in rows.
+        self.table.set_row_height(self.row_h());
+        self.table.set_viewport_height(
+            (bounds.size.y - (TITLE_H + GRID_HEADER_H) * self.s() - 2.0).max(0.0),
+        );
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -261,7 +321,8 @@ impl Widget for GridPanel {
                 position,
                 button: PointerButton::Primary,
             } => {
-                if position.y < self.header_bottom() {
+                let (hdr_top, hdr_bottom) = self.header_band();
+                if position.y >= hdr_top && position.y < hdr_bottom {
                     for (i, (x0, w)) in self.column_layout().iter().enumerate() {
                         if position.x >= *x0 && position.x < x0 + w {
                             self.toggle_sort(i);
@@ -322,6 +383,12 @@ impl Widget for GridPanel {
                 self.focused = false;
                 EventResponse::RequestRepaint
             }
+            // AT focus/activation requests honour the pending-focus
+            // protocol: CaptureFocus records a request the app drains
+            // into the FocusManager.
+            WidgetEvent::SemanticAction(SemanticAction::Focus | SemanticAction::Click) => {
+                EventResponse::CaptureFocus
+            }
             _ => EventResponse::Ignored,
         }
     }
@@ -363,9 +430,8 @@ impl Widget for GridPanel {
         let sd = f64::from(s);
 
         // Column header row.
-        let header_h = 26.0 * sd;
-        list_fill(
-            cx.list,
+        let header_h = f64::from(GRID_HEADER_H) * sd;
+        cx.list.push_fill_rect(
             krect(inner.x0, inner.y0, inner.width(), header_h),
             pal.raised,
         );
@@ -468,7 +534,9 @@ impl Widget for GridPanel {
                 (2, mem, pal.text),
             ];
             for (ci, value, color) in cells {
-                let (x0, w) = cols[ci];
+                let Some(&(x0, w)) = cols.get(ci) else {
+                    continue;
+                };
                 let tw = text.measure(&value, 12.0 * s);
                 text.push(
                     cx.list,
@@ -479,8 +547,10 @@ impl Widget for GridPanel {
                     Some(w),
                 );
             }
-            // Status chip.
-            let (x0, w) = cols[3];
+            // Status chip — only when the column survived the collapse.
+            let Some(&(x0, w)) = cols.get(3) else {
+                continue;
+            };
             let label = if row.alert { "ALERT" } else { "OK" };
             let chip_w = 52.0 * sd;
             let chip_h = 18.0 * sd;
@@ -521,9 +591,7 @@ impl Widget for GridPanel {
             cx.list
                 .push_fill_rect(krect(track_x, thumb_y, 4.0 * sd, thumb_h), pal.text_muted);
         }
-        cx.list
-            .commands
-            .push(martensite::render::PaintCommand::PopClip);
+        cx.list.pop_clip();
     }
 }
 
@@ -626,6 +694,12 @@ impl Widget for TelemetryPanel {
             WidgetEvent::FocusLost => {
                 self.focused = false;
                 EventResponse::RequestRepaint
+            }
+            // AT focus/activation requests honour the pending-focus
+            // protocol: CaptureFocus records a request the app drains
+            // into the FocusManager.
+            WidgetEvent::SemanticAction(SemanticAction::Focus | SemanticAction::Click) => {
+                EventResponse::CaptureFocus
             }
             _ => EventResponse::Ignored,
         }
@@ -748,8 +822,10 @@ impl Widget for TelemetryPanel {
             }
             let mut path = BezPath::new();
             for (i, p) in pts.iter().enumerate() {
+                // `Chart::project` already returns screen-space y
+                // (data max → 0/top) — add the plot origin, don't re-flip.
                 let q = Chart::project(*p, bounds, plot.width(), plot.height());
-                let (qx, qy) = (plot.x0 + q.x, plot.y1 - q.y);
+                let (qx, qy) = (plot.x0 + q.x, plot.y0 + q.y);
                 if i == 0 {
                     path.move_to((qx, qy));
                 } else {
@@ -778,7 +854,7 @@ impl Widget for TelemetryPanel {
                 plot.width(),
                 plot.height(),
             );
-            let (qx, qy) = (plot.x0 + q.x, plot.y1 - q.y);
+            let (qx, qy) = (plot.x0 + q.x, plot.y0 + q.y);
             cx.list
                 .push_fill_rect(krect(qx - 2.5, qy - 2.5, 5.0, 5.0), color);
         }
@@ -818,8 +894,6 @@ pub struct EditorPanel {
     bounds: Rect,
     focused: bool,
     scroll_top: usize,
-    /// Line index → shaped advance map is rebuilt on demand for caret x.
-    shift_held: bool,
 }
 
 impl EditorPanel {
@@ -832,7 +906,6 @@ impl EditorPanel {
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
             scroll_top: 0,
-            shift_held: false,
         }
     }
 
@@ -881,7 +954,8 @@ impl Widget for EditorPanel {
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         let s = self.s();
-        let content_top = self.bounds.min_y() + 28.0 * s + 8.0 * s;
+        // Matches the painter: title bar + hairline + content padding.
+        let content_top = self.bounds.min_y() + TITLE_H * s + 1.0 + 8.0 * s;
         let line_h = self.line_h();
         let visible = ((self.bounds.max_y() - content_top - 8.0 * s) / line_h).max(1.0) as usize;
         match cx.event {
@@ -889,6 +963,11 @@ impl Widget for EditorPanel {
                 position,
                 button: PointerButton::Primary,
             } => {
+                // Clicks in the title bar focus the panel but never move
+                // the caret.
+                if position.y < self.bounds.min_y() + TITLE_H * s + 1.0 {
+                    return EventResponse::CaptureFocus;
+                }
                 let line = (self.scroll_top
                     + ((position.y - content_top) / line_h).max(0.0) as usize)
                     .min(self.editor.lines().len().saturating_sub(1));
@@ -916,7 +995,6 @@ impl Widget for EditorPanel {
             }
             WidgetEvent::KeyPressed { key, repeat } => {
                 match key.as_str() {
-                    "Shift" => self.shift_held = true,
                     "Backspace" => self.editor.delete_backward(),
                     "Enter" => self.editor.insert("\n"),
                     "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" | "Home" | "End" => {
@@ -959,12 +1037,6 @@ impl Widget for EditorPanel {
                 let _ = repeat;
                 EventResponse::Handled
             }
-            WidgetEvent::KeyReleased { key } => {
-                if key == "Shift" {
-                    self.shift_held = false;
-                }
-                EventResponse::Handled
-            }
             WidgetEvent::FocusGained => {
                 self.focused = true;
                 EventResponse::RequestRepaint
@@ -972,6 +1044,12 @@ impl Widget for EditorPanel {
             WidgetEvent::FocusLost => {
                 self.focused = false;
                 EventResponse::RequestRepaint
+            }
+            // AT focus/activation requests honour the pending-focus
+            // protocol: CaptureFocus records a request the app drains
+            // into the FocusManager.
+            WidgetEvent::SemanticAction(SemanticAction::Focus | SemanticAction::Click) => {
+                EventResponse::CaptureFocus
             }
             _ => EventResponse::Ignored,
         }
@@ -1081,9 +1159,7 @@ impl Widget for EditorPanel {
             }
             y += line_h;
         }
-        cx.list
-            .commands
-            .push(martensite::render::PaintCommand::PopClip);
+        cx.list.pop_clip();
     }
 }
 
@@ -1133,12 +1209,13 @@ impl Widget for MediaPanel {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
-        // MediaView owns its dest-rect math (fit + letterbox).
+        // MediaView owns its dest-rect math (fit + letterbox). Content
+        // starts below the title bar + hairline (TITLE_H·s + 1).
         let inner = Rect::new(
             bounds.origin.x,
-            bounds.origin.y + 29.0 * self.s(),
+            bounds.origin.y + TITLE_H * self.s() + 1.0,
             bounds.size.x,
-            (bounds.size.y - 29.0 * self.s()).max(0.0),
+            (bounds.size.y - TITLE_H * self.s() - 1.0).max(0.0),
         );
         self.view.layout(cx, inner);
     }
@@ -1161,6 +1238,12 @@ impl Widget for MediaPanel {
             WidgetEvent::FocusLost => {
                 self.focused = false;
                 EventResponse::RequestRepaint
+            }
+            // AT focus/activation requests honour the pending-focus
+            // protocol: CaptureFocus records a request the app drains
+            // into the FocusManager.
+            WidgetEvent::SemanticAction(SemanticAction::Focus | SemanticAction::Click) => {
+                EventResponse::CaptureFocus
             }
             _ => EventResponse::Ignored,
         }
@@ -1263,8 +1346,4 @@ pub fn fmt_count(n: usize) -> String {
         out.push(c);
     }
     out
-}
-
-fn list_fill(list: &mut PaintList, r: martensite::render::Rect, c: [u8; 4]) {
-    list.push_fill_rect(r, c);
 }

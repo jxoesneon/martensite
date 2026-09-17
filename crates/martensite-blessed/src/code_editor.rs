@@ -145,7 +145,7 @@ impl CodeEditor {
         let mut offset = 0;
         for token in source.split_inclusive(char::is_whitespace) {
             let trimmed = token.trim_end();
-            let kind = if trimmed.starts_with("//") {
+            let kind = if trimmed.starts_with("//") || trimmed.starts_with('#') {
                 TokenKind::Comment
             } else if matches!(
                 trimmed,
