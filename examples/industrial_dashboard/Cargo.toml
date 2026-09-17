@@ -22,6 +22,9 @@ devtools = []
 
 [dependencies]
 martensite = { workspace = true }
+# Editor tab buffers resolve through `EmbeddedVfs` — one VFS document
+# per `model::SOURCES` entry.
+martensite-assets = { workspace = true }
 accesskit_winit = { workspace = true }
 # Real OS clipboard for the grid context menu — the backend isn't
 # `Send`, so it lives app-side and widgets publish payloads via Signal.

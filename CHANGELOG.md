@@ -129,6 +129,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overlay entries never tick, so the owning panel advances the shared
   solver from `GridPanel::tick`. New `martensite-motion` dependency in
   the example.
+- **`industrial_dashboard` editor depth** — `EditorPanel` now hosts a
+  real document set: three sources (`workstation.toml`,
+  `pipeline.toml`, `hot_path.rs`) baked into the binary and served
+  through `martensite-assets`' `EmbeddedVfs`, one tab per VFS path. A
+  tab strip under the title bar paints chips with dirty dots (buffer
+  vs. VFS bytes) and an accent underline on the active tab; clicks
+  switch documents. Per-tab undo/redo stacks (capped at 100
+  snapshots, consecutive `ImeCommitted` inserts coalesced into one
+  step) restore via `CodeEditor::new` + `set_cursors` — the model has
+  no `set_text` (F24). Cmd/Ctrl+Z and +Shift / Ctrl+Y are synthesized
+  as framework `Undo`/`Redo` key names in `app.rs` and routed through
+  the normal dispatch so any focused widget can consume or ignore
+  them. New `martensite-assets` dependency in the example.
 
 ### Fixed
 

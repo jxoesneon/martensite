@@ -980,9 +980,12 @@ impl ApplicationHandler for App {
                     return;
                 }
                 // T cycles theme Dark → Light → System until the toolbar
-                // dropdown lands; both drive `set_theme_choice`.
+                // dropdown lands; both drive `set_theme_choice`. Cmd is
+                // excluded alongside Ctrl — Cmd+T is browser-adjacent
+                // muscle memory, not a theme request.
                 if pressed
                     && !self.mods.control_key()
+                    && !self.mods.meta_key()
                     && matches!(&event.logical_key, Key::Character(c) if c.eq_ignore_ascii_case("t"))
                 {
                     let next = match self.theme_choice {
@@ -992,6 +995,45 @@ impl ApplicationHandler for App {
                     };
                     self.set_theme_choice(next);
                     return;
+                }
+                // Cmd/Ctrl+Z → "Undo", +Shift → "Redo", Ctrl+Y →
+                // "Redo". `WidgetEvent::KeyPressed` carries no modifier
+                // state (F17), so the chords are synthesized as
+                // framework key names and routed through the normal
+                // dispatch — the focused widget, not the app, decides
+                // whether to consume them. The original event is
+                // swallowed so "z"/"y" never reach ImeCommitted.
+                if pressed && (self.mods.meta_key() || self.mods.control_key()) {
+                    let synthetic: Option<&'static str> = match &event.logical_key {
+                        Key::Character(c) if c.eq_ignore_ascii_case("z") => {
+                            Some(if self.mods.shift_key() {
+                                "Redo"
+                            } else {
+                                "Undo"
+                            })
+                        }
+                        Key::Character(c) if c.eq_ignore_ascii_case("y") => Some("Redo"),
+                        _ => None,
+                    };
+                    if let Some(name) = synthetic {
+                        let focused = self.focus.current_focus();
+                        if let Some(arena) = &mut self.arena {
+                            self.router.dispatch_keyboard_event(
+                                arena,
+                                focused,
+                                name,
+                                true,
+                                event.repeat,
+                            );
+                            // Balanced release — widgets tracking
+                            // press/release pairs (GridPanel's shift
+                            // state) must not see a stuck key.
+                            self.router
+                                .dispatch_keyboard_event(arena, focused, name, false, false);
+                        }
+                        self.sync_focus();
+                        return;
+                    }
                 }
                 let key_name = match &event.logical_key {
                     Key::Named(n) => format!("{n:?}"),

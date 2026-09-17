@@ -2362,6 +2362,7 @@ dependencies = [
  "glam",
  "martensite",
  "martensite-accesskit-winit",
+ "martensite-assets",
  "martensite-clipboard-platform",
  "martensite-motion",
  "martensite-wgpu",

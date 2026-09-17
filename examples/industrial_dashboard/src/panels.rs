@@ -49,6 +49,11 @@
 //!      `Widget::debug_name()` — panels override it with friendly
 //!      labels so lints read `in Process Grid`, not
 //!      `…::panels::GridPanel`.
+//! F24. `CodeEditor` exposes no `set_text`/`undo` — restoring a
+//!      snapshot means rebuilding the whole editor (`CodeEditor::new`
+//!      + `set_cursors`), so undo/redo history lives consumer-side in
+//!      `EditorTab`. Cheap at demo sizes; a real editor wants a
+//!      piece-table model with `replace_text`. Pre-freeze candidate.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -60,7 +65,8 @@ use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite::blessed::data_table::{ColumnConfig, ColumnSort, KeyAction, RowFilter};
 use martensite::blessed::{
-    AreaSeries, Chart, CodeEditor, DataTable, LineSeries, Point as CPoint, ScatterSeries, TokenKind,
+    AreaSeries, Chart, CodeEditor, Cursor, DataTable, LineSeries, Point as CPoint, ScatterSeries,
+    TokenKind,
 };
 use martensite::core::overlay::{OverlayAnchor, OverlayLayer};
 use martensite::core::{
@@ -71,10 +77,11 @@ use martensite::media::surface::{VideoPixelFormat, VideoSurface};
 use martensite::prelude::*;
 use martensite::render::{BezPath, PaintList, Point};
 use martensite::widgets::media::{MediaView, VideoFit};
+use martensite_assets::vfs::{EmbeddedVfs, Vfs};
 use martensite_motion::RubberBandScroller;
 
 use crate::menu::{ContextMenu, MenuState};
-use crate::model::{alert_count, gen_rows, MetricRow, Palette, EDITOR_SOURCE};
+use crate::model::{alert_count, gen_rows, MetricRow, Palette, SOURCES};
 use crate::text::{SpanColor, TextPainter};
 
 /// Title-bar height in logical pt — one constant for the chrome paint
@@ -82,6 +89,9 @@ use crate::text::{SpanColor, TextPainter};
 const TITLE_H: f32 = 28.0;
 /// Grid column-header band height in logical pt.
 const GRID_HEADER_H: f32 = 26.0;
+/// Editor tab-strip row height in logical pt — a second header row
+/// under the title bar.
+const TAB_H: f32 = 24.0;
 
 fn to_paint(rect: Rect) -> martensite::render::Rect {
     martensite::render::Rect::new(
@@ -1298,30 +1308,79 @@ impl Widget for TelemetryPanel {
 }
 
 // ---------------------------------------------------------------------------
-// EditorPanel — CodeEditor model with real syntax highlighting
+// EditorPanel — tabbed CodeEditor documents over an embedded VFS
 // ---------------------------------------------------------------------------
 
-/// The `workstation.toml` editor: click-to-place caret, `ImeCommitted`
-/// text input, Backspace/Enter/arrows editing, `highlight_line` spans
-/// mapped to palette colors per glyph byte-offset.
-pub struct EditorPanel {
+/// A restorable buffer state for undo — `CodeEditor` has no `set_text`
+/// (F24), so restore rebuilds the editor and re-clamps the cursors.
+/// Bespoke snapshots rather than `martensite-history`'s ledger: the
+/// model exposes no diff/op API a ledger could record.
+struct Snap {
+    text: String,
+    cursors: Vec<Cursor>,
+}
+
+/// One open VFS document: the editor model plus its private undo/redo
+/// stacks, scroll position, and the insert-run coalescing flag.
+struct EditorTab {
+    path: &'static str,
     editor: CodeEditor,
+    undo: VecDeque<Snap>,
+    redo: Vec<Snap>,
+    scroll_top: usize,
+    /// `true` while a run of consecutive `ImeCommitted` inserts is
+    /// open — the run is a single undo step; any other event closes it.
+    insert_run: bool,
+}
+
+/// Per-tab undo-history cap — bounds memory on the snapshot model.
+const UNDO_CAP: usize = 100;
+
+/// The editor panel: one tab per `SOURCES` document resolved through
+/// `EmbeddedVfs`, a chip strip under the title bar (dirty dot when the
+/// buffer diverges from the VFS bytes, accent underline on the active
+/// tab), click-to-place caret, `ImeCommitted` input, Backspace/Enter/
+/// arrows editing, per-tab undo/redo on synthetic `Undo`/`Redo` keys,
+/// and `highlight_line` spans mapped to palette colors per glyph
+/// byte-offset.
+pub struct EditorPanel {
+    vfs: EmbeddedVfs,
+    tabs: Vec<EditorTab>,
+    active: usize,
     text: Mutex<TextPainter>,
     scale: Signal<f32>,
     bounds: Rect,
     focused: bool,
-    scroll_top: usize,
 }
 
 impl EditorPanel {
     pub fn new(scale: Signal<f32>) -> Self {
+        let vfs = EmbeddedVfs::new(SOURCES);
+        // One tab per VFS document — buffers are seeded from
+        // `vfs.resolve`, not the static table directly.
+        let tabs = SOURCES
+            .iter()
+            .map(|&(path, _)| EditorTab {
+                path,
+                editor: CodeEditor::new(
+                    vfs.resolve(path)
+                        .and_then(|b| std::str::from_utf8(b).ok())
+                        .unwrap_or(""),
+                ),
+                undo: VecDeque::new(),
+                redo: Vec::new(),
+                scroll_top: 0,
+                insert_run: false,
+            })
+            .collect();
         Self {
-            editor: CodeEditor::new(EDITOR_SOURCE),
+            vfs,
+            tabs,
+            active: 0,
             text: Mutex::new(TextPainter::new()),
             scale,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
-            scroll_top: 0,
         }
     }
 
@@ -1337,6 +1396,14 @@ impl EditorPanel {
         46.0 * self.s()
     }
 
+    fn tab(&self) -> &EditorTab {
+        &self.tabs[self.active]
+    }
+
+    fn tab_mut(&mut self) -> &mut EditorTab {
+        &mut self.tabs[self.active]
+    }
+
     fn kind_color(&self, pal: &Palette, kind: TokenKind) -> [u8; 4] {
         match kind {
             TokenKind::Keyword => pal.accent,
@@ -1347,15 +1414,112 @@ impl EditorPanel {
         }
     }
 
+    /// `true` when the tab's buffer diverges from its VFS bytes — the
+    /// chip's dirty dot.
+    fn tab_dirty(&self, index: usize) -> bool {
+        let tab = &self.tabs[index];
+        self.vfs
+            .resolve(tab.path)
+            .is_none_or(|bytes| tab.editor.text().as_bytes() != bytes)
+    }
+
+    /// The chip label — path plus a dirty marker.
+    fn chip_label(&self, index: usize) -> String {
+        if self.tab_dirty(index) {
+            format!("{} •", self.tabs[index].path)
+        } else {
+            self.tabs[index].path.to_string()
+        }
+    }
+
+    /// Chip (x, width) rects in window coordinates — the painter and
+    /// `PointerPressed` hit-testing share this so clicks land on the
+    /// painted chip. Takes the already-held `TextPainter` guard, same
+    /// as `panel_chrome` (the painter is behind a non-reentrant
+    /// `Mutex`, so locking inside would deadlock from `paint`).
+    fn chip_rects(&self, text: &mut TextPainter) -> Vec<(f32, f32)> {
+        let s = self.s();
+        let mut x = self.bounds.min_x() + 6.0 * s;
+        (0..self.tabs.len())
+            .map(|i| {
+                let w = text.measure(&self.chip_label(i), 12.0 * s) + 16.0 * s;
+                let r = (x, w);
+                x += w + 4.0 * s;
+                r
+            })
+            .collect()
+    }
+
+    /// The tab-strip band in window coordinates: (top, bottom) — under
+    /// the title bar + hairline, above the code content.
+    fn strip_band(&self) -> (f32, f32) {
+        let s = self.s();
+        let top = self.bounds.min_y() + TITLE_H * s + 1.0;
+        (top, top + TAB_H * s + 1.0)
+    }
+
     /// Ensures the caret's line is inside the scroll window.
     fn ensure_visible(&mut self, lines_visible: usize) {
-        if let Some(cur) = self.editor.cursors().first() {
-            if cur.line < self.scroll_top {
-                self.scroll_top = cur.line;
-            } else if lines_visible > 0 && cur.line >= self.scroll_top + lines_visible {
-                self.scroll_top = cur.line + 1 - lines_visible;
+        let tab = self.tab_mut();
+        if let Some(cur) = tab.editor.cursors().first() {
+            if cur.line < tab.scroll_top {
+                tab.scroll_top = cur.line;
+            } else if lines_visible > 0 && cur.line >= tab.scroll_top + lines_visible {
+                tab.scroll_top = cur.line + 1 - lines_visible;
             }
         }
+    }
+
+    /// Snapshots the active tab's state onto its undo stack ahead of a
+    /// mutation. `insert` marks an `ImeCommitted` run: consecutive
+    /// inserts coalesce into one step (per-typing-run granularity, not
+    /// per keystroke); anything else closes the run and pushes a fresh
+    /// snapshot. Any new mutation clears redo.
+    fn push_undo(&mut self, insert: bool) {
+        let tab = self.tab_mut();
+        if insert && tab.insert_run {
+            return;
+        }
+        tab.undo.push_back(Snap {
+            text: tab.editor.text(),
+            cursors: tab.editor.cursors().to_vec(),
+        });
+        while tab.undo.len() > UNDO_CAP {
+            tab.undo.pop_front();
+        }
+        tab.redo.clear();
+        tab.insert_run = insert;
+    }
+
+    /// Pops the active tab's undo stack, pushes current state to redo,
+    /// and restores the snapshot by rebuilding the editor (F24).
+    fn undo(&mut self, visible: usize) {
+        let tab = self.tab_mut();
+        if let Some(snap) = tab.undo.pop_back() {
+            tab.redo.push(Snap {
+                text: tab.editor.text(),
+                cursors: tab.editor.cursors().to_vec(),
+            });
+            tab.editor = CodeEditor::new(&snap.text);
+            tab.editor.set_cursors(snap.cursors);
+        }
+        tab.insert_run = false;
+        self.ensure_visible(visible);
+    }
+
+    /// `undo`'s mirror — pops redo, pushes current state to undo.
+    fn redo(&mut self, visible: usize) {
+        let tab = self.tab_mut();
+        if let Some(snap) = tab.redo.pop() {
+            tab.undo.push_back(Snap {
+                text: tab.editor.text(),
+                cursors: tab.editor.cursors().to_vec(),
+            });
+            tab.editor = CodeEditor::new(&snap.text);
+            tab.editor.set_cursors(snap.cursors);
+        }
+        tab.insert_run = false;
+        self.ensure_visible(visible);
     }
 }
 
@@ -1373,8 +1537,10 @@ impl Widget for EditorPanel {
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         let s = self.s();
-        // Matches the painter: title bar + hairline + content padding.
-        let content_top = self.bounds.min_y() + TITLE_H * s + 1.0 + 8.0 * s;
+        // Matches the painter: title bar + hairline + tab strip +
+        // hairline + content padding.
+        let (strip_top, strip_bottom) = self.strip_band();
+        let content_top = strip_bottom + 8.0 * s;
         let line_h = self.line_h();
         let visible = ((self.bounds.max_y() - content_top - 8.0 * s) / line_h).max(1.0) as usize;
         match cx.event {
@@ -1384,20 +1550,47 @@ impl Widget for EditorPanel {
             } => {
                 // Clicks in the title bar focus the panel but never move
                 // the caret.
-                if position.y < self.bounds.min_y() + TITLE_H * s + 1.0 {
+                if position.y < strip_top {
                     return EventResponse::CaptureFocus;
                 }
-                let line = (self.scroll_top
+                // Tab-strip clicks switch documents — chips are
+                // hit-tested against the same rects the painter emits.
+                if position.y < strip_bottom {
+                    // Scoped lock — the guard borrows `self.text` until
+                    // its drop point, which would conflict with the
+                    // `&mut self` uses below.
+                    let chips = {
+                        let mut t = self.text.lock();
+                        self.chip_rects(&mut t)
+                    };
+                    if let Some(i) = chips
+                        .iter()
+                        .position(|(x, w)| position.x >= *x && position.x < x + w)
+                    {
+                        if i != self.active {
+                            // Switching documents ends any open insert
+                            // run on the *departing* tab — the next
+                            // edit there starts a fresh step.
+                            self.tab_mut().insert_run = false;
+                            self.active = i;
+                        }
+                    }
+                    return EventResponse::CaptureFocus;
+                }
+                let line = (self.tab().scroll_top
                     + ((position.y - content_top) / line_h).max(0.0) as usize)
-                    .min(self.editor.lines().len().saturating_sub(1));
+                    .min(self.tab().editor.lines().len().saturating_sub(1));
                 let text_x = position.x - (self.bounds.min_x() + self.gutter_w() + 8.0 * s);
                 let col = {
                     let mut t = self.text.lock();
-                    let line_str = &self.editor.lines()[line];
+                    let line_str = &self.tab().editor.lines()[line];
                     t.column_at(line_str, 12.0 * s, text_x.max(0.0))
                 };
-                self.editor
-                    .set_cursors(vec![martensite::blessed::Cursor::new(line, col)]);
+                let tab = self.tab_mut();
+                // A caret move ends the insert run — the next typed
+                // character opens a new undo step.
+                tab.insert_run = false;
+                tab.editor.set_cursors(vec![Cursor::new(line, col)]);
                 self.ensure_visible(visible);
                 EventResponse::CaptureFocus
             }
@@ -1406,34 +1599,55 @@ impl Widget for EditorPanel {
                 // KeyPressed below.
                 let printable: String = text.chars().filter(|c| !c.is_control()).collect();
                 if !printable.is_empty() {
-                    self.editor.insert(&printable);
+                    self.push_undo(true);
+                    self.tab_mut().editor.insert(&printable);
                     self.ensure_visible(visible);
                     return EventResponse::RequestRepaint;
                 }
                 EventResponse::Handled
             }
-            WidgetEvent::KeyPressed { key, repeat } => {
+            WidgetEvent::KeyPressed { key, .. } => {
                 match key.as_str() {
-                    "Backspace" => self.editor.delete_backward(),
-                    "Enter" => self.editor.insert("\n"),
+                    "Backspace" => {
+                        // A no-op delete (every cursor at 0:0) must not
+                        // push a snapshot — and above all must not
+                        // clear the redo stack.
+                        let can_delete = self
+                            .tab()
+                            .editor
+                            .cursors()
+                            .iter()
+                            .any(|c| c.line > 0 || c.column > 0);
+                        if can_delete {
+                            self.push_undo(false);
+                            self.tab_mut().editor.delete_backward();
+                        }
+                    }
+                    "Enter" => {
+                        self.push_undo(false);
+                        self.tab_mut().editor.insert("\n");
+                    }
+                    // Synthetic names dispatched by the app's Cmd/Ctrl
+                    // chord handling — KeyPressed has no modifiers
+                    // field (F17).
+                    "Undo" => self.undo(visible),
+                    "Redo" => self.redo(visible),
                     "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" | "Home" | "End" => {
-                        if let Some(cur) = self.editor.cursors().first().copied() {
-                            let lines = self.editor.lines();
+                        self.tab_mut().insert_run = false;
+                        if let Some(cur) = self.tab().editor.cursors().first().copied() {
+                            let lines = self.tab().editor.lines();
                             let cur = match key.as_str() {
-                                "ArrowLeft" => martensite::blessed::Cursor::new(
-                                    cur.line,
-                                    cur.column.saturating_sub(1),
-                                ),
-                                "ArrowRight" => martensite::blessed::Cursor::new(
+                                "ArrowLeft" => Cursor::new(cur.line, cur.column.saturating_sub(1)),
+                                "ArrowRight" => Cursor::new(
                                     cur.line,
                                     (cur.column + 1).min(lines[cur.line].chars().count()),
                                 ),
-                                "ArrowUp" => martensite::blessed::Cursor::new(
+                                "ArrowUp" => Cursor::new(
                                     cur.line.saturating_sub(1),
                                     cur.column
                                         .min(lines[cur.line.saturating_sub(1)].chars().count()),
                                 ),
-                                "ArrowDown" => martensite::blessed::Cursor::new(
+                                "ArrowDown" => Cursor::new(
                                     (cur.line + 1).min(lines.len().saturating_sub(1)),
                                     cur.column.min(
                                         lines[(cur.line + 1).min(lines.len().saturating_sub(1))]
@@ -1441,19 +1655,15 @@ impl Widget for EditorPanel {
                                             .count(),
                                     ),
                                 ),
-                                "Home" => martensite::blessed::Cursor::new(cur.line, 0),
-                                _ => martensite::blessed::Cursor::new(
-                                    cur.line,
-                                    lines[cur.line].chars().count(),
-                                ),
+                                "Home" => Cursor::new(cur.line, 0),
+                                _ => Cursor::new(cur.line, lines[cur.line].chars().count()),
                             };
-                            self.editor.set_cursors(vec![cur]);
+                            self.tab_mut().editor.set_cursors(vec![cur]);
                         }
                     }
                     _ => {}
                 }
                 self.ensure_visible(visible);
-                let _ = repeat;
                 EventResponse::Handled
             }
             WidgetEvent::FocusGained => {
@@ -1462,6 +1672,9 @@ impl Widget for EditorPanel {
             }
             WidgetEvent::FocusLost => {
                 self.focused = false;
+                // A focus round-trip ends the insert run — typing after
+                // clicking back in is a new undo step.
+                self.tab_mut().insert_run = false;
                 EventResponse::RequestRepaint
             }
             // AT focus/activation requests honour the pending-focus
@@ -1476,8 +1689,8 @@ impl Widget for EditorPanel {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::MultilineTextInput);
-        node.set_label("Editor — workstation.toml");
-        node.set_value(self.editor.text());
+        node.set_label(format!("Editor — {}", self.tab().path));
+        node.set_value(self.tab().editor.text());
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -1485,27 +1698,30 @@ impl Widget for EditorPanel {
         let pal = &pal;
         let s = self.s();
         let mut text = self.text.lock();
+        let tab = self.tab();
         let full = format!(
-            "{} lines · cursor {}:{}",
-            self.editor.lines().len(),
-            self.editor
+            "{} lines · cursor {}:{} · ↶{}",
+            tab.editor.lines().len(),
+            tab.editor
                 .cursors()
                 .first()
                 .map(|c| c.line + 1)
                 .unwrap_or(0),
-            self.editor.cursors().first().map(|c| c.column).unwrap_or(0)
+            tab.editor.cursors().first().map(|c| c.column).unwrap_or(0),
+            tab.undo.len()
         );
         let slot = (self.bounds.width() * 0.42).max(1.0);
         let right = if text.measure(&full, 12.0 * s) <= slot {
             full
         } else {
-            format!("{} lines", self.editor.lines().len())
+            format!("{} lines", tab.editor.lines().len())
         };
+        let title = format!("EDITOR · {}", tab.path);
         let inner = panel_chrome(
             &mut text,
             cx.list,
             self.bounds,
-            "EDITOR",
+            &title,
             &right,
             pal,
             s,
@@ -1516,17 +1732,73 @@ impl Widget for EditorPanel {
         let gutter_w = f64::from(self.gutter_w());
         let line_h = f64::from(self.line_h());
         let font = 12.0 * s;
-        let content_top = inner.y0 + pad;
         cx.list
             .push_clip(krect(inner.x0, inner.y0, inner.width(), inner.height()));
+
+        // Tab strip — the second header row: raised band, one chip per
+        // VFS path (dirty `•` when the buffer diverges from the VFS
+        // bytes), accent underline on the active chip.
+        let strip_h = f64::from(TAB_H) * sd;
+        let strip_top = inner.y0;
         cx.list.push_fill_rect(
-            krect(inner.x0, inner.y0, gutter_w, inner.height()),
+            krect(inner.x0, strip_top, inner.width(), strip_h),
+            pal.raised,
+        );
+        // `chip_rects` is the single geometry source — PointerPressed
+        // hit-tests the same rects painted here. Chips that can't fit
+        // are dropped rather than painted past the panel clip — same
+        // convention as the grid's rightmost-first column drop.
+        for (i, (chip_x, chip_w)) in self.chip_rects(&mut text).iter().enumerate() {
+            let chip_x = f64::from(*chip_x);
+            let chip_w = f64::from(*chip_w);
+            if chip_x + chip_w > inner.x1 {
+                break;
+            }
+            let label = self.chip_label(i);
+            if i == self.active {
+                cx.list
+                    .push_fill_rect(krect(chip_x, strip_top, chip_w, strip_h), pal.surface);
+                cx.list.push_fill_rect(
+                    krect(
+                        chip_x + 4.0 * sd,
+                        strip_top + strip_h - 2.0 * sd,
+                        chip_w - 8.0 * sd,
+                        2.0 * sd,
+                    ),
+                    pal.accent,
+                );
+            }
+            text.push(
+                cx.list,
+                Point::new(chip_x + 8.0 * sd, strip_top + 5.0 * sd),
+                &label,
+                12.0 * s,
+                // `text_muted` on the raised strip resolves to 4.20:1 —
+                // under the 4.5:1 AA floor. Active/inactive reads via
+                // the surface fill + accent underline instead.
+                pal.text,
+                None,
+            );
+        }
+        cx.list.push_fill_rect(
+            krect(inner.x0, strip_top + strip_h, inner.width(), 1.0),
+            pal.border,
+        );
+
+        let content_top = strip_top + strip_h + 1.0 + pad;
+        cx.list.push_fill_rect(
+            krect(
+                inner.x0,
+                content_top - pad,
+                gutter_w,
+                inner.y1 - content_top + pad,
+            ),
             Palette::alpha(pal.raised, 90),
         );
 
-        let caret = self.editor.cursors().first().copied();
+        let caret = tab.editor.cursors().first().copied();
         let mut y = content_top;
-        for (li, line) in self.editor.lines().iter().enumerate().skip(self.scroll_top) {
+        for (li, line) in tab.editor.lines().iter().enumerate().skip(tab.scroll_top) {
             if y + line_h > inner.y1 {
                 break;
             }
@@ -1547,7 +1819,7 @@ impl Widget for EditorPanel {
             );
             // Highlighted text — spans carry byte offsets, glyphs carry
             // byte offsets; SpanColor maps one onto the other.
-            let spans: Vec<SpanColor> = self
+            let spans: Vec<SpanColor> = tab
                 .editor
                 .highlight_line(li)
                 .into_iter()

@@ -175,9 +175,10 @@ impl Palette {
     }
 }
 
-/// The editor panel's initial buffer — reads like a real Martensite
-/// consumer so the syntax-highlight spans exercise every `TokenKind`.
-pub const EDITOR_SOURCE: &str = "\
+/// The editor panel's `workstation.toml` buffer — reads like a real
+/// Martensite consumer so the syntax-highlight spans exercise every
+/// `TokenKind`.
+const EDITOR_SOURCE: &str = "\
 # workstation.toml — dogfooding consumer config
 [window]
 title = \"Industrial Workstation\"
@@ -195,3 +196,58 @@ paused = false
 [access]
 audit = \"advisory\"     # WCAG paint lints on in debug
 ";
+
+/// `pipeline.toml` — a sibling config so the editor's tab strip has a
+/// second document; numbers, strings, and `#` comments still land on
+/// distinct `TokenKind`s.
+const PIPELINE_SOURCE: &str = "\
+# pipeline.toml — telemetry ingest pipeline
+[pipeline]
+name = \"cpu_feed\"
+rate_hz = 10           # samples per second
+batch = 64
+
+[stages]
+ingest = \"ring_buffer\" # Signal<f64> source
+fold = \"mean_2sigma\"   # outlier gate
+sink = \"chart\"         # LineSeries consumer
+
+[alerts]
+high_watermark = 90.0  # percent of capacity
+cooldown_ms = 250      # debounce window
+enabled = true
+";
+
+/// `hot_path.rs` — a Rust fragment so `fn`/`let`/`pub`/`impl`/`use`
+/// reach `TokenKind::Keyword` (the toml tabs can't) and `//` comments
+/// stay muted.
+const HOT_PATH_SOURCE: &str = "\
+// hot_path.rs — the per-frame inner loop the demo profiles
+use std::time::Instant;
+
+pub struct FrameBudget {
+    pub limit_ms: f64,
+    pub last_ms: f64,
+}
+
+impl FrameBudget {
+    pub fn new(limit_ms: f64) -> Self {
+        Self { limit_ms, last_ms: 0.0 }
+    }
+
+    fn record(&mut self, start: Instant) -> bool {
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        self.last_ms = ms;
+        self.last_ms <= self.limit_ms
+    }
+}
+";
+
+/// The editor panel's document set — baked into the binary and served
+/// through `martensite_assets::vfs::EmbeddedVfs`, one tab per entry.
+/// Table order is tab order.
+pub static SOURCES: &[(&str, &[u8])] = &[
+    ("workstation.toml", EDITOR_SOURCE.as_bytes()),
+    ("pipeline.toml", PIPELINE_SOURCE.as_bytes()),
+    ("hot_path.rs", HOT_PATH_SOURCE.as_bytes()),
+];
