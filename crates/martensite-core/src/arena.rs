@@ -153,6 +153,22 @@ pub struct WidgetArena {
     /// The most recent widget that asked for keyboard focus —
     /// drained by [`take_focus_request`](Self::take_focus_request).
     pending_focus: Option<WidgetId>,
+    /// The active design-token theme, handed to every widget through
+    /// [`PaintContext::theme`] during [`build_paint_list`]. Defaults to
+    /// an empty theme so widgets fall back to their baked appearance
+    /// until [`set_theme`](Self::set_theme) installs one.
+    theme: martensite_theme::Theme,
+    /// Physical px per logical pt, handed to every widget through
+    /// [`PaintContext::scale`] during [`build_paint_list`]. `1.0` until
+    /// [`set_scale_factor`](Self::set_scale_factor) reports the real
+    /// display density.
+    scale_factor: f32,
+    /// Ambient shaped-text painter handed to every widget through
+    /// [`PaintContext::text_painter`] during [`build_paint_list`].
+    /// `None` until [`set_text_painter`](Self::set_text_painter)
+    /// installs one — widgets then fall back to `DrawText` placeholder
+    /// boxes. `Arc` so widgets may also hold explicit clones.
+    text_painter: Option<std::sync::Arc<dyn crate::paint::TextShaper + Send + Sync>>,
 }
 
 impl std::fmt::Debug for WidgetArena {
@@ -209,7 +225,137 @@ impl WidgetArena {
             free_slots: VecDeque::new(),
             overlay: OverlayLayer::new(),
             pending_focus: None,
+            theme: martensite_theme::Theme::new("fallback"),
+            scale_factor: 1.0,
+            text_painter: None,
         }
+    }
+
+    /// Returns the active design-token theme. The default is an empty
+    /// theme — widgets resolve tokens against it and fall back to their
+    /// baked defaults, so an unthemed arena reproduces pre-theme
+    /// behaviour exactly.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{TokenKey, WidgetArena};
+    ///
+    /// let arena = WidgetArena::new();
+    /// assert!(arena.theme().color(TokenKey::TextColor).is_none());
+    /// ```
+    pub fn theme(&self) -> &martensite_theme::Theme {
+        &self.theme
+    }
+
+    /// Replaces the active design-token theme. The next
+    /// [`build_paint_list`](Self::build_paint_list) hands it to every
+    /// widget through [`PaintContext::theme`]; mark nodes
+    /// `DIRTY_PAINT` (or rebuild the list) so the new tokens take
+    /// effect. Callers can animate a switch by installing successive
+    /// [`martensite_theme::ThemeDiff::interpolate`] results per frame.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{TokenKey, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena.set_theme(martensite_theme::tokens::default_dark());
+    /// assert!(arena.theme().color(TokenKey::TextColor).is_some());
+    /// ```
+    pub fn set_theme(&mut self, theme: martensite_theme::Theme) {
+        self.theme = theme;
+    }
+
+    /// Returns the display scale factor (physical px per logical pt).
+    /// `1.0` until [`set_scale_factor`](Self::set_scale_factor) is
+    /// called — a logical-pixel arena never needs to change it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::WidgetArena;
+    ///
+    /// let arena = WidgetArena::new();
+    /// assert_eq!(arena.scale_factor(), 1.0);
+    /// ```
+    pub fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+
+    /// Reports the display's scale factor so widgets can convert their
+    /// baked logical-point constants (font sizes, paddings, target
+    /// minimums) into the device-pixel sizes the paint pass emits —
+    /// see [`PaintContext::scale`]. Call it when the window moves
+    /// between displays or the OS scale changes. A **relayout** is
+    /// required for widgets that cache scale-derived geometry in
+    /// `layout` (thumb extents, scroll steps); the next
+    /// [`build_paint_list`](Self::build_paint_list) then emits at the
+    /// new factor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::WidgetArena;
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena.set_scale_factor(2.0);
+    /// assert_eq!(arena.scale_factor(), 2.0);
+    /// ```
+    pub fn set_scale_factor(&mut self, scale: f32) {
+        self.scale_factor = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        self.overlay.set_scale_factor(self.scale_factor);
+    }
+
+    /// Installs the ambient shaped-text painter handed to every widget
+    /// through [`PaintContext::text_painter`]. Call once at startup —
+    /// e.g. with `martensite::text_paint::shared_painter()` — and all
+    /// facade widgets emit real glyph runs instead of `DrawText`
+    /// placeholder boxes. A widget's own explicitly-injected painter
+    /// still takes precedence.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::paint::TextShaper;
+    /// use martensite_core::{GlyphRun, PaintList, WidgetArena};
+    /// use std::sync::Arc;
+    ///
+    /// struct Nop;
+    /// impl TextShaper for Nop {
+    ///     fn paint_shaped_text(
+    ///         &self,
+    ///         _: &mut PaintList,
+    ///         _: kurbo::Point,
+    ///         _: &str,
+    ///         _: f32,
+    ///         _: [u8; 4],
+    ///     ) {
+    ///     }
+    /// }
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena.set_text_painter(Nop);
+    /// assert!(arena.text_painter().is_some());
+    /// ```
+    pub fn set_text_painter(
+        &mut self,
+        painter: impl crate::paint::TextShaper + Send + Sync + 'static,
+    ) {
+        self.text_painter = Some(std::sync::Arc::new(painter));
+    }
+
+    /// Returns the ambient text painter installed by
+    /// [`set_text_painter`](Self::set_text_painter), if any — pass to
+    /// [`OverlayLayer::paint`](crate::overlay::OverlayLayer::paint) so
+    /// popup content shapes text identically to arena content.
+    pub fn text_painter(&self) -> Option<&(dyn crate::paint::TextShaper + Send + Sync)> {
+        self.text_painter.as_deref()
     }
 
     /// Returns the arena-owned in-window [`OverlayLayer`].
@@ -1460,7 +1606,8 @@ impl WidgetArena {
     pub fn build_paint_list(&self, root: WidgetId, list: &mut PaintList) {
         self.paint_node(root, list);
         // In-window popups paint above everything else.
-        self.overlay.paint(list);
+        self.overlay
+            .paint(list, &self.theme, self.text_painter.as_deref());
     }
 
     /// Recursive helper for [`WidgetArena::build_paint_list`].
@@ -1486,7 +1633,14 @@ impl WidgetArena {
             cold.debug_name.unwrap_or_else(|| cold.widget.debug_name()),
             rect_to_kurbo(hot.bounds),
         );
-        paint_widget_body(&*cold.widget, hot.bounds, list);
+        paint_widget_body(
+            &*cold.widget,
+            hot.bounds,
+            list,
+            &self.theme,
+            self.scale_factor,
+            self.text_painter.as_deref(),
+        );
 
         // Arena children honour the node's `CLIPS_CHILDREN` flag: their
         // paint commands are wrapped in a clip for the node bounds.
@@ -1536,12 +1690,15 @@ pub(crate) fn paint_widget_recursive(
     widget: &dyn crate::Widget,
     bounds: crate::Rect,
     list: &mut PaintList,
+    theme: &martensite_theme::Theme,
+    scale: f32,
+    text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
 ) {
     // Scope with no arena handle — callers of this entry point (overlay
     // content) have no `WidgetId` to report. Internal children recurse
     // through this same function and get their own scopes.
     list.push_scope(None, widget.debug_name(), rect_to_kurbo(bounds));
-    paint_widget_body(widget, bounds, list);
+    paint_widget_body(widget, bounds, list, theme, scale, text_painter);
     list.pop_scope();
 }
 
@@ -1550,8 +1707,21 @@ pub(crate) fn paint_widget_recursive(
 /// cover arena children. [`Widget::clips_children`] wraps the internal
 /// children in a clip pair, matching the arena-level `CLIPS_CHILDREN`
 /// behaviour.
-fn paint_widget_body(widget: &dyn crate::Widget, bounds: crate::Rect, list: &mut PaintList) {
-    let mut cx = PaintContext { list, bounds };
+fn paint_widget_body(
+    widget: &dyn crate::Widget,
+    bounds: crate::Rect,
+    list: &mut PaintList,
+    theme: &martensite_theme::Theme,
+    scale: f32,
+    text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
+) {
+    let mut cx = PaintContext {
+        list,
+        bounds,
+        theme,
+        scale,
+        text_painter,
+    };
     widget.paint(&mut cx);
     let clip = widget.clips_children();
     if clip {
@@ -1561,7 +1731,14 @@ fn paint_widget_body(widget: &dyn crate::Widget, bounds: crate::Rect, list: &mut
         let (Some(child), Some(child_bounds)) = (widget.child(i), widget.child_bounds(i)) else {
             continue;
         };
-        paint_widget_recursive(child, child_bounds, &mut *cx.list);
+        paint_widget_recursive(
+            child,
+            child_bounds,
+            &mut *cx.list,
+            theme,
+            scale,
+            text_painter,
+        );
     }
     if clip {
         cx.list.pop_clip();

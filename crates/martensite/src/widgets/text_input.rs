@@ -20,7 +20,7 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Widget, WidgetEvent,
 };
-use martensite_core::Rect;
+use martensite_core::{NodeFlags, Rect, TokenKey};
 
 /// Field background colour.
 const FACE: [u8; 4] = [255, 255, 255, 255];
@@ -64,6 +64,10 @@ pub struct TextInput {
     pub read_only: bool,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Shared shaped-text painter — when set, `paint` emits real
+    /// `GlyphRun`s; without it text falls back to `DrawText`
+    /// placeholder boxes. See [`crate::text_paint`].
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
     /// Whether the input currently holds keyboard focus. Updated by the
     /// `FocusGained`/`FocusLost` widget events.
     focused: bool,
@@ -89,6 +93,7 @@ impl TextInput {
             enabled: true,
             read_only: false,
             cached_bounds: Rect::default(),
+            text_painter: None,
             focused: false,
         }
     }
@@ -192,18 +197,33 @@ impl TextInput {
     pub fn cached_bounds(&self) -> Rect {
         self.cached_bounds
     }
+
+    /// Shares a [`crate::text_paint::TextPainter`] so `paint` emits real
+    /// glyph runs instead of `DrawText` placeholder boxes.
+    #[must_use]
+    pub fn with_text_painter(mut self, painter: crate::text_paint::SharedTextPainter) -> Self {
+        self.text_painter = Some(painter);
+        self
+    }
 }
 
 impl Widget for TextInput {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        // A text input has a default minimum size of 120x24.
-        let min_w = 120.0_f32.min(constraints.max_size.x.max(0.0));
-        let min_h = 24.0_f32.min(constraints.max_size.y.max(0.0));
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        // A text input has a default minimum size of 120x24 logical pt.
+        let min_w = cx.pt(120.0).min(constraints.max_size.x.max(0.0));
+        let min_h = cx.pt(24.0).min(constraints.max_size.y.max(0.0));
         Vec2::new(min_w, min_h)
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        // Declare keyboard focusability on the arena node — standalone
+        // inputs need it for `ImeCommitted` delivery.
+        if self.enabled {
+            cx.hot.flags |= NodeFlags::FOCUSABLE;
+        } else {
+            cx.hot.flags.remove(NodeFlags::FOCUSABLE);
+        }
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -259,37 +279,53 @@ impl Widget for TextInput {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        cx.list.push_fill_rect(rect, FACE);
         cx.list
-            .push_stroke_rect(rect, 1.0, if self.focused { EDGE_FOCUSED } else { EDGE });
+            .push_fill_rect(rect, cx.color(TokenKey::SurfaceColor, FACE));
+        cx.list.push_stroke_rect(
+            rect,
+            cx.pt(1.0),
+            if self.focused {
+                cx.color(TokenKey::AccentColor, EDGE_FOCUSED)
+            } else {
+                cx.color(TokenKey::BorderColor, EDGE)
+            },
+        );
 
-        let baseline_y = b.origin.y + b.size.y / 2.0 + 5.0;
-        let text_x = b.origin.x + TEXT_PAD_X;
+        // `DrawText` positions by the text run's top edge — centre the
+        // 14 pt font box within the field.
+        let font_px = cx.pt(14.0);
+        let text_y = b.origin.y + (b.size.y - font_px) / 2.0;
+        let text_x = b.origin.x + cx.pt(TEXT_PAD_X);
         if self.value.is_empty() {
-            cx.list.push_text(
-                kurbo::Point::new(f64::from(text_x), f64::from(baseline_y)),
-                self.placeholder.clone(),
-                14.0,
-                INK_PLACEHOLDER,
+            crate::text_paint::paint_label(
+                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                cx.list,
+                kurbo::Point::new(f64::from(text_x), f64::from(text_y)),
+                &self.placeholder,
+                font_px,
+                cx.color(TokenKey::TextMutedColor, INK_PLACEHOLDER),
             );
         } else {
-            cx.list.push_text(
-                kurbo::Point::new(f64::from(text_x), f64::from(baseline_y)),
-                self.value.clone(),
-                14.0,
-                INK,
+            crate::text_paint::paint_label(
+                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                cx.list,
+                kurbo::Point::new(f64::from(text_x), f64::from(text_y)),
+                &self.value,
+                font_px,
+                cx.color(TokenKey::TextColor, INK),
             );
         }
 
         // End-of-text caret — approximate x advance at 7 px per
         // character until real shaping lands in this widget.
         if self.focused {
-            let caret_x = f64::from(text_x + self.value.chars().count() as f32 * 7.0);
-            let top = f64::from(b.origin.y + 4.0);
+            let caret_x = f64::from(text_x + self.value.chars().count() as f32 * cx.pt(7.0));
+            let top = f64::from(b.origin.y + cx.pt(4.0));
             let mut caret = kurbo::BezPath::new();
             caret.move_to((caret_x, top));
-            caret.line_to((caret_x, f64::from(b.max_y()) - 4.0));
-            cx.list.push_stroke_path(caret, 1.0, CARET);
+            caret.line_to((caret_x, f64::from(b.max_y()) - cx.ptf(4.0)));
+            cx.list
+                .push_stroke_path(caret, cx.pt(1.0), cx.color(TokenKey::TextColor, CARET));
         }
     }
 }
@@ -311,7 +347,7 @@ mod tests {
     use martensite_core::HotNode;
 
     fn make_cx(hot: &mut HotNode) -> LayoutContext<'_> {
-        LayoutContext { hot }
+        LayoutContext { hot, scale: 1.0 }
     }
 
     #[test]

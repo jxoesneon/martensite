@@ -22,13 +22,25 @@ mod headless;
 mod model;
 mod panels;
 mod text;
+mod toolbar;
 
 fn main() {
     if std::env::args().any(|a| a == "--headless") {
         headless::run();
         return;
     }
-    if let Err(err) = app::run() {
+    // `--theme <dark|light|system>` — boots settled into the mode
+    // (default dark). Verification needs a non-animated start so the
+    // paint audit measures final colors, not transition frames.
+    let theme = {
+        let mut args = std::env::args().skip_while(|a| a != "--theme").skip(1);
+        match args.next().as_deref() {
+            Some("light") => app::ThemeChoice::Light,
+            Some("system") => app::ThemeChoice::System,
+            _ => app::ThemeChoice::Dark,
+        }
+    };
+    if let Err(err) = app::run(theme) {
         eprintln!("industrial_dashboard: {err}");
         std::process::exit(1);
     }

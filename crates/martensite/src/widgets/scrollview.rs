@@ -41,7 +41,7 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::{NodeFlags, Rect};
+use martensite_core::{NodeFlags, Rect, TokenKey};
 use martensite_motion::RubberBandScroller2D;
 
 /// Scrollbar thickness in logical pixels.
@@ -78,6 +78,8 @@ pub struct ScrollBarWidget {
     thumb: Option<Rect>,
     /// Whether the thumb is being dragged (mirrored from the owner).
     active: bool,
+    /// Display scale from `layout` — scroll steps are logical pt.
+    scale: f32,
 }
 
 /// A scroll request parked by a [`ScrollBarWidget`] for the owner.
@@ -99,21 +101,24 @@ impl ScrollBarWidget {
             pending: None,
             thumb: None,
             active: false,
+            scale: 1.0,
         }
     }
 }
 
 impl Widget for ScrollBarWidget {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let size = if self.vertical {
-            Vec2::new(BAR, 0.0)
+            Vec2::new(cx.pt(BAR), 0.0)
         } else {
-            Vec2::new(0.0, BAR)
+            Vec2::new(0.0, cx.pt(BAR))
         };
         size.min(constraints.max_size.max(Vec2::ZERO))
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+    fn layout(&mut self, cx: &mut LayoutContext, _bounds: Rect) {
+        self.scale = cx.scale;
+    }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::ScrollBar);
@@ -125,7 +130,7 @@ impl Widget for ScrollBarWidget {
         node.set_numeric_value(f64::from(self.offset));
         node.set_min_numeric_value(0.0);
         node.set_max_numeric_value(f64::from(self.max_offset));
-        node.set_numeric_value_step(f64::from(LINE));
+        node.set_numeric_value_step(f64::from(LINE * self.scale));
         if self.vertical {
             node.add_action(accesskit::Action::ScrollUp);
             node.add_action(accesskit::Action::ScrollDown);
@@ -150,9 +155,10 @@ impl Widget for ScrollBarWidget {
                 Vec2::new(v, 0.0)
             }
         };
+        let line = LINE * self.scale;
         let request = match action {
-            SemanticAction::ScrollUp | SemanticAction::ScrollLeft => BarRequest::By(axis(-LINE)),
-            SemanticAction::ScrollDown | SemanticAction::ScrollRight => BarRequest::By(axis(LINE)),
+            SemanticAction::ScrollUp | SemanticAction::ScrollLeft => BarRequest::By(axis(-line)),
+            SemanticAction::ScrollDown | SemanticAction::ScrollRight => BarRequest::By(axis(line)),
             SemanticAction::SetScrollOffset(offset) => BarRequest::To(*offset),
             _ => return EventResponse::Ignored,
         };
@@ -171,7 +177,8 @@ impl Widget for ScrollBarWidget {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        cx.list.push_fill_rect(track, TRACK_COLOR);
+        cx.list
+            .push_fill_rect(track, cx.color(TokenKey::DividerColor, TRACK_COLOR));
         if let Some(thumb) = self.thumb {
             let t = kurbo::Rect::new(
                 f64::from(thumb.min_x()),
@@ -180,11 +187,11 @@ impl Widget for ScrollBarWidget {
                 f64::from(thumb.max_y()),
             );
             cx.list.push_path(
-                kurbo::RoundedRect::from_rect(t, f64::from(BAR / 2.0)).to_path(0.1),
+                kurbo::RoundedRect::from_rect(t, cx.ptf(f64::from(BAR) / 2.0)).to_path(0.1),
                 if self.active {
-                    THUMB_ACTIVE
+                    cx.color(TokenKey::TextMutedColor, THUMB_ACTIVE)
                 } else {
-                    THUMB_COLOR
+                    cx.color(TokenKey::BorderColor, THUMB_COLOR)
                 },
             );
         }
@@ -235,6 +242,9 @@ pub struct ScrollView {
     drag_last: Option<Vec2>,
     /// Thumb-drag state: `(vertical?, grab_offset_in_thumb)`.
     thumb_drag: Option<(bool, f32)>,
+    /// Display scale from `layout` — bar width, min thumb, scroll step
+    /// are logical pt.
+    scale: f32,
 }
 
 impl ScrollView {
@@ -264,6 +274,7 @@ impl ScrollView {
             content_rect: None,
             drag_last: None,
             thumb_drag: None,
+            scale: 1.0,
         }
     }
 
@@ -567,7 +578,13 @@ impl ScrollView {
         // assigned, so it must run unconditionally — otherwise the
         // content child is never laid out, painted, or hit-tested.
         let mut hot = martensite_core::HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            // The layout pass caches the real factor in `self.scale` —
+            // hardcoding 1.0 here lays content out at a different scale
+            // than `paint` uses and rows/text collide at HiDPI.
+            scale: self.scale,
+        };
         let off = self.effective_offset();
         let rect = Rect::new(
             self.viewport.min_x() - off.x,
@@ -618,7 +635,9 @@ impl ScrollView {
         }
         let track_len = track.height();
         let frac = (self.viewport.height() / self.content_size.y).clamp(0.0, 1.0);
-        let thumb_len = (track_len * frac).max(MIN_THUMB).min(track_len);
+        let thumb_len = (track_len * frac)
+            .max(MIN_THUMB * self.scale)
+            .min(track_len);
         let max_off = self.max_offset().y;
         let t = if max_off > 0.0 {
             self.offset.y / max_off
@@ -637,7 +656,9 @@ impl ScrollView {
         }
         let track_len = track.width();
         let frac = (self.viewport.width() / self.content_size.x).clamp(0.0, 1.0);
-        let thumb_len = (track_len * frac).max(MIN_THUMB).min(track_len);
+        let thumb_len = (track_len * frac)
+            .max(MIN_THUMB * self.scale)
+            .min(track_len);
         let max_off = self.max_offset().x;
         let t = if max_off > 0.0 {
             self.offset.x / max_off
@@ -739,14 +760,23 @@ impl Widget for ScrollView {
         // reasonable desired viewport (bounded so the view does not ask
         // for unbounded space).
         let desired = self.content.measure(cx, constraints);
+        // `clamp` panics when min > max — cap the preferred minimum at
+        // the constraint max so zero-constraint probes stay safe.
+        let max_w = constraints.max_size.x.max(0.0);
+        let max_h = constraints.max_size.y.max(0.0);
         Vec2::new(
-            desired.x.clamp(40.0, constraints.max_size.x.max(0.0)),
-            desired.y.clamp(40.0, constraints.max_size.y.max(0.0)),
+            desired.x.clamp(cx.pt(40.0).min(max_w), max_w),
+            desired.y.clamp(cx.pt(40.0).min(max_h), max_h),
         )
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        self.scale = cx.scale;
+        // Hidden bars skip `layout` below but still answer
+        // `accessibility` steps and parked deltas from `self.scale`.
+        self.vbar.scale = cx.scale;
+        self.hbar.scale = cx.scale;
         // Declare keyboard focusability on the arena node — scroll
         // regions are keyboard-scrollable (arrows/PageUp/PageDown).
         if self.enabled {
@@ -769,30 +799,31 @@ impl Widget for ScrollView {
         );
 
         // Smart scrollbars: shown only when the axis overflows.
+        let bar = cx.pt(BAR);
         let show_v = desired.y > bounds.height();
-        let show_h = desired.x > bounds.width() - if show_v { BAR } else { 0.0 };
+        let show_h = desired.x > bounds.width() - if show_v { bar } else { 0.0 };
         // Re-check vertical with horizontal bar accounted for.
-        let show_v = desired.y > bounds.height() - if show_h { BAR } else { 0.0 };
+        let show_v = desired.y > bounds.height() - if show_h { bar } else { 0.0 };
 
         let mut viewport = bounds;
         self.vbar_rect = None;
         self.hbar_rect = None;
         if show_v {
-            viewport.size.x = (viewport.width() - BAR).max(0.0);
+            viewport.size.x = (viewport.width() - bar).max(0.0);
             self.vbar_rect = Some(Rect::new(
-                bounds.max_x() - BAR,
+                bounds.max_x() - bar,
                 bounds.min_y(),
-                BAR,
-                bounds.height() - if show_h { BAR } else { 0.0 },
+                bar,
+                bounds.height() - if show_h { bar } else { 0.0 },
             ));
         }
         if show_h {
-            viewport.size.y = (viewport.height() - BAR).max(0.0);
+            viewport.size.y = (viewport.height() - bar).max(0.0);
             self.hbar_rect = Some(Rect::new(
                 bounds.min_x(),
-                bounds.max_y() - BAR,
-                bounds.width() - if show_v { BAR } else { 0.0 },
-                BAR,
+                bounds.max_y() - bar,
+                bounds.width() - if show_v { bar } else { 0.0 },
+                bar,
             ));
         }
         self.viewport = viewport;
@@ -811,10 +842,10 @@ impl Widget for ScrollView {
 
         // Lay out the scrollbar children so their bounds are current.
         if let Some(rect) = self.vbar_rect {
-            self.vbar.layout(cx, rect);
+            cx.layout_child(&mut self.vbar, rect);
         }
         if let Some(rect) = self.hbar_rect {
-            self.hbar.layout(cx, rect);
+            cx.layout_child(&mut self.hbar, rect);
         }
 
         self.sync_scroller();
@@ -957,11 +988,12 @@ impl Widget for ScrollView {
             }
             WidgetEvent::KeyPressed { key, .. } => {
                 let vp = self.viewport;
+                let line = LINE * self.scale;
                 let delta = match key.as_str() {
-                    "ArrowDown" => Vec2::new(0.0, LINE),
-                    "ArrowUp" => Vec2::new(0.0, -LINE),
-                    "ArrowRight" => Vec2::new(LINE, 0.0),
-                    "ArrowLeft" => Vec2::new(-LINE, 0.0),
+                    "ArrowDown" => Vec2::new(0.0, line),
+                    "ArrowUp" => Vec2::new(0.0, -line),
+                    "ArrowRight" => Vec2::new(line, 0.0),
+                    "ArrowLeft" => Vec2::new(-line, 0.0),
                     "PageDown" => Vec2::new(0.0, vp.height() * 0.9),
                     "PageUp" => Vec2::new(0.0, -vp.height() * 0.9),
                     "Home" => {
@@ -984,19 +1016,19 @@ impl Widget for ScrollView {
             }
             WidgetEvent::SemanticAction(action) => match action {
                 SemanticAction::ScrollUp => {
-                    self.scroll_by(Vec2::new(0.0, -LINE));
+                    self.scroll_by(Vec2::new(0.0, -LINE * self.scale));
                     EventResponse::RequestRepaint
                 }
                 SemanticAction::ScrollDown => {
-                    self.scroll_by(Vec2::new(0.0, LINE));
+                    self.scroll_by(Vec2::new(0.0, LINE * self.scale));
                     EventResponse::RequestRepaint
                 }
                 SemanticAction::ScrollLeft => {
-                    self.scroll_by(Vec2::new(-LINE, 0.0));
+                    self.scroll_by(Vec2::new(-LINE * self.scale, 0.0));
                     EventResponse::RequestRepaint
                 }
                 SemanticAction::ScrollRight => {
-                    self.scroll_by(Vec2::new(LINE, 0.0));
+                    self.scroll_by(Vec2::new(LINE * self.scale, 0.0));
                     EventResponse::RequestRepaint
                 }
                 SemanticAction::SetScrollOffset(offset) => {
@@ -1090,7 +1122,10 @@ mod tests {
     fn make_view(content: Vec2, viewport: Vec2) -> ScrollView {
         let mut v = ScrollView::new(Fixed(content));
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         v.layout(&mut cx, Rect::new(0.0, 0.0, viewport.x, viewport.y));
         v
     }

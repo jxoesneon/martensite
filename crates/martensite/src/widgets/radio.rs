@@ -39,7 +39,7 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::{NodeFlags, Rect};
+use martensite_core::{NodeFlags, Rect, TokenKey};
 
 use crate::widgets::FlexDirection;
 
@@ -78,6 +78,8 @@ pub struct RadioOption {
     focus_pending: bool,
     /// Whether the group is enabled.
     enabled: bool,
+    /// Shared shaped-text painter from the owning `RadioGroup`.
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
 impl RadioOption {
@@ -89,19 +91,20 @@ impl RadioOption {
             activation_pending: false,
             focus_pending: false,
             enabled: true,
+            text_painter: None,
         }
     }
 }
 
 impl Widget for RadioOption {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Approximate label width — real text shaping lives in the
         // `martensite-text` pipeline; this is a coarse per-grapheme
         // estimate sufficient for row layout.
-        let w = DOT + LABEL_GAP + 8.0 * self.label.chars().count() as f32;
+        let w = cx.pt(DOT + LABEL_GAP + 8.0 * self.label.chars().count() as f32);
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
-            ROW_H.min(constraints.max_size.y.max(0.0)),
+            cx.pt(ROW_H).min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -153,23 +156,43 @@ impl Widget for RadioOption {
 
     fn paint(&self, cx: &mut PaintContext) {
         let b = cx.bounds;
+        let dot = cx.pt(DOT);
         let cy = f64::from(b.min_y() + b.height() / 2.0);
-        let cxm = f64::from(b.min_x() + DOT / 2.0);
-        let circle = kurbo::Circle::new(kurbo::Point::new(cxm, cy), f64::from(DOT / 2.0));
-        cx.list.push_stroke_path(circle.to_path(0.1), 1.5, EDGE);
+        let cxm = f64::from(b.min_x() + dot / 2.0);
+        let circle = kurbo::Circle::new(kurbo::Point::new(cxm, cy), f64::from(dot / 2.0));
+        cx.list.push_stroke_path(
+            circle.to_path(0.1),
+            cx.pt(1.5),
+            cx.color(TokenKey::BorderColor, EDGE),
+        );
+        let accent = cx.color(TokenKey::AccentColor, CHECKED);
         if self.focused {
-            let ring = kurbo::Circle::new(kurbo::Point::new(cxm, cy), f64::from(DOT / 2.0 + 3.0));
-            cx.list.push_stroke_path(ring.to_path(0.1), 2.0, FOCUS_RING);
+            let ring = kurbo::Circle::new(
+                kurbo::Point::new(cxm, cy),
+                f64::from(dot / 2.0 + cx.pt(3.0)),
+            );
+            // The ring is a translucent wash of the accent colour.
+            let wash = [accent[0], accent[1], accent[2], FOCUS_RING[3]];
+            cx.list
+                .push_stroke_path(ring.to_path(0.1), cx.pt(2.0), wash);
         }
         if self.checked {
-            let dot = kurbo::Circle::new(kurbo::Point::new(cxm, cy), f64::from(DOT / 2.0 - 4.0));
-            cx.list.push_path(dot.to_path(0.1), CHECKED);
+            let d = kurbo::Circle::new(
+                kurbo::Point::new(cxm, cy),
+                f64::from(dot / 2.0 - cx.pt(4.0)),
+            );
+            cx.list.push_path(d.to_path(0.1), accent);
         }
-        cx.list.push_text(
-            kurbo::Point::new(f64::from(b.min_x() + DOT + LABEL_GAP), cy + 5.0),
-            self.label.clone(),
-            14.0,
-            INK,
+        crate::text_paint::paint_label(
+            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+            cx.list,
+            kurbo::Point::new(
+                f64::from(b.min_x() + dot + cx.pt(LABEL_GAP)),
+                cy - cx.ptf(7.0),
+            ),
+            &self.label,
+            cx.pt(14.0),
+            cx.color(TokenKey::TextColor, INK),
         );
     }
 }
@@ -208,6 +231,9 @@ pub struct RadioGroup {
     cached_bounds: Rect,
     /// Option bounds from the last layout pass.
     option_bounds: Vec<Rect>,
+    /// Shared shaped-text painter — propagated to options in
+    /// `sync_options`. See [`crate::text_paint`].
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
 impl RadioGroup {
@@ -236,6 +262,7 @@ impl RadioGroup {
             focused: 0,
             cached_bounds: Rect::default(),
             option_bounds: Vec::new(),
+            text_painter: None,
         };
         group.sync_options();
         group
@@ -410,6 +437,15 @@ impl RadioGroup {
         }
     }
 
+    /// Shares a [`crate::text_paint::TextPainter`] so option labels
+    /// emit real glyph runs instead of `DrawText` placeholder boxes.
+    #[must_use]
+    pub fn with_text_painter(mut self, painter: crate::text_paint::SharedTextPainter) -> Self {
+        self.text_painter = Some(painter);
+        self.sync_options();
+        self
+    }
+
     /// Mirrors group state onto the option children so their emitted
     /// `RadioButton` nodes are accurate.
     fn sync_options(&mut self) {
@@ -417,6 +453,7 @@ impl RadioGroup {
             option.checked = i == self.selected;
             option.focused = i == self.focused;
             option.enabled = self.enabled;
+            option.text_painter = self.text_painter.clone();
         }
     }
 }
@@ -427,7 +464,7 @@ impl Widget for RadioGroup {
         for (i, option) in self.options.iter_mut().enumerate() {
             let size = option.measure(cx, constraints);
             if self.direction.is_row() {
-                total.x += size.x + if i > 0 { 16.0 } else { 0.0 };
+                total.x += size.x + if i > 0 { cx.pt(16.0) } else { 0.0 };
                 total.y = total.y.max(size.y);
             } else {
                 total.y += size.y;
@@ -447,7 +484,7 @@ impl Widget for RadioGroup {
         }
         self.option_bounds.clear();
         let n = self.options.len();
-        let row_gap = 16.0f32;
+        let row_gap = cx.pt(16.0);
         for (i, option) in self.options.iter_mut().enumerate() {
             let option_bounds = if self.direction.is_row() {
                 let w = if n > 0 {
@@ -475,7 +512,7 @@ impl Widget for RadioGroup {
                 )
             };
             self.option_bounds.push(option_bounds);
-            option.layout(cx, option_bounds);
+            cx.layout_child(option, option_bounds);
         }
     }
 
@@ -588,7 +625,10 @@ mod tests {
 
     fn laid_out(group: &mut RadioGroup, w: f32, h: f32) {
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         group.layout(&mut cx, Rect::new(0.0, 0.0, w, h));
     }
 

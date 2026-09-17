@@ -468,6 +468,23 @@ struct FillRec {
     shape: FillShape,
     color: ColorRgba,
     clip: Option<Rect>,
+    /// Emitted inside an `"Overlay"` provenance scope — popup fills
+    /// *intentionally* occlude content beneath them, so they don't
+    /// count as accidental coverers of non-overlay text.
+    in_overlay: bool,
+}
+
+/// One text command's audit record — command index (ordering), the
+/// probe geometry, the clip and innermost scope active at emit time,
+/// and whether it sits inside an `"Overlay"` provenance scope.
+struct TextRec {
+    idx: usize,
+    probe: TextProbe,
+    clip: Option<Rect>,
+    scope: Option<ScopeRec>,
+    /// Emitted inside an `"Overlay"` scope — popup text intentionally
+    /// sits above page content, so cross-layer overlap is not a lint.
+    in_overlay: bool,
 }
 
 /// One active widget-paint scope: name plus the widget's layout bounds.
@@ -655,9 +672,11 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
     };
     let mut lints = Vec::new();
     let mut clip_stack: Vec<Rect> = Vec::new();
-    // (command index, probe, clip active at record time) for every text
-    // command — reused by the occlusion, overlap and bounds passes below.
-    let mut texts: Vec<(usize, TextProbe, Option<Rect>, Option<ScopeRec>)> = Vec::new();
+    // Every text command in order — reused by the occlusion, overlap
+    // and bounds passes below. `in_overlay` marks content inside an
+    // `"Overlay"` provenance scope: popups intentionally occlude page
+    // content, so overlay↔page collisions are not findings.
+    let mut texts: Vec<TextRec> = Vec::new();
     // Every fill command in order — backdrop resolution and occlusion
     // testing are clip-aware, so each records the clip active when it
     // emitted.
@@ -697,18 +716,21 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
         // Effective clip is the intersection of every active region.
         let clip = clip_stack.iter().copied().reduce(|a, b| a.intersect(b));
         let scope = scope_stack.last().copied();
+        let in_overlay = scope_stack.iter().any(|s| s.name == "Overlay");
         match cmd {
             PaintCommand::FillRect(rect, color) => fills.push(FillRec {
                 idx: i,
                 shape: FillShape::Rect(*rect),
                 color: rgba_u8(*color),
                 clip,
+                in_overlay,
             }),
             PaintCommand::BlurredRect { rect, color, .. } => fills.push(FillRec {
                 idx: i,
                 shape: FillShape::Quad(*rect),
                 color: rgba_f32(*color),
                 clip,
+                in_overlay,
             }),
             PaintCommand::FillLinearGradient(rect, ..)
             | PaintCommand::FillRadialGradient(rect, ..) => fills.push(FillRec {
@@ -716,13 +738,26 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 shape: FillShape::Gradient(*rect),
                 color: ColorRgba::new(0.0, 0.0, 0.0, 0.0),
                 clip,
+                in_overlay,
             }),
             PaintCommand::DrawText(point, text, size, color) => {
-                texts.push((i, probe_text(point, text, *size, *color), clip, scope));
+                texts.push(TextRec {
+                    idx: i,
+                    probe: probe_text(point, text, *size, *color),
+                    clip,
+                    scope,
+                    in_overlay,
+                });
             }
             PaintCommand::DrawGlyphRun(run) => {
                 if let Some(p) = probe_glyph_run(run) {
-                    texts.push((i, p, clip, scope));
+                    texts.push(TextRec {
+                        idx: i,
+                        probe: p,
+                        clip,
+                        scope,
+                        in_overlay,
+                    });
                 }
             }
             PaintCommand::StrokeRect(rect, _, color) => {
@@ -747,7 +782,10 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
             _ => {}
         }
         if config.check_text_visibility {
-            if let Some((_, probe, _, sc)) = texts.last().filter(|t| t.0 == i) {
+            if let Some(TextRec {
+                probe, scope: sc, ..
+            }) = texts.last().filter(|t| t.idx == i)
+            {
                 if clip.is_some_and(|c| fully_outside(&probe.bounds, &c)) {
                     lints.push(PaintLint {
                         kind: PaintLintKind::ClippedText,
@@ -768,7 +806,14 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
             }
         }
     }
-    for &(i, ref probe, clip, sc) in &texts {
+    for &TextRec {
+        idx: i,
+        ref probe,
+        clip,
+        scope: sc,
+        in_overlay: text_in_overlay,
+    } in &texts
+    {
         let pos = format!("@ ({:.0}, {:.0})", probe.anchor.0, probe.anchor.1);
         // Which widget emitted this text — names the component to look
         // at instead of making the developer hunt coordinates.
@@ -850,7 +895,10 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
             (visible.x0 + w * 0.25, visible.y1 - h * 0.25),
             (visible.x1 - w * 0.25, visible.y1 - h * 0.25),
         ];
-        if config.check_text_visibility && renders && occluded_by_later_fill(&fills, i, &samples) {
+        if config.check_text_visibility
+            && renders
+            && occluded_by_later_fill(&fills, i, &samples, text_in_overlay)
+        {
             lints.push(PaintLint {
                 kind: PaintLintKind::OccludedText,
                 severity: LintSeverity::Warning,
@@ -974,8 +1022,13 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
     if config.check_text_overlap {
         for a in 0..texts.len() {
             for b in (a + 1)..texts.len() {
-                let (_, pa, clip_a, _) = &texts[a];
-                let (_, pb, clip_b, _) = &texts[b];
+                let (pa, clip_a, ov_a) = (&texts[a].probe, texts[a].clip, texts[a].in_overlay);
+                let (pb, clip_b, ov_b) = (&texts[b].probe, texts[b].clip, texts[b].in_overlay);
+                // Popup text intentionally renders above page content —
+                // only report collisions within the same layer.
+                if ov_a != ov_b {
+                    continue;
+                }
                 // Compare the *visible* regions — a run clipped inside its
                 // container can't actually render on top of a neighbour.
                 let va = clip_a.map_or(pa.bounds, |c| pa.bounds.intersect(c));
@@ -992,13 +1045,13 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                             pa.excerpt,
                             pb.excerpt,
                             texts[a]
-                                .3
+                                .scope
                                 .map_or(String::new(), |s| format!(" in {}", s.name)),
                             pa.anchor.0,
                             pa.anchor.1
                         ),
-                        scope: texts[a].3.map(|s| s.name),
-                        widget: texts[a].3.and_then(|s| s.id),
+                        scope: texts[a].scope.map(|s| s.name),
+                        widget: texts[a].scope.and_then(|s| s.id),
                     });
                 }
             }
@@ -1205,11 +1258,21 @@ pub fn audit_target_sizes(
 /// fill's own clip, so a fill clipped away from a sample can't count.
 /// Probing several samples (not just the center) keeps a fill that
 /// covers only part of the text from reading as full occlusion.
-fn occluded_by_later_fill(fills: &[FillRec], after: usize, points: &[(f64, f64)]) -> bool {
+/// `text_in_overlay` marks text inside an `"Overlay"` provenance
+/// scope: popup fills intentionally occlude page content, so a
+/// cross-layer cover (overlay fill over page text, or vice versa)
+/// does not count — only same-layer occlusion is a defect.
+fn occluded_by_later_fill(
+    fills: &[FillRec],
+    after: usize,
+    points: &[(f64, f64)],
+    text_in_overlay: bool,
+) -> bool {
     !points.is_empty()
         && points.iter().all(|p| {
             fills.iter().any(|rec| {
                 rec.idx > after
+                    && rec.in_overlay == text_in_overlay
                     && rec.color.a >= 0.999
                     && !matches!(rec.shape, FillShape::Gradient(_))
                     && rec.covers(*p)
@@ -1485,6 +1548,55 @@ mod tests {
         );
         // An opaque panel painted over the text.
         list.push_fill_rect(Rect::new(0.0, 0.0, 400.0, 300.0), [0, 0, 0, 255]);
+        let lints = audit_paint_list(&list, &PaintAuditConfig::default());
+        assert!(lints.iter().any(|l| l.kind == PaintLintKind::OccludedText));
+    }
+
+    #[test]
+    fn overlay_scope_content_does_not_flag_occlusion() {
+        // A dropdown popup legitimately covers page content: the page
+        // text beneath it and the popup's own panel/text must not read
+        // as occluded/overlapping defects. Same-layer defects still
+        // must — a fill covering text *inside* the overlay is a bug.
+        let mut list = list_with([255, 255, 255, 255]);
+        list.push_text(
+            Point::new(10.0, 10.0),
+            "page".to_string(),
+            14.0,
+            [0, 0, 0, 255],
+        );
+        list.push_scope(None, "Overlay", Rect::new(0.0, 0.0, 400.0, 300.0));
+        // Popup panel fill covers the page text — intentional.
+        list.push_fill_rect(Rect::new(0.0, 0.0, 400.0, 300.0), [40, 40, 48, 255]);
+        // Popup option text overlaps the page text — intentional.
+        list.push_text(
+            Point::new(10.0, 10.0),
+            "popup".to_string(),
+            14.0,
+            [240, 240, 240, 255],
+        );
+        list.commands.push(PaintCommand::PopScope);
+        let lints = audit_paint_list(&list, &PaintAuditConfig::default());
+        assert!(
+            !lints
+                .iter()
+                .any(|l| l.kind == PaintLintKind::OccludedText
+                    || l.kind == PaintLintKind::TextOverlap),
+            "cross-layer popup occlusion must not lint: {lints:?}"
+        );
+
+        // Same-layer defect inside the overlay still flags.
+        let mut list = list_with([255, 255, 255, 255]);
+        list.push_scope(None, "Overlay", Rect::new(0.0, 0.0, 400.0, 300.0));
+        list.push_fill_rect(Rect::new(0.0, 0.0, 400.0, 300.0), [40, 40, 48, 255]);
+        list.push_text(
+            Point::new(10.0, 10.0),
+            "popup".to_string(),
+            14.0,
+            [240, 240, 240, 255],
+        );
+        list.push_fill_rect(Rect::new(0.0, 0.0, 400.0, 300.0), [40, 40, 48, 255]);
+        list.commands.push(PaintCommand::PopScope);
         let lints = audit_paint_list(&list, &PaintAuditConfig::default());
         assert!(lints.iter().any(|l| l.kind == PaintLintKind::OccludedText));
     }

@@ -502,6 +502,7 @@ impl LayoutEngine {
         // which applies the node's own style (min/max size, aspect ratio) to
         // the intrinsic size returned by the widget measure callback and
         // produces the `LayoutOutput` the measure closure must return.
+        let scale = arena.scale_factor();
         let mut leaf_measure =
             |node_id: NodeId, known: Size<Option<f32>>, available_space: Size<AvailableSpace>| {
                 // Recursion guard: nodes deeper than [`MAX_LAYOUT_DEPTH`] return
@@ -559,7 +560,7 @@ impl LayoutEngine {
                             min_size: Vec2::new(physical.min_width, physical.min_height),
                             max_size: Vec2::new(physical.max_width, physical.max_height),
                         };
-                        let mut cx = LayoutContext { hot };
+                        let mut cx = LayoutContext { hot, scale };
                         let size = cold.widget.measure(&mut cx, constraints);
                         let logical = measure_trans.to_logical_size(GeomSize::new(size.x, size.y));
                         return Size {
@@ -603,6 +604,7 @@ impl LayoutEngine {
         root: WidgetId,
         container_size: GeomSize,
     ) {
+        let scale = arena.scale_factor();
         let mut queue = std::collections::VecDeque::new();
         queue.push_back((root, container_size));
 
@@ -625,7 +627,7 @@ impl LayoutEngine {
             if let Some((hot, cold)) = arena.get_both_mut(wid) {
                 hot.bounds = bounds;
                 self.bidi_layouts.insert(wid, bidi);
-                let mut cx = LayoutContext { hot };
+                let mut cx = LayoutContext { hot, scale };
                 cold.widget.layout(&mut cx, bounds);
             }
 

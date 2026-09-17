@@ -8,7 +8,7 @@
 
 use martensite::blessed::{DockPanel, DockTree, SplitDirection};
 use martensite::prelude::*;
-use martensite::theme::tokens::default_dark;
+use martensite::theme::tokens::{default_dark, default_light};
 
 /// One row of the process-metrics table. Kept POD so 1M rows stay cheap.
 #[derive(Clone, Debug)]
@@ -116,11 +116,10 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// Resolves `default_dark()` tokens into paint colors. Missing tokens
-    /// fall back to the same values `default_dark` ships, so the palette
-    /// is stable even if a token is renamed pre-freeze.
-    pub fn dark() -> Self {
-        let theme = default_dark();
+    /// Resolves an arbitrary theme into paint colors. Missing tokens
+    /// fall back to the dark defaults so the palette is stable even if
+    /// a token is renamed pre-freeze.
+    pub fn from_theme(theme: &martensite::theme::Theme) -> Self {
         let c =
             |key, fallback: [u8; 4]| theme.color(key).map(|o| o.to_srgba8()).unwrap_or(fallback);
         Self {
@@ -142,6 +141,17 @@ impl Palette {
         }
     }
 
+    /// The shipped dark theme resolved to a palette.
+    pub fn dark() -> Self {
+        Self::from_theme(&default_dark())
+    }
+
+    /// The shipped light theme resolved to a palette.
+    #[allow(dead_code)] // Convenience parity with `dark()` — callers go through `from_theme`.
+    pub fn light() -> Self {
+        Self::from_theme(&default_light())
+    }
+
     /// `color` at `alpha` — chart area fills and focus-ring glows derive
     /// from the same tokens instead of drifting to ad-hoc tints.
     pub fn alpha(color: [u8; 4], a: u8) -> [u8; 4] {
@@ -149,11 +159,10 @@ impl Palette {
     }
 
     /// Hairline stroke for panel frames and separators. `BorderColor`
-    /// (l 0.35) only reaches ~2.2:1 against `surface` — below the 3:1
-    /// WCAG 1.4.11 floor our own paint audit enforces — so borders use
-    /// the muted-text token at full strength: a 1px stroke still reads
-    /// as a hairline, and the audit composites it to ≈3.5:1 on `raised`
-    /// (translucent variants measured only 1.9:1).
+    /// is tuned for *control outlines* (≈3.4:1 on `raised`) — for the
+    /// finer 1px panel hairlines the muted-text token reads better and
+    /// composites to ≈3.5:1 on `raised` under the audit (translucent
+    /// variants measured only 1.9:1).
     pub fn hairline(&self) -> [u8; 4] {
         self.text_muted
     }

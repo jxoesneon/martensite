@@ -43,6 +43,7 @@ pub mod widget;
 pub use arena::{ArenaError, BreadthFirstIter, Children, DepthFirstIter, SubtreeIter, WidgetArena};
 pub use fence::{FrameFence, FrameGuard, DEFAULT_LEASE_TIMEOUT};
 pub use id::{SurfaceId, WidgetId};
+pub use martensite_theme::{Theme, ThemeToken, TokenKey};
 pub use node::{ColdNode, HotNode, InlineTextCache, NodeFlags, Rect};
 pub use overlay::{OverlayAnchor, OverlayEntry, OverlayLayer};
 pub use paint::{

@@ -54,9 +54,11 @@ pub struct Text {
     /// to ensure the next measurement re-shapes the text. Use `set_content()`
     /// for a convenient method that handles this automatically.
     pub content: String,
-    /// Font size in logical pixels.
+    /// Font size in logical points — multiplied by
+    /// [`LayoutContext::scale`](martensite_core::LayoutContext::scale)
+    /// before shaping, so a `16.0` font stays 16pt at every DPI.
     pub font_size: f32,
-    /// Line height in logical pixels. If `None`, uses `font_size * 1.2`.
+    /// Line height in logical points. If `None`, uses `font_size * 1.2`.
     pub line_height: Option<f32>,
     /// Font family name.
     pub family: String,
@@ -91,6 +93,10 @@ pub struct Text {
     /// `paint()` can emit `DrawGlyphRun` commands without re-shaping.
     /// Cleared by `invalidate_cache()`.
     last_shape: Option<CachedShape>,
+    /// Physical pixels per logical point from the last `measure`/`layout`
+    /// context — `font_size` and `line_height` are logical-point values,
+    /// so shaping runs at `value * scale` to emit device-pixel metrics.
+    scale: f32,
 }
 
 impl Text {
@@ -122,6 +128,7 @@ impl Text {
             caret: None,
             focused: false,
             last_shape: None,
+            scale: 1.0,
         }
     }
 
@@ -522,8 +529,12 @@ impl Text {
         // Clone content and family to avoid borrow conflict with font_manager
         let content = self.content.clone();
         let family = self.family.clone();
-        let line_height = self.effective_line_height();
-        let font_size = self.font_size;
+        // `font_size`/`line_height` are logical-point values — shape at
+        // the device-pixel size so metrics and glyph positions land in
+        // the same space as `bounds` (the Tier-2 cache key folds the
+        // scaled size in, so scale changes re-shape naturally).
+        let line_height = self.effective_line_height() * self.scale;
+        let font_size = self.font_size * self.scale;
         let max_width = if available_width.is_finite() && available_width > 0.0 {
             Some(available_width)
         } else {
@@ -610,7 +621,13 @@ impl Text {
 }
 
 impl Widget for Text {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        // A scale change invalidates every width-keyed Tier-1 entry —
+        // measured metrics are device px and would be a factor off.
+        if self.scale != cx.scale {
+            self.scale = cx.scale;
+            self.inline_cache.clear();
+        }
         let available_width = constraints.max_size.x;
         let max_height = constraints.max_size.y;
 
@@ -653,8 +670,15 @@ impl Widget for Text {
         Vec2::new(width, height)
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        // Same guard as `measure` — `layout` can be driven directly
+        // without a preceding `measure`, and stale Tier-1 entries must
+        // not survive a scale change.
+        if self.scale != cx.scale {
+            self.scale = cx.scale;
+            self.inline_cache.clear();
+        }
         // Re-shape at the final allocated width so `last_shape` carries
         // line breaks and glyph positions for the rect `paint()` draws
         // into — measure() may have been called with a wider or
@@ -698,7 +722,7 @@ impl Widget for Text {
         // split wherever `font_id` changes.
         for line in &shape.lines {
             let baseline_y = origin.y + line.line_y;
-            let mut run = GlyphRun::new(self.font_size, color);
+            let mut run = GlyphRun::new(self.font_size * cx.scale, color);
             let mut run_font: Option<martensite_text::FontId> = None;
 
             for g in &line.glyphs {
@@ -777,6 +801,7 @@ impl Clone for Text {
             caret: self.caret.clone(),
             focused: self.focused,
             last_shape: self.last_shape.clone(),
+            scale: self.scale,
         }
     }
 }
@@ -787,7 +812,7 @@ mod tests {
     use martensite_core::HotNode;
 
     fn make_cx(hot: &mut HotNode) -> LayoutContext<'_> {
-        LayoutContext { hot }
+        LayoutContext { hot, scale: 1.0 }
     }
 
     #[test]

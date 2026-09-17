@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ambient theme resolution** — `PaintContext::theme` carries the
+  arena's `martensite_theme::Theme` to every widget; `WidgetArena::
+  {theme, set_theme}` owns it, and `PaintContext::color(TokenKey,
+  fallback)` resolves a token with a baked-default fallback so unthemed
+  arenas reproduce each widget's original appearance. All facade
+  widgets resolve their chrome colors this way. `martensite-core` now
+  depends on `martensite-theme` (token set is dependency-free) and
+  re-exports `Theme`/`TokenKey`/`ThemeToken`. Animated switching rides
+  the normal paint path: interpolate with `ThemeDiff` and call
+  `set_theme` per frame.
+- **HiDPI scale propagation** — `WidgetArena::{scale_factor,
+  set_scale_factor}` (sanitizes non-finite/non-positive to `1.0`),
+  forwarded into `LayoutContext::scale`, `PaintContext::scale`, and the
+  arena's `OverlayLayer`. `LayoutContext::pt` / `PaintContext::{pt,
+  ptf}` convert baked logical-point constants (font sizes, paddings,
+  hit targets, radii) to device pixels; all facade widgets' measure,
+  layout, paint, and hit-test math use them, so measurement and paint
+  agree at 2x. `martensite-layout` feeds the arena factor into widget
+  measurement; `OverlayLayer::set_scale_factor` re-marks open popups
+  for relayout.
+- **Shaped facade-widget text** — new `martensite_core::paint::
+  TextShaper` seam (core cannot depend on a shaper), carried ambiently
+  by `PaintContext::text_painter` and installed once via
+  `WidgetArena::set_text_painter`. `martensite::text_paint` provides
+  `TextPainter` (lazy `FontManager`, `shape_text`, per-font run
+  splitting, `DrawGlyphRun` emission) and `SharedTextPainter`
+  (`Arc<Mutex<…>>`, implements `TextShaper`). Every facade widget emits
+  real glyph runs for its labels — an explicitly injected painter wins
+  over the ambient one, and `DrawText` placeholder boxes remain the
+  fallback when neither exists. `parking_lot` promoted to a regular
+  `martensite` dependency for the poison-free shared painter.
+  `OverlayLayer::paint` takes the painter as a fourth argument
+  (**breaking**); `build_paint_list` forwards the arena's.
+- **`industrial_dashboard` toolbar** — a `Toolbar` widget under the
+  header hosting real facade controls wired to shared `Signal`s:
+  `Button` pausing telemetry, `CheckBox` toggling the chart glow,
+  `Slider` driving the sample period, `Dropdown` switching
+  Dark/Light/System through `ThemeDiff`-animated transitions (with a
+  working listbox popup through the arena `OverlayLayer`), and
+  `TextInput` feeding the grid's `RowFilter`. `--theme <dark|light|
+  system>` boot flag plus a `T` key cycle.
+- **`LayoutContext::layout_child`** — lays out an internal child while
+  preserving the parent's `FOCUSABLE` flag. Internal children share
+  `cx.hot`; a disabled child clearing the flag would otherwise clobber
+  a flag the parent or an earlier sibling set. All container forwards
+  route through it.
+- **Theme conformance test** — `martensite-theme` asserts WCAG contrast
+  for the token pairs both shipped themes actually get painted
+  against: text tokens on surface *and* background (4.5), border
+  strokes on surface/background/raised (3), inverse ink on the accent
+  fill (4.5), and accent/muted marks on raised bands (3).
 - **On-screen paint-compliance audit** (`martensite-access::paint_audit`)
   — inspects the recorded `PaintList` each frame and reports WCAG 2.2
   violations via `tracing`: undersized text (scale-factor corrected),
@@ -29,7 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Backends ignore the markers; the audit tracks them so every
   `PaintLint` names the emitting widget (`PaintLint::scope`,
   `PaintLint::widget` for arena-id correlation, `in <name>` in
-  details). **Breaking change** to the public `PaintCommand` enum.
+  details). `OverlayLayer::paint` wraps all popup content in a named
+  `"Overlay"` scope; the audit treats cross-layer collisions as
+  intentional (a popup legitimately covers page content) while
+  same-layer occlusion and overlap still lint. **Breaking change** to
+  the public `PaintCommand` enum.
 - **Audit: container-overflow, focus-indicator, target-size, JSON** —
   `PaintLintKind::WidgetOverflow` flags text whose visible region
   escapes its own widget's scope bounds (a real paint leak, distinct
@@ -46,6 +101,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ScrollView::relayout_content` hardcoded `scale: 1.0` in its
+  `LayoutContext` — content laid out at a different scale than `paint`
+  emitted it, so popup rows and their text collided at HiDPI.
+- `Dropdown`/`ScrollView` `measure` called `f32::clamp` with
+  `min > max` on zero-constraint probes (e.g. popup measured before its
+  viewport is set) — a hard panic in the windowed app.
+- `Dropdown` popup measured viewport-wide (options reported
+  `max_size.x` as desired width) and showed a phantom horizontal
+  scrollbar over the last row; it now sizes to the widest option.
+- `industrial_dashboard`: `OverlayLayer::set_viewport` was never
+  called, so popups resolved against a zero viewport; the app also
+  painted the overlay a second time after `build_paint_list` (which
+  already appends it), producing covered-text and self-overlap audit
+  findings plus visibly corrupted glyphs.
+- `industrial_dashboard` theme dropdown commits were stomped by the
+  signal→widget reconcile; `Toolbar::tick` now tells a popup commit
+  from an external `theme_sel` write via a last-observed index.
+- Shipped `default_light`/`default_dark` token values that failed the
+  project's own paint audit on their surfaces (pastel chromatics,
+  too-dim borders/secondary text) retuned to WCAG-safe values.
+- `industrial_dashboard` toolbar band/slot `Rect::new` calls passed
+  corner coordinates as width/height (the constructor takes
+  `(x, y, w, h)`), misplacing the strip and its controls.
+- `Text` widget `font_size`/`line_height` were documented as logical
+  but never scaled — at HiDPI a `16.0` font emitted 16 device px. Both
+  are now multiplied by `LayoutContext::scale` before shaping, matching
+  the docs and every other facade widget.
+- `Button`/`CheckBox`/`TextInput` advertised `Action::Focus` but never
+  declared `NodeFlags::FOCUSABLE`, so the `FocusManager` rejected every
+  focus request — a standalone `TextInput` could not receive
+  `ImeCommitted` at all. All three now declare the flag in `layout`.
+- `Tabs::measure` `clamp` panic on small-constraint probes (same class
+  as the `Dropdown`/`ScrollView` fix); `TooltipBubble` measured an
+  unscaled `24px` height; `RadioGroup` used an unscaled `16px` row gap;
+  `Slider` painted an unscaled thumb stroke; `CheckBox::measure`
+  reported box-only width, letting tight parents clip the label.
+- `OverlayLayer::paint` took `scale` as a parameter while
+  `layout_pass` read the stored factor — a dual-source footgun. It now
+  uses `self.scale_factor` for both, and `place()` scales the
+  anchor-gap/pointer-offset constants into device px.
+- `OverlayLayer::set_viewport`/event-position/`bounds` docs claimed
+  "logical pixels" for what is actually the arena's device-pixel space;
+  `WidgetArena::set_scale_factor` now documents the required relayout.
+- `publish.yml`: `martensite-theme` now precedes `martensite-core` in
+  the publish order — the new `core → theme` dependency edge would have
+  failed `cargo publish -p martensite-core` on a fresh version.
 - `Button` label painted ~3px low — `DrawText` positions by the text
   run's top edge (both backends), not baseline as the comment claimed;
   the label rect is now centered within the face.

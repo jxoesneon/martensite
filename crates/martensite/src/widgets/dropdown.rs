@@ -39,7 +39,7 @@ use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
     PaintContext, PointerButton, SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::{NodeFlags, Rect};
+use martensite_core::{NodeFlags, Rect, TokenKey};
 
 use crate::widgets::scrollview::ScrollView;
 
@@ -92,13 +92,26 @@ struct OptionItem {
     index: usize,
     /// Shared state with the owning combobox.
     shared: Arc<Mutex<PopupState>>,
+    /// Shared shaped-text painter from the owning `Dropdown`.
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
 impl Widget for OptionItem {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        // Content width (label approx + gutters) — reporting
+        // `max_size.x` here makes the ScrollView think the column
+        // overflows horizontally and shows a phantom hbar.
+        let label_w = self
+            .shared
+            .lock()
+            .expect("popup state poisoned")
+            .options
+            .get(self.index)
+            .map(|o| o.chars().count() as f32 * cx.pt(7.0) + cx.pt(56.0))
+            .unwrap_or(0.0);
         Vec2::new(
-            constraints.max_size.x.max(0.0),
-            ROW_H.min(constraints.max_size.y.max(0.0)),
+            label_w.min(constraints.max_size.x.max(0.0)),
+            cx.pt(ROW_H).min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -162,26 +175,36 @@ impl Widget for OptionItem {
         );
         let highlighted = self.index == state.highlighted;
         if highlighted {
-            cx.list.push_fill_rect(rect, HIGHLIGHT_BG);
+            cx.list
+                .push_fill_rect(rect, cx.color(TokenKey::AccentColor, HIGHLIGHT_BG));
         }
+        // `DrawText` positions by the run's top edge — centre the 14 pt
+        // font box inside the row.
+        let font_px = cx.pt(14.0);
+        let text_y = b.min_y() + (b.height() - font_px) / 2.0;
         if self.index == state.selected && !highlighted {
             // Selected but not highlighted: draw a check glyph.
-            cx.list.push_text(
-                kurbo::Point::new(f64::from(b.min_x() + 6.0), f64::from(b.min_y() + 19.0)),
-                "✓".to_string(),
-                14.0,
-                CHECK,
+            crate::text_paint::paint_label(
+                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                cx.list,
+                kurbo::Point::new(f64::from(b.min_x() + cx.pt(6.0)), f64::from(text_y)),
+                "✓",
+                font_px,
+                cx.color(TokenKey::AccentColor, CHECK),
             );
         }
-        let ink = if highlighted { HIGHLIGHT_INK } else { INK };
+        let ink = if highlighted {
+            cx.color(TokenKey::TextInverseColor, HIGHLIGHT_INK)
+        } else {
+            cx.color(TokenKey::TextColor, INK)
+        };
         if let Some(label) = state.options.get(self.index) {
-            cx.list.push_text(
-                kurbo::Point::new(
-                    f64::from(b.min_x() + 24.0),
-                    f64::from(b.min_y() + b.height() / 2.0 + 5.0),
-                ),
-                label.clone(),
-                14.0,
+            crate::text_paint::paint_label(
+                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                cx.list,
+                kurbo::Point::new(f64::from(b.min_x() + cx.pt(24.0)), f64::from(text_y)),
+                label.as_str(),
+                font_px,
                 ink,
             );
         }
@@ -197,10 +220,17 @@ struct OptionColumn {
 }
 
 impl Widget for OptionColumn {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        // Widest item — `OptionItem::measure` reports content width so
+        // the ScrollView does not see a phantom horizontal overflow.
+        let w = self
+            .items
+            .iter_mut()
+            .map(|i| i.measure(cx, constraints).x)
+            .fold(0.0f32, f32::max);
         Vec2::new(
-            constraints.max_size.x.max(0.0),
-            (self.items.len() as f32 * ROW_H).min(constraints.max_size.y.max(0.0)),
+            w.min(constraints.max_size.x.max(0.0)),
+            (self.items.len() as f32 * cx.pt(ROW_H)).min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -209,12 +239,12 @@ impl Widget for OptionColumn {
         for (i, item) in self.items.iter_mut().enumerate() {
             let rect = Rect::new(
                 bounds.min_x(),
-                bounds.min_y() + i as f32 * ROW_H,
+                bounds.min_y() + i as f32 * cx.pt(ROW_H),
                 bounds.width(),
-                ROW_H,
+                cx.pt(ROW_H),
             );
             self.row_bounds.push(rect);
-            item.layout(cx, rect);
+            cx.layout_child(item, rect);
         }
     }
 
@@ -252,13 +282,17 @@ struct ListBoxPopup {
 }
 
 impl ListBoxPopup {
-    fn new(shared: Arc<Mutex<PopupState>>) -> Self {
+    fn new(
+        shared: Arc<Mutex<PopupState>>,
+        text_painter: Option<crate::text_paint::SharedTextPainter>,
+    ) -> Self {
         let items = {
             let state = shared.lock().expect("popup state poisoned");
             (0..state.options.len())
                 .map(|index| OptionItem {
                     index,
                     shared: Arc::clone(&shared),
+                    text_painter: text_painter.clone(),
                 })
                 .collect()
         };
@@ -276,14 +310,30 @@ impl ListBoxPopup {
 impl Widget for ListBoxPopup {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut s = self.scroll.measure(cx, constraints);
-        s.y = s.y.min(MAX_VISIBLE_ROWS * ROW_H + 2.0);
-        s.x = s.x.max(120.0).min(constraints.max_size.x.max(0.0));
+        s.y = s.y.min(MAX_VISIBLE_ROWS * cx.pt(ROW_H) + cx.pt(2.0));
+        // Options measure as fill-width (`max_size.x`), so `s.x` would
+        // report the whole viewport — size to the widest option's text
+        // plus the check gutter instead, the same approximation
+        // `Dropdown::measure` uses.
+        let widest = self
+            .shared
+            .lock()
+            .expect("popup state poisoned")
+            .options
+            .iter()
+            .map(|o| o.chars().count())
+            .max()
+            .unwrap_or(0) as f32;
+        s.x = (widest * cx.pt(7.0) + cx.pt(56.0)).clamp(
+            cx.pt(120.0).min(constraints.max_size.x.max(0.0)),
+            constraints.max_size.x.max(0.0),
+        );
         s
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = Some(bounds);
-        self.scroll.layout(cx, bounds);
+        cx.layout_child(&mut self.scroll, bounds);
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -335,8 +385,13 @@ impl Widget for ListBoxPopup {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        cx.list.push_fill_rect(rect, POPUP_BG);
-        cx.list.push_stroke_rect(rect, 1.0, POPUP_BORDER);
+        cx.list
+            .push_fill_rect(rect, cx.color(TokenKey::SurfaceColor, POPUP_BG));
+        cx.list.push_stroke_rect(
+            rect,
+            cx.pt(1.0),
+            cx.color(TokenKey::BorderColor, POPUP_BORDER),
+        );
     }
 
     fn clips_children(&self) -> bool {
@@ -401,6 +456,10 @@ pub struct Dropdown {
     typeahead: String,
     /// Combobox bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Shared shaped-text painter — `paint` emits real `GlyphRun`s when
+    /// set, `DrawText` placeholder boxes otherwise. Propagated to popup
+    /// options when the listbox opens.
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
 impl Dropdown {
@@ -434,7 +493,17 @@ impl Dropdown {
             shared,
             typeahead: String::new(),
             cached_bounds: Rect::default(),
+            text_painter: None,
         }
+    }
+
+    /// Shares a [`crate::text_paint::TextPainter`] so `paint` emits real
+    /// glyph runs instead of `DrawText` placeholder boxes. Popup options
+    /// inherit it when the listbox opens.
+    #[must_use]
+    pub fn with_text_painter(mut self, painter: crate::text_paint::SharedTextPainter) -> Self {
+        self.text_painter = Some(painter);
+        self
     }
 
     /// Sets the accessible label.
@@ -688,7 +757,10 @@ impl Dropdown {
     ///
     /// let mut dd = Dropdown::new(["A", "B"]);
     /// let mut hot = HotNode::default();
-    /// let mut cx = LayoutContext { hot: &mut hot };
+    /// let mut cx = LayoutContext {
+    ///     hot: &mut hot,
+    ///     scale: 1.0,
+    /// };
     /// dd.layout(&mut cx, Rect::new(10.0, 10.0, 160.0, 32.0));
     ///
     /// let mut overlay = OverlayLayer::new();
@@ -709,7 +781,7 @@ impl Dropdown {
         }
         if self.open && self.popup_id.is_none() {
             self.push_shared();
-            let popup = ListBoxPopup::new(Arc::clone(&self.shared));
+            let popup = ListBoxPopup::new(Arc::clone(&self.shared), self.text_painter.clone());
             self.popup_id =
                 Some(overlay.open(Box::new(popup), OverlayAnchor::Bounds(self.cached_bounds)));
         } else if !self.open {
@@ -754,7 +826,7 @@ impl Dropdown {
 }
 
 impl Widget for Dropdown {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Approximate face width — real shaping lives in the
         // `martensite-text` pipeline.
         let widest = self
@@ -763,10 +835,14 @@ impl Widget for Dropdown {
             .map(|o| o.chars().count())
             .max()
             .unwrap_or_else(|| self.placeholder.chars().count()) as f32;
-        let w = widest * 7.0 + 48.0;
+        let w = widest * cx.pt(7.0) + cx.pt(48.0);
+        // `clamp` panics when min > max — a zero-constraint probe
+        // (e.g. a popup measured before its viewport is set) hands us
+        // `max_size.x == 0`, so cap the preferred minimum at the max.
+        let max_w = constraints.max_size.x.max(0.0);
         Vec2::new(
-            w.clamp(80.0, constraints.max_size.x.max(0.0)),
-            FACE_H.min(constraints.max_size.y.max(0.0)),
+            w.clamp(cx.pt(80.0).min(max_w), max_w),
+            cx.pt(FACE_H).min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -967,32 +1043,44 @@ impl Widget for Dropdown {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        cx.list.push_fill_rect(rect, FACE_BG);
-        cx.list.push_stroke_rect(rect, 1.0, FACE_BORDER);
-        let ink = if self.enabled { INK } else { INK_DISABLED };
+        cx.list
+            .push_fill_rect(rect, cx.color(TokenKey::SurfaceColor, FACE_BG));
+        cx.list.push_stroke_rect(
+            rect,
+            cx.pt(1.0),
+            cx.color(TokenKey::BorderColor, FACE_BORDER),
+        );
+        let ink = if self.enabled {
+            cx.color(TokenKey::TextColor, INK)
+        } else {
+            cx.color(TokenKey::TextMutedColor, INK_DISABLED)
+        };
         let text = self
             .selected_text()
             .unwrap_or(self.placeholder.as_str())
             .to_string();
-        cx.list.push_text(
+        let font_px = cx.pt(14.0);
+        crate::text_paint::paint_label(
+            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+            cx.list,
             kurbo::Point::new(
-                f64::from(b.min_x() + 10.0),
-                f64::from(b.min_y() + b.height() / 2.0 + 5.0),
+                f64::from(b.min_x() + cx.pt(10.0)),
+                f64::from(b.min_y() + (b.height() - font_px) / 2.0),
             ),
-            text,
-            14.0,
+            &text,
+            font_px,
             ink,
         );
         // Disclosure triangle.
-        let cx_mid = f64::from(b.max_x() - 16.0);
+        let cx_mid = f64::from(b.max_x() - cx.pt(16.0));
         let cy = f64::from(b.min_y() + b.height() / 2.0);
         let tri = kurbo::BezPath::from_vec(vec![
-            kurbo::PathEl::MoveTo(kurbo::Point::new(cx_mid - 5.0, cy - 2.5)),
-            kurbo::PathEl::LineTo(kurbo::Point::new(cx_mid + 5.0, cy - 2.5)),
-            kurbo::PathEl::LineTo(kurbo::Point::new(cx_mid, cy + 3.5)),
+            kurbo::PathEl::MoveTo(kurbo::Point::new(cx_mid - cx.ptf(5.0), cy - cx.ptf(2.5))),
+            kurbo::PathEl::LineTo(kurbo::Point::new(cx_mid + cx.ptf(5.0), cy - cx.ptf(2.5))),
+            kurbo::PathEl::LineTo(kurbo::Point::new(cx_mid, cy + cx.ptf(3.5))),
             kurbo::PathEl::ClosePath,
         ]);
-        cx.list.push_path(tri, INK);
+        cx.list.push_path(tri, cx.color(TokenKey::TextColor, INK));
     }
 }
 
@@ -1003,7 +1091,10 @@ mod tests {
 
     fn laid_out(dd: &mut Dropdown) {
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         dd.layout(&mut cx, Rect::new(10.0, 10.0, 160.0, 32.0));
     }
 

@@ -98,12 +98,12 @@ jobs:
           CRATES=(
             martensite-reactive
             martensite-macros
+            martensite-theme
             martensite-core
             martensite-host
             martensite-layout
             martensite-vello
             martensite-render
-            martensite-theme
             martensite-media-platform
             martensite-media
             martensite-engine-bridge
@@ -242,7 +242,8 @@ jobs:
           # Crates in topological dependency order.
           # martensite-vello must come before martensite-render.
           # martensite-cosmic-text must come before martensite-text.
-          # martensite-theme must come before martensite-wgpu.
+          # martensite-theme must come before martensite-core (ambient
+          # `PaintContext::theme`) and martensite-wgpu.
           # martensite-media-platform must come before martensite-wgpu.
           # martensite-clipboard-platform must come before martensite-clipboard.
           # martensite-font-fallback must come before martensite.
@@ -256,12 +257,12 @@ jobs:
           CRATES=(
             martensite-reactive
             martensite-macros
+            martensite-theme
             martensite-core
             martensite-host
             martensite-layout
             martensite-vello
             martensite-render
-            martensite-theme
             martensite-media-platform
             martensite-media
             martensite-engine-bridge

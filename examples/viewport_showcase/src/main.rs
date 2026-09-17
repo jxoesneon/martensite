@@ -92,11 +92,18 @@ fn layout_both(
     godot_surface: SurfaceId,
     panels: &mut HashMap<SurfaceId, Rect>,
     size: PhysicalSize<u32>,
+    scale: f32,
 ) {
     let (left, right) = panel_bounds(size);
     let mut hot = HotNode::default();
-    bevy_panel.layout(&mut LayoutContext { hot: &mut hot }, left);
-    godot_panel.layout(&mut LayoutContext { hot: &mut hot }, right);
+    bevy_panel.layout(&mut LayoutContext {
+            hot: &mut hot,
+            scale,
+        }, left);
+    godot_panel.layout(&mut LayoutContext {
+            hot: &mut hot,
+            scale,
+        }, right);
     panels.insert(bevy_surface, left);
     panels.insert(godot_surface, right);
 }
@@ -415,6 +422,7 @@ impl App {
                 *godot_surface,
                 panel_rects,
                 window.surface_size(),
+                window.scale_factor() as f32,
             );
             *needs_layout = false;
         }
@@ -447,6 +455,7 @@ impl App {
                 *godot_surface,
                 panel_rects,
                 window.surface_size(),
+                window.scale_factor() as f32,
             );
         }
         if !ready.is_empty() || bevy_poll.needs_redraw() || godot_poll.needs_redraw() {

@@ -46,12 +46,15 @@ const MARGIN: f32 = 32.0;
 /// Lays `widget` out inside `size` and pushes the physical-pixel
 /// viewport to the bridge — the producer's size + DPI contract for the
 /// next `drive_frame` call.
-fn layout_into(widget: &mut ExternalEngine, size: PhysicalSize<u32>) {
+fn layout_into(widget: &mut ExternalEngine, size: PhysicalSize<u32>, scale: f32) {
     let w = (size.width as f32 - MARGIN * 2.0).max(1.0);
     let h = (size.height as f32 - MARGIN * 2.0).max(1.0);
     let mut hot = HotNode::default();
     widget.layout(
-        &mut LayoutContext { hot: &mut hot },
+        &mut LayoutContext {
+            hot: &mut hot,
+            scale,
+        },
         Rect::new(MARGIN, MARGIN, w, h),
     );
 }
@@ -131,7 +134,7 @@ impl App {
         // 1. Layout — forwards the widget's physical bounds + DPI as the
         //    bridge viewport so the engine renders at its real size.
         if *needs_layout {
-            layout_into(widget, window.surface_size());
+            layout_into(widget, window.surface_size(), window.scale_factor() as f32);
             *needs_layout = false;
         }
 
@@ -156,7 +159,7 @@ impl App {
             if poll.needs_layout() {
                 // First frame carries the intrinsic size — relayout so
                 // the fit rect is computed against real dimensions.
-                layout_into(widget, window.surface_size());
+                layout_into(widget, window.surface_size(), window.scale_factor() as f32);
             }
             if poll.needs_redraw() {
                 window.request_redraw();

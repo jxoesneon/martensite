@@ -47,7 +47,7 @@ use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
     PaintContext, PointerButton, SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::{NodeFlags, Rect};
+use martensite_core::{NodeFlags, Rect, TokenKey};
 
 /// Tab strip height in logical pixels.
 const STRIP_H: f32 = 32.0;
@@ -98,6 +98,8 @@ pub struct TabItem {
     activation_pending: bool,
     /// Parked `SemanticAction::Focus` for the owner to apply.
     focus_pending: bool,
+    /// Shared shaped-text painter from the owning `Tabs`.
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
 impl TabItem {
@@ -111,18 +113,19 @@ impl TabItem {
             enabled: true,
             activation_pending: false,
             focus_pending: false,
+            text_painter: None,
         }
     }
 }
 
 impl Widget for TabItem {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Approximate label width — real shaping lives in the
         // `martensite-text` pipeline.
-        let w = 24.0 + 8.0 * self.label.chars().count() as f32;
+        let w = cx.pt(24.0 + 8.0 * self.label.chars().count() as f32);
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
-            STRIP_H.min(constraints.max_size.y.max(0.0)),
+            cx.pt(STRIP_H).min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -179,22 +182,29 @@ impl Widget for TabItem {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
+        let accent = cx.color(TokenKey::AccentColor, ACCENT);
         if self.selected {
-            cx.list.push_fill_rect(rect, TAB_BG);
-            let underline = kurbo::Rect::new(rect.x0, rect.y1 - 2.0, rect.x1, rect.y1);
-            cx.list.push_fill_rect(underline, ACCENT);
+            cx.list
+                .push_fill_rect(rect, cx.color(TokenKey::SurfaceColor, TAB_BG));
+            let underline = kurbo::Rect::new(rect.x0, rect.y1 - cx.ptf(2.0), rect.x1, rect.y1);
+            cx.list.push_fill_rect(underline, accent);
         }
         if self.focused {
-            cx.list.push_stroke_rect(rect, 2.0, FOCUS_RING);
+            // Translucent wash of the accent colour.
+            let wash = [accent[0], accent[1], accent[2], FOCUS_RING[3]];
+            cx.list.push_stroke_rect(rect, cx.pt(2.0), wash);
         }
-        cx.list.push_text(
+        let font_px = cx.pt(14.0);
+        crate::text_paint::paint_label(
+            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+            cx.list,
             kurbo::Point::new(
-                f64::from(b.min_x() + 12.0),
-                f64::from(b.min_y() + b.height() / 2.0 + 5.0),
+                f64::from(b.min_x() + cx.pt(12.0)),
+                f64::from(b.min_y() + (b.height() - font_px) / 2.0),
             ),
-            self.label.clone(),
-            14.0,
-            INK,
+            &self.label,
+            font_px,
+            cx.color(TokenKey::TextColor, INK),
         );
     }
 }
@@ -218,10 +228,10 @@ impl TabStrip {
 }
 
 impl Widget for TabStrip {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
-            STRIP_H.min(constraints.max_size.y.max(0.0)),
+            cx.pt(STRIP_H).min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -240,7 +250,7 @@ impl Widget for TabStrip {
                 bounds.height(),
             );
             self.tab_bounds.push(rect);
-            tab.layout(cx, rect);
+            cx.layout_child(tab, rect);
         }
     }
 
@@ -284,7 +294,7 @@ impl Widget for TabPanelChild {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = Some(bounds);
-        self.content.layout(cx, bounds);
+        cx.layout_child(self.content.as_mut(), bounds);
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -343,7 +353,7 @@ impl Widget for PanelSet {
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.region = Some(bounds);
         for panel in &mut self.panels {
-            panel.layout(cx, bounds);
+            cx.layout_child(panel, bounds);
         }
     }
 
@@ -413,6 +423,9 @@ pub struct Tabs {
     strip_bounds: Option<Rect>,
     /// Panel region bounds from the last layout pass.
     panel_bounds: Option<Rect>,
+    /// Shared shaped-text painter — propagated to tabs in
+    /// `sync_children`. See [`crate::text_paint`].
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
 impl Tabs {
@@ -441,6 +454,7 @@ impl Tabs {
             cached_bounds: Rect::default(),
             strip_bounds: None,
             panel_bounds: None,
+            text_painter: None,
         }
     }
 
@@ -498,6 +512,15 @@ impl Tabs {
     #[must_use]
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Shares a [`crate::text_paint::TextPainter`] so tab labels emit
+    /// real glyph runs instead of `DrawText` placeholder boxes.
+    #[must_use]
+    pub fn with_text_painter(mut self, painter: crate::text_paint::SharedTextPainter) -> Self {
+        self.text_painter = Some(painter);
+        self.sync_children();
         self
     }
 
@@ -674,6 +697,7 @@ impl Tabs {
             tab.pos_in_set = i + 1;
             tab.set_size = n;
             tab.enabled = self.enabled;
+            tab.text_painter = self.text_painter.clone();
         }
         for (i, panel) in self.panels.panels.iter_mut().enumerate() {
             panel.shown = i == self.selected;
@@ -690,9 +714,14 @@ impl Default for Tabs {
 impl Widget for Tabs {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let panels = self.panels.measure(cx, constraints);
+        // Cap the preferred minimum at the available max — a
+        // zero/small-constraint probe would otherwise make `clamp`'s
+        // min exceed its max and panic.
+        let max_w = constraints.max_size.x.max(0.0);
+        let max_h = constraints.max_size.y.max(0.0);
         Vec2::new(
-            panels.x.clamp(80.0, constraints.max_size.x.max(0.0)),
-            (panels.y + STRIP_H).clamp(80.0, constraints.max_size.y.max(0.0)),
+            panels.x.clamp(cx.pt(80.0).min(max_w), max_w),
+            (panels.y + cx.pt(STRIP_H)).clamp(cx.pt(80.0).min(max_h), max_h),
         )
     }
 
@@ -709,7 +738,7 @@ impl Widget for Tabs {
             bounds.min_x(),
             bounds.min_y(),
             bounds.width(),
-            STRIP_H.min(bounds.height()),
+            cx.pt(STRIP_H).min(bounds.height()),
         );
         let panels = Rect::new(
             bounds.min_x(),
@@ -719,8 +748,8 @@ impl Widget for Tabs {
         );
         self.strip_bounds = Some(strip);
         self.panel_bounds = Some(panels);
-        self.strip.layout(cx, strip);
-        self.panels.layout(cx, panels);
+        cx.layout_child(&mut self.strip, strip);
+        cx.layout_child(&mut self.panels, panels);
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -886,7 +915,10 @@ mod tests {
 
     fn laid_out(tabs: &mut Tabs, w: f32, h: f32) {
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         tabs.layout(&mut cx, Rect::new(0.0, 0.0, w, h));
     }
 

@@ -22,8 +22,10 @@ use martensite::core::{
     ColdNode, HotNode, LayoutContext, NodeFlags, Rect, WidgetArena, WidgetEvent, WidgetId,
 };
 use martensite::focus::{FocusManager, TabNavigation};
+use martensite::motion::{AnimationDriver, AnimationId};
 use martensite::prelude::*;
 use martensite::render::{PaintList, Point};
+use martensite::theme::{ThemeDictionary, ThemeDiff, ThemeMode, ThemeToken};
 use martensite::wgpu::{
     BackdropMode, GpuContext, OrchestratorConfig, PresentModePreference, RecoveryMachine,
     RenderOrchestrator, SurfaceWrapper,
@@ -47,6 +49,7 @@ use martensite::devtools::hud::{DiagnosticHud, FrameTiming};
 use crate::model::{build_dock_tree, Palette};
 use crate::panels::{fmt_count, EditorPanel, GridPanel, MediaPanel, TelemetryPanel};
 use crate::text::TextPainter;
+use crate::toolbar::{Toolbar, TOOLBAR_H};
 
 /// Header strip height (logical pt × scale), status bar likewise.
 const HEADER_PT: f32 = 52.0;
@@ -83,6 +86,14 @@ impl accesskit::DeactivationHandler for NoopDeactivate {
     fn deactivate_accessibility(&mut self) {}
 }
 
+/// The user's theme selection — `System` follows the OS appearance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeChoice {
+    Dark,
+    Light,
+    System,
+}
+
 /// The application. GPU/window state is created lazily inside
 /// `can_create_surfaces` per the winit 0.31 lifecycle.
 struct App {
@@ -90,7 +101,29 @@ struct App {
     scale: Signal<f32>,
     cpu: Signal<f64>,
     mem: Signal<f64>,
+    /// Toolbar outcome cells — shared with the `Toolbar` widget and the
+    /// panels that consume them (pause/rate → Telemetry, text → Grid).
+    paused: Signal<bool>,
+    glow: Signal<bool>,
+    tick_ms: Signal<f64>,
+    /// Theme selection as a `toolbar::THEME_OPTIONS` index — the
+    /// dropdown writes it, `redraw` applies it, `T` writes it back.
+    theme_sel: Signal<usize>,
+    /// Grid filter text — `GridPanel` folds it into its `RowFilter`.
+    filter_text: Signal<String>,
+    /// The toolbar strip's arena node (not a dock panel — a fixed band
+    /// under the header).
+    toolbar: Option<WidgetId>,
     pal: Palette,
+    /// Theme state — the dictionary ships both themes; `choice` is the
+    /// selection (System resolves through winit each frame), and the
+    /// driver + fade animate the switch through `ThemeDiff` Oklab
+    /// interpolation on the ordinary paint path.
+    themes: ThemeDictionary,
+    theme_choice: ThemeChoice,
+    theme_anim: AnimationDriver,
+    theme_fade: Option<(AnimationId, ThemeDiff)>,
+    installed_mode: ThemeMode,
     dock: martensite::blessed::DockTree,
     /// arena is built in `can_create_surfaces` once the real scale
     /// factor is known (F18 — widgets get scale through the signal).
@@ -121,12 +154,23 @@ struct App {
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(initial_choice: ThemeChoice) -> Self {
         Self {
             scale: Signal::new(1.0f32),
             cpu: Signal::new(0.42f64),
             mem: Signal::new(0.61f64),
+            paused: Signal::new(false),
+            glow: Signal::new(true),
+            tick_ms: Signal::new(100.0f64),
+            theme_sel: Signal::new(Self::theme_index(initial_choice)),
+            filter_text: Signal::new(String::new()),
+            toolbar: None,
             pal: Palette::dark(),
+            themes: ThemeDictionary::new(),
+            theme_choice: initial_choice,
+            theme_anim: AnimationDriver::new(),
+            theme_fade: None,
+            installed_mode: ThemeMode::Dark,
             dock: martensite::blessed::DockTree::with_capacity(8),
             arena: None,
             root: None,
@@ -158,6 +202,17 @@ impl App {
     /// child's `WidgetId` (F4 — the u64 bridge is still manual).
     fn build_arena(&mut self) {
         let mut arena = WidgetArena::new();
+        // Every widget's paint resolves tokens through PaintContext::theme.
+        // The initial choice installs directly (no startup fade) so a
+        // `--theme light` boot lands settled on frame one.
+        let mode = self.effective_mode();
+        arena.set_theme(self.themes.theme(mode).clone());
+        arena.set_scale_factor(self.scale.get());
+        // Ambient shaped-text painter — every facade widget (toolbar
+        // button labels, dropdown face/options, …) emits real glyph
+        // runs through this one shared FontManager.
+        arena.set_text_painter(martensite::text_paint::shared_painter());
+        self.installed_mode = mode;
 
         // Transparent root — paints nothing itself; children get their
         // bounds from the dock tree, not Taffy (the dock BSP is the
@@ -171,19 +226,40 @@ impl App {
         let mut focus = FocusManager::new();
         focus.set_root(root);
 
+        // The toolbar strip — first child so it precedes the panels in
+        // Tab order and the paint walk; its geometry is a fixed band
+        // under the header, not a dock leaf.
         let scale = self.scale.clone();
-        let pal = self.pal;
+        {
+            let mut hot = HotNode::default();
+            hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
+            let mut cold = ColdNode::new(Box::new(Toolbar::new(
+                scale.clone(),
+                self.paused.clone(),
+                self.glow.clone(),
+                self.tick_ms.clone(),
+                self.theme_sel.clone(),
+                self.filter_text.clone(),
+            )));
+            cold.debug_name = Some("Toolbar");
+            let id = arena.insert(hot, cold);
+            arena.append_child(root, id).expect("append toolbar");
+            self.toolbar = Some(id);
+        }
+
         let mut panels: [Option<WidgetId>; 4] = [None, None, None, None];
         let widgets: [Box<dyn martensite::core::Widget>; 4] = [
-            Box::new(GridPanel::new(scale.clone(), pal)),
+            Box::new(GridPanel::new(scale.clone(), self.filter_text.clone())),
             Box::new(TelemetryPanel::new(
                 scale.clone(),
-                pal,
                 self.cpu.clone(),
                 self.mem.clone(),
+                self.paused.clone(),
+                self.glow.clone(),
+                self.tick_ms.clone(),
             )),
-            Box::new(EditorPanel::new(scale.clone(), pal)),
-            Box::new(MediaPanel::new(scale.clone(), pal)),
+            Box::new(EditorPanel::new(scale.clone())),
+            Box::new(MediaPanel::new(scale.clone())),
         ];
         for (i, widget) in widgets.into_iter().enumerate() {
             let mut hot = HotNode::default();
@@ -224,10 +300,29 @@ impl App {
         let s = self.scale.get();
         let size = window.surface_size();
         let (w, h) = (f64::from(size.width), f64::from(size.height));
+        // Popups clamp into the real window — without this the layer's
+        // default zero viewport collapses every popup to a degenerate
+        // rect at the origin.
+        arena
+            .overlay_mut()
+            .set_viewport(Rect::new(0.0, 0.0, w as f32, h as f32));
         let m = f64::from(MARGIN_PT * s);
         let gap = f64::from(GAP_PT * s);
         let top = m + f64::from(HEADER_PT * s) + gap;
         let bottom = h - m - f64::from(STATUS_PT * s) - gap;
+
+        // Toolbar band under the header — collapses to nothing when the
+        // window is too short rather than eating the dock area.
+        let tb_h = f64::from(TOOLBAR_H * s).min((bottom - top).max(0.0));
+        if let Some(id) = self.toolbar {
+            // Rect is (x, y, width, height) — not min/max corners.
+            let r = Rect::new(m as f32, top as f32, (w - 2.0 * m) as f32, tb_h as f32);
+            if let Some((hot, cold)) = arena.get_both_mut(id) {
+                hot.bounds = r;
+                cold.widget.layout(&mut LayoutContext { hot, scale: s }, r);
+            }
+        }
+        let top = top + tb_h + gap;
 
         // Root covers the window so routing always has a hit target.
         let root = self.root.expect("arena built");
@@ -259,7 +354,7 @@ impl App {
             );
             if let Some((hot, cold)) = arena.get_both_mut(wid) {
                 hot.bounds = r;
-                cold.widget.layout(&mut LayoutContext { hot }, r);
+                cold.widget.layout(&mut LayoutContext { hot, scale: s }, r);
             }
         }
     }
@@ -443,6 +538,61 @@ impl App {
         }
     }
 
+    /// The effective mode — `System` follows the OS appearance reported
+    /// by winit, defaulting to dark when the platform can't say.
+    fn effective_mode(&self) -> ThemeMode {
+        match self.theme_choice {
+            ThemeChoice::Dark => ThemeMode::Dark,
+            ThemeChoice::Light => ThemeMode::Light,
+            ThemeChoice::System => match self.window.as_ref().and_then(|w| w.theme()) {
+                Some(winit::window::Theme::Light) => ThemeMode::Light,
+                _ => ThemeMode::Dark,
+            },
+        }
+    }
+
+    /// The `THEME_OPTIONS` index for a choice — dropdown order.
+    fn theme_index(choice: ThemeChoice) -> usize {
+        match choice {
+            ThemeChoice::Dark => 0,
+            ThemeChoice::Light => 1,
+            ThemeChoice::System => 2,
+        }
+    }
+
+    /// Selects a theme choice and starts the animated fade. No-op when
+    /// the choice is unchanged. Also writes the dropdown index back so
+    /// `T`-driven cycles stay visible in the toolbar.
+    fn set_theme_choice(&mut self, choice: ThemeChoice) {
+        self.theme_sel.set_if_changed(Self::theme_index(choice));
+        if choice == self.theme_choice {
+            return;
+        }
+        self.theme_choice = choice;
+        self.start_theme_fade();
+    }
+
+    /// Begins (or re-targets) a fade from the *installed* theme to the
+    /// effective target — interrupting a fade mid-flight diffs from
+    /// the interpolated colors on screen, not the stale endpoint.
+    fn start_theme_fade(&mut self) {
+        let target = self.themes.theme(self.effective_mode()).clone();
+        let Some(arena) = &mut self.arena else {
+            return;
+        };
+        let diff = ThemeDiff::from_themes(arena.theme(), &target);
+        if diff.deltas().is_empty() {
+            arena.set_theme(target);
+            self.theme_fade = None;
+            return;
+        }
+        // Critically damped (ζ≈1, ~250 ms settle): a smooth ease with
+        // no overshoot — extrapolated Oklab past t=1 clips the gamut.
+        let spring = SpringConfig::new(1.0, 220.0, 29.7).expect("valid spring");
+        let id = self.theme_anim.start(spring, 0.0, 1.0);
+        self.theme_fade = Some((id, diff));
+    }
+
     /// One frame: tick widgets, paint, composite, present, feed AT.
     fn redraw(&mut self) {
         if self.window.is_none() || self.orchestrator.is_none() || self.arena.is_none() {
@@ -451,6 +601,48 @@ impl App {
         let now = Instant::now();
         let dt = now - self.last_frame;
         self.last_frame = now;
+
+        // Dropdown → choice: the toolbar publishes its index; apply it.
+        let sel = self.theme_sel.get();
+        let wanted = match sel {
+            1 => ThemeChoice::Light,
+            2 => ThemeChoice::System,
+            _ => ThemeChoice::Dark,
+        };
+        if wanted != self.theme_choice {
+            self.set_theme_choice(wanted);
+        }
+
+        // 0. Theme — advance any in-flight fade and install the
+        //    resolved theme; widgets resolve it through
+        //    `PaintContext::theme`, chrome through `self.pal`.
+        {
+            let mode = self.effective_mode();
+            let target = self.themes.theme(mode).clone();
+            let arena = self.arena.as_mut().expect("checked");
+            if let Some((id, diff)) = self.theme_fade.take() {
+                self.theme_anim.advance(dt.as_secs_f32());
+                let t = self.theme_anim.position(id).unwrap_or(1.0);
+                if self.theme_anim.is_settled(id) || t >= 0.999 {
+                    arena.set_theme(target);
+                    self.theme_anim.remove_settled();
+                } else {
+                    // Clone `to` so non-color tokens land at the
+                    // destination; color deltas blend through Oklab.
+                    let mut theme = target;
+                    for (key, color) in diff.interpolate(t.clamp(0.0, 1.0)) {
+                        theme.set(key, ThemeToken::Color(color));
+                    }
+                    arena.set_theme(theme);
+                    self.theme_fade = Some((id, diff));
+                }
+            } else if self.installed_mode != mode {
+                // An OS-level flip under `System` with no fade queued.
+                arena.set_theme(target);
+            }
+            self.installed_mode = mode;
+            self.pal = Palette::from_theme(arena.theme());
+        }
 
         // 1. Widget ticks — telemetry advances its signals, media pumps
         //    its pacing queue; dirty widgets mark repaint.
@@ -483,6 +675,10 @@ impl App {
         );
         self.paint_chrome(&mut list, w, h);
         list.pop_scope();
+        // Overlay popups (dropdown menus, context menus, tooltips) are
+        // appended inside `build_paint_list` — a second explicit paint
+        // here double-emits every popup command (fills covering the
+        // first copy's text, self-overlapping glyph runs).
         let t2 = Instant::now();
 
         // Report the focused widget's rect (device px) so the audit can
@@ -675,6 +871,9 @@ impl ApplicationHandler for App {
                 if let Some(window) = &self.window {
                     let scale = window.scale_factor();
                     self.scale.set(scale as f32);
+                    if let Some(arena) = &mut self.arena {
+                        arena.set_scale_factor(scale as f32);
+                    }
                     if let Some(o) = &mut self.orchestrator {
                         o.set_audit_scale_factor(scale);
                     }
@@ -757,6 +956,20 @@ impl ApplicationHandler for App {
                 #[cfg(feature = "devtools")]
                 if pressed && event.logical_key == Key::Named(NamedKey::F1) {
                     self.hud.toggle();
+                    return;
+                }
+                // T cycles theme Dark → Light → System until the toolbar
+                // dropdown lands; both drive `set_theme_choice`.
+                if pressed
+                    && !self.mods.control_key()
+                    && matches!(&event.logical_key, Key::Character(c) if c.eq_ignore_ascii_case("t"))
+                {
+                    let next = match self.theme_choice {
+                        ThemeChoice::Dark => ThemeChoice::Light,
+                        ThemeChoice::Light => ThemeChoice::System,
+                        ThemeChoice::System => ThemeChoice::Dark,
+                    };
+                    self.set_theme_choice(next);
                     return;
                 }
                 let key_name = match &event.logical_key {
@@ -842,8 +1055,9 @@ impl App {
 }
 
 /// Runs the windowed workstation. `main` calls this unless `--headless`
-/// was passed.
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// was passed. `initial_choice` selects the boot theme (the app installs
+/// it directly — no startup fade — so `--theme light` lands settled).
+pub fn run(initial_choice: ThemeChoice) -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
@@ -851,6 +1065,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    event_loop.run_app(App::new())?;
+    event_loop.run_app(App::new(initial_choice))?;
     Ok(())
 }

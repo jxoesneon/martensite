@@ -2937,6 +2937,7 @@ dependencies = [
  "glam",
  "kurbo",
  "martensite-reactive",
+ "martensite-theme",
  "proptest",
  "slotmap",
  "smallvec",

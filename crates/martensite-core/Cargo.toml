@@ -14,6 +14,7 @@ readme = "README.md"
 
 [dependencies]
 martensite-reactive = { workspace = true }
+martensite-theme = { workspace = true }
 taffy = { workspace = true }
 accesskit = { workspace = true }
 smallvec = { workspace = true }

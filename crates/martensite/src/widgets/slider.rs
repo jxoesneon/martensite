@@ -28,7 +28,7 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::{NodeFlags, Rect};
+use martensite_core::{NodeFlags, Rect, TokenKey};
 
 /// Thumb diameter in logical pixels.
 const THUMB: f32 = 16.0;
@@ -102,6 +102,9 @@ pub struct Slider {
     dragging: bool,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Display scale cached from `layout` so hit-math uses the same
+    /// pixel sizes `paint` emits.
+    scale: f32,
 }
 
 impl Slider {
@@ -129,6 +132,7 @@ impl Slider {
             value_text: None,
             dragging: false,
             cached_bounds: Rect::default(),
+            scale: 1.0,
         }
     }
 
@@ -351,18 +355,24 @@ impl Slider {
         ((self.value - self.min) / span).clamp(0.0, 1.0) as f32
     }
 
+    /// The thumb diameter in the arena's coordinate space.
+    fn thumb_px(&self) -> f32 {
+        THUMB * self.scale
+    }
+
     /// Maps a window-space point to a fraction along the rail.
     fn point_fraction(&self, position: Vec2) -> f64 {
         let b = self.cached_bounds;
+        let thumb = self.thumb_px();
         match self.orientation {
             SliderOrientation::Horizontal => {
-                let usable = (b.width() - THUMB).max(f32::EPSILON);
-                ((position.x - b.min_x() - THUMB / 2.0) / usable).clamp(0.0, 1.0)
+                let usable = (b.width() - thumb).max(f32::EPSILON);
+                ((position.x - b.min_x() - thumb / 2.0) / usable).clamp(0.0, 1.0)
             }
             SliderOrientation::Vertical => {
-                let usable = (b.height() - THUMB).max(f32::EPSILON);
+                let usable = (b.height() - thumb).max(f32::EPSILON);
                 // Vertical sliders increase bottom→top.
-                (1.0 - (position.y - b.min_y() - THUMB / 2.0) / usable).clamp(0.0, 1.0)
+                (1.0 - (position.y - b.min_y() - thumb / 2.0) / usable).clamp(0.0, 1.0)
             }
         }
         .into()
@@ -378,15 +388,16 @@ impl Slider {
     /// The thumb's centre in window coordinates.
     fn thumb_center(&self) -> Vec2 {
         let b = self.cached_bounds;
+        let thumb = self.thumb_px();
         let t = self.fraction();
         match self.orientation {
             SliderOrientation::Horizontal => Vec2::new(
-                b.min_x() + THUMB / 2.0 + t * (b.width() - THUMB).max(0.0),
+                b.min_x() + thumb / 2.0 + t * (b.width() - thumb).max(0.0),
                 b.min_y() + b.height() / 2.0,
             ),
             SliderOrientation::Vertical => Vec2::new(
                 b.min_x() + b.width() / 2.0,
-                b.max_y() - THUMB / 2.0 - t * (b.height() - THUMB).max(0.0),
+                b.max_y() - thumb / 2.0 - t * (b.height() - thumb).max(0.0),
             ),
         }
     }
@@ -409,19 +420,20 @@ impl Slider {
 }
 
 impl Widget for Slider {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let (w, h): (f32, f32) = match self.orientation {
             SliderOrientation::Horizontal => (160.0, 24.0),
             SliderOrientation::Vertical => (24.0, 160.0),
         };
         Vec2::new(
-            w.min(constraints.max_size.x.max(0.0)),
-            h.min(constraints.max_size.y.max(0.0)),
+            cx.pt(w).min(constraints.max_size.x.max(0.0)),
+            cx.pt(h).min(constraints.max_size.y.max(0.0)),
         )
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        self.scale = cx.scale;
         // Declare keyboard focusability on the arena node so the
         // `FocusManager` accepts focus requests and press-to-focus
         // applies.
@@ -539,9 +551,9 @@ impl Widget for Slider {
                 let cy = f64::from(b.min_y() + b.height() / 2.0);
                 let rail = kurbo::Rect::new(
                     f64::from(b.min_x()),
-                    cy - f64::from(RAIL / 2.0),
+                    cy - cx.ptf(f64::from(RAIL) / 2.0),
                     f64::from(b.max_x()),
-                    cy + f64::from(RAIL / 2.0),
+                    cy + cx.ptf(f64::from(RAIL) / 2.0),
                 );
                 let tx = f64::from(self.thumb_center().x);
                 let fill = kurbo::Rect::new(rail.x0, rail.y0, tx, rail.y1);
@@ -550,9 +562,9 @@ impl Widget for Slider {
             SliderOrientation::Vertical => {
                 let cxm = f64::from(b.min_x() + b.width() / 2.0);
                 let rail = kurbo::Rect::new(
-                    cxm - f64::from(RAIL / 2.0),
+                    cxm - cx.ptf(f64::from(RAIL) / 2.0),
                     f64::from(b.min_y()),
-                    cxm + f64::from(RAIL / 2.0),
+                    cxm + cx.ptf(f64::from(RAIL) / 2.0),
                     f64::from(b.max_y()),
                 );
                 let ty = f64::from(self.thumb_center().y);
@@ -562,23 +574,26 @@ impl Widget for Slider {
         };
 
         cx.list.push_path(
-            kurbo::RoundedRect::from_rect(rail, f64::from(RAIL / 2.0)).to_path(0.1),
-            RAIL_COLOR,
+            kurbo::RoundedRect::from_rect(rail, cx.ptf(f64::from(RAIL) / 2.0)).to_path(0.1),
+            cx.color(TokenKey::DividerColor, RAIL_COLOR),
         );
         cx.list.push_path(
-            kurbo::RoundedRect::from_rect(fill, f64::from(RAIL / 2.0)).to_path(0.1),
-            FILL_COLOR,
+            kurbo::RoundedRect::from_rect(fill, cx.ptf(f64::from(RAIL) / 2.0)).to_path(0.1),
+            cx.color(TokenKey::AccentColor, FILL_COLOR),
         );
 
         let thumb = kurbo::Circle::new(
             kurbo::Point::new(f64::from(thumb.x), f64::from(thumb.y)),
-            f64::from(THUMB / 2.0),
+            cx.ptf(f64::from(THUMB) / 2.0),
         );
-        cx.list.push_path(thumb.to_path(0.1), THUMB_COLOR);
+        cx.list.push_path(
+            thumb.to_path(0.1),
+            cx.color(TokenKey::SurfaceColor, THUMB_COLOR),
+        );
         cx.list.push_stroke_path(
             kurbo::Circle::new(thumb.center, thumb.radius).to_path(0.1),
-            1.0,
-            THUMB_EDGE,
+            cx.pt(1.0),
+            cx.color(TokenKey::BorderColor, THUMB_EDGE),
         );
     }
 }
@@ -603,7 +618,10 @@ mod tests {
 
     fn laid_out(slider: &mut Slider, w: f32, h: f32) {
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         slider.layout(&mut cx, Rect::new(0.0, 0.0, w, h));
     }
 
@@ -643,7 +661,10 @@ mod tests {
     fn arrow_keys_step() {
         let mut s = Slider::new(0.0, 10.0).with_value(5.0);
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         s.layout(&mut cx, Rect::new(0.0, 0.0, 100.0, 24.0));
         let mut ecx = EventContext {
             event: &key("ArrowRight"),

@@ -130,7 +130,10 @@ mod suite {
     fn test_dummy_widget() {
         let mut widget = DummyWidget;
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         let constraints = LayoutConstraints {
             min_size: Vec2::ZERO,
             max_size: Vec2::splat(100.0),
@@ -1000,9 +1003,13 @@ mod suite {
         // Widget trait default methods
         let w = DummyWidget;
         let mut list = crate::paint::PaintList::new();
+        let theme = martensite_theme::Theme::new("fallback");
         w.paint(&mut crate::widget::PaintContext {
             list: &mut list,
             bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
         });
         let mut node = accesskit::Node::new(accesskit::Role::GenericContainer);
         w.accessibility(&mut node);

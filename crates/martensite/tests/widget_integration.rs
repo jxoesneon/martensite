@@ -163,7 +163,10 @@ fn text_wraps_in_narrow_container() {
     // Text with a narrow constraint should have a larger height than
     // text with an unbounded constraint (i.e., wrapping occurs).
     let mut hot1 = HotNode::new(taffy::NodeId::new(0));
-    let mut cx1 = LayoutContext { hot: &mut hot1 };
+    let mut cx1 = LayoutContext {
+        hot: &mut hot1,
+        scale: 1.0,
+    };
     let mut t_narrow =
         Text::new("The quick brown fox jumps over the lazy dog repeatedly").font_size(16.0);
     let size_narrow = t_narrow.measure(
@@ -175,7 +178,10 @@ fn text_wraps_in_narrow_container() {
     );
 
     let mut hot2 = HotNode::new(taffy::NodeId::new(0));
-    let mut cx2 = LayoutContext { hot: &mut hot2 };
+    let mut cx2 = LayoutContext {
+        hot: &mut hot2,
+        scale: 1.0,
+    };
     let mut t_wide =
         Text::new("The quick brown fox jumps over the lazy dog repeatedly").font_size(16.0);
     let size_wide = t_wide.measure(
@@ -204,7 +210,10 @@ fn text_wraps_in_narrow_container() {
 #[test]
 fn text_widget_measure_returns_nonzero_for_nonempty() {
     let mut hot = HotNode::new(taffy::NodeId::new(0));
-    let mut cx = LayoutContext { hot: &mut hot };
+    let mut cx = LayoutContext {
+        hot: &mut hot,
+        scale: 1.0,
+    };
     let mut t = Text::new("Test text").font_size(16.0);
     let size = t.measure(
         &mut cx,
@@ -220,7 +229,10 @@ fn text_widget_measure_returns_nonzero_for_nonempty() {
 #[test]
 fn container_layout_computes_content_area_from_bounds() {
     let mut hot = HotNode::new(taffy::NodeId::new(0));
-    let mut cx = LayoutContext { hot: &mut hot };
+    let mut cx = LayoutContext {
+        hot: &mut hot,
+        scale: 1.0,
+    };
     let mut c = Container::new().padding_uniform(15.0);
     let bounds = Rect::new(0.0, 0.0, 200.0, 100.0);
     c.layout(&mut cx, bounds);

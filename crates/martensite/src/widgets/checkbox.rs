@@ -20,7 +20,8 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Widget, WidgetEvent,
 };
-use martensite_core::Rect;
+use martensite_core::TokenKey;
+use martensite_core::{NodeFlags, Rect};
 
 /// Checkbox frame border colour.
 const EDGE: [u8; 4] = [110, 115, 125, 255];
@@ -55,6 +56,10 @@ pub struct CheckBox {
     pub enabled: bool,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Shared shaped-text painter — when set, `paint` emits real
+    /// `GlyphRun`s; without it text falls back to `DrawText`
+    /// placeholder boxes. See [`crate::text_paint`].
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
 impl CheckBox {
@@ -75,6 +80,7 @@ impl CheckBox {
             checked: false,
             enabled: true,
             cached_bounds: Rect::default(),
+            text_painter: None,
         }
     }
 
@@ -144,17 +150,36 @@ impl CheckBox {
     pub fn cached_bounds(&self) -> Rect {
         self.cached_bounds
     }
+
+    /// Shares a [`crate::text_paint::TextPainter`] so `paint` emits real
+    /// glyph runs instead of `DrawText` placeholder boxes.
+    #[must_use]
+    pub fn with_text_painter(mut self, painter: crate::text_paint::SharedTextPainter) -> Self {
+        self.text_painter = Some(painter);
+        self
+    }
 }
 
 impl Widget for CheckBox {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let min_w = 20.0_f32.min(constraints.max_size.x.max(0.0));
-        let min_h = 20.0_f32.min(constraints.max_size.y.max(0.0));
-        Vec2::new(min_w, min_h)
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        // Box + gap + label, matching `RadioOption` — a box-only answer
+        // lets a tight parent clip the label.
+        let w = cx.pt(20.0 + LABEL_GAP + 8.0 * self.label.chars().count() as f32);
+        Vec2::new(
+            w.min(constraints.max_size.x.max(0.0)),
+            cx.pt(20.0).min(constraints.max_size.y.max(0.0)),
+        )
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        // Declare keyboard focusability on the arena node — the
+        // `FocusManager` rejects focus requests for nodes without it.
+        if self.enabled {
+            cx.hot.flags |= NodeFlags::FOCUSABLE;
+        } else {
+            cx.hot.flags.remove(NodeFlags::FOCUSABLE);
+        }
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -193,34 +218,40 @@ impl Widget for CheckBox {
 
     fn paint(&self, cx: &mut PaintContext) {
         let b = cx.bounds;
-        let y = b.origin.y + (b.size.y - BOX_SIZE) / 2.0;
+        let box_px = cx.pt(BOX_SIZE);
+        let y = b.origin.y + (b.size.y - box_px) / 2.0;
         let bx = kurbo::Rect::new(
             f64::from(b.origin.x),
             f64::from(y),
-            f64::from(b.origin.x + BOX_SIZE),
-            f64::from(y + BOX_SIZE),
+            f64::from(b.origin.x + box_px),
+            f64::from(y + box_px),
         );
-        cx.list.push_stroke_rect(bx, 1.0, EDGE);
+        cx.list
+            .push_stroke_rect(bx, cx.pt(1.0), cx.color(TokenKey::BorderColor, EDGE));
 
         if self.checked {
-            // Check mark: two strokes forming a tick inside the box.
-            let x0 = f64::from(b.origin.x) + 3.5;
-            let y0 = f64::from(y) + 8.5;
+            // Check mark: two strokes forming a tick inside the box —
+            // offsets are logical pt, scaled like the box they sit in.
+            let x0 = f64::from(b.origin.x) + cx.ptf(3.5);
+            let y0 = f64::from(y) + cx.ptf(8.5);
             let mut tick = kurbo::BezPath::new();
             tick.move_to((x0, y0));
-            tick.line_to((x0 + 3.5, y0 + 3.5));
-            tick.line_to((x0 + 9.0, y0 - 5.0));
-            cx.list.push_stroke_path(tick, 2.0, ACCENT);
+            tick.line_to((x0 + cx.ptf(3.5), y0 + cx.ptf(3.5)));
+            tick.line_to((x0 + cx.ptf(9.0), y0 - cx.ptf(5.0)));
+            cx.list
+                .push_stroke_path(tick, cx.pt(2.0), cx.color(TokenKey::AccentColor, ACCENT));
         }
 
-        cx.list.push_text(
+        crate::text_paint::paint_label(
+            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+            cx.list,
             kurbo::Point::new(
-                f64::from(b.origin.x + BOX_SIZE + LABEL_GAP),
-                f64::from(b.origin.y + b.size.y / 2.0 + 5.0),
+                f64::from(b.origin.x + box_px + cx.pt(LABEL_GAP)),
+                f64::from(b.origin.y + (b.size.y - cx.pt(14.0)) / 2.0),
             ),
-            self.label.clone(),
-            14.0,
-            INK,
+            &self.label,
+            cx.pt(14.0),
+            cx.color(TokenKey::TextColor, INK),
         );
     }
 }
@@ -241,7 +272,7 @@ mod tests {
     use martensite_core::HotNode;
 
     fn make_cx(hot: &mut HotNode) -> LayoutContext<'_> {
-        LayoutContext { hot }
+        LayoutContext { hot, scale: 1.0 }
     }
 
     #[test]

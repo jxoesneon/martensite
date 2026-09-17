@@ -223,7 +223,7 @@ impl Widget for Container {
         self.cached_content_rect = content;
 
         if let Some(child) = &mut self.child {
-            child.layout(cx, content);
+            cx.layout_child(child.as_mut(), content);
         }
     }
 
@@ -292,7 +292,7 @@ mod tests {
     use martensite_core::HotNode;
 
     fn make_cx(hot: &mut HotNode) -> LayoutContext<'_> {
-        LayoutContext { hot }
+        LayoutContext { hot, scale: 1.0 }
     }
 
     #[test]

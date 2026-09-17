@@ -344,7 +344,7 @@ pub fn default_light() -> Theme {
     theme.set(
         TokenKey::PrimaryColor,
         ThemeToken::Color(Oklab {
-            l: 0.55,
+            l: 0.8,
             a: -0.08,
             b: -0.10,
             alpha: 1.0,
@@ -353,7 +353,7 @@ pub fn default_light() -> Theme {
     theme.set(
         TokenKey::SecondaryColor,
         ThemeToken::Color(Oklab {
-            l: 0.70,
+            l: 0.45,
             a: -0.05,
             b: 0.05,
             alpha: 1.0,
@@ -362,9 +362,9 @@ pub fn default_light() -> Theme {
     theme.set(
         TokenKey::AccentColor,
         ThemeToken::Color(Oklab {
-            l: 0.75,
-            a: 0.15,
-            b: -0.05,
+            l: 0.42,
+            a: 0.1,
+            b: -0.12,
             alpha: 1.0,
         }),
     );
@@ -380,7 +380,7 @@ pub fn default_light() -> Theme {
     theme.set(
         TokenKey::TextMutedColor,
         ThemeToken::Color(Oklab {
-            l: 0.50,
+            l: 0.38,
             a: 0.0,
             b: 0.0,
             alpha: 1.0,
@@ -398,7 +398,7 @@ pub fn default_light() -> Theme {
     theme.set(
         TokenKey::BorderColor,
         ThemeToken::Color(Oklab {
-            l: 0.85,
+            l: 0.42,
             a: 0.0,
             b: 0.0,
             alpha: 1.0,
@@ -416,7 +416,7 @@ pub fn default_light() -> Theme {
     theme.set(
         TokenKey::ErrorColor,
         ThemeToken::Color(Oklab {
-            l: 0.60,
+            l: 0.42,
             a: 0.18,
             b: 0.12,
             alpha: 1.0,
@@ -425,7 +425,7 @@ pub fn default_light() -> Theme {
     theme.set(
         TokenKey::WarningColor,
         ThemeToken::Color(Oklab {
-            l: 0.78,
+            l: 0.4,
             a: 0.10,
             b: 0.13,
             alpha: 1.0,
@@ -434,7 +434,7 @@ pub fn default_light() -> Theme {
     theme.set(
         TokenKey::SuccessColor,
         ThemeToken::Color(Oklab {
-            l: 0.70,
+            l: 0.38,
             a: -0.18,
             b: 0.12,
             alpha: 1.0,
@@ -443,7 +443,7 @@ pub fn default_light() -> Theme {
     theme.set(
         TokenKey::InfoColor,
         ThemeToken::Color(Oklab {
-            l: 0.70,
+            l: 0.4,
             a: -0.10,
             b: -0.12,
             alpha: 1.0,
@@ -549,7 +549,7 @@ pub fn default_dark() -> Theme {
     theme.set(
         TokenKey::SecondaryColor,
         ThemeToken::Color(Oklab {
-            l: 0.60,
+            l: 0.65,
             a: -0.05,
             b: 0.05,
             alpha: 1.0,
@@ -594,7 +594,7 @@ pub fn default_dark() -> Theme {
     theme.set(
         TokenKey::BorderColor,
         ThemeToken::Color(Oklab {
-            l: 0.35,
+            l: 0.60,
             a: 0.0,
             b: 0.0,
             alpha: 1.0,
@@ -612,7 +612,7 @@ pub fn default_dark() -> Theme {
     theme.set(
         TokenKey::ErrorColor,
         ThemeToken::Color(Oklab {
-            l: 0.65,
+            l: 0.68,
             a: 0.18,
             b: 0.12,
             alpha: 1.0,
@@ -872,6 +872,94 @@ mod tests {
         let text = theme.color(TokenKey::TextColor).unwrap();
         assert!(approx_eq(text.l, 0.96));
         assert_eq!(theme.name, "Dark");
+    }
+
+    /// Every token a widget could plausibly paint as a foreground —
+    /// text, secondary text, chromatic accents, and interactive
+    /// borders — must hold WCAG contrast against the theme's own
+    /// `SurfaceColor`. Shipped themes are guaranteed-auditable: the
+    /// paint audit (WCAG 1.4.3 / 1.4.11) must find nothing to flag
+    /// when an app resolves its colors purely through these tokens.
+    #[test]
+    fn default_themes_meet_wcag_contrast_floors() {
+        // Text-grade tokens: 4.5:1 normal-text floor.
+        const TEXT_TOKENS: &[TokenKey] = &[
+            TokenKey::TextColor,
+            TokenKey::TextMutedColor,
+            TokenKey::SecondaryColor,
+            TokenKey::AccentColor,
+            TokenKey::ErrorColor,
+            TokenKey::WarningColor,
+            TokenKey::SuccessColor,
+            TokenKey::InfoColor,
+        ];
+        // Stroke-grade tokens: 3:1 non-text floor. `PrimaryColor` is a
+        // *fill* token (selection washes, primary buttons — text sits on
+        // top of it, not rendered as it), as is `DividerColor`.
+        const STROKE_TOKENS: &[TokenKey] = &[TokenKey::BorderColor];
+        for theme in [default_light(), default_dark()] {
+            let surface = theme.color(TokenKey::SurfaceColor).unwrap();
+            let background = theme.color(TokenKey::BackgroundColor).unwrap();
+            let raised = theme.color(TokenKey::DividerColor).unwrap();
+            for key in TEXT_TOKENS {
+                let fg = theme.color(*key).unwrap();
+                for (bg, name) in [(surface, "SurfaceColor"), (background, "BackgroundColor")] {
+                    let ratio = crate::wcag_contrast(fg, bg);
+                    assert!(
+                        ratio >= 4.5,
+                        "{} {key:?} is {ratio:.2}:1 on {name} (need 4.5)",
+                        theme.name,
+                    );
+                }
+            }
+            for key in STROKE_TOKENS {
+                let fg = theme.color(*key).unwrap();
+                // Controls sit on raised surfaces too — the ecosystem's
+                // convention uses `DividerColor` for toolbar/card bands,
+                // and `BackgroundColor` shows through transparent
+                // control interiors (e.g. CheckBox's box).
+                for (bg, name) in [
+                    (surface, "SurfaceColor"),
+                    (background, "BackgroundColor"),
+                    (raised, "DividerColor"),
+                ] {
+                    let ratio = crate::wcag_contrast(fg, bg);
+                    assert!(
+                        ratio >= 3.0,
+                        "{} {key:?} is {ratio:.2}:1 on {name} (need 3.0)",
+                        theme.name,
+                    );
+                }
+            }
+            // Explicit pairings widgets paint that the token classes
+            // don't cover:
+            // - inverse ink on the accent fill (dropdown highlight,
+            //   primary button face) — text floor.
+            let ratio = crate::wcag_contrast(
+                theme.color(TokenKey::TextInverseColor).unwrap(),
+                theme.color(TokenKey::AccentColor).unwrap(),
+            );
+            assert!(
+                ratio >= 4.5,
+                "{} TextInverseColor is {ratio:.2}:1 on AccentColor (need 4.5)",
+                theme.name,
+            );
+            // - accent fill on a raised band (slider fill on its rail)
+            //   and muted marks on raised bands (scrollbar thumb,
+            //   hairlines) — non-text floor.
+            for (fg_key, bg, name) in [
+                (TokenKey::AccentColor, raised, "DividerColor"),
+                (TokenKey::TextMutedColor, raised, "DividerColor"),
+            ] {
+                let fg = theme.color(fg_key).unwrap();
+                let ratio = crate::wcag_contrast(fg, bg);
+                assert!(
+                    ratio >= 3.0,
+                    "{} {fg_key:?} is {ratio:.2}:1 on {name} (need 3.0)",
+                    theme.name,
+                );
+            }
+        }
     }
 
     #[test]

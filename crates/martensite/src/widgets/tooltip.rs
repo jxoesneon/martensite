@@ -53,7 +53,7 @@ use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
     PaintContext, SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::{NodeFlags, Rect};
+use martensite_core::{NodeFlags, Rect, TokenKey};
 
 /// Default hover delay before a tooltip appears (milliseconds).
 ///
@@ -114,6 +114,8 @@ pub struct TooltipBubble {
     /// hovered (WCAG 1.4.13). A fresh flag each frame means "hovered
     /// since the last sync".
     hover_flag: Arc<AtomicBool>,
+    /// Shared shaped-text painter from the owning `Tooltip`.
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
 impl TooltipBubble {
@@ -131,16 +133,18 @@ impl TooltipBubble {
         Self {
             text: text.into(),
             hover_flag: Arc::new(AtomicBool::new(false)),
+            text_painter: None,
         }
     }
 }
 
 impl Widget for TooltipBubble {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let w = (self.text.chars().count() as f32 * 7.0 + PAD * 2.0).min(400.0);
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        let w =
+            (self.text.chars().count() as f32 * cx.pt(7.0) + cx.pt(PAD * 2.0)).min(cx.pt(400.0));
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
-            24.0_f32.min(constraints.max_size.y.max(0.0)),
+            cx.pt(24.0).min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -158,19 +162,27 @@ impl Widget for TooltipBubble {
             f64::from(b.min_y()),
             f64::from(b.max_x()),
             f64::from(b.max_y()),
-            RADIUS,
+            cx.ptf(RADIUS),
         );
-        cx.list.push_path(rect.to_path(0.1), BUBBLE_BG);
+        // Themed surface, keeping the bubble's near-opaque alpha.
+        let bg = cx.color(TokenKey::SurfaceColor, BUBBLE_BG);
         cx.list
-            .push_stroke_path(rect.to_path(0.1), 1.0, BUBBLE_BORDER);
-        cx.list.push_text(
+            .push_path(rect.to_path(0.1), [bg[0], bg[1], bg[2], BUBBLE_BG[3]]);
+        cx.list.push_stroke_path(
+            rect.to_path(0.1),
+            cx.pt(1.0),
+            cx.color(TokenKey::BorderColor, BUBBLE_BORDER),
+        );
+        crate::text_paint::paint_label(
+            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+            cx.list,
             kurbo::Point::new(
-                f64::from(b.min_x() + PAD),
-                f64::from(b.min_y() + b.height() / 2.0 + 4.0),
+                f64::from(b.min_x() + cx.pt(PAD)),
+                f64::from(b.min_y() + (b.height() - cx.pt(12.0)) / 2.0),
             ),
-            self.text.clone(),
-            12.0,
-            BUBBLE_INK,
+            &self.text,
+            cx.pt(12.0),
+            cx.color(TokenKey::TextColor, BUBBLE_INK),
         );
     }
 
@@ -237,6 +249,9 @@ pub struct Tooltip {
     /// in [`sync_overlay`](Self::sync_overlay) to cancel the grace
     /// countdown while the popup itself is hovered.
     popup_hover: Arc<AtomicBool>,
+    /// Shared shaped-text painter — handed to the bubble at
+    /// `sync_overlay`. See [`crate::text_paint`].
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
 impl Tooltip {
@@ -264,7 +279,16 @@ impl Tooltip {
             leaving: false,
             leave_elapsed_ms: 0,
             popup_hover: Arc::new(AtomicBool::new(false)),
+            text_painter: None,
         }
+    }
+
+    /// Shares a [`crate::text_paint::TextPainter`] so the bubble emits
+    /// real glyph runs instead of `DrawText` placeholder boxes.
+    #[must_use]
+    pub fn with_text_painter(mut self, painter: crate::text_paint::SharedTextPainter) -> Self {
+        self.text_painter = Some(painter);
+        self
     }
 
     /// Sets the hover delay; clamped to the 500..=1000 ms window the
@@ -427,7 +451,10 @@ impl Tooltip {
     ///
     /// let mut tip = Tooltip::new(Text::new("t"), "tip");
     /// let mut hot = HotNode::default();
-    /// let mut cx = LayoutContext { hot: &mut hot };
+    /// let mut cx = LayoutContext {
+    ///     hot: &mut hot,
+    ///     scale: 1.0,
+    /// };
     /// tip.layout(&mut cx, Rect::new(0.0, 0.0, 100.0, 40.0));
     ///
     /// let mut overlay = OverlayLayer::new();
@@ -463,6 +490,7 @@ impl Tooltip {
                 .unwrap_or(OverlayAnchor::Pointer(Vec2::ZERO));
             let mut bubble = TooltipBubble::new(self.text.clone());
             bubble.hover_flag = Arc::clone(&self.popup_hover);
+            bubble.text_painter = self.text_painter.clone();
             self.popup_id = Some(overlay.open(Box::new(bubble), anchor));
         } else if !self.shown {
             if let Some(id) = self.popup_id.take() {
@@ -483,7 +511,7 @@ impl Widget for Tooltip {
         // the tooltip" contract — the trigger is an internal child
         // with no arena node of its own.
         cx.hot.flags |= NodeFlags::FOCUSABLE;
-        self.trigger.layout(cx, bounds);
+        cx.layout_child(self.trigger.as_mut(), bounds);
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -621,7 +649,10 @@ mod tests {
 
     fn laid_out(tip: &mut Tooltip, bounds: Rect) {
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         tip.layout(&mut cx, bounds);
     }
 

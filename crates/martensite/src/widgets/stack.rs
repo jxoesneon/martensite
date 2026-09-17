@@ -216,7 +216,7 @@ impl Widget for Stack {
             };
             let child_bounds = Rect::new(pos.x, pos.y, w, h);
             self.child_rects.push(child_bounds);
-            child.layout(cx, child_bounds);
+            cx.layout_child(child.as_mut(), child_bounds);
         }
     }
 
@@ -257,7 +257,7 @@ mod tests {
     use martensite_core::HotNode;
 
     fn make_cx(hot: &mut HotNode) -> LayoutContext<'_> {
-        LayoutContext { hot }
+        LayoutContext { hot, scale: 1.0 }
     }
 
     #[test]

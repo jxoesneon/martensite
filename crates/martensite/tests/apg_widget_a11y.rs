@@ -32,7 +32,10 @@ use martensite_core::{
 /// production layout pass writes into arena hot nodes.
 fn arena_with(mut widget: impl Widget + 'static, bounds: Rect) -> (WidgetArena, WidgetId) {
     let mut scratch = HotNode::default();
-    let mut cx = LayoutContext { hot: &mut scratch };
+    let mut cx = LayoutContext {
+        hot: &mut scratch,
+        scale: 1.0,
+    };
     widget.layout(&mut cx, bounds);
     let declared = scratch.flags;
 
@@ -243,7 +246,10 @@ fn dropdown_popup_emits_listbox_and_relations() {
     let mut dd = Dropdown::new(["Red", "Green", "Blue"]).label("Colour");
     {
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         dd.layout(&mut cx, Rect::new(10.0, 10.0, 160.0, 32.0));
     }
     dd.open();
@@ -298,7 +304,10 @@ fn tooltip_described_by_wires_to_bubble() {
     let mut tip = Tooltip::new(Text::new("Save"), "Save the document");
     {
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         tip.layout(&mut cx, Rect::new(10.0, 10.0, 100.0, 40.0));
     }
     tip.show();
@@ -479,7 +488,10 @@ fn tooltip_hover_grace_bridges_pointer_to_bubble() {
     let bounds = Rect::new(10.0, 10.0, 100.0, 40.0);
     {
         let mut hot = HotNode::default();
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         tip.layout(&mut cx, bounds);
     }
     let send = |tip: &mut Tooltip, ev: WidgetEvent| {

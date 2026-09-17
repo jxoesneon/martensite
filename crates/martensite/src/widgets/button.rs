@@ -20,7 +20,8 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Widget, WidgetEvent,
 };
-use martensite_core::Rect;
+use martensite_core::TokenKey;
+use martensite_core::{NodeFlags, Rect};
 
 /// Button face colour when enabled (light neutral grey).
 const FACE_ENABLED: [u8; 4] = [230, 233, 238, 255];
@@ -62,6 +63,10 @@ pub struct Button {
     pub tooltip: Option<String>,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Shared shaped-text painter — when set, `paint` emits real
+    /// `GlyphRun`s; without it the label falls back to `DrawText`
+    /// placeholder boxes. See [`crate::text_paint`].
+    text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
 impl Button {
@@ -82,6 +87,7 @@ impl Button {
             enabled: true,
             tooltip: None,
             cached_bounds: Rect::default(),
+            text_painter: None,
         }
     }
 
@@ -134,18 +140,41 @@ impl Button {
     pub fn cached_bounds(&self) -> Rect {
         self.cached_bounds
     }
+
+    /// Shares a [`crate::text_paint::TextPainter`] so `paint` emits real
+    /// glyph runs instead of `DrawText` placeholder boxes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::shared_painter;
+    ///
+    /// let painter = shared_painter();
+    /// ```
+    #[must_use]
+    pub fn with_text_painter(mut self, painter: crate::text_paint::SharedTextPainter) -> Self {
+        self.text_painter = Some(painter);
+        self
+    }
 }
 
 impl Widget for Button {
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        // A button has a default minimum size of 80x32.
-        let min_w = 80.0_f32.min(constraints.max_size.x.max(0.0));
-        let min_h = 32.0_f32.min(constraints.max_size.y.max(0.0));
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        // A button has a default minimum size of 80x32 logical pt.
+        let min_w = cx.pt(80.0).min(constraints.max_size.x.max(0.0));
+        let min_h = cx.pt(32.0).min(constraints.max_size.y.max(0.0));
         Vec2::new(min_w, min_h)
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        // Declare keyboard focusability on the arena node — the
+        // `FocusManager` rejects focus requests for nodes without it.
+        if self.enabled {
+            cx.hot.flags |= NodeFlags::FOCUSABLE;
+        } else {
+            cx.hot.flags.remove(NodeFlags::FOCUSABLE);
+        }
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -187,25 +216,34 @@ impl Widget for Button {
             f64::from(b.max_y()),
         );
         let (face, ink) = if self.enabled {
-            (FACE_ENABLED, INK_ENABLED)
+            (
+                cx.color(TokenKey::SurfaceColor, FACE_ENABLED),
+                cx.color(TokenKey::TextColor, INK_ENABLED),
+            )
         } else {
-            (FACE_DISABLED, INK_DISABLED)
+            (
+                cx.color(TokenKey::SurfaceColor, FACE_DISABLED),
+                cx.color(TokenKey::TextMutedColor, INK_DISABLED),
+            )
         };
 
-        let rounded = kurbo::RoundedRect::from_rect(rect, CORNER_RADIUS).into_path(0.1);
+        let rounded = kurbo::RoundedRect::from_rect(rect, cx.ptf(CORNER_RADIUS)).into_path(0.1);
         cx.list.push_path(rounded.clone(), face);
-        cx.list.push_stroke_path(rounded, 1.0, EDGE);
+        cx.list
+            .push_stroke_path(rounded, cx.pt(1.0), cx.color(TokenKey::BorderColor, EDGE));
 
         // The label is left-aligned inside the face and vertically
         // centred — `DrawText` positions by the text run's top edge, so
         // centre the font box within the face.
-        cx.list.push_text(
+        crate::text_paint::paint_label(
+            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+            cx.list,
             kurbo::Point::new(
-                f64::from(b.origin.x + TEXT_PAD_X),
-                f64::from(b.origin.y + (b.size.y - 14.0) / 2.0),
+                f64::from(b.origin.x + cx.pt(TEXT_PAD_X)),
+                f64::from(b.origin.y + (b.size.y - cx.pt(14.0)) / 2.0),
             ),
-            self.label.clone(),
-            14.0,
+            &self.label,
+            cx.pt(14.0),
             ink,
         );
     }
@@ -226,7 +264,7 @@ mod tests {
     use martensite_core::HotNode;
 
     fn make_cx(hot: &mut HotNode) -> LayoutContext<'_> {
-        LayoutContext { hot }
+        LayoutContext { hot, scale: 1.0 }
     }
 
     #[test]

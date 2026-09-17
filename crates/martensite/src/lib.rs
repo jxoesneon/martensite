@@ -71,6 +71,7 @@ pub mod app;
 /// let btn = Button::new("Click me");
 /// assert_eq!(btn.label, "Click me");
 /// ```
+pub mod text_paint;
 pub mod widgets;
 
 pub use martensite_access as access;

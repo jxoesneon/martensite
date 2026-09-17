@@ -194,6 +194,14 @@ impl ExternalEngine {
         self.scale_factor = scale_factor;
     }
 
+    /// The DPI producers render at — independent of
+    /// [`LayoutContext::scale`], which `layout` deliberately ignores:
+    /// engines need the true display factor even inside arenas that
+    /// keep logical-point geometry.
+    pub fn scale_factor(&self) -> f64 {
+        self.scale_factor
+    }
+
     /// Sets the content-fit mode (letterbox, crop, stretch, or native
     /// size). Reuses [`VideoFit`] — the semantics are identical.
     ///
@@ -1064,7 +1072,10 @@ mod tests {
     fn measure_reports_intrinsic_size() {
         let (mut w, _h, _s) = widget_with_frame((640, 360));
         let mut hot = HotNode::new(taffy::NodeId::new(1));
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         let size = w.measure(
             &mut cx,
             LayoutConstraints {
@@ -1079,7 +1090,10 @@ mod tests {
     fn contain_fit_letterboxes() {
         let (mut w, _h, _s) = widget_with_frame((1920, 1080));
         let mut hot = HotNode::new(taffy::NodeId::new(1));
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         w.layout(&mut cx, Rect::new(0.0, 0.0, 1000.0, 1000.0));
         let dest = w.dest_rect();
         assert!((dest.size.x - 1000.0).abs() < 1e-3);
@@ -1091,7 +1105,10 @@ mod tests {
     fn record_paint_emits_external_marker() {
         let (mut w, _h, surface) = widget_with_frame((64, 64));
         let mut hot = HotNode::new(taffy::NodeId::new(1));
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         w.layout(&mut cx, Rect::new(10.0, 20.0, 100.0, 100.0));
         let mut list = PaintList::new();
         w.record_paint(&mut list);
@@ -1139,7 +1156,10 @@ mod tests {
         // Non-1.0 scale factor proves the forwarding end-to-end.
         let mut w = w.with_scale_factor(2.0);
         let mut hot = HotNode::new(taffy::NodeId::new(1));
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
         w.layout(&mut cx, Rect::new(0.0, 0.0, 320.0, 240.0));
         let vp = handle.lock().viewport(surface).unwrap().unwrap();
         assert_eq!(vp.size, (320, 240));

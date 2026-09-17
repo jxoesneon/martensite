@@ -1313,6 +1313,70 @@ impl PaintList {
     }
 }
 
+/// Shaped-text painter seam carried by [`PaintContext`](crate::PaintContext).
+///
+/// `martensite-core` cannot depend on a shaping engine (the dependency
+/// direction is text → core), so this trait is the narrow contract the
+/// paint walker hands to widgets: emit `text` as real glyph runs into
+/// `list` at top-left `origin`. The `martensite` facade implements it
+/// over `martensite-text`; applications install it once via
+/// [`WidgetArena::set_text_painter`](crate::WidgetArena::set_text_painter)
+/// and every widget gains shaped text instead of [`DrawText`](PaintCommand::DrawText)
+/// placeholder boxes. A widget may also hold an explicit painter that
+/// takes precedence over the ambient one.
+///
+/// Implementations must be `Send + Sync`-safe when shared through the
+/// arena (the trait itself stays unbounded so `&dyn TextShaper` works
+/// in single-threaded contexts).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::paint::TextShaper;
+/// use martensite_core::{PaintList, GlyphRun, GlyphInstance};
+/// use kurbo::Point;
+///
+/// struct Boxes;
+/// impl TextShaper for Boxes {
+///     fn paint_shaped_text(
+///         &self,
+///         list: &mut PaintList,
+///         origin: Point,
+///         text: &str,
+///         size_px: f32,
+///         color: [u8; 4],
+///     ) {
+///         let mut run = GlyphRun::new(size_px, color);
+///         for (i, _) in text.chars().enumerate() {
+///             run.push(GlyphInstance::new(
+///                 origin.x as f32 + i as f32 * size_px,
+///                 origin.y as f32 + size_px,
+///                 0,
+///                 size_px * 0.5,
+///                 size_px,
+///             ));
+///         }
+///         list.push_glyph_run(run);
+///     }
+/// }
+///
+/// let mut list = PaintList::new();
+/// Boxes.paint_shaped_text(&mut list, Point::ZERO, "hi", 12.0, [0; 4]);
+/// assert_eq!(list.len(), 1);
+/// ```
+pub trait TextShaper {
+    /// Emits `text` as glyph runs into `list`; `origin` is the block's
+    /// top-left in device pixels, `size_px` the em size, `color` sRGBA8.
+    fn paint_shaped_text(
+        &self,
+        list: &mut PaintList,
+        origin: Point,
+        text: &str,
+        size_px: f32,
+        color: [u8; 4],
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

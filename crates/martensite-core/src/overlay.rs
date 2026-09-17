@@ -160,7 +160,8 @@ pub struct OverlayLayer {
     entries: Vec<OverlayEntry>,
     /// Next overlay id to hand out (monotonic, never reused).
     next_id: u64,
-    /// Window viewport in logical pixels used for clamping.
+    /// Window viewport in the arena's device-pixel space, used for
+    /// clamping — callers pass the window's physical size.
     viewport: Rect,
     /// FIFO of entry ids dismissed by [`Self::dispatch_event`]
     /// (outside press or Escape), for owners that poll for closure.
@@ -181,6 +182,10 @@ pub struct OverlayLayer {
     current_owner: Option<WidgetId>,
     /// Entry currently holding overlay-level pointer capture.
     capture: Option<u64>,
+    /// Physical px per logical pt — forwarded into
+    /// [`LayoutContext::scale`] during [`Self::layout_pass`]. Mirrors
+    /// [`WidgetArena::scale_factor`]; `1.0` until set.
+    scale_factor: f32,
 }
 
 impl Default for OverlayLayer {
@@ -211,6 +216,7 @@ impl OverlayLayer {
             content_dirty: false,
             current_owner: None,
             capture: None,
+            scale_factor: 1.0,
         }
     }
 
@@ -221,7 +227,8 @@ impl OverlayLayer {
 
     /// Sets the viewport popups are clamped to and re-marks every open
     /// entry for layout so it re-clamps on the next
-    /// [`Self::layout_pass`].
+    /// [`Self::layout_pass`]. Pass the window's physical size — the
+    /// layer operates in the arena's device-pixel space.
     ///
     /// # Examples
     ///
@@ -235,6 +242,55 @@ impl OverlayLayer {
     /// ```
     pub fn set_viewport(&mut self, viewport: Rect) {
         self.viewport = viewport;
+        self.remark_all();
+    }
+
+    /// The display scale factor forwarded into
+    /// [`LayoutContext::scale`] during [`Self::layout_pass`].
+    ///
+    /// `1.0` until [`Self::set_scale_factor`] reports the real factor.
+    /// `WidgetArena` propagates its own factor automatically.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::OverlayLayer;
+    ///
+    /// let mut layer = OverlayLayer::new();
+    /// assert_eq!(layer.scale_factor(), 1.0);
+    /// layer.set_scale_factor(2.0);
+    /// assert_eq!(layer.scale_factor(), 2.0);
+    /// ```
+    pub fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+
+    /// Reports the display's scale factor so popup content can scale
+    /// its baked logical-point sizes. Re-marks open entries for layout.
+    /// `WidgetArena` calls this from
+    /// [`WidgetArena::set_scale_factor`](crate::WidgetArena::set_scale_factor).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::OverlayLayer;
+    ///
+    /// let mut layer = OverlayLayer::new();
+    /// layer.set_scale_factor(2.0);
+    /// ```
+    pub fn set_scale_factor(&mut self, scale: f32) {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        self.scale_factor = scale;
+        self.remark_all();
+    }
+
+    /// Re-marks every open entry for layout so the next
+    /// [`Self::layout_pass`] re-resolves them.
+    fn remark_all(&mut self) {
         for entry in &mut self.entries {
             entry.needs_layout = true;
         }
@@ -574,7 +630,10 @@ impl OverlayLayer {
                 continue;
             }
             let mut hot = HotNode::default();
-            let mut cx = LayoutContext { hot: &mut hot };
+            let mut cx = LayoutContext {
+                hot: &mut hot,
+                scale: self.scale_factor,
+            };
             let desired = entry.content.measure(
                 &mut cx,
                 LayoutConstraints {
@@ -582,7 +641,7 @@ impl OverlayLayer {
                     max_size: viewport.size,
                 },
             );
-            let resolved = place(&entry.anchor, desired, viewport);
+            let resolved = place(&entry.anchor, desired, viewport, self.scale_factor);
             entry.content.layout(&mut cx, resolved);
             entry.resolved = resolved;
             entry.needs_layout = false;
@@ -592,8 +651,11 @@ impl OverlayLayer {
     /// Appends paint commands for all open popups, bottom→top, so the
     /// result paints above previously-recorded content.
     ///
-    /// Call after [`crate::WidgetArena::build_paint_list`] with the
-    /// same [`PaintList`].
+    /// For standalone layers only —
+    /// [`WidgetArena::build_paint_list`](crate::WidgetArena::build_paint_list)
+    /// already calls this on the arena-owned layer; painting it again
+    /// emits every popup twice (covered-text and self-overlap audit
+    /// findings).
     ///
     /// # Examples
     ///
@@ -610,13 +672,42 @@ impl OverlayLayer {
     /// layer.layout_pass();
     ///
     /// let mut list = PaintList::new();
-    /// layer.paint(&mut list);
-    /// // `DummyWidget` emits no chrome — only its provenance scope.
-    /// assert_eq!(list.commands.len(), 2);
+    /// layer.paint(&mut list, &martensite_theme::Theme::new("fallback"), None);
+    /// // `DummyWidget` emits no chrome — only its provenance scope plus
+    /// // the "Overlay" wrapper scope.
+    /// assert_eq!(list.commands.len(), 4);
     /// ```
-    pub fn paint(&self, list: &mut PaintList) {
-        for entry in &self.entries {
-            paint_widget_recursive(entry.content(), entry.resolved, list);
+    ///
+    /// `theme` is forwarded to popup content through
+    /// [`PaintContext::theme`](crate::PaintContext::theme); callers
+    /// should pass [`WidgetArena::theme`](crate::WidgetArena::theme) so
+    /// popups resolve the same tokens as arena content. Scale comes from
+    /// [`Self::set_scale_factor`] — the same value `layout_pass`
+    /// measured with, so popup layout and paint can never disagree.
+    pub fn paint(
+        &self,
+        list: &mut PaintList,
+        theme: &martensite_theme::Theme,
+        text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
+    ) {
+        // One parent scope around all popup content: the paint audit
+        // treats "Overlay"-scoped fills/text as intentional occlusion,
+        // so a popup covering page content is not flagged as a bug —
+        // while same-scope defects (a popup covering its own text)
+        // still are.
+        if !self.entries.is_empty() {
+            list.push_scope(None, "Overlay", crate::arena::rect_to_kurbo(self.viewport));
+            for entry in &self.entries {
+                paint_widget_recursive(
+                    entry.content(),
+                    entry.resolved,
+                    list,
+                    theme,
+                    self.scale_factor,
+                    text_painter,
+                );
+            }
+            list.pop_scope();
         }
     }
 
@@ -780,17 +871,21 @@ fn swallow_ignored(response: EventResponse) -> EventResponse {
 
 /// Resolves a popup rect for `anchor` at `desired` size inside
 /// `viewport`, applying placement preference, flip, and clamp.
-fn place(anchor: &OverlayAnchor, desired: Vec2, viewport: Rect) -> Rect {
+/// `scale` converts the logical-point gap/offset constants into the
+/// viewport's device-pixel space.
+fn place(anchor: &OverlayAnchor, desired: Vec2, viewport: Rect, scale: f32) -> Rect {
     // A popup can never be larger than the viewport.
     let size = Vec2::new(
         desired.x.clamp(0.0, viewport.width().max(0.0)),
         desired.y.clamp(0.0, viewport.height().max(0.0)),
     );
+    let gap = ANCHOR_GAP * scale;
+    let offset = POINTER_OFFSET * scale;
 
     let mut origin = match anchor {
         OverlayAnchor::Bounds(a) => {
-            let below_y = a.max_y() + ANCHOR_GAP;
-            let above_y = a.min_y() - size.y - ANCHOR_GAP;
+            let below_y = a.max_y() + gap;
+            let above_y = a.min_y() - size.y - gap;
             let y = if below_y + size.y <= viewport.max_y() {
                 below_y
             } else if above_y >= viewport.min_y() {
@@ -802,7 +897,7 @@ fn place(anchor: &OverlayAnchor, desired: Vec2, viewport: Rect) -> Rect {
             };
             Vec2::new(a.min_x(), y)
         }
-        OverlayAnchor::Pointer(p) => Vec2::new(p.x + POINTER_OFFSET, p.y + POINTER_OFFSET),
+        OverlayAnchor::Pointer(p) => Vec2::new(p.x + offset, p.y + offset),
     };
 
     // Clamp the origin so the rect stays inside the viewport; `max`
@@ -957,7 +1052,7 @@ mod tests {
         );
         layer.layout_pass();
         let mut list = PaintList::new();
-        layer.paint(&mut list);
+        layer.paint(&mut list, &martensite_theme::Theme::new("fallback"), None);
         // Each entry is wrapped in a provenance scope — filter to the
         // fills to check paint order.
         let fills: Vec<_> = list

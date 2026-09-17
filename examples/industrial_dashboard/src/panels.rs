@@ -173,17 +173,24 @@ pub struct GridPanel {
     table: DataTable<Vec<MetricRow>>,
     text: Mutex<TextPainter>,
     scale: Signal<f32>,
-    pal: Palette,
     bounds: Rect,
     focused: bool,
     /// F17 — modifiers tracked through the key stream.
     shift_held: bool,
     ctrl_held: bool,
     alert_rows: usize,
+    /// Toolbar filter input — polled in `tick`; folded into the
+    /// `RowFilter` together with the `F` alert-only toggle.
+    filter_text: Signal<String>,
+    /// The text currently baked into the table's filter — change
+    /// detection so `set_filter` doesn't re-scan 1M rows per frame.
+    applied_filter: String,
+    /// `F` alert-only toggle — composes with the text filter.
+    alert_only: bool,
 }
 
 impl GridPanel {
-    pub fn new(scale: Signal<f32>, pal: Palette) -> Self {
+    pub fn new(scale: Signal<f32>, filter_text: Signal<String>) -> Self {
         let rows = gen_rows(1_000_000);
         let alert_rows = alert_count(&rows);
         // 26px rows keep the WCAG 2.5.8 24px target floor at 1x.
@@ -203,17 +210,45 @@ impl GridPanel {
             table,
             text: Mutex::new(TextPainter::new()),
             scale,
-            pal,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
             shift_held: false,
             ctrl_held: false,
             alert_rows,
+            filter_text,
+            applied_filter: String::new(),
+            alert_only: false,
         }
     }
 
     fn s(&self) -> f32 {
         self.scale.get()
+    }
+
+    /// Rebuilds the table's `RowFilter` from the two live filter axes:
+    /// the `F` alert-only toggle and the toolbar's text field. The text
+    /// needle is case-insensitive and matches pid, status word
+    /// (`alert`/`ok`), or the raw memory figure.
+    fn apply_filter(&mut self) {
+        let needle = self.applied_filter.to_lowercase();
+        let alert_only = self.alert_only;
+        if needle.is_empty() && !alert_only {
+            if self.table.filter_active() {
+                self.table.clear_filter();
+            }
+            return;
+        }
+        self.table.set_filter(RowFilter::new(move |r: &MetricRow| {
+            if alert_only && !r.alert {
+                return false;
+            }
+            if needle.is_empty() {
+                return true;
+            }
+            r.pid.to_string().contains(&needle)
+                || r.mem_kib.to_string().contains(&needle)
+                || (if r.alert { "alert" } else { "ok" }).contains(&needle)
+        }));
     }
 
     fn row_h(&self) -> f32 {
@@ -327,6 +362,18 @@ impl Widget for GridPanel {
         );
     }
 
+    fn tick(&mut self, _dt: Duration) -> bool {
+        // Toolbar filter input — only re-apply on change; `set_filter`
+        // re-scans the backing store so per-frame churn is real work.
+        let text = self.filter_text.get();
+        if text != self.applied_filter {
+            self.applied_filter = text;
+            self.apply_filter();
+            return true;
+        }
+        false
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         match cx.event {
             WidgetEvent::PointerPressed {
@@ -362,12 +409,8 @@ impl Widget for GridPanel {
                     "Shift" => self.shift_held = true,
                     "Control" => self.ctrl_held = true,
                     "f" | "F" if !repeat => {
-                        if self.table.filter_active() {
-                            self.table.clear_filter();
-                        } else {
-                            self.table
-                                .set_filter(RowFilter::new(|r: &MetricRow| r.alert));
-                        }
+                        self.alert_only = !self.alert_only;
+                        self.apply_filter();
                     }
                     _ => {
                         if let Some(action) =
@@ -415,7 +458,8 @@ impl Widget for GridPanel {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        let pal = &self.pal;
+        let pal = Palette::from_theme(cx.theme);
+        let pal = &pal;
         let s = self.s();
         let mut text = self.text.lock();
         let right = format!(
@@ -520,10 +564,15 @@ impl Widget for GridPanel {
                 );
             }
             let ty = ry + (row_h - 13.0 * sd) / 2.0;
-            // A straddling row keeps its stripe/focus ring, but when its
-            // text origin is already below the clip the runs produce
-            // zero output — skip them (and the chip) entirely.
-            if ty >= rows_bottom {
+            // A straddling row keeps its stripe/focus ring, but its text
+            // can still paint zero pixels: `TextPainter` places the first
+            // baseline ≈1·font_px below the block top (line_height =
+            // 1.25·font_px → 0.8·lh), and the audit's probe puts the
+            // glyph-box top another 0.8·font_px above the baseline — so
+            // visible glyph tops sit at `ty + 0.2·font_px`. When that
+            // reaches the clip edge the runs produce nothing.
+            let font_px = 12.0 * s;
+            if ty + 0.2 * f64::from(font_px) >= rows_bottom {
                 continue;
             }
             // Cells: numeric columns right-aligned; status is a chip.
@@ -549,12 +598,12 @@ impl Widget for GridPanel {
                 let Some(&(x0, w)) = cols.get(ci) else {
                     continue;
                 };
-                let tw = text.measure(&value, 12.0 * s);
+                let tw = text.measure(&value, font_px);
                 text.push(
                     cx.list,
                     Point::new(f64::from(x0 + w) - 10.0 * sd - f64::from(tw), ty),
                     &value,
-                    12.0 * s,
+                    font_px,
                     color,
                     Some(w),
                 );
@@ -617,33 +666,45 @@ impl Widget for GridPanel {
 pub struct TelemetryPanel {
     text: Mutex<TextPainter>,
     scale: Signal<f32>,
-    pal: Palette,
     bounds: Rect,
     focused: bool,
     /// Shared with the app's header KPIs — this panel is the writer.
     pub cpu: Signal<f64>,
     pub mem: Signal<f64>,
+    /// Toolbar-driven controls — shared cells: the toolbar's Pause
+    /// button and sample-rate slider write them, Space writes `paused`
+    /// too so both controls stay in sync.
+    paused: Signal<bool>,
+    glow: Signal<bool>,
+    tick_ms: Signal<f64>,
     phase: f64,
     history: VecDeque<(f64, f64)>,
-    paused: bool,
     elapsed: Duration,
 }
 
 impl TelemetryPanel {
     const CAP: usize = 240;
 
-    pub fn new(scale: Signal<f32>, pal: Palette, cpu: Signal<f64>, mem: Signal<f64>) -> Self {
+    pub fn new(
+        scale: Signal<f32>,
+        cpu: Signal<f64>,
+        mem: Signal<f64>,
+        paused: Signal<bool>,
+        glow: Signal<bool>,
+        tick_ms: Signal<f64>,
+    ) -> Self {
         Self {
             text: Mutex::new(TextPainter::new()),
             scale,
-            pal,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
             cpu,
             mem,
+            paused,
+            glow,
+            tick_ms,
             phase: 0.0,
             history: VecDeque::with_capacity(Self::CAP + 1),
-            paused: false,
             elapsed: Duration::ZERO,
         }
     }
@@ -667,11 +728,12 @@ impl Widget for TelemetryPanel {
 
     fn tick(&mut self, dt: Duration) -> bool {
         self.elapsed += dt;
-        if self.paused {
+        if self.paused.get() {
             return false;
         }
-        // ~10 Hz sample cadence keeps the trace calm and legible.
-        if self.elapsed < Duration::from_millis(100) {
+        // Toolbar slider drives the cadence — 20 ms frantic to 500 ms
+        // glacial; 100 ms is the default legible trace.
+        if self.elapsed < Duration::from_millis(self.tick_ms.get() as u64) {
             return true;
         }
         self.elapsed = Duration::ZERO;
@@ -698,7 +760,7 @@ impl Widget for TelemetryPanel {
             } => EventResponse::CaptureFocus,
             WidgetEvent::KeyPressed { key, repeat } => {
                 if key == " " && !repeat {
-                    self.paused = !self.paused;
+                    self.paused.set(!self.paused.get());
                 }
                 EventResponse::Handled
             }
@@ -727,15 +789,16 @@ impl Widget for TelemetryPanel {
             self.cpu.get() * 100.0,
             self.mem.get() * 100.0,
             self.history.len(),
-            if self.paused { ", paused" } else { "" }
+            if self.paused.get() { ", paused" } else { "" }
         ));
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        let pal = &self.pal;
+        let pal = Palette::from_theme(cx.theme);
+        let pal = &pal;
         let s = self.s();
         let mut text = self.text.lock();
-        let state = if self.paused { "PAUSED" } else { "LIVE" };
+        let state = if self.paused.get() { "PAUSED" } else { "LIVE" };
         let full = format!(
             "cpu {:>3.0}% · mem {:>3.0}% · {state}",
             self.cpu.get() * 100.0,
@@ -829,7 +892,8 @@ impl Widget for TelemetryPanel {
         }
 
         // Series → projected polylines (cpu filled, mem line-only).
-        for (series_idx, color, fill) in [(0usize, pal.accent, true), (1usize, pal.accent2, false)]
+        let glow = self.glow.get();
+        for (series_idx, color, fill) in [(0usize, pal.accent, glow), (1usize, pal.accent2, false)]
         {
             let pts = &chart.lines()[series_idx].points;
             if pts.len() < 2 {
@@ -905,19 +969,17 @@ pub struct EditorPanel {
     editor: CodeEditor,
     text: Mutex<TextPainter>,
     scale: Signal<f32>,
-    pal: Palette,
     bounds: Rect,
     focused: bool,
     scroll_top: usize,
 }
 
 impl EditorPanel {
-    pub fn new(scale: Signal<f32>, pal: Palette) -> Self {
+    pub fn new(scale: Signal<f32>) -> Self {
         Self {
             editor: CodeEditor::new(EDITOR_SOURCE),
             text: Mutex::new(TextPainter::new()),
             scale,
-            pal,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
             scroll_top: 0,
@@ -936,13 +998,13 @@ impl EditorPanel {
         46.0 * self.s()
     }
 
-    fn kind_color(&self, kind: TokenKind) -> [u8; 4] {
+    fn kind_color(&self, pal: &Palette, kind: TokenKind) -> [u8; 4] {
         match kind {
-            TokenKind::Keyword => self.pal.accent,
-            TokenKind::String => self.pal.ok,
-            TokenKind::Comment => self.pal.text_muted,
-            TokenKind::Number => self.pal.warn,
-            _ => self.pal.text,
+            TokenKind::Keyword => pal.accent,
+            TokenKind::String => pal.ok,
+            TokenKind::Comment => pal.text_muted,
+            TokenKind::Number => pal.warn,
+            _ => pal.text,
         }
     }
 
@@ -1080,7 +1142,8 @@ impl Widget for EditorPanel {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        let pal = &self.pal;
+        let pal = Palette::from_theme(cx.theme);
+        let pal = &pal;
         let s = self.s();
         let mut text = self.text.lock();
         let full = format!(
@@ -1152,7 +1215,7 @@ impl Widget for EditorPanel {
                 .map(|sp| SpanColor {
                     start: sp.start,
                     end: sp.end,
-                    color: self.kind_color(sp.kind),
+                    color: self.kind_color(pal, sp.kind),
                 })
                 .collect();
             // No wrap — code lines clip at the panel edge like a real
@@ -1193,14 +1256,13 @@ pub struct MediaPanel {
     view: MediaView,
     text: Mutex<TextPainter>,
     scale: Signal<f32>,
-    pal: Palette,
     bounds: Rect,
     focused: bool,
     elapsed_nanos: u64,
 }
 
 impl MediaPanel {
-    pub fn new(scale: Signal<f32>, pal: Palette) -> Self {
+    pub fn new(scale: Signal<f32>) -> Self {
         let surface = VideoSurface::new_mock(1920, 1080, VideoPixelFormat::Nv12);
         Self {
             view: MediaView::new()
@@ -1208,7 +1270,6 @@ impl MediaPanel {
                 .with_surface(surface),
             text: Mutex::new(TextPainter::new()),
             scale,
-            pal,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
             elapsed_nanos: 0,
@@ -1276,7 +1337,8 @@ impl Widget for MediaPanel {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        let pal = &self.pal;
+        let pal = Palette::from_theme(cx.theme);
+        let pal = &pal;
         let s = self.s();
         let mut text = self.text.lock();
         // Compact status — tiered to the actual panel width so the
@@ -1307,6 +1369,9 @@ impl Widget for MediaPanel {
                 inner.width() as f32,
                 inner.height() as f32,
             ),
+            theme: cx.theme,
+            scale: cx.scale,
+            text_painter: cx.text_painter,
         });
         let sd = f64::from(s);
         let cx0 = inner.x0 + inner.width() / 2.0;
@@ -1324,7 +1389,11 @@ impl Widget for MediaPanel {
         } else {
             "no decoder".to_string()
         };
-        for (i, (line, color)) in [(l1.as_str(), pal.text), (l2.as_str(), pal.text_muted)]
+        // The letterbox is black in every theme — overlay text stays
+        // light regardless of the palette (on-video convention).
+        const VIDEO_INK: [u8; 4] = [226, 232, 240, 255];
+        const VIDEO_MUTED: [u8; 4] = [160, 170, 185, 255];
+        for (i, (line, color)) in [(l1.as_str(), VIDEO_INK), (l2.as_str(), VIDEO_MUTED)]
             .iter()
             .enumerate()
         {

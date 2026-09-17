@@ -95,6 +95,51 @@ pub enum EventResponse {
 pub struct LayoutContext<'a> {
     /// Mutable access to the hot node being laid out.
     pub hot: &'a mut HotNode,
+    /// Physical pixels per logical point — the same factor
+    /// [`PaintContext::scale`] carries. Widgets reporting baked
+    /// logical-point minimum sizes from [`Widget::measure`] should
+    /// multiply them by this so HiDPI minimums stay honest.
+    pub scale: f32,
+}
+
+impl LayoutContext<'_> {
+    /// Converts a logical-point size to this context's coordinate space.
+    pub fn pt(&self, v: f32) -> f32 {
+        v * self.scale
+    }
+
+    /// Lays out an internal child widget, preserving this node's
+    /// [`NodeFlags::FOCUSABLE`](crate::NodeFlags::FOCUSABLE) flag.
+    ///
+    /// Internal children share the parent's `cx.hot`, so a child that
+    /// clears the flag (e.g. a disabled `Button` running
+    /// `flags.remove(FOCUSABLE)`) would otherwise clobber a flag the
+    /// parent or an earlier sibling set. Focusability is union
+    /// semantics: a node is focusable if the parent *or any* enabled
+    /// child is — children may set the flag, only this node's own
+    /// `layout` may clear it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, LayoutContext, Rect};
+    ///
+    /// let mut child = DummyWidget;
+    /// let mut hot = HotNode::default();
+    /// hot.flags |= martensite_core::NodeFlags::FOCUSABLE;
+    /// let mut cx = LayoutContext {
+    ///     hot: &mut hot,
+    ///     scale: 1.0,
+    /// };
+    /// cx.layout_child(&mut child, Rect::new(0.0, 0.0, 50.0, 20.0));
+    /// ```
+    pub fn layout_child(&mut self, child: &mut dyn Widget, bounds: Rect) {
+        let had = self.hot.flags.contains(crate::NodeFlags::FOCUSABLE);
+        child.layout(self, bounds);
+        if had {
+            self.hot.flags |= crate::NodeFlags::FOCUSABLE;
+        }
+    }
 }
 
 /// A normalized, framework-level input event delivered to widgets.
@@ -122,28 +167,32 @@ pub struct LayoutContext<'a> {
 pub enum WidgetEvent {
     /// The pointer moved over the widget's bounds.
     PointerMoved {
-        /// Window-space position in logical pixels.
+        /// Window-space position, in the same device-pixel space as
+        /// [`EventContext::bounds`].
         position: Vec2,
     },
     /// A pointer button was pressed inside the widget's bounds.
     PointerPressed {
-        /// Window-space position in logical pixels.
+        /// Window-space position, in the same device-pixel space as
+        /// [`EventContext::bounds`].
         position: Vec2,
         /// Which button was pressed.
         button: PointerButton,
     },
     /// A pointer button was released.
     PointerReleased {
-        /// Window-space position in logical pixels.
+        /// Window-space position, in the same device-pixel space as
+        /// [`EventContext::bounds`].
         position: Vec2,
         /// Which button was released.
         button: PointerButton,
     },
     /// A scroll gesture occurred over the widget's bounds.
     Scroll {
-        /// Window-space position in logical pixels.
+        /// Window-space position, in the same device-pixel space as
+        /// [`EventContext::bounds`].
         position: Vec2,
-        /// Scroll delta in logical pixels (positive = content up/right).
+        /// Scroll delta in the same space as `position` (positive = content up/right).
         delta: Vec2,
     },
     /// A key was pressed while the widget held focus.
@@ -332,7 +381,8 @@ pub enum PointerButton {
 pub struct EventContext<'a> {
     /// The event being delivered.
     pub event: &'a WidgetEvent,
-    /// The widget's screen-space bounds in logical pixels.
+    /// The widget's screen-space bounds in device pixels (equal to
+    /// logical points at `scale == 1.0`).
     pub bounds: Rect,
 }
 
@@ -345,13 +395,17 @@ pub struct EventContext<'a> {
 /// # Examples
 ///
 /// ```
-/// use martensite_core::{PaintContext, PaintList, Rect};
+/// use martensite_core::{PaintContext, PaintList, Rect, Theme};
 ///
 /// let mut list = PaintList::new();
+/// let theme = Theme::new("fallback");
 /// {
 ///     let mut cx = PaintContext {
 ///         list: &mut list,
 ///         bounds: Rect::new(0.0, 0.0, 50.0, 20.0),
+///         theme: &theme,
+///         scale: 1.0,
+///         text_painter: None,
 ///     };
 ///     cx.list.push_fill_rect(
 ///         kurbo::Rect::new(0.0, 0.0, 50.0, 20.0),
@@ -363,8 +417,90 @@ pub struct EventContext<'a> {
 pub struct PaintContext<'a> {
     /// The command list to record this widget's output into.
     pub list: &'a mut crate::paint::PaintList,
-    /// The widget's screen-space bounds in logical pixels.
+    /// The widget's screen-space bounds in device pixels (equal to
+    /// logical points at `scale == 1.0`).
     pub bounds: Rect,
+    /// The active design-token theme for this paint pass. Widgets
+    /// resolve [`martensite_theme::TokenKey`]s through it and should
+    /// fall back to their baked defaults when a token is absent — an
+    /// empty theme reproduces the widget's unthemed appearance.
+    ///
+    /// The arena supplies this from
+    /// [`WidgetArena::theme`](crate::WidgetArena::theme); applications
+    /// change it via
+    /// [`WidgetArena::set_theme`](crate::WidgetArena::set_theme).
+    pub theme: &'a martensite_theme::Theme,
+    /// The display scale factor (physical px per logical pt) reported
+    /// to the arena via
+    /// [`WidgetArena::set_scale_factor`](crate::WidgetArena::set_scale_factor).
+    /// Defaults to `1.0`. Widgets that bake sizes in logical points —
+    /// font sizes, paddings, hit-target minimums — multiply them by
+    /// this (or call [`PaintContext::pt`]) so the emitted device-pixel
+    /// geometry stays the intended physical size on HiDPI displays.
+    /// Arenas whose bounds are already logical pixels leave it at `1.0`.
+    pub scale: f32,
+    /// The ambient shaped-text painter installed via
+    /// [`WidgetArena::set_text_painter`](crate::WidgetArena::set_text_painter),
+    /// if any. Widgets that emit text should prefer an explicit
+    /// painter of their own when set, then this ambient one, and only
+    /// fall back to [`PaintList::push_text`](crate::PaintList::push_text)'s
+    /// placeholder boxes when neither exists.
+    pub text_painter: Option<&'a (dyn crate::paint::TextShaper + Send + Sync)>,
+}
+
+impl PaintContext<'_> {
+    /// Converts a logical-point size to the paint pass's device-pixel
+    /// size — `pt * scale`. Use for every baked constant a widget emits
+    /// (font sizes, corner radii, paddings) so HiDPI arenas stay
+    /// legible.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintContext, PaintList, Rect, Theme};
+    ///
+    /// let mut list = PaintList::new();
+    /// let theme = Theme::new("fallback");
+    /// let cx = PaintContext {
+    ///     list: &mut list,
+    ///     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///     theme: &theme,
+    ///     scale: 2.0,
+    ///     text_painter: None,
+    /// };
+    /// assert_eq!(cx.pt(14.0), 28.0);
+    /// ```
+    pub fn pt(&self, v: f32) -> f32 {
+        v * self.scale
+    }
+
+    /// `f64` variant of [`PaintContext::pt`].
+    pub fn ptf(&self, v: f64) -> f64 {
+        v * f64::from(self.scale)
+    }
+    /// Resolves a color [`martensite_theme::TokenKey`] to `[u8; 4]`
+    /// sRGBA, or `fallback` when the token is absent or not a color.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintContext, PaintList, Rect, Theme};
+    /// use martensite_theme::TokenKey;
+    ///
+    /// let mut list = PaintList::new();
+    /// let theme = Theme::new("fallback");
+    /// let cx = PaintContext {
+    ///     list: &mut list,
+    ///     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///     theme: &theme,
+    ///     scale: 1.0,
+    ///     text_painter: None,
+    /// };
+    /// assert_eq!(cx.color(TokenKey::BackgroundColor, [9, 9, 9, 255]), [9, 9, 9, 255]);
+    /// ```
+    pub fn color(&self, key: martensite_theme::TokenKey, fallback: [u8; 4]) -> [u8; 4] {
+        self.theme.color(key).map_or(fallback, |c| c.to_srgba8())
+    }
 }
 
 /// Context provided to widgets during accessibility tree construction.
@@ -762,7 +898,10 @@ pub trait Widget: Send + Sync + 'static {
 ///
 /// let mut w = DummyWidget;
 /// let mut hot = martensite_core::HotNode::default();
-/// let mut cx = LayoutContext { hot: &mut hot };
+/// let mut cx = LayoutContext {
+///     hot: &mut hot,
+///     scale: 1.0,
+/// };
 /// // `DummyWidget` measures to zero and lays out as a no-op.
 /// assert_eq!(w.measure(&mut cx, LayoutConstraints { min_size: Vec2::ZERO, max_size: Vec2::new(100.0, 100.0) }), Vec2::ZERO);
 /// w.layout(&mut cx, Rect::new(0.0, 0.0, 0.0, 0.0));

@@ -664,7 +664,10 @@ mod tests {
             .with_fit(VideoFit::Contain);
 
         let mut hot = HotNode::new(taffy::NodeId::new(1));
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
 
         // Measure in a 1000x1000 square container
         let constraints = LayoutConstraints {
@@ -693,7 +696,10 @@ mod tests {
             .with_fit(VideoFit::Fill);
 
         let mut hot = HotNode::new(taffy::NodeId::new(1));
-        let mut cx = LayoutContext { hot: &mut hot };
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
 
         view.layout(&mut cx, Rect::new(10.0, 20.0, 800.0, 600.0));
         assert_eq!(

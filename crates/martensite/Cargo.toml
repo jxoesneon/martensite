@@ -41,10 +41,10 @@ accesskit = { workspace = true }
 glam = { workspace = true }
 kurbo = { workspace = true }
 taffy = { workspace = true }
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 martensite-test = { workspace = true }
-parking_lot = { workspace = true }
 
 # `martensite-plugin` pulls wasmtime (the plugin host runtime), which
 # cannot build for wasm32-unknown-unknown — plugins are host-side.

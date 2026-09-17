@@ -2947,6 +2947,7 @@ dependencies = [
  "martensite-theme",
  "martensite-wgpu",
  "martensite-window",
+ "parking_lot",
  "taffy",
 ]
 
@@ -3046,6 +3047,7 @@ dependencies = [
  "glam 0.33.7",
  "kurbo",
  "martensite-reactive",
+ "martensite-theme",
  "slotmap",
  "smallvec",
  "taffy",
@@ -3275,6 +3277,7 @@ version = "0.18.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.7",
+ "kurbo",
  "martensite-access",
  "martensite-core",
  "martensite-engine-bridge",
