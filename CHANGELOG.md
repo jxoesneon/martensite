@@ -60,6 +60,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against: text tokens on surface *and* background (4.5), border
   strokes on surface/background/raised (3), inverse ink on the accent
   fill (4.5), and accent/muted marks on raised bands (3).
+- **`industrial_dashboard` grid context menu** — a `ContextMenu` popup
+  widget opened by `GridPanel` on secondary-button row presses through
+  the arena `OverlayLayer` (`OverlayAnchor::Pointer`), reconciled via
+  `sync_overlay` like `Dropdown`'s listbox: hover highlight, keyboard
+  navigation (`Up`/`Down`/`Enter`), outside-press/`Escape` dismissal,
+  and committed actions drained into clipboard payloads. "Copy PID"
+  and "Copy row (CSV)" write the row snapshot to the OS clipboard via
+  `martensite-clipboard-platform::native_backend` — the backend isn't
+  `Send`, so it lives app-side and the widget publishes payloads
+  through a `Signal<Option<String>>`. A brief "· copied" marker in the
+  grid title confirms the write.
 - **On-screen paint-compliance audit** (`martensite-access::paint_audit`)
   — inspects the recorded `PaintList` each frame and reports WCAG 2.2
   violations via `tracing`: undersized text (scale-factor corrected),

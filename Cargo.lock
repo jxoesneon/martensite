@@ -2362,6 +2362,7 @@ dependencies = [
  "glam",
  "martensite",
  "martensite-accesskit-winit",
+ "martensite-clipboard-platform",
  "martensite-wgpu",
  "parking_lot",
  "pollster",

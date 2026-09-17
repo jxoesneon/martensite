@@ -19,6 +19,7 @@
 
 mod app;
 mod headless;
+mod menu;
 mod model;
 mod panels;
 mod text;

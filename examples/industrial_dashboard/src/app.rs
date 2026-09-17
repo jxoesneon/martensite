@@ -111,6 +111,12 @@ struct App {
     theme_sel: Signal<usize>,
     /// Grid filter text — `GridPanel` folds it into its `RowFilter`.
     filter_text: Signal<String>,
+    /// Clipboard payload sink — `GridPanel` publishes on a context-menu
+    /// commit; `redraw` writes it to the OS clipboard (the platform
+    /// backend isn't `Send`, so it stays app-side).
+    clipboard_out: Signal<Option<String>>,
+    /// OS clipboard backend — `None` where no native backend exists.
+    clipboard: Option<Box<dyn martensite_clipboard_platform::ClipboardBackend>>,
     /// The toolbar strip's arena node (not a dock panel — a fixed band
     /// under the header).
     toolbar: Option<WidgetId>,
@@ -164,6 +170,8 @@ impl App {
             tick_ms: Signal::new(100.0f64),
             theme_sel: Signal::new(Self::theme_index(initial_choice)),
             filter_text: Signal::new(String::new()),
+            clipboard_out: Signal::new(None),
+            clipboard: martensite_clipboard_platform::native_backend(),
             toolbar: None,
             pal: Palette::dark(),
             themes: ThemeDictionary::new(),
@@ -249,7 +257,11 @@ impl App {
 
         let mut panels: [Option<WidgetId>; 4] = [None, None, None, None];
         let widgets: [Box<dyn martensite::core::Widget>; 4] = [
-            Box::new(GridPanel::new(scale.clone(), self.filter_text.clone())),
+            Box::new(GridPanel::new(
+                scale.clone(),
+                self.filter_text.clone(),
+                self.clipboard_out.clone(),
+            )),
             Box::new(TelemetryPanel::new(
                 scale.clone(),
                 self.cpu.clone(),
@@ -611,6 +623,15 @@ impl App {
         };
         if wanted != self.theme_choice {
             self.set_theme_choice(wanted);
+        }
+
+        // Context menu → OS clipboard: the grid publishes the payload;
+        // the backend write happens here, app-side.
+        if let Some(payload) = self.clipboard_out.get() {
+            if let Some(cb) = self.clipboard.as_mut() {
+                cb.write("text/plain;charset=utf-8", payload.as_bytes());
+            }
+            self.clipboard_out.set(None);
         }
 
         // 0. Theme — advance any in-flight fade and install the

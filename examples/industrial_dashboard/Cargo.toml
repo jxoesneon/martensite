@@ -23,6 +23,9 @@ devtools = []
 [dependencies]
 martensite = { workspace = true }
 accesskit_winit = { workspace = true }
+# Real OS clipboard for the grid context menu — the backend isn't
+# `Send`, so it lives app-side and widgets publish payloads via Signal.
+martensite-clipboard-platform = { workspace = true }
 # The facade has no `vello` passthrough — enabling the GPU glyph/path
 # backend requires a direct dep (same as viewport_showcase).
 martensite-wgpu = { workspace = true, features = ["vello"] }

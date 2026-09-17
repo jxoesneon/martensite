@@ -51,7 +51,8 @@
 //!      `…::panels::GridPanel`.
 
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
@@ -59,6 +60,7 @@ use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite::blessed::data_table::{ColumnConfig, ColumnSort, KeyAction, RowFilter};
 use martensite::blessed::{Chart, CodeEditor, DataTable, LineSeries, Point as CPoint, TokenKind};
+use martensite::core::overlay::{OverlayAnchor, OverlayLayer};
 use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, SemanticAction, Widget, WidgetEvent,
@@ -68,6 +70,7 @@ use martensite::prelude::*;
 use martensite::render::{BezPath, PaintList, Point};
 use martensite::widgets::media::{MediaView, VideoFit};
 
+use crate::menu::{ContextMenu, MenuState};
 use crate::model::{alert_count, gen_rows, MetricRow, Palette, EDITOR_SOURCE};
 use crate::text::{SpanColor, TextPainter};
 
@@ -187,10 +190,33 @@ pub struct GridPanel {
     applied_filter: String,
     /// `F` alert-only toggle — composes with the text filter.
     alert_only: bool,
+    /// Clipboard payload sink — the app drains it into the OS
+    /// clipboard each frame (the platform backend isn't `Send`, so it
+    /// can't live in the widget).
+    clipboard_out: Signal<Option<String>>,
+    /// State shared with the `ContextMenu` popup (committed item).
+    menu_shared: Arc<Mutex<MenuState>>,
+    /// Whether a context menu is requested — reconciled by
+    /// `sync_overlay` against the arena `OverlayLayer`.
+    menu_open: bool,
+    /// Live overlay entry id while the menu is up.
+    menu_id: Option<u64>,
+    /// Window-space position of the opening secondary press.
+    menu_anchor: Vec2,
+    /// Snapshot of the row the menu targets — committed actions read
+    /// its cells (the table has no storage-index getter; the pressed
+    /// row is always visible, so capture it at press time).
+    context_row: Option<MetricRow>,
+    /// "· copied" title flash after a successful clipboard write.
+    copied_flash: Option<Instant>,
 }
 
 impl GridPanel {
-    pub fn new(scale: Signal<f32>, filter_text: Signal<String>) -> Self {
+    pub fn new(
+        scale: Signal<f32>,
+        filter_text: Signal<String>,
+        clipboard_out: Signal<Option<String>>,
+    ) -> Self {
         let rows = gen_rows(1_000_000);
         let alert_rows = alert_count(&rows);
         // 26px rows keep the WCAG 2.5.8 24px target floor at 1x.
@@ -218,6 +244,17 @@ impl GridPanel {
             filter_text,
             applied_filter: String::new(),
             alert_only: false,
+            clipboard_out,
+            menu_shared: Arc::new(Mutex::new(MenuState {
+                items: Vec::new(),
+                highlighted: 0,
+                committed: None,
+            })),
+            menu_open: false,
+            menu_id: None,
+            menu_anchor: Vec2::ZERO,
+            context_row: None,
+            copied_flash: None,
         }
     }
 
@@ -309,6 +346,12 @@ impl GridPanel {
     /// (display position → storage through the same mapping the painter
     /// uses — `visible_rows` yields storage indices).
     fn row_at(&self, y: f32) -> Option<usize> {
+        self.row_snapshot(y).map(|(idx, _)| idx)
+    }
+
+    /// Like [`row_at`](Self::row_at) but also clones the row's data —
+    /// the context menu snapshots cells at press time.
+    fn row_snapshot(&self, y: f32) -> Option<(usize, MetricRow)> {
         // Rows slide by the fractional scroll remainder — the painter
         // draws row n at `n·row_h - frac`, so hit-testing must add frac
         // back before dividing.
@@ -320,7 +363,7 @@ impl GridPanel {
         self.table
             .visible_rows()
             .nth((rel / self.row_h()) as usize)
-            .map(|(idx, _)| idx)
+            .map(|(idx, r)| (idx, r.clone()))
     }
 
     fn toggle_sort(&mut self, col: usize) {
@@ -371,7 +414,62 @@ impl Widget for GridPanel {
             self.apply_filter();
             return true;
         }
+        if self
+            .copied_flash
+            .is_some_and(|t| t.elapsed() > Duration::from_millis(1500))
+        {
+            self.copied_flash = None;
+            return true;
+        }
         false
+    }
+
+    /// Reconciles the context-menu overlay entry with the requested
+    /// state — same pattern as `Dropdown::sync_overlay`: open when
+    /// armed, notice layer-level dismissal, drain committed items into
+    /// real actions (clipboard payloads), close when disarmed.
+    fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
+        // The layer dismissed the menu (outside press / Escape).
+        if let Some(id) = self.menu_id {
+            if !overlay.is_open(id) {
+                self.menu_id = None;
+                self.menu_open = false;
+            }
+        }
+        // A committed item becomes a clipboard payload for the target
+        // row; the app performs the OS write from the signal.
+        if let Some(action) = self.menu_shared.lock().committed.take() {
+            if let Some(row) = &self.context_row {
+                let payload = match action {
+                    0 => format!("{}", row.pid),
+                    _ => format!(
+                        "{},{:.1},{},{}",
+                        row.pid,
+                        f64::from(row.cpu_milli) / 1000.0,
+                        fmt_mem(row.mem_kib),
+                        if row.alert { "ALERT" } else { "OK" }
+                    ),
+                };
+                self.clipboard_out.set(Some(payload));
+                self.copied_flash = Some(Instant::now());
+            }
+            self.menu_open = false;
+        }
+        if self.menu_open && self.menu_id.is_none() {
+            {
+                let mut state = self.menu_shared.lock();
+                state.items = vec!["Copy PID".into(), "Copy row (CSV)".into()];
+                state.highlighted = 0;
+                state.committed = None;
+            }
+            let menu = ContextMenu::new(Arc::clone(&self.menu_shared));
+            self.menu_id =
+                Some(overlay.open(Box::new(menu), OverlayAnchor::Pointer(self.menu_anchor)));
+        } else if !self.menu_open {
+            if let Some(id) = self.menu_id.take() {
+                overlay.close(id);
+            }
+        }
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -397,6 +495,24 @@ impl Widget for GridPanel {
                         sel.clear();
                         sel.select(idx);
                     }
+                }
+                EventResponse::CaptureFocus
+            }
+            WidgetEvent::PointerPressed {
+                position,
+                button: PointerButton::Secondary,
+            } => {
+                // Right-click selects the row under the cursor (standard
+                // context-menu UX) and arms the popup; `sync_overlay`
+                // opens it at the press position.
+                if let Some((idx, row)) = self.row_snapshot(position.y) {
+                    self.table.set_focused_row(Some(idx));
+                    let sel = self.table.selection_mut();
+                    sel.clear();
+                    sel.select(idx);
+                    self.context_row = Some(row);
+                    self.menu_anchor = *position;
+                    self.menu_open = true;
                 }
                 EventResponse::CaptureFocus
             }
@@ -463,12 +579,17 @@ impl Widget for GridPanel {
         let s = self.s();
         let mut text = self.text.lock();
         let right = format!(
-            "{} rows · {} sel · {} alerts{}",
+            "{} rows · {} sel · {} alerts{}{}",
             fmt_count(self.table.display_row_count()),
             self.table.selection().selected_count(),
             fmt_count(self.alert_rows),
             if self.table.filter_active() {
                 " · FILTERED"
+            } else {
+                ""
+            },
+            if self.copied_flash.is_some() {
+                " · copied"
             } else {
                 ""
             }
