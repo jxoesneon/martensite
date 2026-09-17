@@ -33,7 +33,33 @@
 //!   z-order mistakes or positioning errors that produce no output.
 //! - **Overlapping text** — two text runs whose ink boxes intersect,
 //!   the signature of a layout/spacing collision.
+//! - **Provenance** — [`PaintCommand::PushScope`]/`PopScope` markers
+//!   emitted by the arena's paint walker let every lint name the widget
+//!   that produced it (`PaintLint::scope`, `in <name>` in the detail).
+//!   The scope bounds also power the **container-overflow** check:
+//!   text whose visible region escapes its own widget's scope rect
+//!   reports [`PaintLintKind::WidgetOverflow`] — a real paint leak,
+//!   distinct from intentional clipping.
+//! - **Focus indicator (Criterion 2.4.7)** — when the app reports the
+//!   focused widget's rect via [`PaintAuditConfig::focus_rect`], the
+//!   audit requires at least one painted stroke to intersect it and
+//!   reports [`PaintLintKind::MissingFocusIndicator`] otherwise.
+//! - **Target size (Criterion 2.5.8)** — [`audit_target_sizes`] walks
+//!   the arena directly (the paint stream cannot see hit regions) and
+//!   reports interactive nodes under 24×24pt as
+//!   [`PaintLintKind::UndersizedTarget`].
+//! - **Machine-readable output** — [`PaintLint::to_json`] serializes a
+//!   finding for CI tooling and baseline files.
 //!
+//! [`PaintLintKind::WidgetOverflow`]: crate::paint_audit::PaintLintKind::WidgetOverflow
+//! [`PaintLintKind::MissingFocusIndicator`]: crate::paint_audit::PaintLintKind::MissingFocusIndicator
+//! [`PaintLintKind::UndersizedTarget`]: crate::paint_audit::PaintLintKind::UndersizedTarget
+//! [`PaintAuditConfig::focus_rect`]: crate::paint_audit::PaintAuditConfig::focus_rect
+//! [`PaintLint::to_json`]: crate::paint_audit::PaintLint::to_json
+//! [`PaintLint::scope`]: crate::paint_audit::PaintLint::scope
+//! [`PaintLint::widget`]: crate::paint_audit::PaintLint::widget
+//! [`audit_target_sizes`]: crate::paint_audit::audit_target_sizes
+//! [`PaintCommand::PushScope`]: martensite_core::PaintCommand::PushScope
 //! [`PaintLintKind::UnknownBackdrop`]: crate::paint_audit::PaintLintKind::UnknownBackdrop
 //! [`PaintAuditConfig::report_unknown_backdrop`]: crate::paint_audit::PaintAuditConfig::report_unknown_backdrop
 //! [`PaintLintKind::ClipOverflow`]: crate::paint_audit::PaintLintKind::ClipOverflow
@@ -71,6 +97,7 @@ use std::collections::HashSet;
 
 use kurbo::{Point, Rect, Shape};
 use martensite_core::paint::{GlyphRun, PaintCommand, PaintList};
+use martensite_core::NodeFlags;
 use tracing::{info, warn};
 
 use crate::compliance::{contrast_ratio, ColorRgba, TextSize, WcagLevel};
@@ -128,6 +155,27 @@ pub struct PaintAuditConfig {
     /// When set, text whose bounds extend beyond it is reported as
     /// [`PaintLintKind::OutOfFrame`]. `None` disables that check.
     pub frame: Option<Rect>,
+    /// Flag text whose *visible* region (bounds ∩ clip) extends past
+    /// its own widget's `PushScope` bounds — content escaping its
+    /// container even after clipping is accounted for. Zero-area
+    /// scope bounds (widget not yet laid out) are skipped.
+    pub check_container_overflow: bool,
+    /// When [`focus_rect`](Self::focus_rect) is set, require at least
+    /// one stroked shape intersecting it — the focused widget should
+    /// show a visible indicator (WCAG 2.4.7). `None` disables.
+    ///
+    /// Limitation: this verifies *presence* of emphasis, not intent —
+    /// any stroke crossing the rect satisfies it, including a panel
+    /// border that happens to overlap the focused widget's bounds.
+    /// The 1.4.11 contrast check still verifies the stroke is visible.
+    pub check_focus_indicator: bool,
+    /// Bounds of the currently-focused widget in device pixels, fed by
+    /// the app each frame (e.g. via
+    /// `RenderOrchestrator::set_audit_focus_rect`). In practice the
+    /// focused widget's own border usually serves as the indicator, so
+    /// false passes are rare — but a widget with no emphasis at all is
+    /// caught reliably, which is the failure this check exists for.
+    pub focus_rect: Option<Rect>,
 }
 
 impl Default for PaintAuditConfig {
@@ -142,6 +190,9 @@ impl Default for PaintAuditConfig {
             check_text_overlap: true,
             check_bounds: true,
             frame: None,
+            check_container_overflow: true,
+            check_focus_indicator: true,
+            focus_rect: None,
         }
     }
 }
@@ -222,6 +273,21 @@ pub enum PaintLintKind {
     /// Text extends partially outside the configured frame — at best
     /// wasted work, usually a layout that does not fit the window.
     OutOfFrame,
+    /// Text's visible region (bounds ∩ clip) extends past its own
+    /// widget's scope bounds — content painting outside its container
+    /// with no clip to constrain it. The semantic form of
+    /// [`PaintLintKind::ClipOverflow`]: clipping inside a container is
+    /// intentional; leaking past the container's bounds is a bug.
+    WidgetOverflow,
+    /// An interactive node's bounds are smaller than the WCAG 2.5.8
+    /// target-size minimum (24×24 CSS px). Emitted by
+    /// [`audit_target_sizes`], an arena-level pass — the paint stream
+    /// cannot see hit regions.
+    UndersizedTarget,
+    /// `config.focus_rect` was set but no stroke or edge emphasis was
+    /// painted inside it — the focused widget shows no visible
+    /// indicator (WCAG 2.4.7 focus visible).
+    MissingFocusIndicator,
 }
 
 /// A single compliance finding against a painted element.
@@ -231,7 +297,7 @@ pub struct PaintLint {
     pub kind: PaintLintKind,
     /// Report severity.
     pub severity: LintSeverity,
-    /// Approximate center of the offending text, in device pixels —
+    /// Approximate center of the offending element, in device pixels —
     /// usable for devtools overlays.
     pub anchor: (f64, f64),
     /// Measured value: logical font size in points for
@@ -243,6 +309,94 @@ pub struct PaintLint {
     pub required: Option<f32>,
     /// Human-readable detail line, suitable for `tracing` output.
     pub detail: String,
+    /// The innermost widget-paint scope the offending command was
+    /// emitted in (`Widget::debug_name`) — which component to look at.
+    /// `None` for commands outside any scope (app-level chrome) and for
+    /// lints that name a widget directly in `detail` instead.
+    pub scope: Option<&'static str>,
+    /// The arena handle of the emitting widget when the offending
+    /// command ran inside an arena-emitted scope — for tooling that
+    /// wants to correlate a lint back to the live tree (devtools
+    /// "select the offending widget"). `None` for manual scopes and
+    /// non-widget findings.
+    pub widget: Option<martensite_core::WidgetId>,
+}
+
+impl PaintLint {
+    /// One JSON object describing the lint — for CI tooling and
+    /// baseline files. Keys: `kind`, `severity`, `scope`, `widget`,
+    /// `anchor`, `measured`, `required`, `detail`. Non-finite floats
+    /// serialize as `null` (JSON has no NaN/Infinity).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_access::paint_audit::{LintSeverity, PaintLint, PaintLintKind};
+    ///
+    /// let lint = PaintLint {
+    ///     kind: PaintLintKind::UndersizedText,
+    ///     severity: LintSeverity::Warning,
+    ///     anchor: (10.0, 20.0),
+    ///     measured: Some(9.0),
+    ///     required: Some(12.0),
+    ///     detail: "tiny text".to_string(),
+    ///     scope: Some("Panel"),
+    ///     widget: None,
+    /// };
+    /// assert!(lint.to_json().contains("\"kind\":\"UndersizedText\""));
+    /// ```
+    pub fn to_json(&self) -> String {
+        // Escape for a JSON string literal: backslash and quote first,
+        // then the control characters JSON forbids raw (< 0x20).
+        fn esc(s: &str) -> String {
+            let mut out = String::with_capacity(s.len() + 8);
+            for c in s.chars() {
+                match c {
+                    '\\' => out.push_str("\\\\"),
+                    '"' => out.push_str("\\\""),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                    c => out.push(c),
+                }
+            }
+            out
+        }
+        let scope = self
+            .scope
+            .map_or("null".to_string(), |s| format!("\"{}\"", esc(s)));
+        // JSON has no NaN/Infinity — non-finite measurements serialize
+        // as null rather than producing unparseable output.
+        let num = |v: Option<f32>| {
+            v.filter(|v| v.is_finite())
+                .map_or("null".to_string(), |v| format!("{v:.3}"))
+        };
+        let coord = |v: f64| {
+            if v.is_finite() {
+                format!("{v:.1}")
+            } else {
+                "null".to_string()
+            }
+        };
+        let widget = self.widget.map_or("null".to_string(), |w| {
+            format!(
+                "{{\"slot\":{},\"generation\":{}}}",
+                w.slot_idx(),
+                w.generation()
+            )
+        });
+        format!(
+            "{{\"kind\":\"{:?}\",\"severity\":\"{:?}\",\"scope\":{scope},\"widget\":{widget},\"anchor\":[{},{}],\"measured\":{},\"required\":{},\"detail\":\"{}\"}}",
+            self.kind,
+            self.severity,
+            coord(self.anchor.0),
+            coord(self.anchor.1),
+            num(self.measured),
+            num(self.required),
+            esc(&self.detail)
+        )
+    }
 }
 
 impl PaintLint {
@@ -255,6 +409,10 @@ impl PaintLint {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.kind.hash(&mut h);
+        // Scope matters: the same finding in two different widgets is
+        // two findings, not one.
+        self.scope.hash(&mut h);
+        self.widget.hash(&mut h);
         ((self.anchor.0 * 4.0) as i64).hash(&mut h);
         ((self.anchor.1 * 4.0) as i64).hash(&mut h);
         for c in self.detail.chars().filter(|c| !c.is_ascii_digit()) {
@@ -310,6 +468,14 @@ struct FillRec {
     shape: FillShape,
     color: ColorRgba,
     clip: Option<Rect>,
+}
+
+/// One active widget-paint scope: name plus the widget's layout bounds.
+#[derive(Clone, Copy)]
+struct ScopeRec {
+    id: Option<martensite_core::WidgetId>,
+    name: &'static str,
+    bounds: Rect,
 }
 
 /// The coverage geometry of a recorded fill.
@@ -456,10 +622,11 @@ fn probe_glyph_run(run: &GlyphRun) -> Option<TextProbe> {
 
 /// Audits a recorded [`PaintList`] for on-screen WCAG 2.2 violations.
 ///
-/// Returns one [`PaintLint`] per finding. The pass is read-only and
-/// allocation-bounded to the number of text commands; it is intended to
-/// run per frame in debug builds via `RenderOrchestrator`'s audit hook,
-/// or standalone in tests and tooling.
+/// Returns one [`PaintLint`] per finding. The pass is read-only;
+/// allocations scale with the command stream (text probes, fill
+/// records, scope and stroke tracking). It is intended to run per
+/// frame in debug builds via `RenderOrchestrator`'s audit hook, or
+/// standalone in tests and tooling.
 ///
 /// Backdrop resolution is a single-point approximation: the text's
 /// center is tested against every fill painted before it. Text spanning
@@ -490,11 +657,21 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
     let mut clip_stack: Vec<Rect> = Vec::new();
     // (command index, probe, clip active at record time) for every text
     // command — reused by the occlusion, overlap and bounds passes below.
-    let mut texts: Vec<(usize, TextProbe, Option<Rect>)> = Vec::new();
+    let mut texts: Vec<(usize, TextProbe, Option<Rect>, Option<ScopeRec>)> = Vec::new();
     // Every fill command in order — backdrop resolution and occlusion
     // testing are clip-aware, so each records the clip active when it
     // emitted.
     let mut fills: Vec<FillRec> = Vec::new();
+    // Widget-paint scopes (PushScope/PopScope) — the innermost entry is
+    // the widget whose paint produced a command.
+    let mut scope_stack: Vec<ScopeRec> = Vec::new();
+    // Every scope ever pushed, with its depth — lets the focus check
+    // attribute a finding to the deepest scope containing `focus_rect`.
+    let mut scopes_seen: Vec<(usize, ScopeRec)> = Vec::new();
+    // Bounding rect of every stroked shape with its active clip — the
+    // focus-indicator check looks for at least one *visible* stroke
+    // intersecting `config.focus_rect`.
+    let mut strokes: Vec<(Rect, Option<Rect>, Option<ScopeRec>)> = Vec::new();
     for (i, cmd) in list.commands.iter().enumerate() {
         match cmd {
             PaintCommand::ClipRect(r) | PaintCommand::ClipRoundedRect(r, _) => {
@@ -503,10 +680,23 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
             PaintCommand::PopClip => {
                 clip_stack.pop();
             }
+            PaintCommand::PushScope { id, name, bounds } => {
+                let rec = ScopeRec {
+                    id: *id,
+                    name,
+                    bounds: *bounds,
+                };
+                scope_stack.push(rec);
+                scopes_seen.push((scope_stack.len() - 1, rec));
+            }
+            PaintCommand::PopScope => {
+                scope_stack.pop();
+            }
             _ => {}
         }
         // Effective clip is the intersection of every active region.
         let clip = clip_stack.iter().copied().reduce(|a, b| a.intersect(b));
+        let scope = scope_stack.last().copied();
         match cmd {
             PaintCommand::FillRect(rect, color) => fills.push(FillRec {
                 idx: i,
@@ -528,26 +718,36 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 clip,
             }),
             PaintCommand::DrawText(point, text, size, color) => {
-                texts.push((i, probe_text(point, text, *size, *color), clip));
+                texts.push((i, probe_text(point, text, *size, *color), clip, scope));
             }
             PaintCommand::DrawGlyphRun(run) => {
                 if let Some(p) = probe_glyph_run(run) {
-                    texts.push((i, p, clip));
+                    texts.push((i, p, clip, scope));
                 }
             }
-            PaintCommand::StrokeRect(rect, _, color) if config.check_ui_component_contrast => {
-                let anchor = ((rect.x0 + rect.x1) * 0.5, rect.y0);
-                check_stroke(&mut lints, &fills, i, anchor, *color, "rect");
+            PaintCommand::StrokeRect(rect, _, color) => {
+                if config.check_focus_indicator {
+                    strokes.push((*rect, clip, scope));
+                }
+                if config.check_ui_component_contrast {
+                    let anchor = ((rect.x0 + rect.x1) * 0.5, rect.y0);
+                    check_stroke(&mut lints, &fills, i, anchor, *color, scope, "rect");
+                }
             }
-            PaintCommand::StrokePath(path, _, color) if config.check_ui_component_contrast => {
+            PaintCommand::StrokePath(path, _, color) => {
                 let bb = path.bounding_box();
-                let anchor = ((bb.x0 + bb.x1) * 0.5, bb.y0);
-                check_stroke(&mut lints, &fills, i, anchor, *color, "path");
+                if config.check_focus_indicator {
+                    strokes.push((bb, clip, scope));
+                }
+                if config.check_ui_component_contrast {
+                    let anchor = ((bb.x0 + bb.x1) * 0.5, bb.y0);
+                    check_stroke(&mut lints, &fills, i, anchor, *color, scope, "path");
+                }
             }
             _ => {}
         }
         if config.check_text_visibility {
-            if let Some((_, probe, _)) = texts.last().filter(|(idx, _, _)| *idx == i) {
+            if let Some((_, probe, _, sc)) = texts.last().filter(|t| t.0 == i) {
                 if clip.is_some_and(|c| fully_outside(&probe.bounds, &c)) {
                     lints.push(PaintLint {
                         kind: PaintLintKind::ClippedText,
@@ -556,16 +756,24 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                         measured: None,
                         required: None,
                         detail: format!(
-                            "text \"{}\" lies fully outside the active clip region — nothing is painted @ ({:.0}, {:.0})",
-                            probe.excerpt, probe.anchor.0, probe.anchor.1
+                            "text \"{}\" lies fully outside the active clip region — nothing is painted{} @ ({:.0}, {:.0})",
+                            probe.excerpt,
+                            sc.map_or(String::new(), |s| format!(" in {}", s.name)),
+                            probe.anchor.0, probe.anchor.1
                         ),
+                        scope: sc.map(|s| s.name),
+                        widget: sc.and_then(|s| s.id),
                     });
                 }
             }
         }
     }
-    for &(i, ref probe, clip) in &texts {
+    for &(i, ref probe, clip, sc) in &texts {
         let pos = format!("@ ({:.0}, {:.0})", probe.anchor.0, probe.anchor.1);
+        // Which widget emitted this text — names the component to look
+        // at instead of making the developer hunt coordinates.
+        let in_scope = sc.map_or(String::new(), |s| format!(" in {}", s.name));
+        let scope_name = sc.map(|s| s.name);
         let size_pt = probe.font_px / scale;
         if size_pt < config.min_text_size_pt {
             lints.push(PaintLint {
@@ -575,9 +783,11 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 measured: Some(size_pt),
                 required: Some(config.min_text_size_pt),
                 detail: format!(
-                    "text \"{}\" at {:.0}pt is below the {:.0}pt minimum ({:.1}px device @ {:.2}x) {pos}",
+                    "text \"{}\" at {:.0}pt is below the {:.0}pt minimum ({:.1}px device @ {:.2}x){in_scope} {pos}",
                     probe.excerpt, size_pt, config.min_text_size_pt, probe.font_px, scale
                 ),
+                scope: scope_name,
+                widget: sc.and_then(|s| s.id),
             });
         }
         match resolve_backdrop(&fills, i, probe.anchor) {
@@ -598,9 +808,11 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                         measured: Some(ratio),
                         required: Some(required),
                         detail: format!(
-                            "text \"{}\" contrast {:.2}:1 below {:.1}:1 ({:?} {:?} @ {:.0}pt) {pos}",
+                            "text \"{}\" contrast {:.2}:1 below {:.1}:1 ({:?} {:?} @ {:.0}pt){in_scope} {pos}",
                             probe.excerpt, ratio, required, config.level, size_class, size_pt
                         ),
+                        scope: scope_name,
+                        widget: sc.and_then(|s| s.id),
                     });
                 }
             }
@@ -612,9 +824,11 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                     measured: None,
                     required: None,
                     detail: format!(
-                        "text \"{}\" backdrop is not a resolvable solid fill — contrast unverified {pos}",
+                        "text \"{}\" backdrop is not a resolvable solid fill — contrast unverified{in_scope} {pos}",
                         probe.excerpt
                     ),
+                    scope: scope_name,
+                    widget: sc.and_then(|s| s.id),
                 });
             }
             Backdrop::Unknown => {}
@@ -644,9 +858,11 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 measured: None,
                 required: None,
                 detail: format!(
-                    "text \"{}\" is covered by a later opaque fill — invisible output {pos}",
+                    "text \"{}\" is covered by a later opaque fill — invisible output{in_scope} {pos}",
                     probe.excerpt
                 ),
+                scope: scope_name,
+                widget: sc.and_then(|s| s.id),
             });
         }
         if config.check_bounds && renders {
@@ -674,9 +890,11 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                         measured: Some(over as f32),
                         required: None,
                         detail: format!(
-                            "text \"{}\" extends {over:.0}px past its clip's {edge} edge — wider than container (may be intentional) {pos}",
+                            "text \"{}\" extends {over:.0}px past its clip's {edge} edge — wider than container (may be intentional){in_scope} {pos}",
                             probe.excerpt
                         ),
+                        scope: scope_name,
+                        widget: sc.and_then(|s| s.id),
                     });
                 }
             }
@@ -701,10 +919,54 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                         measured: Some(over as f32),
                         required: None,
                         detail: format!(
-                            "text \"{}\" extends {over:.0}px beyond the frame's {edge} edge {pos}",
+                            "text \"{}\" extends {over:.0}px beyond the frame's {edge} edge{in_scope} {pos}",
                             probe.excerpt
                         ),
+                        scope: scope_name,
+                        widget: sc.and_then(|s| s.id),
                     });
+                }
+            }
+        }
+        // Container overflow: the *visible* region exceeding the
+        // widget's own scope bounds means content paints outside its
+        // container with no clip constraining it — a real leak, unlike
+        // the advisory ClipOverflow which fires inside intentional clips.
+        if config.check_container_overflow && renders {
+            if let Some(sc) = sc {
+                let b = sc.bounds;
+                // A zero-area scope means the widget hasn't been laid
+                // out — its bounds can't contain anything, so flagging
+                // every text run would be noise. The 2px tolerance
+                // absorbs probe-estimation error (text bounds are
+                // approximated from glyph metrics, not measured ink).
+                if b.width() > 0.0 && b.height() > 0.0 {
+                    let (over, edge) = if visible.x1 > b.x1 + 2.0 {
+                        (visible.x1 - b.x1, "right")
+                    } else if visible.x0 < b.x0 - 2.0 {
+                        (b.x0 - visible.x0, "left")
+                    } else if visible.y1 > b.y1 + 2.0 {
+                        (visible.y1 - b.y1, "bottom")
+                    } else if visible.y0 < b.y0 - 2.0 {
+                        (b.y0 - visible.y0, "top")
+                    } else {
+                        (0.0, "")
+                    };
+                    if over > 0.0 {
+                        lints.push(PaintLint {
+                            kind: PaintLintKind::WidgetOverflow,
+                            severity: LintSeverity::Warning,
+                            anchor: probe.anchor,
+                            measured: Some(over as f32),
+                            required: None,
+                            detail: format!(
+                                "text \"{}\" paints {over:.0}px past its widget's {edge} edge — outside container bounds{in_scope} {pos}",
+                                probe.excerpt
+                            ),
+                            scope: scope_name,
+                            widget: sc.id,
+                        });
+                    }
                 }
             }
         }
@@ -712,8 +974,8 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
     if config.check_text_overlap {
         for a in 0..texts.len() {
             for b in (a + 1)..texts.len() {
-                let (_, pa, clip_a) = &texts[a];
-                let (_, pb, clip_b) = &texts[b];
+                let (_, pa, clip_a, _) = &texts[a];
+                let (_, pb, clip_b, _) = &texts[b];
                 // Compare the *visible* regions — a run clipped inside its
                 // container can't actually render on top of a neighbour.
                 let va = clip_a.map_or(pa.bounds, |c| pa.bounds.intersect(c));
@@ -726,11 +988,55 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                         measured: None,
                         required: None,
                         detail: format!(
-                            "text \"{}\" overlaps \"{}\" — runs render on top of each other @ ({:.0}, {:.0})",
-                            pa.excerpt, pb.excerpt, pa.anchor.0, pa.anchor.1
+                            "text \"{}\" overlaps \"{}\" — runs render on top of each other{} @ ({:.0}, {:.0})",
+                            pa.excerpt,
+                            pb.excerpt,
+                            texts[a]
+                                .3
+                                .map_or(String::new(), |s| format!(" in {}", s.name)),
+                            pa.anchor.0,
+                            pa.anchor.1
                         ),
+                        scope: texts[a].3.map(|s| s.name),
+                        widget: texts[a].3.and_then(|s| s.id),
                     });
                 }
+            }
+        }
+    }
+    // Focus indicator (WCAG 2.4.7): when the app reports the focused
+    // widget's bounds, at least one *visible* stroked shape should
+    // intersect them — a stroke clipped away entirely doesn't count.
+    if config.check_focus_indicator {
+        if let Some(fr) = config.focus_rect {
+            let has_indicator = strokes.iter().any(|(sr, clip, _)| {
+                let visible = clip.map_or(*sr, |c| sr.intersect(c));
+                visible.intersect(fr).area() > 0.5
+            });
+            if !has_indicator {
+                let center = ((fr.x0 + fr.x1) * 0.5, (fr.y0 + fr.y1) * 0.5);
+                // Attribute to the deepest scope containing the focus
+                // rect's center — that's the widget missing its ring.
+                let owner = scopes_seen
+                    .iter()
+                    .filter(|(_, s)| s.bounds.contains(kurbo::Point::new(center.0, center.1)))
+                    .max_by_key(|(depth, _)| *depth)
+                    .map(|(_, s)| *s);
+                let zero_area = fr.width() <= 0.0 || fr.height() <= 0.0;
+                lints.push(PaintLint {
+                    kind: PaintLintKind::MissingFocusIndicator,
+                    severity: LintSeverity::Warning,
+                    anchor: center,
+                    measured: None,
+                    required: None,
+                    detail: format!(
+                        "focused widget{} at ({:.0}, {:.0})–({:.0}, {:.0}) shows no painted focus indicator (WCAG 2.4.7)",
+                        if zero_area { " (zero-area bounds)" } else { "" },
+                        fr.x0, fr.y0, fr.x1, fr.y1
+                    ),
+                    scope: owner.map(|s| s.name),
+                    widget: owner.and_then(|s| s.id),
+                });
             }
         }
     }
@@ -752,6 +1058,7 @@ fn check_stroke(
     before: usize,
     anchor: (f64, f64),
     color: [u8; 4],
+    scope: Option<ScopeRec>,
     shape: &str,
 ) {
     let fg = rgba_u8(color);
@@ -767,11 +1074,130 @@ fn check_stroke(
             measured: Some(ratio),
             required: Some(3.0),
             detail: format!(
-                "stroked {shape} contrast {ratio:.2}:1 below 3:1 (WCAG 1.4.11 non-text) @ ({:.0}, {:.0})",
+                "stroked {shape} contrast {ratio:.2}:1 below 3:1 (WCAG 1.4.11 non-text){} @ ({:.0}, {:.0})",
+                scope.map_or(String::new(), |s| format!(" in {}", s.name)),
                 anchor.0, anchor.1
             ),
+            scope: scope.map(|s| s.name),
+            widget: scope.and_then(|s| s.id),
         });
     }
+}
+
+/// WCAG 2.5.8 target-size audit over the arena: interactive nodes —
+/// `FOCUSABLE` or `HIT_TEST_ENABLED` — must be at least 24×24 logical
+/// points. The paint stream cannot see hit regions, so this is an
+/// arena-level sibling to [`audit_paint_list`].
+///
+/// Nodes with zero-area bounds (not yet laid out) are skipped, as are
+/// nodes inside invisible subtrees and `INERT` nodes — a node that
+/// can't be seen or reached can't be missed. Call once per frame
+/// alongside the paint audit (e.g.
+/// `RenderOrchestrator::audit_target_sizes`).
+///
+/// Limitations: widget-*internal* children (e.g. a `Button` inside a
+/// `Flex`) are not arena nodes and are invisible to this pass — only
+/// arena-registered widgets are checked. WCAG 2.5.8's spacing/inline/
+/// essential exceptions can't be detected from geometry alone, so
+/// exception-conforming targets are still reported.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_access::paint_audit::audit_target_sizes;
+/// use martensite_core::{DummyWidget, HotNode, NodeFlags, Rect, WidgetArena};
+///
+/// let mut arena = WidgetArena::new();
+/// let mut hot = HotNode::default();
+/// hot.flags |= NodeFlags::VISIBLE | NodeFlags::FOCUSABLE;
+/// hot.bounds = Rect::new(0.0, 0.0, 8.0, 8.0); // 8pt button — too small
+/// arena.insert_with_widget(hot, Box::new(DummyWidget));
+///
+/// let lints = audit_target_sizes(&arena, 1.0);
+/// assert_eq!(lints.len(), 1);
+/// ```
+pub fn audit_target_sizes(
+    arena: &martensite_core::WidgetArena,
+    scale_factor: f64,
+) -> Vec<PaintLint> {
+    const MIN_TARGET_PT: f64 = 24.0;
+    let scale = if scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
+    let mut lints = Vec::new();
+    for id in arena.iter_depth_first() {
+        let Some(hot) = arena.get_hot(id) else {
+            continue;
+        };
+        let interactive = hot
+            .flags
+            .intersects(NodeFlags::FOCUSABLE | NodeFlags::HIT_TEST_ENABLED);
+        if !interactive
+            || !hot.flags.contains(NodeFlags::VISIBLE)
+            || hot.flags.contains(NodeFlags::INERT)
+        {
+            continue;
+        }
+        // An invisible ancestor prunes the whole subtree from the paint
+        // walk — the node can't be seen or hit, so don't flag it.
+        let mut ancestor = arena.parent(id);
+        let mut hidden = false;
+        while let Some(a) = ancestor {
+            match arena.get_hot(a) {
+                Some(h) if !h.flags.contains(NodeFlags::VISIBLE) => {
+                    hidden = true;
+                    break;
+                }
+                _ => ancestor = arena.parent(a),
+            }
+        }
+        if hidden {
+            continue;
+        }
+        let (w, h) = (
+            f64::from(hot.bounds.width()),
+            f64::from(hot.bounds.height()),
+        );
+        if w <= 0.0 || h <= 0.0 {
+            continue; // not laid out yet
+        }
+        if !crate::compliance::check_target_size((w / scale) as f32, (h / scale) as f32) {
+            // Same name source as the paint scopes: instance name wins.
+            let name = arena
+                .get_cold(id)
+                .and_then(|c| c.debug_name)
+                .unwrap_or_else(|| {
+                    arena
+                        .get_cold(id)
+                        .map(|c| c.widget.debug_name())
+                        .unwrap_or("<widget>")
+                });
+            lints.push(PaintLint {
+                kind: PaintLintKind::UndersizedTarget,
+                severity: LintSeverity::Warning,
+                anchor: (
+                    f64::from(hot.bounds.min_x() + hot.bounds.max_x()) * 0.5,
+                    f64::from(hot.bounds.min_y() + hot.bounds.max_y()) * 0.5,
+                ),
+                measured: Some((w.min(h) / scale) as f32),
+                required: Some(MIN_TARGET_PT as f32),
+                detail: format!(
+                    "{name} is {:.0}×{:.0}pt — below the 24×24pt WCAG 2.5.8 target minimum (slot {}, generation {}) @ ({:.0}, {:.0})",
+                    w / scale,
+                    h / scale,
+                    id.slot_idx(),
+                    id.generation(),
+                    f64::from(hot.bounds.min_x()),
+                    f64::from(hot.bounds.min_y())
+                ),
+                scope: Some(name),
+                widget: Some(id),
+            });
+        }
+    }
+    lints
 }
 
 /// True when every point in `points` is covered by a later opaque
@@ -1192,5 +1618,289 @@ mod tests {
         assert_eq!(reporter.report(&lints), 0);
         reporter.reset();
         assert_eq!(reporter.report(&lints), lints.len());
+    }
+
+    #[test]
+    fn scope_marks_emitting_widget() {
+        let mut list = list_with([30, 30, 30, 255]);
+        list.push_scope(None, "Process Grid", Rect::new(0.0, 0.0, 400.0, 300.0));
+        list.push_text(
+            Point::new(10.0, 20.0),
+            "dim".to_string(),
+            14.0,
+            [60, 60, 60, 255],
+        );
+        list.pop_scope();
+        let lints = audit_paint_list(&list, &PaintAuditConfig::default());
+        let lint = lints
+            .iter()
+            .find(|l| l.kind == PaintLintKind::InsufficientContrast)
+            .expect("contrast lint");
+        assert_eq!(lint.scope, Some("Process Grid"));
+        assert!(lint.detail.contains("in Process Grid"));
+    }
+
+    #[test]
+    fn innermost_scope_wins() {
+        let mut list = list_with([30, 30, 30, 255]);
+        list.push_scope(None, "Outer", Rect::new(0.0, 0.0, 400.0, 300.0));
+        list.push_scope(None, "Inner", Rect::new(0.0, 0.0, 200.0, 150.0));
+        list.push_text(
+            Point::new(10.0, 20.0),
+            "dim".to_string(),
+            14.0,
+            [60, 60, 60, 255],
+        );
+        list.pop_scope();
+        list.pop_scope();
+        let lints = audit_paint_list(&list, &PaintAuditConfig::default());
+        let lint = lints
+            .iter()
+            .find(|l| l.kind == PaintLintKind::InsufficientContrast)
+            .expect("contrast lint");
+        assert_eq!(lint.scope, Some("Inner"));
+    }
+
+    #[test]
+    fn unbalanced_scopes_are_tolerated() {
+        let mut list = list_with([30, 30, 30, 255]);
+        // Pop on an empty stack, and a scope left open at list end.
+        list.pop_scope();
+        list.push_scope(None, "Leaky", Rect::new(0.0, 0.0, 400.0, 300.0));
+        list.push_text(
+            Point::new(10.0, 20.0),
+            "dim".to_string(),
+            14.0,
+            [60, 60, 60, 255],
+        );
+        let lints = audit_paint_list(&list, &PaintAuditConfig::default());
+        let lint = lints
+            .iter()
+            .find(|l| l.kind == PaintLintKind::InsufficientContrast)
+            .expect("contrast lint");
+        assert_eq!(lint.scope, Some("Leaky"));
+    }
+
+    #[test]
+    fn text_past_scope_bounds_is_widget_overflow() {
+        let mut list = list_with([255, 255, 255, 255]);
+        // Widget occupies x 0..100 but its text extends to ~x=200.
+        list.push_scope(None, "Narrow", Rect::new(0.0, 0.0, 100.0, 50.0));
+        list.push_text(
+            Point::new(10.0, 20.0),
+            "this string is far wider than its widget".to_string(),
+            14.0,
+            [0, 0, 0, 255],
+        );
+        list.pop_scope();
+        let cfg = PaintAuditConfig {
+            check_container_overflow: true,
+            ..Default::default()
+        };
+        let lints = audit_paint_list(&list, &cfg);
+        let lint = lints
+            .iter()
+            .find(|l| l.kind == PaintLintKind::WidgetOverflow)
+            .expect("widget overflow lint");
+        assert_eq!(lint.scope, Some("Narrow"));
+    }
+
+    #[test]
+    fn clipped_text_inside_scope_is_not_widget_overflow() {
+        let mut list = list_with([255, 255, 255, 255]);
+        // Same overflowing text, but a clip constrains the visible
+        // region inside the widget — intentional clipping, no leak.
+        list.push_scope(None, "Scroll", Rect::new(0.0, 0.0, 100.0, 50.0));
+        list.push_clip(Rect::new(0.0, 0.0, 100.0, 50.0));
+        list.push_text(
+            Point::new(10.0, 20.0),
+            "this string is far wider than its widget".to_string(),
+            14.0,
+            [0, 0, 0, 255],
+        );
+        list.pop_clip();
+        list.pop_scope();
+        let cfg = PaintAuditConfig {
+            check_container_overflow: true,
+            ..Default::default()
+        };
+        let lints = audit_paint_list(&list, &cfg);
+        assert!(!lints
+            .iter()
+            .any(|l| l.kind == PaintLintKind::WidgetOverflow));
+    }
+
+    #[test]
+    fn missing_focus_indicator_names_containing_scope() {
+        let mut list = list_with([255, 255, 255, 255]);
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 400.0, 300.0));
+        list.push_scope(None, "Button", Rect::new(10.0, 10.0, 100.0, 40.0));
+        list.pop_scope();
+        list.pop_scope();
+        let cfg = PaintAuditConfig {
+            focus_rect: Some(Rect::new(10.0, 10.0, 100.0, 40.0)),
+            ..Default::default()
+        };
+        let lint = audit_paint_list(&list, &cfg)
+            .into_iter()
+            .find(|l| l.kind == PaintLintKind::MissingFocusIndicator)
+            .expect("focus lint");
+        assert_eq!(lint.scope, Some("Button"));
+    }
+
+    #[test]
+    fn missing_focus_indicator_is_flagged() {
+        let list = list_with([255, 255, 255, 255]);
+        let cfg = PaintAuditConfig {
+            focus_rect: Some(Rect::new(10.0, 10.0, 100.0, 40.0)),
+            ..Default::default()
+        };
+        let lints = audit_paint_list(&list, &cfg);
+        assert!(lints
+            .iter()
+            .any(|l| l.kind == PaintLintKind::MissingFocusIndicator));
+    }
+
+    #[test]
+    fn painted_focus_ring_passes() {
+        let mut list = list_with([255, 255, 255, 255]);
+        // A visible ring intersecting the focus rect.
+        list.push_stroke_rect(Rect::new(10.0, 10.0, 100.0, 40.0), 2.0, [0, 0, 0, 255]);
+        let cfg = PaintAuditConfig {
+            focus_rect: Some(Rect::new(10.0, 10.0, 100.0, 40.0)),
+            ..Default::default()
+        };
+        let lints = audit_paint_list(&list, &cfg);
+        assert!(!lints
+            .iter()
+            .any(|l| l.kind == PaintLintKind::MissingFocusIndicator));
+    }
+
+    #[test]
+    fn target_size_audit_flags_small_nodes() {
+        use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+        let mut arena = WidgetArena::new();
+        let mut hot = HotNode::default();
+        hot.flags |= NodeFlags::VISIBLE | NodeFlags::FOCUSABLE;
+        hot.bounds = martensite_core::Rect::new(0.0, 0.0, 8.0, 8.0);
+        arena.insert_with_widget(hot, Box::new(DummyWidget));
+        let mut big = HotNode::default();
+        big.flags |= NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
+        big.bounds = martensite_core::Rect::new(0.0, 0.0, 100.0, 100.0);
+        arena.insert_with_widget(big, Box::new(DummyWidget));
+
+        let lints = audit_target_sizes(&arena, 1.0);
+        assert_eq!(lints.len(), 1);
+        assert_eq!(lints[0].kind, PaintLintKind::UndersizedTarget);
+    }
+
+    #[test]
+    fn target_size_audit_skips_non_interactive() {
+        use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+        let mut arena = WidgetArena::new();
+        let mut hot = HotNode::default();
+        hot.flags |= NodeFlags::VISIBLE; // small but not interactive
+        hot.bounds = martensite_core::Rect::new(0.0, 0.0, 4.0, 4.0);
+        arena.insert_with_widget(hot, Box::new(DummyWidget));
+        assert!(audit_target_sizes(&arena, 1.0).is_empty());
+    }
+
+    #[test]
+    fn target_size_audit_skips_hidden_subtrees() {
+        use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+        let mut arena = WidgetArena::new();
+        // Parent is invisible — its interactive child can't be hit.
+        let parent = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+        let mut hot = HotNode::default();
+        hot.flags |= NodeFlags::VISIBLE | NodeFlags::FOCUSABLE;
+        hot.bounds = martensite_core::Rect::new(0.0, 0.0, 4.0, 4.0);
+        let child = arena.insert_with_widget(hot, Box::new(DummyWidget));
+        arena.append_child(parent, child).unwrap();
+        assert!(audit_target_sizes(&arena, 1.0).is_empty());
+    }
+
+    #[test]
+    fn target_size_audit_respects_scale_factor() {
+        use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+        let mut arena = WidgetArena::new();
+        let mut hot = HotNode::default();
+        hot.flags |= NodeFlags::VISIBLE | NodeFlags::FOCUSABLE;
+        // 40 device px = 20pt at 2x — undersized; at 1x it's 40pt — fine.
+        hot.bounds = martensite_core::Rect::new(0.0, 0.0, 40.0, 40.0);
+        arena.insert_with_widget(hot, Box::new(DummyWidget));
+        assert!(audit_target_sizes(&arena, 1.0).is_empty());
+        assert_eq!(audit_target_sizes(&arena, 2.0).len(), 1);
+    }
+
+    #[test]
+    fn stroke_path_satisfies_focus_indicator() {
+        use kurbo::BezPath;
+        let mut list = list_with([255, 255, 255, 255]);
+        let mut path = BezPath::new();
+        path.move_to((10.0, 10.0));
+        path.line_to((100.0, 10.0));
+        path.line_to((100.0, 40.0));
+        path.line_to((10.0, 40.0));
+        path.close_path();
+        list.push_stroke_path(path, 2.0, [0, 0, 0, 255]);
+        let cfg = PaintAuditConfig {
+            focus_rect: Some(Rect::new(10.0, 10.0, 100.0, 40.0)),
+            ..Default::default()
+        };
+        assert!(!audit_paint_list(&list, &cfg)
+            .iter()
+            .any(|l| l.kind == PaintLintKind::MissingFocusIndicator));
+    }
+
+    #[test]
+    fn clipped_stroke_does_not_satisfy_focus() {
+        let mut list = list_with([255, 255, 255, 255]);
+        // The ring is painted but clipped away entirely — no indicator.
+        list.push_clip(Rect::new(0.0, 0.0, 5.0, 5.0));
+        list.push_stroke_rect(Rect::new(10.0, 10.0, 100.0, 40.0), 2.0, [0, 0, 0, 255]);
+        list.pop_clip();
+        let cfg = PaintAuditConfig {
+            focus_rect: Some(Rect::new(10.0, 10.0, 100.0, 40.0)),
+            ..Default::default()
+        };
+        assert!(audit_paint_list(&list, &cfg)
+            .iter()
+            .any(|l| l.kind == PaintLintKind::MissingFocusIndicator));
+    }
+
+    #[test]
+    fn json_serializes_non_finite_as_null() {
+        let lint = PaintLint {
+            kind: PaintLintKind::UndersizedText,
+            severity: LintSeverity::Warning,
+            anchor: (f64::NAN, 2.0),
+            measured: Some(f32::INFINITY),
+            required: None,
+            detail: "x".to_string(),
+            scope: None,
+            widget: None,
+        };
+        let json = lint.to_json();
+        assert!(json.contains("\"measured\":null"));
+        assert!(json.contains("\"anchor\":[null,2.0]"));
+        assert!(!json.contains("NaN"));
+        assert!(!json.contains("inf"));
+    }
+
+    #[test]
+    fn lint_json_escapes_strings() {
+        let lint = PaintLint {
+            kind: PaintLintKind::UndersizedText,
+            severity: LintSeverity::Warning,
+            anchor: (1.0, 2.0),
+            measured: None,
+            required: None,
+            detail: "text \"a\\b\"\nline2".to_string(),
+            scope: Some("Pane\"l"),
+            widget: None,
+        };
+        let json = lint.to_json();
+        assert!(json.contains("\\\"a\\\\b\\\"\\nline2"));
+        assert!(json.contains("Pane\\\"l"));
     }
 }

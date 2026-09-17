@@ -40,6 +40,15 @@
 //!      `apply_focus_request` does. Focus rings and editor carets stay
 //!      dark when the app uses the cheaper calls; the dispatch-vs-set
 //!      split is easy to miss.
+//! F23. Paint findings used to name a coordinate, not a component —
+//!      `@ (738, 302)` meant hunting panels by geometry. The fix is
+//!      provenance in the stream: `PushScope { id, name, bounds }` /
+//!      `PopScope` around every widget (a deliberate breaking change to
+//!      the public `PaintCommand` enum, taken now because this is
+//!      exactly what the pre-1.0 freeze window exists for), plus
+//!      `Widget::debug_name()` — panels override it with friendly
+//!      labels so lints read `in Process Grid`, not
+//!      `…::panels::GridPanel`.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -301,6 +310,9 @@ impl GridPanel {
 }
 
 impl Widget for GridPanel {
+    fn debug_name(&self) -> &'static str {
+        "Process Grid"
+    }
     fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
         Vec2::new(620.0, 420.0)
     }
@@ -642,6 +654,9 @@ impl TelemetryPanel {
 }
 
 impl Widget for TelemetryPanel {
+    fn debug_name(&self) -> &'static str {
+        "Telemetry"
+    }
     fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
         Vec2::new(560.0, 300.0)
     }
@@ -944,6 +959,9 @@ impl EditorPanel {
 }
 
 impl Widget for EditorPanel {
+    fn debug_name(&self) -> &'static str {
+        "Editor"
+    }
     fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
         Vec2::new(400.0, 260.0)
     }
@@ -1203,6 +1221,9 @@ impl MediaPanel {
 }
 
 impl Widget for MediaPanel {
+    fn debug_name(&self) -> &'static str {
+        "Media"
+    }
     fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
         Vec2::new(320.0, 220.0)
     }

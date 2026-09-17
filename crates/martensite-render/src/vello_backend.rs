@@ -504,6 +504,9 @@ impl VelloRenderer {
             // these markers (`PaintList::segments`) and composites the
             // registered texture via `WgpuHost` at this exact position.
             PaintCommand::External { .. } => {}
+            // Scope markers carry provenance for the audit — they are
+            // not drawing operations.
+            PaintCommand::PushScope { .. } | PaintCommand::PopScope => {}
         }
     }
 

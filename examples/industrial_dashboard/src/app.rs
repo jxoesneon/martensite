@@ -474,8 +474,31 @@ impl App {
             let arena = self.arena.as_ref().expect("checked");
             arena.build_paint_list(root, &mut list);
         }
+        // App chrome sits outside the widget tree — wrap it in a manual
+        // provenance scope so audit findings still name a component.
+        list.push_scope(
+            None,
+            "App Chrome",
+            martensite::render::Rect::new(0.0, 0.0, w, h),
+        );
         self.paint_chrome(&mut list, w, h);
+        list.pop_scope();
         let t2 = Instant::now();
+
+        // Report the focused widget's rect (device px) so the audit can
+        // verify a painted focus indicator exists (WCAG 2.4.7).
+        let focus_rect = self
+            .focus
+            .current_focus()
+            .and_then(|id| self.arena.as_ref().and_then(|a| a.get_hot(id)))
+            .map(|h| {
+                martensite::render::Rect::new(
+                    f64::from(h.bounds.min_x()),
+                    f64::from(h.bounds.min_y()),
+                    f64::from(h.bounds.max_x()),
+                    f64::from(h.bounds.max_y()),
+                )
+            });
 
         // 4. Composite + present. The paint audit runs inside `render`.
         {
@@ -484,6 +507,10 @@ impl App {
             else {
                 return;
             };
+            orchestrator.set_audit_focus_rect(focus_rect);
+            if let Some(arena) = self.arena.as_ref() {
+                orchestrator.audit_target_sizes(arena);
+            }
             orchestrator.render(&list, &self.recovery);
             if let Err(err) = orchestrator.render_to_surface(&gpu.device, &gpu.queue, surface) {
                 self.recovery.handle_surface_error(err);

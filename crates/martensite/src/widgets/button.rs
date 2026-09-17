@@ -197,12 +197,12 @@ impl Widget for Button {
         cx.list.push_stroke_path(rounded, 1.0, EDGE);
 
         // The label is left-aligned inside the face and vertically
-        // centred — `DrawText` positions by baseline, so offset half the
-        // cap height (~font_size / 2) below the midpoint.
+        // centred — `DrawText` positions by the text run's top edge, so
+        // centre the font box within the face.
         cx.list.push_text(
             kurbo::Point::new(
                 f64::from(b.origin.x + TEXT_PAD_X),
-                f64::from(b.origin.y + b.size.y / 2.0 + 5.0),
+                f64::from(b.origin.y + (b.size.y - 14.0) / 2.0),
             ),
             self.label.clone(),
             14.0,

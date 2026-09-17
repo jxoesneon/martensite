@@ -20,9 +20,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `disable_paint_audit` / per-check `PaintAuditConfig` flags. Adds a
   `martensite-wgpu → martensite-access` dependency edge (publish order
   updated accordingly).
+- **Paint provenance scopes** — new `PaintCommand::PushScope { id, name,
+  bounds }` / `PopScope` markers emitted by the arena paint walker
+  around every widget's commands (arena children nest inside their
+  parent's scope; widget-internal children get their own; overlays get
+  `id: None`). `Widget::debug_name()` (default `type_name`) supplies
+  the fallback label; an explicit `ColdNode::debug_name` wins when set.
+  Backends ignore the markers; the audit tracks them so every
+  `PaintLint` names the emitting widget (`PaintLint::scope`,
+  `PaintLint::widget` for arena-id correlation, `in <name>` in
+  details). **Breaking change** to the public `PaintCommand` enum.
+- **Audit: container-overflow, focus-indicator, target-size, JSON** —
+  `PaintLintKind::WidgetOverflow` flags text whose visible region
+  escapes its own widget's scope bounds (a real paint leak, distinct
+  from intentional clipping); `MissingFocusIndicator` (WCAG 2.4.7)
+  requires a *visible* (not clipped-away) stroke intersecting
+  `PaintAuditConfig::focus_rect`, attributed to the deepest scope
+  containing the focus rect
+  (`RenderOrchestrator::set_audit_focus_rect`); `audit_target_sizes`
+  walks the arena for sub-24×24pt interactive nodes (WCAG 2.5.8,
+  skipping invisible/inert subtrees, surfaced via
+  `RenderOrchestrator::audit_target_sizes`); `PaintLint::to_json`
+  serializes findings for CI tooling (non-finite values become
+  `null`).
 
 ### Fixed
 
+- `Button` label painted ~3px low — `DrawText` positions by the text
+  run's top edge (both backends), not baseline as the comment claimed;
+  the label rect is now centered within the face.
 - `viewport_showcase`: AppKit/winit cross-thread deadlock that left the
   window invisible (ready-waker now signals via `EventLoopProxy`
   instead of a synchronous off-main `request_redraw`); demo text now

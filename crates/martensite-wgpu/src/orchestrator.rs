@@ -412,6 +412,63 @@ impl RenderOrchestrator {
         }
     }
 
+    /// Reports the focused widget's bounds (device pixels) to the
+    /// paint-compliance audit, enabling the `MissingFocusIndicator`
+    /// check — the audit then requires at least one painted stroke to
+    /// intersect the rect (WCAG 2.4.7). Pass `None` when nothing is
+    /// focused. No-op when the audit is disabled.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// use martensite_wgpu::resilience::RecoveryMachine;
+    /// use martensite_render::PaintList;
+    ///
+    /// # fn example(orchestrator: &mut RenderOrchestrator, recovery: &RecoveryMachine) {
+    /// orchestrator.set_audit_focus_rect(Some(kurbo::Rect::new(10.0, 10.0, 100.0, 40.0)));
+    /// orchestrator.render(&PaintList::new(), recovery);
+    /// # }
+    /// ```
+    pub fn set_audit_focus_rect(&mut self, rect: Option<kurbo::Rect>) {
+        if let Some(audit) = &mut self.paint_audit {
+            // No reporter reset: a new focus rect produces a new lint
+            // anchor, hence a new fingerprint — it reports once without
+            // re-arming every unrelated finding.
+            audit.config.focus_rect = rect;
+        }
+    }
+
+    /// Runs the arena-level target-size audit (WCAG 2.5.8: interactive
+    /// nodes must be at least 24×24 logical points) and reports findings
+    /// through the paint audit's reporter. The paint stream cannot see
+    /// hit regions, so this pass inspects `HotNode` bounds directly.
+    /// No-op when the audit is disabled.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// let mut arena = WidgetArena::new();
+    /// # let mut hot = HotNode::default();
+    /// # hot.flags |= NodeFlags::VISIBLE;
+    /// let _root = arena.insert_with_widget(hot, Box::new(DummyWidget));
+    /// orchestrator.audit_target_sizes(&arena);
+    /// # }
+    /// ```
+    pub fn audit_target_sizes(&mut self, arena: &martensite_core::WidgetArena) {
+        if let Some(audit) = &mut self.paint_audit {
+            let lints = martensite_access::paint_audit::audit_target_sizes(
+                arena,
+                f64::from(audit.config.scale_factor),
+            );
+            audit.reporter.report(&lints);
+        }
+    }
+
     /// Renders a [`PaintList`] using the appropriate backend.
     ///
     /// The backend is selected based on the [`OrchestratorConfig`] and

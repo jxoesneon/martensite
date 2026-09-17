@@ -607,6 +607,30 @@ pub trait Widget: Send + Sync + 'static {
     /// implementation only needs to emit the widget's *own* chrome.
     fn paint(&self, _cx: &mut PaintContext) {}
 
+    /// Human-meaningful identity for this widget in diagnostics —
+    /// the paint walker's `PushScope` markers and any lint output that
+    /// names a component. Defaults to the concrete Rust type name
+    /// (`mycrate::MyPanel`); override with a stable label like
+    /// `"Process Grid"` when the type name is unhelpful.
+    ///
+    /// `&'static` because names must be embeddable in the owned
+    /// `PaintCommand` stream without allocation — dynamic labels are
+    /// not supported. A node's [`ColdNode::debug_name`](crate::ColdNode)
+    /// field, when set, takes precedence over this method in the
+    /// arena's scope emission (instance name wins over type name).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, Widget};
+    ///
+    /// // The default is the concrete type name.
+    /// assert!(DummyWidget.debug_name().contains("DummyWidget"));
+    /// ```
+    fn debug_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     /// Number of internal (non-arena) children this widget manages.
     ///
     /// Container widgets such as `Flex` keep their children inside the

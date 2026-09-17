@@ -1433,6 +1433,13 @@ impl WidgetArena {
     /// the arena-owned [`OverlayLayer`]
     /// are appended last — above all window content.
     ///
+    /// Every widget's commands are wrapped in
+    /// [`PaintCommand::PushScope`](crate::PaintCommand::PushScope) /
+    /// [`PaintCommand::PopScope`](crate::PaintCommand::PopScope)
+    /// provenance markers — nested so the scope tree mirrors the widget
+    /// tree — letting downstream tooling (the paint audit) attribute
+    /// findings to the emitting widget.
+    ///
     /// # Examples
     ///
     /// ```
@@ -1447,8 +1454,8 @@ impl WidgetArena {
     ///
     /// let mut list = PaintList::new();
     /// arena.build_paint_list(root, &mut list);
-    /// // `DummyWidget` emits no chrome — the list is empty.
-    /// assert!(list.is_empty());
+    /// // `DummyWidget` emits no chrome — only its provenance scope.
+    /// assert_eq!(list.commands.len(), 2);
     /// ```
     pub fn build_paint_list(&self, root: WidgetId, list: &mut PaintList) {
         self.paint_node(root, list);
@@ -1468,12 +1475,23 @@ impl WidgetArena {
             return;
         };
 
-        paint_widget_recursive(&*cold.widget, hot.bounds, list);
+        // Provenance scope — covers this widget's paint commands, its
+        // internal children, AND its arena children, so the scope tree
+        // mirrors the widget tree exactly. Backends ignore the marker;
+        // the audit attributes findings to the innermost scope. The
+        // instance-level `ColdNode::debug_name` wins over the widget
+        // type's `debug_name` — apps naming nodes get their name.
+        list.push_scope(
+            Some(id),
+            cold.debug_name.unwrap_or_else(|| cold.widget.debug_name()),
+            rect_to_kurbo(hot.bounds),
+        );
+        paint_widget_body(&*cold.widget, hot.bounds, list);
 
         // Arena children honour the node's `CLIPS_CHILDREN` flag: their
         // paint commands are wrapped in a clip for the node bounds.
         // (`Widget::clips_children` governs *internal* children inside
-        // `paint_widget_recursive`.)
+        // `paint_widget_body`.)
         let clip_children = hot.flags.contains(NodeFlags::CLIPS_CHILDREN);
         if clip_children {
             list.push_clip(rect_to_kurbo(hot.bounds));
@@ -1486,6 +1504,7 @@ impl WidgetArena {
         if clip_children {
             list.pop_clip();
         }
+        list.pop_scope();
     }
 }
 
@@ -1518,6 +1537,20 @@ pub(crate) fn paint_widget_recursive(
     bounds: crate::Rect,
     list: &mut PaintList,
 ) {
+    // Scope with no arena handle — callers of this entry point (overlay
+    // content) have no `WidgetId` to report. Internal children recurse
+    // through this same function and get their own scopes.
+    list.push_scope(None, widget.debug_name(), rect_to_kurbo(bounds));
+    paint_widget_body(widget, bounds, list);
+    list.pop_scope();
+}
+
+/// Paint a widget's chrome and internal children *without* a scope —
+/// [`WidgetArena::paint_node`] manages the scope itself so it can also
+/// cover arena children. [`Widget::clips_children`] wraps the internal
+/// children in a clip pair, matching the arena-level `CLIPS_CHILDREN`
+/// behaviour.
+fn paint_widget_body(widget: &dyn crate::Widget, bounds: crate::Rect, list: &mut PaintList) {
     let mut cx = PaintContext { list, bounds };
     widget.paint(&mut cx);
     let clip = widget.clips_children();
@@ -1754,3 +1787,135 @@ impl<'a> Iterator for BreadthFirstIter<'a> {
 }
 
 impl<'a> FusedIterator for BreadthFirstIter<'a> {}
+
+#[cfg(test)]
+mod scope_tests {
+    use crate::{
+        DummyWidget, HotNode, LayoutConstraints, LayoutContext, NodeFlags, PaintCommand, PaintList,
+        Rect, Widget, WidgetArena,
+    };
+    use glam::Vec2;
+
+    fn visible(flags: NodeFlags) -> HotNode {
+        let mut hot = HotNode::default();
+        hot.flags |= NodeFlags::VISIBLE | flags;
+        hot
+    }
+
+    /// Widget with one internal child — exercises the scope nesting of
+    /// widget-internal children (no arena nodes of their own).
+    struct ParentWithChild {
+        child: DummyWidget,
+    }
+
+    impl Widget for ParentWithChild {
+        fn debug_name(&self) -> &'static str {
+            "Parent"
+        }
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn child_count(&self) -> usize {
+            1
+        }
+        fn child(&self, i: usize) -> Option<&dyn Widget> {
+            (i == 0).then_some(&self.child)
+        }
+        fn child_bounds(&self, i: usize) -> Option<Rect> {
+            (i == 0).then_some(Rect::new(0.0, 0.0, 10.0, 10.0))
+        }
+    }
+
+    #[test]
+    fn paint_list_emits_balanced_scopes() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert_with_widget(visible(NodeFlags::empty()), Box::new(DummyWidget));
+        let child = arena.insert_with_widget(visible(NodeFlags::empty()), Box::new(DummyWidget));
+        arena.append_child(root, child).unwrap();
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+
+        let mut depth = 0i32;
+        let mut names = Vec::new();
+        let mut ids = Vec::new();
+        for cmd in &list.commands {
+            match cmd {
+                PaintCommand::PushScope { id, name, .. } => {
+                    depth += 1;
+                    names.push(*name);
+                    ids.push(*id);
+                }
+                PaintCommand::PopScope => depth -= 1,
+                _ => {}
+            }
+        }
+        assert_eq!(depth, 0, "scopes must balance");
+        assert_eq!(names.len(), 2, "root + arena child each open a scope");
+        assert!(names.iter().all(|n| n.contains("DummyWidget")));
+        assert_eq!(ids, vec![Some(root), Some(child)]);
+        // Child scope nests inside the parent's — the scope tree mirrors
+        // the widget tree. The second PushScope must precede the first
+        // PopScope (child opens before parent closes).
+        let first_pop = list
+            .commands
+            .iter()
+            .position(|c| matches!(c, PaintCommand::PopScope))
+            .unwrap();
+        let second_push = list
+            .commands
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| matches!(c, PaintCommand::PushScope { .. }))
+            .nth(1)
+            .map(|(i, _)| i)
+            .unwrap();
+        assert!(second_push < first_pop, "child scope must nest");
+    }
+
+    #[test]
+    fn cold_node_debug_name_wins_over_type_name() {
+        let mut arena = WidgetArena::new();
+        let mut hot = visible(NodeFlags::empty());
+        hot.bounds = Rect::new(0.0, 0.0, 10.0, 10.0);
+        let id = arena.insert_with_widget(hot, Box::new(DummyWidget));
+        if let Some(cold) = arena.get_cold_mut(id) {
+            cold.debug_name = Some("Process Grid");
+        }
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        let name = list.commands.iter().find_map(|c| match c {
+            PaintCommand::PushScope { name, .. } => Some(*name),
+            _ => None,
+        });
+        assert_eq!(name, Some("Process Grid"));
+    }
+
+    #[test]
+    fn internal_children_get_own_scopes() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert_with_widget(
+            visible(NodeFlags::empty()),
+            Box::new(ParentWithChild { child: DummyWidget }),
+        );
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+
+        let scopes: Vec<_> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::PushScope { id, name, .. } => Some((*id, *name)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(scopes.len(), 2);
+        assert_eq!(scopes[0], (Some(root), "Parent"));
+        // Internal child: no arena handle, but still named.
+        assert_eq!(scopes[1].0, None);
+        assert!(scopes[1].1.contains("DummyWidget"));
+    }
+}

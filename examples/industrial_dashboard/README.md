@@ -27,6 +27,6 @@ cargo run -p industrial_dashboard --features devtools  # with the diagnostic HUD
 ```
 
 `F1`–`F16` comments in `src/headless.rs` log the API friction found
-while wiring the headless composition; `F17`–`F22` in `src/panels.rs`
+while wiring the headless composition; `F17`–`F23` in `src/panels.rs`
 log what the windowed path surfaced (pre-freeze fix candidates, see
 `docs/milestones/v0.18.0-production-hardening.md` §4.6).

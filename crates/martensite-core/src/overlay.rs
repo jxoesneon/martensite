@@ -611,8 +611,8 @@ impl OverlayLayer {
     ///
     /// let mut list = PaintList::new();
     /// layer.paint(&mut list);
-    /// // `DummyWidget` emits no chrome.
-    /// assert!(list.is_empty());
+    /// // `DummyWidget` emits no chrome — only its provenance scope.
+    /// assert_eq!(list.commands.len(), 2);
     /// ```
     pub fn paint(&self, list: &mut PaintList) {
         for entry in &self.entries {
@@ -958,14 +958,21 @@ mod tests {
         layer.layout_pass();
         let mut list = PaintList::new();
         layer.paint(&mut list);
-        assert_eq!(list.commands.len(), 2);
+        // Each entry is wrapped in a provenance scope — filter to the
+        // fills to check paint order.
+        let fills: Vec<_> = list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::FillRect(..)))
+            .collect();
+        assert_eq!(fills.len(), 2);
         // Bottom entry paints first so the topmost lands above it.
         assert!(matches!(
-            list.commands[0],
+            fills[0],
             PaintCommand::FillRect(_, [1, 0, 0, 255])
         ));
         assert!(matches!(
-            list.commands[1],
+            fills[1],
             PaintCommand::FillRect(_, [2, 0, 0, 255])
         ));
     }

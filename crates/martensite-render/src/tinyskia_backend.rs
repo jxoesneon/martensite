@@ -518,6 +518,9 @@ impl TinySkiaBackend {
             PaintCommand::External { rect, clip, .. } => {
                 self.render_external_placeholder(*rect, *clip);
             }
+            // Scope markers carry provenance for the audit — they are
+            // not drawing operations.
+            PaintCommand::PushScope { .. } | PaintCommand::PopScope => {}
         }
     }
 

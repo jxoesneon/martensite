@@ -586,6 +586,34 @@ pub enum PaintCommand {
         /// The clip rectangle in physical pixels (`x`, `y`, `w`, `h`).
         clip: [f32; 4],
     },
+    /// Open a widget-paint scope — provenance metadata, not a drawing
+    /// op. The arena's paint walker emits one around every widget's
+    /// paint commands (including widget-internal children) so tools —
+    /// the paint-compliance audit above all — can attribute findings to
+    /// the emitting widget and test content against its container
+    /// bounds. `id` is the emitting [`WidgetId`](crate::WidgetId), or
+    /// `None` where no arena handle exists (internal children, overlay
+    /// content, manual scopes); `name` is
+    /// [`Widget::debug_name`](crate::Widget::debug_name); `bounds` is the
+    /// widget's layout rect in device pixels.
+    ///
+    /// Backends ignore this command entirely; unbalanced scopes (a
+    /// `PopScope` with an empty stack, or a scope left open at list
+    /// end) are tolerated by consumers.
+    PushScope {
+        /// The emitting widget's arena handle — diagnostic only. `None`
+        /// wherever no arena handle exists: widget-internal children,
+        /// overlay content, and scopes pushed manually around app
+        /// chrome.
+        id: Option<crate::WidgetId>,
+        /// Widget debug name — `type_name` by default.
+        name: &'static str,
+        /// The widget's layout bounds in device pixels.
+        bounds: Rect,
+    },
+    /// Close the most recent [`PaintCommand::PushScope`]. Mirrors
+    /// [`PaintCommand::PopClip`] — a pop on an empty stack is a no-op.
+    PopScope,
 }
 
 /// One element of a [`PaintList`] split at [`PaintCommand::External`]
@@ -1053,6 +1081,45 @@ impl PaintList {
     /// ```
     pub fn pop_clip(&mut self) {
         self.commands.push(PaintCommand::PopClip);
+    }
+
+    /// Pushes a [`PaintCommand::PushScope`], opening a widget-paint
+    /// scope for provenance-aware tooling (the paint audit). Pass
+    /// `None` for `id` when the scope wraps commands with no arena
+    /// handle (manual chrome, internal children, overlay content).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintCommand, PaintList};
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_scope(None, "MyWidget", Rect::new(0.0, 0.0, 100.0, 100.0));
+    /// list.pop_scope();
+    /// assert!(matches!(list.commands[0], PaintCommand::PushScope { .. }));
+    /// ```
+    pub fn push_scope(&mut self, id: Option<crate::WidgetId>, name: &'static str, bounds: Rect) {
+        self.commands
+            .push(PaintCommand::PushScope { id, name, bounds });
+    }
+
+    /// Pushes a [`PaintCommand::PopScope`], closing the most recent
+    /// widget-paint scope.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintCommand, PaintList};
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_scope(None, "W", Rect::new(0.0, 0.0, 10.0, 10.0));
+    /// list.pop_scope();
+    /// assert!(matches!(list.commands[1], PaintCommand::PopScope));
+    /// ```
+    pub fn pop_scope(&mut self) {
+        self.commands.push(PaintCommand::PopScope);
     }
 
     /// Pushes a [`PaintCommand::DrawText`].
