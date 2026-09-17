@@ -196,6 +196,9 @@ pub struct RenderOrchestrator {
     /// `tracing`. Enabled by default in debug builds; see
     /// [`RenderOrchestrator::enable_paint_audit`].
     paint_audit: Option<PaintAuditState>,
+    /// Last configured drawable size — feeds the audit's `OutOfFrame`
+    /// check. `configure_surface` keeps it current on resize.
+    frame_size: (u32, u32),
     /// Dedup set for per-frame external-composite warnings — keyed by
     /// `(surface_id, site)` so a surface with no frames yet warns once
     /// instead of once per frame. An entry is removed when the same
@@ -325,6 +328,7 @@ impl RenderOrchestrator {
             } else {
                 None
             },
+            frame_size: (width, height),
             #[cfg(feature = "vello")]
             external_warned: std::collections::HashSet::new(),
         })
@@ -432,8 +436,14 @@ impl RenderOrchestrator {
     pub fn render(&mut self, paint_list: &PaintList, recovery: &RecoveryMachine) {
         // Advisory compliance audit — inspects what is actually about to
         // be painted. Never blocks; findings are deduped and reported via
-        // `tracing::warn`.
+        // `tracing::warn`. The drawable frame feeds the OutOfFrame check.
         if let Some(audit) = &mut self.paint_audit {
+            audit.config.frame = Some(kurbo::Rect::new(
+                0.0,
+                0.0,
+                f64::from(self.frame_size.0),
+                f64::from(self.frame_size.1),
+            ));
             let lints = martensite_access::paint_audit::audit_paint_list(paint_list, &audit.config);
             audit.reporter.report(&lints);
         }
@@ -678,7 +688,22 @@ impl RenderOrchestrator {
         mode: crate::surface::BackdropMode,
     ) -> Result<(), crate::surface::SurfaceWrapperError> {
         self.backdrop_mode = mode;
-        surface.configure(device, adapter, width, height, mode)
+        surface.configure(device, adapter, width, height, mode)?;
+        // Keep the drawable size current — the paint audit's OutOfFrame
+        // check resolves against it.
+        self.frame_size = (width, height);
+        Ok(())
+    }
+
+    /// Updates the drawable frame size used by the paint audit's
+    /// `OutOfFrame` check.
+    ///
+    /// Call this when the render target resizes through a path other
+    /// than [`configure_surface`](Self::configure_surface) — for
+    /// example an externally managed surface resized via its own
+    /// `resize` method.
+    pub fn set_frame_size(&mut self, width: u32, height: u32) {
+        self.frame_size = (width, height);
     }
 
     /// Renders the most recently built frame to a WGPU surface and presents it.

@@ -33,6 +33,8 @@ pollster = { workspace = true }
 tracing = { workspace = true }
 bytemuck = { workspace = true }
 glam = { workspace = true }
+# Paint-command geometry (the audit's frame/clip rects are kurbo types).
+kurbo = { workspace = true }
 
 [dev-dependencies]
 naga = { workspace = true }

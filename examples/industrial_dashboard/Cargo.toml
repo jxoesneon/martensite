@@ -22,6 +22,19 @@ devtools = []
 
 [dependencies]
 martensite = { workspace = true }
+accesskit_winit = { workspace = true }
+# The facade has no `vello` passthrough — enabling the GPU glyph/path
+# backend requires a direct dep (same as viewport_showcase).
+martensite-wgpu = { workspace = true, features = ["vello"] }
+# winit/wgpu feature pins mirror examples/viewport_showcase — the vendored
+# accesskit_winit fork and the wgpu engine both build against these.
+winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }
+wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12", "gles", "webgpu"] }
+accesskit = { workspace = true }
+parking_lot = { workspace = true }
+glam = { workspace = true }
+pollster = "1.0"
+tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 
 [lints]
 workspace = true

@@ -19,6 +19,15 @@
 //! - **Non-text contrast (Criterion 1.4.11)** — stroked outlines
 //!   (`StrokeRect`, `StrokePath`), which typically carry control borders
 //!   and focus indicators, must reach 3:1 against their backdrop.
+//! - **Bounds** — text extending horizontally past its clip container
+//!   reports [`PaintLintKind::ClipOverflow`] (advisory — clipping is
+//!   often intentional); text whose *visible* region extends past the
+//!   configured [`PaintAuditConfig::frame`] reports
+//!   [`PaintLintKind::OutOfFrame`]. Visibility and bounds checks test
+//!   `bounds ∩ clip`, so pixels clipped away by design never count.
+//! - **Positions** — every lint carries an `anchor` point and the
+//!   detail string ends with `@ (x, y)` in device px so findings can be
+//!   mapped back to the offending element without a debugger.
 //! - **Invisible text** — text painted fully outside the active clip
 //!   region, or covered by a later opaque fill. Both are usually bugs:
 //!   z-order mistakes or positioning errors that produce no output.
@@ -106,6 +115,16 @@ pub struct PaintAuditConfig {
     /// Flag text runs whose ink boxes overlap — usually a layout
     /// collision where two strings render on top of each other.
     pub check_text_overlap: bool,
+    /// Flag elements whose ink boxes exceed their container: text
+    /// extending horizontally past its active clip region, or any text
+    /// painted partially outside [`frame`](Self::frame). Vertical clip
+    /// overflow is deliberately not flagged — scroll containers clip
+    /// mid-row at top and bottom as part of normal operation.
+    pub check_bounds: bool,
+    /// The drawable frame in device pixels (usually the surface size).
+    /// When set, text whose bounds extend beyond it is reported as
+    /// [`PaintLintKind::OutOfFrame`]. `None` disables that check.
+    pub frame: Option<Rect>,
 }
 
 impl Default for PaintAuditConfig {
@@ -118,6 +137,8 @@ impl Default for PaintAuditConfig {
             check_ui_component_contrast: true,
             check_text_visibility: true,
             check_text_overlap: true,
+            check_bounds: true,
+            frame: None,
         }
     }
 }
@@ -190,6 +211,14 @@ pub enum PaintLintKind {
     /// Two text runs' ink boxes intersect — strings render on top of
     /// each other, typically a spacing/layout collision.
     TextOverlap,
+    /// Text extends horizontally past its active clip region — its
+    /// width exceeds the container it was laid out for. Advisory
+    /// ([`LintSeverity::Info`]): scroll containers clip deliberately,
+    /// and the paint stream cannot tell intent.
+    ClipOverflow,
+    /// Text extends partially outside the configured frame — at best
+    /// wasted work, usually a layout that does not fit the window.
+    OutOfFrame,
 }
 
 /// A single compliance finding against a painted element.
@@ -428,9 +457,9 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
     };
     let mut lints = Vec::new();
     let mut clip_stack: Vec<Rect> = Vec::new();
-    // (command index, probe) for every text command — reused by the
-    // occlusion and overlap passes below.
-    let mut texts: Vec<(usize, TextProbe)> = Vec::new();
+    // (command index, probe, clip active at record time) for every text
+    // command — reused by the occlusion, overlap and bounds passes below.
+    let mut texts: Vec<(usize, TextProbe, Option<Rect>)> = Vec::new();
     for (i, cmd) in list.commands.iter().enumerate() {
         match cmd {
             PaintCommand::ClipRect(r) | PaintCommand::ClipRoundedRect(r, _) => {
@@ -439,19 +468,19 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
             PaintCommand::PopClip => {
                 clip_stack.pop();
             }
-            PaintCommand::DrawText(point, text, size, color) => {
-                texts.push((i, probe_text(point, text, *size, *color)));
-            }
-            PaintCommand::DrawGlyphRun(run) => {
-                if let Some(p) = probe_glyph_run(run) {
-                    texts.push((i, p));
-                }
-            }
             _ => {}
         }
         // Effective clip is the intersection of every active region.
         let clip = clip_stack.iter().copied().reduce(|a, b| a.intersect(b));
         match cmd {
+            PaintCommand::DrawText(point, text, size, color) => {
+                texts.push((i, probe_text(point, text, *size, *color), clip));
+            }
+            PaintCommand::DrawGlyphRun(run) => {
+                if let Some(p) = probe_glyph_run(run) {
+                    texts.push((i, p, clip));
+                }
+            }
             PaintCommand::StrokeRect(rect, _, color) if config.check_ui_component_contrast => {
                 let anchor = ((rect.x0 + rect.x1) * 0.5, rect.y0);
                 check_stroke(&mut lints, &list.commands[..i], anchor, *color, "rect");
@@ -464,7 +493,7 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
             _ => {}
         }
         if config.check_text_visibility {
-            if let Some((_, probe)) = texts.last().filter(|(idx, _)| *idx == i) {
+            if let Some((_, probe, _)) = texts.last().filter(|(idx, _, _)| *idx == i) {
                 if clip.is_some_and(|c| fully_outside(&probe.bounds, &c)) {
                     lints.push(PaintLint {
                         kind: PaintLintKind::ClippedText,
@@ -473,15 +502,16 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                         measured: None,
                         required: None,
                         detail: format!(
-                            "text \"{}\" lies fully outside the active clip region — nothing is painted",
-                            probe.excerpt
+                            "text \"{}\" lies fully outside the active clip region — nothing is painted @ ({:.0}, {:.0})",
+                            probe.excerpt, probe.anchor.0, probe.anchor.1
                         ),
                     });
                 }
             }
         }
     }
-    for &(i, ref probe) in &texts {
+    for &(i, ref probe, clip) in &texts {
+        let pos = format!("@ ({:.0}, {:.0})", probe.anchor.0, probe.anchor.1);
         let size_pt = probe.font_px / scale;
         if size_pt < config.min_text_size_pt {
             lints.push(PaintLint {
@@ -491,7 +521,7 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 measured: Some(size_pt),
                 required: Some(config.min_text_size_pt),
                 detail: format!(
-                    "text \"{}\" at {:.0}pt is below the {:.0}pt minimum ({:.1}px device @ {:.2}x)",
+                    "text \"{}\" at {:.0}pt is below the {:.0}pt minimum ({:.1}px device @ {:.2}x) {pos}",
                     probe.excerpt, size_pt, config.min_text_size_pt, probe.font_px, scale
                 ),
             });
@@ -514,7 +544,7 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                         measured: Some(ratio),
                         required: Some(required),
                         detail: format!(
-                            "text \"{}\" contrast {:.2}:1 below {:.1}:1 ({:?} {:?} @ {:.0}pt)",
+                            "text \"{}\" contrast {:.2}:1 below {:.1}:1 ({:?} {:?} @ {:.0}pt) {pos}",
                             probe.excerpt, ratio, required, config.level, size_class, size_pt
                         ),
                     });
@@ -528,15 +558,26 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                     measured: None,
                     required: None,
                     detail: format!(
-                        "text \"{}\" backdrop is not a resolvable solid fill — contrast unverified",
+                        "text \"{}\" backdrop is not a resolvable solid fill — contrast unverified {pos}",
                         probe.excerpt
                     ),
                 });
             }
             Backdrop::Unknown => {}
         }
+        // The region the text actually renders in — commands inside a
+        // clip only produce output where bounds and clip intersect. All
+        // visibility/bounds checks below test `visible`, so a fill that
+        // merely covers clipped-away pixels does not read as occlusion.
+        let visible = clip.map_or(probe.bounds, |c| probe.bounds.intersect(c));
+        let renders = visible.width() > 0.0 && visible.height() > 0.0;
+        let visible_anchor = (
+            (visible.x0 + visible.x1) * 0.5,
+            (visible.y0 + visible.y1) * 0.5,
+        );
         if config.check_text_visibility
-            && occluded_by_later_fill(&list.commands[i + 1..], probe.anchor)
+            && renders
+            && occluded_by_later_fill(&list.commands[i + 1..], visible_anchor)
         {
             lints.push(PaintLint {
                 kind: PaintLintKind::OccludedText,
@@ -545,18 +586,81 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 measured: None,
                 required: None,
                 detail: format!(
-                    "text \"{}\" is covered by a later opaque fill — invisible output",
+                    "text \"{}\" is covered by a later opaque fill — invisible output {pos}",
                     probe.excerpt
                 ),
             });
+        }
+        if config.check_bounds && renders {
+            // Width overflow: text extending past its clip's left/right
+            // edge is wider than its container. Advisory only — scroll
+            // containers clip overflow deliberately, and the paint
+            // stream cannot tell intentional clipping from a layout
+            // bug. Vertical overflow is not flagged at all for the same
+            // reason (mid-row clipping is normal scrolling).
+            if let Some(c) = clip {
+                let over_r = probe.bounds.x1 - c.x1;
+                let over_l = c.x0 - probe.bounds.x0;
+                let (over, edge) = if over_r > 1.0 {
+                    (over_r, "right")
+                } else if over_l > 1.0 {
+                    (over_l, "left")
+                } else {
+                    (0.0, "")
+                };
+                if over > 0.0 {
+                    lints.push(PaintLint {
+                        kind: PaintLintKind::ClipOverflow,
+                        severity: LintSeverity::Info,
+                        anchor: probe.anchor,
+                        measured: Some(over as f32),
+                        required: None,
+                        detail: format!(
+                            "text \"{}\" extends {over:.0}px past its clip's {edge} edge — wider than container (may be intentional) {pos}",
+                            probe.excerpt
+                        ),
+                    });
+                }
+            }
+            if let Some(f) = config.frame {
+                let b = &visible;
+                let (over, edge) = if b.x1 > f.x1 + 1.0 {
+                    (b.x1 - f.x1, "right")
+                } else if b.x0 < f.x0 - 1.0 {
+                    (f.x0 - b.x0, "left")
+                } else if b.y1 > f.y1 + 1.0 {
+                    (b.y1 - f.y1, "bottom")
+                } else if b.y0 < f.y0 - 1.0 {
+                    (f.y0 - b.y0, "top")
+                } else {
+                    (0.0, "")
+                };
+                if over > 0.0 {
+                    lints.push(PaintLint {
+                        kind: PaintLintKind::OutOfFrame,
+                        severity: LintSeverity::Warning,
+                        anchor: probe.anchor,
+                        measured: Some(over as f32),
+                        required: None,
+                        detail: format!(
+                            "text \"{}\" extends {over:.0}px beyond the frame's {edge} edge {pos}",
+                            probe.excerpt
+                        ),
+                    });
+                }
+            }
         }
     }
     if config.check_text_overlap {
         for a in 0..texts.len() {
             for b in (a + 1)..texts.len() {
-                let (_, pa) = &texts[a];
-                let (_, pb) = &texts[b];
-                if pa.bounds.intersect(pb.bounds).area() > 1.0 {
+                let (_, pa, clip_a) = &texts[a];
+                let (_, pb, clip_b) = &texts[b];
+                // Compare the *visible* regions — a run clipped inside its
+                // container can't actually render on top of a neighbour.
+                let va = clip_a.map_or(pa.bounds, |c| pa.bounds.intersect(c));
+                let vb = clip_b.map_or(pb.bounds, |c| pb.bounds.intersect(c));
+                if va.intersect(vb).area() > 1.0 {
                     lints.push(PaintLint {
                         kind: PaintLintKind::TextOverlap,
                         severity: LintSeverity::Warning,
@@ -564,8 +668,8 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                         measured: None,
                         required: None,
                         detail: format!(
-                            "text \"{}\" overlaps \"{}\" — runs render on top of each other",
-                            pa.excerpt, pb.excerpt
+                            "text \"{}\" overlaps \"{}\" — runs render on top of each other @ ({:.0}, {:.0})",
+                            pa.excerpt, pb.excerpt, pa.anchor.0, pa.anchor.1
                         ),
                     });
                 }
@@ -612,8 +716,10 @@ fn check_stroke(
 }
 
 /// True when an opaque fill painted after index `i` covers `anchor`.
-/// Clip state of the covering fill is not modeled — a deliberately
-/// clipped-away fill may be reported as occluding.
+/// The caller passes an anchor inside the text's *visible* region
+/// (bounds ∩ clip), so clipped-away pixels never count as covered. The
+/// covering fill's own clip is still not modeled — a fill clipped away
+/// from the anchor may over-report, the conservative direction.
 fn occluded_by_later_fill(later: &[PaintCommand], anchor: (f64, f64)) -> bool {
     later.iter().any(|cmd| match cmd {
         PaintCommand::FillRect(rect, color) => contains(rect, anchor) && color[3] == 255,
@@ -945,6 +1051,68 @@ mod tests {
         );
         let lints = audit_paint_list(&list, &PaintAuditConfig::default());
         assert!(lints.iter().any(|l| l.kind == PaintLintKind::TextOverlap));
+    }
+
+    #[test]
+    fn text_past_clip_right_edge_is_flagged() {
+        let mut list = list_with([255, 255, 255, 255]);
+        list.push_clip(Rect::new(0.0, 0.0, 100.0, 600.0));
+        // 14px * 0.6 ≈ 8.4px/glyph * 20 chars ≈ 168px wide at x=10 →
+        // extends ~78px past the clip's right edge.
+        list.push_text(
+            Point::new(10.0, 10.0),
+            "a string far too wide".to_string(),
+            14.0,
+            [0, 0, 0, 255],
+        );
+        list.pop_clip();
+        let lints = audit_paint_list(&list, &PaintAuditConfig::default());
+        assert!(lints.iter().any(|l| l.kind == PaintLintKind::ClipOverflow));
+    }
+
+    #[test]
+    fn text_inside_clip_produces_no_overflow() {
+        let mut list = list_with([255, 255, 255, 255]);
+        list.push_clip(Rect::new(0.0, 0.0, 400.0, 600.0));
+        list.push_text(
+            Point::new(10.0, 10.0),
+            "fits".to_string(),
+            14.0,
+            [0, 0, 0, 255],
+        );
+        list.pop_clip();
+        let lints = audit_paint_list(&list, &PaintAuditConfig::default());
+        assert!(!lints.iter().any(|l| l.kind == PaintLintKind::ClipOverflow));
+    }
+
+    #[test]
+    fn text_outside_frame_is_flagged() {
+        let mut list = list_with([255, 255, 255, 255]);
+        list.push_text(
+            Point::new(700.0, 10.0),
+            "off the right edge".to_string(),
+            14.0,
+            [0, 0, 0, 255],
+        );
+        let cfg = PaintAuditConfig {
+            frame: Some(Rect::new(0.0, 0.0, 800.0, 600.0)),
+            ..PaintAuditConfig::default()
+        };
+        let lints = audit_paint_list(&list, &cfg);
+        assert!(lints.iter().any(|l| l.kind == PaintLintKind::OutOfFrame));
+    }
+
+    #[test]
+    fn no_frame_means_no_outoframe() {
+        let mut list = list_with([255, 255, 255, 255]);
+        list.push_text(
+            Point::new(700.0, 10.0),
+            "off the right edge".to_string(),
+            14.0,
+            [0, 0, 0, 255],
+        );
+        let lints = audit_paint_list(&list, &PaintAuditConfig::default());
+        assert!(!lints.iter().any(|l| l.kind == PaintLintKind::OutOfFrame));
     }
 
     #[test]
