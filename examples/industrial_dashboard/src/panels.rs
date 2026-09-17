@@ -71,6 +71,7 @@ use martensite::media::surface::{VideoPixelFormat, VideoSurface};
 use martensite::prelude::*;
 use martensite::render::{BezPath, PaintList, Point};
 use martensite::widgets::media::{MediaView, VideoFit};
+use martensite_motion::RubberBandScroller;
 
 use crate::menu::{ContextMenu, MenuState};
 use crate::model::{alert_count, gen_rows, MetricRow, Palette, EDITOR_SOURCE};
@@ -211,6 +212,11 @@ pub struct GridPanel {
     context_row: Option<MetricRow>,
     /// "· copied" title flash after a successful clipboard write.
     copied_flash: Option<Instant>,
+    /// Rubber-band overscroll driver (vertical, device px) — the
+    /// `ScrollView::scroller` analogue. The table's `scroll_offset`
+    /// stays the authoritative clamped position; the band adds
+    /// transient stretch visuals past the boundaries.
+    band: RubberBandScroller,
 }
 
 impl GridPanel {
@@ -251,12 +257,14 @@ impl GridPanel {
                 items: Vec::new(),
                 highlighted: 0,
                 committed: None,
+                entrance: None,
             })),
             menu_open: false,
             menu_id: None,
             menu_anchor: Vec2::ZERO,
             context_row: None,
             copied_flash: None,
+            band: RubberBandScroller::new(0.0, 0.0),
         }
     }
 
@@ -274,6 +282,9 @@ impl GridPanel {
         if needle.is_empty() && !alert_only {
             if self.table.filter_active() {
                 self.table.clear_filter();
+                // `clear_filter` clamps the scroll offset — re-sync
+                // the band (same reason as `set_filter` below).
+                self.sync_band();
             }
             return;
         }
@@ -288,10 +299,49 @@ impl GridPanel {
                 || r.mem_kib.to_string().contains(&needle)
                 || (if r.alert { "alert" } else { "ok" }).contains(&needle)
         }));
+        // `set_filter` clamps the scroll offset — re-sync the band so
+        // it can't fight the table's clamped position.
+        self.sync_band();
     }
 
     fn row_h(&self) -> f32 {
         30.0 * self.s().max(1.0)
+    }
+
+    /// Row viewport height in device px — the value pushed into
+    /// `DataTable::set_viewport_height` in `layout` and the band's
+    /// viewport size. One formula keeps the two in lockstep.
+    fn rows_viewport_h(&self) -> f32 {
+        (self.bounds.size.y - (TITLE_H + GRID_HEADER_H) * self.s() - 2.0).max(0.0)
+    }
+
+    /// Aligns the rubber-band scroller's sizes and offset with the
+    /// table's authoritative scroll state — the `ScrollView::
+    /// sync_scroller` analogue. Runs from `layout` and after every
+    /// scroll change the band didn't originate (keyboard `handle_key`,
+    /// filter clamps, scale-driven row-height rescales).
+    fn sync_band(&mut self) {
+        self.band
+            .set_content_size(self.table.display_row_count() as f32 * self.row_h());
+        self.band.set_viewport_size(self.rows_viewport_h());
+        // `drag` doubles as the offset writer — it interrupts a live
+        // spring from its current position, so an external scroll
+        // change can't leave the band animating against stale state.
+        let diff = self.table.scroll_offset() - self.band.content_offset();
+        if diff != 0.0 {
+            self.band.drag(diff);
+            // Re-arm after the drag: `release` is a no-op in bounds,
+            // but if the drag left residual overshoot (the new target
+            // didn't absorb the interrupted spring's OOB position)
+            // this starts the spring-back — otherwise the band sits
+            // out-of-bounds with no spring, `is_settled` never trips,
+            // `tick` spins dirty, and `visible_range` clamps to an
+            // empty row area. It must run only inside this branch:
+            // called while a healthy spring is in flight, `release`
+            // would restart it from the stale raw offset — a visible
+            // snap-back.
+            self.band.release(0.0);
+        }
     }
 
     /// Column (x, width) in device px; the last column stretches.
@@ -344,6 +394,18 @@ impl GridPanel {
         self.bounds.min_y() + TITLE_H * s + 1.0 + GRID_HEADER_H * s + 1.0
     }
 
+    /// The px offset the row window is currently rendered at — the
+    /// rubber-banded visible offset while the band is unsettled, else
+    /// the table's clamped offset. Paint AND hit-testing must share
+    /// this or clicks during the spring-back land on the wrong row.
+    fn render_offset(&self) -> f32 {
+        if self.band.is_settled() {
+            self.table.scroll_offset()
+        } else {
+            self.band.visible_offset()
+        }
+    }
+
     /// Storage index of the row at window-y `y`, via the visible window
     /// (display position → storage through the same mapping the painter
     /// uses — `visible_rows` yields storage indices).
@@ -354,17 +416,16 @@ impl GridPanel {
     /// Like [`row_at`](Self::row_at) but also clones the row's data —
     /// the context menu snapshots cells at press time.
     fn row_snapshot(&self, y: f32) -> Option<(usize, MetricRow)> {
-        // Rows slide by the fractional scroll remainder — the painter
-        // draws row n at `n·row_h - frac`, so hit-testing must add frac
-        // back before dividing.
-        let frac = self.table.scroll_offset() % self.row_h();
-        let rel = y - self.rows_top() + frac;
-        if rel < 0.0 {
+        // Rows sit at `(first + n)·row_h − render_off` — the same
+        // mapping the painter uses, including mid-spring stretch.
+        let first = self.table.visible_range().start;
+        let row = ((y - self.rows_top() + self.render_offset()) / self.row_h()).floor();
+        if row < first as f32 {
             return None;
         }
         self.table
             .visible_rows()
-            .nth((rel / self.row_h()) as usize)
+            .nth(row as usize - first)
             .map(|(idx, r)| (idx, r.clone()))
     }
 
@@ -402,28 +463,55 @@ impl Widget for GridPanel {
         // Re-arm the model's row height from the live scale signal —
         // `set_row_height` preserves the scroll position in rows.
         self.table.set_row_height(self.row_h());
-        self.table.set_viewport_height(
-            (bounds.size.y - (TITLE_H + GRID_HEADER_H) * self.s() - 2.0).max(0.0),
-        );
+        self.table.set_viewport_height(self.rows_viewport_h());
+        // Row-height rescales and viewport clamps move the table's
+        // offset — keep the band aligned (`ScrollView::layout` ends
+        // the same way).
+        self.sync_band();
     }
 
-    fn tick(&mut self, _dt: Duration) -> bool {
+    fn tick(&mut self, dt: Duration) -> bool {
+        let mut dirty = false;
         // Toolbar filter input — only re-apply on change; `set_filter`
         // re-scans the backing store so per-frame churn is real work.
         let text = self.filter_text.get();
         if text != self.applied_filter {
             self.applied_filter = text;
             self.apply_filter();
-            return true;
+            dirty = true;
         }
         if self
             .copied_flash
             .is_some_and(|t| t.elapsed() > Duration::from_millis(1500))
         {
             self.copied_flash = None;
-            return true;
+            dirty = true;
         }
-        false
+        // Context-menu entrance spring — overlay entries never see
+        // `tick`, so the owner advances the shared solver each frame
+        // while the popup is animating. When the entry is gone
+        // (commit/dismissal mid-entrance) clear the dead spring so it
+        // can't keep this widget dirty.
+        {
+            let mut state = self.menu_shared.lock();
+            if self.menu_id.is_none() {
+                state.entrance = None;
+            } else if let Some(spring) = state.entrance.as_mut() {
+                spring.advance(dt.as_secs_f32());
+                if spring.settle_threshold() {
+                    state.entrance = None;
+                }
+                dirty = true;
+            }
+        }
+        // Rubber-band spring-back — repaint while animating; landing
+        // writes the boundary back so band and table stay consistent.
+        if !self.band.is_settled() {
+            self.band.update(dt.as_secs_f32());
+            self.table.set_scroll_offset(self.band.content_offset());
+            dirty = true;
+        }
+        dirty
     }
 
     /// Reconciles the context-menu overlay entry with the requested
@@ -463,6 +551,9 @@ impl Widget for GridPanel {
                 state.items = vec!["Copy PID".into(), "Copy row (CSV)".into()];
                 state.highlighted = 0;
                 state.committed = None;
+                // Entrance spring — `tick` advances it; the popup's
+                // `paint` samples it for the translate + fade.
+                state.arm_entrance();
             }
             let menu = ContextMenu::new(Arc::clone(&self.menu_shared));
             self.menu_id =
@@ -519,7 +610,21 @@ impl Widget for GridPanel {
                 EventResponse::CaptureFocus
             }
             WidgetEvent::Scroll { delta, .. } => {
-                self.table.scroll_by(-delta.y);
+                self.sync_band();
+                // Wheel input through the band: `drag` accumulates the
+                // unclamped offset (stretch past the boundaries), then
+                // `release` re-arms the spring-back — a no-op while in
+                // bounds, so every event is safe. Note the spring
+                // starts from the raw accumulated offset: the 0.55
+                // stretch coefficient only applies while dragging, so
+                // a wheel fling shows the full accumulated stretch.
+                // The velocity is the coarse one-tick-per-frame
+                // estimate.
+                self.band.drag(-delta.y);
+                self.band.release(-delta.y * 60.0);
+                // The table keeps the clamped offset — out-of-bounds
+                // stretch is render-only via `band.visible_offset`.
+                self.table.set_scroll_offset(self.band.content_offset());
                 EventResponse::RequestRepaint
             }
             WidgetEvent::KeyPressed { key, repeat } => {
@@ -535,6 +640,10 @@ impl Widget for GridPanel {
                             KeyAction::from_key_name(key, self.shift_held, self.ctrl_held)
                         {
                             self.table.handle_key(action);
+                            // `handle_key` scrolls to keep the focused
+                            // row visible — re-sync so the band never
+                            // fights keyboard navigation.
+                            self.sync_band();
                         }
                     }
                 }
@@ -661,9 +770,15 @@ impl Widget for GridPanel {
         let row_h = f64::from(self.row_h());
         let cols = self.column_layout();
         let focused_row = self.table.focused_row();
+        // While the band is out of bounds / springing, rows render at
+        // the rubber-banded visible offset (device px — may be negative
+        // or past the max, which is the stretch). Settled this is
+        // exactly `scroll_offset % row_h` against the first visible row.
+        // `row_snapshot` uses the same helper so clicks agree with paint.
+        let render_off = f64::from(self.render_offset());
+        let first = self.table.visible_range().start;
         for (n, (idx, row)) in self.table.visible_rows().enumerate() {
-            let ry =
-                rows_top + n as f64 * row_h - f64::from(self.table.scroll_offset() % self.row_h());
+            let ry = rows_top + (first + n) as f64 * row_h - render_off;
             if ry + row_h < rows_top || ry > rows_bottom {
                 continue;
             }

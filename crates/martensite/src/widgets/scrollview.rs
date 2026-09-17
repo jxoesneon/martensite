@@ -608,6 +608,16 @@ impl ScrollView {
         let dy = self.offset.y - cy;
         if dx != 0.0 || dy != 0.0 {
             self.scroller.drag((dx, dy));
+            // Re-arm after the drag: `release` is a no-op in bounds,
+            // but if the drag left residual overshoot (the new offset
+            // didn't absorb the interrupted spring's out-of-bounds
+            // position) this restarts the spring-back — otherwise the
+            // scroller sits out-of-bounds with no spring, `update`
+            // no-ops, and `is_settled` never trips (stuck stretch).
+            // It must run only inside this branch: called while a
+            // healthy spring is in flight, `release` would restart it
+            // from the stale raw offset — a visible snap-back.
+            self.scroller.release((0.0, 0.0));
         }
     }
 
@@ -1309,6 +1319,54 @@ mod tests {
             v.update(1.0 / 60.0);
         }
         assert!(v.is_settled());
+        assert_eq!(v.scroll_offset().y, 0.0);
+    }
+
+    #[test]
+    fn mid_spring_sync_rearms_instead_of_stranding() {
+        // Regression: `sync_scroller` used to `drag` without `release`,
+        // so a programmatic scroll during a live spring-back consumed
+        // the spring and stranded the scroller out-of-bounds —
+        // `update` no-opped and `is_settled` never became true.
+        let mut v = make_view(Vec2::new(80.0, 400.0), Vec2::new(100.0, 100.0));
+        // Content drag past the top edge overscrolls; release arms the
+        // spring-back.
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(10.0, 10.0),
+            button: PointerButton::Primary,
+        };
+        let mut cx = EventContext {
+            event: &press,
+            bounds: v.cached_bounds,
+        };
+        assert_eq!(v.event(&mut cx), EventResponse::CapturePointer);
+        let moved = WidgetEvent::PointerMoved {
+            position: Vec2::new(10.0, 200.0),
+        };
+        let mut cx = EventContext {
+            event: &moved,
+            bounds: v.cached_bounds,
+        };
+        v.event(&mut cx);
+        let release = WidgetEvent::PointerReleased {
+            position: Vec2::new(10.0, 200.0),
+            button: PointerButton::Primary,
+        };
+        let mut cx = EventContext {
+            event: &release,
+            bounds: v.cached_bounds,
+        };
+        v.event(&mut cx);
+        assert!(!v.is_settled());
+        // A programmatic scroll mid-spring: the new offset doesn't
+        // absorb the full residual overshoot, so the scroller must
+        // re-arm a spring-back to the nearest boundary.
+        v.set_scroll_offset(Vec2::new(0.0, 50.0));
+        for _ in 0..600 {
+            v.update(1.0 / 60.0);
+        }
+        assert!(v.is_settled());
+        // The re-armed spring lands on the nearest boundary (top).
         assert_eq!(v.scroll_offset().y, 0.0);
     }
 

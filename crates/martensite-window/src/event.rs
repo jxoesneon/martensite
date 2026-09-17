@@ -908,9 +908,10 @@ impl EventRouter {
                 key: key.to_string(),
             }
         };
-        // `Escape` dismisses the topmost open popup; the overlay ignores
-        // every other key so focused-widget interactions such as
-        // combobox typeahead keep working while a popup is open.
+        // `Escape` dismisses the topmost open popup; the overlay offers
+        // other keys to the popup's content first and falls through on
+        // `Ignored`, so focused-widget interactions such as combobox
+        // typeahead keep working while a popup is open.
         let overlay_response = arena.overlay_mut().dispatch_event(&event);
         if overlay_response != EventResponse::Ignored {
             self.drain_focus(arena);

@@ -727,10 +727,12 @@ impl OverlayLayer {
     ///   [`EventResponse::Ignored`], letting the press continue to the
     ///   content beneath.
     /// - `Escape` dismisses the topmost popup and returns
-    ///   [`EventResponse::Handled`]. **Other keys are ignored** —
-    ///   keyboard input stays with the focused arena widget (the
-    ///   popup's owner), so e.g. combobox typeahead keeps working
-    ///   while a listbox popup is open.
+    ///   [`EventResponse::Handled`]. Other key events are offered to
+    ///   the topmost popup's content first; an `Ignored` response
+    ///   falls through so the focused arena widget (the popup's
+    ///   owner) keeps receiving input — combobox typeahead keeps
+    ///   working while a listbox popup is open, while popups with
+    ///   their own key handling (menu arrow keys, Enter) get it.
     /// - Scroll and other positional events hit-test like pointer
     ///   events, so popup content can scroll.
     ///
@@ -777,11 +779,14 @@ impl OverlayLayer {
             self.layout_pass();
         }
 
-        // Keyboard: only Escape is meaningful to the layer — it
-        // dismisses the topmost popup. Every other key falls through so
-        // the focused arena widget (the popup's owner) keeps receiving
-        // input; popup content is a stateless view of owner state and
-        // never owns focus.
+        // Keyboard: Escape dismisses the topmost popup. Every other
+        // key is offered to the topmost popup's content first —
+        // popup widgets like menus have real keyboard handling
+        // (arrow-key highlight, Enter to commit). Unlike positional
+        // events an `Ignored` key is NOT swallowed: it falls through
+        // so the focused arena widget (the popup's owner) keeps
+        // receiving input it cares about — combobox typeahead, grid
+        // navigation.
         if matches!(
             event,
             WidgetEvent::KeyPressed { .. } | WidgetEvent::KeyReleased { .. }
@@ -793,6 +798,20 @@ impl OverlayLayer {
                         self.dismissed.push_back(top);
                         return EventResponse::Handled;
                     }
+                }
+            }
+            if let Some(entry) = self.entries.last_mut() {
+                let owner = entry.owner;
+                let mut cx = EventContext {
+                    event,
+                    bounds: entry.resolved,
+                };
+                let response = entry.content.event(&mut cx);
+                let id = entry.id;
+                self.apply_capture_response(id, response);
+                self.note_dirty_owner(owner);
+                if response != EventResponse::Ignored {
+                    return response;
                 }
             }
             return EventResponse::Ignored;
@@ -1003,6 +1022,63 @@ mod tests {
         assert!(layer.is_open(a));
         assert!(!layer.is_open(b));
         assert_eq!(layer.take_dismissed(), Some(b));
+    }
+
+    #[test]
+    fn non_escape_keys_reach_topmost_popup() {
+        // Popup widgets (menus, listboxes) handle their own arrow/Enter
+        // keys — the layer must offer non-Escape keys to the topmost
+        // entry before falling through to the focused arena widget.
+        struct KeySpy(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+        impl Widget for KeySpy {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::new(20.0, 20.0)
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+            fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+                match cx.event {
+                    WidgetEvent::KeyPressed { key, .. } => {
+                        self.0.lock().unwrap().push(key.clone());
+                        EventResponse::Handled
+                    }
+                    _ => EventResponse::Ignored,
+                }
+            }
+        }
+
+        let mut layer = layer();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        layer.open(
+            Box::new(KeySpy(std::sync::Arc::clone(&seen))),
+            OverlayAnchor::Pointer(Vec2::new(10.0, 10.0)),
+        );
+        layer.layout_pass();
+
+        let down = WidgetEvent::KeyPressed {
+            key: "ArrowDown".to_string(),
+            repeat: false,
+        };
+        assert_eq!(layer.dispatch_event(&down), EventResponse::Handled);
+        assert_eq!(*seen.lock().unwrap(), vec!["ArrowDown".to_string()]);
+    }
+
+    #[test]
+    fn ignored_keys_fall_through_to_owner() {
+        // A popup that ignores a key must not swallow it — the focused
+        // arena widget (combobox typeahead, grid nav) still gets it.
+        let mut layer = layer();
+        layer.open(
+            Box::new(DummyWidget),
+            OverlayAnchor::Pointer(Vec2::new(10.0, 10.0)),
+        );
+        layer.layout_pass();
+        let key = WidgetEvent::KeyPressed {
+            key: "a".to_string(),
+            repeat: false,
+        };
+        assert_eq!(layer.dispatch_event(&key), EventResponse::Ignored);
+        // And the popup stays open — key fall-through is not dismissal.
+        assert!(!layer.is_empty());
     }
 
     #[test]

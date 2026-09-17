@@ -116,6 +116,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2σ of the visible history render as `ScatterSeries` markers — warn
   colored, escalating to error past the 90% alert line — with a
   matching "outliers" legend chip.
+- **`industrial_dashboard` motion dogfood** — `GridPanel` drives a
+  `martensite-motion` `RubberBandScroller` (vertical, device px) for
+  iOS-style wheel overscroll: `drag`+`release` per `Scroll` event
+  accumulates stretch past the boundaries and re-arms the critically-
+  damped spring-back, the row window renders at `visible_offset` while
+  the table keeps the authoritative clamped offset, and `tick`
+  advances the spring. The `ContextMenu` popup gets a lightly
+  under-damped `SpringSolver` entrance (~180ms, 4px translate at full
+  opacity — an alpha fade would emit sub-threshold-contrast text every
+  frame and spam the paint audit) —
+  overlay entries never tick, so the owning panel advances the shared
+  solver from `GridPanel::tick`. New `martensite-motion` dependency in
+  the example.
 
 ### Fixed
 
@@ -177,6 +190,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (resolved against the first `-C` directory), failing all five Unix
   binary legs on `v0.18.0`; added a `binaries_tag` repair dispatch to
   attach archives to an existing release.
+- `ScrollView::sync_scroller` stranded the rubber-band scroller
+  out-of-bounds when a wheel/keyboard/programmatic scroll interrupted
+  a live spring-back (`drag` without `release` — the spring was
+  consumed, `update` no-opped, `is_settled` never tripped → stuck
+  stretch). It now re-arms `release(0.0)` when the drag leaves
+  residual overshoot, same fix as `GridPanel::sync_band`.
+- `OverlayLayer::dispatch_event` swallowed every non-`Escape` key,
+  so popup widgets' keyboard arms were dead code (arrows moved the
+  focused widget *behind* an open menu). Non-`Escape` key events are
+  now offered to the topmost popup's content first; `Ignored` falls
+  through to the focused arena widget as before, so combobox
+  typeahead keeps working.
 
 ## [0.18.0] - 2026-09-16
 

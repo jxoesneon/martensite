@@ -17,6 +17,7 @@ use martensite::core::{
     Rect, SemanticAction, Widget, WidgetEvent,
 };
 use martensite::render::{Point, Rect as PaintRect};
+use martensite_motion::{SpringConfig, SpringSolver};
 use parking_lot::Mutex;
 
 use crate::model::Palette;
@@ -34,6 +35,24 @@ const FONT_PT: f32 = 12.0;
 /// Minimum menu width (logical pt).
 const MIN_W: f32 = 96.0;
 
+/// Entrance spring configuration — lightly under-damped (`ζ ≈ 0.80`,
+/// `ω₀ ≈ 64 rad/s`) so the 0→1 progress settles in ~180ms (the
+/// solver's 1e-4 settle threshold needs ≈9.2/(ζω₀) seconds) with a
+/// whisper of overshoot. Subtle on purpose: this is a motion-quality
+/// showcase, not a bounce demo.
+fn entrance_config() -> SpringConfig {
+    SpringConfig::new(1.0, 4100.0, 102.0).expect("menu entrance spring is statically valid")
+}
+
+/// Entrance progress `t` (1.0 once settled or never armed) — sampled
+/// from the shared solver the owning `GridPanel::tick` advances.
+fn entrance_t(state: &MenuState) -> f32 {
+    state
+        .entrance
+        .map(|spring| spring.sample().0)
+        .unwrap_or(1.0)
+}
+
 /// State shared between `GridPanel` and its popup [`ContextMenu`].
 ///
 /// The popup writes `committed` on activation (click, Enter, or an AT
@@ -47,6 +66,19 @@ pub struct MenuState {
     pub highlighted: usize,
     /// Set by the menu when an item is activated.
     pub committed: Option<usize>,
+    /// Entrance animation: a 0→1 [`SpringSolver`] armed by the owner
+    /// when the popup opens. Overlay entries never receive `tick`, so
+    /// the owning `GridPanel::tick` advances it each frame and clears
+    /// it once [`SpringSolver::settle_threshold`] trips; `paint` reads
+    /// the sampled position for a translate + fade.
+    pub entrance: Option<SpringSolver>,
+}
+
+impl MenuState {
+    /// Arms the entrance spring — call when the popup opens.
+    pub fn arm_entrance(&mut self) {
+        self.entrance = Some(SpringSolver::new(entrance_config(), 0.0, 1.0, 0.0));
+    }
 }
 
 /// Right-click context menu — a compact raised panel of text items.
@@ -81,10 +113,24 @@ impl ContextMenu {
         }
     }
 
+    /// The entrance slide offset in device px (`0` once settled) —
+    /// the same `dy` `paint` adds to every rect. Keeping `t` unclamped
+    /// matches the paint path so mid-overshoot hit-tests agree.
+    fn entrance_dy(&self) -> f32 {
+        (1.0 - entrance_t(&self.shared.lock())) * 4.0 * self.scale
+    }
+
     /// Item index containing window-space `pos`, or `None`.
     fn item_at(&self, pos: Vec2) -> Option<usize> {
+        // `paint` slides the whole menu by `entrance_dy` during the
+        // entrance — hit-test the drawn position so a mid-animation
+        // click lands on the item under the cursor.
+        let dy = self.entrance_dy();
         self.item_bounds.iter().position(|r| {
-            pos.x >= r.min_x() && pos.x < r.max_x() && pos.y >= r.min_y() && pos.y < r.max_y()
+            pos.x >= r.min_x()
+                && pos.x < r.max_x()
+                && pos.y - dy >= r.min_y()
+                && pos.y - dy < r.max_y()
         })
     }
 
@@ -202,16 +248,26 @@ impl Widget for ContextMenu {
         let pal = Palette::from_theme(cx.theme);
         let s = cx.scale;
         let sd = f64::from(s);
+        let state = self.shared.lock();
+        // Entrance progress — the owning `GridPanel::tick` advances
+        // the shared solver (overlay entries never tick); `None`
+        // means the animation settled or never ran. Translate-only:
+        // an alpha fade would emit sub-threshold-contrast text/strokes
+        // every frame (paint-audit lint spam), so the entrance is a
+        // 4px slide at full opacity — `t` stays unclamped so the
+        // spring's slight overshoot reads through as a dip past the
+        // anchor point.
+        let t = entrance_t(&state);
+        let dy = f64::from((1.0 - t) * 4.0 * s);
         let b = &self.bounds;
         let rect = PaintRect::new(
             f64::from(b.min_x()),
-            f64::from(b.min_y()),
+            f64::from(b.min_y()) + dy,
             f64::from(b.max_x()),
-            f64::from(b.max_y()),
+            f64::from(b.max_y()) + dy,
         );
         cx.list.push_fill_rect(rect, pal.raised);
         cx.list.push_stroke_rect(rect, cx.pt(1.0), pal.border);
-        let state = self.shared.lock();
         let mut text = self.text.lock();
         for (i, label) in state.items.iter().enumerate() {
             let Some(r) = self.item_bounds.get(i) else {
@@ -221,9 +277,9 @@ impl Widget for ContextMenu {
                 cx.list.push_fill_rect(
                     PaintRect::new(
                         f64::from(r.min_x()),
-                        f64::from(r.min_y()),
+                        f64::from(r.min_y()) + dy,
                         f64::from(r.max_x()),
-                        f64::from(r.max_y()),
+                        f64::from(r.max_y()) + dy,
                     ),
                     Palette::alpha(pal.accent, 90),
                 );
@@ -232,7 +288,9 @@ impl Widget for ContextMenu {
                 cx.list,
                 Point::new(
                     f64::from(r.min_x()) + 8.0 * sd,
-                    f64::from(r.min_y()) + (f64::from(r.size.y) - f64::from(FONT_PT) * sd) * 0.5,
+                    f64::from(r.min_y())
+                        + dy
+                        + (f64::from(r.size.y) - f64::from(FONT_PT) * sd) * 0.5,
                 ),
                 label,
                 FONT_PT * s,

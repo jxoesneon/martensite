@@ -2363,6 +2363,7 @@ dependencies = [
  "martensite",
  "martensite-accesskit-winit",
  "martensite-clipboard-platform",
+ "martensite-motion",
  "martensite-wgpu",
  "parking_lot",
  "pollster",
