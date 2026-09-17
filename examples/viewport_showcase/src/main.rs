@@ -324,7 +324,7 @@ impl App {
         color: [u8; 4],
         max_width: Option<f32>,
     ) -> f64 {
-        let mut block_bottom = f64::from(origin.y);
+        let mut block_bottom = origin.y;
         for line in shape_text(fonts, text, size, size * 1.25, max_width) {
             block_bottom = f64::from(origin.y as f32 + line.line_y + size * 1.25);
             let baseline_y = origin.y as f32 + line.line_y;
@@ -348,8 +348,8 @@ impl App {
                     line.line_height,
                 ));
             }
-            if run_font.is_some() && !run.is_empty() {
-                if let Some((data, index)) = fonts.font_data(run_font.unwrap()) {
+            if let Some(font_id) = run_font.filter(|_| !run.is_empty()) {
+                if let Some((data, index)) = fonts.font_data(font_id) {
                     run.set_font(FontResource::new(data, index));
                 }
                 list.push_glyph_run(run);
