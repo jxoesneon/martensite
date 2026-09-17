@@ -109,6 +109,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RenderOrchestrator::audit_target_sizes`); `PaintLint::to_json`
   serializes findings for CI tooling (non-finite values become
   `null`).
+- **`industrial_dashboard` telemetry depth** — `TelemetryPanel` now
+  exercises the full blessed `Chart` series model: the cpu under-fill
+  is an `AreaSeries` (baseline 0, still gated by the toolbar's glow
+  toggle) painted ahead of the strokes, and cpu samples beyond mean +
+  2σ of the visible history render as `ScatterSeries` markers — warn
+  colored, escalating to error past the 90% alert line — with a
+  matching "outliers" legend chip.
 
 ### Fixed
 

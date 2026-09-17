@@ -59,7 +59,9 @@ use parking_lot::Mutex;
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite::blessed::data_table::{ColumnConfig, ColumnSort, KeyAction, RowFilter};
-use martensite::blessed::{Chart, CodeEditor, DataTable, LineSeries, Point as CPoint, TokenKind};
+use martensite::blessed::{
+    AreaSeries, Chart, CodeEditor, DataTable, LineSeries, Point as CPoint, ScatterSeries, TokenKind,
+};
 use martensite::core::overlay::{OverlayAnchor, OverlayLayer};
 use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
@@ -782,7 +784,9 @@ impl Widget for GridPanel {
 // ---------------------------------------------------------------------------
 
 /// Telemetry chart: two live `Signal<f64>` feeds (the app holds clones
-/// for the header KPIs) rendered through `LineSeries` +
+/// for the header KPIs) rendered through the blessed `Chart` model —
+/// `AreaSeries` under-fill (the toolbar's glow toggle), `LineSeries`
+/// strokes, and `ScatterSeries` outlier markers, all projected with
 /// `Chart::project`. `tick` advances the model — Space pauses.
 pub struct TelemetryPanel {
     text: Mutex<TextPainter>,
@@ -805,6 +809,8 @@ pub struct TelemetryPanel {
 
 impl TelemetryPanel {
     const CAP: usize = 240;
+    /// Cpu% at which an outlier marker escalates from warn to error.
+    const ALERT_PCT: f64 = 90.0;
 
     pub fn new(
         scale: Signal<f32>,
@@ -980,6 +986,32 @@ impl Widget for TelemetryPanel {
                 y: m * 100.0,
             })
             .collect();
+        // The toolbar's glow toggle rides the blessed area series now —
+        // the under-fill lives in the chart model instead of a
+        // hand-closed copy of the stroke path.
+        if self.glow.get() {
+            chart.add_area(AreaSeries::new(cpu_pts.clone(), 0.0));
+        }
+        // Cpu outliers — samples beyond mean + 2σ of the visible
+        // window — get scatter markers so spikes stay identifiable
+        // once they scroll off the line's leading edge.
+        let outlier_pts: Vec<CPoint> = if cpu_pts.is_empty() {
+            Vec::new()
+        } else {
+            let n = cpu_pts.len() as f64;
+            let mean = cpu_pts.iter().map(|p| p.y).sum::<f64>() / n;
+            let stddev = (cpu_pts
+                .iter()
+                .map(|p| (p.y - mean) * (p.y - mean))
+                .sum::<f64>()
+                / n)
+                .sqrt();
+            let cutoff = mean + 2.0 * stddev;
+            cpu_pts.iter().copied().filter(|p| p.y > cutoff).collect()
+        };
+        if !outlier_pts.is_empty() {
+            chart.add_scatter(ScatterSeries::new(outlier_pts, 2.5 * sd));
+        }
         chart.add_line(LineSeries::new(cpu_pts));
         chart.add_line(LineSeries::new(mem_pts));
         let auto = chart.bounds().unwrap_or(martensite::blessed::ChartBounds {
@@ -1012,10 +1044,51 @@ impl Widget for TelemetryPanel {
             );
         }
 
-        // Series → projected polylines (cpu filled, mem line-only).
-        let glow = self.glow.get();
-        for (series_idx, color, fill) in [(0usize, pal.accent, glow), (1usize, pal.accent2, false)]
-        {
+        // Area fills paint first — the stroke lines stay crisp on top.
+        for area in chart.areas() {
+            let pts = &area.points;
+            if pts.len() < 2 {
+                continue;
+            }
+            let mut path = BezPath::new();
+            for (i, p) in pts.iter().enumerate() {
+                // `Chart::project` already returns screen-space y
+                // (data max → 0/top) — add the plot origin, don't re-flip.
+                let q = Chart::project(*p, bounds, plot.width(), plot.height());
+                let (qx, qy) = (plot.x0 + q.x, plot.y0 + q.y);
+                if i == 0 {
+                    path.move_to((qx, qy));
+                } else {
+                    path.line_to((qx, qy));
+                }
+            }
+            // Close along the series' data-space baseline (0% → plot
+            // bottom) — the model owns where the fill ends.
+            let base_y = Chart::project(
+                CPoint {
+                    x: pts[0].x,
+                    y: area.baseline,
+                },
+                bounds,
+                plot.width(),
+                plot.height(),
+            )
+            .y;
+            let last = Chart::project(
+                *pts.last().expect("nonempty"),
+                bounds,
+                plot.width(),
+                plot.height(),
+            );
+            let first = Chart::project(pts[0], bounds, plot.width(), plot.height());
+            path.line_to((plot.x0 + last.x, plot.y0 + base_y));
+            path.line_to((plot.x0 + first.x, plot.y0 + base_y));
+            path.close_path();
+            cx.list.push_path(path, Palette::alpha(pal.accent, 56));
+        }
+
+        // Series → projected polylines.
+        for (series_idx, color) in [(0usize, pal.accent), (1usize, pal.accent2)] {
             let pts = &chart.lines()[series_idx].points;
             if pts.len() < 2 {
                 continue;
@@ -1032,20 +1105,6 @@ impl Widget for TelemetryPanel {
                     path.line_to((qx, qy));
                 }
             }
-            if fill {
-                let mut area = path.clone();
-                let last = Chart::project(
-                    *pts.last().expect("nonempty"),
-                    bounds,
-                    plot.width(),
-                    plot.height(),
-                );
-                let first = Chart::project(pts[0], bounds, plot.width(), plot.height());
-                area.line_to((plot.x0 + last.x, plot.y1));
-                area.line_to((plot.x0 + first.x, plot.y1));
-                area.close_path();
-                cx.list.push_path(area, Palette::alpha(color, 40));
-            }
             cx.list.push_stroke_path(path, 1.6, color);
             // Latest-point dot.
             let q = Chart::project(
@@ -1057,6 +1116,24 @@ impl Widget for TelemetryPanel {
             let (qx, qy) = (plot.x0 + q.x, plot.y0 + q.y);
             cx.list
                 .push_fill_rect(krect(qx - 2.5, qy - 2.5, 5.0, 5.0), color);
+        }
+
+        // Outlier markers last so they sit on top of both strokes —
+        // `error` when the sample is also in alert territory, `warn`
+        // otherwise. Radius is device px, matching the scale math.
+        for scatter in chart.scatters() {
+            let r = scatter.radius;
+            for p in &scatter.points {
+                let q = Chart::project(*p, bounds, plot.width(), plot.height());
+                let (qx, qy) = (plot.x0 + q.x, plot.y0 + q.y);
+                let color = if p.y >= Self::ALERT_PCT {
+                    pal.error
+                } else {
+                    pal.warn
+                };
+                cx.list
+                    .push_fill_rect(krect(qx - r, qy - r, 2.0 * r, 2.0 * r), color);
+            }
         }
 
         // Legend.
@@ -1075,6 +1152,32 @@ impl Widget for TelemetryPanel {
                 None,
             );
             lx += 16.0 * sd + f64::from(w) + 20.0 * sd;
+        }
+        // Outlier marker — a square matching the scatter glyph, shown
+        // only while outliers are actually in the window. The chip
+        // escalates to the error color when every visible outlier does.
+        if !chart.scatters().is_empty() {
+            let chip = if chart
+                .scatters()
+                .iter()
+                .all(|s| s.points.iter().all(|p| p.y >= Self::ALERT_PCT))
+            {
+                pal.error
+            } else {
+                pal.warn
+            };
+            cx.list.push_fill_rect(
+                krect(lx + 3.5 * sd, legend_y + 3.0 * sd, 5.0 * sd, 5.0 * sd),
+                chip,
+            );
+            text.push(
+                cx.list,
+                Point::new(lx + 16.0 * sd, legend_y),
+                "outliers",
+                12.0 * s,
+                pal.text_muted,
+                None,
+            );
         }
     }
 }
