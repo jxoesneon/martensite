@@ -1689,6 +1689,55 @@ mod tests {
     }
 
     #[test]
+    fn dock_drop_bottom_stacks_below() {
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
+        let dragged = panel_of(&dock, src);
+        apply_dock_drop(&mut dock, src, dst, DockDropZone::Bottom, dragged);
+        let (dragged, target) = (rect_of(&dock, 1), rect_of(&dock, 2));
+        assert!((dragged.x - target.x).abs() < 1e-6);
+        assert!((dragged.width - target.width).abs() < 1e-6);
+        assert!(dragged.y >= target.y + target.height - 1e-6);
+    }
+
+    /// A press landing inside an open popup belongs to the popup —
+    /// `press_over_overlay` is the gate that keeps it from also
+    /// seeding a dock-drag candidate (menu commits AND a rearrange
+    /// would both fire otherwise).
+    #[test]
+    fn press_over_overlay_matches_popup_bounds() {
+        struct Sized;
+        impl martensite::core::Widget for Sized {
+            fn measure(
+                &mut self,
+                _cx: &mut LayoutContext,
+                _c: martensite::core::LayoutConstraints,
+            ) -> Vec2 {
+                Vec2::new(200.0, 100.0)
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+        }
+
+        let mut app = App::new(ThemeChoice::Dark);
+        app.build_arena();
+        {
+            let overlay = app.arena.as_mut().expect("arena").overlay_mut();
+            overlay.set_viewport(Rect::new(0.0, 0.0, 1000.0, 600.0));
+            overlay.open(
+                Box::new(Sized),
+                martensite::core::overlay::OverlayAnchor::Bounds(Rect::new(
+                    100.0, 100.0, 200.0, 20.0,
+                )),
+            );
+        }
+        // The popup resolves below its anchor → x∈[100,300],
+        // y∈[120,220]. Inside counts as an overlay press; outside
+        // doesn't.
+        assert!(app.press_over_overlay(Vec2::new(150.0, 150.0)));
+        assert!(!app.press_over_overlay(Vec2::new(400.0, 400.0)));
+    }
+
+    #[test]
     fn dock_drop_onto_sibling_re_resolves_target() {
         // Editor (3) and Media (4) are siblings — removing 3 promotes
         // 4 into the parent slot, invalidating its NodeId mid-drop.

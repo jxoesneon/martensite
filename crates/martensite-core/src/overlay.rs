@@ -81,7 +81,7 @@ const POINTER_OFFSET: f32 = 12.0;
 /// assert!(matches!(anchor, OverlayAnchor::Bounds(_)));
 /// assert!(matches!(tip, OverlayAnchor::Pointer(_)));
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OverlayAnchor {
     /// Popup anchored to a widget's window-space bounds — placed below
     /// the anchor when it fits, flipped above when it does not, and

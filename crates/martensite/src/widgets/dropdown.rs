@@ -456,6 +456,11 @@ pub struct Dropdown {
     typeahead: String,
     /// Combobox bounds from the last layout pass.
     cached_bounds: Rect,
+    /// The bounds the live popup was last anchored to — `sync_overlay`
+    /// re-anchors when `cached_bounds` moves (resize, scale change,
+    /// relayout) so an open listbox tracks its face instead of
+    /// detaching.
+    last_anchor: Option<Rect>,
     /// Shared shaped-text painter — `paint` emits real `GlyphRun`s when
     /// set, `DrawText` placeholder boxes otherwise. Propagated to popup
     /// options when the listbox opens.
@@ -493,6 +498,7 @@ impl Dropdown {
             shared,
             typeahead: String::new(),
             cached_bounds: Rect::default(),
+            last_anchor: None,
             text_painter: None,
         }
     }
@@ -777,6 +783,7 @@ impl Dropdown {
             if !overlay.is_open(id) {
                 self.popup_id = None;
                 self.open = false;
+                self.last_anchor = None;
             }
         }
         if self.open && self.popup_id.is_none() {
@@ -784,9 +791,20 @@ impl Dropdown {
             let popup = ListBoxPopup::new(Arc::clone(&self.shared), self.text_painter.clone());
             self.popup_id =
                 Some(overlay.open(Box::new(popup), OverlayAnchor::Bounds(self.cached_bounds)));
+            self.last_anchor = Some(self.cached_bounds);
         } else if !self.open {
             if let Some(id) = self.popup_id.take() {
                 overlay.close(id);
+            }
+            self.last_anchor = None;
+        } else if let Some(id) = self.popup_id {
+            // The face moved while open (resize, scale change,
+            // relayout, dock rearrange) — re-anchor so the listbox
+            // tracks it. Guarded on change so a settled popup doesn't
+            // re-mark layout every tick.
+            if self.last_anchor != Some(self.cached_bounds) {
+                overlay.set_anchor(id, OverlayAnchor::Bounds(self.cached_bounds));
+                self.last_anchor = Some(self.cached_bounds);
             }
         }
     }
@@ -1236,6 +1254,36 @@ mod tests {
         dd.sync_overlay(&mut o);
         assert_eq!(dd.selected(), 1);
         assert!(!dd.is_open());
+    }
+
+    #[test]
+    fn open_popup_reanchors_when_face_moves() {
+        let mut dd = Dropdown::new(["A", "B"]);
+        laid_out(&mut dd);
+        let mut o = overlay();
+        dd.open();
+        dd.sync_overlay(&mut o);
+        o.layout_pass();
+        let id = dd.popup_id.unwrap();
+        assert_eq!(
+            o.entry(id).unwrap().anchor(),
+            &OverlayAnchor::Bounds(Rect::new(10.0, 10.0, 160.0, 32.0))
+        );
+        // Relayout moves the face while the popup is open (resize,
+        // scale change, dock rearrange) — the anchor must track or
+        // the listbox detaches.
+        let moved = Rect::new(40.0, 60.0, 160.0, 32.0);
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        dd.layout(&mut cx, moved);
+        dd.sync_overlay(&mut o);
+        assert_eq!(o.entry(id).unwrap().anchor(), &OverlayAnchor::Bounds(moved));
+        o.layout_pass();
+        // The popup still resolves below the moved face.
+        assert!(o.entry_bounds(id).unwrap().min_y() >= moved.max_y());
     }
 
     #[test]

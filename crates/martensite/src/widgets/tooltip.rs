@@ -240,6 +240,10 @@ pub struct Tooltip {
     popup_id: Option<u64>,
     /// Last seen pointer position (anchors pointer-anchored bubbles).
     last_pointer: Option<Vec2>,
+    /// The anchor the live popup was last placed from — `sync_overlay`
+    /// re-anchors when the trigger moves or the pointer drifts while
+    /// shown so the bubble tracks instead of detaching.
+    last_anchor: Option<OverlayAnchor>,
     /// Whether the pointer has left the trigger and the hide grace
     /// window is counting down (WCAG 1.4.13 "hoverable").
     leaving: bool,
@@ -276,6 +280,7 @@ impl Tooltip {
             shown: false,
             popup_id: None,
             last_pointer: None,
+            last_anchor: None,
             leaving: false,
             leave_elapsed_ms: 0,
             popup_hover: Arc::new(AtomicBool::new(false)),
@@ -474,6 +479,7 @@ impl Tooltip {
                 self.hover_elapsed_ms = 0;
                 self.leaving = false;
                 self.leave_elapsed_ms = 0;
+                self.last_anchor = None;
             }
         }
         // The pointer reached the bubble since the last sync — cancel
@@ -483,20 +489,36 @@ impl Tooltip {
             self.leave_elapsed_ms = 0;
         }
         if self.shown && self.popup_id.is_none() {
-            let anchor = self
-                .last_pointer
-                .map(OverlayAnchor::Pointer)
-                .or_else(|| self.trigger_bounds.map(OverlayAnchor::Bounds))
-                .unwrap_or(OverlayAnchor::Pointer(Vec2::ZERO));
+            let anchor = self.current_anchor();
             let mut bubble = TooltipBubble::new(self.text.clone());
             bubble.hover_flag = Arc::clone(&self.popup_hover);
             bubble.text_painter = self.text_painter.clone();
-            self.popup_id = Some(overlay.open(Box::new(bubble), anchor));
+            self.popup_id = Some(overlay.open(Box::new(bubble), anchor.clone()));
+            self.last_anchor = Some(anchor);
         } else if !self.shown {
             if let Some(id) = self.popup_id.take() {
                 overlay.close(id);
             }
+            self.last_anchor = None;
+        } else if let Some(id) = self.popup_id {
+            // Trigger relayout or pointer drift while shown — re-anchor
+            // so the bubble tracks instead of detaching. Guarded on
+            // change so a settled popup doesn't re-mark layout.
+            let anchor = self.current_anchor();
+            if self.last_anchor.as_ref() != Some(&anchor) {
+                overlay.set_anchor(id, anchor.clone());
+                self.last_anchor = Some(anchor);
+            }
         }
+    }
+
+    /// The anchor the popup would open at right now — pointer when
+    /// known, trigger bounds otherwise.
+    fn current_anchor(&self) -> OverlayAnchor {
+        self.last_pointer
+            .map(OverlayAnchor::Pointer)
+            .or_else(|| self.trigger_bounds.map(OverlayAnchor::Bounds))
+            .unwrap_or(OverlayAnchor::Pointer(Vec2::ZERO))
     }
 }
 
@@ -767,6 +789,64 @@ mod tests {
         tip.sync_overlay(&mut overlay);
         assert!(!tip.is_shown());
         assert_eq!(tip.popup_id(), None);
+    }
+
+    #[test]
+    fn open_popup_reanchors_when_trigger_moves() {
+        let mut tip = Tooltip::new(Text::new("t"), "tip");
+        laid_out(&mut tip, Rect::new(10.0, 10.0, 100.0, 40.0));
+        let mut overlay = OverlayLayer::new();
+        overlay.set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+        tip.show();
+        tip.sync_overlay(&mut overlay);
+        let id = tip.popup_id().unwrap();
+        // No pointer seen yet — bounds-anchored.
+        assert_eq!(
+            overlay.entry(id).unwrap().anchor(),
+            &OverlayAnchor::Bounds(Rect::new(10.0, 10.0, 100.0, 40.0))
+        );
+        // Trigger relayout while shown — the bubble must track.
+        let moved = Rect::new(50.0, 80.0, 100.0, 40.0);
+        laid_out(&mut tip, moved);
+        tip.sync_overlay(&mut overlay);
+        assert_eq!(
+            overlay.entry(id).unwrap().anchor(),
+            &OverlayAnchor::Bounds(moved)
+        );
+    }
+
+    #[test]
+    fn open_popup_reanchors_on_pointer_drift() {
+        let mut tip = Tooltip::new(Text::new("t"), "tip");
+        laid_out(&mut tip, Rect::new(10.0, 10.0, 100.0, 40.0));
+        let mut overlay = OverlayLayer::new();
+        overlay.set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+        event(
+            &mut tip,
+            &WidgetEvent::PointerMoved {
+                position: Vec2::new(20.0, 20.0),
+            },
+        );
+        tip.show();
+        tip.sync_overlay(&mut overlay);
+        let id = tip.popup_id().unwrap();
+        // Pointer anchor takes precedence over trigger bounds.
+        assert_eq!(
+            overlay.entry(id).unwrap().anchor(),
+            &OverlayAnchor::Pointer(Vec2::new(20.0, 20.0))
+        );
+        // Pointer drifts while shown — the anchor follows.
+        event(
+            &mut tip,
+            &WidgetEvent::PointerMoved {
+                position: Vec2::new(60.0, 30.0),
+            },
+        );
+        tip.sync_overlay(&mut overlay);
+        assert_eq!(
+            overlay.entry(id).unwrap().anchor(),
+            &OverlayAnchor::Pointer(Vec2::new(60.0, 30.0))
+        );
     }
 
     #[test]

@@ -427,6 +427,12 @@ impl GridPanel {
     /// Like [`row_at`](Self::row_at) but also clones the row's data —
     /// the context menu snapshots cells at press time.
     fn row_snapshot(&self, y: f32) -> Option<(usize, MetricRow)> {
+        // Above `rows_top` a press lands on the column header — with a
+        // fractional scroll offset the clipped top sliver of the first
+        // visible row still hides there, and must not answer the hit.
+        if y < self.rows_top() {
+            return None;
+        }
         // Rows sit at `(first + n)·row_h − render_off` — the same
         // mapping the painter uses, including mid-spring stretch.
         let first = self.table.visible_range().start;
@@ -674,6 +680,11 @@ impl Widget for GridPanel {
             }
             WidgetEvent::FocusLost => {
                 self.focused = false;
+                // The OS can swallow the KeyReleased while we're
+                // unfocused — clear tracked modifiers so a stuck flag
+                // doesn't ghost into the next KeyAction.
+                self.shift_held = false;
+                self.ctrl_held = false;
                 EventResponse::RequestRepaint
             }
             // AT focus/activation requests honour the pending-focus
@@ -2064,4 +2075,146 @@ pub fn fmt_count(n: usize) -> String {
         out.push(c);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use martensite::core::HotNode;
+
+    fn grid() -> GridPanel {
+        GridPanel::new(
+            Signal::new(1.0),
+            Signal::new(String::new()),
+            Signal::new(None),
+        )
+    }
+
+    fn layout_at(w: &mut impl Widget, bounds: Rect) {
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        w.layout(&mut cx, bounds);
+    }
+
+    fn send(w: &mut impl Widget, bounds: Rect, ev: &WidgetEvent) -> EventResponse {
+        let mut cx = EventContext { event: ev, bounds };
+        w.event(&mut cx)
+    }
+
+    /// The paint/hit-test invariant: while the band stretches past the
+    /// boundary the table keeps the clamped offset and `render_offset`
+    /// carries the stretch — and the two converge once the spring
+    /// lands.
+    #[test]
+    fn rubber_band_stretches_while_table_stays_clamped() {
+        let mut p = grid();
+        let bounds = Rect::new(0.0, 0.0, 600.0, 300.0);
+        layout_at(&mut p, bounds);
+        // A wheel fling far past the bottom (negative delta.y scrolls
+        // down — `band.drag(-delta.y)` grows the offset).
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::Scroll {
+                position: Vec2::new(10.0, 200.0),
+                delta: Vec2::new(0.0, -40_000_000.0),
+            },
+        );
+        assert!(!p.band.is_settled());
+        // The visible offset carries the stretch past the table's
+        // clamped offset — paint and hit-testing agree on it.
+        assert!(p.render_offset() > p.table.scroll_offset());
+        // The spring lands back on the boundary and the offsets
+        // converge again.
+        for _ in 0..180 {
+            p.tick(Duration::from_millis(16));
+        }
+        assert!(p.band.is_settled());
+        assert_eq!(p.render_offset(), p.table.scroll_offset());
+    }
+
+    /// Overlay entries never receive `tick` — the menu's entrance
+    /// spring is advanced by the owning `GridPanel::tick` and cleared
+    /// once it settles.
+    #[test]
+    fn menu_entrance_advances_via_owner_tick() {
+        let mut p = grid();
+        layout_at(&mut p, Rect::new(0.0, 0.0, 600.0, 300.0));
+        // Arm the menu as a secondary press does.
+        p.menu_open = true;
+        let mut overlay = OverlayLayer::new();
+        overlay.set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+        p.sync_overlay(&mut overlay);
+        assert!(p.menu_id.is_some());
+        assert!(p.menu_shared.lock().entrance.is_some());
+        // ~180ms settle → well inside 60 16ms frames.
+        for _ in 0..60 {
+            p.tick(Duration::from_millis(16));
+        }
+        assert!(p.menu_shared.lock().entrance.is_none());
+    }
+
+    /// Undo stacks are per-tab: undoing in one tab must not consume
+    /// the other tab's history.
+    #[test]
+    fn undo_history_is_per_tab() {
+        let mut p = EditorPanel::new(Signal::new(1.0));
+        let bounds = Rect::new(0.0, 0.0, 800.0, 400.0);
+        layout_at(&mut p, bounds);
+
+        let type_text = |p: &mut EditorPanel, text: &str| {
+            send(
+                p,
+                bounds,
+                &WidgetEvent::ImeCommitted {
+                    text: text.to_string(),
+                },
+            );
+        };
+        let click_chip = |p: &mut EditorPanel, i: usize| {
+            let (top, bottom) = p.strip_band();
+            let chips = {
+                let mut t = p.text.lock();
+                p.chip_rects(&mut t)
+            };
+            let x = chips[i].0 + chips[i].1 * 0.5;
+            send(
+                p,
+                bounds,
+                &WidgetEvent::PointerPressed {
+                    position: Vec2::new(x, (top + bottom) * 0.5),
+                    button: PointerButton::Primary,
+                },
+            );
+        };
+        let undo = |p: &mut EditorPanel| {
+            send(
+                p,
+                bounds,
+                &WidgetEvent::KeyPressed {
+                    key: "Undo".to_string(),
+                    repeat: false,
+                },
+            );
+        };
+
+        type_text(&mut p, "X");
+        assert!(p.tab_dirty(0));
+        click_chip(&mut p, 1);
+        type_text(&mut p, "Y");
+        assert!(p.tab_dirty(1));
+
+        // Undo on tab 1 restores only that buffer — tab 0's edit is
+        // untouched by a stack it doesn't own.
+        undo(&mut p);
+        assert!(!p.tab_dirty(1));
+        assert!(p.tab_dirty(0));
+
+        click_chip(&mut p, 0);
+        undo(&mut p);
+        assert!(!p.tab_dirty(0));
+    }
 }
