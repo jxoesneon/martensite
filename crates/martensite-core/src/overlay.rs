@@ -765,6 +765,7 @@ impl OverlayLayer {
     /// let press = WidgetEvent::PointerPressed {
     ///     position: Vec2::new(700.0, 500.0),
     ///     button: PointerButton::Primary,
+    ///     count: 1,
     /// };
     /// assert_eq!(layer.dispatch_event(&press), EventResponse::Ignored);
     /// assert!(layer.is_empty());
@@ -978,6 +979,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(700.0, 500.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         assert_eq!(layer.dispatch_event(&press), EventResponse::Ignored);
         assert!(layer.is_empty());
@@ -1000,6 +1002,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: inside,
             button: PointerButton::Primary,
+            count: 1,
         };
         // `DummyWidget` ignores input but the popup swallows the event.
         assert_eq!(layer.dispatch_event(&press), EventResponse::Handled);
@@ -1181,6 +1184,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(b.min_x() + 5.0, b.min_y() + 5.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         assert_eq!(layer.dispatch_event(&press), EventResponse::RequestRepaint);
     }
@@ -1215,6 +1219,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(b.min_x() + 1.0, b.min_y() + 1.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         assert_eq!(layer.dispatch_event(&press), EventResponse::CapturePointer);
 
@@ -1237,6 +1242,7 @@ mod tests {
         let outside = WidgetEvent::PointerPressed {
             position: Vec2::new(700.0, 500.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         assert_eq!(layer.dispatch_event(&outside), EventResponse::Ignored);
         assert!(!layer.is_open(id));

@@ -478,6 +478,7 @@ impl Widget for Slider {
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Primary,
+                ..
             } => {
                 // Rail clicks jump the thumb straight to the press point.
                 self.set_value_from_point(*position);
@@ -636,6 +637,7 @@ mod tests {
         WidgetEvent::PointerPressed {
             position: Vec2::new(x, y),
             button: PointerButton::Primary,
+            count: 1,
         }
     }
 

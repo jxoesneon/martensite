@@ -198,6 +198,7 @@ impl Widget for ContextMenu {
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Primary,
+                ..
             } => {
                 if let Some(idx) = self.item_at(*position) {
                     self.commit(idx);

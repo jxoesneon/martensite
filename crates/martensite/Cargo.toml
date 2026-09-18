@@ -42,6 +42,7 @@ glam = { workspace = true }
 kurbo = { workspace = true }
 taffy = { workspace = true }
 parking_lot = { workspace = true }
+unicode-segmentation = { workspace = true }
 
 [dev-dependencies]
 martensite-test = { workspace = true }

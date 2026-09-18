@@ -540,6 +540,7 @@ impl Widget for RadioGroup {
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Primary,
+                ..
             } => {
                 // Forward to the option under the press via the child
                 // protocol; the option parks an activation, applied
@@ -717,6 +718,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(10.0, 60.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         assert_eq!(event(&mut g, &press), EventResponse::CaptureFocus);
         assert_eq!(g.selected(), 2);

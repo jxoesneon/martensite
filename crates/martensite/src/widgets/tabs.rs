@@ -818,6 +818,7 @@ impl Widget for Tabs {
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Primary,
+                ..
             } => {
                 // Forward through the child protocol: the strip
                 // bounds-gates to the tab under the press (which parks
@@ -1021,6 +1022,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(250.0, 16.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         assert_eq!(event(&mut t, &press), EventResponse::CaptureFocus);
         assert_eq!(t.selected(), 2);

@@ -1540,6 +1540,7 @@ impl WidgetArena {
     /// let event = WidgetEvent::PointerPressed {
     ///     position: Vec2::ZERO,
     ///     button: PointerButton::Primary,
+    ///     count: 1,
     /// };
     /// assert_eq!(arena.dispatch_event(root, &event), EventResponse::Ignored);
     /// ```

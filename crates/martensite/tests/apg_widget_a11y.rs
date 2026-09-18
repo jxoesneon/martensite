@@ -342,6 +342,7 @@ fn press_on_focusable_widget_records_focus_request() {
     let press = WidgetEvent::PointerPressed {
         position: Vec2::new(50.0, 12.0),
         button: PointerButton::Primary,
+        count: 1,
     };
     assert_eq!(
         arena.dispatch_event(root, &press),
@@ -446,6 +447,7 @@ fn overlay_escape_and_outside_press_record_dismissals() {
     let press = WidgetEvent::PointerPressed {
         position: Vec2::new(700.0, 500.0),
         button: PointerButton::Primary,
+        count: 1,
     };
     assert_eq!(
         arena.overlay_mut().dispatch_event(&press),
@@ -471,6 +473,7 @@ fn overlay_lazily_lays_out_fresh_popup_for_hit_testing() {
     let inside = WidgetEvent::PointerPressed {
         position: Vec2::new(20.0, 50.0),
         button: PointerButton::Primary,
+        count: 1,
     };
     assert_ne!(overlay.dispatch_event(&inside), EventResponse::Ignored);
     assert!(

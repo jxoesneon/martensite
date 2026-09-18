@@ -28,6 +28,7 @@
 //! [`HitTester`]: crate::hit_test::HitTester
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use glam::Vec2;
 use martensite_core::{EventResponse, PointerButton, WidgetArena, WidgetEvent, WidgetId};
@@ -233,6 +234,81 @@ pub struct PointerEvent {
     pub button: Option<MouseButton>,
     /// The keyboard modifier keys active at the time of the event.
     pub modifiers: ModifierKeys,
+}
+
+/// The press-to-press interval within which consecutive presses of the
+/// same button on the same pointer continue a multi-click streak.
+/// 500 ms matches the platform defaults (macOS `doubleClickInterval`,
+/// Windows `SM_GETDOUBLECLICKTIME`).
+const CLICK_STREAK_INTERVAL: Duration = Duration::from_millis(500);
+
+/// The maximum distance, in logical px, a press may drift from the
+/// previous press and still continue the streak — the same magnitude
+/// as `SM_CXDOUBLECLK` on Windows.
+const CLICK_STREAK_SLOP: f32 = 4.0;
+
+/// Tracks multi-click streaks per pointer so [`WidgetEvent::PointerPressed`]
+/// can carry a `count` — the framework's equivalent of macOS
+/// `NSEvent.clickCount`, GTK `n_press`, or the web's `MouseEvent.detail`.
+///
+/// A press continues the streak when it shares the previous press's
+/// pointer and button, lands within [`CLICK_STREAK_INTERVAL`] of it,
+/// and stays inside [`CLICK_STREAK_SLOP`]. Anything else restarts the
+/// streak at `1`. The streak intentionally ignores which widget was
+/// hit — platform click counts behave the same way.
+#[derive(Debug, Default)]
+struct ClickTracker {
+    /// The most recent press in the streak, if any.
+    last: Option<ClickStreak>,
+}
+
+/// One registered press in a streak.
+#[derive(Debug)]
+struct ClickStreak {
+    /// The pointer that pressed.
+    pointer_id: PointerId,
+    /// The button that pressed.
+    button: Option<MouseButton>,
+    /// Logical-space position of the press.
+    position: Vec2,
+    /// When the press was registered.
+    at: Instant,
+    /// The streak count that press was assigned.
+    count: u8,
+}
+
+impl ClickTracker {
+    /// Registers `event` and returns its streak count (`1` for a plain
+    /// click). Non-press events never continue a streak and return `1`.
+    fn register(&mut self, event: &PointerEvent) -> u8 {
+        self.register_at(event, Instant::now())
+    }
+
+    /// [`register`](Self::register) with an injectable timestamp so
+    /// tests can drive the streak without sleeping.
+    fn register_at(&mut self, event: &PointerEvent, at: Instant) -> u8 {
+        if event.state != PointerState::Pressed {
+            return 1;
+        }
+        let count = self
+            .last
+            .as_ref()
+            .filter(|l| {
+                l.pointer_id == event.pointer_id
+                    && l.button == event.button
+                    && at.duration_since(l.at) <= CLICK_STREAK_INTERVAL
+                    && l.position.distance(event.position) <= CLICK_STREAK_SLOP
+            })
+            .map_or(1, |l| l.count.saturating_add(1));
+        self.last = Some(ClickStreak {
+            pointer_id: event.pointer_id,
+            button: event.button,
+            position: event.position,
+            at,
+            count,
+        });
+        count
+    }
 }
 
 /// Tracks which widgets have captured pointer input, per pointer.
@@ -534,6 +610,8 @@ pub struct EventRouter {
     /// dispatch — drained by
     /// [`take_focus_request`](Self::take_focus_request).
     pending_focus: Option<WidgetId>,
+    /// Multi-click streak state feeding `PointerPressed::count`.
+    clicks: ClickTracker,
 }
 
 impl EventRouter {
@@ -805,6 +883,9 @@ impl EventRouter {
         window_id: WindowId,
         event: &PointerEvent,
     ) -> Option<EventResponse> {
+        // Register the press with the click tracker before any dispatch
+        // path so popups and window content see the same streak count.
+        let click_count = self.clicks.register(event);
         // Popups in the arena-owned overlay hit-test ahead of window
         // content — unless an arena widget holds pointer capture: a
         // drag that began on window content must keep tracking even
@@ -816,7 +897,7 @@ impl EventRouter {
         if !arena_captured {
             let overlay_response = arena
                 .overlay_mut()
-                .dispatch_event(&widget_event_for_pointer(event));
+                .dispatch_event(&widget_event_for_pointer(event, click_count));
             if overlay_response != EventResponse::Ignored {
                 // The popup consumed the event. Keep the tracked pointer
                 // position fresh but leave hover untouched — the widget
@@ -851,7 +932,7 @@ impl EventRouter {
         }
         let result = match outcome {
             EventDispatchOutcome::Handled(id) => {
-                match arena.dispatch_event_ex(id, &widget_event_for_pointer(event)) {
+                match arena.dispatch_event_ex(id, &widget_event_for_pointer(event, click_count)) {
                     Some((responder, response)) => {
                         match response {
                             EventResponse::CapturePointer => {
@@ -965,15 +1046,18 @@ impl EventRouter {
 }
 
 /// Converts a normalized [`PointerEvent`] into the widget-level
-/// [`WidgetEvent`] vocabulary.
+/// [`WidgetEvent`] vocabulary. `click_count` is the streak value
+/// computed by the router's [`ClickTracker`] for `Pressed` events;
+/// pass `1` for other states.
 #[must_use]
-pub fn widget_event_for_pointer(event: &PointerEvent) -> WidgetEvent {
+pub fn widget_event_for_pointer(event: &PointerEvent, click_count: u8) -> WidgetEvent {
     let position = event.position;
     match event.state {
         PointerState::Moved => WidgetEvent::PointerMoved { position },
         PointerState::Pressed => WidgetEvent::PointerPressed {
             position,
             button: convert_pointer_button(event.button.unwrap_or(MouseButton::Left)),
+            count: click_count,
         },
         PointerState::Released => WidgetEvent::PointerReleased {
             position,
@@ -1492,6 +1576,81 @@ fn button_source_info(
 mod tests {
     use super::*;
     use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, WidgetArena};
+
+    fn press_at(pos: Vec2) -> PointerEvent {
+        PointerEvent {
+            pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
+            position: pos,
+            state: PointerState::Pressed,
+            button: Some(MouseButton::Left),
+            modifiers: ModifierKeys::empty(),
+        }
+    }
+
+    #[test]
+    fn click_streak_increments_within_interval() {
+        let mut tracker = ClickTracker::default();
+        let t0 = Instant::now();
+        let ev = press_at(Vec2::new(10.0, 10.0));
+        assert_eq!(tracker.register_at(&ev, t0), 1);
+        assert_eq!(tracker.register_at(&ev, t0 + Duration::from_millis(200)), 2);
+        assert_eq!(tracker.register_at(&ev, t0 + Duration::from_millis(400)), 3);
+    }
+
+    #[test]
+    fn click_streak_resets_on_interval_slop_button_and_pointer() {
+        let mut tracker = ClickTracker::default();
+        let t0 = Instant::now();
+        let ev = press_at(Vec2::new(10.0, 10.0));
+        assert_eq!(tracker.register_at(&ev, t0), 1);
+
+        // Past the interval → restart.
+        assert_eq!(tracker.register_at(&ev, t0 + Duration::from_secs(1)), 1);
+        // Within the interval but beyond the slop radius → restart.
+        let far = press_at(Vec2::new(10.0 + CLICK_STREAK_SLOP + 1.0, 10.0));
+        assert_eq!(
+            tracker.register_at(
+                &far,
+                t0 + Duration::from_secs(1) + Duration::from_millis(10)
+            ),
+            1
+        );
+        // Different button → restart.
+        let mut right = far;
+        right.button = Some(MouseButton::Right);
+        assert_eq!(
+            tracker.register_at(
+                &right,
+                t0 + Duration::from_secs(1) + Duration::from_millis(20)
+            ),
+            1
+        );
+        // Different pointer → restart.
+        let mut touch = press_at(Vec2::new(10.0 + CLICK_STREAK_SLOP + 1.0, 10.0));
+        touch.pointer_id = PointerId(7);
+        assert_eq!(
+            tracker.register_at(
+                &touch,
+                t0 + Duration::from_secs(1) + Duration::from_millis(30)
+            ),
+            1
+        );
+        // Moves and releases never extend or restart the streak.
+        let mut moved = touch;
+        moved.state = PointerState::Moved;
+        assert_eq!(tracker.register_at(&moved, t0 + Duration::from_secs(2)), 1);
+        // A press within the interval of the last press continues it.
+        assert_eq!(
+            tracker.register_at(
+                &touch,
+                t0 + Duration::from_secs(1) + Duration::from_millis(400)
+            ),
+            2
+        );
+        // One past the interval restarts.
+        assert_eq!(tracker.register_at(&touch, t0 + Duration::from_secs(3)), 1);
+    }
     use winit::dpi::PhysicalPosition;
     use winit::event::{
         ButtonSource, ElementState, FingerId, Force, Modifiers, MouseButton as WinitMouseButton,

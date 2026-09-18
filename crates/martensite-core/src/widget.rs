@@ -313,6 +313,7 @@ impl LayoutContext<'_> {
 /// let press = WidgetEvent::PointerPressed {
 ///     position: Vec2::new(10.0, 20.0),
 ///     button: PointerButton::Primary,
+///     count: 1,
 /// };
 /// assert!(matches!(press, WidgetEvent::PointerPressed { .. }));
 /// ```
@@ -334,6 +335,14 @@ pub enum WidgetEvent {
         position: Vec2,
         /// Which button was pressed.
         button: PointerButton,
+        /// Multi-click streak for this press: `1` for a single click,
+        /// `2` for the second press of a double-click, `3` for a
+        /// triple-click, and so on. The window layer computes the
+        /// streak from press timing and position (same button, same
+        /// pointer, within the platform double-click interval and
+        /// slop radius); widgets use it for word/paragraph selection
+        /// and similar multi-click gestures.
+        count: u8,
     },
     /// A pointer button was released.
     PointerReleased {
@@ -473,6 +482,7 @@ impl WidgetEvent {
     /// let p = WidgetEvent::PointerPressed {
     ///     position: Vec2::new(5.0, 5.0),
     ///     button: PointerButton::Primary,
+    ///     count: 1,
     /// };
     /// assert_eq!(p.position(), Some(Vec2::new(5.0, 5.0)));
     /// assert_eq!(WidgetEvent::FocusGained.position(), None);

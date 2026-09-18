@@ -21,6 +21,7 @@ use martensite_core::widget::{
     Widget, WidgetEvent,
 };
 use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Field background colour.
 const FACE: [u8; 4] = [255, 255, 255, 255];
@@ -38,6 +39,39 @@ const CARET: [u8; 4] = [30, 30, 35, 255];
 const TEXT_PAD_X: f32 = 8.0;
 /// Font size in logical pt for the editable text.
 const FONT_PT: f32 = 14.0;
+
+/// Selection granularity for an in-progress drag — chosen by the
+/// initiating press's click count: single-click drags by character,
+/// double-click drags by word, triple-click (the whole line for a
+/// single-line field) has nothing to extend.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+enum SelectGranularity {
+    /// Extend the selection one insertion boundary at a time.
+    #[default]
+    Char,
+    /// Extend the selection by whole words, keeping the initially
+    /// clicked word fully covered on either drag direction.
+    Word,
+    /// Whole-line selection — a drag cannot extend further in a
+    /// single-line input.
+    Line,
+}
+
+/// The UAX#29 word segment containing byte offset `at` — the run of
+/// letters, the whitespace run, or the punctuation run under the
+/// pointer, matching platform text-field double-click behavior. An
+/// offset at the very end resolves to the last segment.
+fn word_span(text: &str, at: usize) -> (usize, usize) {
+    let mut last = (text.len(), text.len());
+    for (i, seg) in text.split_word_bound_indices() {
+        let end = i + seg.len();
+        if at < end {
+            return (i, end);
+        }
+        last = (i, end);
+    }
+    last
+}
 
 /// A text input widget with a label and editable value.
 ///
@@ -86,6 +120,13 @@ pub struct TextInput {
     shift_held: bool,
     /// Drag-select in progress; the widget holds pointer capture.
     dragging: bool,
+    /// The granularity the current drag selects with — set from the
+    /// initiating press's `count` (single → char, double → word).
+    drag_granularity: SelectGranularity,
+    /// The word selected by the double-click that opened a `Word`
+    /// drag — its far edge becomes the anchor so the initial word
+    /// stays fully covered whichever way the pointer moves.
+    drag_word: Option<(usize, usize)>,
     /// Device pixels per logical point, cached in `layout` — pointer
     /// hit-testing needs it because `EventContext` carries no scale.
     scale: f32,
@@ -117,6 +158,8 @@ impl TextInput {
             selection_anchor: None,
             shift_held: false,
             dragging: false,
+            drag_granularity: SelectGranularity::Char,
+            drag_word: None,
             scale: 1.0,
         }
     }
@@ -492,17 +535,42 @@ impl Widget for TextInput {
             WidgetEvent::PointerPressed {
                 button: PointerButton::Primary,
                 position,
+                count,
             } => {
                 let hit = self.byte_at_position(cx.bounds, position.x);
-                if self.shift_held {
-                    // Shift-click extends from the existing caret.
-                    if self.selection_anchor.is_none() {
-                        self.selection_anchor = Some(self.cursor);
+                match count {
+                    1 => {
+                        if self.shift_held {
+                            // Shift-click extends from the existing caret.
+                            if self.selection_anchor.is_none() {
+                                self.selection_anchor = Some(self.cursor);
+                            }
+                        } else {
+                            self.selection_anchor = None;
+                        }
+                        self.cursor = hit;
+                        self.drag_granularity = SelectGranularity::Char;
+                        self.drag_word = None;
                     }
-                } else {
-                    self.selection_anchor = None;
+                    2 => {
+                        // Double-click selects the whole word segment
+                        // under the pointer — the platform-standard
+                        // gesture `count` exists for.
+                        let (lo, hi) = word_span(&self.value, hit);
+                        self.selection_anchor = Some(lo);
+                        self.cursor = hi;
+                        self.drag_granularity = SelectGranularity::Word;
+                        self.drag_word = Some((lo, hi));
+                    }
+                    _ => {
+                        // Triple-click selects the line — the whole
+                        // value for a single-line input.
+                        self.selection_anchor = Some(0);
+                        self.cursor = self.value.len();
+                        self.drag_granularity = SelectGranularity::Line;
+                        self.drag_word = None;
+                    }
                 }
-                self.cursor = hit;
                 self.dragging = true;
                 // Focus is implicit for FOCUSABLE nodes on handled
                 // presses; capture keeps drag-select tracking outside
@@ -510,16 +578,40 @@ impl Widget for TextInput {
                 EventResponse::CapturePointer
             }
             WidgetEvent::PointerMoved { position } if self.dragging => {
-                if self.selection_anchor.is_none() {
-                    // The press position becomes the anchor — cursor is
-                    // still there on the first move.
-                    self.selection_anchor = Some(self.cursor);
+                let hit = self.byte_at_position(cx.bounds, position.x);
+                match self.drag_granularity {
+                    SelectGranularity::Char => {
+                        if self.selection_anchor.is_none() {
+                            // The press position becomes the anchor —
+                            // cursor is still there on the first move.
+                            self.selection_anchor = Some(self.cursor);
+                        }
+                        self.cursor = hit;
+                    }
+                    SelectGranularity::Word => {
+                        // Extend by whole words: the edge of the
+                        // double-clicked word opposite the drag stays
+                        // anchored, the moving edge snaps to the far
+                        // boundary of the word under the pointer.
+                        let (wlo, whi) = word_span(&self.value, hit);
+                        if let Some((ilo, ihi)) = self.drag_word {
+                            if hit >= ilo {
+                                self.selection_anchor = Some(ilo);
+                                self.cursor = whi;
+                            } else {
+                                self.selection_anchor = Some(ihi);
+                                self.cursor = wlo;
+                            }
+                        }
+                    }
+                    // Whole line already selected — nothing to extend.
+                    SelectGranularity::Line => {}
                 }
-                self.cursor = self.byte_at_position(cx.bounds, position.x);
                 EventResponse::RequestRepaint
             }
             WidgetEvent::PointerReleased { .. } if self.dragging => {
                 self.dragging = false;
+                self.drag_word = None;
                 EventResponse::ReleasePointer
             }
             WidgetEvent::FocusGained => {
@@ -802,6 +894,79 @@ mod tests {
         // Typing replaces the selection.
         input.event(&mut ev(&ime("X")));
         assert_eq!(input.value, "aX");
+    }
+
+    /// Window-space x of a caret boundary — through the same shaped
+    /// painter `byte_at_position` hit-tests with, so test presses land
+    /// inside the intended word.
+    fn click_x(input: &mut TextInput, byte: usize) -> f32 {
+        let p = input
+            .text_painter
+            .get_or_insert_with(crate::text_paint::shared_painter);
+        TEXT_PAD_X + p.caret_x(&input.value, FONT_PT, byte)
+    }
+
+    fn press(input: &mut TextInput, x: f32, count: u8) -> EventResponse {
+        input.event(&mut ev(&WidgetEvent::PointerPressed {
+            position: Vec2::new(x, 12.0),
+            button: PointerButton::Primary,
+            count,
+        }))
+    }
+
+    #[test]
+    fn text_input_double_click_selects_word() {
+        let mut input = TextInput::new("F").value("alpha beta gamma");
+        let x = click_x(&mut input, 8); // inside "beta"
+        assert_eq!(press(&mut input, x, 2), EventResponse::CapturePointer);
+        assert_eq!(input.selected_text(), Some("beta"));
+    }
+
+    #[test]
+    fn text_input_triple_click_selects_all() {
+        let mut input = TextInput::new("F").value("alpha beta gamma");
+        let x = click_x(&mut input, 8);
+        press(&mut input, x, 3);
+        assert_eq!(input.selection(), Some((0, "alpha beta gamma".len())));
+    }
+
+    #[test]
+    fn text_input_double_click_drag_extends_by_word() {
+        let mut input = TextInput::new("F").value("alpha beta gamma");
+        let x = click_x(&mut input, 8); // inside "beta"
+        press(&mut input, x, 2);
+        // Drag left into "alpha" — the whole initial word stays
+        // covered and the selection snaps to word boundaries.
+        let left = click_x(&mut input, 1); // inside "alpha"
+        input.event(&mut ev(&WidgetEvent::PointerMoved {
+            position: Vec2::new(left, 12.0),
+        }));
+        assert_eq!(input.selected_text(), Some("alpha beta"));
+        // Drag back right into "gamma" — anchor flips to the initial
+        // word's leading edge.
+        let right = click_x(&mut input, 14); // inside "gamma"
+        input.event(&mut ev(&WidgetEvent::PointerMoved {
+            position: Vec2::new(right, 12.0),
+        }));
+        assert_eq!(input.selected_text(), Some("beta gamma"));
+        input.event(&mut ev(&WidgetEvent::PointerReleased {
+            position: Vec2::new(right, 12.0),
+            button: PointerButton::Primary,
+        }));
+        assert!(!input.dragging);
+    }
+
+    #[test]
+    fn text_input_single_click_drag_selects_chars() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        let x = click_x(&mut input, 2);
+        press(&mut input, x, 1);
+        let end = click_x(&mut input, 5);
+        input.event(&mut ev(&WidgetEvent::PointerMoved {
+            position: Vec2::new(end, 12.0),
+        }));
+        // Char granularity — a mid-word range, not a snapped word.
+        assert_eq!(input.selected_text(), Some("pha"));
     }
 
     #[test]

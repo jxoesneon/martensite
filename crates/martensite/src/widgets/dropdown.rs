@@ -1230,6 +1230,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(700.0, 500.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         assert_eq!(o.dispatch_event(&press), EventResponse::Ignored);
         dd.sync_overlay(&mut o);
@@ -1252,6 +1253,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(5.0, 5.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         let mut cx = EventContext {
             event: &press,

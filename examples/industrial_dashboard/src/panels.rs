@@ -614,6 +614,7 @@ impl Widget for GridPanel {
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Primary,
+                ..
             } => {
                 let (hdr_top, hdr_bottom) = self.header_band();
                 if position.y >= hdr_top && position.y < hdr_bottom {
@@ -638,6 +639,7 @@ impl Widget for GridPanel {
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Secondary,
+                ..
             } => {
                 // Right-click selects the row under the cursor (standard
                 // context-menu UX) and arms the popup; `sync_overlay`
@@ -1398,6 +1400,20 @@ struct EditorTab {
 /// Per-tab undo-history cap — bounds memory on the snapshot model.
 const UNDO_CAP: usize = 100;
 
+/// Drag-select granularity chosen by the initiating press's click
+/// count — the same convention `TextInput` uses: single-click drags by
+/// character, double by word, triple by line.
+#[derive(Copy, Clone)]
+enum DragGran {
+    /// Extend one cursor position at a time.
+    Char,
+    /// Extend by whole words; the double-clicked word's span is kept
+    /// so its far edge anchors whichever way the pointer moves.
+    Word(Cursor, Cursor),
+    /// Extend by whole lines from the triple-clicked line index.
+    Line(usize),
+}
+
 /// The editor panel: one tab per `SOURCES` document resolved through
 /// `EmbeddedVfs`, a chip strip under the title bar (dirty dot when the
 /// buffer diverges from the VFS bytes, accent underline on the active
@@ -1413,6 +1429,12 @@ pub struct EditorPanel {
     scale: Signal<f32>,
     bounds: Rect,
     focused: bool,
+    /// Shift state for shift-click / shift-arrow selection extension —
+    /// `KeyPressed` carries no modifier field (F17), tracked like
+    /// `TextInput` does.
+    shift_held: bool,
+    /// In-progress drag-select; the panel holds pointer capture.
+    drag: Option<DragGran>,
 }
 
 impl EditorPanel {
@@ -1443,6 +1465,8 @@ impl EditorPanel {
             scale,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
+            shift_held: false,
+            drag: None,
         }
     }
 
@@ -1464,6 +1488,52 @@ impl EditorPanel {
 
     fn tab_mut(&mut self) -> &mut EditorTab {
         &mut self.tabs[self.active]
+    }
+
+    /// Maps a window-space point to the document cursor under it —
+    /// the shared geometry for `PointerPressed` caret placement and
+    /// drag-select extension. `content_top`/`line_h` come from the
+    /// event handler so click geometry and paint geometry agree.
+    fn cursor_at(
+        &self,
+        text: &mut TextPainter,
+        position: Vec2,
+        content_top: f32,
+        line_h: f32,
+    ) -> Cursor {
+        let s = self.s();
+        let line = (self.tab().scroll_top
+            + ((position.y - content_top) / line_h).max(0.0) as usize)
+            .min(self.tab().editor.lines().len().saturating_sub(1));
+        let text_x = position.x - (self.bounds.min_x() + self.gutter_w() + 8.0 * s);
+        let col = text.column_at(&self.tab().editor.lines()[line], 12.0 * s, text_x.max(0.0));
+        Cursor::new(line, col)
+    }
+
+    /// Copies the open selection to the OS clipboard — the same
+    /// `default_platform_clipboard` seam `TextInput` uses. Returns
+    /// whether text was written.
+    fn copy_selection(&self) -> bool {
+        let Some(text) = self.tab().editor.selected_text() else {
+            return false;
+        };
+        let mut cb = martensite::clipboard::default_platform_clipboard();
+        cb.set_contents(&martensite::clipboard::ClipboardItem::new().offer_text(text));
+        true
+    }
+
+    /// Inserts the OS clipboard's text payload at the caret, replacing
+    /// any open selection (the model's `insert` consumes it). One undo
+    /// step, its own run — pastes never coalesce into a typing run.
+    fn paste_clipboard(&mut self, visible: usize) {
+        let cb = martensite::clipboard::default_platform_clipboard();
+        if let Some(bytes) = cb.get_contents(martensite::clipboard::clipboard::MIME_TEXT_PLAIN) {
+            if let Ok(text) = String::from_utf8(bytes) {
+                self.push_undo(false);
+                self.tab_mut().editor.insert(&text);
+                self.ensure_visible(visible);
+            }
+        }
     }
 
     fn kind_color(&self, pal: &Palette, kind: TokenKind) -> [u8; 4] {
@@ -1615,6 +1685,7 @@ impl Widget for EditorPanel {
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Primary,
+                count,
             } => {
                 // Clicks in the title bar focus the panel but never move
                 // the caret.
@@ -1645,22 +1716,89 @@ impl Widget for EditorPanel {
                     }
                     return EventResponse::CaptureFocus;
                 }
-                let line = (self.tab().scroll_top
-                    + ((position.y - content_top) / line_h).max(0.0) as usize)
-                    .min(self.tab().editor.lines().len().saturating_sub(1));
-                let text_x = position.x - (self.bounds.min_x() + self.gutter_w() + 8.0 * s);
-                let col = {
+                let cur = {
                     let mut t = self.text.lock();
-                    let line_str = &self.tab().editor.lines()[line];
-                    t.column_at(line_str, 12.0 * s, text_x.max(0.0))
+                    self.cursor_at(&mut t, *position, content_top, line_h)
                 };
+                let shift = self.shift_held;
                 let tab = self.tab_mut();
                 // A caret move ends the insert run — the next typed
                 // character opens a new undo step.
                 tab.insert_run = false;
-                tab.editor.set_cursors(vec![Cursor::new(line, col)]);
+                match count {
+                    1 => {
+                        if shift {
+                            // Shift-click extends from the anchor.
+                            tab.editor.extend_selection_to(cur);
+                        } else {
+                            tab.editor.set_cursors(vec![cur]);
+                        }
+                        self.drag = Some(DragGran::Char);
+                    }
+                    2 => {
+                        // Double-click selects the word under the
+                        // pointer; its span is kept for word-drag.
+                        let (lo, hi) = tab.editor.word_span_at(cur);
+                        tab.editor.select_word_at(cur);
+                        self.drag = Some(DragGran::Word(lo, hi));
+                    }
+                    _ => {
+                        // Triple-click selects the whole line — the
+                        // paragraph gesture for a line-based editor.
+                        tab.editor.select_line(cur.line);
+                        self.drag = Some(DragGran::Line(cur.line));
+                    }
+                }
                 self.ensure_visible(visible);
-                EventResponse::CaptureFocus
+                EventResponse::CapturePointer
+            }
+            WidgetEvent::PointerMoved { position } if self.drag.is_some() => {
+                let cur = {
+                    let mut t = self.text.lock();
+                    self.cursor_at(&mut t, *position, content_top, line_h)
+                };
+                match self.drag {
+                    Some(DragGran::Char) => {
+                        self.tab_mut().editor.extend_selection_to(cur);
+                    }
+                    Some(DragGran::Word(ilo, ihi)) => {
+                        // Word-drag: the initial word stays covered —
+                        // anchor on its far edge relative to the drag.
+                        let (wlo, whi) = self.tab().editor.word_span_at(cur);
+                        let tab = self.tab_mut();
+                        if cur >= ilo {
+                            tab.editor.set_selection(ilo, whi);
+                        } else {
+                            tab.editor.set_selection(ihi, wlo);
+                        }
+                    }
+                    Some(DragGran::Line(anchor_line)) => {
+                        // Line-drag covers whole lines from the
+                        // triple-clicked line to the pointer's line.
+                        let ed = &mut self.tab_mut().editor;
+                        let end_of = |ed: &CodeEditor, l: usize| {
+                            if l + 1 < ed.lines().len() {
+                                Cursor::new(l + 1, 0)
+                            } else {
+                                Cursor::new(l, ed.lines()[l].chars().count())
+                            }
+                        };
+                        if cur.line >= anchor_line {
+                            let end = end_of(ed, cur.line);
+                            ed.set_selection(Cursor::new(anchor_line, 0), end);
+                        } else {
+                            let end = end_of(ed, anchor_line);
+                            ed.set_selection(Cursor::new(cur.line, 0), end);
+                        }
+                    }
+                    None => {}
+                }
+                self.ensure_visible(visible);
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::PointerReleased { .. } if self.drag.is_some() => {
+                self.drag = None;
+                EventResponse::ReleasePointer
             }
             WidgetEvent::ImeCommitted { text } => {
                 // Printable input only — control chars (Enter/Tab) ride
@@ -1676,16 +1814,36 @@ impl Widget for EditorPanel {
             }
             WidgetEvent::KeyPressed { key, .. } => {
                 match key.as_str() {
+                    "Shift" => self.shift_held = true,
+                    "SelectAll" => self.tab_mut().editor.select_all(),
+                    "Copy" => {
+                        self.copy_selection();
+                    }
+                    "Cut" => {
+                        if self.copy_selection() {
+                            self.push_undo(false);
+                            self.tab_mut().editor.delete_selection();
+                        }
+                    }
+                    "Paste" => self.paste_clipboard(visible),
+                    "Escape" => {
+                        // Collapse an open selection onto its head.
+                        if let Some(cur) = self.tab().editor.cursors().first().copied() {
+                            self.tab_mut().editor.set_cursors(vec![cur]);
+                        }
+                    }
                     "Backspace" => {
                         // A no-op delete (every cursor at 0:0) must not
                         // push a snapshot — and above all must not
-                        // clear the redo stack.
-                        let can_delete = self
-                            .tab()
-                            .editor
-                            .cursors()
-                            .iter()
-                            .any(|c| c.line > 0 || c.column > 0);
+                        // clear the redo stack. An open selection is
+                        // always deletable.
+                        let can_delete = self.tab().editor.selection().is_some()
+                            || self
+                                .tab()
+                                .editor
+                                .cursors()
+                                .iter()
+                                .any(|c| c.line > 0 || c.column > 0);
                         if can_delete {
                             self.push_undo(false);
                             self.tab_mut().editor.delete_backward();
@@ -1704,7 +1862,7 @@ impl Widget for EditorPanel {
                         self.tab_mut().insert_run = false;
                         if let Some(cur) = self.tab().editor.cursors().first().copied() {
                             let lines = self.tab().editor.lines();
-                            let cur = match key.as_str() {
+                            let target = match key.as_str() {
                                 "ArrowLeft" => Cursor::new(cur.line, cur.column.saturating_sub(1)),
                                 "ArrowRight" => Cursor::new(
                                     cur.line,
@@ -1726,12 +1884,32 @@ impl Widget for EditorPanel {
                                 "Home" => Cursor::new(cur.line, 0),
                                 _ => Cursor::new(cur.line, lines[cur.line].chars().count()),
                             };
-                            self.tab_mut().editor.set_cursors(vec![cur]);
+                            let extend = self.shift_held;
+                            let tab = self.tab_mut();
+                            if extend {
+                                // Shift+arrow extends the selection.
+                                tab.editor.extend_selection_to(target);
+                            } else if let Some((lo, hi)) = tab.editor.selection() {
+                                // Plain Left/Right collapse to the
+                                // selection edge instead of stepping —
+                                // the platform convention.
+                                tab.editor.set_cursors(vec![match key.as_str() {
+                                    "ArrowLeft" => lo,
+                                    "ArrowRight" => hi,
+                                    _ => target,
+                                }]);
+                            } else {
+                                tab.editor.set_cursors(vec![target]);
+                            }
                         }
                     }
                     _ => {}
                 }
                 self.ensure_visible(visible);
+                EventResponse::Handled
+            }
+            WidgetEvent::KeyReleased { key } if key == "Shift" => {
+                self.shift_held = false;
                 EventResponse::Handled
             }
             WidgetEvent::FocusGained => {
@@ -1741,8 +1919,11 @@ impl Widget for EditorPanel {
             WidgetEvent::FocusLost => {
                 self.focused = false;
                 // A focus round-trip ends the insert run — typing after
-                // clicking back in is a new undo step.
+                // clicking back in is a new undo step. Shift and any
+                // in-progress drag must not leak past the transition.
                 self.tab_mut().insert_run = false;
+                self.shift_held = false;
+                self.drag = None;
                 EventResponse::RequestRepaint
             }
             // AT focus/activation requests honour the pending-focus
@@ -1865,6 +2046,7 @@ impl Widget for EditorPanel {
         );
 
         let caret = tab.editor.cursors().first().copied();
+        let sel = tab.editor.selection();
         let mut y = content_top;
         for (li, line) in tab.editor.lines().iter().enumerate().skip(tab.scroll_top) {
             if y + line_h > inner.y1 {
@@ -1897,6 +2079,35 @@ impl Widget for EditorPanel {
                     color: self.kind_color(pal, sp.kind),
                 })
                 .collect();
+            // Selection band behind the text — measured with the same
+            // painter and font so the highlight aligns with glyphs.
+            if let Some((sa, sb)) = sel {
+                if li >= sa.line && li <= sb.line {
+                    let len = line.chars().count();
+                    let c0 = if li == sa.line { sa.column.min(len) } else { 0 };
+                    let c1 = if li == sb.line {
+                        sb.column.min(len)
+                    } else {
+                        len
+                    };
+                    if c0 < c1 || li < sb.line {
+                        let p0: String = line.chars().take(c0).collect();
+                        let p1: String = line.chars().take(c1).collect();
+                        let x0 =
+                            inner.x0 + gutter_w + 8.0 * sd + f64::from(text.measure(&p0, font));
+                        let mut x1 =
+                            inner.x0 + gutter_w + 8.0 * sd + f64::from(text.measure(&p1, font));
+                        // The selection continues past EOL (newline
+                        // selected) — the band extends a sliver, the
+                        // platform convention.
+                        if li < sb.line {
+                            x1 = x1.max(x0) + 4.0 * sd;
+                        }
+                        cx.list
+                            .push_fill_rect(krect(x0, y, x1 - x0, line_h), pal.selection_tint());
+                    }
+                }
+            }
             // No wrap — code lines clip at the panel edge like a real
             // editor (horizontal scroll is out of scope for the demo).
             text.push_colored(
@@ -2333,6 +2544,7 @@ mod tests {
                 &WidgetEvent::PointerPressed {
                     position: Vec2::new(x, (top + bottom) * 0.5),
                     button: PointerButton::Primary,
+                    count: 1,
                 },
             );
         };
@@ -2362,6 +2574,81 @@ mod tests {
         click_chip(&mut p, 0);
         undo(&mut p);
         assert!(!p.tab_dirty(0));
+    }
+
+    /// Double-click selects the word under the pointer, triple-click
+    /// selects the line, and a word-drag keeps the initial word
+    /// covered on either side — the platform-standard multi-click
+    /// contract the framework's `count` field exists for.
+    #[test]
+    fn editor_multi_click_selects_word_and_line() {
+        let mut p = EditorPanel::new(Signal::new(1.0));
+        let bounds = Rect::new(0.0, 0.0, 800.0, 400.0);
+        layout_at(&mut p, bounds);
+        let (_, strip_bottom) = p.strip_band();
+        let content_top = strip_bottom + 8.0;
+        let line_h = p.line_h();
+        // Window-space x of a column on a line — the same painter the
+        // panel hit-tests with.
+        let col_x = |p: &mut EditorPanel, line: usize, col: usize| {
+            let mut t = p.text.lock();
+            let prefix: String = p.tab().editor.lines()[line].chars().take(col).collect();
+            bounds.min_x() + p.gutter_w() + 8.0 + t.measure(&prefix, 12.0)
+        };
+        let press = |p: &mut EditorPanel, x: f32, y: f32, count: u8| {
+            send(
+                p,
+                bounds,
+                &WidgetEvent::PointerPressed {
+                    position: Vec2::new(x, y),
+                    button: PointerButton::Primary,
+                    count,
+                },
+            )
+        };
+
+        // Line 2 is `title = "Industrial Workstation"` — double-click
+        // inside "title".
+        let x = col_x(&mut p, 2, 3);
+        let y = content_top + line_h * 2.0 + 2.0;
+        assert_eq!(press(&mut p, x, y, 2), EventResponse::CapturePointer);
+        assert_eq!(p.tab().editor.selected_text().as_deref(), Some("title"));
+
+        // Triple-click on line 1 (`[window]`) selects the line plus
+        // its newline — paragraph semantics.
+        let y1 = content_top + line_h + 2.0;
+        press(&mut p, x, y1, 3);
+        assert_eq!(
+            p.tab().editor.selected_text().as_deref(),
+            Some("[window]\n")
+        );
+
+        // Double-click "title" again, then drag into "Workstation" —
+        // the selection snaps to word boundaries and keeps "title".
+        press(&mut p, x, y, 2);
+        let xw = col_x(&mut p, 2, 20); // inside "Workstation"
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::PointerMoved {
+                position: Vec2::new(xw, y),
+            },
+        );
+        assert_eq!(
+            p.tab().editor.selected_text().as_deref(),
+            // "Workstation" is a word run; the closing quote is a
+            // punctuation span of its own — not part of the selection.
+            Some("title = \"Industrial Workstation"),
+        );
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::PointerReleased {
+                position: Vec2::new(xw, y),
+                button: PointerButton::Primary,
+            },
+        );
+        assert!(p.drag.is_none());
     }
 }
 

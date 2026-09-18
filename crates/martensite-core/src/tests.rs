@@ -1421,6 +1421,7 @@ mod dispatch_paint {
         let event = WidgetEvent::PointerPressed {
             position: Vec2::new(75.0, 25.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         assert_eq!(arena.dispatch_event(id, &event), EventResponse::Handled);
         assert_eq!(a_calls.load(Ordering::SeqCst), 0);
@@ -1430,6 +1431,7 @@ mod dispatch_paint {
         let event = WidgetEvent::PointerPressed {
             position: Vec2::new(10.0, 25.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         assert_eq!(arena.dispatch_event(id, &event), EventResponse::Handled);
         assert_eq!(a_calls.load(Ordering::SeqCst), 1);

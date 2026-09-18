@@ -907,6 +907,7 @@ impl Widget for ScrollView {
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Primary,
+                ..
             } => {
                 if self.vbar_rect.is_some_and(|r| r.contains(*position)) {
                     self.press_bar(true, *position);
@@ -1248,6 +1249,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(track.min_x() + 5.0, thumb.min_y() + 5.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         let mut cx = EventContext {
             event: &press,
@@ -1307,6 +1309,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(10.0, 10.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         let mut cx = EventContext {
             event: &press,
@@ -1356,6 +1359,7 @@ mod tests {
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(10.0, 10.0),
             button: PointerButton::Primary,
+            count: 1,
         };
         let mut cx = EventContext {
             event: &press,
