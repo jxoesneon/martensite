@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   working listbox popup through the arena `OverlayLayer`), and
   `TextInput` feeding the grid's `RowFilter`. `--theme <dark|light|
   system>` boot flag plus a `T` key cycle.
+- **`industrial_dashboard` status-bar locale dropdown** — a `StatusBar`
+  widget in the bottom chrome strip hosting a `Dropdown` of locales
+  (en/es/fr/de) that publishes `Signal<usize>`; `martensite-l10n`
+  Fluent bundles compiled in via `include_str!` localize the status
+  hints, the focused-widget readout (`{ $name }` arg), and the header
+  KPI chips at runtime, with English literals as fallbacks.
 - **`LayoutContext::layout_child`** — lays out an internal child while
   preserving the parent's `FOCUSABLE` flag. Internal children share
   `cx.hot`; a disabled child clearing the flag would otherwise clobber

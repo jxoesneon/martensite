@@ -35,6 +35,10 @@ martensite-wgpu = { workspace = true, features = ["vello"] }
 # Rubber-band overscroll + spring micro-interactions — the same motion
 # crate `ScrollView` dogfoods, driven directly by the panels.
 martensite-motion = { workspace = true }
+# Fluent bundles for the status-bar locale dropdown — en/es/fr/de
+# resources compile in via `include_str!` from `locales/` and switch
+# live through `martensite_l10n::reactive::L10n`.
+martensite-l10n = { workspace = true }
 # winit/wgpu feature pins mirror examples/viewport_showcase — the vendored
 # accesskit_winit fork and the wgpu engine both build against these.
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }

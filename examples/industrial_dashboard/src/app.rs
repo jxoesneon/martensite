@@ -51,12 +51,13 @@ use martensite::devtools::hud::{DiagnosticHud, FrameTiming};
 
 use crate::model::{build_dock_tree, Palette};
 use crate::panels::{fmt_count, EditorPanel, GridPanel, MediaPanel, TelemetryPanel, TITLE_H};
+use crate::statusbar::{build_l10n, StatusBar, LOCALE_CODES, STATUSBAR_W};
 use crate::text::TextPainter;
 use crate::toolbar::{Toolbar, TOOLBAR_H};
 
 /// Header strip height (logical pt × scale), status bar likewise.
 const HEADER_PT: f32 = 52.0;
-const STATUS_PT: f32 = 30.0;
+pub(crate) const STATUS_PT: f32 = 30.0;
 const MARGIN_PT: f32 = 12.0;
 const GAP_PT: f32 = 10.0;
 
@@ -135,6 +136,16 @@ struct App {
     theme_sel: Signal<usize>,
     /// Grid filter text — `GridPanel` folds it into its `RowFilter`.
     filter_text: Signal<String>,
+    /// Fluent catalog backing the status-bar locale dropdown — the
+    /// en/es/fr/de bundles compile in via `include_str!` and the
+    /// chrome labels re-resolve through it on every paint.
+    l10n: martensite_l10n::reactive::L10n,
+    /// Locale selection as a `statusbar::LOCALE_CODES` index — the
+    /// status-bar dropdown writes it, `redraw` applies it.
+    locale_sel: Signal<usize>,
+    /// The `LOCALE_CODES` index last applied to `l10n` — the redraw
+    /// drain compares the signal against it to detect a switch.
+    locale_idx: usize,
     /// Clipboard payload sink — `GridPanel` publishes on a context-menu
     /// commit; `redraw` writes it to the OS clipboard (the platform
     /// backend isn't `Send`, so it stays app-side).
@@ -144,6 +155,9 @@ struct App {
     /// The toolbar strip's arena node (not a dock panel — a fixed band
     /// under the header).
     toolbar: Option<WidgetId>,
+    /// The status strip's arena node — a fixed band at the window
+    /// bottom, positioned by `apply_dock_layout` like the toolbar.
+    statusbar: Option<WidgetId>,
     pal: Palette,
     /// Theme state — the dictionary ships both themes; `choice` is the
     /// selection (System resolves through winit each frame), and the
@@ -198,9 +212,13 @@ impl App {
             tick_ms: Signal::new(100.0f64),
             theme_sel: Signal::new(Self::theme_index(initial_choice)),
             filter_text: Signal::new(String::new()),
+            l10n: build_l10n(),
+            locale_sel: Signal::new(0),
+            locale_idx: 0,
             clipboard_out: Signal::new(None),
             clipboard: martensite_clipboard_platform::native_backend(),
             toolbar: None,
+            statusbar: None,
             pal: Palette::dark(),
             themes: ThemeDictionary::new(),
             theme_choice: initial_choice,
@@ -316,6 +334,23 @@ impl App {
             panels[i] = Some(id);
         }
 
+        // The status strip — last child so it follows the panels in
+        // Tab order and the paint walk; its geometry is a fixed band
+        // at the window bottom (the strip region `dock_area`'s bottom
+        // already reserves), positioned by `apply_dock_layout`.
+        {
+            let mut hot = HotNode::default();
+            hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
+            let mut cold = ColdNode::new(Box::new(StatusBar::new(
+                scale.clone(),
+                self.locale_sel.clone(),
+            )));
+            cold.debug_name = Some("StatusBar");
+            let id = arena.insert(hot, cold);
+            arena.append_child(root, id).expect("append statusbar");
+            self.statusbar = Some(id);
+        }
+
         let ids: Vec<u64> = panels.iter().map(|p| p.unwrap().to_u64()).collect();
         self.dock = build_dock_tree(&ids.try_into().expect("4 panels"));
         self.arena = Some(arena);
@@ -403,6 +438,31 @@ impl App {
             }
         }
 
+        // Status strip at the window bottom — `dock_area`'s `bottom`
+        // already leaves it free, so the band is available for the
+        // locale dropdown. Right-aligned inside the strip at full
+        // strip height — the widget fills this segment itself (the
+        // chrome fill stops at its left edge: chrome paints after
+        // widgets and would cover the dropdown face otherwise).
+        if let Some(id) = self.statusbar {
+            let sb_h = f64::from(STATUS_PT * s);
+            let sb_y = (h - m - sb_h).max(0.0);
+            // Clamp the segment to what's left of the margin so a
+            // too-narrow window degrades to a zero-width widget
+            // instead of an inverted rect.
+            let sb_w = f64::from(STATUSBAR_W * s).min((w - m).max(0.0));
+            let r = Rect::new(
+                (w - m - sb_w).max(m) as f32,
+                sb_y as f32,
+                sb_w as f32,
+                sb_h as f32,
+            );
+            if let Some((hot, cold)) = arena.get_both_mut(id) {
+                hot.bounds = r;
+                cold.widget.layout(&mut LayoutContext { hot, scale: s }, r);
+            }
+        }
+
         // Root covers the window so routing always has a hit target.
         let root = self.root.expect("arena built");
         if let Some(hot) = arena.get_hot_mut(root) {
@@ -461,11 +521,22 @@ impl App {
         let m = MARGIN_PT as f64 * sd;
         let uptime = fmt_uptime(self.started.elapsed().as_secs());
         let drag_preview = self.dock_drag_preview();
-        let focused_name = self
-            .focus
-            .current_focus()
-            .and_then(|id| self.panels.iter().position(|p| *p == Some(id)))
-            .map(|i| self.panel_names[i])
+        // The focus readout names whichever arena node holds focus —
+        // panels by title, the two chrome strips by role, `none`
+        // otherwise (e.g. the transparent root).
+        let focused_id = self.focus.current_focus();
+        let focused_name = focused_id
+            .map(|id| {
+                if let Some(i) = self.panels.iter().position(|p| *p == Some(id)) {
+                    self.panel_names[i]
+                } else if self.toolbar == Some(id) {
+                    "toolbar"
+                } else if self.statusbar == Some(id) {
+                    "status bar"
+                } else {
+                    "none"
+                }
+            })
             .unwrap_or("none");
         let text = &mut self.chrome;
 
@@ -480,15 +551,23 @@ impl App {
         // remaining width instead of a fraction guess. At narrow widths
         // the least important chips drop off (UPTIME, then PROCS) rather
         // than squeezing the title to zero — graceful degradation.
+        // Labels resolve through Fluent so they follow the status-bar
+        // locale dropdown; the English literals stay as fallbacks.
+        let chip =
+            |key: &str, fallback: &str| self.l10n.get(key).unwrap_or_else(|| fallback.to_string());
         let mut kpis = vec![
-            ("UPTIME", uptime, pal.text_muted),
-            ("PROCS", fmt_count(1_000_000), pal.text),
+            (chip("kpi-uptime", "UPTIME"), uptime, pal.text_muted),
+            (chip("kpi-procs", "PROCS"), fmt_count(1_000_000), pal.text),
             (
-                "MEM",
+                chip("kpi-mem", "MEM"),
                 format!("{:.0}%", self.mem.get() * 100.0),
                 pal.accent2,
             ),
-            ("CPU", format!("{:.0}%", self.cpu.get() * 100.0), pal.accent),
+            (
+                chip("kpi-cpu", "CPU"),
+                format!("{:.0}%", self.cpu.get() * 100.0),
+                pal.accent,
+            ),
         ];
         // Least important first — pop until the title keeps ~180pt.
         let min_title_w = 180.0 * sd;
@@ -586,21 +665,41 @@ impl App {
 
         // Status bar.
         let sb_h = STATUS_PT as f64 * sd;
-        let sb_y = h - m - sb_h;
+        let sb_y = (h - m - sb_h).max(0.0);
+        // The fill stops at the StatusBar widget's left edge — chrome
+        // paints after `build_paint_list`, so a full-width fill here
+        // would cover the dropdown face and focus ring. The widget
+        // fills its own segment with the same token.
         list.push_fill_rect(
-            martensite::render::Rect::new(m, sb_y, w - m, sb_y + sb_h),
+            martensite::render::Rect::new(
+                m,
+                sb_y,
+                (w - m - f64::from(STATUSBAR_W * s)).max(m),
+                sb_y + sb_h,
+            ),
             pal.raised,
         );
-        let hints = format!(
-            "Tab focus · drag title to dock · click sort/select · F alerts · Space pause · focus: {focused_name} · {:.1}ms",
-            self.frame_ms
-        );
-        // Reserve room on the right for the devtools label (only when
-        // built with `--features devtools`) so the two never collide.
+        // Hints + focused-widget readout resolve through Fluent so the
+        // strip follows the locale dropdown live; the English literals
+        // stay as fallbacks when a bundle lacks the key.
+        let hints = self.l10n.get("sb-hints").unwrap_or_else(|| {
+            "Tab focus · drag title to dock · click sort/select · F alerts · Space pause"
+                .to_string()
+        });
+        let focus_label = self
+            .l10n
+            .get_with_args("sb-focus", &[("name", focused_name)])
+            .unwrap_or_else(|| format!("focus: {focused_name}"));
+        let hints = format!("{hints} · {focus_label} · {:.1}ms", self.frame_ms);
+        // Reserve room on the right for the locale dropdown (always —
+        // it owns the rightmost `STATUSBAR_W` of the strip) plus the
+        // devtools label (only when built with `--features devtools`)
+        // so the hints never collide with either.
+        let dd_reserve = f64::from(STATUSBAR_W * s) + 8.0 * sd;
         #[cfg(feature = "devtools")]
-        let reserve = 260.0 * sd;
+        let reserve = dd_reserve + 260.0 * sd;
         #[cfg(not(feature = "devtools"))]
-        let reserve = 0.0;
+        let reserve = dd_reserve;
         let hints_w = (w - 2.0 * m - 24.0 * sd - reserve).max(1.0);
         // fit, not wrap — a wrapped second line would overflow the
         // bar's fixed height and collide with nothing to clip it.
@@ -623,7 +722,9 @@ impl App {
             let lw = text.measure(&label, 12.0 * s);
             text.push(
                 list,
-                Point::new(w - m - 12.0 * sd - f64::from(lw), sb_y + 6.0 * sd),
+                // Left of the locale dropdown — the rightmost band is
+                // the widget's, not the label's.
+                Point::new(w - m - dd_reserve - f64::from(lw), sb_y + 6.0 * sd),
                 &label,
                 12.0 * s,
                 pal.accent,
@@ -737,6 +838,18 @@ impl App {
         };
         if wanted != self.theme_choice {
             self.set_theme_choice(wanted);
+        }
+
+        // Locale dropdown → Fluent: the status bar publishes its
+        // `LOCALE_CODES` index; switching re-points the catalog so the
+        // next `paint_chrome` resolves the new bundle. No layout flag
+        // needed — chrome text re-shapes every frame anyway.
+        let idx = self.locale_sel.get().min(LOCALE_CODES.len() - 1);
+        if idx != self.locale_idx {
+            self.locale_idx = idx;
+            self.l10n
+                .set_locale(LOCALE_CODES[idx].parse().expect("valid langid"))
+                .expect("LOCALE_CODES are registered bundles");
         }
 
         // Context menu → OS clipboard: the grid publishes the payload;

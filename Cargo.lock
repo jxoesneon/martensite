@@ -2364,6 +2364,7 @@ dependencies = [
  "martensite-accesskit-winit",
  "martensite-assets",
  "martensite-clipboard-platform",
+ "martensite-l10n",
  "martensite-motion",
  "martensite-wgpu",
  "parking_lot",
