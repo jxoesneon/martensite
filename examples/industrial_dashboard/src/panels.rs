@@ -818,10 +818,16 @@ impl Widget for GridPanel {
             // baseline ≈1·font_px below the block top (line_height =
             // 1.25·font_px → 0.8·lh), and the audit's probe puts the
             // glyph-box top another 0.8·font_px above the baseline — so
-            // visible glyph tops sit at `ty + 0.2·font_px`. When that
-            // reaches the clip edge the runs produce nothing.
+            // the audit's probe box spans `baseline − 0.8·fp ..
+            // baseline + 0.25·fp`, i.e. `ty + 0.2·font_px ..
+            // ty + 1.25·font_px`. When it sits fully past either clip
+            // edge the runs produce nothing — and a record left in the
+            // list also earns a spurious contrast check against
+            // whatever fill it overlaps.
             let font_px = 12.0 * s;
-            if ty + 0.2 * f64::from(font_px) >= rows_bottom {
+            if ty + 0.2 * f64::from(font_px) >= rows_bottom
+                || ty + 1.25 * f64::from(font_px) <= rows_top
+            {
                 continue;
             }
             // Cells: numeric columns right-aligned; status is a chip.
@@ -1153,13 +1159,23 @@ impl Widget for TelemetryPanel {
             y_max: 100.0,
         };
 
-        // Horizontal gridlines at 0/25/50/75/100% with labels.
+        // Horizontal gridlines at 0/25/50/75/100% with labels. Labels
+        // thin out when the plot is squeezed (a docked panel can be
+        // dragged to any height): keep a label only if its text band
+        // clears the previous kept label's band — the gridlines still
+        // all paint.
+        let label_gap = 16.0 * sd;
+        let mut last_label_y = f64::INFINITY;
         for frac in [0.0, 0.25, 0.5, 0.75, 1.0] {
             let y = plot.y1 - frac * plot.height();
             cx.list.push_fill_rect(
                 krect(plot.x0, y, plot.width(), 1.0),
                 Palette::alpha(pal.border, if frac == 0.0 { 255 } else { 110 }),
             );
+            if last_label_y - y < label_gap {
+                continue;
+            }
+            last_label_y = y;
             text.push(
                 cx.list,
                 Point::new(inner.x0 + 2.0 * sd, y - 6.0 * sd),
