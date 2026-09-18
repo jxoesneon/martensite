@@ -36,6 +36,8 @@ const INK_PLACEHOLDER: [u8; 4] = [150, 150, 155, 255];
 const CARET: [u8; 4] = [30, 30, 35, 255];
 /// Horizontal inset for the editable text.
 const TEXT_PAD_X: f32 = 8.0;
+/// Font size in logical pt for the editable text.
+const FONT_PT: f32 = 14.0;
 
 /// A text input widget with a label and editable value.
 ///
@@ -71,6 +73,22 @@ pub struct TextInput {
     /// Whether the input currently holds keyboard focus. Updated by the
     /// `FocusGained`/`FocusLost` widget events.
     focused: bool,
+    /// Caret position as a byte offset into `value` — always a
+    /// char boundary, matching `ShapedGlyph::start`/`end` units so
+    /// shaped hit-testing and caret placement agree exactly.
+    cursor: usize,
+    /// Selection anchor (byte offset). `Some(anchor)` with
+    /// `anchor != cursor` means the byte range between them is
+    /// selected.
+    selection_anchor: Option<usize>,
+    /// Shift state tracked from `KeyPressed`/`KeyReleased` —
+    /// `WidgetEvent::KeyPressed` carries no modifier state (F17).
+    shift_held: bool,
+    /// Drag-select in progress; the widget holds pointer capture.
+    dragging: bool,
+    /// Device pixels per logical point, cached in `layout` — pointer
+    /// hit-testing needs it because `EventContext` carries no scale.
+    scale: f32,
 }
 
 impl TextInput {
@@ -95,6 +113,11 @@ impl TextInput {
             cached_bounds: Rect::default(),
             text_painter: None,
             focused: false,
+            cursor: 0,
+            selection_anchor: None,
+            shift_held: false,
+            dragging: false,
+            scale: 1.0,
         }
     }
 
@@ -111,7 +134,7 @@ impl TextInput {
     #[inline]
     #[must_use]
     pub fn value(mut self, value: impl Into<String>) -> Self {
-        self.value = value.into();
+        self.set_value(value);
         self
     }
 
@@ -180,6 +203,10 @@ impl TextInput {
     #[inline]
     pub fn set_value(&mut self, value: impl Into<String>) {
         self.value = value.into();
+        // Programmatic writes collapse the caret to the end — a stale
+        // byte offset could land mid-char after a shorter write.
+        self.cursor = self.value.len();
+        self.selection_anchor = None;
     }
 
     /// Returns the cached bounds from the last layout pass.
@@ -205,6 +232,214 @@ impl TextInput {
         self.text_painter = Some(painter);
         self
     }
+
+    /// Selected byte range `(start, end)`, or `None` when the caret is
+    /// collapsed.
+    fn selection(&self) -> Option<(usize, usize)> {
+        let anchor = self.selection_anchor?;
+        (anchor != self.cursor).then(|| (anchor.min(self.cursor), anchor.max(self.cursor)))
+    }
+
+    /// The currently selected text, if any.
+    fn selected_text(&self) -> Option<&str> {
+        self.selection().map(|(lo, hi)| &self.value[lo..hi])
+    }
+
+    /// Removes the selected range, leaving the caret at its start.
+    /// Returns whether anything was deleted.
+    fn delete_selection(&mut self) -> bool {
+        let Some((lo, hi)) = self.selection() else {
+            return false;
+        };
+        self.value.drain(lo..hi);
+        self.cursor = lo;
+        self.selection_anchor = None;
+        true
+    }
+
+    /// Inserts `text` at the caret, replacing any selection. Newlines
+    /// are stripped — this is a single-line field.
+    fn insert_str(&mut self, text: &str) {
+        self.delete_selection();
+        let clean: String = text.chars().filter(|c| *c != '\n' && *c != '\r').collect();
+        self.value.insert_str(self.cursor, &clean);
+        self.cursor += clean.len();
+    }
+
+    /// Moves the caret to `pos` (clamped). With `extend`, the range
+    /// from the previous caret becomes the selection anchor;
+    /// otherwise any selection collapses.
+    fn set_caret(&mut self, pos: usize, extend: bool) {
+        if extend {
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(self.cursor);
+            }
+        } else {
+            self.selection_anchor = None;
+        }
+        self.cursor = pos.min(self.value.len());
+    }
+
+    fn caret_left(&mut self, extend: bool) {
+        // Collapse to the selection's left edge rather than stepping.
+        if !extend {
+            if let Some((lo, _)) = self.selection() {
+                self.selection_anchor = None;
+                self.cursor = lo;
+                return;
+            }
+        }
+        let prev = self.value[..self.cursor]
+            .chars()
+            .next_back()
+            .map_or(0, |c| self.cursor - c.len_utf8());
+        self.set_caret(prev, extend);
+    }
+
+    fn caret_right(&mut self, extend: bool) {
+        if !extend {
+            if let Some((_, hi)) = self.selection() {
+                self.selection_anchor = None;
+                self.cursor = hi;
+                return;
+            }
+        }
+        let next = self.value[self.cursor..]
+            .chars()
+            .next()
+            .map_or(self.value.len(), |c| self.cursor + c.len_utf8());
+        self.set_caret(next, extend);
+    }
+
+    fn backspace(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
+        if let Some(c) = self.value[..self.cursor].chars().next_back() {
+            let start = self.cursor - c.len_utf8();
+            self.value.drain(start..self.cursor);
+            self.cursor = start;
+        }
+    }
+
+    fn delete_forward(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
+        if let Some(c) = self.value[self.cursor..].chars().next() {
+            self.value.drain(self.cursor..self.cursor + c.len_utf8());
+        }
+    }
+
+    /// Writes the selection to the OS clipboard (no-op when nothing
+    /// is selected). A fresh backend is constructed per call — the
+    /// platform clipboard objects are not `Send` and cannot live on
+    /// the widget (`Widget: Send + Sync`).
+    fn copy_selection(&self) {
+        if let Some(text) = self.selected_text() {
+            let mut cb = martensite_clipboard::default_platform_clipboard();
+            cb.set_contents(&martensite_clipboard::ClipboardItem::new().offer_text(text));
+        }
+    }
+
+    /// Inserts the OS clipboard's text payload at the caret (no-op
+    /// when the clipboard holds none).
+    fn paste_clipboard(&mut self) {
+        let cb = martensite_clipboard::default_platform_clipboard();
+        if let Some(bytes) = cb.get_contents(martensite_clipboard::clipboard::MIME_TEXT_PLAIN) {
+            let text = String::from_utf8_lossy(&bytes);
+            self.insert_str(&text);
+        }
+    }
+
+    /// Byte offset of the insertion boundary nearest device-pixel `x`
+    /// in window space. Shapes through the widget's painter so clicks
+    /// land exactly where the glyphs are — the painter is created
+    /// lazily so inputs that are never clicked skip the font scan.
+    fn byte_at_position(&mut self, bounds: Rect, x: f32) -> usize {
+        let text_x = bounds.origin.x + TEXT_PAD_X * self.scale;
+        let painter = self
+            .text_painter
+            .get_or_insert_with(crate::text_paint::shared_painter);
+        painter.byte_at(&self.value, FONT_PT * self.scale, x - text_x)
+    }
+
+    /// Device-pixel offset of the caret boundary at `byte_idx`, from
+    /// the same painter that emits the glyphs. Falls back to the
+    /// per-char estimate only when no shaped painter exists at all
+    /// (placeholder `DrawText` path, which is itself approximate).
+    fn offset_x(&self, cx: &PaintContext, byte_idx: usize, font_px: f32) -> f32 {
+        if let Some(p) = &self.text_painter {
+            return p.caret_x(&self.value, font_px, byte_idx);
+        }
+        if let Some(p) = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter) {
+            if let Some(w) = p.measure_text(&self.value[..byte_idx], font_px) {
+                return w;
+            }
+        }
+        self.value[..byte_idx].chars().count() as f32 * cx.pt(7.0)
+    }
+
+    /// Keyboard handling for the focused input. `key` is the logical
+    /// key name — plain characters arrive via `ImeCommitted`, while
+    /// chords like Cmd+A arrive as the synthetic names
+    /// `"SelectAll"`/`"Cut"`/`"Copy"`/`"Paste"` that the window layer
+    /// dispatches (see the example's chord synthesis).
+    fn key_pressed(&mut self, key: &str) -> EventResponse {
+        match key {
+            "Shift" => {
+                self.shift_held = true;
+                EventResponse::Handled
+            }
+            "ArrowLeft" => {
+                self.caret_left(self.shift_held);
+                EventResponse::RequestRepaint
+            }
+            "ArrowRight" => {
+                self.caret_right(self.shift_held);
+                EventResponse::RequestRepaint
+            }
+            "Home" => {
+                self.set_caret(0, self.shift_held);
+                EventResponse::RequestRepaint
+            }
+            "End" => {
+                self.set_caret(self.value.len(), self.shift_held);
+                EventResponse::RequestRepaint
+            }
+            "SelectAll" => {
+                self.selection_anchor = Some(0);
+                self.cursor = self.value.len();
+                EventResponse::RequestRepaint
+            }
+            "Copy" => {
+                self.copy_selection();
+                EventResponse::Handled
+            }
+            "Cut" if !self.read_only => {
+                self.copy_selection();
+                self.delete_selection();
+                EventResponse::RequestRepaint
+            }
+            "Paste" if !self.read_only => {
+                self.paste_clipboard();
+                EventResponse::RequestRepaint
+            }
+            "Backspace" if !self.read_only => {
+                self.backspace();
+                EventResponse::RequestRepaint
+            }
+            "Delete" if !self.read_only => {
+                self.delete_forward();
+                EventResponse::RequestRepaint
+            }
+            "Escape" if self.selection().is_some() => {
+                self.selection_anchor = None;
+                EventResponse::RequestRepaint
+            }
+            _ => EventResponse::Ignored,
+        }
+    }
 }
 
 impl Widget for TextInput {
@@ -217,6 +452,7 @@ impl Widget for TextInput {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        self.scale = cx.scale;
         // Declare keyboard focusability on the arena node — standalone
         // inputs need it for `ImeCommitted` delivery.
         if self.enabled {
@@ -249,23 +485,57 @@ impl Widget for TextInput {
         match cx.event {
             WidgetEvent::PointerPressed {
                 button: PointerButton::Primary,
-                ..
-            } => EventResponse::CaptureFocus,
+                position,
+            } => {
+                let hit = self.byte_at_position(cx.bounds, position.x);
+                if self.shift_held {
+                    // Shift-click extends from the existing caret.
+                    if self.selection_anchor.is_none() {
+                        self.selection_anchor = Some(self.cursor);
+                    }
+                } else {
+                    self.selection_anchor = None;
+                }
+                self.cursor = hit;
+                self.dragging = true;
+                // Focus is implicit for FOCUSABLE nodes on handled
+                // presses; capture keeps drag-select tracking outside
+                // the bounds.
+                EventResponse::CapturePointer
+            }
+            WidgetEvent::PointerMoved { position } if self.dragging => {
+                if self.selection_anchor.is_none() {
+                    // The press position becomes the anchor — cursor is
+                    // still there on the first move.
+                    self.selection_anchor = Some(self.cursor);
+                }
+                self.cursor = self.byte_at_position(cx.bounds, position.x);
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::PointerReleased { .. } if self.dragging => {
+                self.dragging = false;
+                EventResponse::ReleasePointer
+            }
             WidgetEvent::FocusGained => {
                 self.focused = true;
                 EventResponse::RequestRepaint
             }
             WidgetEvent::FocusLost => {
                 self.focused = false;
+                // The OS can swallow key releases on focus transitions —
+                // don't leak a stuck Shift or drag into the next focus.
+                self.shift_held = false;
+                self.dragging = false;
                 EventResponse::RequestRepaint
             }
             WidgetEvent::ImeCommitted { text } if !self.read_only => {
-                self.value.push_str(text);
+                self.insert_str(text);
                 EventResponse::RequestRepaint
             }
-            WidgetEvent::KeyPressed { key, .. } if !self.read_only && key == "Backspace" => {
-                self.value.pop();
-                EventResponse::RequestRepaint
+            WidgetEvent::KeyPressed { key, .. } => self.key_pressed(key),
+            WidgetEvent::KeyReleased { key } if key == "Shift" => {
+                self.shift_held = false;
+                EventResponse::Handled
             }
             _ => EventResponse::Ignored,
         }
@@ -293,9 +563,29 @@ impl Widget for TextInput {
 
         // `DrawText` positions by the text run's top edge — centre the
         // 14 pt font box within the field.
-        let font_px = cx.pt(14.0);
+        let font_px = cx.pt(FONT_PT);
         let text_y = b.origin.y + (b.size.y - font_px) / 2.0;
         let text_x = b.origin.x + cx.pt(TEXT_PAD_X);
+
+        // Selection highlight behind the text — same shaped offsets
+        // the caret uses, so the band aligns with the glyphs.
+        if self.focused {
+            if let Some((lo, hi)) = self.selection() {
+                let x0 = f64::from(text_x + self.offset_x(cx, lo, font_px));
+                let x1 = f64::from(text_x + self.offset_x(cx, hi, font_px));
+                let accent = cx.color(TokenKey::AccentColor, EDGE_FOCUSED);
+                cx.list.push_fill_rect(
+                    kurbo::Rect::new(
+                        x0,
+                        f64::from(b.origin.y + cx.pt(3.0)),
+                        x1,
+                        f64::from(b.max_y()) - cx.ptf(3.0),
+                    ),
+                    [accent[0], accent[1], accent[2], 96],
+                );
+            }
+        }
+
         if self.value.is_empty() {
             crate::text_paint::paint_label(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
@@ -316,10 +606,11 @@ impl Widget for TextInput {
             );
         }
 
-        // End-of-text caret — approximate x advance at 7 px per
-        // character until real shaping lands in this widget.
+        // Caret at the shaped boundary for `self.cursor` — measured
+        // through the same shape pass as the painted glyphs, so it
+        // cannot drift on mixed-width text.
         if self.focused {
-            let caret_x = f64::from(text_x + self.value.chars().count() as f32 * cx.pt(7.0));
+            let caret_x = f64::from(text_x + self.offset_x(cx, self.cursor, font_px));
             let top = f64::from(b.origin.y + cx.pt(4.0));
             let mut caret = kurbo::BezPath::new();
             caret.move_to((caret_x, top));
@@ -438,6 +729,142 @@ mod tests {
         let cloned = input.clone();
         assert_eq!(input.label, cloned.label);
         assert_eq!(input.value, cloned.value);
+    }
+
+    fn ev<'a>(event: &'a WidgetEvent) -> EventContext<'a> {
+        EventContext {
+            event,
+            bounds: Rect::new(0.0, 0.0, 200.0, 24.0),
+        }
+    }
+
+    fn ime(text: &str) -> WidgetEvent {
+        WidgetEvent::ImeCommitted {
+            text: text.to_string(),
+        }
+    }
+
+    fn key(name: &str) -> WidgetEvent {
+        WidgetEvent::KeyPressed {
+            key: name.to_string(),
+            repeat: false,
+        }
+    }
+
+    #[test]
+    fn text_input_ime_inserts_at_caret() {
+        let mut input = TextInput::new("F");
+        input.event(&mut ev(&ime("abc")));
+        input.event(&mut ev(&key("ArrowLeft")));
+        input.event(&mut ev(&key("ArrowLeft")));
+        input.event(&mut ev(&ime("X")));
+        assert_eq!(input.value, "aXbc");
+        assert_eq!(input.cursor, 2);
+    }
+
+    #[test]
+    fn text_input_backspace_and_delete() {
+        let mut input = TextInput::new("F").value("abc");
+        input.event(&mut ev(&key("ArrowLeft")));
+        input.event(&mut ev(&key("Backspace")));
+        assert_eq!(input.value, "ac");
+        input.event(&mut ev(&key("Home")));
+        input.event(&mut ev(&key("Delete")));
+        assert_eq!(input.value, "c");
+    }
+
+    #[test]
+    fn text_input_select_all_then_type_replaces() {
+        let mut input = TextInput::new("F").value("abc");
+        input.event(&mut ev(&key("SelectAll")));
+        assert_eq!(input.selection(), Some((0, 3)));
+        input.event(&mut ev(&ime("z")));
+        assert_eq!(input.value, "z");
+        assert_eq!(input.selection(), None);
+        assert_eq!(input.cursor, 1);
+    }
+
+    #[test]
+    fn text_input_shift_arrows_extend_selection() {
+        let mut input = TextInput::new("F").value("abc");
+        input.event(&mut ev(&key("Shift")));
+        input.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(input.selection(), Some((2, 3)));
+        input.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(input.selection(), Some((1, 3)));
+        // Typing replaces the selection.
+        input.event(&mut ev(&ime("X")));
+        assert_eq!(input.value, "aX");
+    }
+
+    #[test]
+    fn text_input_arrows_collapse_selection() {
+        let mut input = TextInput::new("F").value("abc");
+        input.event(&mut ev(&key("SelectAll")));
+        input.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(input.cursor, 0);
+        assert_eq!(input.selection(), None);
+        input.event(&mut ev(&key("SelectAll")));
+        input.event(&mut ev(&key("ArrowRight")));
+        assert_eq!(input.cursor, 3);
+        assert_eq!(input.selection(), None);
+    }
+
+    #[test]
+    fn text_input_backspace_deletes_selection() {
+        let mut input = TextInput::new("F").value("abc");
+        input.event(&mut ev(&key("SelectAll")));
+        input.event(&mut ev(&key("Backspace")));
+        assert_eq!(input.value, "");
+        assert_eq!(input.cursor, 0);
+    }
+
+    #[test]
+    fn text_input_escape_clears_selection() {
+        let mut input = TextInput::new("F").value("abc");
+        input.event(&mut ev(&key("SelectAll")));
+        input.event(&mut ev(&key("Escape")));
+        assert_eq!(input.selection(), None);
+        assert_eq!(input.cursor, 3);
+    }
+
+    #[test]
+    fn text_input_home_end() {
+        let mut input = TextInput::new("F").value("abc");
+        input.event(&mut ev(&key("Home")));
+        assert_eq!(input.cursor, 0);
+        input.event(&mut ev(&key("End")));
+        assert_eq!(input.cursor, 3);
+    }
+
+    #[test]
+    fn text_input_set_value_resets_caret() {
+        let mut input = TextInput::new("F").value("abcdef");
+        input.event(&mut ev(&key("Home")));
+        input.set_value("xy");
+        assert_eq!(input.cursor, 2);
+        assert_eq!(input.selection(), None);
+    }
+
+    #[test]
+    fn text_input_read_only_blocks_edits() {
+        let mut input = TextInput::new("F").value("abc").read_only(true);
+        input.event(&mut ev(&ime("X")));
+        input.event(&mut ev(&key("Backspace")));
+        input.event(&mut ev(&key("Paste")));
+        input.event(&mut ev(&key("Cut")));
+        assert_eq!(input.value, "abc");
+        // …but selection and cursor movement still work.
+        input.event(&mut ev(&key("SelectAll")));
+        assert_eq!(input.selection(), Some((0, 3)));
+    }
+
+    #[test]
+    fn text_input_insert_strips_newlines() {
+        let mut input = TextInput::new("F");
+        input.event(&mut ev(&ime("a\nb\rc")));
+        assert_eq!(input.value, "abc");
+        assert_eq!(input.cursor, 3);
     }
 
     #[test]

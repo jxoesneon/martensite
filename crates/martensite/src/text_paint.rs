@@ -100,6 +100,79 @@ impl TextPainter {
         end
     }
 
+    /// Device-pixel x of the insertion boundary before `byte_idx`,
+    /// derived from one shape pass over the whole text so kerning and
+    /// ligature context agree with `push` — this is the caret position
+    /// for that byte offset. `byte_idx` is clamped to `text.len()`;
+    /// boundaries inside a multi-byte cluster interpolate within the
+    /// cluster's glyph. Assumes a single LTR line (text inputs, labels).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::TextPainter;
+    ///
+    /// let mut p = TextPainter::new();
+    /// let w = p.measure("hi", 14.0);
+    /// assert!((p.caret_x("hi", 14.0, 2) - w).abs() < 1.0);
+    /// ```
+    pub fn caret_x(&mut self, text: &str, size: f32, byte_idx: usize) -> f32 {
+        let byte_idx = byte_idx.min(text.len());
+        let Some(line) = shape_text(self.fonts(), text, size, size * 1.25, None)
+            .into_iter()
+            .next()
+        else {
+            return 0.0;
+        };
+        let mut right_edge = 0.0f32;
+        for g in &line.glyphs {
+            if g.start >= byte_idx {
+                // First glyph at or after the boundary — its left edge
+                // is where the next character would begin.
+                return g.x;
+            }
+            if g.end > byte_idx {
+                // Boundary inside a cluster (e.g. a ligature) —
+                // interpolate so round-tripping `byte_at` stays stable.
+                let span = (g.end - g.start).max(1) as f32;
+                return g.x + g.w * (byte_idx - g.start) as f32 / span;
+            }
+            right_edge = right_edge.max(g.x + g.w);
+        }
+        right_edge
+    }
+
+    /// Byte offset of the insertion boundary nearest device-pixel `x`,
+    /// the inverse of [`caret_x`](Self::caret_x) — click and drag
+    /// hit-testing. Always returns a boundary between clusters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::TextPainter;
+    ///
+    /// let mut p = TextPainter::new();
+    /// assert_eq!(p.byte_at("hi", 14.0, -10.0), 0);
+    /// assert_eq!(p.byte_at("hi", 14.0, 10_000.0), 2);
+    /// ```
+    pub fn byte_at(&mut self, text: &str, size: f32, x: f32) -> usize {
+        let Some(line) = shape_text(self.fonts(), text, size, size * 1.25, None)
+            .into_iter()
+            .next()
+        else {
+            return 0;
+        };
+        for g in &line.glyphs {
+            if x < g.x + g.w * 0.5 {
+                return g.start.min(text.len());
+            }
+            if x < g.x + g.w {
+                return g.end.min(text.len());
+            }
+        }
+        text.len()
+    }
+
     /// Shapes `text` and emits `DrawGlyphRun` commands; returns the y
     /// coordinate of the rendered block's bottom so callers can stack
     /// text without colliding. `origin` is the top-left of the block.
@@ -165,6 +238,53 @@ impl TextPainter {
     }
 }
 
+impl SharedTextPainter {
+    /// Advance width of `text` at `size` device pixels — see
+    /// [`TextPainter::measure`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::shared_painter;
+    ///
+    /// let p = shared_painter();
+    /// assert!(p.measure("hi", 14.0) >= 0.0);
+    /// ```
+    pub fn measure(&self, text: &str, size: f32) -> f32 {
+        self.0.lock().measure(text, size)
+    }
+
+    /// Device-pixel x of the insertion boundary before `byte_idx` —
+    /// see [`TextPainter::caret_x`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::shared_painter;
+    ///
+    /// let p = shared_painter();
+    /// assert_eq!(p.caret_x("", 14.0, 0), 0.0);
+    /// ```
+    pub fn caret_x(&self, text: &str, size: f32, byte_idx: usize) -> f32 {
+        self.0.lock().caret_x(text, size, byte_idx)
+    }
+
+    /// Byte offset of the insertion boundary nearest device-pixel `x`
+    /// — see [`TextPainter::byte_at`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::shared_painter;
+    ///
+    /// let p = shared_painter();
+    /// assert_eq!(p.byte_at("hi", 14.0, 10_000.0), 2);
+    /// ```
+    pub fn byte_at(&self, text: &str, size: f32, x: f32) -> usize {
+        self.0.lock().byte_at(text, size, x)
+    }
+}
+
 /// `SharedTextPainter` satisfies the core [`TextShaper`] seam —
 /// widgets use it as their explicit painter, and
 /// [`martensite_core::WidgetArena::set_text_painter`] stores one as the
@@ -179,6 +299,10 @@ impl martensite_core::paint::TextShaper for SharedTextPainter {
         color: [u8; 4],
     ) {
         self.0.lock().push(list, origin, text, size_px, color, None);
+    }
+
+    fn measure_text(&self, text: &str, size_px: f32) -> Option<f32> {
+        Some(self.0.lock().measure(text, size_px))
     }
 }
 
@@ -235,5 +359,44 @@ mod tests {
         let mut list = PaintList::new();
         p.push(&mut list, Point::new(0.0, 0.0), "x", 0.0, [255; 4], None);
         assert!(list.commands.is_empty());
+    }
+
+    #[test]
+    fn caret_x_matches_measure_at_end() {
+        let mut p = TextPainter::new();
+        let text = "mixed Width iiWWwww";
+        let w = p.measure(text, 14.0);
+        let end = p.caret_x(text, 14.0, text.len());
+        // The caret past the last glyph sits at the run's advance —
+        // the property the old 7px/char estimate violated on
+        // mixed-width text.
+        assert!((end - w).abs() < 0.5, "caret {end} vs measure {w}");
+    }
+
+    #[test]
+    fn caret_x_is_monotonic() {
+        let mut p = TextPainter::new();
+        let text = "iiiiWWWW";
+        let mut prev = -1.0f32;
+        for b in 0..=text.len() {
+            let x = p.caret_x(text, 14.0, b);
+            assert!(x >= prev, "caret moved backwards at byte {b}");
+            prev = x;
+        }
+    }
+
+    #[test]
+    fn byte_at_roundtrips_caret_x() {
+        let mut p = TextPainter::new();
+        // No common ligatures here — every byte boundary is a real
+        // cluster boundary, so caret_x inverts exactly.
+        let text = "aXgTm";
+        for b in 0..=text.len() {
+            let x = p.caret_x(text, 14.0, b);
+            assert_eq!(p.byte_at(text, 14.0, x), b, "round-trip at {b}");
+        }
+        // Clamping outside the run.
+        assert_eq!(p.byte_at(text, 14.0, -100.0), 0);
+        assert_eq!(p.byte_at(text, 14.0, 100_000.0), text.len());
     }
 }

@@ -1375,6 +1375,16 @@ pub trait TextShaper {
         size_px: f32,
         color: [u8; 4],
     );
+
+    /// Advance width of `text` at `size_px` in device pixels, measured
+    /// through the same shaping pipeline as
+    /// [`paint_shaped_text`](Self::paint_shaped_text). Implementations
+    /// that cannot measure return `None`; callers use the result for
+    /// caret placement and hit-testing that must agree with painted
+    /// glyph advances.
+    fn measure_text(&self, _text: &str, _size_px: f32) -> Option<f32> {
+        None
+    }
 }
 
 #[cfg(test)]

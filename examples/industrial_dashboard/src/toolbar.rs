@@ -56,6 +56,11 @@ pub struct Toolbar {
     /// Press armed inside the pause button — the Button facade keeps no
     /// pressed state, so the parent tracks the press/release pair.
     pause_armed: bool,
+    /// Child currently holding a pointer press. While set, positional
+    /// events forward to it regardless of hit position — captured
+    /// drags (slider thumb, text-input drag-select) leave every child
+    /// rect and would otherwise be dropped by the hit test.
+    press_target: Option<usize>,
     pause: Button,
     glow: CheckBox,
     tick: Slider,
@@ -95,6 +100,7 @@ impl Toolbar {
             focused: false,
             key_target: None,
             pause_armed: false,
+            press_target: None,
             pause: Button::new("Pause").tooltip("pause telemetry (Space in Telemetry works too)"),
             glow: CheckBox::new("glow").checked(true),
             tick: Slider::new(20.0, 500.0)
@@ -230,13 +236,16 @@ impl Widget for Toolbar {
             }
             _ if cx.event.position().is_some() => {
                 let pos = cx.event.position().expect("checked");
-                let mut hit = None;
-                for i in (0..N).rev() {
-                    if self.rects[i].contains(pos) {
-                        hit = Some(i);
-                        break;
-                    }
-                }
+                // A held press keeps the event stream: drag moves and
+                // the release forward to `press_target` even when the
+                // pointer leaves every child rect. Everything else
+                // hit-tests topmost-first.
+                let hit = if matches!(cx.event, WidgetEvent::PointerPressed { .. }) {
+                    (0..N).rev().find(|&i| self.rects[i].contains(pos))
+                } else {
+                    self.press_target
+                        .or_else(|| (0..N).rev().find(|&i| self.rects[i].contains(pos)))
+                };
                 let Some(i) = hit else {
                     return EventResponse::Ignored;
                 };
@@ -244,6 +253,7 @@ impl Widget for Toolbar {
                 // moves the TextInput's FocusGained/Lost with it.
                 if matches!(cx.event, WidgetEvent::PointerPressed { .. }) {
                     self.key_target = Some(i);
+                    self.press_target = Some(i);
                     self.pause_armed = i == PAUSE;
                     let focus_ev = if i == FILTER {
                         WidgetEvent::FocusGained
@@ -266,8 +276,16 @@ impl Widget for Toolbar {
                     .child_mut_at(i)
                     .map(|c| c.event(&mut child_cx))
                     .unwrap_or(EventResponse::Ignored);
+                // The release ends the hold after the child sees it —
+                // the child needs it to answer `ReleasePointer`.
+                if matches!(cx.event, WidgetEvent::PointerReleased { .. }) {
+                    self.press_target = None;
+                }
                 // Pause is a stateless Button — the click is ours to
-                // interpret: armed press + release inside toggles it.
+                // interpret: armed press + release *inside* toggles it.
+                // `press_target` routing now delivers outside releases
+                // too, so the bounds check is explicit; either way the
+                // release disarms the press.
                 if i == PAUSE
                     && self.pause_armed
                     && matches!(
@@ -278,8 +296,10 @@ impl Widget for Toolbar {
                         }
                     )
                 {
-                    let now = !self.paused.get();
-                    self.paused.set(now);
+                    if self.rects[PAUSE].contains(pos) {
+                        let now = !self.paused.get();
+                        self.paused.set(now);
+                    }
                     self.pause_armed = false;
                 }
                 r

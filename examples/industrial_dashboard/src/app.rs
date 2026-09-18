@@ -1331,12 +1331,14 @@ impl ApplicationHandler for App {
                     return;
                 }
                 // Cmd/Ctrl+Z → "Undo", +Shift → "Redo", Ctrl+Y →
-                // "Redo". `WidgetEvent::KeyPressed` carries no modifier
+                // "Redo", plus the text-editing set A/X/C/V →
+                // "SelectAll"/"Cut"/"Copy"/"Paste".
+                // `WidgetEvent::KeyPressed` carries no modifier
                 // state (F17), so the chords are synthesized as
                 // framework key names and routed through the normal
                 // dispatch — the focused widget, not the app, decides
                 // whether to consume them. The original event is
-                // swallowed so "z"/"y" never reach ImeCommitted.
+                // swallowed so "z"/"y"/etc. never reach ImeCommitted.
                 if pressed && (self.mods.meta_key() || self.mods.control_key()) {
                     let synthetic: Option<&'static str> = match &event.logical_key {
                         Key::Character(c) if c.eq_ignore_ascii_case("z") => {
@@ -1347,6 +1349,10 @@ impl ApplicationHandler for App {
                             })
                         }
                         Key::Character(c) if c.eq_ignore_ascii_case("y") => Some("Redo"),
+                        Key::Character(c) if c.eq_ignore_ascii_case("a") => Some("SelectAll"),
+                        Key::Character(c) if c.eq_ignore_ascii_case("x") => Some("Cut"),
+                        Key::Character(c) if c.eq_ignore_ascii_case("c") => Some("Copy"),
+                        Key::Character(c) if c.eq_ignore_ascii_case("v") => Some("Paste"),
                         _ => None,
                     };
                     if let Some(name) = synthetic {
