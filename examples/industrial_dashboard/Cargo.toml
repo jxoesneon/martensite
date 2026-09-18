@@ -21,7 +21,13 @@ default = []
 devtools = []
 
 [dependencies]
-martensite = { workspace = true }
+# Platform video decoders for the media panel — each backend is a no-op
+# off its target OS (VT on macOS, MF on Windows, VAAPI on Linux).
+martensite = { workspace = true, features = [
+    "decoder-videotoolbox",
+    "decoder-mf",
+    "decoder-vaapi",
+] }
 # Editor tab buffers resolve through `EmbeddedVfs` — one VFS document
 # per `model::SOURCES` entry.
 martensite-assets = { workspace = true }

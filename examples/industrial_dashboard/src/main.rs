@@ -19,6 +19,7 @@
 
 mod app;
 mod headless;
+mod media_stream;
 mod menu;
 mod model;
 mod panels;

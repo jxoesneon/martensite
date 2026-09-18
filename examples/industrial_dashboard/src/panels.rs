@@ -1884,13 +1884,14 @@ impl Widget for EditorPanel {
 }
 
 // ---------------------------------------------------------------------------
-// MediaPanel — MediaView over a mock NV12 surface (honest empty state)
+// MediaPanel — MediaView over the platform decoder (or honest fallback)
 // ---------------------------------------------------------------------------
 
-/// Media surface panel: a real `MediaView` widget (Contain fit, mock
-/// 1920×1080 NV12 `VideoSurface`) composited through the widget tree.
-/// No decoder is attached — the letterboxed backdrop and the "awaiting
-/// frames" overlay are the honest state, not a faked video.
+/// Media surface panel: a real `MediaView` widget (Contain fit) decoding
+/// the checked-in 320×240 H.264 fixture through the platform hardware
+/// decoder (VideoToolbox / Media Foundation / VAAPI, per target). When
+/// no backend is available the mock-surface fallback keeps the honest
+/// "no decoder" overlay — never faked frames.
 pub struct MediaPanel {
     view: MediaView,
     text: Mutex<TextPainter>,
@@ -1898,25 +1899,89 @@ pub struct MediaPanel {
     bounds: Rect,
     focused: bool,
     elapsed_nanos: u64,
+    /// Packetized fixture stream; `None` only when it fails to parse.
+    clip: Option<crate::media_stream::ClipStream>,
+    /// Next access-unit index to feed this pass.
+    feed_idx: usize,
+    /// Pacing budget — access units are fed at the stream's 30fps
+    /// cadence so the decoder's bounded output queue never drops.
+    feed_budget_ns: u64,
+    /// Running output frame index — keeps `pts` monotonic across loops.
+    frame_index: u64,
+    /// `end_of_stream` signalled for the current pass.
+    eos_sent: bool,
+    /// A persistent `send_packet` failure disables feeding (the overlay
+    /// shows the stalled queue honestly rather than spinning).
+    feed_failed: bool,
 }
 
 impl MediaPanel {
     pub fn new(scale: Signal<f32>) -> Self {
-        let surface = VideoSurface::new_mock(1920, 1080, VideoPixelFormat::Nv12);
+        let clip = crate::media_stream::ClipStream::load();
+        let mut view = MediaView::new().with_fit(VideoFit::Contain);
+        if let Some(clip) = clip.as_ref() {
+            if let Some(dec) = crate::media_stream::platform_decoder(clip) {
+                view.set_decoder(dec);
+            }
+        }
+        if view.decoder().is_none() {
+            view = view.with_surface(VideoSurface::new_mock(1920, 1080, VideoPixelFormat::Nv12));
+        }
         Self {
-            view: MediaView::new()
-                .with_fit(VideoFit::Contain)
-                .with_surface(surface),
+            view,
             text: Mutex::new(TextPainter::new()),
             scale,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
             elapsed_nanos: 0,
+            clip,
+            feed_idx: 0,
+            feed_budget_ns: 0,
+            frame_index: 0,
+            eos_sent: false,
+            feed_failed: false,
         }
     }
 
     fn s(&self) -> f32 {
         self.scale.get()
+    }
+
+    /// Feeds the next access units due under the 30fps pacing budget.
+    fn feed_decoder(&mut self, dt_ns: u64) {
+        let Some(clip) = self.clip.as_ref() else {
+            return;
+        };
+        if self.view.decoder().is_none() || self.feed_failed {
+            return;
+        }
+        self.feed_budget_ns = self.feed_budget_ns.saturating_add(dt_ns);
+        while self.feed_idx < clip.len() && self.feed_budget_ns >= crate::media_stream::FRAME_NS {
+            let pts = self.frame_index * crate::media_stream::FRAME_NS;
+            if self
+                .view
+                .feed_packet(&clip.packet(self.feed_idx, pts))
+                .is_err()
+            {
+                self.feed_failed = true;
+                return;
+            }
+            self.feed_idx += 1;
+            self.frame_index += 1;
+            self.feed_budget_ns -= crate::media_stream::FRAME_NS;
+        }
+        if self.feed_idx == clip.len() && !self.eos_sent {
+            let _ = self.view.end_of_stream();
+            self.eos_sent = true;
+        }
+        if self.eos_sent && self.view.queued_frames() == 0 {
+            // Pass drained — re-arm the keyframe gate and loop the clip.
+            if let Some(dec) = self.view.decoder_mut() {
+                let _ = dec.flush();
+            }
+            self.feed_idx = 0;
+            self.eos_sent = false;
+        }
     }
 }
 
@@ -1943,6 +2008,7 @@ impl Widget for MediaPanel {
 
     fn tick(&mut self, dt: Duration) -> bool {
         self.elapsed_nanos += dt.as_nanos() as u64;
+        self.feed_decoder(dt.as_nanos() as u64);
         self.view.advance(self.elapsed_nanos)
     }
 
@@ -1972,7 +2038,13 @@ impl Widget for MediaPanel {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         self.view.accessibility(node);
-        node.set_label("Media surface — 1920x1080 NV12 mock, no decoder attached");
+        let label = match self.view.decoder().and_then(|d| d.stats().backend) {
+            Some(backend) => {
+                format!("Media surface — H.264 320x240 NV12, {backend:?} decoder")
+            }
+            None => "Media surface — 1920x1080 NV12 mock, no decoder attached".to_string(),
+        };
+        node.set_label(&label);
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -2018,15 +2090,38 @@ impl Widget for MediaPanel {
         // Width-adaptive overlay — full strings when the panel has room,
         // compact variants when narrow (still honest, never fake frames).
         let roomy = inner.width() >= 300.0 * sd;
-        let l1 = if roomy {
-            "NV12 1920×1080 — mock surface".to_string()
-        } else {
-            "NV12 · 1080p".to_string()
-        };
-        let l2 = if roomy {
-            format!("awaiting decoder — {} queued", self.view.queued_frames())
-        } else {
-            "no decoder".to_string()
+        let (l1, l2) = match self.view.decoder() {
+            Some(dec) => {
+                let stats = dec.stats();
+                // Once real frames are flowing the decoded video is the
+                // content — the center overlay only shows during warm-up.
+                if stats.frames_decoded > 0 {
+                    (String::new(), String::new())
+                } else {
+                    let backend = stats
+                        .backend
+                        .map_or("decoder".to_string(), |b| format!("{b:?}"));
+                    let fmt = format!("{:?}", dec.negotiated_format());
+                    if roomy {
+                        (
+                            format!("H.264 320×240 → {fmt} · {backend}"),
+                            "awaiting frames".to_string(),
+                        )
+                    } else {
+                        (format!("{fmt} · {backend}"), String::new())
+                    }
+                }
+            }
+            None => {
+                if roomy {
+                    (
+                        "NV12 1920×1080 — mock surface".to_string(),
+                        "no decoder on this platform".to_string(),
+                    )
+                } else {
+                    ("NV12 · 1080p".to_string(), "no decoder".to_string())
+                }
+            }
         };
         // The letterbox is black in every theme — overlay text stays
         // light regardless of the palette (on-video convention).
@@ -2216,5 +2311,48 @@ mod tests {
         click_chip(&mut p, 0);
         undo(&mut p);
         assert!(!p.tab_dirty(0));
+    }
+}
+
+#[cfg(test)]
+mod decoder_tests {
+    use super::*;
+    use std::time::Instant;
+
+    /// macOS: `MediaPanel` must attach the real VideoToolbox decoder and
+    /// produce NV12 frames from the checked-in H.264 fixture — never the
+    /// "no decoder" fallback. Skips gracefully where no backend exists.
+    #[test]
+    fn media_panel_decodes_fixture_through_platform_decoder() {
+        let mut panel = MediaPanel::new(Signal::new(1.0));
+        if panel.view.decoder().is_none() {
+            eprintln!("no platform decoder on this target — skipping");
+            return;
+        }
+        // Ticks advance the 30fps pacing budget and drain the decoder;
+        // sleeps give the backend's decode thread wall-clock time. The
+        // clip is one pass of 30 access units — `frame_index` crossing
+        // that boundary proves EOS drain → flush → loop restart works.
+        let pass_len = panel.clip.as_ref().map_or(0, |c| c.len() as u64);
+        assert_eq!(pass_len, 30);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while panel.frame_index <= pass_len && Instant::now() < deadline {
+            panel.tick(Duration::from_millis(16));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let dec = panel.view.decoder().expect("decoder attached");
+        assert!(
+            dec.stats().frames_decoded > 0,
+            "platform decoder produced no frames"
+        );
+        assert_eq!(
+            dec.negotiated_format(),
+            VideoPixelFormat::Nv12,
+            "NV12 was the negotiated output"
+        );
+        assert!(
+            panel.frame_index > pass_len,
+            "clip did not loop after end_of_stream"
+        );
     }
 }
