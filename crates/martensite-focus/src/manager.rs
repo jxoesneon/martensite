@@ -503,6 +503,61 @@ impl FocusManager {
         Some(next)
     }
 
+    /// Advances focus in the given tab navigation direction **and**
+    /// dispatches the [`WidgetEvent::FocusLost`] /
+    /// [`WidgetEvent::FocusGained`] transition — the turnkey
+    /// counterpart of [`tab`](Self::tab) for callers that want the
+    /// events delivered rather than dispatching them manually.
+    ///
+    /// Pairing [`tab`](Self::tab) with
+    /// [`apply_focus_request`](Self::apply_focus_request) is a silent
+    /// no-op: `tab` commits `current_focus` before returning, so the
+    /// follow-up request sees `prev == next` and dispatches nothing.
+    /// This method exists for exactly that call pattern — prefer it
+    /// whenever Tab-key handling should behave like
+    /// [`apply_focus_request`](Self::apply_focus_request) (validate,
+    /// move, dispatch) instead of the raw-mutator contract.
+    ///
+    /// Returns the newly focused widget ID, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_focus::{FocusManager, TabNavigation};
+    /// use martensite_core::{ColdNode, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let make_focusable = |arena: &mut WidgetArena| {
+    ///     arena.insert(
+    ///         HotNode {
+    ///             flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+    ///             ..HotNode::default()
+    ///         },
+    ///         ColdNode::default(),
+    ///     )
+    /// };
+    /// let a = make_focusable(&mut arena);
+    /// let b = make_focusable(&mut arena);
+    ///
+    /// let mut manager = FocusManager::new();
+    /// assert_eq!(manager.apply_tab(&mut arena, TabNavigation::Forward), Some(a));
+    /// assert_eq!(manager.apply_tab(&mut arena, TabNavigation::Forward), Some(b));
+    /// assert_eq!(manager.current_focus(), Some(b));
+    /// ```
+    pub fn apply_tab(
+        &mut self,
+        arena: &mut WidgetArena,
+        direction: TabNavigation,
+    ) -> Option<WidgetId> {
+        let prev = self.current_focus;
+        let next = self.tab(arena, direction)?;
+        // `tab` already committed `current_focus`; roll it back so
+        // `move_focus` observes and dispatches the full transition.
+        self.current_focus = prev;
+        self.move_focus(arena, Some(next));
+        Some(next)
+    }
+
     /// Navigates focus in the given spatial direction (arrow keys).
     ///
     /// If a modal scope is active, spatial navigation is restricted to
@@ -972,6 +1027,76 @@ mod tests {
         assert_eq!(next, Some(a));
         let next = manager.tab(&arena, TabNavigation::Forward);
         assert_eq!(next, Some(b));
+    }
+
+    /// Records `FocusGained`/`FocusLost` deliveries by widget name.
+    struct FocusLog {
+        name: &'static str,
+        log: std::sync::Arc<std::sync::Mutex<Vec<(&'static str, &'static str)>>>,
+    }
+
+    impl martensite_core::Widget for FocusLog {
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::LayoutContext,
+            _constraints: martensite_core::LayoutConstraints,
+        ) -> glam::Vec2 {
+            glam::Vec2::ZERO
+        }
+
+        fn layout(&mut self, _cx: &mut martensite_core::LayoutContext, _bounds: Rect) {}
+
+        fn event(
+            &mut self,
+            cx: &mut martensite_core::EventContext,
+        ) -> martensite_core::EventResponse {
+            let ev = match cx.event {
+                martensite_core::WidgetEvent::FocusGained => "gained",
+                martensite_core::WidgetEvent::FocusLost => "lost",
+                _ => return martensite_core::EventResponse::Ignored,
+            };
+            self.log.lock().unwrap().push((self.name, ev));
+            martensite_core::EventResponse::Handled
+        }
+    }
+
+    #[test]
+    fn apply_tab_dispatches_focus_transition() {
+        use std::sync::{Arc, Mutex};
+        let log: Arc<Mutex<Vec<(&'static str, &'static str)>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut arena = WidgetArena::new();
+        let mut mk = |name: &'static str| {
+            let hot = HotNode {
+                flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+                ..Default::default()
+            };
+            arena.insert_with_widget(
+                hot,
+                Box::new(FocusLog {
+                    name,
+                    log: log.clone(),
+                }),
+            )
+        };
+        let a = mk("a");
+        let b = mk("b");
+
+        let mut manager = FocusManager::new();
+        assert_eq!(
+            manager.apply_tab(&mut arena, TabNavigation::Forward),
+            Some(a)
+        );
+        assert_eq!(
+            manager.apply_tab(&mut arena, TabNavigation::Forward),
+            Some(b)
+        );
+        // The transition delivered FocusGained to each new target and
+        // FocusLost to the one it left — the `tab` +
+        // `apply_focus_request` pairing silently skipped both.
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec![("a", "gained"), ("a", "lost"), ("b", "gained")]
+        );
     }
 
     #[test]

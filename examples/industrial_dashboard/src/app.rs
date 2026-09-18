@@ -1299,12 +1299,12 @@ impl ApplicationHandler for App {
                         TabNavigation::Forward
                     };
                     if let Some(arena) = &mut self.arena {
-                        // `tab` returns the next candidate without
-                        // dispatching — `apply_focus_request` performs
-                        // the FocusLost/FocusGained transition (F22).
-                        if let Some(next) = self.focus.tab(arena, dir) {
-                            self.focus.apply_focus_request(arena, next);
-                        }
+                        // `apply_tab` advances *and* dispatches
+                        // FocusLost/FocusGained. (The raw `tab` +
+                        // `apply_focus_request` pairing was a silent
+                        // no-op — `tab` commits the transition before
+                        // returning, so nothing ever dispatched.)
+                        self.focus.apply_tab(arena, dir);
                     }
                     return;
                 }
@@ -1741,6 +1741,34 @@ mod tests {
         // doesn't.
         assert!(app.press_over_overlay(Vec2::new(150.0, 150.0)));
         assert!(!app.press_over_overlay(Vec2::new(400.0, 400.0)));
+    }
+
+    /// Tab must visit every chrome element AND every panel — the
+    /// `tab` + `apply_focus_request` pairing left `FocusGained`
+    /// undispatched, so focus *visually* never left the chin bar
+    /// even though `current_focus` advanced.
+    #[test]
+    fn tab_traversal_visits_panels_and_chrome() {
+        let mut app = App::new(ThemeChoice::Dark);
+        app.build_arena();
+        let arena = app.arena.as_mut().expect("arena");
+        let mut visited = std::collections::HashSet::new();
+        // One full cycle — six FOCUSABLE nodes: toolbar, four panels,
+        // status bar.
+        for _ in 0..6 {
+            if let Some(id) = app.focus.apply_tab(arena, TabNavigation::Forward) {
+                visited.insert(id.to_u64());
+            }
+        }
+        for p in app.panels.iter().flatten() {
+            assert!(
+                visited.contains(&p.to_u64()),
+                "panel never received Tab focus"
+            );
+        }
+        assert!(visited.contains(&app.toolbar.expect("toolbar").to_u64()));
+        assert!(visited.contains(&app.statusbar.expect("statusbar").to_u64()));
+        assert_eq!(visited.len(), 6);
     }
 
     #[test]
