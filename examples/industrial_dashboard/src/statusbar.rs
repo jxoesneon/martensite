@@ -196,6 +196,7 @@ impl StatusBar {
         let mut child_cx = EventContext {
             event: cx.event,
             bounds: self.dd_rect,
+            scale: cx.scale,
         };
         self.dropdown.event(&mut child_cx)
     }

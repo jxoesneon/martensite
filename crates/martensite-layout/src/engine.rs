@@ -40,7 +40,7 @@
 use core::iter::FusedIterator;
 
 use glam::Vec2;
-use martensite_core::widget::{LayoutConstraints, LayoutContext};
+use martensite_core::widget::{LayoutConstraints, LayoutContext, UnderflowPolicy};
 use martensite_core::{Rect, WidgetArena, WidgetId};
 use taffy::{AvailableSpace, Layout, NodeId, Size, Style, TaffyTree};
 
@@ -239,6 +239,12 @@ pub struct LayoutEngine {
     /// Computed flow-relative rectangles for each widget, populated by
     /// [`Self::compute_with_widgets`].
     bidi_layouts: std::collections::HashMap<WidgetId, BidiRect>,
+    /// Nodes currently collapsed by an engaged
+    /// `UnderflowPolicy::Collapse` — presence means the node's Taffy
+    /// style is `display:none`. The state drives the speculative
+    /// restore check and the exponential backoff that bounds
+    /// collapse/restore oscillation.
+    collapse_states: std::collections::HashMap<WidgetId, CollapseState>,
 }
 
 impl Default for LayoutEngine {
@@ -255,6 +261,7 @@ impl LayoutEngine {
             id_map: std::collections::HashMap::new(),
             writing_mode: WritingMode::HorizontalTb,
             bidi_layouts: std::collections::HashMap::new(),
+            collapse_states: std::collections::HashMap::new(),
         }
     }
 
@@ -265,6 +272,7 @@ impl LayoutEngine {
             id_map: std::collections::HashMap::with_capacity(capacity),
             writing_mode: WritingMode::HorizontalTb,
             bidi_layouts: std::collections::HashMap::with_capacity(capacity),
+            collapse_states: std::collections::HashMap::with_capacity(capacity),
         }
     }
 
@@ -384,6 +392,38 @@ impl LayoutEngine {
         self.bidi_layouts.clear();
     }
 
+    /// The Taffy style seeded for a node at registration: `min_size`
+    /// populated from the widget's declared
+    /// [`RenderMinimum`](martensite_core::RenderMinimum) when its policy
+    /// enforces — making the engine *prefer* honoring the floor (Qt
+    /// `minimumSizeHint` semantics). Advisory policies (`Allow`/`Lint`)
+    /// and undeclared nodes keep `Style::default()`.
+    ///
+    /// `Collapse` is excluded deliberately: Taffy treats `min_size` as
+    /// a hard bound and would allocate the floor even inside a too-small
+    /// container, so the node could never observe the squeeze that is
+    /// supposed to collapse it. Collapse must see real bounds shrink.
+    fn underflow_style(arena: &WidgetArena, wid: WidgetId) -> Style {
+        let Some(cold) = arena.get_cold(wid) else {
+            return Style::default();
+        };
+        let min = cold.effective_render_minimum();
+        if min.size == Vec2::ZERO
+            || !min.policy.enforces()
+            || min.policy == UnderflowPolicy::Collapse
+        {
+            return Style::default();
+        }
+        let px = min.size * arena.scale_factor();
+        Style {
+            min_size: Size {
+                width: taffy::LengthPercentageAuto::length(px.x),
+                height: taffy::LengthPercentageAuto::length(px.y),
+            },
+            ..Style::default()
+        }
+    }
+
     /// Synchronizes the Taffy tree topology to match the arena's tree
     /// structure rooted at `root`.
     ///
@@ -402,7 +442,10 @@ impl LayoutEngine {
             // Ensure node is registered. Errors on capacity overflow
             // (extraordinarily unlikely with u64-backed slotmap); skip
             // the node if registration fails.
-            if self.lookup_node(wid).is_none() && self.register_node(wid, Style::default()).is_err()
+            if self.lookup_node(wid).is_none()
+                && self
+                    .register_node(wid, Self::underflow_style(arena, wid))
+                    .is_err()
             {
                 continue;
             }
@@ -411,7 +454,7 @@ impl LayoutEngine {
                 // Register children that don't exist yet.
                 let mut child_nodes = Vec::with_capacity(children.len());
                 for c in &children {
-                    if let Ok(node) = self.register_node(*c, Style::default()) {
+                    if let Ok(node) = self.register_node(*c, Self::underflow_style(arena, *c)) {
                         child_nodes.push(node);
                     }
                 }
@@ -491,109 +534,231 @@ impl LayoutEngine {
         self.bidi_layouts.clear();
         let container_size = available_to_geom_size(available);
         let logical_available = logical_available(available, self.writing_mode);
+        let scale = arena.scale_factor();
 
         // Run Taffy layout with a measure function that calls Widget::measure
         // with the actual constraints Taffy provides. This ensures text
         // wrapping, flex sizing, and container padding all respond to
         // real parent constraints rather than unbounded space.
-        let tree = &mut self.tree;
-        let measure_trans = FlowTransposition::new(self.writing_mode, GeomSize::zero());
-        // Taffy 0.14 routes leaf measurement through `compute_leaf_layout`,
-        // which applies the node's own style (min/max size, aspect ratio) to
-        // the intrinsic size returned by the widget measure callback and
-        // produces the `LayoutOutput` the measure closure must return.
-        let scale = arena.scale_factor();
-        let mut leaf_measure =
-            |node_id: NodeId, known: Size<Option<f32>>, available_space: Size<AvailableSpace>| {
-                // Recursion guard: nodes deeper than [`MAX_LAYOUT_DEPTH`] return
-                // a zero size instead of recursing into the widget, preventing
-                // stack overflow on pathological trees.
-                let depth = node_depths.get(&node_id).copied().unwrap_or(0);
-                if depth > MAX_LAYOUT_DEPTH {
-                    return Size {
-                        width: 0.0,
-                        height: 0.0,
-                    };
-                }
-                if let Some(widget_id) = node_to_widget.get(&node_id) {
-                    if let Some((hot, cold)) = arena.get_both_mut(*widget_id) {
-                        // Taffy's `available_space` is in logical (inline/block)
-                        // dimensions. Convert to flow-relative [`Constraints`],
-                        // then transpose to the physical width/height the widget
-                        // will measure, and convert the result back to logical.
-                        //
-                        // # Known Limitation: MinContent Sizing
-                        //
-                        // Taffy's `MinContent` requests the narrowest possible
-                        // intrinsic size (e.g. the longest unbreakable word for
-                        // text). We approximate this as `0.0` because the
-                        // `Widget::measure` API does not distinguish between
-                        // min-content and max-content queries. A future milestone
-                        // will add a `MeasureMode` parameter to `Widget::measure`
-                        // to support proper min-content sizing. For v0.3.0, this
-                        // approximation is acceptable because Taffy primarily
-                        // uses `MaxContent` and `Definite` constraints during
-                        // flexbox layout.
-                        let max_width = match (known.width, available_space.width) {
-                            (Some(w), _) => w,
-                            (None, AvailableSpace::Definite(w)) => w,
-                            (None, AvailableSpace::MaxContent) => f32::MAX,
-                            (None, AvailableSpace::MinContent) => 0.0,
-                        };
-                        let max_height = match (known.height, available_space.height) {
-                            (Some(h), _) => h,
-                            (None, AvailableSpace::Definite(h)) => h,
-                            (None, AvailableSpace::MaxContent) => f32::MAX,
-                            (None, AvailableSpace::MinContent) => 0.0,
-                        };
-                        // If known dimensions are provided, use them as both
-                        // min and max (fixed size). Otherwise, min is zero.
-                        let (min_w, min_h) = match (known.width, known.height) {
-                            (Some(w), Some(h)) => (w, h),
-                            (Some(w), None) => (w, 0.0),
-                            (None, Some(h)) => (0.0, h),
-                            (None, None) => (0.0, 0.0),
-                        };
-                        let logical = Constraints::new(min_w, min_h, max_width, max_height);
-                        let physical = measure_trans.transpose_constraints(logical);
-                        let constraints = LayoutConstraints {
-                            min_size: Vec2::new(physical.min_width, physical.min_height),
-                            max_size: Vec2::new(physical.max_width, physical.max_height),
-                        };
-                        let mut cx = LayoutContext { hot, scale };
-                        let size = cold.widget.measure(&mut cx, constraints);
-                        let logical = measure_trans.to_logical_size(GeomSize::new(size.x, size.y));
+        for pass in 0..2 {
+            let tree = &mut self.tree;
+            let measure_trans = FlowTransposition::new(self.writing_mode, GeomSize::zero());
+            let mut leaf_measure =
+                |node_id: NodeId,
+                 known: Size<Option<f32>>,
+                 available_space: Size<AvailableSpace>| {
+                    // Recursion guard: nodes deeper than [`MAX_LAYOUT_DEPTH`] return
+                    // a zero size instead of recursing into the widget, preventing
+                    // stack overflow on pathological trees.
+                    let depth = node_depths.get(&node_id).copied().unwrap_or(0);
+                    if depth > MAX_LAYOUT_DEPTH {
                         return Size {
-                            width: logical.inline,
-                            height: logical.block,
+                            width: 0.0,
+                            height: 0.0,
                         };
                     }
-                }
-                Size {
-                    width: 0.0,
-                    height: 0.0,
-                }
+                    if let Some(widget_id) = node_to_widget.get(&node_id) {
+                        if let Some((hot, cold)) = arena.get_both_mut(*widget_id) {
+                            // Taffy's `available_space` is in logical (inline/block)
+                            // dimensions. Convert to flow-relative [`Constraints`],
+                            // then transpose to the physical width/height the widget
+                            // will measure, and convert the result back to logical.
+                            //
+                            // # Known Limitation: MinContent Sizing
+                            //
+                            // Taffy's `MinContent` requests the narrowest possible
+                            // intrinsic size (e.g. the longest unbreakable word for
+                            // text). We approximate this as `0.0` because the
+                            // `Widget::measure` API does not distinguish between
+                            // min-content and max-content queries. A future milestone
+                            // will add a `MeasureMode` parameter to `Widget::measure`
+                            // to support proper min-content sizing. For v0.3.0, this
+                            // approximation is acceptable because Taffy primarily
+                            // uses `MaxContent` and `Definite` constraints during
+                            // flexbox layout.
+                            let max_width = match (known.width, available_space.width) {
+                                (Some(w), _) => w,
+                                (None, AvailableSpace::Definite(w)) => w,
+                                (None, AvailableSpace::MaxContent) => f32::MAX,
+                                (None, AvailableSpace::MinContent) => 0.0,
+                            };
+                            let max_height = match (known.height, available_space.height) {
+                                (Some(h), _) => h,
+                                (None, AvailableSpace::Definite(h)) => h,
+                                (None, AvailableSpace::MaxContent) => f32::MAX,
+                                (None, AvailableSpace::MinContent) => 0.0,
+                            };
+                            // If known dimensions are provided, use them as both
+                            // min and max (fixed size). Otherwise, min is zero.
+                            let (min_w, min_h) = match (known.width, known.height) {
+                                (Some(w), Some(h)) => (w, h),
+                                (Some(w), None) => (w, 0.0),
+                                (None, Some(h)) => (0.0, h),
+                                (None, None) => (0.0, 0.0),
+                            };
+                            let logical = Constraints::new(min_w, min_h, max_width, max_height);
+                            let physical = measure_trans.transpose_constraints(logical);
+                            let constraints = LayoutConstraints {
+                                min_size: Vec2::new(physical.min_width, physical.min_height),
+                                max_size: Vec2::new(physical.max_width, physical.max_height),
+                            };
+                            let mut cx = LayoutContext { hot, scale };
+                            let size = cold.widget.measure(&mut cx, constraints);
+                            let logical =
+                                measure_trans.to_logical_size(GeomSize::new(size.x, size.y));
+                            return Size {
+                                width: logical.inline,
+                                height: logical.block,
+                            };
+                        }
+                    }
+                    Size {
+                        width: 0.0,
+                        height: 0.0,
+                    }
+                };
+            let measure = |inputs: taffy::LayoutInput,
+                           node_id: NodeId,
+                           _context: Option<&mut WidgetId>,
+                           style: &Style| {
+                taffy::compute_leaf_layout(
+                    inputs,
+                    style,
+                    |_, _| 0.0,
+                    |known, available_space| leaf_measure(node_id, known, available_space),
+                )
             };
 
-        let measure = |inputs: taffy::LayoutInput,
-                       node_id: NodeId,
-                       _context: Option<&mut WidgetId>,
-                       style: &Style| {
-            taffy::compute_leaf_layout(
-                inputs,
-                style,
-                |_, _| 0.0,
-                |known, available_space| leaf_measure(node_id, known, available_space),
-            )
-        };
+            tree.compute_layout_with_measure(root_node, logical_available, measure)
+                .map_err(|e| LayoutError::TaffyError(format!("{e:?}")))?;
 
-        tree.compute_layout_with_measure(root_node, logical_available, measure)
-            .map_err(|e| LayoutError::TaffyError(format!("{e:?}")))?;
+            // Apply layouts back to arena and call Widget::layout
+            self.apply_layout_with_widgets(arena, root, container_size);
 
-        // Apply layouts back to arena and call Widget::layout
-        self.apply_layout_with_widgets(arena, root, container_size);
+            if pass == 0 && !self.resolve_underflow_collapses(arena) {
+                break;
+            }
+        }
 
         Ok(())
+    }
+
+    /// Applies the space-freeing half of [`UnderflowPolicy::Collapse`]:
+    /// engaged Collapse nodes get `display:none`, and collapsed nodes
+    /// are restored when their parent could satisfy the floor again.
+    ///
+    /// Restore is speculative — a node returns only after two
+    /// consecutive frames in which the parent's free space exceeds its
+    /// minimum (with release margin), and each re-collapse doubles a
+    /// backoff timer (4→64 frames) so a restore that immediately
+    /// re-violates cannot toggle every frame.
+    ///
+    /// Returns `true` when any style changed and the caller must
+    /// re-solve once (the re-solve is capped at one per frame —
+    /// policy state is an input to the next pass, never iterated
+    /// within it).
+    fn resolve_underflow_collapses(&mut self, arena: &mut WidgetArena) -> bool {
+        let mut changed = false;
+        let scale = arena.scale_factor();
+        let ids: Vec<WidgetId> = arena.iter_depth_first().collect();
+
+        // Engage: newly underflowed Collapse nodes → display:none.
+        for wid in &ids {
+            let engaged_collapse = arena
+                .get_cold(*wid)
+                .and_then(|c| c.underflow_policy())
+                .is_some_and(|p| p == UnderflowPolicy::Collapse);
+            let already = self.collapse_states.get(wid).is_some_and(|s| s.collapsed);
+            if engaged_collapse && !already {
+                let state = self.collapse_states.entry(*wid).or_default();
+                // Exponential backoff on every (re-)collapse: 4→8→…→64
+                // frames — a restore that immediately re-violates gets
+                // progressively slower to retry.
+                state.collapsed = true;
+                // Exponential backoff on every (re-)collapse: 4→8→…→64
+                // frames — a restore that immediately re-violates gets
+                // progressively slower to retry.
+                state.next_backoff = state.next_backoff.saturating_mul(2).clamp(4, 64);
+                state.backoff = state.next_backoff;
+                state.streak = 0;
+                if let Some(node) = self.lookup_node(*wid) {
+                    let mut style = self
+                        .tree
+                        .style(node)
+                        .cloned()
+                        .unwrap_or_else(|_| Self::underflow_style(arena, *wid));
+                    style.display = taffy::Display::None;
+                    let _ = self.tree.set_style(node, style);
+                }
+                changed = true;
+            }
+        }
+
+        // Restore: collapsed nodes whose parent could satisfy the floor.
+        let collapsed: Vec<WidgetId> = self.collapse_states.keys().copied().collect();
+        for wid in collapsed {
+            if !arena.is_alive(wid) {
+                self.collapse_states.remove(&wid);
+                continue;
+            }
+            let Some(state) = self.collapse_states.get(&wid) else {
+                continue;
+            };
+            if !state.collapsed {
+                continue;
+            }
+            let backoff = state.backoff;
+            if backoff > 0 {
+                if let Some(s) = self.collapse_states.get_mut(&wid) {
+                    s.backoff -= 1;
+                    s.streak = 0;
+                }
+                continue;
+            }
+            let Some(cold) = arena.get_cold(wid) else {
+                continue;
+            };
+            let min_px =
+                cold.effective_render_minimum().size * scale * WidgetArena::UNDERFLOW_RELEASE;
+            let feasible = parent_size(arena, wid)
+                .is_some_and(|parent| parent.x >= min_px.x && parent.y >= min_px.y);
+            if !feasible {
+                if let Some(s) = self.collapse_states.get_mut(&wid) {
+                    s.streak = 0;
+                }
+                continue;
+            }
+            let streak = self
+                .collapse_states
+                .get_mut(&wid)
+                .map(|s| {
+                    s.streak = s.streak.saturating_add(1);
+                    s.streak
+                })
+                .unwrap_or(1);
+            if streak >= 2 {
+                if let Some(node) = self.lookup_node(wid) {
+                    let _ = self.tree.set_style(node, Self::underflow_style(arena, wid));
+                }
+                // Keep the entry — `backoff` persists so a re-collapse
+                // resumes the escalation rather than restarting at 4.
+                if let Some(s) = self.collapse_states.get_mut(&wid) {
+                    s.collapsed = false;
+                    s.streak = 0;
+                }
+                if let Some(cold) = arena.get_cold_mut(wid) {
+                    cold.underflow_engaged = false;
+                }
+                if let Some(hot) = arena.get_hot_mut(wid) {
+                    hot.flags |= martensite_core::NodeFlags::DIRTY_LAYOUT
+                        | martensite_core::NodeFlags::DIRTY_PAINT
+                        | martensite_core::NodeFlags::DIRTY_A11Y;
+                }
+                changed = true;
+            }
+        }
+
+        changed
     }
 
     /// Applies computed Taffy layouts back to the arena and calls
@@ -630,6 +795,10 @@ impl LayoutEngine {
                 let mut cx = LayoutContext { hot, scale };
                 cold.widget.layout(&mut cx, bounds);
             }
+            // Underflow engagement is evaluated at every bounds-write
+            // seam — the Taffy path does it here; manual layout paths
+            // call `WidgetArena::update_underflow_all` themselves.
+            arena.update_underflow(wid);
 
             // Enqueue children, using this widget's physical size as their
             // containing box size.
@@ -738,6 +907,38 @@ impl LayoutEngine {
             inner: self.id_map.iter(),
         }
     }
+}
+
+/// Per-node bookkeeping for an engaged `UnderflowPolicy::Collapse`:
+/// a consecutive-feasible-frame streak gating restore, and an
+/// exponential backoff (in frames) that slows restore attempts after
+/// each re-collapse — together bounding collapse/restore oscillation.
+#[derive(Copy, Clone, Debug, Default)]
+struct CollapseState {
+    /// Whether the node currently has `display:none` applied.
+    collapsed: bool,
+    /// Consecutive frames the restore feasibility check has held.
+    streak: u8,
+    /// Countdown of frames to skip before the next restore attempt.
+    backoff: u8,
+    /// The backoff applied on the next collapse — doubles on each
+    /// re-collapse (4→8→…→64) and persists across restores, so a cycle
+    /// that keeps collapsing retries progressively slower instead of
+    /// toggling every frame. Kept separate from `backoff` because the
+    /// countdown necessarily reaches 0 before a restore fires.
+    next_backoff: u8,
+}
+
+/// The collapsed node's parent's bounds — the cheap upper bound on
+/// what a restored `Collapse` node could be allocated. Restores are
+/// speculative by design: a sibling legitimately fills the freed slot
+/// while the node is collapsed, so "free space" is always ~0 and tells
+/// us nothing. If the real layout still can't satisfy the floor, the
+/// node re-collapses with backoff — the streak+backoff machinery is the
+/// guard, not this estimate.
+fn parent_size(arena: &WidgetArena, wid: WidgetId) -> Option<Vec2> {
+    let parent = arena.get_hot(wid)?.parent?;
+    Some(arena.get_hot(parent)?.bounds.size)
 }
 
 /// Iterator over registered id mappings.
@@ -865,6 +1066,138 @@ mod tests {
         // Root should have non-zero layout
         let root_hot = arena.get_hot(root).unwrap();
         assert!(root_hot.bounds.width() >= 0.0);
+    }
+
+    /// Reports `self.0` as its natural size but honors `max_size` —
+    /// like a real widget it shrinks under constraint, so Taffy can
+    /// flex-shrink it below its natural width.
+    struct SizedWidget(glam::Vec2);
+    impl martensite_core::widget::Widget for SizedWidget {
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::widget::LayoutContext,
+            constraints: martensite_core::widget::LayoutConstraints,
+        ) -> glam::Vec2 {
+            self.0.min(constraints.max_size.max(glam::Vec2::ZERO))
+        }
+        fn layout(&mut self, _cx: &mut martensite_core::widget::LayoutContext, _bounds: Rect) {}
+    }
+
+    #[test]
+    fn collapse_engages_display_none_and_reflows_sibling() {
+        use martensite_core::{RenderMinimum, UnderflowPolicy};
+
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(HotNode::default(), ColdNode::new(Box::new(NoopWidget)));
+        // `a` wants 90×30 but declares an 80×24pt Collapse floor; `b`
+        // wants the same with no floor. In a 100px row both shrink to
+        // ~50 → `a` underflows and collapses out of the layout.
+        let a = arena.insert(
+            HotNode::default(),
+            ColdNode::new(Box::new(SizedWidget(glam::Vec2::new(90.0, 30.0)))).with_render_minimum(
+                RenderMinimum::new(glam::Vec2::new(80.0, 24.0))
+                    .with_policy(UnderflowPolicy::Collapse),
+            ),
+        );
+        let b = arena.insert(
+            HotNode::default(),
+            ColdNode::new(Box::new(SizedWidget(glam::Vec2::new(90.0, 30.0)))),
+        );
+        arena.append_child(root, a).unwrap();
+        arena.append_child(root, b).unwrap();
+
+        // Fix the root at a hard 100×40 — `available` alone only
+        // *suggests* the root size; an explicit style makes the row
+        // genuinely too narrow for both children.
+        let mut engine = LayoutEngine::new();
+        engine
+            .register_node(
+                root,
+                Style {
+                    size: Size {
+                        width: taffy::Dimension::length(100.0),
+                        height: taffy::Dimension::length(40.0),
+                    },
+                    ..Style::default()
+                },
+            )
+            .unwrap();
+        let squeeze = Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(40.0),
+        };
+        engine
+            .compute_with_widgets(&mut arena, root, squeeze)
+            .unwrap();
+
+        // `a` is collapsed — display:none yields a zero-size layout and
+        // the engagement stays set.
+        assert!(arena.get_cold(a).unwrap().underflow_engaged);
+        assert_eq!(
+            arena.get_cold(a).unwrap().underflow_policy(),
+            Some(UnderflowPolicy::Collapse)
+        );
+        assert!(arena.get_hot(a).unwrap().bounds.width() < 1.0);
+        // `b` reclaimed the row — far beyond the ~50px it had while
+        // sharing with `a`.
+        assert!(arena.get_hot(b).unwrap().bounds.width() > 80.0);
+
+        // Restore: widen the container to 200px — the root's explicit
+        // style is the hard bound, so it must be restyled, not just
+        // given more `available` space. The speculative restore needs
+        // the backoff (4 frames) plus a 2-frame feasibility streak —
+        // loop generously.
+        let root_node = engine.lookup_node(root).unwrap();
+        engine
+            .tree
+            .set_style(
+                root_node,
+                Style {
+                    size: Size {
+                        width: taffy::Dimension::length(200.0),
+                        height: taffy::Dimension::length(40.0),
+                    },
+                    ..Style::default()
+                },
+            )
+            .unwrap();
+        let roomy = Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::Definite(40.0),
+        };
+        for _ in 0..8 {
+            engine
+                .compute_with_widgets(&mut arena, root, roomy)
+                .unwrap();
+        }
+        // `a` is back with real bounds at its natural 90px — above the
+        // 80pt floor, so engagement stays released.
+        assert!(!arena.get_cold(a).unwrap().underflow_engaged);
+        assert!(arena.get_hot(a).unwrap().bounds.width() >= 80.0);
+
+        // Squeeze again — restyle the root back to 100px first
+        // (`available` is a hint; the explicit style is the hard bound).
+        engine
+            .tree
+            .set_style(
+                root_node,
+                Style {
+                    size: Size {
+                        width: taffy::Dimension::length(100.0),
+                        height: taffy::Dimension::length(40.0),
+                    },
+                    ..Style::default()
+                },
+            )
+            .unwrap();
+        // Re-collapse engages and backoff doubles, so a repeated
+        // collapse/restore cycle cannot toggle every frame.
+        engine
+            .compute_with_widgets(&mut arena, root, squeeze)
+            .unwrap();
+        assert!(arena.get_cold(a).unwrap().underflow_engaged);
+        let backoff = engine.collapse_states.get(&a).map(|s| s.next_backoff);
+        assert!(backoff.unwrap_or(0) >= 8);
     }
 
     #[test]

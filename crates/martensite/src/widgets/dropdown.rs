@@ -39,7 +39,7 @@ use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
     PaintContext, PointerButton, SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::{NodeFlags, Rect, TokenKey};
+use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
 
 use crate::widgets::scrollview::ScrollView;
 
@@ -864,6 +864,12 @@ impl Widget for Dropdown {
         )
     }
 
+    fn min_render(&self) -> RenderMinimum {
+        // The 80×FACE_H floor `measure` requests — narrower or shorter
+        // than this and the face (label + chevron) cannot render legibly.
+        RenderMinimum::new(Vec2::new(80.0, FACE_H)).with_policy(UnderflowPolicy::Lint)
+    }
+
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
         // Declare keyboard focusability on the arena node.
@@ -1133,6 +1139,7 @@ mod tests {
         let mut cx = EventContext {
             event: ev,
             bounds: dd.cached_bounds,
+            scale: 1.0,
         };
         dd.event(&mut cx)
     }
@@ -1249,6 +1256,7 @@ mod tests {
         let mut cx = EventContext {
             event: &press,
             bounds: Rect::default(),
+            scale: 1.0,
         };
         assert_eq!(option.event(&mut cx), EventResponse::Handled);
         dd.sync_overlay(&mut o);

@@ -145,6 +145,7 @@ mod suite {
             widget.event(&mut crate::widget::EventContext {
                 event: &event,
                 bounds: Rect::new(0.0, 0.0, 50.0, 50.0),
+                scale: 1.0,
             }),
             crate::widget::EventResponse::Ignored
         );
@@ -1197,11 +1198,12 @@ mod dispatch_paint {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    use crate::node::{HotNode, NodeFlags, Rect};
+    use crate::node::{ColdNode, HotNode, NodeFlags, Rect};
+    use crate::overlay::{OverlayAnchor, OverlayLayer};
     use crate::paint::{PaintCommand, PaintList};
     use crate::widget::{
         DummyWidget, EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext,
-        PointerButton, Widget, WidgetEvent,
+        PointerButton, RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
     };
     use crate::WidgetArena;
     use glam::Vec2;
@@ -1512,5 +1514,377 @@ mod dispatch_paint {
             delta: Vec2::new(0.0, 1.0),
         };
         assert_eq!(arena.dispatch_event(id, &event), EventResponse::Ignored);
+    }
+
+    // --- Minimum render area / underflow policies ---
+
+    fn underflow_cold(policy: UnderflowPolicy, min: Vec2) -> ColdNode {
+        ColdNode::new(Box::new(DummyWidget))
+            .with_render_minimum(RenderMinimum::new(min).with_policy(policy))
+    }
+
+    #[test]
+    fn underflow_engages_below_declared_minimum() {
+        let mut arena = WidgetArena::new();
+        arena.set_scale_factor(1.0);
+        let id = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 50.0, 10.0)),
+            underflow_cold(UnderflowPolicy::Hide, Vec2::new(80.0, 24.0)),
+        );
+        arena.update_underflow(id);
+        assert_eq!(
+            arena.get_cold(id).unwrap().underflow_policy(),
+            Some(UnderflowPolicy::Hide)
+        );
+        // Within the floor on one axis only still engages.
+        let id2 = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 200.0, 10.0)),
+            underflow_cold(UnderflowPolicy::Hide, Vec2::new(80.0, 24.0)),
+        );
+        arena.update_underflow(id2);
+        assert_eq!(
+            arena.get_cold(id2).unwrap().underflow_policy(),
+            Some(UnderflowPolicy::Hide)
+        );
+    }
+
+    #[test]
+    fn underflow_release_uses_hysteresis() {
+        let mut arena = WidgetArena::new();
+        arena.set_scale_factor(1.0);
+        let id = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 50.0, 10.0)),
+            underflow_cold(UnderflowPolicy::Hide, Vec2::new(80.0, 24.0)),
+        );
+        arena.update_underflow(id);
+        assert!(arena.get_cold(id).unwrap().underflow_engaged);
+
+        // 82 < 80 * 1.05 = 84 — inside the release band, stays engaged.
+        arena.get_hot_mut(id).unwrap().bounds = Rect::new(0.0, 0.0, 82.0, 26.0);
+        arena.update_underflow(id);
+        assert!(arena.get_cold(id).unwrap().underflow_engaged);
+
+        // Both axes past the release threshold — disengages.
+        arena.get_hot_mut(id).unwrap().bounds = Rect::new(0.0, 0.0, 90.0, 30.0);
+        arena.update_underflow(id);
+        assert!(!arena.get_cold(id).unwrap().underflow_engaged);
+        assert_eq!(arena.get_cold(id).unwrap().underflow_policy(), None);
+    }
+
+    #[test]
+    fn underflow_scale_factor_scales_the_floor() {
+        let mut arena = WidgetArena::new();
+        arena.set_scale_factor(2.0);
+        // 100px = 50pt < 80pt floor at 2×.
+        let id = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 60.0)),
+            underflow_cold(UnderflowPolicy::Hide, Vec2::new(80.0, 24.0)),
+        );
+        arena.update_underflow(id);
+        assert!(arena.get_cold(id).unwrap().underflow_engaged);
+        // 200px = 100pt ≥ 80pt at 2×.
+        arena.get_hot_mut(id).unwrap().bounds = Rect::new(0.0, 0.0, 200.0, 60.0);
+        arena.update_underflow(id);
+        assert!(!arena.get_cold(id).unwrap().underflow_engaged);
+    }
+
+    #[test]
+    fn underflow_advisory_policies_never_engage() {
+        let mut arena = WidgetArena::new();
+        for policy in [UnderflowPolicy::Allow, UnderflowPolicy::Lint] {
+            let id = arena.insert(
+                hot_visible(Rect::new(0.0, 0.0, 10.0, 5.0)),
+                underflow_cold(policy, Vec2::new(80.0, 24.0)),
+            );
+            arena.update_underflow(id);
+            assert!(!arena.get_cold(id).unwrap().underflow_engaged);
+            assert_eq!(arena.get_cold(id).unwrap().underflow_policy(), None);
+        }
+    }
+
+    #[test]
+    fn underflow_hide_skips_paint() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Box::new(DummyWidget),
+        );
+        let id = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 40.0, 10.0)),
+            ColdNode::new(Box::new(FillWidget([9, 9, 9, 255]))).with_render_minimum(
+                RenderMinimum::new(Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Hide),
+            ),
+        );
+        arena.append_child(root, id).unwrap();
+        arena.update_underflow(id);
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+        assert!(list
+            .commands
+            .iter()
+            .all(|c| !matches!(c, PaintCommand::FillRect(_, [9, 9, 9, 255]))));
+    }
+
+    #[test]
+    fn underflow_fallback_invokes_paint_underflow() {
+        struct FallbackWidget;
+        impl Widget for FallbackWidget {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn paint(&self, cx: &mut PaintContext) {
+                cx.list.commands.push(PaintCommand::FillRect(
+                    kurbo::Rect::new(0.0, 0.0, 1.0, 1.0),
+                    [7, 7, 7, 255],
+                ));
+            }
+            fn paint_underflow(&self, cx: &mut PaintContext) {
+                cx.list.commands.push(PaintCommand::FillRect(
+                    kurbo::Rect::new(0.0, 0.0, 1.0, 1.0),
+                    [8, 8, 8, 255],
+                ));
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let id = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 40.0, 10.0)),
+            ColdNode::new(Box::new(FallbackWidget)).with_render_minimum(
+                RenderMinimum::new(Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Fallback),
+            ),
+        );
+        arena.update_underflow(id);
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        let colors: Vec<[u8; 4]> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::FillRect(_, color) => Some(*color),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(colors, vec![[8, 8, 8, 255]]);
+    }
+
+    #[test]
+    fn underflow_scrim_emits_blurred_veil() {
+        let mut arena = WidgetArena::new();
+        let id = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 40.0, 10.0)),
+            ColdNode::new(Box::new(FillWidget([5, 5, 5, 255]))).with_render_minimum(
+                RenderMinimum::new(Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Scrim),
+            ),
+        );
+        arena.update_underflow(id);
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        let fill = list
+            .commands
+            .iter()
+            .position(|c| matches!(c, PaintCommand::FillRect(_, [5, 5, 5, 255])));
+        let veil = list
+            .commands
+            .iter()
+            .position(|c| matches!(c, PaintCommand::BlurredRect { .. }));
+        // Normal paint still happens; the veil lands on top of it.
+        assert!(fill.is_some() && veil.is_some() && veil > fill);
+    }
+
+    #[test]
+    fn underflow_clip_wraps_subtree() {
+        let mut arena = WidgetArena::new();
+        let id = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 40.0, 10.0)),
+            ColdNode::new(Box::new(FillWidget([5, 5, 5, 255]))).with_render_minimum(
+                RenderMinimum::new(Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Clip),
+            ),
+        );
+        arena.update_underflow(id);
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        let clip = list.commands.iter().position(|c| {
+            matches!(
+                c,
+                PaintCommand::ClipRect(_) | PaintCommand::ClipRoundedRect(..)
+            )
+        });
+        let fill = list
+            .commands
+            .iter()
+            .position(|c| matches!(c, PaintCommand::FillRect(_, [5, 5, 5, 255])));
+        let pop = list
+            .commands
+            .iter()
+            .rposition(|c| matches!(c, PaintCommand::PopClip));
+        assert!(clip.is_some() && fill.is_some() && pop.is_some());
+        assert!(clip < fill && fill < pop);
+    }
+
+    #[test]
+    fn underflow_instance_override_beats_widget_default() {
+        struct FloorWidget;
+        impl Widget for FloorWidget {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn min_render(&self) -> RenderMinimum {
+                RenderMinimum::new(Vec2::new(100.0, 100.0)).with_policy(UnderflowPolicy::Hide)
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        // Widget declares 100×100 Hide; the instance overrides to a
+        // 10×10 Allow — the instance wins, so a 50×50 slot does NOT
+        // engage despite violating the widget-level floor.
+        let id = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 50.0, 50.0)),
+            ColdNode::new(Box::new(FloorWidget)).with_render_minimum(
+                RenderMinimum::new(Vec2::new(10.0, 10.0)).with_policy(UnderflowPolicy::Allow),
+            ),
+        );
+        arena.update_underflow(id);
+        assert_eq!(arena.get_cold(id).unwrap().underflow_policy(), None);
+    }
+
+    #[test]
+    fn dispatch_event_skips_covered_node_and_bubbles() {
+        let child_calls = Arc::new(AtomicUsize::new(0));
+        let parent_calls = Arc::new(AtomicUsize::new(0));
+        let mut arena = WidgetArena::new();
+        let parent = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Box::new(ProbeWidget::new(
+                parent_calls.clone(),
+                EventResponse::Handled,
+            )),
+        );
+        let child = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 40.0, 10.0)),
+            ColdNode::new(Box::new(ProbeWidget::new(
+                child_calls.clone(),
+                EventResponse::Handled,
+            )))
+            .with_render_minimum(
+                RenderMinimum::new(Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Hide),
+            ),
+        );
+        arena.append_child(parent, child).unwrap();
+        arena.update_underflow(child);
+
+        let event = WidgetEvent::PointerMoved {
+            position: Vec2::new(5.0, 5.0),
+        };
+        // The covered child is skipped entirely — the event bubbles to
+        // the parent, matching `!VISIBLE` semantics.
+        assert_eq!(arena.dispatch_event(child, &event), EventResponse::Handled);
+        assert_eq!(child_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(parent_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn sync_overlays_closes_covered_owners_popup() {
+        struct PopupOwner {
+            opened: bool,
+        }
+        impl Widget for PopupOwner {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
+                if !self.opened {
+                    self.opened = true;
+                    overlay.open(
+                        Box::new(DummyWidget),
+                        OverlayAnchor::Bounds(Rect::new(0.0, 0.0, 10.0, 10.0)),
+                    );
+                }
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let id = arena.insert(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 40.0)),
+            ColdNode::new(Box::new(PopupOwner { opened: false })).with_render_minimum(
+                RenderMinimum::new(Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Hide),
+            ),
+        );
+        arena.sync_overlays();
+        assert_eq!(arena.overlay().entries().len(), 1);
+
+        // Squeeze below the floor — Hide engages and the popup is
+        // closed rather than orphaned above a hidden owner.
+        arena.get_hot_mut(id).unwrap().bounds = Rect::new(0.0, 0.0, 40.0, 10.0);
+        arena.update_underflow(id);
+        arena.sync_overlays();
+        assert_eq!(arena.overlay().entries().len(), 0);
+    }
+
+    #[test]
+    fn internal_child_covered_by_min_render_gets_no_events() {
+        struct MinChild {
+            calls: Arc<AtomicUsize>,
+        }
+        impl Widget for MinChild {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn min_render(&self) -> RenderMinimum {
+                RenderMinimum::new(Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Hide)
+            }
+            fn event(&mut self, _cx: &mut EventContext) -> EventResponse {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                EventResponse::Handled
+            }
+        }
+        struct EventComposite {
+            child: MinChild,
+        }
+        impl Widget for EventComposite {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn child_count(&self) -> usize {
+                1
+            }
+            fn child(&self, index: usize) -> Option<&dyn Widget> {
+                (index == 0).then_some(&self.child as &dyn Widget)
+            }
+            fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+                (index == 0).then_some(&mut self.child as &mut dyn Widget)
+            }
+            fn child_bounds(&self, index: usize) -> Option<Rect> {
+                // 5×5px slot — far below the child's 80×24pt floor.
+                (index == 0).then_some(Rect::new(0.0, 0.0, 5.0, 5.0))
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Box::new(EventComposite {
+                child: MinChild {
+                    calls: calls.clone(),
+                },
+            }),
+        );
+        let event = WidgetEvent::PointerMoved {
+            position: Vec2::new(2.0, 2.0),
+        };
+        // The default `event` forwards to internal children — the
+        // underflowed-covering child is skipped (threshold-only check;
+        // internal children have no engagement state).
+        let _ = arena.dispatch_event(id, &event);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }

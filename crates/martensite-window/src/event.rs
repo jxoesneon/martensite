@@ -674,11 +674,19 @@ impl EventRouter {
         self.mouse.update_position(window_id, event.position);
 
         let target = if let Some(captured) = self.capture.captured(event.pointer_id) {
-            if arena.is_alive(captured) {
+            // A captured widget that became underflow-covered mid-gesture
+            // (engaged Hide/Collapse/Scrim) can no longer be the gesture's
+            // referent — release the capture and resume hit-testing,
+            // same as a dead capture.
+            let covered = arena
+                .get_cold(captured)
+                .and_then(|c| c.underflow_policy())
+                .is_some_and(|p| p.covers_input());
+            if arena.is_alive(captured) && !covered {
                 Some(captured)
             } else {
-                // The captured widget is gone — release the stale capture so
-                // subsequent events resume normal hit-testing.
+                // The captured widget is gone or covered — release the
+                // stale capture so subsequent events resume hit-testing.
                 self.capture.release(event.pointer_id);
                 let tester = HitTester::new(arena);
                 tester.hit_test(root, event.position).map(|r| r.widget_id)
@@ -1545,6 +1553,43 @@ mod tests {
             router.route_pointer_event(&arena, b, win, &event),
             EventDispatchOutcome::Handled(a)
         );
+    }
+
+    #[test]
+    fn pointer_capture_released_when_target_becomes_covered() {
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 300.0, 300.0);
+        let a = arena.insert(
+            hot_node(0.0, 0.0, 40.0, 10.0),
+            ColdNode::default().with_render_minimum(
+                martensite_core::RenderMinimum::new(Vec2::new(80.0, 24.0))
+                    .with_policy(martensite_core::UnderflowPolicy::Hide),
+            ),
+        );
+        let b = insert(&mut arena, 200.0, 0.0, 100.0, 100.0);
+        arena.append_child(root, a).unwrap();
+        arena.append_child(root, b).unwrap();
+
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        router.capture_pointer_primary(a);
+
+        // The captured widget becomes underflow-covered mid-gesture —
+        // capture is revoked and routing falls back to hit-testing.
+        arena.update_underflow(a);
+        let event = PointerEvent {
+            pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
+            position: Vec2::new(250.0, 50.0),
+            state: PointerState::Moved,
+            button: None,
+            modifiers: ModifierKeys::empty(),
+        };
+        assert_eq!(
+            router.route_pointer_event(&arena, root, win, &event),
+            EventDispatchOutcome::Handled(b)
+        );
+        assert!(router.capture.captured(PointerId::PRIMARY).is_none());
     }
 
     #[test]

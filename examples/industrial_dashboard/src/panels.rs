@@ -71,7 +71,7 @@ use martensite::blessed::{
 use martensite::core::overlay::{OverlayAnchor, OverlayLayer};
 use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
-    Rect, SemanticAction, Widget, WidgetEvent,
+    Rect, RenderMinimum, SemanticAction, UnderflowPolicy, Widget, WidgetEvent,
 };
 use martensite::media::surface::{VideoPixelFormat, VideoSurface};
 use martensite::prelude::*;
@@ -473,6 +473,33 @@ impl Widget for GridPanel {
     }
     fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
         Vec2::new(620.0, 420.0)
+    }
+
+    fn min_render(&self) -> RenderMinimum {
+        // Below ~300×170pt the table cannot show headers plus a row
+        // meaningfully — degrade to a placeholder badge instead of a
+        // half-rendered grid.
+        RenderMinimum::new(Vec2::new(300.0, 170.0)).with_policy(UnderflowPolicy::Fallback)
+    }
+
+    fn paint_underflow(&self, cx: &mut PaintContext) {
+        let pal = Palette::from_theme(cx.theme);
+        let s = self.s();
+        let mut text = self.text.lock();
+        let b = krect(
+            f64::from(self.bounds.min_x()),
+            f64::from(self.bounds.min_y()),
+            f64::from(self.bounds.width()),
+            f64::from(self.bounds.height()),
+        );
+        cx.list.push_fill_rect(b, pal.surface);
+        cx.list.push_stroke_rect(b, 1.0, pal.border);
+        let msg = "PROCESS GRID — enlarge to restore";
+        let size = 11.0 * s;
+        let tw = f64::from(text.measure(msg, size));
+        let x = (b.x0 + (b.width() - tw) * 0.5).max(b.x0 + 2.0);
+        let y = b.y0 + (b.height() - f64::from(size)) * 0.5;
+        text.push(cx.list, Point::new(x, y), msg, size, pal.text_muted, None);
     }
 
     fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
@@ -990,6 +1017,13 @@ impl Widget for TelemetryPanel {
     }
     fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
         Vec2::new(560.0, 300.0)
+    }
+
+    fn min_render(&self) -> RenderMinimum {
+        // Below ~260×150pt the chart is illegible even after the
+        // widget's own label-thinning — veil the region rather than
+        // paint noise.
+        RenderMinimum::new(Vec2::new(260.0, 150.0)).with_policy(UnderflowPolicy::Scrim)
     }
 
     fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
@@ -1559,6 +1593,12 @@ impl Widget for EditorPanel {
         Vec2::new(400.0, 260.0)
     }
 
+    fn min_render(&self) -> RenderMinimum {
+        // The editor stays live when squeezed but clips its content to
+        // the slot — no half-painted glyphs past the panel edge.
+        RenderMinimum::new(Vec2::new(240.0, 140.0)).with_policy(UnderflowPolicy::Clip)
+    }
+
     fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
     }
@@ -1993,6 +2033,13 @@ impl Widget for MediaPanel {
         Vec2::new(320.0, 220.0)
     }
 
+    fn min_render(&self) -> RenderMinimum {
+        // The dock's manual layout cannot honor `display:none`
+        // semantics, so Collapse degrades to hide-like behavior here —
+        // the slot is retained and the panel simply stops painting.
+        RenderMinimum::new(Vec2::new(220.0, 130.0)).with_policy(UnderflowPolicy::Collapse)
+    }
+
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
         // MediaView owns its dest-rect math (fit + letterbox). Content
@@ -2195,7 +2242,11 @@ mod tests {
     }
 
     fn send(w: &mut impl Widget, bounds: Rect, ev: &WidgetEvent) -> EventResponse {
-        let mut cx = EventContext { event: ev, bounds };
+        let mut cx = EventContext {
+            event: ev,
+            bounds,
+            scale: 1.0,
+        };
         w.event(&mut cx)
     }
 
@@ -2354,5 +2405,36 @@ mod decoder_tests {
             panel.frame_index > pass_len,
             "clip did not loop after end_of_stream"
         );
+    }
+
+    /// The dock panels declare their render floors with the intended
+    /// degradation policies — the contract `apply_dock_layout`'s
+    /// `update_underflow_all` consumes.
+    #[test]
+    fn panels_declare_min_render_policies() {
+        let grid = GridPanel::new(
+            Signal::new(1.0),
+            Signal::new(String::new()),
+            Signal::new(None),
+        );
+        let min = grid.min_render();
+        assert_eq!(min.policy, UnderflowPolicy::Fallback);
+        assert_eq!(min.size, Vec2::new(300.0, 170.0));
+
+        let telemetry = TelemetryPanel::new(
+            Signal::new(1.0),
+            Signal::new(0.0),
+            Signal::new(0.0),
+            Signal::new(false),
+            Signal::new(false),
+            Signal::new(16.0),
+        );
+        assert_eq!(telemetry.min_render().policy, UnderflowPolicy::Scrim);
+
+        let editor = EditorPanel::new(Signal::new(1.0));
+        assert_eq!(editor.min_render().policy, UnderflowPolicy::Clip);
+
+        let media = MediaPanel::new(Signal::new(1.0));
+        assert_eq!(media.min_render().policy, UnderflowPolicy::Collapse);
     }
 }

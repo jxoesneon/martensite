@@ -409,6 +409,7 @@ impl RadioGroup {
     ///     let mut cx = martensite_core::EventContext {
     ///         event: &event,
     ///         bounds: martensite_core::Rect::default(),
+    ///         scale: 1.0,
     ///     };
     ///     option.event(&mut cx);
     /// }
@@ -554,6 +555,7 @@ impl Widget for RadioGroup {
                     let mut child_cx = EventContext {
                         event: cx.event,
                         bounds: b,
+                        scale: cx.scale,
                     };
                     if let Some(option) = self.options.get_mut(i) {
                         response = option.event(&mut child_cx);
@@ -643,6 +645,7 @@ mod tests {
         let mut cx = EventContext {
             event: ev,
             bounds: group.cached_bounds,
+            scale: 1.0,
         };
         group.event(&mut cx)
     }
@@ -728,6 +731,7 @@ mod tests {
         let mut cx = EventContext {
             event: &ev,
             bounds: Rect::default(),
+            scale: 1.0,
         };
         assert_eq!(option.event(&mut cx), EventResponse::Handled);
         g.poll_pending();

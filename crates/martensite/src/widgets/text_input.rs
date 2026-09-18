@@ -20,7 +20,7 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Widget, WidgetEvent,
 };
-use martensite_core::{NodeFlags, Rect, TokenKey};
+use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
 
 /// Field background colour.
 const FACE: [u8; 4] = [255, 255, 255, 255];
@@ -450,6 +450,12 @@ impl Widget for TextInput {
         Vec2::new(min_w, min_h)
     }
 
+    fn min_render(&self) -> RenderMinimum {
+        // The same 120×24pt floor `measure` requests — declared so
+        // underflow auditing and app-chosen policies can act on it.
+        RenderMinimum::new(Vec2::new(120.0, 24.0)).with_policy(UnderflowPolicy::Lint)
+    }
+
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
         self.scale = cx.scale;
@@ -735,6 +741,7 @@ mod tests {
         EventContext {
             event,
             bounds: Rect::new(0.0, 0.0, 200.0, 24.0),
+            scale: 1.0,
         }
     }
 

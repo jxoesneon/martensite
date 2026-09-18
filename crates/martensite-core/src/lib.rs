@@ -54,8 +54,8 @@ pub use paint::{
 pub use snapshot::{ArenaRestoreError, ArenaState, TimemachineState};
 pub use widget::{
     A11yEmittedNode, AccessibilityContext, DummyWidget, EventContext, EventResponse,
-    LayoutConstraints, LayoutContext, OverlayA11yRef, PaintContext, PointerButton, SemanticAction,
-    Widget, WidgetEvent,
+    LayoutConstraints, LayoutContext, OverlayA11yRef, PaintContext, PointerButton, RenderMinimum,
+    SemanticAction, UnderflowPolicy, Widget, WidgetEvent,
 };
 
 #[cfg(test)]

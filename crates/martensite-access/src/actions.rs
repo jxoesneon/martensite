@@ -246,6 +246,7 @@ pub fn dispatch_a11y_action(arena: &mut WidgetArena, action: &A11yAction) -> Eve
     // owning arena widget — decided here, before `semantic` moves.
     let wants_owner_focus = semantic == SemanticAction::Focus;
     let event = WidgetEvent::SemanticAction(semantic);
+    let scale = arena.scale_factor();
     match action.target() {
         ActionTarget::Arena(id) => arena.dispatch_event(id, &event),
         ActionTarget::Internal(owner, path) => {
@@ -254,6 +255,7 @@ pub fn dispatch_a11y_action(arena: &mut WidgetArena, action: &A11yAction) -> Eve
                 Some(widget) => widget.event(&mut EventContext {
                     event: &event,
                     bounds,
+                    scale,
                 }),
                 None => return EventResponse::Ignored,
             };
@@ -270,6 +272,7 @@ pub fn dispatch_a11y_action(arena: &mut WidgetArena, action: &A11yAction) -> Eve
                 Some(widget) => widget.event(&mut EventContext {
                     event: &event,
                     bounds,
+                    scale,
                 }),
                 None => return EventResponse::Ignored,
             };

@@ -647,6 +647,18 @@ impl<'a> HitTester<'a> {
             return None;
         }
 
+        // Underflow-covered subtrees (engaged Hide/Collapse/Scrim) are
+        // unhittable — the policy's veil or invisibility covers the
+        // whole region.
+        if self
+            .arena
+            .get_cold(node)
+            .and_then(|c| c.underflow_policy())
+            .is_some_and(|p| p.covers_input())
+        {
+            return None;
+        }
+
         // Recurse into children in reverse Z-order (topmost sibling first).
         // The arena stores children as a singly-linked list with `first_child`
         // pointing at the *earliest* (bottom-most) sibling, so iterating via
@@ -761,6 +773,27 @@ mod tests {
         // Point inside parent only → parent wins.
         let hit = tester.hit_test(parent, Vec2::new(10.0, 10.0));
         assert_eq!(hit.map(|h| h.widget_id), Some(parent));
+    }
+
+    #[test]
+    fn underflow_covered_subtree_is_unhittable() {
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 200.0, 200.0);
+        let covered = arena.insert(
+            hot_node(0.0, 0.0, 40.0, 10.0),
+            ColdNode::default().with_render_minimum(
+                martensite_core::RenderMinimum::new(Vec2::new(80.0, 24.0))
+                    .with_policy(martensite_core::UnderflowPolicy::Hide),
+            ),
+        );
+        arena.append_child(root, covered).unwrap();
+        arena.update_underflow(covered);
+
+        let tester = HitTester::new(&arena);
+        // A point inside the covered child falls through to the parent —
+        // the whole subtree is unhittable.
+        let hit = tester.hit_test(root, Vec2::new(20.0, 5.0));
+        assert_eq!(hit.map(|h| h.widget_id), Some(root));
     }
 
     #[test]

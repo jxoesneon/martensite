@@ -170,6 +170,7 @@ impl Toolbar {
         let mut child_cx = EventContext {
             event: cx.event,
             bounds,
+            scale: cx.scale,
         };
         child.event(&mut child_cx)
     }
@@ -264,6 +265,7 @@ impl Widget for Toolbar {
                     let mut fcx = EventContext {
                         event: &focus_ev,
                         bounds: fb,
+                        scale: cx.scale,
                     };
                     self.filter.event(&mut fcx);
                 }
@@ -271,6 +273,7 @@ impl Widget for Toolbar {
                 let mut child_cx = EventContext {
                     event: cx.event,
                     bounds,
+                    scale: 1.0,
                 };
                 let r = self
                     .child_mut_at(i)

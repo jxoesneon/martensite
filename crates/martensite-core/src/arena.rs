@@ -19,7 +19,9 @@ use crate::id::WidgetId;
 use crate::node::{ColdNode, HotNode, NodeFlags};
 use crate::overlay::OverlayLayer;
 use crate::paint::PaintList;
-use crate::widget::{EventContext, EventResponse, PaintContext, Widget, WidgetEvent};
+use crate::widget::{
+    EventContext, EventResponse, PaintContext, UnderflowPolicy, Widget, WidgetEvent,
+};
 
 /// Error variants for arena tree operations and synchronization.
 ///
@@ -442,6 +444,16 @@ impl WidgetArena {
             if let Some(cold) = self.get_cold_mut(id) {
                 Self::sync_overlay_recursive(cold.widget.as_mut(), &mut overlay);
             }
+            // An owner whose underflow policy hides it can no longer
+            // project a popup — an invisible widget floating a live
+            // surface is worse than the cramped widget. Close it.
+            let orphan = self
+                .get_cold(id)
+                .and_then(|c| c.underflow_policy())
+                .is_some_and(|p| p.hides_from_a11y() || p.covers_input());
+            if orphan {
+                overlay.close_owner(id);
+            }
         }
         overlay.set_current_owner(None);
         overlay.layout_pass();
@@ -462,6 +474,92 @@ impl WidgetArena {
         self.overlay = overlay;
         for owner in owners {
             self.mark_dirty(owner);
+        }
+    }
+
+    /// Release margin for underflow hysteresis: a node engages when its
+    /// bounds drop below its [`RenderMinimum`](crate::RenderMinimum) and
+    /// releases only when both axes recover past `min × 1.05`. Without
+    /// the band, a resize drag hovering at the boundary would flicker
+    /// the policy every frame.
+    pub const UNDERFLOW_RELEASE: f32 = 1.05;
+
+    /// Re-evaluates `id`'s underflow engagement against its current
+    /// [`HotNode::bounds`] — call after assigning a node's bounds.
+    ///
+    /// The Taffy `LayoutEngine` calls this automatically for every node
+    /// it lays out. Manual layout paths (docking BSPs, custom
+    /// allocators — anything that writes `hot.bounds` directly) should
+    /// call [`Self::update_underflow_all`] once per layout pass, or this
+    /// per node. Nodes with no declared [`RenderMinimum`](crate::RenderMinimum)
+    /// or an advisory policy (`Allow`/`Lint`) are never engaged — the
+    /// paint audit reports their violations independently of this
+    /// state.
+    ///
+    /// `Collapse`-policy nodes engage like any enforcing policy; the
+    /// space-freeing half of `Collapse` is applied by the layout engine
+    /// — on manual paths the node keeps its slot (Hide semantics).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::{ColdNode, DummyWidget, HotNode, NodeFlags,
+    ///     Rect, RenderMinimum, UnderflowPolicy, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags |= NodeFlags::VISIBLE;
+    /// hot.bounds = Rect::new(0.0, 0.0, 40.0, 20.0); // below the 100x50 floor
+    /// let id = arena.insert(
+    ///     hot,
+    ///     ColdNode::new(Box::new(DummyWidget)).with_render_minimum(
+    ///         RenderMinimum::new(Vec2::new(100.0, 50.0))
+    ///             .with_policy(UnderflowPolicy::Hide),
+    ///     ),
+    /// );
+    /// arena.update_underflow(id);
+    /// assert_eq!(
+    ///     arena.get_cold(id).unwrap().underflow_policy(),
+    ///     Some(UnderflowPolicy::Hide)
+    /// );
+    /// ```
+    pub fn update_underflow(&mut self, id: WidgetId) {
+        let Some(hot) = self.get_hot(id) else {
+            return;
+        };
+        let bounds = hot.bounds;
+        let scale = self.scale_factor;
+        let Some(cold) = self.get_cold_mut(id) else {
+            return;
+        };
+        let min = cold.effective_render_minimum();
+        if min.size == glam::Vec2::ZERO || !min.policy.enforces() {
+            cold.underflow_engaged = false;
+            return;
+        }
+        let engaged = cold.underflow_engaged;
+        let next = if engaged {
+            // Release only when both axes clear the hysteresis band.
+            !min.satisfied(bounds, scale, Self::UNDERFLOW_RELEASE)
+        } else {
+            min.violated(bounds, scale)
+        };
+        if next != engaged {
+            cold.underflow_engaged = next;
+            if let Some(h) = self.get_hot_mut(id) {
+                h.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
+            }
+        }
+    }
+
+    /// Runs [`Self::update_underflow`] for every live node — the
+    /// one-call hook for manual layout paths after they finish
+    /// assigning bounds.
+    pub fn update_underflow_all(&mut self) {
+        let ids: Vec<WidgetId> = self.iter_depth_first().collect();
+        for id in ids {
+            self.update_underflow(id);
         }
     }
 
@@ -1474,14 +1572,30 @@ impl WidgetArena {
             };
             let bounds = hot.bounds;
             let parent = hot.parent;
-            if hot.flags.contains(NodeFlags::INERT) {
+            // Inert, invisible, and input-covered (engaged Hide/
+            // Collapse/Scrim) nodes never receive events — the event
+            // bubbles to the parent instead.
+            if hot.flags.contains(NodeFlags::INERT) || !hot.flags.contains(NodeFlags::VISIBLE) {
                 current = parent;
                 continue;
             }
+            let covered = self
+                .get_cold(id)
+                .and_then(|c| c.underflow_policy())
+                .is_some_and(|p| p.covers_input());
+            if covered {
+                current = parent;
+                continue;
+            }
+            let scale = self.scale_factor;
             let Some(cold) = self.get_cold_mut(id) else {
                 break;
             };
-            let mut cx = EventContext { event, bounds };
+            let mut cx = EventContext {
+                event,
+                bounds,
+                scale,
+            };
             let response = cold.widget.event(&mut cx);
             match response {
                 EventResponse::Ignored => current = parent,
@@ -1622,6 +1736,17 @@ impl WidgetArena {
             return;
         };
 
+        // Underflow enforcement — `Hide`/`Collapse` keep the layout
+        // slot but paint nothing (Android `INVISIBLE` semantics; the
+        // space-freeing half of `Collapse` is the layout engine's job).
+        let policy = cold.underflow_policy();
+        if matches!(
+            policy,
+            Some(UnderflowPolicy::Hide | UnderflowPolicy::Collapse)
+        ) {
+            return;
+        }
+
         // Provenance scope — covers this widget's paint commands, its
         // internal children, AND its arena children, so the scope tree
         // mirrors the widget tree exactly. Backends ignore the marker;
@@ -1633,6 +1758,28 @@ impl WidgetArena {
             cold.debug_name.unwrap_or_else(|| cold.widget.debug_name()),
             rect_to_kurbo(hot.bounds),
         );
+
+        // `Fallback` replaces the whole subtree with the widget's
+        // degraded chrome — nothing else paints.
+        if matches!(policy, Some(UnderflowPolicy::Fallback)) {
+            let mut cx = PaintContext {
+                list,
+                bounds: hot.bounds,
+                theme: &self.theme,
+                scale: self.scale_factor,
+                text_painter: self.text_painter.as_deref(),
+            };
+            cold.widget.paint_underflow(&mut cx);
+            list.pop_scope();
+            return;
+        }
+
+        // `Clip` wraps the widget's chrome AND its entire subtree —
+        // stricter than `CLIPS_CHILDREN`, which clips children only.
+        if matches!(policy, Some(UnderflowPolicy::Clip)) {
+            list.push_clip(rect_to_kurbo(hot.bounds));
+        }
+
         paint_widget_body(
             &*cold.widget,
             hot.bounds,
@@ -1658,8 +1805,46 @@ impl WidgetArena {
         if clip_children {
             list.pop_clip();
         }
+
+        if matches!(policy, Some(UnderflowPolicy::Clip)) {
+            list.pop_clip();
+        }
+        // `Scrim` veils the painted subtree with a frosted overlay —
+        // the bounds stay legible as *occupied*, the cramped content
+        // underneath does not.
+        if matches!(policy, Some(UnderflowPolicy::Scrim)) {
+            let (rect, radius, color) = scrim_veil(hot.bounds, &self.theme);
+            list.push_blurred_rect(rect, radius, color);
+        }
         list.pop_scope();
     }
+}
+
+/// The frosted-veil parameters for an engaged
+/// [`UnderflowPolicy::Scrim`]: the widget's bounds, a fixed blur
+/// radius, and a translucent tint derived from the theme's surface
+/// color. This is a cover over the region — it does not blur the
+/// widget's painted output.
+fn scrim_veil(bounds: crate::Rect, theme: &martensite_theme::Theme) -> ([f32; 4], f32, [f32; 4]) {
+    const SCRIM_BLUR_RADIUS: f32 = 10.0;
+    const SCRIM_ALPHA: f32 = 0.55;
+    let color = theme
+        .color(martensite_theme::TokenKey::SurfaceColor)
+        .map(|c| {
+            let (r, g, b) = c.to_srgb();
+            [r, g, b, c.alpha * SCRIM_ALPHA]
+        })
+        .unwrap_or([0.0, 0.0, 0.0, SCRIM_ALPHA]);
+    (
+        [
+            bounds.min_x(),
+            bounds.min_y(),
+            bounds.width(),
+            bounds.height(),
+        ],
+        SCRIM_BLUR_RADIUS,
+        color,
+    )
 }
 
 /// Convert a [`crate::Rect`] to the `kurbo` rectangle paint commands use.
@@ -1731,7 +1916,7 @@ fn paint_widget_body(
         let (Some(child), Some(child_bounds)) = (widget.child(i), widget.child_bounds(i)) else {
             continue;
         };
-        paint_widget_recursive(
+        paint_underflowed_child(
             child,
             child_bounds,
             &mut *cx.list,
@@ -1742,6 +1927,52 @@ fn paint_widget_body(
     }
     if clip {
         cx.list.pop_clip();
+    }
+}
+
+/// Paints one internal child, applying its [`Widget::min_render`]
+/// underflow policy when the child's bounds underflow the declared
+/// minimum. Internal children have no `ColdNode`, so evaluation is
+/// threshold-only — no hysteresis state and no per-instance override.
+fn paint_underflowed_child(
+    child: &dyn Widget,
+    bounds: crate::Rect,
+    list: &mut PaintList,
+    theme: &martensite_theme::Theme,
+    scale: f32,
+    text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
+) {
+    let min = child.min_render();
+    let policy = if min.policy.enforces() && min.violated(bounds, scale) {
+        Some(min.policy)
+    } else {
+        None
+    };
+    match policy {
+        Some(UnderflowPolicy::Hide | UnderflowPolicy::Collapse) => {}
+        Some(UnderflowPolicy::Fallback) => {
+            list.push_scope(None, child.debug_name(), rect_to_kurbo(bounds));
+            let mut cx = PaintContext {
+                list,
+                bounds,
+                theme,
+                scale,
+                text_painter,
+            };
+            child.paint_underflow(&mut cx);
+            list.pop_scope();
+        }
+        Some(UnderflowPolicy::Clip) => {
+            list.push_clip(rect_to_kurbo(bounds));
+            paint_widget_recursive(child, bounds, list, theme, scale, text_painter);
+            list.pop_clip();
+        }
+        Some(UnderflowPolicy::Scrim) => {
+            paint_widget_recursive(child, bounds, list, theme, scale, text_painter);
+            let (rect, radius, color) = scrim_veil(bounds, theme);
+            list.push_blurred_rect(rect, radius, color);
+        }
+        _ => paint_widget_recursive(child, bounds, list, theme, scale, text_painter),
     }
 }
 

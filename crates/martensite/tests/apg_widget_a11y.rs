@@ -131,6 +131,7 @@ fn radio_group_tree_and_at_activation() {
     let mut cx = EventContext {
         event: &ev,
         bounds: Rect::default(),
+        scale: 1.0,
     };
     target.event(&mut cx);
 
@@ -495,7 +496,11 @@ fn tooltip_hover_grace_bridges_pointer_to_bubble() {
         tip.layout(&mut cx, bounds);
     }
     let send = |tip: &mut Tooltip, ev: WidgetEvent| {
-        let mut cx = EventContext { event: &ev, bounds };
+        let mut cx = EventContext {
+            event: &ev,
+            bounds,
+            scale: 1.0,
+        };
         tip.event(&mut cx)
     };
 

@@ -27,6 +27,162 @@ pub struct LayoutConstraints {
     pub max_size: Vec2,
 }
 
+/// How the framework treats a widget whose allocated bounds fall below
+/// its declared [`RenderMinimum`].
+///
+/// The policy is evaluated lazily at the paint, hit-test, and audit
+/// consumption sites — never by a mandatory layout pass — so it applies
+/// regardless of which layout authority produced the rect (the Taffy
+/// engine, a docking BSP, or manual bounds assignment). Engagement is
+/// hysteretic: a node engages when either axis drops below its minimum
+/// and releases only when both axes recover past the minimum scaled by
+/// [`crate::WidgetArena::UNDERFLOW_RELEASE`], preventing flicker during
+/// live resize.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::UnderflowPolicy;
+///
+/// // `Allow` is the default — the pre-feature behavior, made explicit.
+/// assert_eq!(UnderflowPolicy::default(), UnderflowPolicy::Allow);
+/// // `Hide` and `Scrim` cover the subtree from input; `Fallback` does not.
+/// assert!(UnderflowPolicy::Hide.covers_input());
+/// assert!(!UnderflowPolicy::Fallback.covers_input());
+/// ```
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum UnderflowPolicy {
+    /// Paint and hit-test normally — the pre-feature behavior, made
+    /// explicit. The `audit_underflow` pass in `martensite-access`
+    /// still reports the violation when the app runs it.
+    #[default]
+    Allow,
+    /// Render and behave exactly like [`UnderflowPolicy::Allow`], but
+    /// flag the violation whenever the underflow audit runs — the
+    /// declaration says "a minimum breach here is a real problem, not
+    /// a style choice". Use for widgets whose minimum is a hard
+    /// correctness requirement.
+    Lint,
+    /// Clip the widget's chrome and its entire subtree to its allocated
+    /// bounds. Slightly stricter than the status quo, which clips only
+    /// children of nodes carrying `CLIPS_CHILDREN`.
+    Clip,
+    /// Keep the layout slot but skip painting, hit-testing, and event
+    /// delivery — Android `INVISIBLE` semantics, not `GONE`: no
+    /// relayout is requested and the space stays allocated. The node is
+    /// marked `hidden` in the accessibility tree and focus is relocated
+    /// away before it engages.
+    Hide,
+    /// Paint normally, then veil the widget's bounds with a blurred,
+    /// translucent scrim and cover the subtree from input. The scrim is
+    /// a frosted overlay — it does **not** blur the widget's own
+    /// painted output (true content blur requires render-target
+    /// machinery deferred to a later `ContentBlur` variant).
+    Scrim,
+    /// Skip the normal paint and let the widget draw a degraded
+    /// representation via [`Widget::paint_underflow`] — a "window too
+    /// small" badge, a sparkline, an icon. Input stays live: the
+    /// fallback chrome may itself be interactive.
+    Fallback,
+    /// Remove the node from layout entirely — CSS `display:none`
+    /// semantics. The space is freed and siblings reflow. Requires a
+    /// layout authority that honours per-node styles (the Taffy engine
+    /// applies `display:none` and recomputes once per frame); on
+    /// manual-layout paths it degrades to [`UnderflowPolicy::Hide`]
+    /// semantics. Restore is speculative — the node returns only when
+    /// the freed space could satisfy its floor, with a feasibility
+    /// streak that prevents collapse/restore oscillation.
+    Collapse,
+}
+
+impl UnderflowPolicy {
+    /// Whether the engaged policy covers the widget's subtree from
+    /// input — pointer, scroll, keyboard, and focus all bypass it.
+    pub fn covers_input(self) -> bool {
+        matches!(self, Self::Hide | Self::Collapse | Self::Scrim)
+    }
+
+    /// Whether the engaged policy marks the node `hidden` in the
+    /// accessibility tree.
+    pub fn hides_from_a11y(self) -> bool {
+        matches!(self, Self::Hide | Self::Collapse)
+    }
+
+    /// Whether the policy enforces anything at consumption time.
+    /// `Allow` and `Lint` are advisory — they never alter behavior.
+    pub fn enforces(self) -> bool {
+        !matches!(self, Self::Allow | Self::Lint)
+    }
+}
+
+/// A widget's declared minimum render area and the policy applied on
+/// shortfall.
+///
+/// `size` is in logical points — the same unit [`Widget::measure`]
+/// reports. `RenderMinimum::ZERO` disables underflow handling entirely
+/// (the default). Declare it via [`Widget::min_render`] for a widget's
+/// intrinsic floor, or per arena node via
+/// [`crate::ColdNode::with_render_minimum`] — the instance override
+/// wins, mirroring `debug_name` precedence.
+///
+/// # Examples
+///
+/// ```
+/// use glam::Vec2;
+/// use martensite_core::{RenderMinimum, UnderflowPolicy};
+///
+/// let min = RenderMinimum::new(Vec2::new(120.0, 24.0))
+///     .with_policy(UnderflowPolicy::Clip);
+/// assert!(min.policy.enforces());
+/// assert_eq!(RenderMinimum::ZERO.size, Vec2::ZERO);
+/// ```
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct RenderMinimum {
+    /// Minimum meaningful render size in logical points.
+    pub size: Vec2,
+    /// Behavior when allocated bounds are smaller than `size`.
+    pub policy: UnderflowPolicy,
+}
+
+impl RenderMinimum {
+    /// No declared minimum — underflow handling is disabled.
+    pub const ZERO: Self = Self {
+        size: Vec2::ZERO,
+        policy: UnderflowPolicy::Allow,
+    };
+
+    /// Declare a minimum render size with the default
+    /// [`UnderflowPolicy::Allow`] policy.
+    pub const fn new(size: Vec2) -> Self {
+        Self {
+            size,
+            policy: UnderflowPolicy::Allow,
+        }
+    }
+
+    /// Set the shortfall policy.
+    #[must_use]
+    pub const fn with_policy(self, policy: UnderflowPolicy) -> Self {
+        Self { policy, ..self }
+    }
+
+    /// Whether `bounds` (device pixels) underflows this minimum under
+    /// the given display `scale` (physical px per logical pt).
+    pub(crate) fn violated(self, bounds: Rect, scale: f32) -> bool {
+        let min = self.size * scale;
+        bounds.size.x < min.x || bounds.size.y < min.y
+    }
+
+    /// Whether `bounds` (device pixels) satisfies this minimum scaled
+    /// by `margin` — `1.0` is an exact fit, `>1.0` adds release
+    /// hysteresis.
+    pub(crate) fn satisfied(self, bounds: Rect, scale: f32, margin: f32) -> bool {
+        let min = self.size * scale * margin;
+        bounds.size.x >= min.x && bounds.size.y >= min.y
+    }
+}
+
 /// Result of processing an input event on a widget.
 ///
 /// # Examples
@@ -375,6 +531,7 @@ pub enum PointerButton {
 /// let cx = EventContext {
 ///     event: &event,
 ///     bounds: Rect::new(0.0, 0.0, 100.0, 30.0),
+///     scale: 1.0,
 /// };
 /// assert_eq!(cx.bounds.width(), 100.0);
 /// ```
@@ -384,6 +541,10 @@ pub struct EventContext<'a> {
     /// The widget's screen-space bounds in device pixels (equal to
     /// logical points at `scale == 1.0`).
     pub bounds: Rect,
+    /// Physical pixels per logical point — needed to evaluate declared
+    /// [`RenderMinimum`] sizes (logical pt) against `bounds` (device
+    /// px) when forwarding events to internal children.
+    pub scale: f32,
 }
 
 /// Context provided to widgets during the paint pass.
@@ -596,6 +757,7 @@ pub struct OverlayA11yRef {
 /// let mut cx = EventContext {
 ///     event: &event,
 ///     bounds: Rect::new(0.0, 0.0, 50.0, 25.0),
+///     scale: 1.0,
 /// };
 /// assert_eq!(w.event(&mut cx), EventResponse::Ignored);
 /// ```
@@ -624,12 +786,20 @@ pub trait Widget: Send + Sync + 'static {
                     continue;
                 }
             }
+            let Some(child) = self.child_mut(i) else {
+                continue;
+            };
+            // Underflowed internal children whose policy covers input
+            // are skipped — they have no arena node, so the check is
+            // threshold-only (no hysteresis state).
+            let min = child.min_render();
+            if min.policy.covers_input() && min.violated(child_bounds, cx.scale) {
+                continue;
+            }
             let mut child_cx = EventContext {
                 event: cx.event,
                 bounds: child_bounds,
-            };
-            let Some(child) = self.child_mut(i) else {
-                continue;
+                scale: cx.scale,
             };
             match child.event(&mut child_cx) {
                 EventResponse::Ignored => continue,
@@ -742,6 +912,46 @@ pub trait Widget: Send + Sync + 'static {
     /// [`Widget::child_bounds`] after this method returns — a `paint`
     /// implementation only needs to emit the widget's *own* chrome.
     fn paint(&self, _cx: &mut PaintContext) {}
+
+    /// The widget's declared minimum render area and the policy applied
+    /// when allocated bounds fall below it.
+    ///
+    /// The declaration is *not* a measure probe: it must be cheap and
+    /// stable — return a constant, or a floor cached during
+    /// `measure`/`layout`/`tick`. `RenderMinimum::ZERO` (the default)
+    /// disables underflow handling. A per-node
+    /// [`ColdNode::render_minimum`](crate::ColdNode) override takes
+    /// precedence over this method — instance wins over type, matching
+    /// [`Widget::debug_name`] precedence.
+    ///
+    /// Enforcement is lazy — evaluated against the node's final
+    /// [`HotNode::bounds`](crate::HotNode) at paint, hit-test, and audit
+    /// time — so it applies regardless of which layout authority
+    /// assigned the bounds. Engagement requires
+    /// [`WidgetArena::update_underflow`](crate::WidgetArena::update_underflow)
+    /// (or `update_underflow_all`) to run after bounds assignment; the
+    /// Taffy [`LayoutEngine`] does this automatically. Internal children
+    /// are evaluated threshold-only, without hysteresis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::{DummyWidget, RenderMinimum, Widget};
+    ///
+    /// assert_eq!(DummyWidget.min_render(), RenderMinimum::ZERO);
+    /// ```
+    fn min_render(&self) -> RenderMinimum {
+        RenderMinimum::ZERO
+    }
+
+    /// Degraded chrome painted *instead of* this widget's normal body
+    /// and children when the resolved policy is
+    /// [`UnderflowPolicy::Fallback`] and the widget is underflowed.
+    ///
+    /// Default: paints nothing. `cx.bounds` is the *allocated* rect —
+    /// the fallback is defined for the space it actually has.
+    fn paint_underflow(&self, _cx: &mut PaintContext) {}
 
     /// Human-meaningful identity for this widget in diagnostics —
     /// the paint walker's `PushScope` markers and any lint output that

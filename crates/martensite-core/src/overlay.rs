@@ -805,6 +805,7 @@ impl OverlayLayer {
                 let mut cx = EventContext {
                     event,
                     bounds: entry.resolved,
+                    scale: self.scale_factor,
                 };
                 let response = entry.content.event(&mut cx);
                 let id = entry.id;
@@ -826,6 +827,7 @@ impl OverlayLayer {
                 let mut cx = EventContext {
                     event,
                     bounds: entry.resolved,
+                    scale: self.scale_factor,
                 };
                 let response = entry.content.event(&mut cx);
                 let id = entry.id;
@@ -845,6 +847,7 @@ impl OverlayLayer {
                     let mut cx = EventContext {
                         event,
                         bounds: entry.resolved,
+                        scale: self.scale_factor,
                     };
                     let response = entry.content.event(&mut cx);
                     let id = entry.id;

@@ -312,6 +312,45 @@ impl FocusManager {
         }
     }
 
+    /// Revalidates `current_focus` against the arena: if the focused
+    /// node has become unfocusable — removed, hidden, inert, out of
+    /// scope, or underflow-covered — focus relocates to the first tab
+    /// candidate (dispatching `FocusLost`/`FocusGained`) or clears when
+    /// no candidate remains.
+    ///
+    /// Call once per frame after layout/policy state changes so a node
+    /// that vanishes mid-session cannot hold an invisible focus.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{ColdNode, DummyWidget, HotNode, NodeFlags, WidgetArena};
+    /// use martensite_focus::FocusManager;
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags = NodeFlags::FOCUSABLE | NodeFlags::VISIBLE;
+    /// let a = arena.insert(hot, ColdNode::default());
+    /// let mut manager = FocusManager::new();
+    /// manager.set_focus(&mut arena, a);
+    ///
+    /// // Hide the focused node — revalidate relocates focus away.
+    /// arena.get_hot_mut(a).unwrap().flags.remove(NodeFlags::VISIBLE);
+    /// manager.revalidate(&mut arena);
+    /// assert_eq!(manager.current_focus(), None);
+    /// ```
+    pub fn revalidate(&mut self, arena: &mut WidgetArena) {
+        if self
+            .current_focus
+            .is_some_and(|id| self.is_focusable_target(arena, id))
+        {
+            return;
+        }
+        let candidates = self.collect_tab_candidates(arena);
+        let next = candidates.first().copied();
+        self.move_focus(arena, next);
+    }
+
     /// Returns `true` if `id` is a valid focus target: alive, visible,
     /// focusable, not inert, and within the active scope (if any).
     fn is_focusable_target(&self, arena: &WidgetArena, id: WidgetId) -> bool {
@@ -325,6 +364,15 @@ impl FocusManager {
             return false;
         }
         if hot.flags.contains(NodeFlags::INERT) {
+            return false;
+        }
+        // An underflow-covered node (engaged Hide/Collapse/Scrim)
+        // cannot hold focus — its input is covered.
+        if arena
+            .get_cold(id)
+            .and_then(|c| c.underflow_policy())
+            .is_some_and(|p| p.covers_input())
+        {
             return false;
         }
         if let Some(scope_root) = self.scopes.current_scope_root() {
@@ -838,6 +886,10 @@ impl FocusManager {
                 if hot.flags.contains(NodeFlags::FOCUSABLE)
                     && hot.flags.contains(NodeFlags::VISIBLE)
                     && !hot.flags.contains(NodeFlags::INERT)
+                    && !arena
+                        .get_cold(id)
+                        .and_then(|c| c.underflow_policy())
+                        .is_some_and(|p| p.covers_input())
                 {
                     candidates.push(id);
                 }
@@ -862,7 +914,9 @@ impl FocusManager {
 mod tests {
     use super::*;
     use crate::spatial::FocusDirection;
-    use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, WidgetArena};
+    use martensite_core::{
+        ColdNode, HotNode, NodeFlags, Rect, RenderMinimum, UnderflowPolicy, WidgetArena,
+    };
 
     fn make_focusable(arena: &mut WidgetArena) -> WidgetId {
         let hot = HotNode {
@@ -929,6 +983,79 @@ mod tests {
         manager.set_focus(&mut arena, id);
         manager.clear_focus();
         assert_eq!(manager.current_focus(), None);
+    }
+
+    /// Inserts a focusable node whose 40×10px slot underflows its
+    /// 80×24pt floor. The caller decides when to run
+    /// `arena.update_underflow` — tests that need focus set *before*
+    /// coverage engages call it after `set_focus`.
+    fn make_squeezed(arena: &mut WidgetArena) -> WidgetId {
+        arena.insert(
+            HotNode {
+                bounds: Rect::new(0.0, 0.0, 40.0, 10.0),
+                flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+                ..Default::default()
+            },
+            ColdNode::default().with_render_minimum(
+                RenderMinimum::new(glam::Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Hide),
+            ),
+        )
+    }
+
+    fn make_covered(arena: &mut WidgetArena) -> WidgetId {
+        let id = make_squeezed(arena);
+        arena.update_underflow(id);
+        id
+    }
+
+    #[test]
+    fn revalidate_relocates_focus_off_covered_node() {
+        let mut arena = WidgetArena::new();
+        let node = make_squeezed(&mut arena);
+        let next = make_focusable_at(&mut arena, Rect::new(0.0, 0.0, 50.0, 50.0));
+        let mut manager = FocusManager::new();
+        manager.set_focus(&mut arena, node);
+        assert_eq!(manager.current_focus(), Some(node));
+
+        // Squeeze the node below its floor — coverage engages and the
+        // current focus is now invalid.
+        arena.update_underflow(node);
+        manager.revalidate(&mut arena);
+        // Focus lands on the first remaining valid candidate.
+        assert_eq!(manager.current_focus(), Some(next));
+    }
+
+    #[test]
+    fn revalidate_clears_focus_when_nothing_valid_remains() {
+        let mut arena = WidgetArena::new();
+        let node = make_squeezed(&mut arena);
+        let mut manager = FocusManager::new();
+        manager.set_focus(&mut arena, node);
+        assert_eq!(manager.current_focus(), Some(node));
+
+        arena.update_underflow(node);
+        manager.revalidate(&mut arena);
+        assert_eq!(manager.current_focus(), None);
+    }
+
+    #[test]
+    fn set_focus_on_covered_node_does_nothing() {
+        let mut arena = WidgetArena::new();
+        let covered = make_covered(&mut arena);
+        let mut manager = FocusManager::new();
+        manager.set_focus(&mut arena, covered);
+        assert_eq!(manager.current_focus(), None);
+    }
+
+    #[test]
+    fn tab_skips_covered_candidates() {
+        let mut arena = WidgetArena::new();
+        let covered = make_covered(&mut arena);
+        let visible = make_focusable_at(&mut arena, Rect::new(0.0, 0.0, 50.0, 50.0));
+        let mut manager = FocusManager::new();
+        let next = manager.tab(&arena, TabNavigation::Forward);
+        assert_eq!(next, Some(visible));
+        assert_ne!(next, Some(covered));
     }
 
     #[test]

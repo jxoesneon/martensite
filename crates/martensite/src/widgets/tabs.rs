@@ -47,7 +47,7 @@ use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
     PaintContext, PointerButton, SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::{NodeFlags, Rect, TokenKey};
+use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
 
 /// Tab strip height in logical pixels.
 const STRIP_H: f32 = 32.0;
@@ -663,7 +663,11 @@ impl Tabs {
     ///     let strip = t.child_mut(0).unwrap();
     ///     let tab = strip.child_mut(1).unwrap();
     ///     let ev = WidgetEvent::SemanticAction(SemanticAction::Click);
-    ///     let mut cx = EventContext { event: &ev, bounds: Rect::default() };
+    ///     let mut cx = EventContext {
+    ///         event: &ev,
+    ///         bounds: Rect::default(),
+    ///         scale: 1.0,
+    ///     };
     ///     assert_eq!(tab.event(&mut cx), EventResponse::Handled);
     /// }
     /// t.poll_pending();
@@ -723,6 +727,12 @@ impl Widget for Tabs {
             panels.x.clamp(cx.pt(80.0).min(max_w), max_w),
             (panels.y + cx.pt(STRIP_H)).clamp(cx.pt(80.0).min(max_h), max_h),
         )
+    }
+
+    fn min_render(&self) -> RenderMinimum {
+        // The 80×80pt floor `measure` requests — the strip plus at least
+        // a sliver of the active panel.
+        RenderMinimum::new(Vec2::new(80.0, 80.0)).with_policy(UnderflowPolicy::Lint)
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
@@ -824,6 +834,7 @@ impl Widget for Tabs {
                     let mut child_cx = EventContext {
                         event: cx.event,
                         bounds: b,
+                        scale: cx.scale,
                     };
                     if let Some(child) = self.child_mut(i) {
                         response = child.event(&mut child_cx);
@@ -933,6 +944,7 @@ mod tests {
         let mut cx = EventContext {
             event: ev,
             bounds: t.cached_bounds,
+            scale: 1.0,
         };
         t.event(&mut cx)
     }
@@ -1048,6 +1060,7 @@ mod tests {
         let mut cx = EventContext {
             event: &ev,
             bounds: Rect::default(),
+            scale: 1.0,
         };
         assert_eq!(tab.event(&mut cx), EventResponse::Handled);
         t.poll_pending();

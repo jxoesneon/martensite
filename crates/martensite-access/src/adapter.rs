@@ -542,19 +542,34 @@ impl AccessKitAdapter {
             .map(|h| h.flags)
             .unwrap_or(NodeFlags::empty());
 
-        // Add Focus action if the node is focusable and visible.
-        // Hidden nodes should not advertise focus to assistive technologies.
-        if hot_flags.contains(NodeFlags::FOCUSABLE) && hot_flags.contains(NodeFlags::VISIBLE) {
+        // Hidden when not visible, when an engaged underflow policy
+        // hides it (Hide/Collapse), or when any ancestor is hidden —
+        // hidden state propagates down the tree so the emitted tree
+        // stays internally consistent for ATs that prune subtrees.
+        // Input coverage propagates the same way: a Scrim veil over an
+        // ancestor covers this node's region too.
+        let underflow = cold.underflow_policy();
+        let (ancestor_hidden, ancestor_covered) = self.ancestor_state(arena, widget_id);
+        let hidden = !hot_flags.contains(NodeFlags::VISIBLE)
+            || underflow.is_some_and(|p| p.hides_from_a11y())
+            || ancestor_hidden;
+        let covered = underflow.is_some_and(|p| p.covers_input()) || ancestor_covered;
+
+        // Add Focus action if the node is focusable and usable —
+        // hidden or input-covered nodes must not advertise focus to
+        // assistive technologies (the framework would drop the event).
+        if hot_flags.contains(NodeFlags::FOCUSABLE) && !hidden && !covered {
             node.add_action(accesskit::Action::Focus);
         }
 
-        // Set disabled state if the node is inert.
-        if hot_flags.contains(NodeFlags::INERT) {
+        // Set disabled state if the node is inert or its input is
+        // covered by an engaged Scrim veil (direct or inherited).
+        if hot_flags.contains(NodeFlags::INERT) || covered {
             node.set_disabled();
         }
 
         // Set hidden state if not visible.
-        if !hot_flags.contains(NodeFlags::VISIBLE) {
+        if hidden {
             node.set_hidden();
         }
 
@@ -562,6 +577,32 @@ impl AccessKitAdapter {
         cold.widget.accessibility(&mut node);
 
         node
+    }
+
+    /// `(hidden, covered)` state inherited from `widget_id`'s
+    /// ancestors: any `!VISIBLE` or underflow-hidden ancestor makes the
+    /// node hidden; any underflow-covered ancestor covers its input.
+    /// Both propagate so ATs see a consistent tree — a visible child of
+    /// a hidden parent is still reported hidden, a live child under a
+    /// Scrim veil is still reported disabled.
+    fn ancestor_state(&self, arena: &WidgetArena, widget_id: WidgetId) -> (bool, bool) {
+        let mut hidden = false;
+        let mut covered = false;
+        let mut current = arena.get_hot(widget_id).and_then(|h| h.parent);
+        while let Some(id) = current {
+            let Some(hot) = arena.get_hot(id) else {
+                break;
+            };
+            if !hot.flags.contains(NodeFlags::VISIBLE) {
+                hidden = true;
+            }
+            if let Some(policy) = arena.get_cold(id).and_then(|c| c.underflow_policy()) {
+                hidden |= policy.hides_from_a11y();
+                covered |= policy.covers_input();
+            }
+            current = hot.parent;
+        }
+        (hidden, covered)
     }
 
     /// Returns an existing virtual [`NodeId`] for an internal-child path,
@@ -914,7 +955,9 @@ impl AccessKitAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use martensite_core::{ColdNode, HotNode, NodeFlags, WidgetArena};
+    use martensite_core::{
+        ColdNode, HotNode, NodeFlags, RenderMinimum, UnderflowPolicy, WidgetArena,
+    };
 
     fn make_arena_with_root() -> (WidgetArena, WidgetId) {
         let mut arena = WidgetArena::new();
@@ -1063,6 +1106,98 @@ mod tests {
         let update = adapter.build_update(&mut arena);
         let node = &update.nodes[0].1;
         assert!(node.is_hidden());
+        assert!(!node.supports_action(accesskit::Action::Focus));
+    }
+
+    /// A node engaged under a hiding underflow policy, with a visible
+    /// child — used by the propagation tests.
+    fn make_hidden_parent_tree() -> (WidgetArena, WidgetId, WidgetId, WidgetId) {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                ..HotNode::default()
+            },
+            ColdNode::default(),
+        );
+        let hidden = arena.insert(
+            HotNode {
+                bounds: martensite_core::Rect::new(0.0, 0.0, 40.0, 10.0),
+                flags: NodeFlags::VISIBLE | NodeFlags::FOCUSABLE,
+                ..HotNode::default()
+            },
+            ColdNode::default().with_render_minimum(
+                RenderMinimum::new(glam::Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Hide),
+            ),
+        );
+        let child = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE | NodeFlags::FOCUSABLE,
+                ..HotNode::default()
+            },
+            ColdNode::default(),
+        );
+        arena.append_child(root, hidden).unwrap();
+        arena.append_child(hidden, child).unwrap();
+        arena.update_underflow(hidden);
+        (arena, root, hidden, child)
+    }
+
+    #[test]
+    fn underflow_hidden_node_is_hidden_and_focusless() {
+        let (mut arena, root, hidden, _) = make_hidden_parent_tree();
+        let mut adapter = AccessKitAdapter::new(root);
+        let update = adapter.build_update(&mut arena);
+        let nid = widget_id_to_node_id(hidden);
+        let node = &update.nodes.iter().find(|(id, _)| *id == nid).unwrap().1;
+        assert!(node.is_hidden());
+        assert!(!node.supports_action(accesskit::Action::Focus));
+    }
+
+    #[test]
+    fn underflow_hidden_ancestor_hides_visible_descendant() {
+        let (mut arena, root, _, child) = make_hidden_parent_tree();
+        let mut adapter = AccessKitAdapter::new(root);
+        let update = adapter.build_update(&mut arena);
+        let nid = widget_id_to_node_id(child);
+        let node = &update.nodes.iter().find(|(id, _)| *id == nid).unwrap().1;
+        // The child is VISIBLE itself but its ancestor is hidden —
+        // hidden propagates so ATs see a consistent tree.
+        assert!(node.is_hidden());
+        assert!(!node.supports_action(accesskit::Action::Focus));
+    }
+
+    #[test]
+    fn underflow_scrim_marks_node_disabled() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                ..HotNode::default()
+            },
+            ColdNode::default(),
+        );
+        let covered = arena.insert(
+            HotNode {
+                bounds: martensite_core::Rect::new(0.0, 0.0, 40.0, 10.0),
+                flags: NodeFlags::VISIBLE | NodeFlags::FOCUSABLE,
+                ..HotNode::default()
+            },
+            ColdNode::default().with_render_minimum(
+                RenderMinimum::new(glam::Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Scrim),
+            ),
+        );
+        arena.append_child(root, covered).unwrap();
+        arena.update_underflow(covered);
+
+        let mut adapter = AccessKitAdapter::new(root);
+        let update = adapter.build_update(&mut arena);
+        let nid = widget_id_to_node_id(covered);
+        let node = &update.nodes.iter().find(|(id, _)| *id == nid).unwrap().1;
+        // Scrim-covered nodes stay in the tree but are marked
+        // disabled — the veil covers input, not visibility.
+        assert!(!node.is_hidden());
+        assert!(node.is_disabled());
         assert!(!node.supports_action(accesskit::Action::Focus));
     }
 

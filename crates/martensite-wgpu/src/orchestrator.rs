@@ -498,6 +498,38 @@ impl RenderOrchestrator {
         }
     }
 
+    /// Runs the underflow audit — reports nodes whose allocated bounds
+    /// underflow their declared [`martensite_core::RenderMinimum`]
+    /// without an engaged policy handling the shortfall.
+    ///
+    /// No-op when the audit is disabled. Reports `Allow`/`Lint`
+    /// violations plus declared-but-unevaluated enforcing policies (the
+    /// `update_underflow`-not-wired footgun).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// let mut arena = WidgetArena::new();
+    /// # let mut hot = HotNode::default();
+    /// # hot.flags |= NodeFlags::VISIBLE;
+    /// let _root = arena.insert_with_widget(hot, Box::new(DummyWidget));
+    /// orchestrator.audit_underflow(&arena);
+    /// # }
+    /// ```
+    pub fn audit_underflow(&mut self, arena: &martensite_core::WidgetArena) {
+        if let Some(audit) = &mut self.paint_audit {
+            let lints = martensite_access::paint_audit::audit_underflow(
+                arena,
+                f64::from(audit.config.scale_factor),
+            );
+            audit.reporter.report(&lints);
+        }
+    }
+
     /// Renders a [`PaintList`] using the appropriate backend.
     ///
     /// The backend is selected based on the [`OrchestratorConfig`] and

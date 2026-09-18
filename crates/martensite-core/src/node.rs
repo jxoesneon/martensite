@@ -397,6 +397,16 @@ pub struct ColdNode {
     pub a11y_name: Option<String>,
     /// Tier 1 inline text measurement cache for $O(1)$ flexbox constraint probes.
     pub text_cache: InlineTextCache,
+    /// Per-instance minimum render area — takes precedence over
+    /// [`Widget::min_render`](crate::Widget::min_render), matching
+    /// `debug_name` precedence (instance wins over type).
+    pub render_minimum: Option<crate::widget::RenderMinimum>,
+    /// Sticky underflow-engagement state, written by
+    /// [`WidgetArena::update_underflow`](crate::WidgetArena::update_underflow)
+    /// (or the layout engine) after bounds assignment. Consumed by the
+    /// paint walk, event dispatch, hit-testing, focus, and the a11y
+    /// adapter — never written by them.
+    pub underflow_engaged: bool,
     /// Boxed widget implementation.
     pub widget: Box<dyn crate::widget::Widget>,
 }
@@ -410,8 +420,34 @@ impl ColdNode {
             a11y_role: accesskit::Role::GenericContainer,
             a11y_name: None,
             text_cache: InlineTextCache::new(),
+            render_minimum: None,
+            underflow_engaged: false,
             widget,
         }
+    }
+
+    /// The effective [`RenderMinimum`] for this node — the instance
+    /// override when set, else the widget's [`Widget::min_render`]
+    /// declaration.
+    ///
+    /// [`Widget::min_render`]: crate::Widget::min_render
+    pub fn effective_render_minimum(&self) -> crate::widget::RenderMinimum {
+        self.render_minimum
+            .unwrap_or_else(|| self.widget.min_render())
+    }
+
+    /// The engaged enforcing [`UnderflowPolicy`], or `None` when the
+    /// node is not underflowed or the resolved policy is advisory
+    /// (`Allow`/`Lint`). Consumption sites (paint, input, a11y, focus)
+    /// consult this — never the raw declaration.
+    ///
+    /// [`UnderflowPolicy`]: crate::UnderflowPolicy
+    pub fn underflow_policy(&self) -> Option<crate::widget::UnderflowPolicy> {
+        if !self.underflow_engaged {
+            return None;
+        }
+        let policy = self.effective_render_minimum().policy;
+        policy.enforces().then_some(policy)
     }
 
     /// Set debug name.
@@ -435,6 +471,14 @@ impl ColdNode {
     /// Set accessibility name.
     pub fn with_a11y_name(mut self, name: impl Into<String>) -> Self {
         self.a11y_name = Some(name.into());
+        self
+    }
+
+    /// Set a per-instance minimum render area — overrides the widget's
+    /// own [`Widget::min_render`](crate::Widget::min_render)
+    /// declaration, matching `debug_name` precedence.
+    pub fn with_render_minimum(mut self, min: crate::widget::RenderMinimum) -> Self {
+        self.render_minimum = Some(min);
         self
     }
 

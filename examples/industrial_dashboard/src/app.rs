@@ -496,6 +496,13 @@ impl App {
                 cold.widget.layout(&mut LayoutContext { hot, scale: s }, r);
             }
         }
+
+        // The dock's manual path assigns bounds outside the layout
+        // engine — re-evaluate underflow engagement for every node
+        // (engage/release hysteresis lives inside), then relocate
+        // focus if the focused node just became covered.
+        arena.update_underflow_all();
+        self.focus.revalidate(arena);
     }
 
     /// The active drag's preview: `(drop-zone rect, pointer pos,
@@ -958,6 +965,7 @@ impl App {
             orchestrator.set_audit_focus_rect(focus_rect);
             if let Some(arena) = self.arena.as_ref() {
                 orchestrator.audit_target_sizes(arena);
+                orchestrator.audit_underflow(arena);
             }
             orchestrator.render(&list, &self.recovery);
             if let Err(err) = orchestrator.render_to_surface(&gpu.device, &gpu.queue, surface) {

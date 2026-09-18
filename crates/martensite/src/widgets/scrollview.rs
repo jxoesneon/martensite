@@ -41,7 +41,7 @@ use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
 };
-use martensite_core::{NodeFlags, Rect, TokenKey};
+use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
 use martensite_motion::RubberBandScroller2D;
 
 /// Scrollbar thickness in logical pixels.
@@ -780,6 +780,12 @@ impl Widget for ScrollView {
         )
     }
 
+    fn min_render(&self) -> RenderMinimum {
+        // The 40×40pt viewport floor `measure` requests — below this the
+        // viewport (and its scroll bars) cannot usefully render content.
+        RenderMinimum::new(Vec2::new(40.0, 40.0)).with_policy(UnderflowPolicy::Lint)
+    }
+
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
         self.scale = cx.scale;
@@ -916,6 +922,7 @@ impl Widget for ScrollView {
                     let mut child_cx = EventContext {
                         event: cx.event,
                         bounds: content_rect,
+                        scale: cx.scale,
                     };
                     let response = self.content.event(&mut child_cx);
                     if response != EventResponse::Ignored {
@@ -945,6 +952,7 @@ impl Widget for ScrollView {
                     let mut child_cx = EventContext {
                         event: cx.event,
                         bounds: content_rect,
+                        scale: cx.scale,
                     };
                     return self.content.event(&mut child_cx);
                 }
@@ -957,6 +965,7 @@ impl Widget for ScrollView {
                     let mut child_cx = EventContext {
                         event: cx.event,
                         bounds: content_rect,
+                        scale: cx.scale,
                     };
                     return self.content.event(&mut child_cx);
                 }
@@ -981,6 +990,7 @@ impl Widget for ScrollView {
                     let mut child_cx = EventContext {
                         event: cx.event,
                         bounds: content_rect,
+                        scale: cx.scale,
                     };
                     return self.content.event(&mut child_cx);
                 }
@@ -1148,6 +1158,7 @@ mod tests {
         let mut cx = EventContext {
             event: &ev,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx)
     }
@@ -1201,24 +1212,28 @@ mod tests {
         let mut cx = EventContext {
             event: &key("End"),
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx);
         assert_eq!(v.scroll_offset().y, 300.0);
         let mut cx = EventContext {
             event: &key("Home"),
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx);
         assert_eq!(v.scroll_offset().y, 0.0);
         let mut cx = EventContext {
             event: &key("PageDown"),
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx);
         assert_eq!(v.scroll_offset().y, 90.0);
         let mut cx = EventContext {
             event: &key("ArrowDown"),
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx);
         assert_eq!(v.scroll_offset().y, 138.0);
@@ -1237,6 +1252,7 @@ mod tests {
         let mut cx = EventContext {
             event: &press,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         assert_eq!(v.event(&mut cx), EventResponse::CapturePointer);
         assert!(v.thumb_drag.is_some());
@@ -1247,6 +1263,7 @@ mod tests {
         let mut cx = EventContext {
             event: &moved,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx);
         assert_eq!(v.scroll_offset().y, 300.0);
@@ -1269,6 +1286,7 @@ mod tests {
         let mut cx = EventContext {
             event: &ev,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx);
         assert_eq!(v.scroll_offset().y, 120.0);
@@ -1276,6 +1294,7 @@ mod tests {
         let mut cx = EventContext {
             event: &ev,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx);
         assert_eq!(v.scroll_offset().y, 168.0);
@@ -1292,6 +1311,7 @@ mod tests {
         let mut cx = EventContext {
             event: &press,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         assert_eq!(v.event(&mut cx), EventResponse::CapturePointer);
         let moved = WidgetEvent::PointerMoved {
@@ -1300,6 +1320,7 @@ mod tests {
         let mut cx = EventContext {
             event: &moved,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx);
         // Visible offset overscrolls below zero.
@@ -1311,6 +1332,7 @@ mod tests {
         let mut cx = EventContext {
             event: &release,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         assert_eq!(v.event(&mut cx), EventResponse::ReleasePointer);
         assert!(!v.is_settled());
@@ -1338,6 +1360,7 @@ mod tests {
         let mut cx = EventContext {
             event: &press,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         assert_eq!(v.event(&mut cx), EventResponse::CapturePointer);
         let moved = WidgetEvent::PointerMoved {
@@ -1346,6 +1369,7 @@ mod tests {
         let mut cx = EventContext {
             event: &moved,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx);
         let release = WidgetEvent::PointerReleased {
@@ -1355,6 +1379,7 @@ mod tests {
         let mut cx = EventContext {
             event: &release,
             bounds: v.cached_bounds,
+            scale: 1.0,
         };
         v.event(&mut cx);
         assert!(!v.is_settled());

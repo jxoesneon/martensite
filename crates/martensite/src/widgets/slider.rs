@@ -669,12 +669,14 @@ mod tests {
         let mut ecx = EventContext {
             event: &key("ArrowRight"),
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         assert_eq!(s.event(&mut ecx), EventResponse::RequestRepaint);
         assert_eq!(s.value(), 6.0);
         let mut ecx = EventContext {
             event: &key("ArrowLeft"),
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         s.event(&mut ecx);
         assert_eq!(s.value(), 5.0);
@@ -687,12 +689,14 @@ mod tests {
         let mut ecx = EventContext {
             event: &key("End"),
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         s.event(&mut ecx);
         assert_eq!(s.value(), 10.0);
         let mut ecx = EventContext {
             event: &key("Home"),
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         s.event(&mut ecx);
         assert_eq!(s.value(), 0.0);
@@ -707,12 +711,14 @@ mod tests {
         let mut ecx = EventContext {
             event: &key("PageUp"),
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         s.event(&mut ecx);
         assert_eq!(s.value(), 70.0);
         let mut ecx = EventContext {
             event: &key("PageDown"),
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         s.event(&mut ecx);
         assert_eq!(s.value(), 50.0);
@@ -726,6 +732,7 @@ mod tests {
         let mut ecx = EventContext {
             event: &press(58.0, 12.0),
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         assert_eq!(s.event(&mut ecx), EventResponse::CapturePointer);
         assert_eq!(s.value(), 50.0);
@@ -739,6 +746,7 @@ mod tests {
         let mut ecx = EventContext {
             event: &press(8.0, 12.0),
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         s.event(&mut ecx);
         assert_eq!(s.value(), 0.0);
@@ -749,6 +757,7 @@ mod tests {
         let mut ecx = EventContext {
             event: &moved,
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         s.event(&mut ecx);
         assert_eq!(s.value(), 100.0);
@@ -760,6 +769,7 @@ mod tests {
         let mut ecx = EventContext {
             event: &released,
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         assert_eq!(s.event(&mut ecx), EventResponse::ReleasePointer);
         assert!(!s.is_dragging());
@@ -773,6 +783,7 @@ mod tests {
         let mut ecx = EventContext {
             event: &press(12.0, 8.0),
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         s.event(&mut ecx);
         assert_eq!(s.value(), 100.0);
@@ -782,6 +793,7 @@ mod tests {
         let mut ecx = EventContext {
             event: &press(12.0, 108.0),
             bounds: s2.cached_bounds,
+            scale: 1.0,
         };
         s2.event(&mut ecx);
         assert_eq!(s2.value(), 0.0);
@@ -795,6 +807,7 @@ mod tests {
         let mut ecx = EventContext {
             event: &ev,
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         s.event(&mut ecx);
         assert_eq!(s.value(), 7.0);
@@ -802,6 +815,7 @@ mod tests {
         let mut ecx = EventContext {
             event: &ev,
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         s.event(&mut ecx);
         assert_eq!(s.value(), 8.0);
@@ -838,6 +852,7 @@ mod tests {
         let mut ecx = EventContext {
             event: &press(50.0, 12.0),
             bounds: s.cached_bounds,
+            scale: 1.0,
         };
         assert_eq!(s.event(&mut ecx), EventResponse::Ignored);
         assert_eq!(s.value(), 0.0);

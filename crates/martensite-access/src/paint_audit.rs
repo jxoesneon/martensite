@@ -373,6 +373,12 @@ pub enum PaintLintKind {
     /// ([`LintSeverity::Info`]) — localization coverage is opt-in and
     /// the probe decides which strings are intentionally unlocalized.
     MissingLocale,
+    /// A node's allocated bounds are smaller than its declared
+    /// [`RenderMinimum`](martensite_core::RenderMinimum) and no engaged
+    /// [`UnderflowPolicy`](martensite_core::UnderflowPolicy) is handling
+    /// the shortfall. Emitted by [`audit_underflow`], an arena-level
+    /// pass — the paint stream cannot see declared minimums.
+    Underflow,
 }
 
 /// A single compliance finding against a painted element.
@@ -1368,6 +1374,106 @@ pub fn audit_target_sizes(
     lints
 }
 
+/// Arena-level audit pass reporting [`PaintLintKind::Underflow`] for
+/// nodes whose allocated bounds underflow their declared
+/// [`RenderMinimum`](martensite_core::RenderMinimum).
+///
+/// A node is reported when all of these hold:
+///
+/// - It declares a non-zero render minimum (via `Widget::min_render`
+///   or a `ColdNode::with_render_minimum` override).
+/// - Its allocated bounds are below that minimum on either axis.
+/// - No *enforcing* policy is currently engaged for it — an engaged
+///   `Hide`/`Clip`/`Scrim`/`Fallback`/`Collapse` is handling the
+///   shortfall by design and is not a finding.
+///
+/// `Allow` and `Lint` are advisory and always report (that is `Lint`'s
+/// whole purpose). An enforcing policy that declares a minimum but is
+/// not engaged also reports — the detail names the policy, which is the
+/// tell that `WidgetArena::update_underflow` was never wired into that
+/// layout path.
+///
+/// `scale_factor` is physical pixels per logical point (e.g. `2.0` on
+/// Retina); `<= 0.0` falls back to `1.0`. Bounds are stored in device
+/// pixels, declared minimums in logical points.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_access::paint_audit::{audit_underflow, PaintLintKind};
+/// use martensite_core::{ColdNode, DummyWidget, HotNode, NodeFlags, Rect, WidgetArena};
+/// use martensite_core::RenderMinimum;
+/// use glam::Vec2;
+///
+/// let mut arena = WidgetArena::new();
+/// let mut hot = HotNode::default();
+/// hot.flags |= NodeFlags::VISIBLE;
+/// hot.bounds = Rect::new(0.0, 0.0, 40.0, 10.0); // below the floor
+/// let cold = ColdNode::new(Box::new(DummyWidget))
+///     .with_render_minimum(RenderMinimum::new(Vec2::new(80.0, 24.0)));
+/// arena.insert(hot, cold);
+///
+/// let lints = audit_underflow(&arena, 1.0);
+/// assert_eq!(lints.len(), 1);
+/// assert_eq!(lints[0].kind, PaintLintKind::Underflow);
+/// ```
+pub fn audit_underflow(arena: &martensite_core::WidgetArena, scale_factor: f64) -> Vec<PaintLint> {
+    let scale = if scale_factor > 0.0 {
+        scale_factor as f32
+    } else {
+        1.0
+    };
+    let mut lints = Vec::new();
+    for id in arena.iter_depth_first() {
+        let (Some(hot), Some(cold)) = (arena.get_hot(id), arena.get_cold(id)) else {
+            continue;
+        };
+        let minimum = cold.effective_render_minimum();
+        // Engaged enforcing policies handle the shortfall — not a finding.
+        let underflowed = hot.bounds.size.x < minimum.size.x * scale
+            || hot.bounds.size.y < minimum.size.y * scale;
+        if cold.underflow_policy().is_some() || !underflowed {
+            continue;
+        }
+        let name = cold.debug_name.unwrap_or_else(|| cold.widget.debug_name());
+        let (w, h) = (hot.bounds.width() / scale, hot.bounds.height() / scale);
+        let (mw, mh) = (minimum.size.x, minimum.size.y);
+        let detail = if minimum.policy.enforces() {
+            format!(
+                "{name} is {w:.0}×{h:.0}pt — below declared minimum {mw:.0}×{mh:.0}pt; policy {:?} is declared but not engaged — is `update_underflow` wired into this layout path? (slot {}, generation {}) @ ({:.0}, {:.0})",
+                minimum.policy,
+                id.slot_idx(),
+                id.generation(),
+                f64::from(hot.bounds.min_x()),
+                f64::from(hot.bounds.min_y())
+            )
+        } else {
+            format!(
+                "{name} is {w:.0}×{h:.0}pt — below declared minimum {mw:.0}×{mh:.0}pt (policy {:?}, slot {}, generation {}) @ ({:.0}, {:.0})",
+                minimum.policy,
+                id.slot_idx(),
+                id.generation(),
+                f64::from(hot.bounds.min_x()),
+                f64::from(hot.bounds.min_y())
+            )
+        };
+        lints.push(PaintLint {
+            kind: PaintLintKind::Underflow,
+            severity: LintSeverity::Warning,
+            anchor: (
+                f64::from(hot.bounds.min_x() + hot.bounds.max_x()) * 0.5,
+                f64::from(hot.bounds.min_y() + hot.bounds.max_y()) * 0.5,
+            ),
+            measured: Some(w.min(h)),
+            required: Some(mw.min(mh)),
+            detail,
+            scope: Some(name),
+            widget: Some(id),
+        });
+    }
+    lints
+}
+
 /// True when every point in `points` is covered by a later opaque
 /// non-gradient fill. `FillRec::covers` already respects the covering
 /// fill's own clip, so a fill clipped away from a sample can't count.
@@ -2189,5 +2295,48 @@ mod locale_tests {
         );
         let lints = audit_paint_list(&list, &locale_config());
         assert!(!lints.iter().any(|l| l.kind == PaintLintKind::MissingLocale));
+    }
+
+    #[test]
+    fn underflow_audit_reports_violated_declared_minimum() {
+        use martensite_core::{
+            ColdNode, DummyWidget, HotNode, NodeFlags, RenderMinimum, UnderflowPolicy, WidgetArena,
+        };
+        let mut arena = WidgetArena::new();
+        let mut hot = HotNode::default();
+        hot.flags |= NodeFlags::VISIBLE;
+        hot.bounds = martensite_core::Rect::new(0.0, 0.0, 40.0, 10.0);
+        let cold = ColdNode::new(Box::new(DummyWidget)).with_render_minimum(
+            RenderMinimum::new(glam::Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Lint),
+        );
+        arena.insert(hot, cold);
+        let lints = audit_underflow(&arena, 1.0);
+        assert_eq!(lints.len(), 1);
+        assert_eq!(lints[0].kind, PaintLintKind::Underflow);
+        assert!(lints[0].detail.contains("Lint"));
+    }
+
+    #[test]
+    fn underflow_audit_skips_engaged_policies_and_undeclared() {
+        use martensite_core::{
+            ColdNode, DummyWidget, HotNode, NodeFlags, RenderMinimum, UnderflowPolicy, WidgetArena,
+        };
+        let mut arena = WidgetArena::new();
+        // Hide-engaged node — the policy handles the shortfall.
+        let mut hot = HotNode::default();
+        hot.flags |= NodeFlags::VISIBLE;
+        hot.bounds = martensite_core::Rect::new(0.0, 0.0, 40.0, 10.0);
+        let cold = ColdNode::new(Box::new(DummyWidget)).with_render_minimum(
+            RenderMinimum::new(glam::Vec2::new(80.0, 24.0)).with_policy(UnderflowPolicy::Hide),
+        );
+        let hidden = arena.insert(hot, cold);
+        // No minimum declared — nothing to report.
+        let mut hot2 = HotNode::default();
+        hot2.flags |= NodeFlags::VISIBLE;
+        hot2.bounds = martensite_core::Rect::new(0.0, 0.0, 4.0, 4.0);
+        arena.insert_with_widget(hot2, Box::new(DummyWidget));
+
+        arena.update_underflow(hidden);
+        assert!(audit_underflow(&arena, 1.0).is_empty());
     }
 }

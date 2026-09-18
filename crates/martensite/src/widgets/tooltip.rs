@@ -620,6 +620,7 @@ impl Widget for Tooltip {
             let mut child_cx = EventContext {
                 event: cx.event,
                 bounds,
+                scale: cx.scale,
             };
             self.trigger.event(&mut child_cx)
         } else {
@@ -682,6 +683,7 @@ mod tests {
         let mut cx = EventContext {
             event: ev,
             bounds: tip.trigger_bounds.unwrap_or_default(),
+            scale: 1.0,
         };
         tip.event(&mut cx)
     }
