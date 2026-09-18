@@ -100,6 +100,101 @@ pub mod flex;
 /// ```
 pub mod stack;
 
+/// Severity-tinted inline banner strip.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::banner::{Banner, Severity};
+///
+/// let b = Banner::new(Severity::Info, "Heads up");
+/// assert_eq!(b.message, "Heads up");
+/// ```
+pub mod banner;
+
+/// Modal dialog card for the overlay layer.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::dialog::Dialog;
+///
+/// let d = Dialog::new("Title").buttons(&["OK"]);
+/// assert_eq!(d.buttons.len(), 1);
+/// ```
+pub mod dialog;
+
+/// Collapsible section with a disclosure chevron.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::disclosure::Disclosure;
+///
+/// let d = Disclosure::new("Section");
+/// assert!(!d.open);
+/// ```
+pub mod disclosure;
+
+/// Edge-docked drawer / side panel for the overlay layer.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::drawer::Drawer;
+///
+/// let d = Drawer::new("Panel");
+/// assert_eq!(d.depth, 300.0);
+/// ```
+pub mod drawer;
+
+/// Determinate and indeterminate progress indicators.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::progress::ProgressBar;
+///
+/// let p = ProgressBar::new();
+/// assert_eq!(p.fraction(), None);
+/// ```
+pub mod progress;
+
+/// Hairline separator between content regions.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::separator::Separator;
+///
+/// let _ = Separator::horizontal();
+/// ```
+pub mod separator;
+
+/// Pill toggle switch.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::switch::Switch;
+///
+/// let s = Switch::new("Toggle");
+/// assert!(!s.on);
+/// ```
+pub mod switch;
+
+/// Toast notification stack for the overlay layer.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::toast::ToastHost;
+///
+/// let h = ToastHost::new();
+/// assert!(h.is_empty());
+/// ```
+pub mod toast;
+
 /// Shaped text display widget.
 ///
 /// # Examples
@@ -211,18 +306,26 @@ pub mod tabs;
 /// ```
 pub mod tooltip;
 
+pub use banner::{Banner, Severity};
 pub use button::Button;
 pub use checkbox::CheckBox;
 pub use container::Container;
+pub use dialog::Dialog;
+pub use disclosure::Disclosure;
+pub use drawer::Drawer;
 pub use dropdown::Dropdown;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use media::{MediaView, VideoFit};
+pub use progress::{ProgressBar, Spinner};
 pub use radio::{RadioGroup, RadioOption};
 pub use scrollview::{ScrollBarWidget, ScrollView};
+pub use separator::Separator;
 pub use slider::{Slider, SliderOrientation};
 pub use stack::Stack;
+pub use switch::Switch;
 pub use tabs::{TabActivation, TabItem, Tabs};
 pub use text::Text;
 pub use text_input::TextInput;
+pub use toast::{Toast, ToastHost};
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};

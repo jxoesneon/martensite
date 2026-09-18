@@ -51,10 +51,12 @@ use winit::window::{Window, WindowAttributes};
 use martensite::devtools::hud::{DiagnosticHud, FrameTiming};
 
 use crate::model::{build_dock_tree, Palette};
+use crate::overlays::{push_toast, ShellOverlays, ToastInbox};
 use crate::panels::{fmt_count, EditorPanel, GridPanel, MediaPanel, TelemetryPanel, TITLE_H};
 use crate::statusbar::{build_l10n, StatusBar, LOCALE_CODES, STATUSBAR_W};
+use crate::subwindow::SubWindow;
 use crate::text::TextPainter;
-use crate::toolbar::{Toolbar, TOOLBAR_H};
+use crate::toolbar::{Toolbar, THEME_OPTIONS, TOOLBAR_H};
 
 /// Header strip height (logical pt × scale), status bar likewise.
 const HEADER_PT: f32 = 52.0;
@@ -151,6 +153,17 @@ struct App {
     /// commit; `redraw` writes it to the OS clipboard (the platform
     /// backend isn't `Send`, so it stays app-side).
     clipboard_out: Signal<Option<String>>,
+    /// Toolbar "alerts" switch ↔ `TelemetryPanel` banner.
+    alerts_on: Signal<bool>,
+    /// Toolbar "About…" → `ShellOverlays` modal dialog.
+    about_req: Signal<bool>,
+    /// Toolbar "Inspector" → `ShellOverlays` edge drawer.
+    inspector_req: Signal<bool>,
+    /// Toolbar "Console" → opens the secondary OS window.
+    console_req: Signal<bool>,
+    /// Shared toast inbox — cloned into `ShellOverlays`; `redraw`
+    /// enqueues toasts for real app actions (copies, theme changes).
+    toast_inbox: ToastInbox,
     /// OS clipboard backend — `None` where no native backend exists.
     clipboard: Option<Box<dyn martensite_clipboard_platform::ClipboardBackend>>,
     /// The toolbar strip's arena node (not a dock panel — a fixed band
@@ -159,6 +172,9 @@ struct App {
     /// The status strip's arena node — a fixed band at the window
     /// bottom, positioned by `apply_dock_layout` like the toolbar.
     statusbar: Option<WidgetId>,
+    /// The overlay owner's arena node — zero-bounds widget whose
+    /// `sync_overlay` reconciles the dialog, drawer, and toast strip.
+    shell_overlays: Option<WidgetId>,
     pal: Palette,
     /// Theme state — the dictionary ships both themes; `choice` is the
     /// selection (System resolves through winit each frame), and the
@@ -188,6 +204,8 @@ struct App {
 
     // Windowed state.
     window: Option<Arc<dyn Window>>,
+    /// The secondary "Console" window — real OS surface sharing `gpu`.
+    subwindow: Option<SubWindow>,
     gpu: Option<GpuContext>,
     surface: Option<SurfaceWrapper<'static>>,
     orchestrator: Option<RenderOrchestrator>,
@@ -220,9 +238,15 @@ impl App {
             locale_sel: Signal::new(0),
             locale_idx: 0,
             clipboard_out: Signal::new(None),
+            alerts_on: Signal::new(false),
+            about_req: Signal::new(false),
+            inspector_req: Signal::new(false),
+            console_req: Signal::new(false),
+            toast_inbox: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             clipboard: martensite_clipboard_platform::native_backend(),
             toolbar: None,
             statusbar: None,
+            shell_overlays: None,
             pal: Palette::dark(),
             themes: ThemeDictionary::new(),
             theme_choice: initial_choice,
@@ -241,6 +265,7 @@ impl App {
             actions: Arc::new(Mutex::new(Vec::new())),
             initial_tree: Arc::new(Mutex::new(None)),
             window: None,
+            subwindow: None,
             gpu: None,
             surface: None,
             orchestrator: None,
@@ -295,11 +320,17 @@ impl App {
             hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
             let mut cold = ColdNode::new(Box::new(Toolbar::new(
                 scale.clone(),
-                self.paused.clone(),
-                self.glow.clone(),
-                self.tick_ms.clone(),
-                self.theme_sel.clone(),
-                self.filter_text.clone(),
+                crate::toolbar::ToolbarSignals {
+                    paused: self.paused.clone(),
+                    glow_on: self.glow.clone(),
+                    tick_ms: self.tick_ms.clone(),
+                    theme_sel: self.theme_sel.clone(),
+                    filter_text: self.filter_text.clone(),
+                    alerts_on: self.alerts_on.clone(),
+                    about_req: self.about_req.clone(),
+                    inspector_req: self.inspector_req.clone(),
+                    console_req: self.console_req.clone(),
+                },
             )));
             cold.debug_name = Some("Toolbar");
             let id = arena.insert(hot, cold);
@@ -321,6 +352,7 @@ impl App {
                 self.paused.clone(),
                 self.glow.clone(),
                 self.tick_ms.clone(),
+                self.alerts_on.clone(),
             )),
             Box::new(EditorPanel::new(scale.clone())),
             Box::new(MediaPanel::new(scale.clone())),
@@ -349,11 +381,32 @@ impl App {
             let mut cold = ColdNode::new(Box::new(StatusBar::new(
                 scale.clone(),
                 self.locale_sel.clone(),
+                self.cpu.clone(),
+                self.paused.clone(),
             )));
             cold.debug_name = Some("StatusBar");
             let id = arena.insert(hot, cold);
             arena.append_child(root, id).expect("append statusbar");
             self.statusbar = Some(id);
+        }
+
+        // The overlay owner — an invisible zero-bounds widget whose
+        // `sync_overlay` reconciles the About dialog, inspector drawer,
+        // and toast strip against the layer. VIRTUAL (no HIT_TEST) so
+        // it never intercepts input itself.
+        {
+            let mut hot = HotNode::default();
+            hot.flags |= NodeFlags::VISIBLE;
+            let mut cold = ColdNode::new(Box::new(ShellOverlays::new(
+                self.about_req.clone(),
+                self.inspector_req.clone(),
+                self.alerts_on.clone(),
+                self.toast_inbox.clone(),
+            )));
+            cold.debug_name = Some("ShellOverlays");
+            let id = arena.insert(hot, cold);
+            arena.append_child(root, id).expect("append overlays");
+            self.shell_overlays = Some(id);
         }
 
         let ids: Vec<u64> = panels.iter().map(|p| p.unwrap().to_u64()).collect();
@@ -860,6 +913,11 @@ impl App {
         };
         if wanted != self.theme_choice {
             self.set_theme_choice(wanted);
+            crate::overlays::push_toast(
+                &self.toast_inbox,
+                martensite::widgets::Severity::Info,
+                format!("Theme: {}", THEME_OPTIONS[sel.min(2)]),
+            );
         }
 
         // Locale dropdown → Fluent: the status bar publishes its
@@ -881,6 +939,11 @@ impl App {
                 cb.write("text/plain;charset=utf-8", payload.as_bytes());
             }
             self.clipboard_out.set(None);
+            crate::overlays::push_toast(
+                &self.toast_inbox,
+                martensite::widgets::Severity::Info,
+                "Copied to clipboard",
+            );
         }
 
         // 0. Theme — advance any in-flight fade and install the
@@ -912,6 +975,10 @@ impl App {
             }
             self.installed_mode = mode;
             self.pal = Palette::from_theme(arena.theme());
+            // The secondary window's arena tracks the same theme.
+            if let Some(sub) = &mut self.subwindow {
+                sub.set_theme(arena.theme());
+            }
         }
 
         // 1. Widget ticks — telemetry advances its signals, media pumps
@@ -1226,12 +1293,38 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &dyn ActiveEventLoop,
-        _id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // A pending toolbar request opens the secondary window — needs
+        // `ActiveEventLoop`, which only exists inside event callbacks.
+        if self.console_req.get() {
+            self.console_req.set(false);
+            if self.subwindow.is_none() {
+                if let (Some(gpu), Some(arena)) = (&self.gpu, &self.arena) {
+                    self.subwindow =
+                        SubWindow::open(event_loop, gpu, arena.theme(), self.cpu.clone());
+                    if self.subwindow.is_some() {
+                        push_toast(
+                            &self.toast_inbox,
+                            martensite::widgets::Severity::Info,
+                            "Console window opened",
+                        );
+                    }
+                }
+            }
+        }
+        // Events addressed to the secondary window bypass the primary
+        // window's arena, router, and a11y adapter entirely.
+        if let Some(sub) = &mut self.subwindow {
+            if sub.window_id() == id {
+                if let Some(gpu) = &self.gpu {
+                    if sub.handle_event(gpu, &event) {
+                        self.subwindow = None;
+                    }
+                }
+                return;
+            }
+        }
+
         // AT sees every event first (focus tracking, event filtering).
         if let (Some(a), Some(w)) = (&mut self.a11y, &self.window) {
             a.adapter.process_event(w.as_ref(), &event);

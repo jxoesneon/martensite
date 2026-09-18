@@ -22,8 +22,10 @@ mod headless;
 mod media_stream;
 mod menu;
 mod model;
+mod overlays;
 mod panels;
 mod statusbar;
+mod subwindow;
 mod text;
 mod toolbar;
 

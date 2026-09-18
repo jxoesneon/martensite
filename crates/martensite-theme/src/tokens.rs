@@ -106,6 +106,9 @@ pub enum TokenKey {
     CsdShadowColor,
     /// The macOS-specific vibrancy material selection.
     VibrancyMaterial,
+    /// The dimming layer painted under modal overlays (dialogs,
+    /// modal drawers) — translucent dark in every theme.
+    ScrimColor,
 }
 
 /// A collection of design tokens describing a complete theme.
@@ -449,6 +452,18 @@ pub fn default_light() -> Theme {
             alpha: 1.0,
         }),
     );
+    // Modal dimming layer — near-black at ~40% (Fluent's dialog smoke
+    // layer is 32%; Material's modal scrim is 32–60%). Dark in every
+    // theme: the scrim dims toward black, not toward the page color.
+    theme.set(
+        TokenKey::ScrimColor,
+        ThemeToken::Color(Oklab {
+            l: 0.0,
+            a: 0.0,
+            b: 0.0,
+            alpha: 0.4,
+        }),
+    );
 
     // --- Dimensions -------------------------------------------------------
     theme.set(TokenKey::Spacing, ThemeToken::Dimension(16.0));
@@ -643,6 +658,17 @@ pub fn default_dark() -> Theme {
             a: -0.10,
             b: -0.12,
             alpha: 1.0,
+        }),
+    );
+    // Modal dimming layer — same translucent black as the light theme
+    // (a scrim dims toward black, not toward the page color).
+    theme.set(
+        TokenKey::ScrimColor,
+        ThemeToken::Color(Oklab {
+            l: 0.0,
+            a: 0.0,
+            b: 0.0,
+            alpha: 0.4,
         }),
     );
 

@@ -27,7 +27,7 @@ use martensite::core::{
 use martensite::prelude::Signal;
 use martensite::render::BezPath;
 use martensite::theme::TokenKey;
-use martensite::widgets::{Button, CheckBox, Dropdown, Slider, TextInput};
+use martensite::widgets::{Button, CheckBox, Dropdown, Separator, Slider, Switch, TextInput};
 
 /// Strip height in logical pt.
 pub const TOOLBAR_H: f32 = 40.0;
@@ -39,8 +39,40 @@ const PAUSE: usize = 0;
 const GLOW: usize = 1;
 const TICK: usize = 2;
 const THEME: usize = 3;
-const FILTER: usize = 4;
-const N: usize = 5;
+const SEP: usize = 4;
+const ALERTS: usize = 5;
+const ABOUT: usize = 6;
+const INSPECTOR: usize = 7;
+const CONSOLE: usize = 8;
+const FILTER: usize = 9;
+const N: usize = 10;
+
+/// Outcome signals shared between the toolbar and the app — clones
+/// share the same cells, so both sides observe state without
+/// downcasting through `dyn Widget`.
+#[derive(Clone)]
+pub struct ToolbarSignals {
+    /// Telemetry pause — Space in the Telemetry panel writes the same
+    /// cell, so the button label re-syncs in `tick`.
+    pub paused: Signal<bool>,
+    /// Chart area-fill toggle.
+    pub glow_on: Signal<bool>,
+    /// Telemetry sample period in milliseconds (20–500).
+    pub tick_ms: Signal<f64>,
+    /// Theme selection as a `THEME_OPTIONS` index — bidirectional.
+    pub theme_sel: Signal<usize>,
+    /// Grid filter text — `GridPanel` folds it into its `RowFilter`.
+    pub filter_text: Signal<String>,
+    /// Row-alert strip toggle — `TelemetryPanel` shows its `Banner`
+    /// while set; the switch writes, the banner's × clears.
+    pub alerts_on: Signal<bool>,
+    /// "About" pressed — `ShellOverlays` opens the modal dialog.
+    pub about_req: Signal<bool>,
+    /// "Inspector" pressed — `ShellOverlays` opens the drawer.
+    pub inspector_req: Signal<bool>,
+    /// "Console" pressed — the app opens the secondary OS window.
+    pub console_req: Signal<bool>,
+}
 
 /// The toolbar widget. Outcome signals are shared cells — the app
 /// clones them before constructing the widget, so both sides observe
@@ -56,6 +88,13 @@ pub struct Toolbar {
     /// Press armed inside the pause button — the Button facade keeps no
     /// pressed state, so the parent tracks the press/release pair.
     pause_armed: bool,
+    /// Same armed-press tracking for the About/Inspector buttons —
+    /// release inside the rect fires the request.
+    about_armed: bool,
+    /// See `about_armed`.
+    inspector_armed: bool,
+    /// See `about_armed` — release inside fires the console request.
+    console_armed: bool,
     /// Child currently holding a pointer press. While set, positional
     /// events forward to it regardless of hit position — captured
     /// drags (slider thumb, text-input drag-select) leave every child
@@ -65,6 +104,11 @@ pub struct Toolbar {
     glow: CheckBox,
     tick: Slider,
     theme: Dropdown,
+    sep: Separator,
+    alerts: Switch,
+    about: Button,
+    inspector: Button,
+    console: Button,
     filter: TextInput,
     rects: [Rect; N],
     /// Telemetry pause — Space in the Telemetry panel writes the same
@@ -80,26 +124,43 @@ pub struct Toolbar {
     theme_sel: Signal<usize>,
     /// Grid filter text — `GridPanel` folds it into its `RowFilter`.
     filter_text: Signal<String>,
+    /// Row-alert strip toggle — `TelemetryPanel` shows its `Banner`
+    /// while set; the switch writes, the banner's × clears.
+    alerts_on: Signal<bool>,
+    /// "About" pressed — `ShellOverlays` opens the modal dialog.
+    about_req: Signal<bool>,
+    /// "Inspector" pressed — `ShellOverlays` opens the drawer.
+    inspector_req: Signal<bool>,
+    /// "Console" pressed — the app opens the secondary OS window.
+    console_req: Signal<bool>,
+
     /// Last selection index observed — `tick` uses it to tell a popup
     /// commit (dropdown moved) from an external write (signal moved).
     last_theme_idx: usize,
 }
 
 impl Toolbar {
-    pub fn new(
-        scale: Signal<f32>,
-        paused: Signal<bool>,
-        glow_on: Signal<bool>,
-        tick_ms: Signal<f64>,
-        theme_sel: Signal<usize>,
-        filter_text: Signal<String>,
-    ) -> Self {
+    pub fn new(scale: Signal<f32>, signals: ToolbarSignals) -> Self {
+        let ToolbarSignals {
+            paused,
+            glow_on,
+            tick_ms,
+            theme_sel,
+            filter_text,
+            alerts_on,
+            about_req,
+            inspector_req,
+            console_req,
+        } = signals;
         Self {
             scale,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
             key_target: None,
             pause_armed: false,
+            about_armed: false,
+            inspector_armed: false,
+            console_armed: false,
             press_target: None,
             pause: Button::new("Pause").tooltip("pause telemetry (Space in Telemetry works too)"),
             glow: CheckBox::new("glow").checked(true),
@@ -108,6 +169,11 @@ impl Toolbar {
                 .step(10.0)
                 .label("sample ms"),
             theme: Dropdown::new(THEME_OPTIONS).label("theme"),
+            sep: Separator::vertical(),
+            alerts: Switch::new("alerts"),
+            about: Button::new("About…").tooltip("modal dialog — scrim + input block"),
+            inspector: Button::new("Inspector").tooltip("edge drawer — scrim-tap dismisses"),
+            console: Button::new("Console").tooltip("secondary OS window — real surface"),
             filter: TextInput::new("filter grid").placeholder("filter pid/mem/status…"),
             rects: [Rect::new(0.0, 0.0, 0.0, 0.0); N],
             paused,
@@ -115,6 +181,10 @@ impl Toolbar {
             tick_ms,
             theme_sel,
             filter_text,
+            alerts_on,
+            about_req,
+            inspector_req,
+            console_req,
             last_theme_idx: 0,
         }
     }
@@ -129,6 +199,7 @@ impl Toolbar {
         self.glow_on.set_if_changed(self.glow.checked);
         self.tick_ms.set_if_changed(self.tick.value());
         self.theme_sel.set_if_changed(self.theme.selected());
+        self.alerts_on.set_if_changed(self.alerts.on);
         self.filter_text.set_if_changed(self.filter.value.clone());
     }
 
@@ -138,6 +209,11 @@ impl Toolbar {
             GLOW => Some(&mut self.glow),
             TICK => Some(&mut self.tick),
             THEME => Some(&mut self.theme),
+            SEP => Some(&mut self.sep),
+            ALERTS => Some(&mut self.alerts),
+            ABOUT => Some(&mut self.about),
+            INSPECTOR => Some(&mut self.inspector),
+            CONSOLE => Some(&mut self.console),
             FILTER => Some(&mut self.filter),
             _ => None,
         }
@@ -149,6 +225,11 @@ impl Toolbar {
             GLOW => Some(&self.glow),
             TICK => Some(&self.tick),
             THEME => Some(&self.theme),
+            SEP => Some(&self.sep),
+            ALERTS => Some(&self.alerts),
+            ABOUT => Some(&self.about),
+            INSPECTOR => Some(&self.inspector),
+            CONSOLE => Some(&self.console),
             FILTER => Some(&self.filter),
             _ => None,
         }
@@ -198,14 +279,19 @@ impl Widget for Toolbar {
         let mut x = bounds.origin.x + pad;
         let right = bounds.max_x() - pad;
 
-        // Fixed slots for the four controls; the filter input takes the
+        // Fixed slots for the eight controls; the filter input takes the
         // remainder (clamped — collapses to nothing under real pressure).
         // Rect is (x, y, width, height) — not min/max corners.
-        let slots: [(usize, f32); 4] = [
+        let slots: [(usize, f32); 9] = [
             (PAUSE, 84.0 * s),
             (GLOW, 76.0 * s),
             (TICK, 180.0 * s),
             (THEME, 120.0 * s),
+            (SEP, 9.0 * s),
+            (ALERTS, 104.0 * s),
+            (ABOUT, 74.0 * s),
+            (INSPECTOR, 88.0 * s),
+            (CONSOLE, 84.0 * s),
         ];
         for (i, w) in slots {
             let r = Rect::new(x, y, w.min(right - x).max(0.0), h);
@@ -256,6 +342,9 @@ impl Widget for Toolbar {
                     self.key_target = Some(i);
                     self.press_target = Some(i);
                     self.pause_armed = i == PAUSE;
+                    self.about_armed = i == ABOUT;
+                    self.inspector_armed = i == INSPECTOR;
+                    self.console_armed = i == CONSOLE;
                     let focus_ev = if i == FILTER {
                         WidgetEvent::FocusGained
                     } else {
@@ -289,21 +378,39 @@ impl Widget for Toolbar {
                 // `press_target` routing now delivers outside releases
                 // too, so the bounds check is explicit; either way the
                 // release disarms the press.
-                if i == PAUSE
-                    && self.pause_armed
-                    && matches!(
-                        cx.event,
-                        WidgetEvent::PointerReleased {
-                            button: PointerButton::Primary,
-                            ..
-                        }
-                    )
-                {
+                let released = matches!(
+                    cx.event,
+                    WidgetEvent::PointerReleased {
+                        button: PointerButton::Primary,
+                        ..
+                    }
+                );
+                if i == PAUSE && self.pause_armed && released {
                     if self.rects[PAUSE].contains(pos) {
                         let now = !self.paused.get();
                         self.paused.set(now);
                     }
                     self.pause_armed = false;
+                }
+                // Stateless buttons — an armed press + release inside
+                // fires the overlay request once.
+                if i == ABOUT && self.about_armed && released {
+                    if self.rects[ABOUT].contains(pos) {
+                        self.about_req.set(true);
+                    }
+                    self.about_armed = false;
+                }
+                if i == INSPECTOR && self.inspector_armed && released {
+                    if self.rects[INSPECTOR].contains(pos) {
+                        self.inspector_req.set(true);
+                    }
+                    self.inspector_armed = false;
+                }
+                if i == CONSOLE && self.console_armed && released {
+                    if self.rects[CONSOLE].contains(pos) {
+                        self.console_req.set(true);
+                    }
+                    self.console_armed = false;
                 }
                 r
             }
@@ -329,6 +436,11 @@ impl Widget for Toolbar {
         } else if sig != self.last_theme_idx && !self.theme.is_open() {
             self.theme.commit(sig);
             self.last_theme_idx = sig;
+            dirty = true;
+        }
+        // Banner × writes the signal off — mirror it into the switch.
+        if self.alerts.on != self.alerts_on.get() {
+            self.alerts.on = self.alerts_on.get();
             dirty = true;
         }
         // Space-driven pause (Telemetry panel) re-syncs the label.

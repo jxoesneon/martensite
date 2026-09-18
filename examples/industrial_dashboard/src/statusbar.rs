@@ -29,12 +29,12 @@ use martensite::core::{
 };
 use martensite::prelude::Signal;
 use martensite::theme::TokenKey;
-use martensite::widgets::Dropdown;
+use martensite::widgets::{Dropdown, ProgressBar, Spinner};
 
 /// Width `apply_dock_layout` reserves for the widget at the right end
 /// of the status strip (logical pt) — `paint_chrome` keeps the hints
 /// text out of the same band.
-pub const STATUSBAR_W: f32 = 110.0;
+pub const STATUSBAR_W: f32 = 260.0;
 
 /// Band height the widget reports to `measure` — the strip's
 /// `STATUS_PT`, shared so the two can never disagree.
@@ -166,16 +166,38 @@ pub struct StatusBar {
     /// Locale selection as a `LOCALE_CODES` index — the dropdown
     /// writes it, `redraw` applies it.
     locale_sel: Signal<usize>,
+    /// Live-telemetry spinner — present (and animated by the arena's
+    /// internal-children tick) only while the feed isn't paused.
+    spinner: Spinner,
+    /// CPU progress bar — mirrors the shared `cpu` signal.
+    progress: ProgressBar,
+    /// Telemetry signals driving the two indicators.
+    cpu: Signal<f64>,
+    paused: Signal<bool>,
+    /// Child rects resolved in `layout` (device px).
+    spinner_rect: Rect,
+    progress_rect: Rect,
 }
 
 impl StatusBar {
-    pub fn new(scale: Signal<f32>, locale_sel: Signal<usize>) -> Self {
+    pub fn new(
+        scale: Signal<f32>,
+        locale_sel: Signal<usize>,
+        cpu: Signal<f64>,
+        paused: Signal<bool>,
+    ) -> Self {
         Self {
             scale,
             dd_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
             dropdown: Dropdown::new(LOCALE_LABELS).label("locale"),
             locale_sel,
+            spinner: Spinner::new().size(14.0),
+            progress: ProgressBar::new().value(0.0),
+            cpu,
+            paused,
+            spinner_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
+            progress_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
         }
     }
 
@@ -227,14 +249,34 @@ impl Widget for StatusBar {
         // corners.
         let w = (bounds.size.x - pad).max(1.0);
         let h = (bounds.size.y - pad * 0.75).max(1.0);
+        // Right-to-left: locale dropdown, then the spinner, then the
+        // CPU progress bar filling the remainder.
+        let dd_w = (110.0 * self.s()).min(w);
         let r = Rect::new(
-            bounds.max_x() - pad - w,
+            bounds.max_x() - pad - dd_w,
             bounds.origin.y + (bounds.size.y - h) * 0.5,
-            w,
+            dd_w,
             h,
         );
         self.dd_rect = r;
         cx.layout_child(&mut self.dropdown, r);
+        let sp_d = (16.0 * self.s()).min(h);
+        let sp_x = (r.origin.x - pad * 0.5 - sp_d).max(bounds.origin.x);
+        self.spinner_rect = Rect::new(
+            sp_x,
+            bounds.origin.y + (bounds.size.y - sp_d) * 0.5,
+            sp_d,
+            sp_d,
+        );
+        cx.layout_child(&mut self.spinner, self.spinner_rect);
+        let pb_w = (sp_x - pad - bounds.origin.x).max(0.0);
+        self.progress_rect = Rect::new(
+            bounds.origin.x,
+            bounds.origin.y + (bounds.size.y - 6.0 * self.s()) * 0.5,
+            pb_w,
+            6.0 * self.s(),
+        );
+        cx.layout_child(&mut self.progress, self.progress_rect);
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -268,13 +310,13 @@ impl Widget for StatusBar {
     }
 
     fn tick(&mut self, _dt: std::time::Duration) -> bool {
-        // No `dropdown.tick` here — `WidgetArena::tick_recursive`
-        // already ticks internal children via `child_mut`; a manual
-        // call would double-advance it. `publish` still runs every
-        // tick so popup commits (which land via `sync_overlay`, not
-        // an event) reach the signal.
+        // `WidgetArena::tick_recursive` already ticks internal children
+        // via `child_mut` — that's what animates the Spinner's phase.
+        // The progress bar mirrors the shared `cpu` signal; rebuilding
+        // it here keeps the fraction honest (it holds no other state).
+        self.progress = ProgressBar::new().value(self.cpu.get() as f32);
         self.publish();
-        false
+        true
     }
 
     fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
@@ -290,19 +332,44 @@ impl Widget for StatusBar {
     }
 
     fn child_count(&self) -> usize {
-        1
+        // The spinner drops out of the tree while paused — it stops
+        // ticking (frozen) and stops painting, which is the honest
+        // "feed halted" cue.
+        if self.paused.get() {
+            2
+        } else {
+            3
+        }
     }
 
     fn child(&self, index: usize) -> Option<&dyn Widget> {
-        (index == 0).then_some(&self.dropdown as &dyn Widget)
+        let live = !self.paused.get();
+        match (index, live) {
+            (0, _) => Some(&self.dropdown),
+            (1, true) => Some(&self.spinner),
+            (1, false) | (2, true) => Some(&self.progress),
+            _ => None,
+        }
     }
 
     fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
-        (index == 0).then_some(&mut self.dropdown as &mut dyn Widget)
+        let live = !self.paused.get();
+        match (index, live) {
+            (0, _) => Some(&mut self.dropdown),
+            (1, true) => Some(&mut self.spinner),
+            (1, false) | (2, true) => Some(&mut self.progress),
+            _ => None,
+        }
     }
 
     fn child_bounds(&self, index: usize) -> Option<Rect> {
-        (index == 0).then_some(self.dd_rect)
+        let live = !self.paused.get();
+        match (index, live) {
+            (0, _) => Some(self.dd_rect),
+            (1, true) => Some(self.spinner_rect),
+            (1, false) | (2, true) => Some(self.progress_rect),
+            _ => None,
+        }
     }
 
     fn paint(&self, cx: &mut PaintContext) {

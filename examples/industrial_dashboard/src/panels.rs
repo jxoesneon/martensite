@@ -78,6 +78,7 @@ use martensite::media::surface::{VideoPixelFormat, VideoSurface};
 use martensite::prelude::*;
 use martensite::render::{BezPath, PaintList, Point};
 use martensite::widgets::media::{MediaView, VideoFit};
+use martensite::widgets::{Banner, Severity};
 use martensite_assets::vfs::{EmbeddedVfs, Vfs};
 use martensite_motion::RubberBandScroller;
 
@@ -1125,6 +1126,12 @@ pub struct TelemetryPanel {
     paused: Signal<bool>,
     glow: Signal<bool>,
     tick_ms: Signal<f64>,
+    /// Toolbar "alerts" switch → the inline `Banner` strip. The
+    /// banner's × writes the cell off (the toolbar mirrors it back).
+    alerts: Signal<bool>,
+    banner: Banner,
+    /// The banner's strip rect — zero when alerts are off.
+    banner_rect: Rect,
     phase: f64,
     history: VecDeque<(f64, f64)>,
     elapsed: Duration,
@@ -1142,6 +1149,7 @@ impl TelemetryPanel {
         paused: Signal<bool>,
         glow: Signal<bool>,
         tick_ms: Signal<f64>,
+        alerts: Signal<bool>,
     ) -> Self {
         Self {
             text: Mutex::new(TextPainter::new()),
@@ -1153,6 +1161,13 @@ impl TelemetryPanel {
             paused,
             glow,
             tick_ms,
+            alerts,
+            banner: Banner::new(
+                Severity::Warning,
+                "Row alerts live — outliers flagged in the grid",
+            )
+            .with_text_painter(martensite::text_paint::shared_painter()),
+            banner_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             phase: 0.0,
             history: VecDeque::with_capacity(Self::CAP + 1),
             elapsed: Duration::ZERO,
@@ -1179,11 +1194,31 @@ impl Widget for TelemetryPanel {
         RenderMinimum::new(Vec2::new(260.0, 150.0)).with_policy(UnderflowPolicy::Scrim)
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
+        // The banner strips the top of the content area while the
+        // alerts switch is on; the plot shrinks under it.
+        let s = self.s();
+        if self.alerts.get() {
+            let top = bounds.origin.y + TITLE_H * s + 6.0 * s;
+            self.banner_rect = Rect::new(
+                bounds.origin.x + 8.0 * s,
+                top,
+                (bounds.size.x - 16.0 * s).max(0.0),
+                36.0 * s,
+            );
+            cx.layout_child(&mut self.banner, self.banner_rect);
+        } else {
+            self.banner_rect = Rect::new(bounds.origin.x, bounds.origin.y, 0.0, 0.0);
+        }
     }
 
     fn tick(&mut self, dt: Duration) -> bool {
+        // Banner × → write the shared cell off; the toolbar switch
+        // mirrors it back on its next tick.
+        if self.banner.take_dismissed() {
+            self.alerts.set(false);
+        }
         self.elapsed += dt;
         if self.paused.get() {
             return false;
@@ -1210,6 +1245,15 @@ impl Widget for TelemetryPanel {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        // The banner's × is the only interactive element — forward
+        // positional events that land inside its rect.
+        if self.alerts.get() {
+            if let Some(pos) = cx.event.position() {
+                if self.banner_rect.contains(pos) {
+                    return self.banner.event(cx);
+                }
+            }
+        }
         match cx.event {
             WidgetEvent::PointerPressed {
                 button: PointerButton::Primary,
@@ -1248,6 +1292,34 @@ impl Widget for TelemetryPanel {
             self.history.len(),
             if self.paused.get() { ", paused" } else { "" }
         ));
+    }
+
+    fn child_count(&self) -> usize {
+        usize::from(self.alerts.get())
+    }
+
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        if index == 0 && self.alerts.get() {
+            Some(&self.banner)
+        } else {
+            None
+        }
+    }
+
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        if index == 0 && self.alerts.get() {
+            Some(&mut self.banner)
+        } else {
+            None
+        }
+    }
+
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        if index == 0 && self.alerts.get() {
+            Some(self.banner_rect)
+        } else {
+            None
+        }
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -2952,6 +3024,7 @@ mod decoder_tests {
             Signal::new(false),
             Signal::new(false),
             Signal::new(16.0),
+            Signal::new(false),
         );
         assert_eq!(telemetry.min_render().policy, UnderflowPolicy::Scrim);
 

@@ -10,6 +10,13 @@
 //!   dismisses all popups and falls through to the content beneath;
 //! - `Escape` dismisses the topmost popup.
 //!
+//! Entries opened via [`OverlayLayer::open_with`] with
+//! [`OverlayOptions::modal`] change that contract: a scrim covers the
+//! viewport beneath the topmost modal entry, positional events outside
+//! it are consumed rather than forwarded, and popups below it are
+//! unreachable until it closes — the standard modal-dialog and
+//! modal-drawer behavior.
+//!
 //! Pointer and scroll events are dispatched to popups topmost-first
 //! before the caller forwards them to the arena, so popup content
 //! hit-tests ahead of in-window content. While an entry's content
@@ -90,6 +97,114 @@ pub enum OverlayAnchor {
     /// Popup anchored to a pointer position, offset below-right and
     /// flipped/clamped into the viewport.
     Pointer(Vec2),
+    /// Centered in the viewport — dialogs, alert boxes, command
+    /// palettes.
+    Center,
+    /// Spans the full viewport height pinned to the left edge; the
+    /// measured width sets the drawer's depth. Modal with a scrim
+    /// when opened via [`OverlayOptions::modal`].
+    EdgeLeft,
+    /// Spans the full viewport height pinned to the right edge —
+    /// inspector drawers, detail panels.
+    EdgeRight,
+    /// Spans the full viewport width pinned to the top edge.
+    EdgeTop,
+    /// Spans the full viewport width pinned to the bottom edge —
+    /// bottom sheets.
+    EdgeBottom,
+    /// Pinned to a viewport region with the measured size and an
+    /// edge margin (logical px) — toast stacks bottom-right,
+    /// notification centers top-right.
+    Viewport {
+        /// Horizontal placement within the viewport.
+        h: ViewportAlign,
+        /// Vertical placement within the viewport.
+        v: ViewportAlign,
+        /// Logical-pixel margin from the anchored edges (and from the
+        /// viewport center lines for `Center`).
+        margin: f32,
+    },
+}
+
+/// Horizontal or vertical placement of a [`OverlayAnchor::Viewport`]
+/// popup within the viewport.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewportAlign {
+    /// Flush to the start edge (left/top) plus the margin.
+    Start,
+    /// Centered on the axis.
+    Center,
+    /// Flush to the end edge (right/bottom) minus the margin.
+    End,
+}
+
+/// Behavioral options for an overlay entry, passed to
+/// [`OverlayLayer::open_with`]. The default is the historical popup
+/// behavior: non-modal, light-dismissed by outside presses.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::overlay::OverlayOptions;
+///
+/// // A modal dialog: scrim, input blocked, scrim-click does NOT
+/// // dismiss — an explicit button is required.
+/// let modal = OverlayOptions::modal();
+/// assert!(modal.modal && modal.scrim && !modal.scrim_dismiss);
+/// // A modal drawer that closes when the scrim is tapped.
+/// let drawer = OverlayOptions::modal().light_dismiss();
+/// assert!(drawer.scrim_dismiss);
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct OverlayOptions {
+    /// `true` marks the entry modal: a scrim covers the viewport
+    /// beneath it, positional events outside the popup are consumed
+    /// (never reach content), and popups stacked *below* the topmost
+    /// modal are unreachable until it closes.
+    pub modal: bool,
+    /// `true` paints a [`martensite_theme::TokenKey::ScrimColor`] fill
+    /// over the viewport before this entry. Implied by `modal`.
+    pub scrim: bool,
+    /// `true` lets a press on the scrim dismiss this modal entry —
+    /// the drawer/bottom-sheet convention (dialogs leave it `false`
+    /// so an accidental click can't discard a form).
+    pub scrim_dismiss: bool,
+    /// `true` marks the entry transparent to input: an event its
+    /// content ignores falls through to lower popups and window
+    /// content instead of being swallowed, the blanket outside-press
+    /// dismissal skips it, and Escape never targets it. The toast-stack
+    /// contract — a strip of self-expiring cards that must not eat
+    /// clicks landing between them.
+    pub passthrough: bool,
+}
+
+impl OverlayOptions {
+    /// Options for a modal surface: scrim painted, input blocked,
+    /// scrim clicks consumed but not dismissing.
+    pub fn modal() -> Self {
+        Self {
+            modal: true,
+            scrim: true,
+            scrim_dismiss: false,
+            passthrough: false,
+        }
+    }
+
+    /// Options for a non-interactive notification layer: no scrim, no
+    /// modality, events its content ignores fall through to content,
+    /// and outside presses never dismiss it.
+    pub fn passthrough() -> Self {
+        Self {
+            passthrough: true,
+            ..Self::default()
+        }
+    }
+
+    /// Sets `scrim_dismiss` — builder-style.
+    pub fn light_dismiss(mut self) -> Self {
+        self.scrim_dismiss = true;
+        self
+    }
 }
 
 /// A single popup managed by an [`OverlayLayer`].
@@ -115,6 +230,8 @@ pub struct OverlayEntry {
     /// arena dirty-mark owners when their popups close or change, and
     /// close orphaned popups when an owner is removed.
     owner: Option<WidgetId>,
+    /// Modal/scrim behavior from [`OverlayOptions`] at `open` time.
+    options: OverlayOptions,
 }
 
 impl OverlayEntry {
@@ -149,6 +266,11 @@ impl OverlayEntry {
     /// was driving that widget's [`Widget::sync_overlay`].
     pub fn owner(&self) -> Option<WidgetId> {
         self.owner
+    }
+
+    /// The [`OverlayOptions`] this entry was opened with.
+    pub fn options(&self) -> OverlayOptions {
+        self.options
     }
 }
 
@@ -315,6 +437,34 @@ impl OverlayLayer {
     /// assert!(layer.is_open(id));
     /// ```
     pub fn open(&mut self, content: Box<dyn Widget>, anchor: OverlayAnchor) -> u64 {
+        self.open_with(content, anchor, OverlayOptions::default())
+    }
+
+    /// Opens a popup with explicit [`OverlayOptions`] — `modal` for
+    /// dialogs and drawers that block input to the content beneath.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::{OverlayAnchor, OverlayLayer, OverlayOptions};
+    /// use martensite_core::{DummyWidget, Rect};
+    ///
+    /// let mut layer = OverlayLayer::new();
+    /// layer.set_viewport(Rect::new(0.0, 0.0, 800.0, 600.0));
+    /// let id = layer.open_with(
+    ///     Box::new(DummyWidget),
+    ///     OverlayAnchor::Center,
+    ///     OverlayOptions::modal(),
+    /// );
+    /// assert!(layer.has_modal());
+    /// assert!(layer.is_open(id));
+    /// ```
+    pub fn open_with(
+        &mut self,
+        content: Box<dyn Widget>,
+        anchor: OverlayAnchor,
+        options: OverlayOptions,
+    ) -> u64 {
         let id = self.next_id;
         self.next_id = self
             .next_id
@@ -327,9 +477,16 @@ impl OverlayLayer {
             needs_layout: true,
             content,
             owner: self.current_owner,
+            options,
         });
         self.content_dirty = true;
         id
+    }
+
+    /// `true` while any open entry is modal — the layer then blocks
+    /// positional input outside the topmost modal's z-range.
+    pub fn has_modal(&self) -> bool {
+        self.entries.iter().any(|e| e.options.modal)
     }
 
     /// Closes the popup with the given id. Returns `true` if it was
@@ -697,7 +854,14 @@ impl OverlayLayer {
         // still are.
         if !self.entries.is_empty() {
             list.push_scope(None, "Overlay", crate::arena::rect_to_kurbo(self.viewport));
+            let scrim = theme
+                .color(martensite_theme::TokenKey::ScrimColor)
+                .map_or([8, 10, 16, 102], |c| c.to_srgba8());
+            let scrim_rect = crate::arena::rect_to_kurbo(self.viewport);
             for entry in &self.entries {
+                if entry.options.scrim || entry.options.modal {
+                    list.push_fill_rect(scrim_rect, scrim);
+                }
                 paint_widget_recursive(
                     entry.content(),
                     entry.resolved,
@@ -794,7 +958,15 @@ impl OverlayLayer {
         ) {
             if let WidgetEvent::KeyPressed { key, .. } = event {
                 if key == "Escape" {
-                    if let Some(top) = self.entries.last().map(|e| e.id) {
+                    // Passthrough entries (toast strips) are never the
+                    // Escape target — the dismissible popup below them is.
+                    if let Some(top) = self
+                        .entries
+                        .iter()
+                        .rev()
+                        .find(|e| !e.options.passthrough)
+                        .map(|e| e.id)
+                    {
                         self.close(top);
                         self.dismissed.push_back(top);
                         return EventResponse::Handled;
@@ -839,9 +1011,18 @@ impl OverlayLayer {
             self.capture = None;
         }
 
-        // Positional events hit-test topmost-first.
+        // Positional events hit-test topmost-first. While a modal entry
+        // is open the scrim is the event floor: entries below the
+        // topmost modal are unreachable (it covers them), and events
+        // outside every reachable popup land on the scrim — consumed,
+        // never forwarded to window content.
         if let Some(position) = event.position() {
-            for index in (0..self.entries.len()).rev() {
+            let floor = self
+                .entries
+                .iter()
+                .rposition(|e| e.options.modal)
+                .unwrap_or(0);
+            for index in (floor..self.entries.len()).rev() {
                 if self.entries[index].resolved.contains(position) {
                     let entry = &mut self.entries[index];
                     let owner = entry.owner;
@@ -854,16 +1035,54 @@ impl OverlayLayer {
                     let id = entry.id;
                     self.apply_capture_response(id, response);
                     self.note_dirty_owner(owner);
+                    // A passthrough entry that ignores the event lets
+                    // it continue down the stack — its bounds cover a
+                    // strip, not every card in it.
+                    if self.entries[index].options.passthrough && response == EventResponse::Ignored
+                    {
+                        continue;
+                    }
                     return swallow_ignored(response);
                 }
             }
-            // Outside every popup: a press dismisses all popups and
-            // falls through to window content.
-            if matches!(event, WidgetEvent::PointerPressed { .. }) && !self.entries.is_empty() {
-                // Record every dismissed id — owners reconcile their
-                // own state via `take_dismissed`.
-                self.dismissed.extend(self.entries.iter().map(|e| e.id));
-                self.clear();
+            if let Some(m) = self.entries.iter().rposition(|e| e.options.modal) {
+                // On the scrim. A press light-dismisses the popups
+                // stacked above the modal, and the modal itself only
+                // when it opted into scrim dismissal.
+                if matches!(event, WidgetEvent::PointerPressed { .. }) {
+                    let above: Vec<u64> = self.entries[m + 1..]
+                        .iter()
+                        .filter(|e| !e.options.passthrough)
+                        .map(|e| e.id)
+                        .collect();
+                    self.dismissed.extend(above.iter().copied());
+                    for id in above {
+                        self.close(id);
+                    }
+                    if self.entries.get(m).is_some_and(|e| e.options.scrim_dismiss) {
+                        let id = self.entries[m].id;
+                        self.dismissed.push_back(id);
+                        self.close(id);
+                    }
+                }
+                return EventResponse::Handled;
+            }
+            // Outside every popup: a press dismisses the dismissible
+            // popups (passthrough layers survive — toasts must outlive
+            // unrelated clicks) and falls through to window content.
+            if matches!(event, WidgetEvent::PointerPressed { .. })
+                && self.entries.iter().any(|e| !e.options.passthrough)
+            {
+                let ids: Vec<u64> = self
+                    .entries
+                    .iter()
+                    .filter(|e| !e.options.passthrough)
+                    .map(|e| e.id)
+                    .collect();
+                self.dismissed.extend(ids.iter().copied());
+                for id in ids {
+                    self.close(id);
+                }
                 return EventResponse::Ignored;
             }
         }
@@ -902,8 +1121,24 @@ fn place(anchor: &OverlayAnchor, desired: Vec2, viewport: Rect, scale: f32) -> R
         desired.x.clamp(0.0, viewport.width().max(0.0)),
         desired.y.clamp(0.0, viewport.height().max(0.0)),
     );
+    // Edge anchors span the viewport on the flow axis — the measured
+    // size supplies only the depth (drawer width, sheet height).
+    let size = match anchor {
+        OverlayAnchor::EdgeLeft | OverlayAnchor::EdgeRight => {
+            Vec2::new(size.x, viewport.height().max(0.0))
+        }
+        OverlayAnchor::EdgeTop | OverlayAnchor::EdgeBottom => {
+            Vec2::new(viewport.width().max(0.0), size.y)
+        }
+        _ => size,
+    };
     let gap = ANCHOR_GAP * scale;
     let offset = POINTER_OFFSET * scale;
+    let align_axis = |a: ViewportAlign, min: f32, max: f32, extent: f32, m: f32| match a {
+        ViewportAlign::Start => min + m,
+        ViewportAlign::Center => min + (max - min - extent) / 2.0,
+        ViewportAlign::End => max - m - extent,
+    };
 
     let mut origin = match anchor {
         OverlayAnchor::Bounds(a) => {
@@ -921,6 +1156,21 @@ fn place(anchor: &OverlayAnchor, desired: Vec2, viewport: Rect, scale: f32) -> R
             Vec2::new(a.min_x(), y)
         }
         OverlayAnchor::Pointer(p) => Vec2::new(p.x + offset, p.y + offset),
+        OverlayAnchor::Center => Vec2::new(
+            viewport.min_x() + (viewport.width() - size.x) / 2.0,
+            viewport.min_y() + (viewport.height() - size.y) / 2.0,
+        ),
+        OverlayAnchor::Viewport { h, v, margin } => {
+            let m = margin * scale;
+            Vec2::new(
+                align_axis(*h, viewport.min_x(), viewport.max_x(), size.x, m),
+                align_axis(*v, viewport.min_y(), viewport.max_y(), size.y, m),
+            )
+        }
+        OverlayAnchor::EdgeLeft => Vec2::new(viewport.min_x(), viewport.min_y()),
+        OverlayAnchor::EdgeRight => Vec2::new(viewport.max_x() - size.x, viewport.min_y()),
+        OverlayAnchor::EdgeTop => Vec2::new(viewport.min_x(), viewport.min_y()),
+        OverlayAnchor::EdgeBottom => Vec2::new(viewport.min_x(), viewport.max_y() - size.y),
     };
 
     // Clamp the origin so the rect stays inside the viewport; `max`
@@ -1246,5 +1496,171 @@ mod tests {
         };
         assert_eq!(layer.dispatch_event(&outside), EventResponse::Ignored);
         assert!(!layer.is_open(id));
+    }
+
+    #[test]
+    fn modal_blocks_outside_press_and_content() {
+        let mut layer = layer();
+        let id = layer.open_with(
+            Box::new(DummyWidget),
+            OverlayAnchor::Center,
+            OverlayOptions::modal(),
+        );
+        layer.layout_pass();
+        assert!(layer.has_modal());
+
+        // Press on the scrim — consumed, modal stays, nothing falls
+        // through to content.
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(10.0, 10.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(layer.dispatch_event(&press), EventResponse::Handled);
+        assert!(layer.is_open(id));
+        // Moves and scrolls are swallowed by the scrim too.
+        let mv = WidgetEvent::PointerMoved {
+            position: Vec2::new(10.0, 10.0),
+        };
+        assert_eq!(layer.dispatch_event(&mv), EventResponse::Handled);
+        // Escape still dismisses (the cancel convention).
+        let esc = WidgetEvent::KeyPressed {
+            key: "Escape".into(),
+            repeat: false,
+        };
+        assert_eq!(layer.dispatch_event(&esc), EventResponse::Handled);
+        assert!(!layer.is_open(id));
+    }
+
+    #[test]
+    fn scrim_dismiss_modal_closes_on_outside_press() {
+        let mut layer = layer();
+        let id = layer.open_with(
+            Box::new(DummyWidget),
+            OverlayAnchor::EdgeRight,
+            OverlayOptions::modal().light_dismiss(),
+        );
+        layer.layout_pass();
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(10.0, 10.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(layer.dispatch_event(&press), EventResponse::Handled);
+        assert!(!layer.is_open(id));
+        assert_eq!(layer.take_dismissed(), Some(id));
+    }
+
+    #[test]
+    fn popup_below_modal_is_unreachable() {
+        let mut layer = layer();
+        // A non-modal popup opened first…
+        let menu = layer.open(
+            Box::new(DummyWidget),
+            OverlayAnchor::Pointer(Vec2::new(10.0, 10.0)),
+        );
+        // …then a modal dialog on top of it.
+        layer.open_with(
+            Box::new(DummyWidget),
+            OverlayAnchor::Center,
+            OverlayOptions::modal(),
+        );
+        layer.layout_pass();
+        let mb = layer.entry_bounds(menu).unwrap();
+        // A press inside the lower popup's rect hits the scrim, not
+        // the popup — and must not dismiss the modal either.
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(mb.min_x() + 1.0, mb.min_y() + 1.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(layer.dispatch_event(&press), EventResponse::Handled);
+        assert!(layer.is_open(menu));
+        assert_eq!(layer.len(), 2);
+    }
+
+    #[test]
+    fn popup_above_modal_light_dismisses_on_scrim_press() {
+        let mut layer = layer();
+        layer.open_with(
+            Box::new(DummyWidget),
+            OverlayAnchor::Center,
+            OverlayOptions::modal(),
+        );
+        let tip = layer.open(
+            Box::new(DummyWidget),
+            OverlayAnchor::Pointer(Vec2::new(10.0, 10.0)),
+        );
+        layer.layout_pass();
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(400.0, 10.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(layer.dispatch_event(&press), EventResponse::Handled);
+        // The non-modal popup above the modal light-dismissed; the
+        // modal (no scrim_dismiss) stayed.
+        assert!(!layer.is_open(tip));
+        assert_eq!(layer.len(), 1);
+        assert!(layer.has_modal());
+    }
+
+    #[test]
+    fn modal_paints_scrim() {
+        let mut layer = layer();
+        layer.open_with(
+            Box::new(DummyWidget),
+            OverlayAnchor::Center,
+            OverlayOptions::modal(),
+        );
+        layer.layout_pass();
+        let mut list = PaintList::new();
+        layer.paint(&mut list, &martensite_theme::Theme::new("t"), None);
+        let scrimmed = list.commands.iter().any(|c| {
+            matches!(
+                c,
+                PaintCommand::FillRect(_, color)
+                    if color[3] > 0 && color[3] < 255
+            )
+        });
+        assert!(scrimmed, "modal entry must emit a translucent scrim");
+    }
+
+    #[test]
+    fn edge_and_viewport_anchors_place() {
+        let mut layer = layer();
+        // Right drawer: 300pt wide, full viewport height.
+        struct Sized(Vec2);
+        impl Widget for Sized {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                self.0
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+        }
+        let d = layer.open_with(
+            Box::new(Sized(Vec2::new(300.0, 50.0))),
+            OverlayAnchor::EdgeRight,
+            OverlayOptions::modal().light_dismiss(),
+        );
+        let t = layer.open(
+            Box::new(Sized(Vec2::new(120.0, 60.0))),
+            OverlayAnchor::Viewport {
+                h: ViewportAlign::End,
+                v: ViewportAlign::End,
+                margin: 12.0,
+            },
+        );
+        let c = layer.open_with(
+            Box::new(Sized(Vec2::new(200.0, 100.0))),
+            OverlayAnchor::Center,
+            OverlayOptions::modal(),
+        );
+        layer.layout_pass();
+        let db = layer.entry_bounds(d).unwrap();
+        assert_eq!(db, Rect::new(500.0, 0.0, 300.0, 600.0));
+        let tb = layer.entry_bounds(t).unwrap();
+        assert_eq!(tb, Rect::new(668.0, 528.0, 120.0, 60.0));
+        let cb = layer.entry_bounds(c).unwrap();
+        assert_eq!(cb, Rect::new(300.0, 250.0, 200.0, 100.0));
     }
 }
