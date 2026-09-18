@@ -43,7 +43,10 @@ fn main() {
             _ => app::ThemeChoice::Dark,
         }
     };
-    if let Err(err) = app::run(theme) {
+    // `--audit-locale` — opt the paint audit into the `MissingLocale`
+    // lint (user-visible strings without a shipped FTL translation).
+    let audit_locale = std::env::args().any(|a| a == "--audit-locale");
+    if let Err(err) = app::run(theme, audit_locale) {
         eprintln!("industrial_dashboard: {err}");
         std::process::exit(1);
     }

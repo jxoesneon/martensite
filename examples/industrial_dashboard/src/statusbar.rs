@@ -71,6 +71,86 @@ pub(crate) fn build_l10n() -> martensite_l10n::reactive::L10n {
     l10n
 }
 
+/// Builds the `MissingLocale` probe from the shipped FTL resources —
+/// every literal string the l10n system can emit, in every shipped
+/// locale, plus the intentional exemptions (locale endonyms, the live
+/// filter-field content, non-alphabetic data). `--audit-locale` wires
+/// it into the paint audit; see `PaintLintKind::MissingLocale`.
+pub(crate) fn build_locale_probe(
+    filter_text: Signal<String>,
+) -> martensite::access::paint_audit::LocaleProbe {
+    use martensite::access::paint_audit::LocaleProbe;
+    use std::collections::HashSet;
+
+    // Static values match exactly — and a `fit()`-truncated prefix of
+    // one still counts (a clipped localized string stays localized).
+    let mut exact: HashSet<String> = HashSet::new();
+    // Templated values reduce to their literal segments — covered when
+    // every segment appears in order ("foco: { $name }" → "foco:").
+    let mut patterns: Vec<Vec<String>> = Vec::new();
+    for (_, source) in LOCALE_SOURCES {
+        for line in source.lines() {
+            let Some((_, value)) = line.split_once('=') else {
+                continue;
+            };
+            let templated = value.contains('{');
+            let mut segs: Vec<String> = Vec::new();
+            let mut rest = value;
+            while let Some((lit, after)) = rest.split_once('{') {
+                if !lit.trim().is_empty() {
+                    segs.push(lit.trim().to_string());
+                }
+                rest = after.split_once('}').map_or("", |(_, r)| r);
+            }
+            if !rest.trim().is_empty() {
+                segs.push(rest.trim().to_string());
+            }
+            if templated {
+                if !segs.is_empty() {
+                    patterns.push(segs);
+                }
+            } else if let Some(v) = segs.into_iter().next() {
+                exact.insert(v);
+            }
+        }
+    }
+
+    LocaleProbe::new(move |text, _scope| {
+        // Editable-field content is user data, not chrome — the live
+        // filter string is the only editable field's current value.
+        if text == filter_text.get() {
+            return true;
+        }
+        // Locale names are endonyms — correct by definition.
+        if LOCALE_LABELS.contains(&text) {
+            return true;
+        }
+        // Numbers, units and symbol runs carry no localizable text.
+        if !text.chars().any(char::is_alphabetic) {
+            return true;
+        }
+        if exact.contains(text) {
+            return true;
+        }
+        // `fit()`-truncated output still stems from a translated
+        // string — the ellipsis is stripped before prefix-matching.
+        let stem = text.trim_end_matches('…').trim_end();
+        if stem.len() >= 4 && exact.iter().any(|v| v.starts_with(stem)) {
+            return true;
+        }
+        patterns.iter().any(|segs| {
+            let mut rest = text;
+            segs.iter().all(|seg| match rest.find(seg.as_str()) {
+                Some(i) => {
+                    rest = &rest[i + seg.len()..];
+                    true
+                }
+                None => false,
+            })
+        })
+    })
+}
+
 /// The status-bar widget. `locale_sel` is a shared cell — the app
 /// clones it before constructing the widget, so the dropdown's commits
 /// are observable app-side without downcasting through `dyn Widget`.
@@ -328,5 +408,62 @@ mod tests {
                 LOCALE_LABELS[i]
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod locale_probe_tests {
+    use super::*;
+
+    fn probe() -> (martensite::access::paint_audit::LocaleProbe, Signal<String>) {
+        let filter = Signal::new(String::new());
+        (build_locale_probe(filter.clone()), filter)
+    }
+
+    #[test]
+    fn probe_covers_static_and_templated_values_in_every_locale() {
+        let (p, _) = probe();
+        // Static value, English and Spanish.
+        assert!(p.is_translated(
+            "Tab focus · drag title to dock · click sort/select · F alerts · Space pause",
+            None
+        ));
+        // A bare fragment of a templated line is not a value itself.
+        assert!(!p.is_translated("Espacio pausa", None));
+        // The full es line — not a fragment.
+        assert!(p.is_translated(
+            "Tab foco · arrastra el título para anclar · clic ordenar/seleccionar · F alertas · Espacio pausa",
+            None
+        ));
+        // Templated pattern — `focus: { $name }` resolves per locale.
+        assert!(p.is_translated("focus: process grid", None));
+        assert!(p.is_translated("foco: editor", None));
+        assert!(p.is_translated("Fokus: media", None));
+    }
+
+    #[test]
+    fn probe_exemptions_and_real_findings() {
+        let (p, filter) = probe();
+        // Endonyms and non-alphabetic data are intentionally unlocalized.
+        assert!(p.is_translated("Español", None));
+        assert!(p.is_translated("99.9%", None));
+        assert!(p.is_translated("5323", None));
+        // The live filter-field content is user data.
+        filter.set("pid 42".to_string());
+        assert!(p.is_translated("pid 42", None));
+        // Hardcoded chrome — the check's real findings.
+        assert!(!p.is_translated("PROCESS GRID", None));
+        assert!(!p.is_translated("MEDIA", None));
+        assert!(!p.is_translated("Dark", None));
+    }
+
+    #[test]
+    fn probe_accepts_fit_truncated_translations() {
+        let (p, _) = probe();
+        // A `fit()`-ellipsized localized string stays localized.
+        assert!(p.is_translated(
+            "Tab focus · drag title to dock · click sort/select · F alerts · Sp…",
+            None
+        ));
     }
 }

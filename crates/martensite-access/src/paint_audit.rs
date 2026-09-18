@@ -48,6 +48,13 @@
 //!   the arena directly (the paint stream cannot see hit regions) and
 //!   reports interactive nodes under 24×24pt as
 //!   [`PaintLintKind::UndersizedTarget`].
+//! - **Locale coverage (opt-in)** — when the app installs
+//!   [`PaintAuditConfig::locale_probe`], every visible
+//!   [`PaintCommand::DrawText`] string the probe doesn't recognize as
+//!   translated reports [`PaintLintKind::MissingLocale`] (advisory).
+//!   `DrawGlyphRun` output carries no source text and is skipped; the
+//!   probe itself exempts intentionally unlocalized values (dynamic
+//!   data, endonyms).
 //! - **Machine-readable output** — [`PaintLint::to_json`] serializes a
 //!   finding for CI tooling and baseline files.
 //!
@@ -176,6 +183,20 @@ pub struct PaintAuditConfig {
     /// false passes are rare — but a widget with no emphasis at all is
     /// caught reliably, which is the failure this check exists for.
     pub focus_rect: Option<Rect>,
+    /// Optional predicate answering "does this painted string have a
+    /// locale translation". When set, every [`PaintCommand::DrawText`]
+    /// string the probe rejects is reported as
+    /// [`PaintLintKind::MissingLocale`]; `None` (default) disables the
+    /// check entirely.
+    ///
+    /// Only `DrawText` carries source text — shaped
+    /// [`PaintCommand::DrawGlyphRun`] output is not probeable and is
+    /// skipped. The probe is also the opt-out seam for intentionally
+    /// non-localized strings: return `true` for dynamic data (numbers,
+    /// units, IDs), endonyms, brand names, and other non-user-facing
+    /// values. Strings that paint nothing (empty, whitespace-only, or
+    /// fully outside their clip) are never probed.
+    pub locale_probe: Option<LocaleProbe>,
 }
 
 impl Default for PaintAuditConfig {
@@ -193,6 +214,7 @@ impl Default for PaintAuditConfig {
             check_container_overflow: true,
             check_focus_indicator: true,
             focus_rect: None,
+            locale_probe: None,
         }
     }
 }
@@ -212,6 +234,64 @@ impl PaintAuditConfig {
     pub fn with_scale_factor(mut self, scale_factor: f64) -> Self {
         self.scale_factor = scale_factor as f32;
         self
+    }
+}
+
+/// The predicate a [`LocaleProbe`] wraps: `(text, scope) ->
+/// has_translation`.
+pub type LocaleProbeFn = dyn Fn(&str, Option<&'static str>) -> bool + Send + Sync;
+
+/// Predicate deciding whether a painted string has a locale translation
+/// — the opt-in seam behind [`PaintAuditConfig::locale_probe`] and
+/// [`PaintLintKind::MissingLocale`].
+///
+/// The probe receives the full source text of a
+/// [`PaintCommand::DrawText`] command plus the innermost widget-paint
+/// scope name (`Widget::debug_name`, `None` outside any scope). Return
+/// `true` when the string is covered by the localization system — or
+/// intentionally exempt (dynamic data, endonyms, brand names); `false`
+/// reports the lint.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_access::paint_audit::LocaleProbe;
+///
+/// let probe = LocaleProbe::new(|text, _scope| text == "OK");
+/// assert!(probe.is_translated("OK", None));
+/// assert!(!probe.is_translated("Cancel", None));
+/// ```
+#[derive(Clone)]
+pub struct LocaleProbe(std::sync::Arc<LocaleProbeFn>);
+
+impl LocaleProbe {
+    /// Wraps a `(text, scope) -> has_translation` predicate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_access::paint_audit::LocaleProbe;
+    ///
+    /// let probe = LocaleProbe::new(|text, scope| scope == Some("Data"));
+    /// assert!(probe.is_translated("anything", Some("Data")));
+    /// assert!(!probe.is_translated("anything", Some("Chrome")));
+    /// ```
+    #[must_use]
+    pub fn new(f: impl Fn(&str, Option<&'static str>) -> bool + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(f))
+    }
+
+    /// Whether `text` painted inside `scope` has a locale translation
+    /// (or is intentionally exempt).
+    #[must_use]
+    pub fn is_translated(&self, text: &str, scope: Option<&'static str>) -> bool {
+        (self.0)(text, scope)
+    }
+}
+
+impl std::fmt::Debug for LocaleProbe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LocaleProbe(..)")
     }
 }
 
@@ -288,6 +368,11 @@ pub enum PaintLintKind {
     /// painted inside it — the focused widget shows no visible
     /// indicator (WCAG 2.4.7 focus visible).
     MissingFocusIndicator,
+    /// A user-visible string has no locale translation, per the
+    /// configured [`PaintAuditConfig::locale_probe`]. Advisory
+    /// ([`LintSeverity::Info`]) — localization coverage is opt-in and
+    /// the probe decides which strings are intentionally unlocalized.
+    MissingLocale,
 }
 
 /// A single compliance finding against a painted element.
@@ -578,6 +663,9 @@ struct TextProbe {
     color: ColorRgba,
     /// Short excerpt for the detail line.
     excerpt: String,
+    /// Full source string for the locale probe — `DrawText` only;
+    /// shaped [`GlyphRun`] output carries no recoverable text.
+    text: Option<String>,
 }
 
 /// Extracts the audit inputs from a `DrawText` command. `DrawText`'s
@@ -599,6 +687,9 @@ fn probe_text(point: &Point, text: &str, size: f32, color: [u8; 4]) -> TextProbe
         font_px: size,
         color: rgba_u8(color),
         excerpt: text.chars().take(24).collect(),
+        // Bounded: strings past 512 chars are bulk data, not chrome —
+        // truncating keeps probe calls cheap and lints readable.
+        text: Some(text.chars().take(512).collect()),
     }
 }
 
@@ -634,6 +725,7 @@ fn probe_glyph_run(run: &GlyphRun) -> Option<TextProbe> {
         font_px: run.font_size,
         color: rgba_u8(run.color),
         excerpt: format!("{} glyphs", run.glyphs.len()),
+        text: None,
     })
 }
 
@@ -819,6 +911,29 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
         // at instead of making the developer hunt coordinates.
         let in_scope = sc.map_or(String::new(), |s| format!(" in {}", s.name));
         let scope_name = sc.map(|s| s.name);
+        // Opt-in locale coverage: flag user-visible `DrawText` strings
+        // the app's probe doesn't recognize as translated. Text that
+        // paints nothing (empty, whitespace, or clipped away entirely)
+        // is skipped — there is nothing to localize.
+        if let (Some(probe_fn), Some(text)) = (&config.locale_probe, &probe.text) {
+            let clipped_away = clip.is_some_and(|c| fully_outside(&probe.bounds, &c));
+            if !clipped_away && !text.trim().is_empty() && !probe_fn.is_translated(text, scope_name)
+            {
+                lints.push(PaintLint {
+                    kind: PaintLintKind::MissingLocale,
+                    severity: LintSeverity::Info,
+                    anchor: probe.anchor,
+                    measured: None,
+                    required: None,
+                    detail: format!(
+                        "text \"{}\" has no locale translation{in_scope} {pos}",
+                        probe.excerpt
+                    ),
+                    scope: scope_name,
+                    widget: sc.and_then(|s| s.id),
+                });
+            }
+        }
         let size_pt = probe.font_px / scale;
         if size_pt < config.min_text_size_pt {
             lints.push(PaintLint {
@@ -2014,5 +2129,65 @@ mod tests {
         let json = lint.to_json();
         assert!(json.contains("\\\"a\\\\b\\\"\\nline2"));
         assert!(json.contains("Pane\\\"l"));
+    }
+}
+
+#[cfg(test)]
+mod locale_tests {
+    use super::*;
+    use kurbo::Point;
+
+    fn list_with_text(text: &str) -> PaintList {
+        let mut list = PaintList::new();
+        list.push_fill_rect(Rect::new(0.0, 0.0, 400.0, 200.0), [255, 255, 255, 255]);
+        list.push_text(Point::new(8.0, 8.0), text.to_string(), 14.0, [0, 0, 0, 255]);
+        list
+    }
+
+    fn locale_config() -> PaintAuditConfig {
+        PaintAuditConfig {
+            locale_probe: Some(LocaleProbe::new(|text, _| {
+                matches!(text, "Cancelar" | "Aceptar")
+            })),
+            ..PaintAuditConfig::default()
+        }
+    }
+
+    #[test]
+    fn missing_locale_flags_untranslated_text() {
+        let lints = audit_paint_list(&list_with_text("Unlocalized chrome"), &locale_config());
+        assert!(lints.iter().any(|l| l.kind == PaintLintKind::MissingLocale));
+    }
+
+    #[test]
+    fn translated_text_and_off_by_default() {
+        // A probe-approved string produces no lint.
+        let lints = audit_paint_list(&list_with_text("Cancelar"), &locale_config());
+        assert!(!lints.iter().any(|l| l.kind == PaintLintKind::MissingLocale));
+        // Default config — no probe — never reports MissingLocale.
+        let lints = audit_paint_list(
+            &list_with_text("Unlocalized chrome"),
+            &PaintAuditConfig::default(),
+        );
+        assert!(!lints.iter().any(|l| l.kind == PaintLintKind::MissingLocale));
+    }
+
+    #[test]
+    fn whitespace_and_clipped_text_are_not_probed() {
+        // Whitespace-only strings paint nothing — nothing to localize.
+        let lints = audit_paint_list(&list_with_text("   "), &locale_config());
+        assert!(!lints.iter().any(|l| l.kind == PaintLintKind::MissingLocale));
+        // Text clipped fully away is not user-visible — skip it.
+        let mut list = PaintList::new();
+        list.push_fill_rect(Rect::new(0.0, 0.0, 400.0, 200.0), [255, 255, 255, 255]);
+        list.push_clip(Rect::new(0.0, 0.0, 10.0, 10.0));
+        list.push_text(
+            Point::new(300.0, 100.0),
+            "Unlocalized chrome".to_string(),
+            14.0,
+            [0, 0, 0, 255],
+        );
+        let lints = audit_paint_list(&list, &locale_config());
+        assert!(!lints.iter().any(|l| l.kind == PaintLintKind::MissingLocale));
     }
 }

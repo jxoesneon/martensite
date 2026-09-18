@@ -194,6 +194,9 @@ struct App {
     chrome: TextPainter,
     recovery: RecoveryMachine,
     needs_layout: bool,
+    /// `--audit-locale` — opt-in `MissingLocale` lint: flag painted
+    /// strings the shipped FTL resources don't cover.
+    audit_locale: bool,
     last_frame: Instant,
     started: Instant,
     frame_ms: f64,
@@ -202,7 +205,7 @@ struct App {
 }
 
 impl App {
-    fn new(initial_choice: ThemeChoice) -> Self {
+    fn new(initial_choice: ThemeChoice, audit_locale: bool) -> Self {
         Self {
             scale: Signal::new(1.0f32),
             cpu: Signal::new(0.42f64),
@@ -244,6 +247,7 @@ impl App {
             chrome: TextPainter::new(),
             recovery: RecoveryMachine::new(),
             needs_layout: true,
+            audit_locale,
             last_frame: Instant::now(),
             started: Instant::now(),
             frame_ms: 0.0,
@@ -1161,6 +1165,11 @@ impl ApplicationHandler for App {
             notify_window.pre_present_notify();
         })));
         orchestrator.set_audit_scale_factor(window.scale_factor());
+        if self.audit_locale {
+            orchestrator.set_audit_locale_probe(Some(crate::statusbar::build_locale_probe(
+                self.filter_text.clone(),
+            )));
+        }
 
         // Arena + first layout + initial a11y tree — all before show.
         self.build_arena();
@@ -1586,7 +1595,13 @@ impl App {
 /// Runs the windowed workstation. `main` calls this unless `--headless`
 /// was passed. `initial_choice` selects the boot theme (the app installs
 /// it directly — no startup fade — so `--theme light` lands settled).
-pub fn run(initial_choice: ThemeChoice) -> Result<(), Box<dyn std::error::Error>> {
+/// `audit_locale` (the `--audit-locale` flag) opts the paint audit into
+/// the `MissingLocale` lint — user-visible strings the shipped FTL
+/// resources don't cover are reported through the same lint channel.
+pub fn run(
+    initial_choice: ThemeChoice,
+    audit_locale: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
@@ -1594,7 +1609,7 @@ pub fn run(initial_choice: ThemeChoice) -> Result<(), Box<dyn std::error::Error>
         .init();
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    event_loop.run_app(App::new(initial_choice))?;
+    event_loop.run_app(App::new(initial_choice, audit_locale))?;
     Ok(())
 }
 
@@ -1724,7 +1739,7 @@ mod tests {
             fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
         }
 
-        let mut app = App::new(ThemeChoice::Dark);
+        let mut app = App::new(ThemeChoice::Dark, false);
         app.build_arena();
         {
             let overlay = app.arena.as_mut().expect("arena").overlay_mut();
@@ -1749,7 +1764,7 @@ mod tests {
     /// even though `current_focus` advanced.
     #[test]
     fn tab_traversal_visits_panels_and_chrome() {
-        let mut app = App::new(ThemeChoice::Dark);
+        let mut app = App::new(ThemeChoice::Dark, false);
         app.build_arena();
         let arena = app.arena.as_mut().expect("arena");
         let mut visited = std::collections::HashSet::new();

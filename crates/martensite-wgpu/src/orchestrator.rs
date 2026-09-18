@@ -439,6 +439,35 @@ impl RenderOrchestrator {
         }
     }
 
+    /// Installs (or clears, with `None`) the locale probe used by the
+    /// `MissingLocale` lint — an opt-in check that reports user-visible
+    /// `DrawText` strings the app's localization system doesn't cover.
+    /// The probe decides which strings are intentionally unlocalized
+    /// (dynamic data, endonyms); see
+    /// [`PaintAuditConfig::locale_probe`](martensite_access::paint_audit::PaintAuditConfig::locale_probe).
+    /// No-op when the audit is disabled.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_access::paint_audit::LocaleProbe;
+    /// use martensite_wgpu::orchestrator::RenderOrchestrator;
+    ///
+    /// # fn example(orchestrator: &mut RenderOrchestrator) {
+    /// orchestrator.set_audit_locale_probe(Some(LocaleProbe::new(|text, _| {
+    ///     !text.is_empty()
+    /// })));
+    /// # }
+    /// ```
+    pub fn set_audit_locale_probe(
+        &mut self,
+        probe: Option<martensite_access::paint_audit::LocaleProbe>,
+    ) {
+        if let Some(audit) = &mut self.paint_audit {
+            audit.config.locale_probe = probe;
+        }
+    }
+
     /// Runs the arena-level target-size audit (WCAG 2.5.8: interactive
     /// nodes must be at least 24×24 logical points) and reports findings
     /// through the paint audit's reporter. The paint stream cannot see
