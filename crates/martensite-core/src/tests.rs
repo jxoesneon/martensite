@@ -1890,3 +1890,159 @@ mod dispatch_paint {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }
+
+#[cfg(test)]
+mod clip_shape_tests {
+    use crate::node::{HotNode, NodeFlags, Rect};
+    use crate::paint::PaintCommand;
+    use crate::shape::{CornerRadii, CornerStyle, CornerStyles, Shape};
+    use crate::widget::{LayoutConstraints, LayoutContext, Widget};
+    use crate::{PaintList, WidgetArena};
+    use glam::Vec2;
+
+    /// Uniform-round silhouette → the fast `ClipRoundedRect` path.
+    #[test]
+    fn clip_shape_uniform_round_emits_clip_rounded_rect() {
+        struct W;
+        impl Widget for W {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn clips_children(&self) -> bool {
+                true
+            }
+            fn clip_shape(&self) -> Option<Shape> {
+                Some(Shape::rounded(8.0))
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                bounds: Rect::new(0.0, 0.0, 80.0, 40.0),
+                ..HotNode::default()
+            },
+            Box::new(W),
+        );
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        assert!(
+            list.commands
+                .iter()
+                .any(|c| matches!(c, PaintCommand::ClipRoundedRect(_, r) if *r == 8.0)),
+            "uniform round clip_shape should emit ClipRoundedRect: {:?}",
+            list.commands
+        );
+    }
+
+    /// Non-uniform silhouette → the general `ClipPath` path.
+    #[test]
+    fn clip_shape_squircle_emits_clip_path() {
+        struct W;
+        impl Widget for W {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn clips_children(&self) -> bool {
+                true
+            }
+            fn clip_shape(&self) -> Option<Shape> {
+                Some(Shape::squircle(8.0))
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                bounds: Rect::new(0.0, 0.0, 80.0, 40.0),
+                ..HotNode::default()
+            },
+            Box::new(W),
+        );
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        assert!(
+            list.commands
+                .iter()
+                .any(|c| matches!(c, PaintCommand::ClipPath(_))),
+            "squircle clip_shape should emit ClipPath: {:?}",
+            list.commands
+        );
+    }
+
+    /// Default `clip_shape` (None) keeps the rectangular clip.
+    #[test]
+    fn clip_shape_none_falls_back_to_rect() {
+        struct W;
+        impl Widget for W {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn clips_children(&self) -> bool {
+                true
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                bounds: Rect::new(0.0, 0.0, 80.0, 40.0),
+                ..HotNode::default()
+            },
+            Box::new(W),
+        );
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        assert!(
+            list.commands
+                .iter()
+                .any(|c| matches!(c, PaintCommand::ClipRect(_))),
+            "default clip_shape should emit ClipRect: {:?}",
+            list.commands
+        );
+    }
+
+    /// The `CLIPS_CHILDREN` node flag path honours `clip_shape` too.
+    #[test]
+    fn clips_children_flag_uses_clip_shape() {
+        struct W;
+        impl Widget for W {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn clip_shape(&self) -> Option<Shape> {
+                Some(Shape::Corners {
+                    radii: CornerRadii::top(6.0),
+                    styles: CornerStyles::uniform(CornerStyle::Round),
+                })
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            HotNode {
+                flags: NodeFlags::VISIBLE | NodeFlags::CLIPS_CHILDREN,
+                bounds: Rect::new(0.0, 0.0, 80.0, 40.0),
+                ..HotNode::default()
+            },
+            Box::new(W),
+        );
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        // Top-only radii are non-uniform → ClipPath.
+        assert!(
+            list.commands
+                .iter()
+                .any(|c| matches!(c, PaintCommand::ClipPath(_))),
+            "CLIPS_CHILDREN + per-corner shape should emit ClipPath: {:?}",
+            list.commands
+        );
+    }
+}

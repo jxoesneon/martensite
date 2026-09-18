@@ -395,6 +395,11 @@ impl WidgetArena {
                 a11y_name: entry.a11y_name.clone(),
                 text_cache: entry.text_cache,
                 widget,
+                // Per-instance render minimums and transient underflow
+                // engagement are not part of the snapshot format —
+                // widgets re-declare/re-derive them on the next pass.
+                render_minimum: None,
+                underflow_engaged: false,
             });
         }
 

@@ -1791,12 +1791,17 @@ impl WidgetArena {
         );
 
         // Arena children honour the node's `CLIPS_CHILDREN` flag: their
-        // paint commands are wrapped in a clip for the node bounds.
-        // (`Widget::clips_children` governs *internal* children inside
-        // `paint_widget_body`.)
+        // paint commands are wrapped in a clip for the node bounds —
+        // following `Widget::clip_shape` when the widget declares a
+        // silhouette. (`Widget::clips_children` governs *internal*
+        // children inside `paint_widget_body`.)
         let clip_children = hot.flags.contains(NodeFlags::CLIPS_CHILDREN);
         if clip_children {
-            list.push_clip(rect_to_kurbo(hot.bounds));
+            let kb = rect_to_kurbo(hot.bounds);
+            match cold.widget.clip_shape() {
+                Some(shape) => list.push_clip_shape(kb, &shape),
+                None => list.push_clip(kb),
+            }
         }
         let mut child = hot.first_child;
         while let Some(child_id) = child {
@@ -1911,7 +1916,12 @@ fn paint_widget_body(
     widget.paint(&mut cx);
     let clip = widget.clips_children();
     if clip {
-        cx.list.push_clip(rect_to_kurbo(bounds));
+        // `clip_shape` lets a shaped widget clip children to its
+        // silhouette (e.g. rounded corners) rather than the raw bounds.
+        match widget.clip_shape() {
+            Some(shape) => cx.list.push_clip_shape(rect_to_kurbo(bounds), &shape),
+            None => cx.list.push_clip(rect_to_kurbo(bounds)),
+        }
     }
     for i in 0..widget.child_count() {
         let (Some(child), Some(child_bounds)) = (widget.child(i), widget.child_bounds(i)) else {

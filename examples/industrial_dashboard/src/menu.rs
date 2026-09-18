@@ -12,11 +12,13 @@ use std::sync::Arc;
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use martensite::core::shape::Shape;
 use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, SemanticAction, Widget, WidgetEvent,
 };
 use martensite::render::{Point, Rect as PaintRect};
+use martensite::theme::TokenKey;
 use martensite_motion::{SpringConfig, SpringSolver};
 use parking_lot::Mutex;
 
@@ -267,8 +269,10 @@ impl Widget for ContextMenu {
             f64::from(b.max_x()),
             f64::from(b.max_y()) + dy,
         );
-        cx.list.push_fill_rect(rect, pal.raised);
-        cx.list.push_stroke_rect(rect, cx.pt(1.0), pal.border);
+        let popup = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        cx.list.push_fill_shape(rect, &popup, pal.raised);
+        cx.list
+            .push_stroke_shape(rect, &popup, cx.pt(1.0), pal.border);
         let mut text = self.text.lock();
         for (i, label) in state.items.iter().enumerate() {
             let Some(r) = self.item_bounds.get(i) else {

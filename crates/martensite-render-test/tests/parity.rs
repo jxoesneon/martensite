@@ -390,3 +390,76 @@ mod gpu_cpu_parity {
         );
     }
 }
+
+/// A paint list exercising the shaped commands: rounded fill/stroke,
+/// squircle clip, and gradient-in-shape fills.
+fn shaped_paint_list() -> PaintList {
+    use martensite_render::shape::Shape;
+    let mut list = PaintList::new();
+    let bounds = Rect::new(8.0, 8.0, 88.0, 56.0);
+    // Squircle silhouette filled solid + stroked.
+    list.push_fill_shape(bounds, &Shape::squircle(10.0), [60, 120, 220, 255]);
+    list.push_stroke_shape(bounds, &Shape::squircle(10.0), 1.0, [255, 255, 255, 255]);
+    // Pill gradient + circular radial gradient.
+    let stops = GradientStops::from_slice(&[
+        GradientStop::new(0.0, [255, 128, 0, 255]),
+        GradientStop::new(1.0, [128, 0, 255, 255]),
+    ]);
+    list.push_linear_gradient_shape(
+        Rect::new(8.0, 8.0, 48.0, 24.0),
+        &Shape::PILL,
+        stops.clone(),
+        [8.0, 8.0],
+        [48.0, 8.0],
+    );
+    list.push_radial_gradient_shape(
+        Rect::new(56.0, 24.0, 88.0, 56.0),
+        &Shape::ELLIPSE,
+        stops,
+        [72.0, 40.0],
+        16.0,
+    );
+    list
+}
+
+#[test]
+fn tinyskia_renders_shaped_list() {
+    use martensite_render::shape::Shape;
+    let mut backend = TinySkiaBackend::new(W, H).expect("pixmap should allocate");
+    backend.render(&shaped_paint_list());
+    // The squircle fill covers the center of its bounds.
+    let mid = backend.pixmap().pixel(48, 32).expect("pixel in range");
+    assert!(mid.alpha() > 0, "squircle interior should be painted");
+
+    // The rounded clip must exclude pixels in its cut corners — isolate
+    // it on a dedicated list so no other shape underlies the probe.
+    let mut clip_backend = TinySkiaBackend::new(W, H).expect("pixmap should allocate");
+    let mut clipped = PaintList::new();
+    clipped.push_clip_shape(Rect::new(8.0, 32.0, 48.0, 56.0), &Shape::rounded(6.0));
+    clipped.push_fill_rect(Rect::new(0.0, 0.0, 96.0, 64.0), [0, 200, 120, 255]);
+    clipped.pop_clip();
+    clip_backend.render(&clipped);
+    let corner = clip_backend.pixmap().pixel(8, 32).expect("pixel in range");
+    assert_eq!(
+        corner.alpha(),
+        0,
+        "pixel in the rounded clip's cut corner must stay transparent"
+    );
+    let inside = clip_backend.pixmap().pixel(28, 44).expect("pixel in range");
+    assert_eq!(inside.alpha(), 255, "clip interior should be painted");
+}
+
+#[cfg(feature = "vello")]
+mod vello_shape_parity {
+    use super::*;
+    use martensite_render::vello_backend::VelloRenderer;
+
+    #[test]
+    fn vello_scene_accepts_shaped_commands() {
+        let mut renderer = VelloRenderer::new();
+        let list = shaped_paint_list();
+        renderer.render(&list);
+        assert!(renderer.scene().encoding().n_path_segments > 0);
+        assert_eq!(renderer.last_command_count(), list.commands.len());
+    }
+}

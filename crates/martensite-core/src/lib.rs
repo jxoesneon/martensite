@@ -34,6 +34,7 @@ pub mod overlay;
 /// The [`PaintList`](paint::PaintList) command stream vocabulary produced by
 /// the widget paint pass and consumed by render backends.
 pub mod paint;
+pub mod shape;
 /// Arena state snapshots and fingerprints for time-travel debugging.
 #[cfg(feature = "devtools-timemachine")]
 pub mod snapshot;

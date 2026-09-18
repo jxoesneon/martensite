@@ -497,6 +497,78 @@ impl TinySkiaBackend {
                     self.push_clip_path(path);
                 }
             }
+            PaintCommand::ClipPath(path) => {
+                if let Some(ts_path) = self.build_ts_path(path) {
+                    self.push_clip_path(ts_path);
+                }
+            }
+            PaintCommand::FillLinearGradientPath(path, stops, start, end) => {
+                self.fill_gradient_stops(stops);
+                let ts_stops = self.gradient_stops_buf.clone();
+                if let Some(shader) = LinearGradient::new(
+                    tiny_skia::Point {
+                        x: start[0] as f32,
+                        y: start[1] as f32,
+                    },
+                    tiny_skia::Point {
+                        x: end[0] as f32,
+                        y: end[1] as f32,
+                    },
+                    ts_stops,
+                    SpreadMode::Pad,
+                    Transform::identity(),
+                ) {
+                    let paint = Paint {
+                        shader,
+                        anti_alias: true,
+                        ..Paint::default()
+                    };
+                    if let Some(ts_path) = self.build_ts_path(path) {
+                        self.pixmap.fill_path(
+                            &ts_path,
+                            &paint,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            self.clip_stack.last(),
+                        );
+                    }
+                }
+            }
+            PaintCommand::FillRadialGradientPath(path, stops, center, radius) => {
+                self.fill_gradient_stops(stops);
+                let ts_stops = self.gradient_stops_buf.clone();
+                let r = *radius as f32;
+                if let Some(shader) = RadialGradient::new(
+                    tiny_skia::Point {
+                        x: center[0] as f32,
+                        y: center[1] as f32,
+                    },
+                    r,
+                    tiny_skia::Point {
+                        x: center[0] as f32,
+                        y: center[1] as f32,
+                    },
+                    r,
+                    ts_stops,
+                    SpreadMode::Pad,
+                    Transform::identity(),
+                ) {
+                    let paint = Paint {
+                        shader,
+                        anti_alias: true,
+                        ..Paint::default()
+                    };
+                    if let Some(ts_path) = self.build_ts_path(path) {
+                        self.pixmap.fill_path(
+                            &ts_path,
+                            &paint,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            self.clip_stack.last(),
+                        );
+                    }
+                }
+            }
             PaintCommand::PopClip => {
                 // Restore the clip to what it was before the most recent
                 // push; a pop on an empty stack is a documented no-op.

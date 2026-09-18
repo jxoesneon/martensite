@@ -16,6 +16,7 @@
 
 use accesskit::{Node as AccessKitNode, Toggled};
 use glam::Vec2;
+use martensite_core::shape::Shape;
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Widget, WidgetEvent,
@@ -226,8 +227,12 @@ impl Widget for CheckBox {
             f64::from(b.origin.x + box_px),
             f64::from(y + box_px),
         );
-        cx.list
-            .push_stroke_rect(bx, cx.pt(1.0), cx.color(TokenKey::BorderColor, EDGE));
+        cx.list.push_stroke_shape(
+            bx,
+            &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
+            cx.pt(1.0),
+            cx.color(TokenKey::BorderColor, EDGE),
+        );
 
         if self.checked {
             // Check mark: two strokes forming a tick inside the box —

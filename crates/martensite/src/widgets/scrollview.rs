@@ -36,7 +36,7 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
-use kurbo::Shape;
+use martensite_core::shape::Shape;
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
@@ -186,8 +186,9 @@ impl Widget for ScrollBarWidget {
                 f64::from(thumb.max_x()),
                 f64::from(thumb.max_y()),
             );
-            cx.list.push_path(
-                kurbo::RoundedRect::from_rect(t, cx.ptf(f64::from(BAR) / 2.0)).to_path(0.1),
+            cx.list.push_fill_shape(
+                t,
+                &Shape::PILL,
                 if self.active {
                     cx.color(TokenKey::TextMutedColor, THUMB_ACTIVE)
                 } else {

@@ -544,8 +544,20 @@ pub enum PaintCommand {
     ClipRect(Rect),
     /// Push a rounded-rectangular clip onto the active clip stack.
     ClipRoundedRect(Rect, f32),
-    /// Pop the most recent clip pushed by [`PaintCommand::ClipRect`] or
-    /// [`PaintCommand::ClipRoundedRect`], restoring the clip state to
+    /// Push an arbitrary Bézier path as a clip onto the active clip
+    /// stack — the escape hatch for squircle, elliptical, per-corner,
+    /// and custom [`Shape`](crate::shape::Shape) clips.
+    ClipPath(BezPath),
+    /// Fill a Bézier path with a linear gradient between two points —
+    /// the shaped counterpart of [`PaintCommand::FillLinearGradient`].
+    FillLinearGradientPath(BezPath, GradientStops, [f64; 2], [f64; 2]),
+    /// Fill a Bézier path with a radial gradient centered at a point
+    /// with a radius — the shaped counterpart of
+    /// [`PaintCommand::FillRadialGradient`].
+    FillRadialGradientPath(BezPath, GradientStops, [f64; 2], f64),
+    /// Pop the most recent clip pushed by [`PaintCommand::ClipRect`],
+    /// [`PaintCommand::ClipRoundedRect`], or [`PaintCommand::ClipPath`],
+    /// restoring the clip state to
     /// what it was before that push.
     ///
     /// Without this command, clips accumulate for the remainder of the
@@ -1063,6 +1075,228 @@ impl PaintList {
     pub fn push_clip_rounded(&mut self, rect: Rect, radius: f32) {
         self.commands
             .push(PaintCommand::ClipRoundedRect(rect, radius));
+    }
+
+    /// Pushes a [`PaintCommand::ClipPath`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintCommand, PaintList};
+    /// use kurbo::BezPath;
+    ///
+    /// let mut list = PaintList::new();
+    /// let mut p = BezPath::new();
+    /// p.move_to((0.0, 0.0));
+    /// p.line_to((10.0, 0.0));
+    /// p.line_to((5.0, 10.0));
+    /// p.close_path();
+    /// list.push_clip_path(p);
+    /// assert!(matches!(list.commands[0], PaintCommand::ClipPath(_)));
+    /// ```
+    pub fn push_clip_path(&mut self, path: BezPath) {
+        self.commands.push(PaintCommand::ClipPath(path));
+    }
+
+    /// Fills a [`Shape`](crate::shape::Shape) resolved against `rect`
+    /// with a solid color.
+    ///
+    /// Rectangular shapes emit [`PaintCommand::FillRect`] directly;
+    /// everything else resolves to [`PaintCommand::FillPath`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintCommand, PaintList};
+    /// use martensite_core::shape::Shape;
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_fill_shape(
+    ///     Rect::new(0.0, 0.0, 60.0, 24.0),
+    ///     &Shape::squircle(6.0),
+    ///     [30, 30, 40, 255],
+    /// );
+    /// assert!(matches!(list.commands[0], PaintCommand::FillPath(..)));
+    /// ```
+    pub fn push_fill_shape(&mut self, rect: Rect, shape: &crate::shape::Shape, color: [u8; 4]) {
+        if shape.is_rect(rect) {
+            self.push_fill_rect(rect, color);
+        } else {
+            self.commands
+                .push(PaintCommand::FillPath(shape.to_path(rect), color));
+        }
+    }
+
+    /// Strokes a [`Shape`](crate::shape::Shape) resolved against `rect`.
+    ///
+    /// Rectangular shapes emit [`PaintCommand::StrokeRect`] directly;
+    /// everything else resolves to [`PaintCommand::StrokePath`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintCommand, PaintList};
+    /// use martensite_core::shape::Shape;
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_stroke_shape(
+    ///     Rect::new(0.0, 0.0, 60.0, 24.0),
+    ///     &Shape::PILL,
+    ///     1.0,
+    ///     [255, 255, 255, 255],
+    /// );
+    /// assert!(matches!(list.commands[0], PaintCommand::StrokePath(..)));
+    /// ```
+    pub fn push_stroke_shape(
+        &mut self,
+        rect: Rect,
+        shape: &crate::shape::Shape,
+        width: f32,
+        color: [u8; 4],
+    ) {
+        if shape.is_rect(rect) {
+            self.push_stroke_rect(rect, width, color);
+        } else {
+            self.commands
+                .push(PaintCommand::StrokePath(shape.to_path(rect), width, color));
+        }
+    }
+
+    /// Fills a [`Shape`](crate::shape::Shape) with a linear gradient.
+    ///
+    /// Rectangular shapes emit [`PaintCommand::FillLinearGradient`];
+    /// everything else emits [`PaintCommand::FillLinearGradientPath`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{GradientStop, GradientStops, PaintCommand, PaintList};
+    /// use martensite_core::shape::Shape;
+    /// use kurbo::Rect;
+    ///
+    /// let stops = GradientStops::from_slice(&[
+    ///     GradientStop::new(0.0, [255, 0, 0, 255]),
+    ///     GradientStop::new(1.0, [0, 0, 255, 255]),
+    /// ]);
+    /// let mut list = PaintList::new();
+    /// list.push_linear_gradient_shape(
+    ///     Rect::new(0.0, 0.0, 100.0, 40.0),
+    ///     &Shape::rounded(8.0),
+    ///     stops,
+    ///     [0.0, 0.0],
+    ///     [100.0, 0.0],
+    /// );
+    /// assert!(matches!(list.commands[0], PaintCommand::FillLinearGradientPath(..)));
+    /// ```
+    pub fn push_linear_gradient_shape(
+        &mut self,
+        rect: Rect,
+        shape: &crate::shape::Shape,
+        stops: GradientStops,
+        start: [f64; 2],
+        end: [f64; 2],
+    ) {
+        if shape.is_rect(rect) {
+            self.push_linear_gradient(rect, stops, start, end);
+        } else {
+            self.commands.push(PaintCommand::FillLinearGradientPath(
+                shape.to_path(rect),
+                stops,
+                start,
+                end,
+            ));
+        }
+    }
+
+    /// Fills a [`Shape`](crate::shape::Shape) with a radial gradient.
+    ///
+    /// Rectangular shapes emit [`PaintCommand::FillRadialGradient`];
+    /// everything else emits [`PaintCommand::FillRadialGradientPath`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{GradientStop, GradientStops, PaintCommand, PaintList};
+    /// use martensite_core::shape::Shape;
+    /// use kurbo::Rect;
+    ///
+    /// let stops = GradientStops::from_slice(&[
+    ///     GradientStop::new(0.0, [255, 255, 255, 255]),
+    ///     GradientStop::new(1.0, [0, 0, 0, 255]),
+    /// ]);
+    /// let mut list = PaintList::new();
+    /// list.push_radial_gradient_shape(
+    ///     Rect::new(0.0, 0.0, 48.0, 48.0),
+    ///     &Shape::ELLIPSE,
+    ///     stops,
+    ///     [24.0, 24.0],
+    ///     24.0,
+    /// );
+    /// assert!(matches!(list.commands[0], PaintCommand::FillRadialGradientPath(..)));
+    /// ```
+    pub fn push_radial_gradient_shape(
+        &mut self,
+        rect: Rect,
+        shape: &crate::shape::Shape,
+        stops: GradientStops,
+        center: [f64; 2],
+        radius: f64,
+    ) {
+        if shape.is_rect(rect) {
+            self.push_radial_gradient(rect, stops, center, radius);
+        } else {
+            self.commands.push(PaintCommand::FillRadialGradientPath(
+                shape.to_path(rect),
+                stops,
+                center,
+                radius,
+            ));
+        }
+    }
+
+    /// Pushes a clip for a [`Shape`](crate::shape::Shape) resolved
+    /// against `rect`.
+    ///
+    /// Rectangles emit [`PaintCommand::ClipRect`]; uniform round corners
+    /// emit [`PaintCommand::ClipRoundedRect`]; every other silhouette
+    /// emits [`PaintCommand::ClipPath`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintCommand, PaintList};
+    /// use martensite_core::shape::Shape;
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// list.push_clip_shape(Rect::new(0.0, 0.0, 80.0, 80.0), &Shape::rounded(6.0));
+    /// assert!(matches!(list.commands[0], PaintCommand::ClipRoundedRect(..)));
+    /// list.push_clip_shape(Rect::new(0.0, 0.0, 80.0, 80.0), &Shape::squircle(6.0));
+    /// assert!(matches!(list.commands[1], PaintCommand::ClipPath(_)));
+    /// ```
+    pub fn push_clip_shape(&mut self, rect: Rect, shape: &crate::shape::Shape) {
+        match shape {
+            crate::shape::Shape::Corners { radii, styles }
+                if styles.all(crate::shape::CornerStyle::Round) =>
+            {
+                if let Some(r) = radii
+                    .resolve(rect.width(), rect.height())
+                    .is_uniform()
+                    .filter(|r| *r > 0.0)
+                {
+                    self.push_clip_rounded(rect, r);
+                } else {
+                    self.commands
+                        .push(PaintCommand::ClipPath(shape.to_path(rect)));
+                }
+            }
+            _ if shape.is_rect(rect) => self.push_clip(rect),
+            _ => self
+                .commands
+                .push(PaintCommand::ClipPath(shape.to_path(rect))),
+        }
     }
 
     /// Pushes a [`PaintCommand::PopClip`], restoring the clip state to

@@ -69,6 +69,7 @@ use martensite::blessed::{
     TokenKind,
 };
 use martensite::core::overlay::{OverlayAnchor, OverlayLayer};
+use martensite::core::shape::{CornerRadii, CornerStyle, Shape};
 use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, RenderMinimum, SemanticAction, UnderflowPolicy, Widget, WidgetEvent,
@@ -124,9 +125,20 @@ fn panel_chrome(
 ) -> martensite::render::Rect {
     let b = to_paint(bounds);
     let s = f64::from(scale);
-    list.push_fill_rect(b, pal.surface);
+    let corner = Shape::rounded((6.0 * s) as f32);
+    list.push_fill_shape(b, &corner, pal.surface);
     let title_h = f64::from(TITLE_H) * s;
-    list.push_fill_rect(krect(b.x0, b.y0, b.width(), title_h), pal.raised);
+    // The title bar rounds only its top corners so it meets the panel
+    // silhouette flush; its radius shrinks by the 1px border inset.
+    let title_shape = Shape::corners(
+        CornerRadii::top(((6.0 * s - 1.0).max(0.0)) as f32),
+        CornerStyle::Round,
+    );
+    list.push_fill_shape(
+        krect(b.x0, b.y0, b.width(), title_h),
+        &title_shape,
+        pal.raised,
+    );
     // Below ~120pt the right label is dropped — two ellipsized strings
     // butted together read worse than one clean title.
     let show_right = !right.is_empty() && b.width() >= 120.0 * s;
@@ -158,13 +170,14 @@ fn panel_chrome(
     }
     list.push_fill_rect(krect(b.x0, b.y0 + title_h, b.width(), 1.0), pal.border);
     if focused {
-        list.push_stroke_rect(
+        list.push_stroke_shape(
             krect(b.x0 + 1.0, b.y0 + 1.0, b.width() - 2.0, b.height() - 2.0),
+            &Shape::rounded(((6.0 * s - 1.0).max(0.0)) as f32),
             2.0,
             pal.accent,
         );
     } else {
-        list.push_stroke_rect(b, 1.0, pal.hairline());
+        list.push_stroke_shape(b, &corner, 1.0, pal.hairline());
     }
     krect(
         b.x0,
@@ -917,8 +930,11 @@ impl Widget for GridPanel {
             } else {
                 (Palette::alpha(pal.ok, 40), pal.text)
             };
-            cx.list
-                .push_fill_rect(krect(chip_x, chip_y, chip_w, chip_h), chip_bg);
+            cx.list.push_fill_shape(
+                krect(chip_x, chip_y, chip_w, chip_h),
+                &Shape::squircle((chip_h * 0.35) as f32),
+                chip_bg,
+            );
             let label_fit = text.fit(label, 12.0 * s, chip_w as f32);
             let lw = text.measure(&label_fit, 12.0 * s);
             text.push(
@@ -944,8 +960,11 @@ impl Widget for GridPanel {
             let max_off = (total_h - view_h).max(1.0);
             let frac = f64::from(self.table.scroll_offset()) / max_off;
             let thumb_y = rows_top + frac * (rows_bottom - rows_top - thumb_h);
-            cx.list
-                .push_fill_rect(krect(track_x, thumb_y, 4.0 * sd, thumb_h), pal.text_muted);
+            cx.list.push_fill_shape(
+                krect(track_x, thumb_y, 4.0 * sd, thumb_h),
+                &Shape::PILL,
+                pal.text_muted,
+            );
         }
         cx.list.pop_clip();
     }
@@ -2005,8 +2024,13 @@ impl Widget for EditorPanel {
             }
             let label = self.chip_label(i);
             if i == self.active {
-                cx.list
-                    .push_fill_rect(krect(chip_x, strip_top, chip_w, strip_h), pal.surface);
+                // Active tab rounds its top edge — it visually meets the
+                // raised strip at the bottom.
+                cx.list.push_fill_shape(
+                    krect(chip_x, strip_top, chip_w, strip_h),
+                    &Shape::corners(CornerRadii::top((4.0 * sd) as f32), CornerStyle::Round),
+                    pal.surface,
+                );
                 cx.list.push_fill_rect(
                     krect(
                         chip_x + 4.0 * sd,

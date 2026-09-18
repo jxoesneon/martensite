@@ -672,6 +672,32 @@ impl PaintContext<'_> {
     pub fn color(&self, key: martensite_theme::TokenKey, fallback: [u8; 4]) -> [u8; 4] {
         self.theme.color(key).map_or(fallback, |c| c.to_srgba8())
     }
+
+    /// Resolves a dimension [`martensite_theme::TokenKey`] (logical
+    /// points) into physical pixels via the paint scale, or `fallback`
+    /// (also logical) when the token is absent or not a dimension.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintContext, PaintList, Rect, Theme};
+    /// use martensite_theme::TokenKey;
+    ///
+    /// let mut list = PaintList::new();
+    /// let theme = Theme::new("fallback");
+    /// let cx = PaintContext {
+    ///     list: &mut list,
+    ///     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///     theme: &theme,
+    ///     scale: 2.0,
+    ///     text_painter: None,
+    /// };
+    /// // No radius token set → fallback, scaled to device px.
+    /// assert_eq!(cx.dim(TokenKey::BorderRadius, 4.0), 8.0);
+    /// ```
+    pub fn dim(&self, key: martensite_theme::TokenKey, fallback: f32) -> f32 {
+        self.pt(self.theme.dimension(key).unwrap_or(fallback))
+    }
 }
 
 /// Context provided to widgets during accessibility tree construction.
@@ -912,6 +938,47 @@ pub trait Widget: Send + Sync + 'static {
     /// Default: `false`.
     fn clips_children(&self) -> bool {
         false
+    }
+
+    /// The widget's interactive outline for hit-testing, resolved
+    /// against its local `[0, size]` bounds rectangle during the
+    /// hit-tester's narrow phase.
+    ///
+    /// Widgets that paint a non-rectangular silhouette — a circular
+    /// knob, a chamfered chip, a squircle — should return the same
+    /// [`Shape`](crate::shape::Shape) they paint so pointer input is
+    /// accepted exactly where the widget is visible. `None` (the
+    /// default) keeps the axis-aligned bounds test.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, Widget};
+    ///
+    /// // The default is `None` — rectangular hit region.
+    /// assert!(DummyWidget.hit_shape().is_none());
+    /// ```
+    fn hit_shape(&self) -> Option<crate::shape::Shape> {
+        None
+    }
+
+    /// The silhouette applied to this widget's child clip when
+    /// [`Widget::clips_children`] (internal children) or the node's
+    /// `CLIPS_CHILDREN` flag (arena children) is set.
+    ///
+    /// Returning `Some(shape)` makes the emitted clip follow the shape —
+    /// a rounded widget's children cannot paint into its cut-off
+    /// corners. `None` (the default) keeps the rectangular bounds clip.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, Widget};
+    ///
+    /// assert!(DummyWidget.clip_shape().is_none());
+    /// ```
+    fn clip_shape(&self) -> Option<crate::shape::Shape> {
+        None
     }
 
     /// Record this widget's own paint commands into the context's paint

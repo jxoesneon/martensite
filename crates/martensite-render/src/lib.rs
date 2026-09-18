@@ -20,6 +20,7 @@ pub mod presentation;
 pub mod tinyskia_backend;
 pub mod vello_backend;
 
+pub use martensite_core::shape::{self, CornerRadii, CornerStyle, CornerStyles, Shape};
 pub use paint::{
     FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintCommand, PaintList,
     PaintSegment, PathBuilder,

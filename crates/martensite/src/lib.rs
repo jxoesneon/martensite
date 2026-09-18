@@ -109,6 +109,7 @@ pub mod prelude {
         FramePoll, MediaView, RadioGroup, ScrollView, Slider, SliderOrientation, Stack,
         TabActivation, Tabs, Text, Tooltip, VideoFit,
     };
+    pub use martensite_core::shape::{CornerRadii, CornerStyle, CornerStyles, Shape};
     pub use martensite_core::{
         ColdNode, EventContext, EventResponse, HotNode, NodeFlags, OverlayAnchor, OverlayLayer,
         PaintContext, PaintList, Rect, SemanticAction, Widget, WidgetArena, WidgetEvent, WidgetId,

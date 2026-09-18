@@ -22,6 +22,7 @@
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite::core::overlay::OverlayLayer;
+use martensite::core::shape::Shape;
 use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect,
     SemanticAction, Widget, WidgetEvent,
@@ -328,13 +329,14 @@ impl Widget for StatusBar {
             // its inner half under the face's border.
             let r = self.dd_rect;
             let grow = f64::from(cx.pt(1.0));
-            cx.list.push_stroke_rect(
+            cx.list.push_stroke_shape(
                 martensite::render::Rect::new(
                     f64::from(r.min_x()) - grow,
                     f64::from(r.min_y()) - grow,
                     f64::from(r.max_x()) + grow,
                     f64::from(r.max_y()) + grow,
                 ),
+                &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0) + cx.pt(1.0)),
                 cx.pt(2.0),
                 accent,
             );

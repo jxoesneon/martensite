@@ -366,6 +366,55 @@ pub enum ClipShape {
     Path(Vec<Vec2>),
 }
 
+impl ClipShape {
+    /// Resolves a framework [`Shape`](martensite_core::shape::Shape)
+    /// against `bounds` into the cheapest equivalent clip region.
+    ///
+    /// Plain rectangles map to [`ClipShape::Rect`], uniform round
+    /// corners to [`ClipShape::RoundedRect`], and every other silhouette
+    /// — squircle, ellipse, per-corner, concave — flattens to
+    /// [`ClipShape::Path`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::shape::Shape;
+    /// use martensite_core::Rect;
+    /// use martensite_window::hit_test::{point_in_shape, ClipShape};
+    /// use glam::Vec2;
+    ///
+    /// let clip = ClipShape::from_shape(&Shape::squircle(8.0), Rect::new(0.0, 0.0, 40.0, 40.0));
+    /// assert!(matches!(clip, ClipShape::Path(_)));
+    /// assert!(point_in_shape(&clip, Vec2::new(20.0, 20.0)));
+    /// assert!(!point_in_shape(&clip, Vec2::new(0.5, 0.5)));
+    /// ```
+    #[must_use]
+    pub fn from_shape(shape: &martensite_core::shape::Shape, bounds: Rect) -> Self {
+        use martensite_core::shape::{CornerStyle, Shape};
+        let kb = kurbo::Rect::new(
+            f64::from(bounds.min_x()),
+            f64::from(bounds.min_y()),
+            f64::from(bounds.max_x()),
+            f64::from(bounds.max_y()),
+        );
+        match shape {
+            Shape::Rect => Self::Rect(bounds),
+            Shape::Corners { radii, styles } if styles.all(CornerStyle::Round) => {
+                if let Some(r) = radii
+                    .resolve(bounds.width().into(), bounds.height().into())
+                    .is_uniform()
+                    .filter(|r| *r > 0.0)
+                {
+                    Self::RoundedRect(RoundedRect::new(bounds, r))
+                } else {
+                    Self::Path(shape.flatten(kb, 0.25))
+                }
+            }
+            _ => Self::Path(shape.flatten(kb, 0.25)),
+        }
+    }
+}
+
 /// Returns `true` when `point` lies inside the clipping region `shape`.
 ///
 /// - [`ClipShape::Rect`] uses the same half-open `[min, max)` AABB test as the
@@ -477,36 +526,10 @@ fn point_in_rounded_rect(point: Vec2, rr: RoundedRect) -> bool {
 /// regions wound in opposite directions cancel out. Degenerate paths with
 /// fewer than 3 vertices contain no area.
 fn point_in_path(point: Vec2, pts: &[Vec2]) -> bool {
-    if pts.len() < 3 {
-        return false;
-    }
-    let n = pts.len();
-    let mut winding = 0i32;
-    let mut j = n - 1;
-    for i in 0..n {
-        let pi = pts[i];
-        let pj = pts[j];
-        // Only edges that straddle the horizontal ray at `point.y` can cross it.
-        if (pi.y <= point.y) != (pj.y <= point.y) {
-            // Compute the x-coordinate at which the edge intersects the ray.
-            let dy = pj.y - pi.y;
-            if dy.abs() > 0.0 {
-                let x_intersect = pi.x + ((point.y - pi.y) / dy) * (pj.x - pi.x);
-                // The ray travels in +x, so only crossings to the right of the
-                // point are counted. Direction is determined by whether the
-                // edge goes upward or downward.
-                if point.x < x_intersect {
-                    if pi.y < pj.y {
-                        winding += 1;
-                    } else {
-                        winding -= 1;
-                    }
-                }
-            }
-        }
-        j = i;
-    }
-    winding != 0
+    // Delegates to `martensite_core::shape::point_in_polygon` — the same
+    // non-zero winding eval `Shape::contains` uses, so painted outlines
+    // and hit regions cannot diverge.
+    martensite_core::shape::point_in_polygon(pts, point)
 }
 
 /// Hit-tester bound to a widget arena.
@@ -711,6 +734,26 @@ impl<'a> HitTester<'a> {
                 if !point_in_shape(shape, local_point) {
                     return None;
                 }
+            }
+        }
+
+        // Widget-declared silhouette: a widget painting a rounded,
+        // squircle, elliptical, or otherwise shaped outline via
+        // `Widget::hit_shape` accepts input only inside that outline.
+        // Evaluated in local space against `[0, size]` so the same shape
+        // object drives paint and hit-test geometry.
+        if let Some(shape) = self.arena.get_cold(node).and_then(|c| c.widget.hit_shape()) {
+            let local_rect = kurbo::Rect::new(
+                0.0,
+                0.0,
+                f64::from(hot.bounds.width()),
+                f64::from(hot.bounds.height()),
+            );
+            if !shape.contains(
+                local_rect,
+                kurbo::Point::new(f64::from(local_point.x), f64::from(local_point.y)),
+            ) {
+                return None;
             }
         }
 
@@ -1228,5 +1271,69 @@ mod tests {
         assert!(tester
             .hit_test_with_clip(root, Vec2::new(10.0, 10.0), &clips)
             .is_none());
+    }
+}
+
+#[cfg(test)]
+mod shape_hit_tests {
+    use super::*;
+    use martensite_core::shape::Shape;
+    use martensite_core::{ColdNode, HotNode, NodeFlags, Rect, Widget, WidgetArena};
+
+    /// Widget declaring a rounded silhouette via `hit_shape`.
+    struct RoundBox;
+
+    impl Widget for RoundBox {
+        fn hit_shape(&self) -> Option<Shape> {
+            Some(Shape::rounded(10.0))
+        }
+
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::LayoutContext<'_>,
+            _constraints: martensite_core::LayoutConstraints,
+        ) -> Vec2 {
+            Vec2::ZERO
+        }
+
+        fn layout(&mut self, _cx: &mut martensite_core::LayoutContext<'_>, _bounds: Rect) {}
+    }
+
+    fn insert_shaped(arena: &mut WidgetArena) -> WidgetId {
+        arena.insert(
+            HotNode {
+                bounds: Rect::new(0.0, 0.0, 100.0, 60.0),
+                flags: NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED,
+                ..HotNode::default()
+            },
+            ColdNode::new(Box::new(RoundBox)),
+        )
+    }
+
+    #[test]
+    fn hit_shape_rejects_cut_corner() {
+        let mut arena = WidgetArena::new();
+        let id = insert_shaped(&mut arena);
+        let tester = HitTester::new(&arena);
+        // (2, 2) is inside the AABB but outside the r=10 round corner.
+        assert!(tester.hit_test(id, Vec2::new(2.0, 2.0)).is_none());
+        // Center and edge midpoints still hit.
+        assert!(tester.hit_test(id, Vec2::new(50.0, 30.0)).is_some());
+        assert!(tester.hit_test(id, Vec2::new(50.0, 0.5)).is_some());
+    }
+
+    #[test]
+    fn hit_shape_none_keeps_aabb() {
+        let mut arena = WidgetArena::new();
+        let id = arena.insert(
+            HotNode {
+                bounds: Rect::new(0.0, 0.0, 100.0, 60.0),
+                flags: NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED,
+                ..HotNode::default()
+            },
+            ColdNode::default(), // DummyWidget → hit_shape() = None
+        );
+        let tester = HitTester::new(&arena);
+        assert!(tester.hit_test(id, Vec2::new(1.0, 1.0)).is_some());
     }
 }

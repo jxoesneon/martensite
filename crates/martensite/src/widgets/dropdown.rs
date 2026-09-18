@@ -35,6 +35,7 @@ use std::sync::{Arc, Mutex};
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite_core::overlay::{OverlayAnchor, OverlayLayer};
+use martensite_core::shape::Shape;
 use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
     PaintContext, PointerButton, SemanticAction, Widget, WidgetEvent,
@@ -279,6 +280,10 @@ struct ListBoxPopup {
     /// Popup bounds from the last layout pass (the scroll view fills
     /// the whole popup inside its 1px border).
     bounds: Option<Rect>,
+    /// The silhouette painted last frame — the single source of truth
+    /// for `clip_shape`/`hit_shape` so clipping and hit-testing can
+    /// never diverge from the visible outline.
+    painted_shape: Mutex<Shape>,
 }
 
 impl ListBoxPopup {
@@ -303,6 +308,7 @@ impl ListBoxPopup {
             }),
             shared,
             bounds: None,
+            painted_shape: Mutex::new(Shape::RECT),
         }
     }
 }
@@ -385,10 +391,16 @@ impl Widget for ListBoxPopup {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        cx.list
-            .push_fill_rect(rect, cx.color(TokenKey::SurfaceColor, POPUP_BG));
-        cx.list.push_stroke_rect(
+        let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        *self.painted_shape.lock().expect("popup shape poisoned") = popup_shape.clone();
+        cx.list.push_fill_shape(
             rect,
+            &popup_shape,
+            cx.color(TokenKey::SurfaceColor, POPUP_BG),
+        );
+        cx.list.push_stroke_shape(
+            rect,
+            &popup_shape,
             cx.pt(1.0),
             cx.color(TokenKey::BorderColor, POPUP_BORDER),
         );
@@ -396,6 +408,24 @@ impl Widget for ListBoxPopup {
 
     fn clips_children(&self) -> bool {
         true
+    }
+
+    fn clip_shape(&self) -> Option<Shape> {
+        Some(
+            self.painted_shape
+                .lock()
+                .expect("popup shape poisoned")
+                .clone(),
+        )
+    }
+
+    fn hit_shape(&self) -> Option<Shape> {
+        Some(
+            self.painted_shape
+                .lock()
+                .expect("popup shape poisoned")
+                .clone(),
+        )
     }
 
     fn child_count(&self) -> usize {
@@ -1067,10 +1097,12 @@ impl Widget for Dropdown {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
+        let face = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
         cx.list
-            .push_fill_rect(rect, cx.color(TokenKey::SurfaceColor, FACE_BG));
-        cx.list.push_stroke_rect(
+            .push_fill_shape(rect, &face, cx.color(TokenKey::SurfaceColor, FACE_BG));
+        cx.list.push_stroke_shape(
             rect,
+            &face,
             cx.pt(1.0),
             cx.color(TokenKey::BorderColor, FACE_BORDER),
         );

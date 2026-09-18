@@ -461,6 +461,40 @@ impl VelloRenderer {
                     self.clip_depth += 1;
                 }
             }
+            PaintCommand::ClipPath(path) => {
+                if !path.elements().is_empty() {
+                    self.scene.push_layer(
+                        Fill::EvenOdd,
+                        BlendMode::new(Mix::Normal, Compose::SrcOver),
+                        1.0,
+                        Affine::IDENTITY,
+                        path,
+                    );
+                    self.clip_depth += 1;
+                }
+            }
+            PaintCommand::FillLinearGradientPath(path, stops, start, end) => {
+                if path.elements().is_empty() {
+                    return;
+                }
+                let gradient = Gradient::new_linear(
+                    KurboPoint::new(start[0], start[1]),
+                    KurboPoint::new(end[0], end[1]),
+                )
+                .with_stops(gradient_stops_to_peniko(stops));
+                self.scene
+                    .fill(Fill::EvenOdd, Affine::IDENTITY, &gradient, None, path);
+            }
+            PaintCommand::FillRadialGradientPath(path, stops, center, radius) => {
+                if path.elements().is_empty() || *radius <= 0.0 {
+                    return;
+                }
+                let gradient =
+                    Gradient::new_radial(KurboPoint::new(center[0], center[1]), *radius as f32)
+                        .with_stops(gradient_stops_to_peniko(stops));
+                self.scene
+                    .fill(Fill::EvenOdd, Affine::IDENTITY, &gradient, None, path);
+            }
             PaintCommand::PopClip => {
                 // Restore the clip to what it was before the most recent
                 // push; a pop on an empty stack is a documented no-op.

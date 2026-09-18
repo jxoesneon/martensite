@@ -21,6 +21,7 @@ use martensite::access::adapter::AccessKitAdapter;
 use martensite::blessed::{
     DockDragSession, DockDropZone, DockNode, DockPanel, NodeId, SplitDirection,
 };
+use martensite::core::shape::Shape;
 use martensite::core::{
     ColdNode, HotNode, LayoutContext, NodeFlags, Rect, WidgetArena, WidgetEvent, WidgetId,
 };
@@ -754,8 +755,9 @@ impl App {
                 preview.x + preview.width,
                 preview.y + preview.height,
             );
-            list.push_fill_rect(pr, Palette::alpha(pal.accent, 50));
-            list.push_stroke_rect(pr, (1.5 * s).max(1.0), pal.accent);
+            let target = Shape::rounded(4.0 * s);
+            list.push_fill_shape(pr, &target, Palette::alpha(pal.accent, 50));
+            list.push_stroke_shape(pr, &target, (1.5 * s).max(1.0), pal.accent);
             let label = text.fit(&title, 12.0 * s, (160.0 * sd) as f32);
             let lw = f64::from(text.measure(&label, 12.0 * s));
             let chip_w = lw + 20.0 * sd;
@@ -763,8 +765,17 @@ impl App {
             let cx = f64::from(pos.x) + 12.0 * sd;
             let cy = f64::from(pos.y) + 10.0 * sd;
             let chip = martensite::render::Rect::new(cx, cy, cx + chip_w, cy + chip_h);
-            list.push_fill_rect(chip, Palette::alpha(pal.raised, 230));
-            list.push_stroke_rect(chip, s.max(1.0), pal.accent);
+            list.push_fill_shape(
+                chip,
+                &Shape::squircle((chip_h * 0.4) as f32),
+                Palette::alpha(pal.raised, 230),
+            );
+            list.push_stroke_shape(
+                chip,
+                &Shape::squircle((chip_h * 0.4) as f32),
+                s.max(1.0),
+                pal.accent,
+            );
             text.push(
                 list,
                 Point::new(cx + 10.0 * sd, cy + 5.0 * sd),

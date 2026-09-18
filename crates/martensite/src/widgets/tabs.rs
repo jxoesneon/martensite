@@ -43,6 +43,7 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use martensite_core::shape::{CornerRadii, Shape};
 use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
     PaintContext, PointerButton, SemanticAction, Widget, WidgetEvent,
@@ -183,16 +184,22 @@ impl Widget for TabItem {
             f64::from(b.max_y()),
         );
         let accent = cx.color(TokenKey::AccentColor, ACCENT);
+        // Tabs round only their top edge — the bottom meets the panel.
+        let tab_shape = Shape::corners(
+            CornerRadii::top(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
+            martensite_core::shape::CornerStyle::Round,
+        );
         if self.selected {
             cx.list
-                .push_fill_rect(rect, cx.color(TokenKey::SurfaceColor, TAB_BG));
+                .push_fill_shape(rect, &tab_shape, cx.color(TokenKey::SurfaceColor, TAB_BG));
             let underline = kurbo::Rect::new(rect.x0, rect.y1 - cx.ptf(2.0), rect.x1, rect.y1);
             cx.list.push_fill_rect(underline, accent);
         }
         if self.focused {
             // Translucent wash of the accent colour.
             let wash = [accent[0], accent[1], accent[2], FOCUS_RING[3]];
-            cx.list.push_stroke_rect(rect, cx.pt(2.0), wash);
+            cx.list
+                .push_stroke_shape(rect, &tab_shape, cx.pt(2.0), wash);
         }
         let font_px = cx.pt(14.0);
         crate::text_paint::paint_label(

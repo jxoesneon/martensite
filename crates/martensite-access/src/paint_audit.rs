@@ -794,6 +794,12 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
             PaintCommand::ClipRect(r) | PaintCommand::ClipRoundedRect(r, _) => {
                 clip_stack.push(*r);
             }
+            PaintCommand::ClipPath(p) => {
+                // The path's bounding box conservatively approximates
+                // the clip region — it can only *over*-include, so a
+                // finding never escapes by claiming to be clipped away.
+                clip_stack.push(p.bounding_box());
+            }
             PaintCommand::PopClip => {
                 clip_stack.pop();
             }
@@ -830,10 +836,29 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 clip,
                 in_overlay,
             }),
+            PaintCommand::FillPath(path, color) => fills.push(FillRec {
+                idx: i,
+                // Bounding-box coverage — convex silhouettes (rounded,
+                // squircle, pill) are nearly exact; concave outlines can
+                // over-claim coverage slightly, which errs toward
+                // *reporting* a backdrop rather than inventing one.
+                shape: FillShape::Rect(path.bounding_box()),
+                color: rgba_u8(*color),
+                clip,
+                in_overlay,
+            }),
             PaintCommand::FillLinearGradient(rect, ..)
             | PaintCommand::FillRadialGradient(rect, ..) => fills.push(FillRec {
                 idx: i,
                 shape: FillShape::Gradient(*rect),
+                color: ColorRgba::new(0.0, 0.0, 0.0, 0.0),
+                clip,
+                in_overlay,
+            }),
+            PaintCommand::FillLinearGradientPath(path, ..)
+            | PaintCommand::FillRadialGradientPath(path, ..) => fills.push(FillRec {
+                idx: i,
+                shape: FillShape::Gradient(path.bounding_box()),
                 color: ColorRgba::new(0.0, 0.0, 0.0, 0.0),
                 clip,
                 in_overlay,

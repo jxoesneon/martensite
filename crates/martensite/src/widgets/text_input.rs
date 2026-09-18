@@ -16,6 +16,7 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use martensite_core::shape::Shape;
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Widget, WidgetEvent,
@@ -647,10 +648,12 @@ impl Widget for TextInput {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
+        let face = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
         cx.list
-            .push_fill_rect(rect, cx.color(TokenKey::SurfaceColor, FACE));
-        cx.list.push_stroke_rect(
+            .push_fill_shape(rect, &face, cx.color(TokenKey::SurfaceColor, FACE));
+        cx.list.push_stroke_shape(
             rect,
+            &face,
             cx.pt(1.0),
             if self.focused {
                 cx.color(TokenKey::AccentColor, EDGE_FOCUSED)

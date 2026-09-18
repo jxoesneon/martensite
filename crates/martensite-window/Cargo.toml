@@ -18,6 +18,7 @@ martensite-shell = { workspace = true }
 winit = { workspace = true }
 slotmap = { workspace = true }
 glam = { workspace = true }
+kurbo = { workspace = true }
 bitflags = { workspace = true }
 tracing = { workspace = true }
 

@@ -3317,6 +3317,7 @@ dependencies = [
  "bitflags",
  "glam",
  "js-sys",
+ "kurbo",
  "martensite-core",
  "martensite-shell",
  "slotmap",

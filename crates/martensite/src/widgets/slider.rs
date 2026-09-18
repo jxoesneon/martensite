@@ -23,7 +23,7 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
-use kurbo::Shape;
+use martensite_core::shape::Shape;
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
@@ -574,25 +574,26 @@ impl Widget for Slider {
             }
         };
 
-        cx.list.push_path(
-            kurbo::RoundedRect::from_rect(rail, cx.ptf(f64::from(RAIL) / 2.0)).to_path(0.1),
+        cx.list.push_fill_shape(
+            rail,
+            &Shape::PILL,
             cx.color(TokenKey::DividerColor, RAIL_COLOR),
         );
-        cx.list.push_path(
-            kurbo::RoundedRect::from_rect(fill, cx.ptf(f64::from(RAIL) / 2.0)).to_path(0.1),
+        cx.list.push_fill_shape(
+            fill,
+            &Shape::PILL,
             cx.color(TokenKey::AccentColor, FILL_COLOR),
         );
 
-        let thumb = kurbo::Circle::new(
-            kurbo::Point::new(f64::from(thumb.x), f64::from(thumb.y)),
-            cx.ptf(f64::from(THUMB) / 2.0),
-        );
-        cx.list.push_path(
-            thumb.to_path(0.1),
+        let thumb_shape = Shape::circle(thumb, cx.pt(THUMB / 2.0));
+        cx.list.push_fill_shape(
+            rail,
+            &thumb_shape,
             cx.color(TokenKey::SurfaceColor, THUMB_COLOR),
         );
-        cx.list.push_stroke_path(
-            kurbo::Circle::new(thumb.center, thumb.radius).to_path(0.1),
+        cx.list.push_stroke_shape(
+            rail,
+            &thumb_shape,
             cx.pt(1.0),
             cx.color(TokenKey::BorderColor, THUMB_EDGE),
         );
