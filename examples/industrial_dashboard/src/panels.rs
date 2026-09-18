@@ -108,10 +108,13 @@ fn krect(x: f64, y: f64, w: f64, h: f64) -> martensite::render::Rect {
     martensite::render::Rect::new(x, y, x + w, y + h)
 }
 
-/// Paints the shared panel chrome — surface, title bar, hairline, focus
-/// ring — and returns the inner content rect (panel-local, still in
-/// window coordinates). `right` is drawn muted at the title bar's
-/// trailing edge (row counts, state badges).
+/// Paints the shared panel chrome — surface and title bar — and
+/// returns the inner content rect (panel-local, still in window
+/// coordinates). `right` is drawn muted at the title bar's trailing
+/// edge (row counts, state badges). The hairline/focus ring is NOT
+/// emitted here: it must come last via [`panel_border`], after all
+/// panel content, or full-width content bands (header rows, selection
+/// stripes, scrollbars) paint over the outline's edge segments.
 #[allow(clippy::too_many_arguments)]
 fn panel_chrome(
     painter: &mut TextPainter,
@@ -121,7 +124,6 @@ fn panel_chrome(
     right: &str,
     pal: &Palette,
     scale: f32,
-    focused: bool,
 ) -> martensite::render::Rect {
     let b = to_paint(bounds);
     let s = f64::from(scale);
@@ -169,6 +171,28 @@ fn panel_chrome(
         );
     }
     list.push_fill_rect(krect(b.x0, b.y0 + title_h, b.width(), 1.0), pal.border);
+    krect(
+        b.x0,
+        b.y0 + title_h + 1.0,
+        b.width(),
+        (b.height() - title_h - 1.0).max(0.0),
+    )
+}
+
+/// Paints the panel outline — accent focus ring when focused, hairline
+/// otherwise — matching [`panel_chrome`]'s silhouette. Call this at the
+/// END of a panel's `paint`, after every content band: headers, rows,
+/// and scrollbars all span the full inner width and would otherwise
+/// cover the outline's left/right/bottom segments.
+fn panel_border(
+    list: &mut PaintList,
+    bounds: Rect,
+    pal: &Palette,
+    scale: f32,
+    focused: bool,
+) {
+    let b = to_paint(bounds);
+    let s = f64::from(scale);
     if focused {
         list.push_stroke_shape(
             krect(b.x0 + 1.0, b.y0 + 1.0, b.width() - 2.0, b.height() - 2.0),
@@ -177,14 +201,8 @@ fn panel_chrome(
             pal.accent,
         );
     } else {
-        list.push_stroke_shape(b, &corner, 1.0, pal.hairline());
+        list.push_stroke_shape(b, &Shape::rounded((6.0 * s) as f32), 1.0, pal.hairline());
     }
-    krect(
-        b.x0,
-        b.y0 + title_h + 1.0,
-        b.width(),
-        (b.height() - title_h - 1.0).max(0.0),
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -777,7 +795,6 @@ impl Widget for GridPanel {
             &right,
             pal,
             s,
-            self.focused,
         );
         let sd = f64::from(s);
 
@@ -967,6 +984,9 @@ impl Widget for GridPanel {
             );
         }
         cx.list.pop_clip();
+        // Outline last — the header band and row fills span the full
+        // inner width and would cover its edge segments.
+        panel_border(cx.list, self.bounds, pal, s, self.focused);
     }
 }
 
@@ -1142,14 +1162,7 @@ impl Widget for TelemetryPanel {
             )
         };
         let inner = panel_chrome(
-            &mut text,
-            cx.list,
-            self.bounds,
-            "TELEMETRY",
-            &right,
-            pal,
-            s,
-            self.focused,
+            &mut text, cx.list, self.bounds, "TELEMETRY", &right, pal, s,
         );
         let sd = f64::from(s);
         let pad = 14.0 * sd;
@@ -1387,6 +1400,7 @@ impl Widget for TelemetryPanel {
                 None,
             );
         }
+        panel_border(cx.list, self.bounds, pal, s, self.focused);
     }
 }
 
@@ -1986,14 +2000,7 @@ impl Widget for EditorPanel {
         };
         let title = format!("EDITOR · {}", tab.path);
         let inner = panel_chrome(
-            &mut text,
-            cx.list,
-            self.bounds,
-            &title,
-            &right,
-            pal,
-            s,
-            self.focused,
+            &mut text, cx.list, self.bounds, &title, &right, pal, s,
         );
         let sd = f64::from(s);
         let pad = 8.0 * sd;
@@ -2155,6 +2162,7 @@ impl Widget for EditorPanel {
             y += line_h;
         }
         cx.list.pop_clip();
+        panel_border(cx.list, self.bounds, pal, s, self.focused);
     }
 }
 
@@ -2344,14 +2352,7 @@ impl Widget for MediaPanel {
             String::new()
         };
         let inner = panel_chrome(
-            &mut text,
-            cx.list,
-            self.bounds,
-            "MEDIA",
-            &right,
-            pal,
-            s,
-            self.focused,
+            &mut text, cx.list, self.bounds, "MEDIA", &right, pal, s,
         );
         // Delegate to the real widget for the letterboxed backdrop.
         self.view.paint(&mut PaintContext {
@@ -2427,6 +2428,7 @@ impl Widget for MediaPanel {
                 None,
             );
         }
+        panel_border(cx.list, self.bounds, pal, s, self.focused);
     }
 }
 
