@@ -1799,4 +1799,40 @@ mod tests {
         assert!((dragged.y - target.y).abs() < 1e-6);
         assert!(dragged.x >= target.x + target.width - 1e-6);
     }
+
+    /// The semantic tree VoiceOver consumes: panels expose real roles
+    /// and live labels, chrome is named, and the editor publishes its
+    /// buffer as its value — the content path, headlessly.
+    #[test]
+    fn a11y_tree_exposes_roles_labels_and_values() {
+        let mut app = App::new(ThemeChoice::Dark, false);
+        app.build_arena();
+        let arena = app.arena.as_mut().expect("arena");
+        let mut adapter = AccessKitAdapter::new(app.root.expect("root"));
+        let update = adapter.build_update(arena);
+
+        let roles: Vec<accesskit::Role> = update.nodes.iter().map(|(_, n)| n.role()).collect();
+        for want in [
+            accesskit::Role::Table,              // Process Grid
+            accesskit::Role::Image,              // Telemetry
+            accesskit::Role::MultilineTextInput, // Editor
+        ] {
+            assert!(roles.contains(&want), "missing role {want:?}");
+        }
+
+        let labels: Vec<&str> = update.nodes.iter().filter_map(|(_, n)| n.label()).collect();
+        for want in ["Process Grid", "Telemetry", "Editor"] {
+            assert!(
+                labels.iter().any(|l| l.contains(want)),
+                "missing label {want}"
+            );
+        }
+        assert!(
+            update
+                .nodes
+                .iter()
+                .any(|(_, n)| n.value().is_some_and(|v| !v.is_empty())),
+            "editor publishes no value"
+        );
+    }
 }
