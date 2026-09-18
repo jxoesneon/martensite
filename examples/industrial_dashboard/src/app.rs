@@ -18,6 +18,9 @@ use parking_lot::Mutex;
 use glam::Vec2;
 use martensite::access::actions::dispatch_a11y_action;
 use martensite::access::adapter::AccessKitAdapter;
+use martensite::blessed::{
+    DockDragSession, DockDropZone, DockNode, DockPanel, NodeId, SplitDirection,
+};
 use martensite::core::{
     ColdNode, HotNode, LayoutContext, NodeFlags, Rect, WidgetArena, WidgetEvent, WidgetId,
 };
@@ -47,7 +50,7 @@ use winit::window::{Window, WindowAttributes};
 use martensite::devtools::hud::{DiagnosticHud, FrameTiming};
 
 use crate::model::{build_dock_tree, Palette};
-use crate::panels::{fmt_count, EditorPanel, GridPanel, MediaPanel, TelemetryPanel};
+use crate::panels::{fmt_count, EditorPanel, GridPanel, MediaPanel, TelemetryPanel, TITLE_H};
 use crate::text::TextPainter;
 use crate::toolbar::{Toolbar, TOOLBAR_H};
 
@@ -94,6 +97,27 @@ pub enum ThemeChoice {
     System,
 }
 
+/// An in-flight title-bar drag. Created as a *candidate* on press;
+/// `active` flips once the pointer leaves the dead-zone, at which
+/// point `session.target_zone` drives the translucent drop preview
+/// painted by `paint_chrome`. Releasing applies the rearrangement to
+/// the BSP tree — over no leaf (or over the source leaf) it cancels.
+struct DockDrag {
+    /// Leaf the drag started on. Stale after `apply_dock_drop`'s
+    /// `remove` — targets are re-resolved by widget id.
+    source: NodeId,
+    /// The panel being moved — inserted into the tree on drop.
+    panel: DockPanel,
+    /// Press position for the dead-zone test.
+    start: Vec2,
+    /// Latest pointer position — the ghost chip rides it.
+    pos: Vec2,
+    /// Framework-side drag state: floating panel + hit-tested target.
+    session: DockDragSession,
+    /// Past the dead-zone — a real rearrange gesture, not a click.
+    active: bool,
+}
+
 /// The application. GPU/window state is created lazily inside
 /// `can_create_surfaces` per the winit 0.31 lifecycle.
 struct App {
@@ -131,6 +155,10 @@ struct App {
     theme_fade: Option<(AnimationId, ThemeDiff)>,
     installed_mode: ThemeMode,
     dock: martensite::blessed::DockTree,
+    /// Title-bar drag-to-dock gesture — `Some` from a title-band press
+    /// until the primary button releases (a click that never leaves
+    /// the dead-zone stays `!active` and changes nothing).
+    dock_drag: Option<DockDrag>,
     /// arena is built in `can_create_surfaces` once the real scale
     /// factor is known (F18 — widgets get scale through the signal).
     arena: Option<WidgetArena>,
@@ -180,6 +208,7 @@ impl App {
             theme_fade: None,
             installed_mode: ThemeMode::Dark,
             dock: martensite::blessed::DockTree::with_capacity(8),
+            dock_drag: None,
             arena: None,
             root: None,
             panels: [None, None, None, None],
@@ -301,11 +330,50 @@ impl App {
         }
     }
 
+    /// The rectangle the dock BSP subdivides — below the header +
+    /// toolbar bands, above the status bar, inside the window margin.
+    /// Shared by `apply_dock_layout` and every dock hit-test so the
+    /// pointer and the painted panels always agree. Device px (the
+    /// same space as `panel_rects` output); a degenerate 1×1 rect
+    /// without a window so headless callers degrade instead of
+    /// panicking.
+    fn dock_area(&self) -> martensite::blessed::Rect {
+        let s = self.scale.get();
+        let size = self
+            .window
+            .as_ref()
+            .map(|w| w.surface_size())
+            .unwrap_or_default();
+        let (w, h) = (f64::from(size.width), f64::from(size.height));
+        let m = f64::from(MARGIN_PT * s);
+        let gap = f64::from(GAP_PT * s);
+        let top = m + f64::from(HEADER_PT * s) + gap;
+        let bottom = h - m - f64::from(STATUS_PT * s) - gap;
+        // Toolbar band under the header — same collapse rule as
+        // `apply_dock_layout`.
+        let tb_h = f64::from(TOOLBAR_H * s).min((bottom - top).max(0.0));
+        let top = top + tb_h + gap;
+        // blessed::Rect is (x, y, width, height) — the dock area's
+        // height is `bottom - top`, not `bottom`.
+        martensite::blessed::Rect::new(m, top, (w - 2.0 * m).max(1.0), (bottom - top).max(1.0))
+    }
+
+    /// The leaf whose `panel_rects` rect contains `(x, y)` — device
+    /// px, same space as winit `PhysicalPosition`.
+    fn leaf_at(&self, x: f64, y: f64) -> Option<(NodeId, martensite::blessed::Rect)> {
+        let area = self.dock_area();
+        self.dock.panel_rects(area).find(|(_, r)| r.contains(x, y))
+    }
+
     /// Applies the dock tree's panel rects to the arena — the docking
     /// model is the sole geometry authority in windowed mode (header
     /// and status strips are hand-painted chrome; Taffy's two-pass
     /// path is exercised only by `--headless`).
     fn apply_dock_layout(&mut self) {
+        // Computed before the arena borrow — `dock_area` is the shared
+        // authority for the rect the BSP subdivides (the pointer
+        // hit-tests use it too).
+        let area = self.dock_area();
         let (Some(arena), Some(window)) = (&mut self.arena, &self.window) else {
             return;
         };
@@ -334,7 +402,6 @@ impl App {
                 cold.widget.layout(&mut LayoutContext { hot, scale: s }, r);
             }
         }
-        let top = top + tb_h + gap;
 
         // Root covers the window so routing always has a hit target.
         let root = self.root.expect("arena built");
@@ -342,10 +409,6 @@ impl App {
             hot.bounds = Rect::new(0.0, 0.0, w as f32, h as f32);
         }
 
-        // blessed::Rect is (x, y, width, height) — the dock area's size
-        // is `bottom - top`, not `bottom`.
-        let area =
-            martensite::blessed::Rect::new(m, top, (w - 2.0 * m).max(1.0), (bottom - top).max(1.0));
         let rects: Vec<_> = self.dock.panel_rects(area).collect();
         for (node_id, rect) in rects {
             let Some(martensite::blessed::DockNode::Leaf { panel }) = self.dock.node(node_id)
@@ -371,6 +434,24 @@ impl App {
         }
     }
 
+    /// The active drag's preview: `(drop-zone rect, pointer pos,
+    /// panel title)` — resolved before `paint_chrome` mutably borrows
+    /// `self.chrome`.
+    fn dock_drag_preview(&self) -> Option<(martensite::blessed::Rect, Vec2, String)> {
+        let drag = self.dock_drag.as_ref()?;
+        if !drag.active {
+            return None;
+        }
+        let (target, zone) = drag.session.target_zone?;
+        let area = self.dock_area();
+        let (_, rect) = self.dock.panel_rects(area).find(|(id, _)| *id == target)?;
+        Some((
+            drag.session.preview_rect(rect, zone),
+            drag.pos,
+            drag.panel.title().to_string(),
+        ))
+    }
+
     /// Paints the app-level chrome: header strip with title + live KPI
     /// chips, status bar with key hints + focus + frame stats.
     fn paint_chrome(&mut self, list: &mut PaintList, w: f64, h: f64) {
@@ -379,6 +460,7 @@ impl App {
         let sd = f64::from(s);
         let m = MARGIN_PT as f64 * sd;
         let uptime = fmt_uptime(self.started.elapsed().as_secs());
+        let drag_preview = self.dock_drag_preview();
         let focused_name = self
             .focus
             .current_focus()
@@ -510,7 +592,7 @@ impl App {
             pal.raised,
         );
         let hints = format!(
-            "Tab focus · click sort/select · F alerts · Space pause · focus: {focused_name} · {:.1}ms",
+            "Tab focus · drag title to dock · click sort/select · F alerts · Space pause · focus: {focused_name} · {:.1}ms",
             self.frame_ms
         );
         // Reserve room on the right for the devtools label (only when
@@ -545,6 +627,38 @@ impl App {
                 &label,
                 12.0 * s,
                 pal.accent,
+                None,
+            );
+        }
+
+        // Dock-rearrange preview — a translucent drop-zone fill over
+        // the target leaf plus a ghost chip with the dragged panel's
+        // title riding the pointer. Paints last so it sits above all
+        // panel chrome.
+        if let Some((preview, pos, title)) = drag_preview {
+            let pr = martensite::render::Rect::new(
+                preview.x,
+                preview.y,
+                preview.x + preview.width,
+                preview.y + preview.height,
+            );
+            list.push_fill_rect(pr, Palette::alpha(pal.accent, 50));
+            list.push_stroke_rect(pr, (1.5 * s).max(1.0), pal.accent);
+            let label = text.fit(&title, 12.0 * s, (160.0 * sd) as f32);
+            let lw = f64::from(text.measure(&label, 12.0 * s));
+            let chip_w = lw + 20.0 * sd;
+            let chip_h = 22.0 * sd;
+            let cx = f64::from(pos.x) + 12.0 * sd;
+            let cy = f64::from(pos.y) + 10.0 * sd;
+            let chip = martensite::render::Rect::new(cx, cy, cx + chip_w, cy + chip_h);
+            list.push_fill_rect(chip, Palette::alpha(pal.raised, 230));
+            list.push_stroke_rect(chip, s.max(1.0), pal.accent);
+            text.push(
+                list,
+                Point::new(cx + 10.0 * sd, cy + 5.0 * sd),
+                &label,
+                12.0 * s,
+                pal.text,
                 None,
             );
         }
@@ -773,6 +887,113 @@ fn fmt_uptime(secs: u64) -> String {
         format!("{h}h{m:02}m")
     } else {
         format!("{m}:{s:02}")
+    }
+}
+
+/// Maps a pointer position inside a target leaf's rect to a drop zone:
+/// the outer quarter of each edge is a directional split, the interior
+/// is a Center swap. Left/right zones win at the corners.
+fn drop_zone(rect: martensite::blessed::Rect, pos: Vec2) -> DockDropZone {
+    const EDGE: f64 = 0.25;
+    let fx = (f64::from(pos.x) - rect.x) / rect.width.max(f64::EPSILON);
+    let fy = (f64::from(pos.y) - rect.y) / rect.height.max(f64::EPSILON);
+    if fx < EDGE {
+        DockDropZone::Left
+    } else if fx > 1.0 - EDGE {
+        DockDropZone::Right
+    } else if fy < EDGE {
+        DockDropZone::Top
+    } else if fy > 1.0 - EDGE {
+        DockDropZone::Bottom
+    } else {
+        DockDropZone::Center
+    }
+}
+
+/// Applies a completed drag to the BSP tree.
+///
+/// `Center`/`Tab` swap the two leaves' panels in place — no structural
+/// change. Directional zones remove the source leaf (collapsing its
+/// parent split) and re-split the target at 0.5. `DockTree::remove`
+/// promotes the sibling into the parent's slot, so the target id can
+/// go stale mid-operation — it is re-resolved by widget id afterward.
+/// `split_leaf` always lands the new panel on the right/bottom, so a
+/// `Left`/`Top` drop finishes by swapping the two new child leaves.
+fn apply_dock_drop(
+    dock: &mut martensite::blessed::DockTree,
+    source: NodeId,
+    target: NodeId,
+    zone: DockDropZone,
+    dragged: DockPanel,
+) {
+    // A directional drop onto the source leaf would `remove` it and
+    // then fail re-resolution — silently deleting the panel. Callers
+    // already exclude the source during hit-testing; this guards
+    // against misuse.
+    if source == target {
+        return;
+    }
+    match zone {
+        DockDropZone::Center | DockDropZone::Tab => {
+            let Some(DockNode::Leaf {
+                panel: target_panel,
+            }) = dock.node(target)
+            else {
+                return;
+            };
+            let target_panel = target_panel.clone();
+            // Validate the source leaf before either write — if the
+            // first `node_mut` landed and the second couldn't, the
+            // dragged panel would exist in two leaves.
+            let Some(DockNode::Leaf { .. }) = dock.node(source) else {
+                return;
+            };
+            if let Some(DockNode::Leaf { panel }) = dock.node_mut(target) {
+                *panel = dragged;
+            }
+            if let Some(DockNode::Leaf { panel }) = dock.node_mut(source) {
+                *panel = target_panel;
+            }
+        }
+        DockDropZone::Left | DockDropZone::Right | DockDropZone::Top | DockDropZone::Bottom => {
+            let Some(DockNode::Leaf {
+                panel: target_panel,
+            }) = dock.node(target)
+            else {
+                return;
+            };
+            let target_wid = target_panel.widget_id();
+            dock.remove(source);
+            // The sibling's slot moved during `remove` — re-find the
+            // target leaf by its widget id rather than trusting `target`.
+            let Some((target_id, _)) = dock.panels().find(|(_, p)| p.widget_id() == target_wid)
+            else {
+                return;
+            };
+            let direction = match zone {
+                DockDropZone::Left | DockDropZone::Right => SplitDirection::Vertical,
+                _ => SplitDirection::Horizontal,
+            };
+            let Ok((orig, new)) = dock.split_leaf(target_id, direction, 0.5, dragged) else {
+                return;
+            };
+            // The dragged panel landed on the right/bottom half; for a
+            // Left/Top drop swap the two children so it reads as the
+            // leading half.
+            if matches!(zone, DockDropZone::Left | DockDropZone::Top) {
+                let (Some(DockNode::Leaf { panel: a }), Some(DockNode::Leaf { panel: b })) =
+                    (dock.node(orig).cloned(), dock.node(new).cloned())
+                else {
+                    return;
+                };
+                if let Some(DockNode::Leaf { panel }) = dock.node_mut(orig) {
+                    *panel = b;
+                }
+                if let Some(DockNode::Leaf { panel }) = dock.node_mut(new) {
+                    *panel = a;
+                }
+            }
+        }
     }
 }
 
@@ -1076,12 +1297,138 @@ impl ApplicationHandler for App {
 }
 
 impl App {
+    /// `true` when `pos` lands inside an open overlay popup's resolved
+    /// bounds — such presses belong to the popup (menu item, dropdown
+    /// option), which hit-tests before window content, so they must
+    /// not seed a dock-drag candidate. Mirrors `dispatch_event`'s
+    /// resolve-before-hit-test so a popup opened this frame (synthetic
+    /// event streams can press before the next `tick`) still counts.
+    fn press_over_overlay(&mut self, pos: Vec2) -> bool {
+        let Some(arena) = self.arena.as_mut() else {
+            return false;
+        };
+        let overlay = arena.overlay_mut();
+        if overlay.viewport().width() > 0.0 && overlay.viewport().height() > 0.0 {
+            overlay.layout_pass();
+        }
+        overlay.entries().any(|e| e.bounds().contains(pos))
+    }
+
+    /// Left-press inside a leaf's title band seeds a drag candidate.
+    /// The band is the top `TITLE_H·scale` of the *inset* leaf rect —
+    /// the same inset `apply_dock_layout` applies, so the hit target
+    /// matches the painted title bar exactly.
+    fn dock_press_candidate(&self, pos: PhysicalPosition<f64>) -> Option<DockDrag> {
+        let s = self.scale.get();
+        let gi = f64::from(GAP_PT * s) * 0.5;
+        let title_h = f64::from(TITLE_H * s);
+        let (id, rect) = self.leaf_at(pos.x, pos.y)?;
+        let in_band = pos.y >= rect.y + gi
+            && pos.y < rect.y + gi + title_h
+            && pos.x >= rect.x + gi
+            && pos.x < rect.x + rect.width - gi;
+        if !in_band {
+            return None;
+        }
+        let Some(DockNode::Leaf { panel }) = self.dock.node(id) else {
+            return None;
+        };
+        let start = Vec2::new(pos.x as f32, pos.y as f32);
+        Some(DockDrag {
+            source: id,
+            panel: panel.clone(),
+            start,
+            pos: start,
+            session: DockDragSession::new(panel.clone()),
+            active: false,
+        })
+    }
+
+    /// The `(leaf, zone)` under `pos`, excluding `source` — dropping
+    /// back on the dragged leaf is a cancel, not a valid target.
+    /// Shared by the Moved path (preview) and the release path so a
+    /// drop is computed from the release position, not a stale cached
+    /// target.
+    fn dock_target_at(
+        &self,
+        pos: PhysicalPosition<f64>,
+        source: NodeId,
+    ) -> Option<(NodeId, DockDropZone)> {
+        let p = Vec2::new(pos.x as f32, pos.y as f32);
+        let (id, rect) = self.leaf_at(pos.x, pos.y)?;
+        (id != source).then(|| (id, drop_zone(rect, p)))
+    }
+
+    /// Moves the drag forward: activates past the dead-zone, then
+    /// hit-tests `pos` against the *other* leaves to maintain
+    /// `session.target_zone` for the preview.
+    fn update_dock_drag(&mut self, pos: PhysicalPosition<f64>) {
+        if self.dock_drag.is_none() {
+            return;
+        }
+        let p = Vec2::new(pos.x as f32, pos.y as f32);
+        let source = self.dock_drag.as_ref().expect("checked").source;
+        let target = self.dock_target_at(pos, source);
+        let dead = 4.0 * self.scale.get();
+        let drag = self.dock_drag.as_mut().expect("checked");
+        drag.pos = p;
+        if !drag.active && p.distance(drag.start) <= dead {
+            return;
+        }
+        drag.active = true;
+        match target {
+            Some((id, zone)) => drag.session.set_target(id, zone),
+            None => drag.session.clear_target(),
+        }
+    }
+
+    /// Ends the gesture: an active drag re-hit-tests the *release*
+    /// position (a release with no preceding move — window-edge
+    /// releases, synthetic events — must not apply a stale target);
+    /// anything else is a cancel. `dock_drag` clears regardless so a
+    /// stale candidate never survives a release.
+    fn finish_dock_drag(&mut self, pos: PhysicalPosition<f64>) {
+        let Some(drag) = self.dock_drag.take() else {
+            return;
+        };
+        if !drag.active {
+            return;
+        }
+        let target = self.dock_target_at(pos, drag.source);
+        if let Some((target, zone)) = target {
+            apply_dock_drop(&mut self.dock, drag.source, target, zone, drag.panel);
+            // Relayout now — `redraw` repaints every frame regardless.
+            self.apply_dock_layout();
+        }
+    }
+
     fn dispatch_pointer(
         &mut self,
         pos: PhysicalPosition<f64>,
         state: PointerState,
         button: Option<MButton>,
     ) {
+        // Dock-rearrange bookkeeping runs before arena dispatch: the
+        // press seeds a candidate while the widget still sees the
+        // event, so clicks that never leave the dead-zone behave
+        // exactly as before. Presses consumed by an open overlay popup
+        // (menus, dropdown lists — the overlay hit-tests first) never
+        // seed a candidate.
+        match state {
+            PointerState::Pressed if button == Some(MButton::Left) => {
+                let p = Vec2::new(pos.x as f32, pos.y as f32);
+                self.dock_drag = if self.press_over_overlay(p) {
+                    None
+                } else {
+                    self.dock_press_candidate(pos)
+                };
+            }
+            PointerState::Moved => self.update_dock_drag(pos),
+            PointerState::Released if button == Some(MButton::Left) => {
+                self.finish_dock_drag(pos);
+            }
+            _ => {}
+        }
         let mods = {
             let mut k = ModifierKeys::empty();
             if self.mods.shift_key() {
@@ -1130,4 +1477,115 @@ pub fn run(initial_choice: ThemeChoice) -> Result<(), Box<dyn std::error::Error>
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(App::new(initial_choice))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn area() -> martensite::blessed::Rect {
+        martensite::blessed::Rect::new(0.0, 0.0, 1000.0, 600.0)
+    }
+
+    /// Leaf id of the panel holding `wid` — the widget id is the only
+    /// stable key across `remove`/`split` (slab indices move).
+    fn leaf_id(dock: &martensite::blessed::DockTree, wid: u64) -> NodeId {
+        dock.panels()
+            .find(|(_, p)| p.widget_id() == wid)
+            .map(|(id, _)| id)
+            .expect("widget docked")
+    }
+
+    /// The `panel_rects` rect of the leaf holding `wid`.
+    fn rect_of(dock: &martensite::blessed::DockTree, wid: u64) -> martensite::blessed::Rect {
+        dock.panel_rects(area())
+            .find(|(id, _)| {
+                matches!(dock.node(*id), Some(DockNode::Leaf { panel }) if panel.widget_id() == wid)
+            })
+            .map(|(_, r)| r)
+            .expect("widget docked")
+    }
+
+    /// The panel stored in leaf `id` (what a press would capture).
+    fn panel_of(dock: &martensite::blessed::DockTree, id: NodeId) -> DockPanel {
+        match dock.node(id) {
+            Some(DockNode::Leaf { panel }) => panel.clone(),
+            _ => panic!("expected leaf"),
+        }
+    }
+
+    #[test]
+    fn drop_zone_edges_and_center() {
+        let r = martensite::blessed::Rect::new(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(drop_zone(r, Vec2::new(10.0, 50.0)), DockDropZone::Left);
+        assert_eq!(drop_zone(r, Vec2::new(90.0, 50.0)), DockDropZone::Right);
+        assert_eq!(drop_zone(r, Vec2::new(50.0, 10.0)), DockDropZone::Top);
+        assert_eq!(drop_zone(r, Vec2::new(50.0, 90.0)), DockDropZone::Bottom);
+        assert_eq!(drop_zone(r, Vec2::new(50.0, 50.0)), DockDropZone::Center);
+        // Corners resolve to the left/right zone first.
+        assert_eq!(drop_zone(r, Vec2::new(5.0, 5.0)), DockDropZone::Left);
+    }
+
+    #[test]
+    fn dock_drop_center_swaps_panels() {
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
+        let dragged = panel_of(&dock, src);
+        apply_dock_drop(&mut dock, src, dst, DockDropZone::Center, dragged);
+        assert_eq!(dock.panel_count(), 4);
+        // Same leaves, exchanged payloads.
+        assert_eq!(panel_of(&dock, src).widget_id(), 2);
+        assert_eq!(panel_of(&dock, dst).widget_id(), 1);
+    }
+
+    #[test]
+    fn dock_drop_right_lands_right_half() {
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
+        let dragged = panel_of(&dock, src);
+        apply_dock_drop(&mut dock, src, dst, DockDropZone::Right, dragged);
+        assert_eq!(dock.panel_count(), 4);
+        let (dragged, target) = (rect_of(&dock, 1), rect_of(&dock, 2));
+        // Same band, dragged on the right half of the target's old rect.
+        assert!((dragged.y - target.y).abs() < 1e-6);
+        assert!((dragged.height - target.height).abs() < 1e-6);
+        assert!(dragged.x >= target.x + target.width - 1e-6);
+    }
+
+    #[test]
+    fn dock_drop_left_lands_left_half() {
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
+        let dragged = panel_of(&dock, src);
+        apply_dock_drop(&mut dock, src, dst, DockDropZone::Left, dragged);
+        let (dragged, target) = (rect_of(&dock, 1), rect_of(&dock, 2));
+        assert!((dragged.y - target.y).abs() < 1e-6);
+        assert!(dragged.x + dragged.width <= target.x + 1e-6);
+    }
+
+    #[test]
+    fn dock_drop_top_stacks_above() {
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
+        let dragged = panel_of(&dock, src);
+        apply_dock_drop(&mut dock, src, dst, DockDropZone::Top, dragged);
+        let (dragged, target) = (rect_of(&dock, 1), rect_of(&dock, 2));
+        assert!((dragged.x - target.x).abs() < 1e-6);
+        assert!((dragged.width - target.width).abs() < 1e-6);
+        assert!(dragged.y + dragged.height <= target.y + 1e-6);
+    }
+
+    #[test]
+    fn dock_drop_onto_sibling_re_resolves_target() {
+        // Editor (3) and Media (4) are siblings — removing 3 promotes
+        // 4 into the parent slot, invalidating its NodeId mid-drop.
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let (src, dst) = (leaf_id(&dock, 3), leaf_id(&dock, 4));
+        let dragged = panel_of(&dock, src);
+        apply_dock_drop(&mut dock, src, dst, DockDropZone::Right, dragged);
+        assert_eq!(dock.panel_count(), 4);
+        let (dragged, target) = (rect_of(&dock, 3), rect_of(&dock, 4));
+        assert!((dragged.y - target.y).abs() < 1e-6);
+        assert!(dragged.x >= target.x + target.width - 1e-6);
+    }
 }

@@ -142,6 +142,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as framework `Undo`/`Redo` key names in `app.rs` and routed through
   the normal dispatch so any focused widget can consume or ignore
   them. New `martensite-assets` dependency in the example.
+- **`industrial_dashboard` drag-to-dock** — pressing a panel's title
+  bar and dragging past a 4pt dead-zone starts a BSP rearrange gesture
+  backed by `blessed::DockDragSession`: a translucent drop-zone preview
+  (`DockDropZone::{Left,Right,Top,Bottom}` edge quarters, `Center`
+  interior) follows the pointer over target leaves, and a ghost chip
+  with the panel title rides the cursor. Releasing applies the move
+  to the `DockTree` — `Center`/`Tab` swap the two leaves' panels via
+  `node_mut`, directional zones `remove` the source leaf and
+  `split_leaf` the target at 0.5 (re-resolving the target by widget id
+  since sibling promotion invalidates its `NodeId`, and swapping the
+  new split's children for `Left`/`Top` so the dragged panel leads).
+  Releasing re-hit-tests the release position and applies the drop;
+  over empty space or the source leaf it cancels. Presses that land
+  inside an open overlay popup (context menus, dropdown lists — the
+  overlay hit-tests before window content) never seed a drag. The
+  dock-area computation is factored into a shared `dock_area()` used
+  by both `apply_dock_layout` and the hit-tests.
 
 ### Fixed
 

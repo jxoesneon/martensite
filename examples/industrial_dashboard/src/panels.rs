@@ -85,8 +85,9 @@ use crate::model::{alert_count, gen_rows, MetricRow, Palette, SOURCES};
 use crate::text::{SpanColor, TextPainter};
 
 /// Title-bar height in logical pt — one constant for the chrome paint
-/// and every hit-zone/layout computation that subtracts it.
-const TITLE_H: f32 = 28.0;
+/// and every hit-zone/layout computation that subtracts it (including
+/// the app's title-bar drag-to-dock hit test).
+pub(crate) const TITLE_H: f32 = 28.0;
 /// Grid column-header band height in logical pt.
 const GRID_HEADER_H: f32 = 26.0;
 /// Editor tab-strip row height in logical pt — a second header row
