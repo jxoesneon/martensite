@@ -184,13 +184,7 @@ fn panel_chrome(
 /// END of a panel's `paint`, after every content band: headers, rows,
 /// and scrollbars all span the full inner width and would otherwise
 /// cover the outline's left/right/bottom segments.
-fn panel_border(
-    list: &mut PaintList,
-    bounds: Rect,
-    pal: &Palette,
-    scale: f32,
-    focused: bool,
-) {
+fn panel_border(list: &mut PaintList, bounds: Rect, pal: &Palette, scale: f32, focused: bool) {
     let b = to_paint(bounds);
     let s = f64::from(scale);
     if focused {
@@ -212,6 +206,11 @@ fn panel_border(
 /// Column headers — `ColumnConfig` carries widths but no title field
 /// (F6), so the renderer owns the labels, in column order.
 const GRID_HEADERS: [&str; 4] = ["PID", "CPU %", "MEMORY", "STATUS"];
+/// Logical-pt floor for a dragged column — matches the stretch
+/// column's "at least ~40pt" collapse floor in `column_layout`.
+const GRID_MIN_COL_W: f32 = 40.0;
+/// Logical-pt slop either side of a divider that grabs a resize drag.
+const GRID_DIVIDER_GRAB: f32 = 4.0;
 
 /// The process-metrics table: column-header sort toggling, click
 /// selection (+ Shift range), wheel scrolling, full keyboard navigation,
@@ -259,6 +258,12 @@ pub struct GridPanel {
     /// stays the authoritative clamped position; the band adds
     /// transient stretch visuals past the boundaries.
     band: RubberBandScroller,
+    /// Live column-resize drag: `(configured column, grab offset)` —
+    /// the offset is `divider_x - press_x` so the line doesn't jump
+    /// when the press lands off-center inside the grab zone.
+    resizing: Option<(usize, f32)>,
+    /// The shipped column widths — the double-click reset target.
+    default_widths: Vec<f32>,
 }
 
 impl GridPanel {
@@ -282,6 +287,7 @@ impl GridPanel {
         table.sort_by(1, ColumnSort::Descending, |a, b| {
             a.cpu_milli.cmp(&b.cpu_milli)
         });
+        let default_widths = table.columns().iter().map(|c| c.width()).collect();
         Self {
             table,
             text: Mutex::new(TextPainter::new()),
@@ -307,6 +313,8 @@ impl GridPanel {
             context_row: None,
             copied_flash: None,
             band: RubberBandScroller::new(0.0, 0.0),
+            resizing: None,
+            default_widths,
         }
     }
 
@@ -496,6 +504,55 @@ impl GridPanel {
             _ => {}
         }
     }
+
+    /// Live divider positions — `(divider x, configured column)` for
+    /// every visible column's right edge, except the stretch column's:
+    /// its edge is the panel boundary, so there's nothing to drag. A
+    /// column whose right-side siblings all collapsed keeps its
+    /// divider — shrinking it is how they come back. Because
+    /// `column_layout` walks configured columns in order and *breaks*
+    /// on the first that doesn't fit, the visible index IS the
+    /// configured index.
+    fn divider_edges(&self) -> Vec<(f32, usize)> {
+        let Some(last) = self.table.column_count().checked_sub(1) else {
+            return Vec::new();
+        };
+        self.column_layout()
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != last && self.table.columns()[*i].resizable())
+            .map(|(i, (x0, w))| (*x0 + *w, i))
+            .collect()
+    }
+
+    /// The divider under `position` inside the header band —
+    /// `(configured column, grab offset)` where the offset keeps the
+    /// drag from jumping when the press lands off-center in the zone.
+    fn divider_at(&self, position: Vec2) -> Option<(usize, f32)> {
+        let (top, bottom) = self.header_band();
+        if position.y < top || position.y >= bottom {
+            return None;
+        }
+        let grab = GRID_DIVIDER_GRAB * self.s();
+        self.divider_edges()
+            .into_iter()
+            .find(|(x, _)| (position.x - *x).abs() <= grab)
+            .map(|(x, col)| (col, x - position.x))
+    }
+
+    /// Sets `col`'s logical width from a drag position, clamped to the
+    /// floor and to the panel's inner right edge — past that the
+    /// column would collapse out of `column_layout` entirely and the
+    /// drag would lose its anchor.
+    fn resize_to(&mut self, col: usize, grab_off: f32, x: f32) {
+        let s = self.s();
+        let Some(&(x0, _)) = self.column_layout().get(col) else {
+            return;
+        };
+        let max_w = (self.bounds.max_x() - 12.0 * s - x0) / s;
+        let w = ((x + grab_off - x0) / s).clamp(GRID_MIN_COL_W, max_w.max(GRID_MIN_COL_W));
+        self.table.set_column_width(col, w);
+    }
 }
 
 impl Widget for GridPanel {
@@ -645,8 +702,22 @@ impl Widget for GridPanel {
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Primary,
+                count,
                 ..
             } => {
+                // Divider grab wins over the sort click — a press in
+                // the slop zone is a resize (or, on double-click, a
+                // reset to the shipped width), never a sort.
+                if let Some((col, grab_off)) = self.divider_at(*position) {
+                    if *count >= 2 {
+                        if let Some(&w) = self.default_widths.get(col) {
+                            self.table.set_column_width(col, w);
+                        }
+                    } else {
+                        self.resizing = Some((col, grab_off));
+                    }
+                    return EventResponse::CapturePointer;
+                }
                 let (hdr_top, hdr_bottom) = self.header_band();
                 if position.y >= hdr_top && position.y < hdr_bottom {
                     for (i, (x0, w)) in self.column_layout().iter().enumerate() {
@@ -685,6 +756,24 @@ impl Widget for GridPanel {
                     self.menu_open = true;
                 }
                 EventResponse::CaptureFocus
+            }
+            WidgetEvent::PointerMoved { position } => {
+                if let Some((col, grab_off)) = self.resizing {
+                    self.resize_to(col, grab_off, position.x);
+                    EventResponse::RequestRepaint
+                } else {
+                    EventResponse::Ignored
+                }
+            }
+            WidgetEvent::PointerReleased {
+                button: PointerButton::Primary,
+                ..
+            } => {
+                if self.resizing.take().is_some() {
+                    EventResponse::ReleasePointer
+                } else {
+                    EventResponse::Ignored
+                }
             }
             WidgetEvent::Scroll { delta, .. } => {
                 self.sync_band();
@@ -882,6 +971,11 @@ impl Widget for GridPanel {
                     pal.accent,
                 );
             }
+            // Row separator — under the cell text, which follows.
+            cx.list.push_fill_rect(
+                krect(inner.x0, ry + row_h - 1.0, inner.width(), 1.0),
+                Palette::alpha(pal.border, 50),
+            );
             let ty = ry + (row_h - 13.0 * sd) / 2.0;
             // A straddling row keeps its stripe/focus ring, but its text
             // can still paint zero pixels: `TextPainter` places the first
@@ -984,6 +1078,24 @@ impl Widget for GridPanel {
             );
         }
         cx.list.pop_clip();
+        // Column separators — solid through the header band, faint
+        // through the rows; the live-drag divider turns accent.
+        for (x, col) in self.divider_edges() {
+            let dx = f64::from(x);
+            let active = self.resizing.is_some_and(|(c, _)| c == col);
+            cx.list.push_fill_rect(
+                krect(dx, inner.y0 + 3.0 * sd, 1.0, header_h - 6.0 * sd),
+                if active { pal.accent } else { pal.border },
+            );
+            cx.list.push_fill_rect(
+                krect(dx, rows_top, 1.0, rows_bottom - rows_top),
+                if active {
+                    pal.accent
+                } else {
+                    Palette::alpha(pal.border, 70)
+                },
+            );
+        }
         // Outline last — the header band and row fills span the full
         // inner width and would cover its edge segments.
         panel_border(cx.list, self.bounds, pal, s, self.focused);
@@ -1161,9 +1273,7 @@ impl Widget for TelemetryPanel {
                 self.mem.get() * 100.0
             )
         };
-        let inner = panel_chrome(
-            &mut text, cx.list, self.bounds, "TELEMETRY", &right, pal, s,
-        );
+        let inner = panel_chrome(&mut text, cx.list, self.bounds, "TELEMETRY", &right, pal, s);
         let sd = f64::from(s);
         let pad = 14.0 * sd;
         let label_w = 34.0 * sd;
@@ -1999,9 +2109,7 @@ impl Widget for EditorPanel {
             format!("{} lines", tab.editor.lines().len())
         };
         let title = format!("EDITOR · {}", tab.path);
-        let inner = panel_chrome(
-            &mut text, cx.list, self.bounds, &title, &right, pal, s,
-        );
+        let inner = panel_chrome(&mut text, cx.list, self.bounds, &title, &right, pal, s);
         let sd = f64::from(s);
         let pad = 8.0 * sd;
         let gutter_w = f64::from(self.gutter_w());
@@ -2351,9 +2459,7 @@ impl Widget for MediaPanel {
         } else {
             String::new()
         };
-        let inner = panel_chrome(
-            &mut text, cx.list, self.bounds, "MEDIA", &right, pal, s,
-        );
+        let inner = panel_chrome(&mut text, cx.list, self.bounds, "MEDIA", &right, pal, s);
         // Delegate to the real widget for the letterboxed backdrop.
         self.view.paint(&mut PaintContext {
             list: cx.list,
@@ -2517,6 +2623,111 @@ mod tests {
         }
         assert!(p.band.is_settled());
         assert_eq!(p.render_offset(), p.table.scroll_offset());
+    }
+
+    /// A press inside a divider's grab zone starts a resize drag — it
+    /// must NOT toggle the column's sort — and a double-click on the
+    /// divider resets the column to its shipped width.
+    #[test]
+    fn column_divider_drag_resizes_and_double_click_resets() {
+        let mut p = grid();
+        let bounds = Rect::new(0.0, 0.0, 600.0, 300.0);
+        layout_at(&mut p, bounds);
+
+        // First divider = PID's right edge (12pt pad + 96pt column).
+        let (dx, col) = p.divider_edges()[0];
+        assert_eq!(col, 0);
+        let (hdr_top, hdr_bottom) = p.header_band();
+        let y = (hdr_top + hdr_bottom) * 0.5;
+        let sort_before = p.table.sort_column();
+
+        let r = send(
+            &mut p,
+            bounds,
+            &WidgetEvent::PointerPressed {
+                position: Vec2::new(dx, y),
+                button: PointerButton::Primary,
+                count: 1,
+            },
+        );
+        assert_eq!(r, EventResponse::CapturePointer);
+        // A divider press is a resize grab, not a sort toggle.
+        assert_eq!(p.table.sort_column(), sort_before);
+
+        // Dragging +40px grows the column 96 → 136 logical pt.
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::PointerMoved {
+                position: Vec2::new(dx + 40.0, y),
+            },
+        );
+        assert_eq!(p.table.columns()[0].width(), 136.0);
+
+        // Release frees the capture and ends the drag.
+        let r = send(
+            &mut p,
+            bounds,
+            &WidgetEvent::PointerReleased {
+                position: Vec2::new(dx + 40.0, y),
+                button: PointerButton::Primary,
+            },
+        );
+        assert_eq!(r, EventResponse::ReleasePointer);
+        assert!(p.resizing.is_none());
+
+        // Double-click on the (moved) divider resets to 96pt.
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::PointerPressed {
+                position: Vec2::new(dx + 40.0, y),
+                button: PointerButton::Primary,
+                count: 2,
+            },
+        );
+        assert_eq!(p.table.columns()[0].width(), 96.0);
+        assert!(p.resizing.is_none());
+    }
+
+    /// The drag clamps at the floor and at the panel's inner edge —
+    /// past the edge the column would collapse out of the layout and
+    /// the drag would lose its anchor.
+    #[test]
+    fn column_resize_clamps() {
+        let mut p = grid();
+        let bounds = Rect::new(0.0, 0.0, 600.0, 300.0);
+        layout_at(&mut p, bounds);
+        let (dx, _) = p.divider_edges()[0];
+        let (hdr_top, hdr_bottom) = p.header_band();
+        let y = (hdr_top + hdr_bottom) * 0.5;
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::PointerPressed {
+                position: Vec2::new(dx, y),
+                button: PointerButton::Primary,
+                count: 1,
+            },
+        );
+        // Far left → floor; far right → panel edge.
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::PointerMoved {
+                position: Vec2::new(0.0, y),
+            },
+        );
+        assert_eq!(p.table.columns()[0].width(), GRID_MIN_COL_W);
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::PointerMoved {
+                position: Vec2::new(10_000.0, y),
+            },
+        );
+        let max_w = bounds.max_x() - 12.0 - p.column_layout()[0].0;
+        assert_eq!(p.table.columns()[0].width(), max_w);
     }
 
     /// Overlay entries never receive `tick` — the menu's entrance
