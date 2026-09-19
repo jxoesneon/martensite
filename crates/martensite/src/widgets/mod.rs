@@ -1810,6 +1810,21 @@ pub mod wheel_picker;
 /// ```
 pub mod wizard;
 
+/// Two-dimensional drag controller (Kaoss-pad / Ableton XY idiom) —
+/// a square pad whose thumb tracks a normalized `(x, y)` value with
+/// crosshair guides, arrow-key nudges, `Home`/`End` snaps, and a
+/// two-axis `"x,y"` `SetValue` semantic.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::xy_pad::XYPad;
+///
+/// let pad = XYPad::new().value(0.5, 0.5).labels("Cutoff", "Res");
+/// assert_eq!(pad.value_xy(), (0.5, 0.5));
+/// ```
+pub mod xy_pad;
+
 pub use about::About;
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
@@ -1943,3 +1958,4 @@ pub use treemap::{Treemap, TreemapItem};
 pub use watermark::Watermark;
 pub use wheel_picker::WheelPicker;
 pub use wizard::Wizard;
+pub use xy_pad::XYPad;
