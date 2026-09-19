@@ -254,6 +254,24 @@ pub mod checkbox;
 /// ```
 pub mod chip;
 
+/// Wrapping set of selectable chips (Material 3 filter-chip set /
+/// Ant `Tag.CheckableTag` group) — `FlowBox`-style wrap layout plus
+/// a `ChipSelection` mode (None/Single/Multiple) enforced on the
+/// children's own toggle seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::chip_group::{ChipGroup, ChipSelection};
+/// use martensite::widgets::Chip;
+///
+/// let g = ChipGroup::new()
+///     .chip(Chip::new("a"))
+///     .selection(ChipSelection::Single);
+/// assert_eq!(g.chip_count(), 1);
+/// ```
+pub mod chip_group;
+
 /// Preset color-swatch grid — the curated palette row (Ant
 /// `ColorPicker` presets / `NSColorList`) where click selects and
 /// parks `(index, rgba)` in `take_selected`. Unlike `ColorPicker`'s
@@ -1415,6 +1433,7 @@ pub use carousel::Carousel;
 pub use cascader::{Cascader, CascaderOption};
 pub use checkbox::{CheckBox, CheckState};
 pub use chip::{Chip, ChipKind};
+pub use chip_group::{ChipGroup, ChipSelection};
 pub use color_palette::ColorPalette;
 pub use color_picker::{hsv_to_rgb, rgb_to_hsv, Color, ColorPicker};
 pub use command_palette::{CommandAction, CommandPalette};
