@@ -159,6 +159,20 @@ pub mod checkbox;
 /// ```
 pub mod chip;
 
+/// Color well with an HSV picker popup (WinUI `ColorPicker` /
+/// `NSColorWell`) — SV square, hue/alpha strips, live `take_edited`
+/// seam plus an OK-confirm `take_selected` seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Color, ColorPicker};
+///
+/// let c = ColorPicker::new().color(Color::rgb(60, 110, 220));
+/// assert!(!c.is_open());
+/// ```
+pub mod color_picker;
+
 /// Box container layout primitive.
 ///
 /// # Examples
@@ -181,6 +195,20 @@ pub mod container;
 /// assert!(!m.is_open());
 /// ```
 pub mod context_menu;
+
+/// Read-only date field with a calendar-grid popup (`QDateEdit` /
+/// `GtkCalendar` / WinUI `CalendarDatePicker`) — min/max clamping,
+/// host-injected "today", `take_selected` pick seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Date, DatePicker};
+///
+/// let d = DatePicker::new().date(Date { year: 2024, month: 6, day: 15 });
+/// assert!(!d.is_open());
+/// ```
+pub mod date_picker;
 
 /// Flexbox row and column layout.
 ///
@@ -423,6 +451,19 @@ pub mod text_input;
 /// ```
 pub mod external;
 
+/// Keyboard-shortcut recorder field (Qt `QKeySequenceEdit`, KDE
+/// `KKeySequenceWidget`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::key_capture::KeyCapture;
+///
+/// let k = KeyCapture::new().shortcut("Ctrl+S");
+/// assert_eq!(k.get_shortcut(), "Ctrl+S");
+/// ```
+pub mod key_capture;
+
 /// Level/capacity meter — battery, disk-usage, or signal-strength
 /// indicator with zone colors (GTK `GtkLevelBar`, `NSLevelIndicator`).
 ///
@@ -483,6 +524,30 @@ pub mod menu;
 /// assert_eq!(bar.menu_count(), 1);
 /// ```
 pub mod menu_bar;
+
+/// Vertical icon+label destination rail for app-level navigation
+/// (Material 3 `NavigationRail`, WinUI `NavigationView` rail mode).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::nav_rail::NavRail;
+///
+/// let r = NavRail::new().destination("🏠", "Home").selected(0);
+/// assert_eq!(r.destination_count(), 1);
+/// ```
+pub mod nav_rail;
+
+/// Segmented one-time-code / PIN field (Ant `Input.OTP`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::otp_input::OtpInput;
+///
+/// let o = OtpInput::new().length(6).masked(true);
+/// ```
+pub mod otp_input;
 
 /// Page switcher — prev/next arrows + a windowed page run with
 /// ellipsis gaps (Ant `Pagination`, Carbon `Pagination`).
@@ -663,6 +728,20 @@ pub mod empty_state;
 /// ```
 pub mod tabs;
 
+/// Segmented time-of-day field with inline hour/minute/AM-PM
+/// editing (`QTimeEdit` / WinUI `TimePicker`) — arrow stepping,
+/// two-digit rollover typing, `take_edited` seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Time, TimePicker};
+///
+/// let t = TimePicker::new().time(Time { hour: 9, minute: 30 });
+/// assert_eq!(t.text(), "09:30");
+/// ```
+pub mod time_picker;
+
 /// Pressed-state (latched) toggle button.
 ///
 /// # Examples
@@ -724,8 +803,10 @@ pub use button::Button;
 pub use card::{Card, CardVariant};
 pub use checkbox::{CheckBox, CheckState};
 pub use chip::{Chip, ChipKind};
+pub use color_picker::{hsv_to_rgb, rgb_to_hsv, Color, ColorPicker};
 pub use container::Container;
 pub use context_menu::ContextMenu;
+pub use date_picker::{Date, DatePicker};
 pub use dialog::Dialog;
 pub use disclosure::Disclosure;
 pub use drawer::Drawer;
@@ -735,11 +816,14 @@ pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use group_box::GroupBox;
 pub use image::{Image, ImageFit};
+pub use key_capture::KeyCapture;
 pub use level_bar::{LevelBar, LevelZone};
 pub use list_view::{ListView, SelectionMode, SelectionModel};
 pub use media::{MediaView, VideoFit};
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
 pub use menu_bar::MenuBar;
+pub use nav_rail::{NavDestination, NavRail};
+pub use otp_input::OtpInput;
 pub use pagination::Pagination;
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
@@ -762,6 +846,7 @@ pub use tabs::{TabActivation, TabItem, Tabs};
 pub use text::Text;
 pub use text_area::TextArea;
 pub use text_input::TextInput;
+pub use time_picker::{Time, TimePicker};
 pub use toast::{Toast, ToastHost};
 pub use toggle_button::ToggleButton;
 pub use toolbar::Toolbar;
