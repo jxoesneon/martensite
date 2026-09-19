@@ -624,6 +624,25 @@ pub mod gantt;
 /// ```
 pub mod gauge;
 
+/// Gradient rail with draggable color stops (design-tool /
+/// CSS gradient-editor idiom) — a horizontal color bar with a
+/// diamond handle per `(position, color)` stop. Dragging a handle
+/// moves its stop, clicking empty rail space inserts a sampled
+/// stop, and a double-click removes one (two-stop minimum). Any
+/// edit parks [`GradientEditor::take_changed`] and the selected
+/// index in `take_selected`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::gradient_editor::{GradientEditor, GradientStop};
+///
+/// let mut g = GradientEditor::new();
+/// g.add_stop(GradientStop::new(0.5, [255, 0, 0, 255]));
+/// assert_eq!(g.stop_count(), 3);
+/// ```
+pub mod gradient_editor;
+
 /// Column-grid layout container — Ant `Row`/`Col` style: a fixed
 /// column count with per-cell `col_span`/`row_span` and automatic
 /// left-to-right placement that wraps to fresh rows.
