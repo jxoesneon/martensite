@@ -385,6 +385,23 @@ pub mod flex;
 /// ```
 pub mod float_button;
 
+/// Wrap-flow cell container (GTK `FlowBox`) — children flow
+/// left-to-right at natural size and wrap when out of width, each
+/// row's height set by its tallest cell. Optional single-select
+/// cell semantics park the index in `take_selected`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::flow_box::FlowBox;
+/// use martensite::widgets::Text;
+/// use martensite::core::Widget;
+///
+/// let fb = FlowBox::new().child(Text::new("a")).child(Text::new("b"));
+/// assert_eq!(fb.child_count(), 2);
+/// ```
+pub mod flow_box;
+
 /// Labeled control row with a validation strip — the Ant `Form.Item`
 /// pattern: label (top or left column), one control child, and an
 /// error/hint message line that takes space only when it has content.
@@ -1371,6 +1388,7 @@ pub use empty_state::EmptyState;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use float_button::FloatButton;
+pub use flow_box::{FlowBox, FlowSelection};
 pub use form_field::{FormField, LabelPosition};
 pub use gauge::Gauge;
 pub use grid::{Grid, GridCell};
