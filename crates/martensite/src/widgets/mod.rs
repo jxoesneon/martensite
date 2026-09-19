@@ -531,6 +531,20 @@ pub mod stack;
 /// ```
 pub mod banner;
 
+/// Categorical column chart — labeled bars scaled to max with a
+/// baseline axis, the display-only KPI companion to `Sparkline`'s
+/// continuous trend line.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::bar_chart::BarChart;
+///
+/// let c = BarChart::new().bar("Q1", 12.0).bar("Q2", 30.0);
+/// assert_eq!(c.bar_count(), 2);
+/// ```
+pub mod bar_chart;
+
 /// Edge-bottom sheet with snap-point detents and a drag handle
 /// (Material bottom sheet).
 ///
@@ -1439,6 +1453,7 @@ pub use avatar::Avatar;
 pub use avatar_group::AvatarGroup;
 pub use badge::Badge;
 pub use banner::{Banner, Severity};
+pub use bar_chart::BarChart;
 pub use bottom_sheet::BottomSheet;
 pub use breadcrumb::Breadcrumb;
 pub use button::Button;
