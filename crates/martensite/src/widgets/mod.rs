@@ -550,6 +550,21 @@ pub mod font_button;
 /// ```
 pub mod form_field;
 
+/// Conversion-funnel chart — a vertical stack of centered
+/// trapezoids tapering with each stage's value (Ant `Funnel` /
+/// pipeline-chart idiom). Stage names and values paint beside each
+/// band; hovering a stage parks its index in `take_hovered`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::funnel_chart::FunnelChart;
+///
+/// let f = FunnelChart::new().stage("Visits", 1000.0).stage("Paid", 90.0);
+/// assert_eq!(f.stage_count(), 2);
+/// ```
+pub mod funnel_chart;
+
 /// Radial gauge display — value arc with zone colors, ticks, and a
 /// centered readout (WCT `RadialGauge`, SwiftUI `Gauge`).
 ///
@@ -1923,6 +1938,7 @@ pub use float_button::FloatButton;
 pub use flow_box::{FlowBox, FlowSelection};
 pub use font_button::FontButton;
 pub use form_field::{FormField, LabelPosition};
+pub use funnel_chart::FunnelChart;
 pub use gauge::Gauge;
 pub use grid::{Grid, GridCell};
 pub use group_box::GroupBox;
