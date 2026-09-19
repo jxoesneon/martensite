@@ -1120,6 +1120,22 @@ pub mod split_view;
 /// ```
 pub mod steps;
 
+/// Scrolling time-series trace (oscilloscope / strip-recorder
+/// idiom) — `push` appends to a bounded ring, the newest sample
+/// anchors the right edge and older data scrolls left, with a
+/// center grid line and pinned or auto-fit vertical range.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::strip_chart::StripChart;
+///
+/// let mut s = StripChart::new().capacity(60).range(-1.0, 1.0);
+/// s.push(0.5);
+/// assert_eq!(s.latest(), Some(0.5));
+/// ```
+pub mod strip_chart;
+
 /// Nested radial hierarchy chart (d3 sunburst / multi-level pie
 /// idiom) — root siblings partition the inner ring by weight and
 /// each node's children subdivide its angular span on the next
