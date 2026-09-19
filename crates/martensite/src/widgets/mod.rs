@@ -394,6 +394,20 @@ pub mod progress;
 /// ```
 pub mod separator;
 
+/// Preferences-page row + titled group — icon/title/subtitle rows
+/// with a trailing control (Libadwaita `ActionRow`/`PreferencesGroup`,
+/// WCT `SettingsCard`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::settings_row::{SettingsGroup, SettingsRow};
+///
+/// let g = SettingsGroup::new("General").row(SettingsRow::new("About"));
+/// assert_eq!(g.row_count(), 1);
+/// ```
+pub mod settings_row;
+
 /// Bottom-of-window status strip (QStatusBar / WPF `StatusBar`) —
 /// left zone widgets, a permanent/temporary message zone, and
 /// right-docked permanent widgets.
@@ -919,6 +933,7 @@ pub use scrollview::{ScrollBarWidget, ScrollView};
 pub use search_field::SearchField;
 pub use segmented::{Segment, Segmented};
 pub use separator::Separator;
+pub use settings_row::{SettingsGroup, SettingsRow};
 pub use skeleton::{Skeleton, SkeletonShape};
 pub use slider::{Slider, SliderOrientation};
 pub use spinbox::SpinBox;
