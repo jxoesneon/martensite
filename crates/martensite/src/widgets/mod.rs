@@ -915,6 +915,23 @@ pub mod breadcrumb;
 /// ```
 pub mod dialog;
 
+/// Unified-diff display (code-review idiom) — `Added` rows get a
+/// green wash, `Removed` a red wash, `Hunk` headers a muted tone,
+/// each with the leading marker character. Clicking a row parks
+/// its index in `take_selected`; mouse-wheel scrolls.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::diff_view::{DiffKind, DiffView};
+///
+/// let d = DiffView::new()
+///     .line(DiffKind::Removed, "old")
+///     .line(DiffKind::Added, "new");
+/// assert_eq!(d.tally(), (1, 1, 0, 0));
+/// ```
+pub mod diff_view;
+
 /// Collapsible section with a disclosure chevron.
 ///
 /// # Examples
