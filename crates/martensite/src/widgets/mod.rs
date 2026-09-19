@@ -1037,6 +1037,19 @@ pub mod tree_view;
 /// ```
 pub mod watermark;
 
+/// Vertically scrollable option drum that snaps to the centered row
+/// (iOS `UIPickerView`, SwiftUI wheel style).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::WheelPicker;
+///
+/// let w = WheelPicker::new().items(["a", "b"]);
+/// assert_eq!(w.item_count(), 2);
+/// ```
+pub mod wheel_picker;
+
 /// Multi-step flow — `Steps` header, one visible page, and a
 /// back/next/cancel footer (`QWizard`, Ant Steps+form idiom).
 ///
@@ -1129,4 +1142,5 @@ pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVE
 pub use tour::{Tour, TourStep};
 pub use tree_view::{TreeNode, TreeView};
 pub use watermark::Watermark;
+pub use wheel_picker::WheelPicker;
 pub use wizard::Wizard;
