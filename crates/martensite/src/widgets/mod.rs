@@ -746,6 +746,21 @@ pub mod ink_canvas;
 /// ```
 pub mod inline_edit;
 
+/// IPv4 dotted-quad entry (WinForms `IPAddressControl` idiom) —
+/// four [`SpinBox`] octets side by side with painted dot
+/// separators, reading out as `[u8; 4]` with an any-octet
+/// `take_changed` seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::ip_input::IpInput;
+///
+/// let ip = IpInput::new().value([192, 168, 1, 1]);
+/// assert_eq!(ip.text(), "192.168.1.1");
+/// ```
+pub mod ip_input;
+
 /// Z-ordered layering stack.
 ///
 /// # Examples
@@ -2118,6 +2133,7 @@ pub use heat_map::HeatMap;
 pub use image::{Image, ImageFit};
 pub use ink_canvas::{InkCanvas, Stroke};
 pub use inline_edit::InlineEdit;
+pub use ip_input::IpInput;
 pub use kbd::Kbd;
 pub use key_capture::KeyCapture;
 pub use keyboard_shortcuts::{KeyboardShortcuts, ShortcutGroup, ShortcutRow};
