@@ -449,6 +449,21 @@ pub mod command_link;
 /// ```
 pub mod command_palette;
 
+/// Cardinal heading indicator (navigation / embedded-instrument
+/// idiom) — `N E S W` letters and tick marks around a circular
+/// dial with a two-tone needle at `heading` degrees.
+/// Display-only companion to `AnalogClock`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::compass::Compass;
+///
+/// let c = Compass::new().heading(135.0);
+/// assert_eq!(c.cardinal(), "SE");
+/// ```
+pub mod compass;
+
 /// Box container layout primitive.
 ///
 /// # Examples
