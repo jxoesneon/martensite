@@ -94,6 +94,19 @@ pub enum OverlayAnchor {
     /// the anchor when it fits, flipped above when it does not, and
     /// finally clamped into the viewport.
     Bounds(Rect),
+    /// Popup anchored to a widget's window-space bounds on a preferred
+    /// [`AnchorEdge`] — placed on that edge when it fits, flipped to
+    /// the opposite edge when it does not, and finally clamped into
+    /// the viewport. Unlike [`Bounds`](Self::Bounds), which always
+    /// prefers below and left-aligns, this honours all four sides and
+    /// centres the popup on the anchor's cross axis — the popover
+    /// contract.
+    BoundsEdge {
+        /// Anchor rect in window space.
+        rect: Rect,
+        /// Preferred placement edge.
+        edge: AnchorEdge,
+    },
     /// Popup anchored to a pointer position, offset below-right and
     /// flipped/clamped into the viewport.
     Pointer(Vec2),
@@ -124,6 +137,30 @@ pub enum OverlayAnchor {
         /// viewport center lines for `Center`).
         margin: f32,
     },
+}
+
+/// The side of an anchor rect a [`OverlayAnchor::BoundsEdge`] popup
+/// prefers — `Top` places the popup *above* the rect, `Bottom` below,
+/// `Left`/`Right` beside it. When the preferred side does not fit the
+/// viewport the opposite edge is tried before the final clamp.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::overlay::AnchorEdge;
+///
+/// assert_ne!(AnchorEdge::Top, AnchorEdge::Bottom);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnchorEdge {
+    /// Above the anchor rect — popover "top" placement.
+    Top,
+    /// Below the anchor rect — the [`OverlayAnchor::Bounds`] direction.
+    Bottom,
+    /// To the anchor rect's left.
+    Left,
+    /// To the anchor rect's right.
+    Right,
 }
 
 /// Horizontal or vertical placement of a [`OverlayAnchor::Viewport`]
@@ -1154,6 +1191,62 @@ fn place(anchor: &OverlayAnchor, desired: Vec2, viewport: Rect, scale: f32) -> R
                 below_y
             };
             Vec2::new(a.min_x(), y)
+        }
+        OverlayAnchor::BoundsEdge { rect: a, edge } => {
+            let below_y = a.max_y() + gap;
+            let above_y = a.min_y() - size.y - gap;
+            let right_x = a.max_x() + gap;
+            let left_x = a.min_x() - size.x - gap;
+            let fits_below = below_y + size.y <= viewport.max_y();
+            let fits_above = above_y >= viewport.min_y();
+            let fits_right = right_x + size.x <= viewport.max_x();
+            let fits_left = left_x >= viewport.min_x();
+            // Popover cross-axis: centre on the anchor; the clamp
+            // below still pulls an over-wide popup back on screen.
+            let center_x = a.min_x() + (a.width() - size.x) / 2.0;
+            let center_y = a.min_y() + (a.height() - size.y) / 2.0;
+            match edge {
+                AnchorEdge::Bottom => Vec2::new(
+                    center_x,
+                    if fits_below {
+                        below_y
+                    } else if fits_above {
+                        above_y
+                    } else {
+                        below_y
+                    },
+                ),
+                AnchorEdge::Top => Vec2::new(
+                    center_x,
+                    if fits_above {
+                        above_y
+                    } else if fits_below {
+                        below_y
+                    } else {
+                        above_y
+                    },
+                ),
+                AnchorEdge::Right => Vec2::new(
+                    if fits_right {
+                        right_x
+                    } else if fits_left {
+                        left_x
+                    } else {
+                        right_x
+                    },
+                    center_y,
+                ),
+                AnchorEdge::Left => Vec2::new(
+                    if fits_left {
+                        left_x
+                    } else if fits_right {
+                        right_x
+                    } else {
+                        left_x
+                    },
+                    center_y,
+                ),
+            }
         }
         OverlayAnchor::Pointer(p) => Vec2::new(p.x + offset, p.y + offset),
         OverlayAnchor::Center => Vec2::new(
