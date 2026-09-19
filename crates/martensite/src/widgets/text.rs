@@ -717,6 +717,16 @@ impl Widget for Text {
         let color = self.color.map_or([0, 0, 0, 255], |c| c.to_srgba8());
         let origin = cx.bounds.origin;
 
+        // Glyphs are clipped to the widget's allocated rect — an
+        // unbreakable run wider than the layout can't spill past the
+        // right edge.
+        cx.list.push_clip(kurbo::Rect::new(
+            f64::from(cx.bounds.min_x()),
+            f64::from(cx.bounds.min_y()),
+            f64::from(cx.bounds.max_x()),
+            f64::from(cx.bounds.max_y()),
+        ));
+
         // Emit one GlyphRun per (line, font) segment — glyph runs must
         // share a single font, so a line that underwent font fallback is
         // split wherever `font_id` changes.
@@ -747,6 +757,8 @@ impl Widget for Text {
                 self.push_glyph_run(cx, run, font_id);
             }
         }
+
+        cx.list.pop_clip();
     }
 }
 

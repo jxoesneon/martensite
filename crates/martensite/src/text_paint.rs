@@ -340,6 +340,23 @@ pub(crate) fn paint_label(
     }
 }
 
+/// [`paint_label`] clipped to `clip` — for labels painted inside a
+/// fixed-size container (toast cards, dialog cards, input faces, tab
+/// slots), where an over-long string must not spill past the chrome.
+pub(crate) fn paint_label_clipped(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    list: &mut PaintList,
+    clip: kurbo::Rect,
+    origin: Point,
+    text: &str,
+    size_px: f32,
+    color: [u8; 4],
+) {
+    list.push_clip(clip);
+    paint_label(painter, list, origin, text, size_px, color);
+    list.pop_clip();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,6 +400,30 @@ mod tests {
             assert!(x >= prev, "caret moved backwards at byte {b}");
             prev = x;
         }
+    }
+
+    #[test]
+    fn paint_label_clipped_balances_clip() {
+        let mut list = PaintList::new();
+        paint_label_clipped(
+            None,
+            &mut list,
+            kurbo::Rect::new(10.0, 2.0, 50.0, 20.0),
+            Point::new(12.0, 4.0),
+            "label",
+            14.0,
+            [255; 4],
+        );
+        // ClipRect → text → PopClip, in order.
+        assert!(matches!(
+            list.commands[0],
+            martensite_core::paint::PaintCommand::ClipRect(r)
+                if r == kurbo::Rect::new(10.0, 2.0, 50.0, 20.0)
+        ));
+        assert!(matches!(
+            list.commands.last(),
+            Some(martensite_core::paint::PaintCommand::PopClip)
+        ));
     }
 
     #[test]

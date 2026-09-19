@@ -200,10 +200,19 @@ impl Widget for OptionItem {
             cx.color(TokenKey::TextColor, INK)
         };
         if let Some(label) = state.options.get(self.index) {
-            crate::text_paint::paint_label(
+            // Clip the option label to the row — a long option can't
+            // spill past the popup's right edge.
+            let text_x = b.min_x() + cx.pt(24.0);
+            crate::text_paint::paint_label_clipped(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
-                kurbo::Point::new(f64::from(b.min_x() + cx.pt(24.0)), f64::from(text_y)),
+                kurbo::Rect::new(
+                    f64::from(text_x),
+                    f64::from(b.min_y()),
+                    f64::from(b.max_x() - cx.pt(6.0)),
+                    f64::from(b.max_y()),
+                ),
+                kurbo::Point::new(f64::from(text_x), f64::from(text_y)),
                 label.as_str(),
                 font_px,
                 ink,
@@ -1116,11 +1125,20 @@ impl Widget for Dropdown {
             .unwrap_or(self.placeholder.as_str())
             .to_string();
         let font_px = cx.pt(14.0);
-        crate::text_paint::paint_label(
+        // Clip the selected label to the face minus the chevron zone —
+        // a long option can't spill past the field edge.
+        let text_x = b.min_x() + cx.pt(10.0);
+        crate::text_paint::paint_label_clipped(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
+            kurbo::Rect::new(
+                f64::from(text_x),
+                f64::from(b.min_y()),
+                f64::from(b.max_x() - cx.pt(24.0)),
+                f64::from(b.max_y()),
+            ),
             kurbo::Point::new(
-                f64::from(b.min_x() + cx.pt(10.0)),
+                f64::from(text_x),
                 f64::from(b.min_y() + (b.height() - font_px) / 2.0),
             ),
             &text,

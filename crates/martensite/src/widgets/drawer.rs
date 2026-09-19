@@ -234,11 +234,22 @@ impl Widget for Drawer {
             cx.color(TokenKey::BorderColor, EDGE),
         );
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        crate::text_paint::paint_label(
+        // Clip the title between the left pad and the close
+        // affordance — an over-long title can't spill past the
+        // header chrome.
+        let title_x = b.origin.x + cx.pt(14.0);
+        let cr = self.close_rect(cx.scale);
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
+            kurbo::Rect::new(
+                f64::from(title_x),
+                f64::from(b.origin.y),
+                f64::from(cr.origin.x - cx.pt(4.0)),
+                f64::from(b.origin.y + cx.pt(HEADER_H)),
+            ),
             kurbo::Point::new(
-                f64::from(b.origin.x + cx.pt(14.0)),
+                f64::from(title_x),
                 f64::from(b.origin.y + (cx.pt(HEADER_H) - cx.pt(15.0)) / 2.0),
             ),
             &self.title,
@@ -246,7 +257,6 @@ impl Widget for Drawer {
             cx.color(TokenKey::TextColor, INK),
         );
         // Close ×.
-        let cr = self.close_rect(cx.scale);
         let arm = 5.0 * cx.scale;
         let mid = cr.origin + cr.size / 2.0;
         let mut x = kurbo::BezPath::new();

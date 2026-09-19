@@ -247,11 +247,20 @@ impl Widget for CheckBox {
                 .push_stroke_path(tick, cx.pt(2.0), cx.color(TokenKey::AccentColor, ACCENT));
         }
 
-        crate::text_paint::paint_label(
+        // Clip the label to the widget bounds — a long label can't
+        // spill past the right edge.
+        let text_x = b.origin.x + box_px + cx.pt(LABEL_GAP);
+        crate::text_paint::paint_label_clipped(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
+            kurbo::Rect::new(
+                f64::from(text_x),
+                f64::from(b.origin.y),
+                f64::from(b.max_x()),
+                f64::from(b.max_y()),
+            ),
             kurbo::Point::new(
-                f64::from(b.origin.x + box_px + cx.pt(LABEL_GAP)),
+                f64::from(text_x),
                 f64::from(b.origin.y + (b.size.y - cx.pt(14.0)) / 2.0),
             ),
             &self.label,

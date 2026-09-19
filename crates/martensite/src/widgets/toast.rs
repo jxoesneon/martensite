@@ -354,11 +354,21 @@ impl Widget for ToastHost {
                 &Shape::ELLIPSE,
                 accent,
             );
-            crate::text_paint::paint_label(
+            // Clip the message to the card minus the leading dot and
+            // trailing pad — an over-long message can't spill past
+            // the card edge.
+            let text_x = r.origin.x + cx.pt(28.0);
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                kurbo::Rect::new(
+                    f64::from(text_x),
+                    f64::from(r.origin.y),
+                    f64::from(r.max_x() - cx.pt(8.0)),
+                    f64::from(r.max_y()),
+                ),
                 kurbo::Point::new(
-                    f64::from(r.origin.x + cx.pt(28.0)),
+                    f64::from(text_x),
                     f64::from(r.origin.y + (r.size.y - cx.pt(13.0)) / 2.0),
                 ),
                 &toast.message,

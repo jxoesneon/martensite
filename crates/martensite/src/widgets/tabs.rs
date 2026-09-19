@@ -202,11 +202,20 @@ impl Widget for TabItem {
                 .push_stroke_shape(rect, &tab_shape, cx.pt(2.0), wash);
         }
         let font_px = cx.pt(14.0);
-        crate::text_paint::paint_label(
+        // Clip the label to the tab slot — a long title can't spill
+        // into the neighbouring tab.
+        let text_x = b.min_x() + cx.pt(12.0);
+        crate::text_paint::paint_label_clipped(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
+            kurbo::Rect::new(
+                f64::from(text_x),
+                f64::from(b.min_y()),
+                f64::from(b.max_x() - cx.pt(8.0)),
+                f64::from(b.max_y()),
+            ),
             kurbo::Point::new(
-                f64::from(b.min_x() + cx.pt(12.0)),
+                f64::from(text_x),
                 f64::from(b.min_y() + (b.height() - font_px) / 2.0),
             ),
             &self.label,

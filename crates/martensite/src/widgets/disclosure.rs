@@ -197,11 +197,20 @@ impl Widget for Disclosure {
         cx.list
             .push_stroke_path(caret, cx.pt(1.5), cx.color(TokenKey::TextMutedColor, INK));
 
-        crate::text_paint::paint_label(
+        // Clip the title to the header row — an over-long title
+        // can't spill past the widget's right edge.
+        let title_x = cxl + cs + cx.pt(6.0);
+        crate::text_paint::paint_label_clipped(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
+            kurbo::Rect::new(
+                f64::from(title_x),
+                f64::from(h.origin.y),
+                f64::from(h.max_x() - cx.pt(4.0)),
+                f64::from(h.max_y()),
+            ),
             kurbo::Point::new(
-                f64::from(cxl + cs + cx.pt(6.0)),
+                f64::from(title_x),
                 f64::from(h.origin.y + (h.size.y - cx.pt(14.0)) / 2.0),
             ),
             &self.title,

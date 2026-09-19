@@ -87,7 +87,6 @@ fn word_span(text: &str, at: usize) -> (usize, usize) {
 /// assert_eq!(input.label, "Email");
 /// assert_eq!(input.value, "user@example.com");
 /// ```
-#[derive(Clone)]
 pub struct TextInput {
     /// The accessible label for the text input.
     pub label: String,
@@ -131,6 +130,38 @@ pub struct TextInput {
     /// Device pixels per logical point, cached in `layout` — pointer
     /// hit-testing needs it because `EventContext` carries no scale.
     scale: f32,
+    /// Horizontal scroll of the text run (device px, f32 bits) —
+    /// `paint` keeps the caret inside the field when the value is
+    /// wider than the interior. Atomic interior mutation because the
+    /// shaped offsets the scroll needs only exist in `PaintContext`
+    /// (`event` can't see the ambient painter), and `Widget` requires
+    /// `Sync`.
+    scroll_x: std::sync::atomic::AtomicU32,
+}
+
+impl Clone for TextInput {
+    fn clone(&self) -> Self {
+        Self {
+            label: self.label.clone(),
+            value: self.value.clone(),
+            placeholder: self.placeholder.clone(),
+            enabled: self.enabled,
+            read_only: self.read_only,
+            cached_bounds: self.cached_bounds,
+            text_painter: self.text_painter.clone(),
+            focused: self.focused,
+            cursor: self.cursor,
+            selection_anchor: self.selection_anchor,
+            shift_held: self.shift_held,
+            dragging: self.dragging,
+            drag_granularity: self.drag_granularity,
+            drag_word: self.drag_word,
+            scale: self.scale,
+            scroll_x: std::sync::atomic::AtomicU32::new(
+                self.scroll_x.load(std::sync::atomic::Ordering::Relaxed),
+            ),
+        }
+    }
 }
 
 impl TextInput {
@@ -162,6 +193,7 @@ impl TextInput {
             drag_granularity: SelectGranularity::Char,
             drag_word: None,
             scale: 1.0,
+            scroll_x: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -396,12 +428,25 @@ impl TextInput {
         }
     }
 
+    /// The text run's horizontal scroll in device px.
+    fn scroll_x(&self) -> f32 {
+        f32::from_bits(self.scroll_x.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Stores the text run's horizontal scroll in device px.
+    fn set_scroll_x(&self, v: f32) {
+        self.scroll_x
+            .store(v.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Byte offset of the insertion boundary nearest device-pixel `x`
     /// in window space. Shapes through the widget's painter so clicks
     /// land exactly where the glyphs are — the painter is created
     /// lazily so inputs that are never clicked skip the font scan.
     fn byte_at_position(&mut self, bounds: Rect, x: f32) -> usize {
-        let text_x = bounds.origin.x + TEXT_PAD_X * self.scale;
+        // `scroll_x` shifts the painted run left — add it back so a
+        // click lands on the glyph under the pointer.
+        let text_x = bounds.origin.x + TEXT_PAD_X * self.scale - self.scroll_x();
         let painter = self
             .text_painter
             .get_or_insert_with(crate::text_paint::shared_painter);
@@ -665,8 +710,40 @@ impl Widget for TextInput {
         // `DrawText` positions by the text run's top edge — centre the
         // 14 pt font box within the field.
         let font_px = cx.pt(FONT_PT);
+        let pad = cx.pt(TEXT_PAD_X);
         let text_y = b.origin.y + (b.size.y - font_px) / 2.0;
-        let text_x = b.origin.x + cx.pt(TEXT_PAD_X);
+        let text_x = b.origin.x + pad;
+
+        // Caret-following horizontal scroll — when the value is wider
+        // than the interior the run slides left so the caret stays
+        // inside the field (standard text-field behavior). Painted
+        // positions below all shift by `scroll`.
+        let caret_off = self.offset_x(cx, self.cursor, font_px);
+        let inner_w = (b.size.x - 2.0 * pad).max(0.0);
+        let mut scroll = self.scroll_x();
+        if caret_off - scroll > inner_w {
+            scroll = caret_off - inner_w;
+        }
+        if caret_off - scroll < 0.0 {
+            scroll = caret_off;
+        }
+        let scroll = scroll.max(0.0);
+        self.set_scroll_x(scroll);
+        let text_x = text_x - scroll;
+
+        // Everything inside the border is clipped to the face — the
+        // text run, selection band, and caret can never spill past
+        // the field edge.
+        let inset = cx.pt(1.0);
+        cx.list.push_clip_shape(
+            kurbo::Rect::new(
+                rect.x0 + f64::from(inset),
+                rect.y0 + f64::from(inset),
+                rect.x1 - f64::from(inset),
+                rect.y1 - f64::from(inset),
+            ),
+            &face,
+        );
 
         // Selection highlight behind the text — same shaped offsets
         // the caret uses, so the band aligns with the glyphs.
@@ -719,6 +796,7 @@ impl Widget for TextInput {
             cx.list
                 .push_stroke_path(caret, cx.pt(1.0), cx.color(TokenKey::TextColor, CARET));
         }
+        cx.list.pop_clip();
     }
 }
 
@@ -1040,6 +1118,29 @@ mod tests {
         input.event(&mut ev(&ime("a\nb\rc")));
         assert_eq!(input.value, "abc");
         assert_eq!(input.cursor, 3);
+    }
+
+    #[test]
+    fn text_input_hit_test_accounts_for_scroll() {
+        let mut hot = HotNode::default();
+        let mut cx = make_cx(&mut hot);
+        let mut input = TextInput::new("F").value("alpha beta gamma delta epsilon");
+        let bounds = Rect::new(0.0, 0.0, 60.0, 24.0);
+        input.layout(&mut cx, bounds);
+
+        // No scroll — a click near the left edge maps near the start.
+        let unscrolled = input.byte_at_position(bounds, TEXT_PAD_X + 5.0);
+        // Scroll the run left 40px — the same click lands 40px further
+        // in, matching an un-scrolled click at x+40.
+        input.set_scroll_x(40.0);
+        let scrolled = input.byte_at_position(bounds, TEXT_PAD_X + 5.0);
+        assert!(scrolled > unscrolled, "scroll did not shift hit-test");
+        input.set_scroll_x(0.0);
+        assert_eq!(
+            scrolled,
+            input.byte_at_position(bounds, TEXT_PAD_X + 45.0),
+            "scrolled hit-test disagrees with un-scrolled equivalent"
+        );
     }
 
     #[test]

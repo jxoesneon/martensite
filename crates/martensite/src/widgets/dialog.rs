@@ -285,9 +285,18 @@ impl Widget for Dialog {
         );
 
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        crate::text_paint::paint_label(
+        // Title and body are clipped to the card interior — an
+        // over-long string can't spill past the rounded chrome.
+        let interior = kurbo::Rect::new(
+            f64::from(b.origin.x + cx.pt(PAD)),
+            f64::from(b.origin.y),
+            f64::from(b.max_x() - cx.pt(PAD)),
+            f64::from(b.max_y()),
+        );
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
+            interior,
             kurbo::Point::new(
                 f64::from(b.origin.x + cx.pt(PAD)),
                 f64::from(b.origin.y + cx.pt(PAD) * 0.75),
@@ -297,9 +306,15 @@ impl Widget for Dialog {
             cx.color(TokenKey::TextColor, INK),
         );
         if self.child.is_none() && !self.body.is_empty() {
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                kurbo::Rect::new(
+                    f64::from(self.body_rect.origin.x),
+                    f64::from(self.body_rect.origin.y),
+                    f64::from(self.body_rect.max_x()),
+                    f64::from(self.body_rect.max_y()),
+                ),
                 kurbo::Point::new(
                     f64::from(self.body_rect.origin.x),
                     f64::from(self.body_rect.origin.y),
@@ -334,9 +349,15 @@ impl Widget for Dialog {
                 cx.pt(1.0),
                 cx.color(TokenKey::BorderColor, [110, 115, 125, 255]),
             );
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                kurbo::Rect::new(
+                    f64::from(r.origin.x + cx.pt(12.0)),
+                    f64::from(r.origin.y),
+                    f64::from(r.max_x() - cx.pt(8.0)),
+                    f64::from(r.max_y()),
+                ),
                 kurbo::Point::new(
                     f64::from(r.origin.x + cx.pt(12.0)),
                     f64::from(r.origin.y + (r.size.y - cx.pt(13.0)) / 2.0),

@@ -234,12 +234,20 @@ impl Widget for Button {
 
         // The label is left-aligned inside the face and vertically
         // centred — `DrawText` positions by the text run's top edge, so
-        // centre the font box within the face.
-        crate::text_paint::paint_label(
+        // centre the font box within the face. Clipped to the face
+        // interior — a long label can't spill past the rounded edge.
+        let text_x = b.origin.x + cx.pt(TEXT_PAD_X);
+        crate::text_paint::paint_label_clipped(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
+            kurbo::Rect::new(
+                f64::from(text_x),
+                f64::from(b.origin.y),
+                f64::from(b.max_x() - cx.pt(TEXT_PAD_X)),
+                f64::from(b.max_y()),
+            ),
             kurbo::Point::new(
-                f64::from(b.origin.x + cx.pt(TEXT_PAD_X)),
+                f64::from(text_x),
                 f64::from(b.origin.y + (b.size.y - cx.pt(14.0)) / 2.0),
             ),
             &self.label,
