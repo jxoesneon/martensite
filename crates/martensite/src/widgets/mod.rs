@@ -552,6 +552,20 @@ pub mod group_box;
 /// ```
 pub mod header_bar;
 
+/// Intensity grid — GitHub contribution-graph / d3-heatmap cells
+/// mapped through a sequential ramp, with cell hover hit-testing for
+/// tooltips.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::heat_map::HeatMap;
+///
+/// let hm = HeatMap::new(7, 52).set(0, 0, 5.0);
+/// assert_eq!(hm.get(0, 0), 5.0);
+/// ```
+pub mod heat_map;
+
 /// Raster image display with aspect-fit modes (`Contain`, `Cover`,
 /// `Fill`, `None`).
 ///
@@ -1664,6 +1678,7 @@ pub use gauge::Gauge;
 pub use grid::{Grid, GridCell};
 pub use group_box::GroupBox;
 pub use header_bar::HeaderBar;
+pub use heat_map::HeatMap;
 pub use image::{Image, ImageFit};
 pub use inline_edit::InlineEdit;
 pub use kbd::Kbd;
