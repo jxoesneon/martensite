@@ -56,6 +56,32 @@
 /// ```
 pub mod accordion;
 
+/// Circular user avatar — image content clipped to the silhouette, or
+/// initials on an accent disc.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::avatar::Avatar;
+///
+/// let a = Avatar::new("Ada Lovelace");
+/// assert_eq!(a.name, "Ada Lovelace");
+/// ```
+pub mod avatar;
+
+/// Notification badge — count pill, capped `99+`, or bare dot,
+/// standalone or anchored to a wrapped child's top-right corner.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::badge::Badge;
+///
+/// let b = Badge::new(5);
+/// assert_eq!(b.text(), "5");
+/// ```
+pub mod badge;
+
 /// Interactive button widget.
 ///
 /// # Examples
@@ -117,6 +143,18 @@ pub mod chip;
 /// ```
 pub mod container;
 
+/// Right-click context-menu trigger wrapping a content child.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{ContextMenu, MenuItem, Text};
+///
+/// let m = ContextMenu::new(Text::new("area"), vec![MenuItem::action("Copy")]);
+/// assert!(!m.is_open());
+/// ```
+pub mod context_menu;
+
 /// Flexbox row and column layout.
 ///
 /// # Examples
@@ -140,6 +178,20 @@ pub mod flex;
 /// assert_eq!(gb.title, "Options");
 /// ```
 pub mod group_box;
+
+/// Raster image display with aspect-fit modes (`Contain`, `Cover`,
+/// `Fill`, `None`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::image::Image;
+/// use martensite_core::ImageData;
+///
+/// let data = ImageData::from_rgba(1, 1, vec![0, 0, 0, 255]).unwrap();
+/// let i = Image::new(data);
+/// ```
+pub mod image;
 
 /// Z-ordered layering stack.
 ///
@@ -280,6 +332,17 @@ pub mod text_input;
 /// let widget = ExternalEngine::new(handle, surface);
 /// ```
 pub mod external;
+/// Virtualized selectable list of string rows (APG listbox).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::ListView;
+///
+/// let l = ListView::new().items(["A", "B", "C"]);
+/// assert_eq!(l.item_count(), 3);
+/// ```
+pub mod list_view;
 
 /// Hardware video presentation widget.
 ///
@@ -291,6 +354,31 @@ pub mod external;
 /// let view = MediaView::new();
 /// ```
 pub mod media;
+
+/// Menu item model and the `Role::Menu` popup surface (items,
+/// submenus, checkables, radios, separators, headings).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Menu, MenuItem};
+///
+/// let m = Menu::new([MenuItem::action("Open")]);
+/// assert_eq!(m.item_count(), 1);
+/// ```
+pub mod menu;
+
+/// Horizontal menu strip (QMenuBar/NSMenuBar) driving `Menu` popups.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{MenuBar, MenuItem};
+///
+/// let bar = MenuBar::new().menu("File", vec![MenuItem::action("Open")]);
+/// assert_eq!(bar.menu_count(), 1);
+/// ```
+pub mod menu_bar;
 
 /// ARIA APG slider widget.
 ///
@@ -405,13 +493,28 @@ pub mod toggle_button;
 /// ```
 pub mod tooltip;
 
+/// Virtualized hierarchical tree of labelled nodes (APG tree view).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{TreeNode, TreeView};
+///
+/// let t = TreeView::new().roots(vec![TreeNode::new("root")]);
+/// assert_eq!(t.visible_row_count(), 1);
+/// ```
+pub mod tree_view;
+
 pub use accordion::Accordion;
+pub use avatar::Avatar;
+pub use badge::Badge;
 pub use banner::{Banner, Severity};
 pub use button::Button;
 pub use card::{Card, CardVariant};
 pub use checkbox::{CheckBox, CheckState};
 pub use chip::{Chip, ChipKind};
 pub use container::Container;
+pub use context_menu::ContextMenu;
 pub use dialog::Dialog;
 pub use disclosure::Disclosure;
 pub use drawer::Drawer;
@@ -419,7 +522,11 @@ pub use dropdown::Dropdown;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use group_box::GroupBox;
+pub use image::{Image, ImageFit};
+pub use list_view::{ListView, SelectionMode, SelectionModel};
 pub use media::{MediaView, VideoFit};
+pub use menu::{Menu, MenuItem, MenuPath, MenuState};
+pub use menu_bar::MenuBar;
 pub use progress::{ProgressBar, Spinner};
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
@@ -436,3 +543,4 @@ pub use text_input::TextInput;
 pub use toast::{Toast, ToastHost};
 pub use toggle_button::ToggleButton;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
+pub use tree_view::{TreeNode, TreeView};
