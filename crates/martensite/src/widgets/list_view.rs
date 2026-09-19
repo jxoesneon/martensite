@@ -626,7 +626,11 @@ impl ListView {
     pub fn set_row_height(&mut self, height: f32) {
         // Preserve the top row across the change (the DataTable rule:
         // offsets are pixels, so rescale on a row-height change).
-        let new = if height.is_finite() { height.max(1.0) } else { ROW_H };
+        let new = if height.is_finite() {
+            height.max(1.0)
+        } else {
+            ROW_H
+        };
         let old_px = self.row_height * self.scale;
         let new_px = new * self.scale;
         if old_px > 0.0 && new_px > 0.0 && new_px != old_px {
@@ -1577,7 +1581,7 @@ impl Widget for ListView {
                     // Point is in this widget's coordinate space.
                     let i = ((point.y - self.viewport.min_y() + self.scroll_y)
                         / self.row_px().max(f32::EPSILON))
-                        .max(0.0) as usize;
+                    .max(0.0) as usize;
                     self.ensure_visible(i.min(self.items.len().saturating_sub(1)));
                     EventResponse::RequestRepaint
                 }
@@ -1950,9 +1954,8 @@ mod tests {
         let ev = WidgetEvent::SemanticAction(SemanticAction::ScrollDown);
         event(&mut l, &ev);
         assert_eq!(l.scroll_offset(), 24.0);
-        let ev = WidgetEvent::SemanticAction(SemanticAction::SetScrollOffset(Vec2::new(
-            0.0, 120.0,
-        )));
+        let ev =
+            WidgetEvent::SemanticAction(SemanticAction::SetScrollOffset(Vec2::new(0.0, 120.0)));
         event(&mut l, &ev);
         assert_eq!(l.scroll_offset(), 120.0);
     }

@@ -368,7 +368,8 @@ impl Widget for TreeItemRow {
                 path.line_to((cxm - s * 0.6, cy + s));
             }
             path.close_path();
-            cx.list.push_path(path, cx.color(TokenKey::TextMutedColor, TRI_INK));
+            cx.list
+                .push_path(path, cx.color(TokenKey::TextMutedColor, TRI_INK));
         }
         // `DrawText` positions by the run's top edge — centre the font
         // box inside the row, clipped so a long label can't spill.
@@ -798,7 +799,11 @@ impl TreeView {
     /// ```
     pub fn set_row_height(&mut self, height: f32) {
         // Preserve the top row across the change (offsets are pixels).
-        let new = if height.is_finite() { height.max(1.0) } else { ROW_H };
+        let new = if height.is_finite() {
+            height.max(1.0)
+        } else {
+            ROW_H
+        };
         let old_px = self.row_height * self.scale;
         let new_px = new * self.scale;
         if old_px > 0.0 && new_px > 0.0 && new_px != old_px {
@@ -1581,11 +1586,7 @@ impl Widget for TreeView {
                 if let Some(i) = self.row_at(*position) {
                     // The disclosure triangle toggles without moving
                     // the selection — the platform-tree convention.
-                    if *count == 1
-                        && self
-                            .triangle_rect(i)
-                            .is_some_and(|r| r.contains(*position))
-                    {
+                    if *count == 1 && self.triangle_rect(i).is_some_and(|r| r.contains(*position)) {
                         let path = self.flat[i].path.clone();
                         self.toggle(&path);
                         return EventResponse::CaptureFocus;
@@ -1759,7 +1760,7 @@ impl Widget for TreeView {
                     // Point is in this widget's coordinate space.
                     let i = ((point.y - self.viewport.min_y() + self.scroll_y)
                         / self.row_px().max(f32::EPSILON))
-                        .max(0.0) as usize;
+                    .max(0.0) as usize;
                     self.ensure_visible(i.min(self.flat.len().saturating_sub(1)));
                     EventResponse::RequestRepaint
                 }
@@ -2005,11 +2006,8 @@ mod tests {
     #[test]
     fn wheel_scrolls_virtualized_rows() {
         // 100 roots → tall content in a short viewport.
-        let mut t = TreeView::new().roots(
-            (0..100)
-                .map(|i| TreeNode::new(format!("n{i}")))
-                .collect(),
-        );
+        let mut t =
+            TreeView::new().roots((0..100).map(|i| TreeNode::new(format!("n{i}"))).collect());
         laid_out(&mut t, 240.0, 96.0);
         assert_eq!(t.visible_range(), 0..4);
         let ev = WidgetEvent::Scroll {
@@ -2027,10 +2025,7 @@ mod tests {
     fn collapse_of_scrolled_tree_clamps() {
         let mut t = TreeView::new().roots(
             (0..100)
-                .map(|i| {
-                    TreeNode::new(format!("n{i}"))
-                        .with_children(vec![TreeNode::new("c")])
-                })
+                .map(|i| TreeNode::new(format!("n{i}")).with_children(vec![TreeNode::new("c")]))
                 .collect(),
         );
         laid_out(&mut t, 240.0, 96.0);

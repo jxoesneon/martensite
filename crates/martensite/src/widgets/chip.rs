@@ -337,8 +337,7 @@ impl Widget for Chip {
                 self.selected_changed = Some(self.selected);
                 EventResponse::RequestRepaint
             }
-            WidgetEvent::KeyPressed { .. }
-            | WidgetEvent::SemanticAction(SemanticAction::Click) => {
+            WidgetEvent::KeyPressed { .. } | WidgetEvent::SemanticAction(SemanticAction::Click) => {
                 self.selected = !self.selected;
                 self.selected_changed = Some(self.selected);
                 EventResponse::RequestRepaint

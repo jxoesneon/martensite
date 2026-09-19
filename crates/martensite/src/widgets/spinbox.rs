@@ -521,7 +521,10 @@ impl SpinBox {
     fn parse_text(&self) -> Option<f64> {
         let mut t = self.input.value.trim();
         if !self.prefix.is_empty() {
-            t = t.strip_prefix(self.prefix.as_str()).unwrap_or(t).trim_start();
+            t = t
+                .strip_prefix(self.prefix.as_str())
+                .unwrap_or(t)
+                .trim_start();
         }
         if !self.suffix.is_empty() {
             t = t.strip_suffix(self.suffix.as_str()).unwrap_or(t).trim_end();
@@ -1137,9 +1140,12 @@ mod tests {
         assert_eq!(sb.text(), "$0.0 ms");
         event(&mut sb, &WidgetEvent::FocusGained);
         event(&mut sb, &key("SelectAll"));
-        event(&mut sb, &WidgetEvent::ImeCommitted {
-            text: "$12.5 ms".into(),
-        });
+        event(
+            &mut sb,
+            &WidgetEvent::ImeCommitted {
+                text: "$12.5 ms".into(),
+            },
+        );
         event(&mut sb, &key("Enter"));
         assert_eq!(sb.value(), 12.5);
         assert_eq!(sb.text(), "$12.5 ms");
@@ -1173,9 +1179,15 @@ mod tests {
     fn semantic_actions_step_and_set() {
         let mut sb = SpinBox::new().range(0.0, 10.0).with_value(5.0);
         laid_out(&mut sb, 140.0, 24.0);
-        event(&mut sb, &WidgetEvent::SemanticAction(SemanticAction::Increment));
+        event(
+            &mut sb,
+            &WidgetEvent::SemanticAction(SemanticAction::Increment),
+        );
         assert_eq!(sb.value(), 6.0);
-        event(&mut sb, &WidgetEvent::SemanticAction(SemanticAction::Decrement));
+        event(
+            &mut sb,
+            &WidgetEvent::SemanticAction(SemanticAction::Decrement),
+        );
         assert_eq!(sb.value(), 5.0);
         event(
             &mut sb,
@@ -1223,10 +1235,7 @@ mod tests {
         let mut sb = SpinBox::new();
         laid_out(&mut sb, 140.0, 24.0);
         assert_eq!(sb.child_count(), 1);
-        assert_eq!(
-            sb.child_bounds(0),
-            Some(Rect::new(0.0, 0.0, 120.0, 24.0))
-        );
+        assert_eq!(sb.child_bounds(0), Some(Rect::new(0.0, 0.0, 120.0, 24.0)));
         // A press inside the field reaches the TextInput.
         assert_eq!(
             event(&mut sb, &press(10.0, 12.0)),

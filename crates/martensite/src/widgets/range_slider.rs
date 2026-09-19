@@ -358,7 +358,11 @@ impl RangeSlider {
     /// assert!(rs.low() <= rs.high());
     /// ```
     pub fn set_range(&mut self, low: f64, high: f64) {
-        let (low, high) = if low <= high { (low, high) } else { (high, low) };
+        let (low, high) = if low <= high {
+            (low, high)
+        } else {
+            (high, low)
+        };
         self.set_high(high);
         self.set_low(low);
     }
@@ -502,8 +506,12 @@ impl RangeSlider {
     /// A tie goes to `Low`, matching "the value under the pointer
     /// starts editing" intuition at the collapsed-thumb case.
     fn nearest_thumb(&self, position: Vec2) -> RangeThumb {
-        let dl = self.thumb_center(RangeThumb::Low).distance_squared(position);
-        let dh = self.thumb_center(RangeThumb::High).distance_squared(position);
+        let dl = self
+            .thumb_center(RangeThumb::Low)
+            .distance_squared(position);
+        let dh = self
+            .thumb_center(RangeThumb::High)
+            .distance_squared(position);
         if dh < dl {
             RangeThumb::High
         } else {
@@ -935,8 +943,7 @@ mod tests {
 
     #[test]
     fn vertical_increases_upward() {
-        let mut rs =
-            RangeSlider::new(0.0, 100.0).orientation(SliderOrientation::Vertical);
+        let mut rs = RangeSlider::new(0.0, 100.0).orientation(SliderOrientation::Vertical);
         laid_out(&mut rs, 24.0, 116.0);
         // Press near the top → fraction ~1.0. Thumbs are equidistant
         // only by value; nearest by position picks high (at top).
@@ -949,7 +956,10 @@ mod tests {
     fn semantic_actions_target_active_thumb() {
         let mut rs = RangeSlider::new(0.0, 10.0).with_range(4.0, 6.0);
         laid_out(&mut rs, 116.0, 24.0);
-        event(&mut rs, &WidgetEvent::SemanticAction(SemanticAction::Increment));
+        event(
+            &mut rs,
+            &WidgetEvent::SemanticAction(SemanticAction::Increment),
+        );
         assert_eq!(rs.low(), 5.0);
         event(&mut rs, &key("Tab"));
         event(

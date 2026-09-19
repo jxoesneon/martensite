@@ -12,6 +12,7 @@
 //! ```
 //! use martensite::widgets::accordion::Accordion;
 //! use martensite::widgets::text::Text;
+//! use martensite_core::widget::Widget;
 //!
 //! let a = Accordion::new()
 //!     .section("General", Text::new("general settings"))

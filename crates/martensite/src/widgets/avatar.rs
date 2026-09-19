@@ -112,7 +112,11 @@ impl Avatar {
     /// ```
     #[must_use]
     pub fn image(mut self, image: ImageData) -> Self {
-        self.image = Some(Image::new(image).fit(ImageFit::Cover).alt(self.name.clone()));
+        self.image = Some(
+            Image::new(image)
+                .fit(ImageFit::Cover)
+                .alt(self.name.clone()),
+        );
         self
     }
 

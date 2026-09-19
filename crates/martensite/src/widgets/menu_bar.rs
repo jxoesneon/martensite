@@ -235,10 +235,7 @@ impl MenuBar {
     /// popups emit real glyph runs.
     #[must_use]
     pub fn with_text_painter(mut self, painter: crate::text_paint::SharedTextPainter) -> Self {
-        self.stack = MenuStack::new(
-            self.stack.shared(),
-            Some(painter.clone()),
-        );
+        self.stack = MenuStack::new(self.stack.shared(), Some(painter.clone()));
         self.text_painter = Some(painter);
         self
     }
@@ -437,8 +434,8 @@ impl Widget for MenuBar {
         self.button_bounds.clear();
         let mut x = bounds.min_x();
         for (i, button) in self.buttons.iter_mut().enumerate() {
-            let w = self.menus[i].label.chars().count() as f32 * cx.pt(7.2)
-                + cx.pt(2.0 * BUTTON_PAD_X);
+            let w =
+                self.menus[i].label.chars().count() as f32 * cx.pt(7.2) + cx.pt(2.0 * BUTTON_PAD_X);
             let rect = Rect::new(x, bounds.min_y(), w, bounds.height());
             self.button_bounds.push(rect);
             cx.layout_child(button, rect);
@@ -534,8 +531,7 @@ impl Widget for MenuBar {
                         // consumed Up/Down/Enter; Left/Right only fall
                         // through at the root level or on non-submenu
                         // rows — the menubar convention).
-                        let next =
-                            (active as i64 + delta).rem_euclid(n as i64) as usize;
+                        let next = (active as i64 + delta).rem_euclid(n as i64) as usize;
                         self.open_menu(next, false);
                     } else {
                         let cur = self.focused.unwrap_or(0) as i64;
@@ -625,8 +621,7 @@ impl Widget for MenuBar {
                 continue;
             };
             let open = self.active == Some(i);
-            let flagged = self.hovered == Some(i)
-                || (!self.is_open() && self.focused == Some(i));
+            let flagged = self.hovered == Some(i) || (!self.is_open() && self.focused == Some(i));
             let ink = if open {
                 let pill = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 4.0));
                 let fill = kurbo::Rect::new(
@@ -762,11 +757,17 @@ mod tests {
         laid_out(&mut bar);
         // Button 0 spans the left edge.
         let r = bar.button_bounds[0];
-        assert_eq!(press_at(&mut bar, r.min_x() + 4.0), EventResponse::CaptureFocus);
+        assert_eq!(
+            press_at(&mut bar, r.min_x() + 4.0),
+            EventResponse::CaptureFocus
+        );
         assert_eq!(bar.active_menu(), Some(0));
         assert!(bar.is_open());
         // Pressing the open button closes.
-        assert_eq!(press_at(&mut bar, r.min_x() + 4.0), EventResponse::CaptureFocus);
+        assert_eq!(
+            press_at(&mut bar, r.min_x() + 4.0),
+            EventResponse::CaptureFocus
+        );
         assert!(!bar.is_open());
         assert_eq!(bar.active_menu(), None);
     }
@@ -776,12 +777,15 @@ mod tests {
         let mut bar = bar();
         laid_out(&mut bar);
         // Closed: arrows move the button focus.
-        assert_eq!(event(&mut bar, &key("ArrowRight")), EventResponse::RequestRepaint);
+        assert_eq!(
+            event(&mut bar, &key("ArrowRight")),
+            EventResponse::RequestRepaint
+        );
         assert_eq!(bar.focused, Some(1));
         event(&mut bar, &key("ArrowLeft"));
         event(&mut bar, &key("ArrowLeft"));
         assert_eq!(bar.focused, Some(2)); // wraps
-        // Open a menu — arrows switch between menus.
+                                          // Open a menu — arrows switch between menus.
         bar.open_menu(0, true);
         event(&mut bar, &key("ArrowRight"));
         assert_eq!(bar.active_menu(), Some(1));
@@ -809,7 +813,10 @@ mod tests {
         let mut bar = bar();
         laid_out(&mut bar);
         bar.open_menu(0, true);
-        assert_eq!(event(&mut bar, &key("Escape")), EventResponse::RequestRepaint);
+        assert_eq!(
+            event(&mut bar, &key("Escape")),
+            EventResponse::RequestRepaint
+        );
         assert!(!bar.is_open());
     }
 
@@ -827,11 +834,7 @@ mod tests {
         // Popup hangs below the button.
         assert!(b.min_y() >= bar.button_bounds[0].max_y());
         // Activate through the shared state (as a row would).
-        bar.stack
-            .shared()
-            .lock()
-            .unwrap()
-            .activate_for_test(1);
+        bar.stack.shared().lock().unwrap().activate_for_test(1);
         bar.sync_overlay(&mut o);
         assert_eq!(bar.take_activated(), Some(vec![1]));
         assert!(!bar.is_open());
@@ -842,7 +845,10 @@ mod tests {
     fn checkable_state_persists_across_open() {
         let mut bar = MenuBar::new().menu(
             "View",
-            vec![MenuItem::checkable("Sidebar", false), MenuItem::action("Zoom")],
+            vec![
+                MenuItem::checkable("Sidebar", false),
+                MenuItem::action("Zoom"),
+            ],
         );
         laid_out(&mut bar);
         let mut o = overlay();
@@ -850,11 +856,7 @@ mod tests {
         bar.sync_overlay(&mut o);
         o.layout_pass();
         // Toggle the checkable through the live state.
-        bar.stack
-            .shared()
-            .lock()
-            .unwrap()
-            .activate_for_test(0);
+        bar.stack.shared().lock().unwrap().activate_for_test(0);
         bar.sync_overlay(&mut o);
         assert_eq!(bar.take_activated(), Some(vec![0]));
         // Reopen — the toggle persisted back into the canonical items.

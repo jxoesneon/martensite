@@ -310,6 +310,17 @@ pub mod toast;
 /// ```
 pub mod text;
 
+/// Multiline plain-text editor widget.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::text_area::TextArea;
+///
+/// let area = TextArea::new();
+/// ```
+pub mod text_area;
+
 /// Editable text input widget.
 ///
 /// # Examples
@@ -539,6 +550,7 @@ pub use stack::Stack;
 pub use switch::Switch;
 pub use tabs::{TabActivation, TabItem, Tabs};
 pub use text::Text;
+pub use text_area::TextArea;
 pub use text_input::TextInput;
 pub use toast::{Toast, ToastHost};
 pub use toggle_button::ToggleButton;

@@ -186,8 +186,7 @@ impl ContextMenu {
     /// ```
     pub fn open_at(&mut self, position: Vec2) {
         self.last_pointer = Some(position);
-        self.stack
-            .open_at(OverlayAnchor::Pointer(position), false);
+        self.stack.open_at(OverlayAnchor::Pointer(position), false);
     }
 
     /// Opens the menu at the last pointer position (keyboard/AT path),
@@ -209,8 +208,7 @@ impl ContextMenu {
                 self.cached_bounds.min_y() + self.cached_bounds.height() / 2.0,
             )
         });
-        self.stack
-            .open_at(OverlayAnchor::Pointer(position), true);
+        self.stack.open_at(OverlayAnchor::Pointer(position), true);
     }
 
     /// Closes the menu.
@@ -442,7 +440,10 @@ mod tests {
     fn semantic_show_context_menu() {
         let mut m = menu();
         laid_out(&mut m);
-        let r = event(&mut m, &WidgetEvent::SemanticAction(SemanticAction::ShowContextMenu));
+        let r = event(
+            &mut m,
+            &WidgetEvent::SemanticAction(SemanticAction::ShowContextMenu),
+        );
         assert_eq!(r, EventResponse::RequestRepaint);
         assert!(m.is_open());
     }
@@ -468,11 +469,7 @@ mod tests {
         m.open_at(Vec2::new(100.0, 100.0));
         m.sync_overlay(&mut o);
         o.layout_pass();
-        m.stack
-            .shared()
-            .lock()
-            .unwrap()
-            .activate_for_test(0);
+        m.stack.shared().lock().unwrap().activate_for_test(0);
         m.sync_overlay(&mut o);
         assert_eq!(m.take_activated(), Some(vec![0]));
         assert!(!m.is_open());

@@ -405,11 +405,7 @@ impl Widget for Card {
         // Action row pinned to the interior bottom, right-aligned as a
         // group in declaration order (first button leftmost).
         let gap = cx.pt(ACTION_GAP);
-        let actions_h = self
-            .action_sizes
-            .iter()
-            .map(|s| s.y)
-            .fold(0.0f32, f32::max);
+        let actions_h = self.action_sizes.iter().map(|s| s.y).fold(0.0f32, f32::max);
         let row_y = if self.actions.is_empty() {
             inner.max_y()
         } else {
@@ -471,12 +467,8 @@ impl Widget for Card {
                 // No elevation/shadow token exists yet — fake the lift
                 // with a translucent shape offset 1.5pt below the card.
                 let drop = cx.ptf(1.5);
-                let shadow_rect = kurbo::Rect::new(
-                    rect.x0,
-                    rect.y0 + drop,
-                    rect.x1,
-                    rect.y1 + drop,
-                );
+                let shadow_rect =
+                    kurbo::Rect::new(rect.x0, rect.y0 + drop, rect.x1, rect.y1 + drop);
                 cx.list.push_fill_shape(shadow_rect, &shape, SHADOW);
                 cx.list.push_fill_shape(rect, &shape, surface);
             }

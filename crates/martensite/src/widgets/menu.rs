@@ -582,11 +582,7 @@ impl MenuState {
         if sel.is_empty() {
             return;
         }
-        let row = if first {
-            sel[0]
-        } else {
-            sel[sel.len() - 1]
-        };
+        let row = if first { sel[0] } else { sel[sel.len() - 1] };
         self.set_highlight(depth, Some(row));
     }
 
@@ -778,24 +774,22 @@ impl MenuState {
                     EventResponse::Ignored
                 }
             }
-            "Enter" | " " | "Space" => {
-                match self.highlighted(depth) {
-                    Some(row) => {
-                        let is_sub = self
-                            .items_at(depth)
-                            .and_then(|items| items.get(row))
-                            .is_some_and(MenuItem::is_submenu);
-                        if is_sub {
-                            self.open_submenu(depth, row, true);
-                            EventResponse::RequestRepaint
-                        } else {
-                            self.activate(depth, row);
-                            EventResponse::Handled
-                        }
+            "Enter" | " " | "Space" => match self.highlighted(depth) {
+                Some(row) => {
+                    let is_sub = self
+                        .items_at(depth)
+                        .and_then(|items| items.get(row))
+                        .is_some_and(MenuItem::is_submenu);
+                    if is_sub {
+                        self.open_submenu(depth, row, true);
+                        EventResponse::RequestRepaint
+                    } else {
+                        self.activate(depth, row);
+                        EventResponse::Handled
                     }
-                    None => EventResponse::Ignored,
                 }
-            }
+                None => EventResponse::Ignored,
+            },
             k if k.chars().count() == 1 => {
                 let c = k.chars().next().unwrap_or_default();
                 if c.is_ascii_alphanumeric() && self.typeahead_select(depth, c) {
@@ -938,9 +932,7 @@ impl Widget for MenuRow {
                 node.set_role(accesskit::Role::MenuItem);
                 node.set_label(label.as_str());
                 node.set_has_popup(accesskit::HasPopup::Menu);
-                node.set_expanded(
-                    state.open_path.get(self.depth) == Some(&self.index),
-                );
+                node.set_expanded(state.open_path.get(self.depth) == Some(&self.index));
                 node.add_action(accesskit::Action::Click);
                 node.add_action(accesskit::Action::Expand);
                 node.add_action(accesskit::Action::Collapse);
@@ -1005,10 +997,7 @@ impl Widget for MenuRow {
                 button: PointerButton::Primary,
                 ..
             } => {
-                let selectable = self
-                    .item()
-                    .as_ref()
-                    .is_some_and(MenuItem::is_selectable);
+                let selectable = self.item().as_ref().is_some_and(MenuItem::is_selectable);
                 if selectable {
                     self.press()
                 } else {
@@ -1016,10 +1005,7 @@ impl Widget for MenuRow {
                 }
             }
             WidgetEvent::SemanticAction(SemanticAction::Click) => {
-                let selectable = self
-                    .item()
-                    .as_ref()
-                    .is_some_and(MenuItem::is_selectable);
+                let selectable = self.item().as_ref().is_some_and(MenuItem::is_selectable);
                 if selectable {
                     self.press()
                 } else {
@@ -1146,10 +1132,7 @@ impl Widget for MenuRow {
             crate::text_paint::paint_label(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
-                kurbo::Point::new(
-                    f64::from(b.min_x() + cx.pt(8.0)),
-                    f64::from(text_y),
-                ),
+                kurbo::Point::new(f64::from(b.min_x() + cx.pt(8.0)), f64::from(text_y)),
                 glyph,
                 font_px,
                 glyph_ink,
@@ -1381,11 +1364,7 @@ impl Menu {
     /// assert_eq!(menu.item_count(), 2);
     /// ```
     pub fn new(items: impl Into<Vec<MenuItem>>) -> Self {
-        Self::with_shared(
-            Arc::new(Mutex::new(MenuState::new(items.into()))),
-            0,
-            None,
-        )
+        Self::with_shared(Arc::new(Mutex::new(MenuState::new(items.into()))), 0, None)
     }
 
     /// Creates a menu level over an existing shared state — `depth`
@@ -1490,20 +1469,20 @@ impl Widget for Menu {
                     .iter()
                     .map(|item| {
                         let label = item.label().chars().count() as f32;
-                        let shortcut =
-                            item.shortcut().map_or(0.0, |s| s.chars().count() as f32 * 0.9);
+                        let shortcut = item
+                            .shortcut()
+                            .map_or(0.0, |s| s.chars().count() as f32 * 0.9);
                         label + shortcut
                     })
                     .fold(0.0f32, f32::max)
             })
             .unwrap_or(0.0);
         drop(state);
-        s.x = (widest * cx.pt(7.0)
-            + cx.pt(GUTTER_W + SUBMENU_W + SHORTCUT_GAP + 2.0 * ROW_INSET))
-        .clamp(
-            cx.pt(MIN_POPUP_W).min(constraints.max_size.x.max(0.0)),
-            constraints.max_size.x.max(0.0),
-        );
+        s.x = (widest * cx.pt(7.0) + cx.pt(GUTTER_W + SUBMENU_W + SHORTCUT_GAP + 2.0 * ROW_INSET))
+            .clamp(
+                cx.pt(MIN_POPUP_W).min(constraints.max_size.x.max(0.0)),
+                constraints.max_size.x.max(0.0),
+            );
         s
     }
 
@@ -1549,10 +1528,7 @@ impl Widget for Menu {
             f64::from(b.max_y()),
         );
         let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
-        *self
-            .painted_shape
-            .lock()
-            .expect("popup shape poisoned") = popup_shape.clone();
+        *self.painted_shape.lock().expect("popup shape poisoned") = popup_shape.clone();
         cx.list.push_fill_shape(
             rect,
             &popup_shape,
@@ -1743,7 +1719,9 @@ impl MenuStack {
             self.popup_ids.pop();
             self.last_anchors.pop();
             let mut state = self.shared.lock().expect("menu state poisoned");
-            state.open_path.truncate(self.popup_ids.len().saturating_sub(1));
+            state
+                .open_path
+                .truncate(self.popup_ids.len().saturating_sub(1));
             state.highlight.truncate(self.popup_ids.len() + 1);
         }
         // The root itself is gone — the layer dismissed the whole
@@ -1765,11 +1743,7 @@ impl MenuStack {
                 self.open = false;
                 return;
             };
-            let menu = Menu::with_shared(
-                Arc::clone(&self.shared),
-                0,
-                self.text_painter.clone(),
-            );
+            let menu = Menu::with_shared(Arc::clone(&self.shared), 0, self.text_painter.clone());
             self.popup_ids
                 .push(overlay.open(Box::new(menu), anchor.clone()));
             self.last_anchors.push(anchor);
@@ -1809,11 +1783,7 @@ impl MenuStack {
                     .and_then(|&row| state.row_anchor(d - 1, row))
             }
             .unwrap_or(OverlayAnchor::Pointer(Vec2::ZERO));
-            let menu = Menu::with_shared(
-                Arc::clone(&self.shared),
-                d,
-                self.text_painter.clone(),
-            );
+            let menu = Menu::with_shared(Arc::clone(&self.shared), d, self.text_painter.clone());
             self.popup_ids
                 .push(overlay.open(Box::new(menu), anchor.clone()));
             self.last_anchors.push(anchor);
@@ -1968,7 +1938,10 @@ mod tests {
         let shared = state();
         let mut stack = MenuStack::new(Arc::clone(&shared), None);
         let mut o = overlay();
-        stack.open_at(OverlayAnchor::Bounds(Rect::new(10.0, 10.0, 60.0, 30.0)), false);
+        stack.open_at(
+            OverlayAnchor::Bounds(Rect::new(10.0, 10.0, 60.0, 30.0)),
+            false,
+        );
         stack.sync(&mut o);
         o.layout_pass();
         assert_eq!(o.len(), 1);
@@ -2013,7 +1986,10 @@ mod tests {
         let shared = state();
         let mut stack = MenuStack::new(Arc::clone(&shared), None);
         let mut o = overlay();
-        stack.open_at(OverlayAnchor::Bounds(Rect::new(10.0, 10.0, 60.0, 30.0)), false);
+        stack.open_at(
+            OverlayAnchor::Bounds(Rect::new(10.0, 10.0, 60.0, 30.0)),
+            false,
+        );
         stack.sync(&mut o);
         o.layout_pass();
         let id = stack.root_id().unwrap();
@@ -2040,7 +2016,10 @@ mod tests {
         let shared = state();
         let mut stack = MenuStack::new(Arc::clone(&shared), None);
         let mut o = overlay();
-        stack.open_at(OverlayAnchor::Bounds(Rect::new(10.0, 10.0, 60.0, 30.0)), false);
+        stack.open_at(
+            OverlayAnchor::Bounds(Rect::new(10.0, 10.0, 60.0, 30.0)),
+            false,
+        );
         stack.sync(&mut o);
         o.layout_pass();
         // Keyboard: highlight the submenu row and open it.
