@@ -988,6 +988,21 @@ pub mod line_chart;
 /// ```
 pub mod list_view;
 
+/// Scrolling monospace log display — append-only `LogLine` ring with
+/// severity colors, bottom-follow, and wheel-scroll history (IDE
+/// console / `journalctl -f` pattern).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::log_view::{LogSeverity, LogView};
+///
+/// let mut log = LogView::new();
+/// log.push(LogSeverity::Info, "started");
+/// assert_eq!(log.len(), 1);
+/// ```
+pub mod log_view;
+
 /// Read-only Markdown rich-text renderer — a pragmatic subset
 /// (headings, paragraphs, code blocks, quotes, lists, rules; inline
 /// emphasis, code, links) flowed as styled runs (Ant `Typography`,
@@ -1689,6 +1704,7 @@ pub use level_bar::{LevelBar, LevelZone};
 pub use line_chart::{LineChart, LineSeries};
 pub use link::Link;
 pub use list_view::{ListView, SelectionMode, SelectionModel};
+pub use log_view::{LogLine, LogSeverity, LogView};
 pub use markdown::Markdown;
 pub use masonry::Masonry;
 pub use media::{MediaView, VideoFit};
