@@ -495,6 +495,189 @@ impl GlyphRun {
     }
 }
 
+/// A decoded RGBA8 raster image shared into the paint stream.
+///
+/// This is the image-data carrier that lets a [`PaintCommand::DrawImage`]
+/// blit real pixels without depending on any specific render backend. The
+/// bytes are shared via an [`Arc`] so cloning an `ImageData` — and therefore
+/// a paint command that holds one — is cheap and a single decoded image can
+/// be referenced by many commands.
+///
+/// Pixels are straight-alpha (unpremultiplied) RGBA8, tightly packed in
+/// row-major order: `width * height * 4` bytes. Backends convert to their
+/// native form at draw time — the TinySkia backend premultiplies into its
+/// `Pixmap` layout, and the Vello backend wraps the shared bytes in a
+/// `peniko::ImageData` without copying.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::ImageData;
+///
+/// // A 2x2 opaque red square.
+/// let image = ImageData::from_rgba(2, 2, [255, 0, 0, 255].repeat(4)).unwrap();
+/// assert_eq!((image.width(), image.height()), (2, 2));
+/// assert_eq!(image.pixels().len(), 2 * 2 * 4);
+///
+/// // Cloning shares the underlying pixels (no copy).
+/// let cloned = image.clone();
+/// assert_eq!(cloned.pixels(), image.pixels());
+/// ```
+#[derive(Clone, Debug)]
+pub struct ImageData {
+    /// The tightly-packed straight-alpha RGBA8 pixels, shared via [`Arc`].
+    pixels: Arc<[u8]>,
+    /// The image width in pixels.
+    width: u32,
+    /// The image height in pixels.
+    height: u32,
+}
+
+impl ImageData {
+    /// Creates an image from tightly-packed straight-alpha RGBA8 pixels.
+    ///
+    /// Returns `None` when `width` or `height` is zero, or when
+    /// `pixels.len()` is not exactly `width * height * 4` — malformed
+    /// input is rejected rather than truncated so a backend can never
+    /// read past the buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::ImageData;
+    ///
+    /// let image = ImageData::from_rgba(1, 1, vec![10, 20, 30, 255]).unwrap();
+    /// assert_eq!(image.pixels(), [10, 20, 30, 255]);
+    ///
+    /// // Wrong length or a zero dimension returns `None`.
+    /// assert!(ImageData::from_rgba(1, 1, vec![0; 3]).is_none());
+    /// assert!(ImageData::from_rgba(0, 1, Vec::new()).is_none());
+    /// ```
+    #[must_use]
+    pub fn from_rgba(width: u32, height: u32, pixels: Vec<u8>) -> Option<Self> {
+        Self::validate(width, height, pixels.len())?;
+        Some(Self {
+            pixels: Arc::from(pixels),
+            width,
+            height,
+        })
+    }
+
+    /// Creates an image from a static pixel slice, applying the same
+    /// validation as [`ImageData::from_rgba`].
+    ///
+    /// This avoids copying the bytes when they already live in a
+    /// `&'static [u8]` (e.g. a decoded image baked in with
+    /// `include_bytes!`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::ImageData;
+    ///
+    /// static PX: &[u8] = &[0, 0, 0, 255];
+    /// let image = ImageData::from_static(1, 1, PX).unwrap();
+    /// assert_eq!(image.pixels(), PX);
+    /// ```
+    #[must_use]
+    pub fn from_static(width: u32, height: u32, pixels: &'static [u8]) -> Option<Self> {
+        Self::validate(width, height, pixels.len())?;
+        Some(Self {
+            pixels: Arc::from(pixels),
+            width,
+            height,
+        })
+    }
+
+    /// `Some(())` when `len == width * height * 4` and both dimensions
+    /// are non-zero.
+    fn validate(width: u32, height: u32, len: usize) -> Option<()> {
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let expected = (width as usize)
+            .checked_mul(height as usize)?
+            .checked_mul(4)?;
+        (expected == len).then_some(())
+    }
+
+    /// Returns the tightly-packed straight-alpha RGBA8 pixels.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::ImageData;
+    ///
+    /// let image = ImageData::from_rgba(1, 2, vec![1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+    /// assert_eq!(image.pixels()[7], 8);
+    /// ```
+    #[must_use]
+    pub fn pixels(&self) -> &[u8] {
+        &self.pixels
+    }
+
+    /// Returns a reference to the shared byte buffer backing this image.
+    ///
+    /// This is intended for backends (such as the Vello backend) that need
+    /// to wrap the bytes in their own `Arc`-backed shared handle without
+    /// copying.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::ImageData;
+    ///
+    /// let image = ImageData::from_rgba(1, 1, vec![9, 9, 9, 255]).unwrap();
+    /// let arc = image.pixels_arc();
+    /// assert_eq!(arc.as_ref(), &[9, 9, 9, 255]);
+    /// ```
+    #[must_use]
+    pub fn pixels_arc(&self) -> &Arc<[u8]> {
+        &self.pixels
+    }
+
+    /// Returns the image width in pixels.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::ImageData;
+    ///
+    /// let image = ImageData::from_rgba(4, 2, vec![0; 32]).unwrap();
+    /// assert_eq!(image.width(), 4);
+    /// ```
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Returns the image height in pixels.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::ImageData;
+    ///
+    /// let image = ImageData::from_rgba(4, 2, vec![0; 32]).unwrap();
+    /// assert_eq!(image.height(), 2);
+    /// ```
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+}
+
+impl PartialEq for ImageData {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare by pointer identity of the shared slice first (cheap),
+        // then fall back to a byte-wise comparison. Two images built from
+        // the same `Arc` are equal without scanning the bytes.
+        (Arc::ptr_eq(&self.pixels, &other.pixels) || self.pixels.as_ref() == other.pixels.as_ref())
+            && self.width == other.width
+            && self.height == other.height
+    }
+}
+
 /// A single drawing operation emitted into a [`PaintList`].
 ///
 /// # Examples
@@ -570,6 +753,14 @@ pub enum PaintCommand {
     DrawText(Point, String, f32, [u8; 4]),
     /// Draw a pre-resolved [`GlyphRun`].
     DrawGlyphRun(GlyphRun),
+    /// Draw a decoded [`ImageData`] raster image into the destination rect.
+    ///
+    /// The image is scaled to fill `dest` exactly (the widget layer is
+    /// responsible for computing aspect-fit rectangles from its fit mode
+    /// before pushing the command) and composited with source-over alpha.
+    /// The TinySkia backend samples with a bilinear filter; the Vello
+    /// backend routes through its GPU image pipeline.
+    DrawImage(Rect, ImageData),
     /// A blurred filled rectangle, used for CSD shadows and backdrop blur effects.
     ///
     /// The blur is a two-pass Gaussian (horizontal + vertical) applied to a
@@ -1389,6 +1580,27 @@ impl PaintList {
     /// ```
     pub fn push_glyph_run(&mut self, run: GlyphRun) {
         self.commands.push(PaintCommand::DrawGlyphRun(run));
+    }
+
+    /// Pushes a [`PaintCommand::DrawImage`].
+    ///
+    /// `dest` is the destination rectangle in the list's current
+    /// coordinate space; the image is scaled to fill it exactly.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{ImageData, PaintCommand, PaintList};
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// let image = ImageData::from_rgba(2, 2, vec![255; 16]).unwrap();
+    /// list.push_image(Rect::new(0.0, 0.0, 32.0, 32.0), image);
+    /// assert_eq!(list.len(), 1);
+    /// assert!(matches!(list.commands[0], PaintCommand::DrawImage(..)));
+    /// ```
+    pub fn push_image(&mut self, dest: Rect, image: ImageData) {
+        self.commands.push(PaintCommand::DrawImage(dest, image));
     }
 
     /// Pushes a [`PaintCommand::BlurredRect`].

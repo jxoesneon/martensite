@@ -22,8 +22,8 @@ pub mod vello_backend;
 
 pub use martensite_core::shape::{self, CornerRadii, CornerStyle, CornerStyles, Shape};
 pub use paint::{
-    FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops, PaintCommand, PaintList,
-    PaintSegment, PathBuilder,
+    FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops, ImageData, PaintCommand,
+    PaintList, PaintSegment, PathBuilder,
 };
 pub use presentation::{
     nonzero as presentation_nonzero, present_rgba_to_softbuffer, rgba_to_softbuffer,

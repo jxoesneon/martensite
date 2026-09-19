@@ -14,7 +14,7 @@
 
 use crate::paint::PaintList;
 #[cfg(feature = "vello")]
-use crate::paint::{FontResource, GlyphRun, PaintCommand};
+use crate::paint::{FontResource, GlyphRun, ImageData, PaintCommand};
 use crate::{ClearMode, RenderBackend};
 
 #[cfg(feature = "vello")]
@@ -22,7 +22,8 @@ use {
     kurbo::{Affine, Point as KurboPoint, Rect as KurboRect, RoundedRect, Stroke as KurboStroke},
     peniko::{
         color::{AlphaColor, DynamicColor, Srgb},
-        BlendMode, Blob, Color, ColorStop, ColorStops, Compose, Fill, FontData, Gradient, Mix,
+        BlendMode, Blob, Color, ColorStop, ColorStops, Compose, Fill, FontData, Gradient,
+        ImageAlphaType, ImageFormat, Mix,
     },
     vello::{
         AaConfig, AaSupport, Glyph, RenderParams, Renderer as VelloGpuRenderer, RendererOptions,
@@ -379,6 +380,8 @@ impl VelloRenderer {
     ///   glyph outlines)
     /// - `DrawGlyphRun` → real glyph outlines via `Scene::draw_glyphs` when the
     ///   run carries a `FontResource`, otherwise filled bounding-box rectangles
+    /// - `DrawImage` → `Scene::draw_image` with a `peniko::ImageData` wrapping
+    ///   the shared RGBA8 buffer
     #[cfg(feature = "vello")]
     fn render_command(&mut self, command: &PaintCommand) {
         match command {
@@ -526,6 +529,9 @@ impl VelloRenderer {
             PaintCommand::DrawGlyphRun(run) => {
                 self.render_glyph_run(run);
             }
+            PaintCommand::DrawImage(rect, image) => {
+                self.render_image(*rect, image);
+            }
             PaintCommand::BlurredRect {
                 rect,
                 blur_radius,
@@ -542,6 +548,45 @@ impl VelloRenderer {
             // not drawing operations.
             PaintCommand::PushScope { .. } | PaintCommand::PopScope => {}
         }
+    }
+
+    /// Translates a [`PaintCommand::DrawImage`] into a Vello scene image draw.
+    ///
+    /// The shared RGBA8 bytes are wrapped in a `peniko::ImageData` whose
+    /// `Blob` reuses the same `Arc` allocation as the paint command — the
+    /// same double-`Arc` trick [`font_resource_to_peniko`] uses — so
+    /// scene building performs zero pixel copies; the GPU texture upload
+    /// happens inside Vello's image cache at render time.
+    ///
+    /// `Scene::draw_image` draws the image's natural rect under
+    /// `transform`, so the transform maps the `width × height` source box
+    /// onto `dest` exactly — aspect-fit geometry is the widget layer's
+    /// responsibility before the command is pushed.
+    #[cfg(feature = "vello")]
+    fn render_image(&mut self, dest: KurboRect, image: &ImageData) {
+        let (iw, ih) = (image.width(), image.height());
+        if iw == 0 || ih == 0 || dest.width() <= 0.0 || dest.height() <= 0.0 {
+            return;
+        }
+        // `Blob::new` expects `Arc<dyn AsRef<[u8]> + Send + Sync>`; like
+        // `font_resource_to_peniko` we wrap the shared slice in one extra
+        // `Arc` — zero pixel copies, one small allocation.
+        let inner = std::sync::Arc::clone(image.pixels_arc());
+        let data: std::sync::Arc<dyn std::convert::AsRef<[u8]> + Send + Sync> =
+            std::sync::Arc::new(inner);
+        let peniko_image = peniko::ImageData {
+            data: Blob::new(data),
+            format: ImageFormat::Rgba8,
+            alpha_type: ImageAlphaType::Alpha,
+            width: iw,
+            height: ih,
+        };
+        let ts = Affine::translate((dest.x0, dest.y0))
+            * Affine::scale_non_uniform(
+                dest.width() / f64::from(iw),
+                dest.height() / f64::from(ih),
+            );
+        self.scene.draw_image(&peniko_image, ts);
     }
 
     /// Renders a [`PaintCommand::BlurredRect`] as a Vello scene contribution

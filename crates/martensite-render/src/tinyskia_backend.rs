@@ -6,15 +6,15 @@
 //! or inspected directly by tests. Because no GPU is required, this backend is
 //! the primary target for headless CI rendering tests.
 
-use crate::paint::{FontResource, GlyphRun, GradientStops, PaintCommand, PaintList};
+use crate::paint::{FontResource, GlyphRun, GradientStops, ImageData, PaintCommand, PaintList};
 use crate::{ClearMode, RenderBackend};
 use kurbo::{BezPath, PathEl, Point, Rect};
 use swash::scale::ScaleContext;
 use swash::zeno::Verb;
 use swash::FontRef as SwashFontRef;
 use tiny_skia::{
-    Color, FillRule, LinearGradient, Mask, Paint, PathBuilder as TsPathBuilder, Pixmap,
-    RadialGradient, Rect as TsRect, SpreadMode, Stroke, Transform,
+    Color, FillRule, FilterQuality, LinearGradient, Mask, Paint, PathBuilder as TsPathBuilder,
+    Pixmap, PixmapPaint, RadialGradient, Rect as TsRect, SpreadMode, Stroke, Transform,
 };
 
 /// A CPU software rasterizer that renders a [`PaintList`] into an RGBA
@@ -580,6 +580,9 @@ impl TinySkiaBackend {
             PaintCommand::DrawGlyphRun(run) => {
                 self.render_glyph_run(run);
             }
+            PaintCommand::DrawImage(rect, image) => {
+                self.render_image(*rect, image);
+            }
             PaintCommand::BlurredRect {
                 rect,
                 blur_radius,
@@ -594,6 +597,58 @@ impl TinySkiaBackend {
             // not drawing operations.
             PaintCommand::PushScope { .. } | PaintCommand::PopScope => {}
         }
+    }
+
+    /// Blits a [`PaintCommand::DrawImage`]: converts the straight-alpha
+    /// RGBA8 [`ImageData`] into a premultiplied [`Pixmap`], then composites
+    /// it into `dest` — scaled with bilinear sampling — under the active
+    /// clip stack, so `ClipPath` (ellipse, squircle, …) clips apply to
+    /// image content exactly as they do to fills.
+    ///
+    /// [`Pixmap::draw_pixmap`] takes only an integer destination offset, so
+    /// the fractional origin and the scale factor both ride inside the
+    /// transform: the source's natural rect is mapped onto `dest` exactly.
+    fn render_image(&mut self, dest: Rect, image: &ImageData) {
+        let (iw, ih) = (image.width(), image.height());
+        let (dw, dh) = (dest.width() as f32, dest.height() as f32);
+        if iw == 0 || ih == 0 || dw <= 0.0 || dh <= 0.0 {
+            return;
+        }
+        // Convert straight-alpha RGBA8 into tiny-skia's premultiplied
+        // layout. `ImageData` is pre-validated, so the buffers line up
+        // one-to-one by construction.
+        let Some(mut src) = Pixmap::new(iw, ih) else {
+            return;
+        };
+        {
+            let dst = src.data_mut();
+            for (out, px) in dst
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(image.pixels().as_chunks::<4>().0.iter())
+            {
+                let a = u32::from(px[3]);
+                out[0] = ((u32::from(px[0]) * a + 127) / 255) as u8;
+                out[1] = ((u32::from(px[1]) * a + 127) / 255) as u8;
+                out[2] = ((u32::from(px[2]) * a + 127) / 255) as u8;
+                out[3] = px[3];
+            }
+        }
+        let ts = Transform::from_row(
+            dw / iw as f32,
+            0.0,
+            0.0,
+            dh / ih as f32,
+            dest.x0 as f32,
+            dest.y0 as f32,
+        );
+        let paint = PixmapPaint {
+            quality: FilterQuality::Bilinear,
+            ..PixmapPaint::default()
+        };
+        self.pixmap
+            .draw_pixmap(0, 0, src.as_ref(), &paint, ts, self.clip_stack.last());
     }
 
     /// Renders the documented [`PaintCommand::External`] placeholder: an
