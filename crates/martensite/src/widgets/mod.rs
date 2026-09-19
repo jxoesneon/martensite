@@ -839,6 +839,19 @@ pub mod tabs;
 /// ```
 pub mod time_picker;
 
+/// Vertical event feed with a dot-and-connector rail (Ant `Timeline`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Timeline, TimelineItem};
+///
+/// let tl = Timeline::new().item(TimelineItem::new("a")).pending("live…");
+/// assert_eq!(tl.item_count(), 1);
+/// assert!(tl.has_pending());
+/// ```
+pub mod timeline;
+
 /// Pressed-state (latched) toggle button.
 ///
 /// # Examples
@@ -964,6 +977,7 @@ pub use text::Text;
 pub use text_area::TextArea;
 pub use text_input::TextInput;
 pub use time_picker::{Time, TimePicker};
+pub use timeline::{Timeline, TimelineDot, TimelineItem};
 pub use toast::{Toast, ToastHost};
 pub use toggle_button::ToggleButton;
 pub use token_field::TokenField;
