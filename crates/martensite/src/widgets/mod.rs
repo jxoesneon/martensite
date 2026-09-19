@@ -863,6 +863,22 @@ pub mod key_capture;
 /// ```
 pub mod kbd;
 
+/// Grouped shortcut reference — GTK `ShortcutsWindow` content:
+/// titled [`ShortcutGroup`]s of `label : keys` rows flowed across
+/// columns. Display-only; mount inside a dialog for the chrome.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::keyboard_shortcuts::{
+///     KeyboardShortcuts, ShortcutGroup,
+/// };
+///
+/// let s = KeyboardShortcuts::new(vec![ShortcutGroup::new("General")]);
+/// assert_eq!(s.columns, 2);
+/// ```
+pub mod keyboard_shortcuts;
+
 /// Level/capacity meter — battery, disk-usage, or signal-strength
 /// indicator with zone colors (GTK `GtkLevelBar`, `NSLevelIndicator`).
 ///
@@ -1551,6 +1567,7 @@ pub use image::{Image, ImageFit};
 pub use inline_edit::InlineEdit;
 pub use kbd::Kbd;
 pub use key_capture::KeyCapture;
+pub use keyboard_shortcuts::{KeyboardShortcuts, ShortcutGroup, ShortcutRow};
 pub use level_bar::{LevelBar, LevelZone};
 pub use link::Link;
 pub use list_view::{ListView, SelectionMode, SelectionModel};
