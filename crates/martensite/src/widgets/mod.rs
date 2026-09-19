@@ -43,6 +43,20 @@
 //! recurses into them after the parent's chrome, and the AccessKit
 //! adapter emits them as virtual nodes in the accessibility tree.
 
+/// "About this app" panel — GTK `AboutDialog` / `NSAboutPanel`
+/// content: logo, name, version, description, website link, copyright,
+/// and titled credits sections. Mount inside a `Dialog` for chrome.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::about::About;
+///
+/// let a = About::new("App").version("1.0").credits("By", ["A"]);
+/// assert_eq!(a.app_name, "App");
+/// ```
+pub mod about;
+
 /// Vertically stacked collapsible sections (Ant Collapse / MUI
 /// Accordion) with managed expansion.
 ///
@@ -1561,6 +1575,7 @@ pub mod wheel_picker;
 /// ```
 pub mod wizard;
 
+pub use about::About;
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
