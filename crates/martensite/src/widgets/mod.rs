@@ -290,6 +290,19 @@ pub mod dial;
 /// ```
 pub mod flex;
 
+/// Floating action button — a circular overlay button for `Stack`
+/// layering, with a `back_top` scroll-to-top idiom (M3 FAB, Ant
+/// `FloatButton`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::FloatButton;
+///
+/// assert!(!FloatButton::back_top().visible);
+/// ```
+pub mod float_button;
+
 /// Radial gauge display — value arc with zone colors, ticks, and a
 /// centered readout (WCT `RadialGauge`, SwiftUI `Gauge`).
 ///
@@ -1132,6 +1145,7 @@ pub use dropdown::Dropdown;
 pub use empty_state::EmptyState;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
+pub use float_button::FloatButton;
 pub use gauge::Gauge;
 pub use group_box::GroupBox;
 pub use image::{Image, ImageFit};
