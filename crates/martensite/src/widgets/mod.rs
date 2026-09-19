@@ -148,6 +148,20 @@ pub mod button;
 /// ```
 pub mod card;
 
+/// Cascading column picker — drill-down option lists whose leaf
+/// click commits the full value path (macOS `NSBrowser`, Ant
+/// `Cascader`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Cascader, CascaderOption};
+///
+/// let c = Cascader::new().options([CascaderOption::new("a", "a")]);
+/// assert_eq!(c.option_count(), 1);
+/// ```
+pub mod cascader;
+
 /// Toggleable checkbox widget.
 ///
 /// # Examples
@@ -411,6 +425,20 @@ pub mod drawer;
 /// ```
 pub mod progress;
 
+/// Pull-to-refresh wrapper — downward drag reveals an indicator and
+/// parks a refresh request past the threshold (`UIRefreshControl`,
+/// `SwipeRefreshLayout`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{PullToRefresh, Text};
+///
+/// let p = PullToRefresh::new(Text::new("feed"));
+/// assert!(!p.refreshing());
+/// ```
+pub mod pull_to_refresh;
+
 /// Hairline separator between content regions.
 ///
 /// # Examples
@@ -476,6 +504,20 @@ pub mod split_view;
 /// assert_eq!(s.current_step(), 1);
 /// ```
 pub mod steps;
+
+/// Swipe-to-reveal row actions — horizontal drags expose
+/// leading/trailing action strips (iOS `UISwipeActionsConfiguration`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{SwipeAction, SwipeActions, Text};
+///
+/// let s = SwipeActions::new(Text::new("row"))
+///     .trailing([SwipeAction::new("Delete").destructive()]);
+/// assert_eq!(s.trailing_count(), 1);
+/// ```
+pub mod swipe_actions;
 
 /// Pill toggle switch.
 ///
@@ -583,6 +625,20 @@ pub mod level_bar;
 /// assert_eq!(l.item_count(), 3);
 /// ```
 pub mod list_view;
+
+/// Masonry layout — children flow into the currently-shortest
+/// column (Pinterest layout, CSS `masonry`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::core::Widget;
+/// use martensite::widgets::{Masonry, Text};
+///
+/// let m = Masonry::new().columns(3).child(Text::new("a"));
+/// assert_eq!(m.child_count(), 1);
+/// ```
+pub mod masonry;
 
 /// Hardware video presentation widget.
 ///
@@ -1005,6 +1061,7 @@ pub use bottom_sheet::BottomSheet;
 pub use breadcrumb::Breadcrumb;
 pub use button::Button;
 pub use card::{Card, CardVariant};
+pub use cascader::{Cascader, CascaderOption};
 pub use checkbox::{CheckBox, CheckState};
 pub use chip::{Chip, ChipKind};
 pub use color_picker::{hsv_to_rgb, rgb_to_hsv, Color, ColorPicker};
@@ -1027,6 +1084,7 @@ pub use image::{Image, ImageFit};
 pub use key_capture::KeyCapture;
 pub use level_bar::{LevelBar, LevelZone};
 pub use list_view::{ListView, SelectionMode, SelectionModel};
+pub use masonry::Masonry;
 pub use media::{MediaView, VideoFit};
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
 pub use menu_bar::MenuBar;
@@ -1036,6 +1094,7 @@ pub use pagination::Pagination;
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
 pub use progress::{ProgressBar, Spinner};
+pub use pull_to_refresh::PullToRefresh;
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
 pub use rating::Rating;
@@ -1053,6 +1112,7 @@ pub use stack::Stack;
 pub use statistic::{Statistic, Trend};
 pub use status_bar::{StatusBar, StatusItem};
 pub use steps::{Step, Steps};
+pub use swipe_actions::{SwipeAction, SwipeActions, SwipeEdge};
 pub use switch::Switch;
 pub use table::{SortDir, Table, TableAlign, TableColumn};
 pub use tabs::{TabActivation, TabItem, Tabs};
