@@ -1451,6 +1451,22 @@ pub mod dropdown;
 /// ```
 pub mod empty_state;
 
+/// A settings row that expands to reveal indented nested child rows
+/// (libadwaita `AdwExpanderRow`) — activatable `SettingsRow` header,
+/// caret affordance, `ArrowRight`/`ArrowLeft` + semantic
+/// expand/collapse.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::expander_row::ExpanderRow;
+/// use martensite::widgets::SettingsRow;
+///
+/// let row = ExpanderRow::new("Network").child(SettingsRow::new("Wi-Fi"));
+/// assert_eq!(row.child_len(), 1);
+/// ```
+pub mod expander_row;
+
 /// Virtualized data grid — pinned sortable/resizable column header
 /// over a scrollable striped body (QTableView, GTK `ColumnView`,
 /// WinUI `DataGrid`, Ant `Table`).
@@ -1684,6 +1700,7 @@ pub use disclosure::Disclosure;
 pub use drawer::Drawer;
 pub use dropdown::Dropdown;
 pub use empty_state::EmptyState;
+pub use expander_row::ExpanderRow;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use float_button::FloatButton;
