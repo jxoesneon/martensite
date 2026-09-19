@@ -1646,6 +1646,21 @@ pub mod segmented;
 /// ```
 pub mod skeleton;
 
+/// Frequency-band equalizer display — app-driven `0..=1` band
+/// amplitudes painted as segmented LED-meter columns (green /
+/// amber / red thirds) with an optional decaying peak-hold tick.
+/// Clicking a band parks its index in `take_pressed`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::spectrum::Spectrum;
+///
+/// let s = Spectrum::new().bands([0.3, 0.7, 0.5]);
+/// assert_eq!(s.band_count(), 3);
+/// ```
+pub mod spectrum;
+
 /// Numeric spin box with ▲/▼ step buttons and an editable field.
 ///
 /// # Examples
@@ -2090,6 +2105,7 @@ pub use settings_row::{SettingsGroup, SettingsRow};
 pub use skeleton::{Skeleton, SkeletonShape};
 pub use slider::{Slider, SliderOrientation};
 pub use sparkline::{SparkStyle, Sparkline};
+pub use spectrum::Spectrum;
 pub use spinbox::SpinBox;
 pub use split_button::SplitButton;
 pub use split_view::{SplitOrientation, SplitView};
