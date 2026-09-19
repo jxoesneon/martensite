@@ -443,6 +443,22 @@ pub mod grid;
 /// ```
 pub mod group_box;
 
+/// Window-top bar with a centered title, an optional subtitle, and
+/// leading/trailing slots (GTK `HeaderBar`, WinUI `AppTitleBar`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::header_bar::HeaderBar;
+/// use martensite::widgets::Button;
+///
+/// let bar = HeaderBar::new("Document")
+///     .leading(Button::new("Back"))
+///     .trailing(Button::new("Save"));
+/// assert_eq!(bar.title(), "Document");
+/// ```
+pub mod header_bar;
+
 /// Raster image display with aspect-fit modes (`Contain`, `Cover`,
 /// `Fill`, `None`).
 ///
@@ -1359,6 +1375,7 @@ pub use form_field::{FormField, LabelPosition};
 pub use gauge::Gauge;
 pub use grid::{Grid, GridCell};
 pub use group_box::GroupBox;
+pub use header_bar::HeaderBar;
 pub use image::{Image, ImageFit};
 pub use kbd::Kbd;
 pub use key_capture::KeyCapture;
