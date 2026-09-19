@@ -422,6 +422,20 @@ pub mod text_input;
 /// let widget = ExternalEngine::new(handle, surface);
 /// ```
 pub mod external;
+
+/// Level/capacity meter — battery, disk-usage, or signal-strength
+/// indicator with zone colors (GTK `GtkLevelBar`, `NSLevelIndicator`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::level_bar::LevelBar;
+///
+/// let b = LevelBar::new().value(0.75);
+/// assert_eq!(b.get_value(), 0.75);
+/// ```
+pub mod level_bar;
+
 /// Virtualized selectable list of string rows (APG listbox).
 ///
 /// # Examples
@@ -541,6 +555,19 @@ pub mod radio;
 /// let rs = RangeSlider::new(0.0, 100.0).with_range(20.0, 80.0);
 /// ```
 pub mod range_slider;
+
+/// Star-style rating input/display (WinUI `RatingControl`,
+/// KDE `KRatingWidget`, Ant `Rate`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::rating::Rating;
+///
+/// let r = Rating::new().half_steps(true).value(3.5);
+/// assert_eq!(r.get_value(), 3.5);
+/// ```
+pub mod rating;
 
 /// Status result page — coloured status glyph + title + subtitle +
 /// action buttons, centred in the view (Ant `Result`).
@@ -708,6 +735,7 @@ pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use group_box::GroupBox;
 pub use image::{Image, ImageFit};
+pub use level_bar::{LevelBar, LevelZone};
 pub use list_view::{ListView, SelectionMode, SelectionModel};
 pub use media::{MediaView, VideoFit};
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
@@ -718,6 +746,7 @@ pub use popover::Popover;
 pub use progress::{ProgressBar, Spinner};
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
+pub use rating::Rating;
 pub use result_page::{ResultAction, ResultPage, ResultStatus};
 pub use scrollview::{ScrollBarWidget, ScrollView};
 pub use segmented::{Segment, Segmented};
