@@ -113,6 +113,19 @@ pub mod anchor;
 /// ```
 pub mod auto_complete;
 
+/// Aspect-ratio-locked container (GTK `AspectFrame`) — the child
+/// gets the largest rect preserving `ratio`, centered by xalign/
+/// yalign. For video surfaces and previews that must not stretch.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::aspect_frame::AspectFrame;
+///
+/// assert_eq!(AspectFrame::new(16.0 / 9.0).ratio, 16.0 / 9.0);
+/// ```
+pub mod aspect_frame;
+
 /// Circular user avatar — image content clipped to the silhouette, or
 /// initials on an accent disc.
 ///
@@ -271,6 +284,23 @@ pub mod chip;
 /// assert_eq!(g.chip_count(), 1);
 /// ```
 pub mod chip_group;
+
+/// Maximum-width centering container (libadwaita `AdwClamp`) — the
+/// child fills height but its width is capped at `maximum`,
+/// centered horizontally. The readability container for long text
+/// and forms on wide windows.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::clamp::Clamp;
+/// use martensite::widgets::Text;
+/// use martensite::core::Widget;
+///
+/// let c = Clamp::new().maximum(600.0).child(Text::new("x"));
+/// assert_eq!(c.child_count(), 1);
+/// ```
+pub mod clamp;
 
 /// Preset color-swatch grid — the curated palette row (Ant
 /// `ColorPicker` presets / `NSColorList`) where click selects and
@@ -1448,6 +1478,7 @@ pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
 pub use anchor::{Anchor, AnchorItem};
+pub use aspect_frame::AspectFrame;
 pub use auto_complete::{AutoComplete, FilterMode};
 pub use avatar::Avatar;
 pub use avatar_group::AvatarGroup;
@@ -1464,6 +1495,7 @@ pub use cascader::{Cascader, CascaderOption};
 pub use checkbox::{CheckBox, CheckState};
 pub use chip::{Chip, ChipKind};
 pub use chip_group::{ChipGroup, ChipSelection};
+pub use clamp::Clamp;
 pub use color_palette::ColorPalette;
 pub use color_picker::{hsv_to_rgb, rgb_to_hsv, Color, ColorPicker};
 pub use command_palette::{CommandAction, CommandPalette};
