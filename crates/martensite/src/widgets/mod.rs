@@ -240,6 +240,18 @@ pub mod context_menu;
 /// ```
 pub mod date_picker;
 
+/// Label:value detail grid for detail pages (Ant `Descriptions`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Descriptions;
+///
+/// let d = Descriptions::new().title("Device").item("Model", "MX");
+/// assert_eq!(d.item_count(), 1);
+/// ```
+pub mod descriptions;
+
 /// Rotary knob — circular value control with a 270° sweep
 /// (Qt `QDial`, audio-plugin knob idiom).
 ///
@@ -945,6 +957,7 @@ pub use command_palette::{CommandAction, CommandPalette};
 pub use container::Container;
 pub use context_menu::ContextMenu;
 pub use date_picker::{Date, DatePicker};
+pub use descriptions::{DescriptionItem, Descriptions};
 pub use dial::Dial;
 pub use dialog::Dialog;
 pub use disclosure::Disclosure;
