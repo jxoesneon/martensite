@@ -1094,6 +1094,21 @@ pub mod status_dot;
 /// ```
 pub mod split_button;
 
+/// Split-flap departure-board display (Solari / flip-board
+/// idiom) — `text` sets the target and each cell flips through
+/// the character set on `tick` until it lands, rippling
+/// left-to-right. Display-only.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::split_flap::SplitFlap;
+///
+/// let mut s = SplitFlap::new().cells(7).text("ON TIME");
+/// assert_eq!(s.cell_count(), 7);
+/// ```
+pub mod split_flap;
+
 /// Two-pane container with a draggable divider (Qt `QSplitter`,
 /// `NSSplitViewController`, WinUI `SplitView`).
 ///
