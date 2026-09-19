@@ -924,6 +924,20 @@ pub mod separator;
 /// ```
 pub mod settings_row;
 
+/// Ascending-bars connectivity indicator (cellular / Wi-Fi status
+/// icon idiom) — a `0..=4` level lights that many bars and an
+/// `offline` flag swaps the lit color to the error token.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::signal_strength::SignalStrength;
+///
+/// let s = SignalStrength::new().level(3);
+/// assert_eq!(s.level_value(), 3);
+/// ```
+pub mod signal_strength;
+
 /// Bottom-of-window status strip (QStatusBar / WPF `StatusBar`) —
 /// left zone widgets, a permanent/temporary message zone, and
 /// right-docked permanent widgets.
@@ -2135,6 +2149,7 @@ pub use search_field::SearchField;
 pub use segmented::{Segment, Segmented};
 pub use separator::Separator;
 pub use settings_row::{SettingsGroup, SettingsRow};
+pub use signal_strength::SignalStrength;
 pub use skeleton::{Skeleton, SkeletonShape};
 pub use slider::{Slider, SliderOrientation};
 pub use sparkline::{SparkStyle, Sparkline};
