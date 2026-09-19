@@ -808,6 +808,23 @@ pub mod menu_bar;
 /// ```
 pub mod nav_rail;
 
+/// Push/pop navigation container — titled header with a `‹ Back`
+/// affordance over a page stack where only the topmost is visible
+/// (SwiftUI `NavigationStack`). Push, pop, back-zone click, `Escape`,
+/// and `Backspace` all park `(depth, title)` in `take_navigated`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::prelude::*;
+/// use martensite::widgets::nav_stack::NavStack;
+///
+/// let mut nav = NavStack::new(Text::new("root")).title("Home");
+/// nav.push(Text::new("detail"), "Detail");
+/// assert_eq!(nav.depth(), 2);
+/// ```
+pub mod nav_stack;
+
 /// Segmented one-time-code / PIN field (Ant `Input.OTP`).
 ///
 /// # Examples
@@ -1271,6 +1288,7 @@ pub use media::{MediaView, VideoFit};
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
 pub use menu_bar::MenuBar;
 pub use nav_rail::{NavDestination, NavRail};
+pub use nav_stack::NavStack;
 pub use otp_input::OtpInput;
 pub use pagination::Pagination;
 pub use popconfirm::{ConfirmResult, Popconfirm};
