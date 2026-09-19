@@ -1191,6 +1191,21 @@ pub mod ribbon;
 /// ```
 pub mod scrollview;
 
+/// Toggleable search strip — collapses to zero height while
+/// `search_mode` is off (libadwaita `AdwSearchBar`). `Escape` parks a
+/// close request the app answers by flipping `search_mode`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::search_bar::SearchBar;
+///
+/// let mut bar = SearchBar::new().placeholder("Search…");
+/// bar.search_mode = true;
+/// assert!(bar.field().placeholder.starts_with("Search"));
+/// ```
+pub mod search_bar;
+
 /// Dedicated search input (NSSearchField, Carbon `Search`) — a
 /// magnifier-prefixed, clearable `TextInput` child with an `Enter`
 /// submit seam and `Role::SearchInput` accessibility.
@@ -1564,6 +1579,7 @@ pub use rating::Rating;
 pub use result_page::{ResultAction, ResultPage, ResultStatus};
 pub use ribbon::{Ribbon, RibbonCorner};
 pub use scrollview::{ScrollBarWidget, ScrollView};
+pub use search_bar::SearchBar;
 pub use search_field::SearchField;
 pub use segmented::{Segment, Segmented};
 pub use separator::Separator;
