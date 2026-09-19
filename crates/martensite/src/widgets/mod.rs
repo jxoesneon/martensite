@@ -977,6 +977,22 @@ pub mod split_view;
 /// ```
 pub mod steps;
 
+/// Nested radial hierarchy chart (d3 sunburst / multi-level pie
+/// idiom) — root siblings partition the inner ring by weight and
+/// each node's children subdivide its angular span on the next
+/// ring outward. Hovering a sector parks its index in
+/// `take_hovered` and draws its name at the center.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::sunburst::{Sunburst, SunburstNode};
+///
+/// let s = Sunburst::new().node(SunburstNode::new("docs", 3.0));
+/// assert_eq!(s.node_count(), 1);
+/// ```
+pub mod sunburst;
+
 /// Swipe-to-reveal row actions — horizontal drags expose
 /// leading/trailing action strips (iOS `UISwipeActionsConfiguration`).
 ///
