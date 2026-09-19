@@ -538,6 +538,20 @@ pub mod header_bar;
 /// ```
 pub mod image;
 
+/// Click-to-edit text — a label that swaps in a [`TextInput`] on
+/// press (`Enter` commits, `Escape` reverts, blur commits).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::inline_edit::InlineEdit;
+///
+/// let mut edit = InlineEdit::new("Title").placeholder("Untitled");
+/// edit.begin_edit();
+/// assert!(edit.is_editing());
+/// ```
+pub mod inline_edit;
+
 /// Z-ordered layering stack.
 ///
 /// # Examples
@@ -1519,6 +1533,7 @@ pub use grid::{Grid, GridCell};
 pub use group_box::GroupBox;
 pub use header_bar::HeaderBar;
 pub use image::{Image, ImageFit};
+pub use inline_edit::InlineEdit;
 pub use kbd::Kbd;
 pub use key_capture::KeyCapture;
 pub use level_bar::{LevelBar, LevelZone};
