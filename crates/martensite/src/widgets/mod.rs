@@ -637,6 +637,22 @@ pub mod heat_map;
 /// ```
 pub mod image;
 
+/// Freehand stroke-capture surface — the signature-pad / sketch
+/// idiom. Primary-drag collects canvas-clamped points into strokes;
+/// each released stroke is parked in `take_stroke`, `Backspace`
+/// undoes the last committed stroke, and `Escape` cancels the one
+/// in flight.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::ink_canvas::InkCanvas;
+///
+/// let canvas = InkCanvas::new().pen(2.5).label("Sign here");
+/// assert!(canvas.is_empty());
+/// ```
+pub mod ink_canvas;
+
 /// Click-to-edit text — a label that swaps in a [`TextInput`] on
 /// press (`Enter` commits, `Escape` reverts, blur commits).
 ///
@@ -1879,6 +1895,7 @@ pub use group_box::GroupBox;
 pub use header_bar::HeaderBar;
 pub use heat_map::HeatMap;
 pub use image::{Image, ImageFit};
+pub use ink_canvas::{InkCanvas, Stroke};
 pub use inline_edit::InlineEdit;
 pub use kbd::Kbd;
 pub use key_capture::KeyCapture;
