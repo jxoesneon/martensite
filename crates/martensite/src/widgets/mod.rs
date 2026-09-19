@@ -1669,6 +1669,21 @@ pub mod pie_chart;
 /// ```
 pub mod pips_pager;
 
+/// Polar area chart (Nightingale / Coxcomb rose idiom) — every
+/// wedge spans an equal angle and its radius encodes the value
+/// (sqrt-scaled so area stays linear). Hovering a wedge parks its
+/// index in `take_hovered`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::polar_area::PolarArea;
+///
+/// let p = PolarArea::new().slice("Jan", 12.0).slice("Feb", 7.0);
+/// assert_eq!(p.slice_count(), 2);
+/// ```
+pub mod polar_area;
+
 /// Mini anchored confirmation bubble (Ant `Popconfirm`) — question,
 /// Confirm/Cancel pair, arrow tail, `ConfirmResult` seam.
 ///
