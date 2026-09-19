@@ -1323,6 +1323,22 @@ pub mod property_grid;
 /// ```
 pub mod qr_code;
 
+/// Spider/polar chart (Ant `Radar`, Qt `QPolarChart`) — concentric
+/// ring polygons + axis spokes, translucent series fills with stroked
+/// edges and vertex dots, palette-cycled colors.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::radar_chart::{RadarChart, RadarSeries};
+///
+/// let c = RadarChart::new()
+///     .axes(["A", "B", "C"])
+///     .series(RadarSeries::new("S", [1.0, 2.0, 3.0]));
+/// assert_eq!(c.axes.len(), 3);
+/// ```
+pub mod radar_chart;
+
 /// ARIA APG slider widget.
 ///
 /// # Examples
@@ -1837,6 +1853,7 @@ pub use property_grid::{
 };
 pub use pull_to_refresh::PullToRefresh;
 pub use qr_code::QrCode;
+pub use radar_chart::{RadarChart, RadarSeries};
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
 pub use rating::Rating;
