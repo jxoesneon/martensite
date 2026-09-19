@@ -1012,6 +1012,19 @@ pub mod tour;
 /// ```
 pub mod tooltip;
 
+/// Dual-pane shuttle list — source items left, chosen items right,
+/// with → / ← move buttons (Ant `Transfer`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Transfer;
+///
+/// let t = Transfer::new().source(["a", "b"]).target(["c"]);
+/// assert_eq!(t.source_count(), 2);
+/// ```
+pub mod transfer;
+
 /// Virtualized hierarchical tree of labelled nodes (APG tree view).
 ///
 /// # Examples
@@ -1140,6 +1153,7 @@ pub use token_field::TokenField;
 pub use toolbar::Toolbar;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
 pub use tour::{Tour, TourStep};
+pub use transfer::{MoveDir, Transfer};
 pub use tree_view::{TreeNode, TreeView};
 pub use watermark::Watermark;
 pub use wheel_picker::WheelPicker;
