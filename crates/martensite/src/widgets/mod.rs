@@ -877,6 +877,20 @@ pub mod menu;
 /// ```
 pub mod menu_bar;
 
+/// Text field with a trigger-character suggestion popup — the Ant
+/// `Mentions` / Slack `@`-completion pattern. Shares `AutoComplete`'s
+/// APG editable-combobox architecture: the popup is an overlay
+/// `ListBox` of candidates filtered by the token under the caret.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::mention::Mention;
+///
+/// let m = Mention::new().suggestions(["alice", "bob"]);
+/// ```
+pub mod mention;
+
 /// Vertical icon+label destination rail for app-level navigation
 /// (Material 3 `NavigationRail`, WinUI `NavigationView` rail mode).
 ///
@@ -1303,6 +1317,21 @@ pub mod tooltip;
 /// ```
 pub mod transfer;
 
+/// Dropdown face whose popup hosts a `TreeView` — the Ant
+/// `TreeSelect` / WinUI tree-combo pattern. Leaf selection commits
+/// the value; branch selection toggles expansion.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::tree_select::TreeSelect;
+/// use martensite::widgets::TreeNode;
+///
+/// let ts = TreeSelect::new().tree(vec![TreeNode::new("root")]);
+/// assert_eq!(ts.node_count(), 1);
+/// ```
+pub mod tree_select;
+
 /// Virtualized hierarchical tree of labelled nodes (APG tree view).
 ///
 /// # Examples
@@ -1402,6 +1431,7 @@ pub use list_view::{ListView, SelectionMode, SelectionModel};
 pub use markdown::Markdown;
 pub use masonry::Masonry;
 pub use media::{MediaView, VideoFit};
+pub use mention::Mention;
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
 pub use menu_bar::MenuBar;
 pub use nav_rail::{NavDestination, NavRail};
@@ -1452,6 +1482,7 @@ pub use toolbar::Toolbar;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
 pub use tour::{Tour, TourStep};
 pub use transfer::{MoveDir, Transfer};
+pub use tree_select::TreeSelect;
 pub use tree_view::{TreeNode, TreeView};
 pub use watermark::Watermark;
 pub use wheel_picker::WheelPicker;
