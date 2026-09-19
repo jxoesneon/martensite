@@ -1412,6 +1412,21 @@ pub mod result_page;
 /// ```
 pub mod ribbon;
 
+/// XY point-cloud chart (Ant `Scatter`, Qt `QScatterSeries`) —
+/// marker dots inside a gridded axis frame, auto-fit or pinned
+/// ranges, nearest-point hover seam for tooltips.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::scatter_chart::{ScatterChart, ScatterSeries};
+///
+/// let c = ScatterChart::new()
+///     .series(ScatterSeries::new("A", [(0.0, 1.0), (1.0, 2.0)]));
+/// assert_eq!(c.series.len(), 1);
+/// ```
+pub mod scatter_chart;
+
 /// ARIA APG scroll view with smart scrollbars and rubber-band
 /// overscroll.
 ///
@@ -1859,6 +1874,7 @@ pub use range_slider::{RangeSlider, RangeThumb};
 pub use rating::Rating;
 pub use result_page::{ResultAction, ResultPage, ResultStatus};
 pub use ribbon::{Ribbon, RibbonCorner};
+pub use scatter_chart::{ScatterChart, ScatterSeries};
 pub use scrollview::{ScrollBarWidget, ScrollView};
 pub use search_bar::SearchBar;
 pub use search_field::SearchField;
