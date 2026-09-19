@@ -23,6 +23,9 @@
 //!   [`SelectionMode::Multiple`].
 //! - Pointer: click selects, double-click activates, hover
 //!   highlights, dragging extends the range in `Multiple` mode.
+//!   With [`ListView::reorderable`], grabbing the selected row in
+//!   `Single` mode starts a reorder drag (accent drop line; the
+//!   completed `(from, to)` parks in [`ListView::take_moved`]).
 //!
 //! # Documented limitations
 //!
@@ -462,6 +465,16 @@ pub struct ListView {
     thumb_drag: Option<f32>,
     /// Whether a press-drag on rows is in flight (drag selection).
     dragging: bool,
+    /// Whether grabbing the *selected* row starts a reorder drag —
+    /// the Qt `InternalMove` / macOS row-drag idiom (`Single`
+    /// selection mode only; `Multiple` drags extend the range).
+    /// Completed moves park `(from, to)` in [`take_moved`](Self::take_moved).
+    pub reorderable: bool,
+    /// Reorder drag in flight: `(from, drop_index)` where
+    /// `drop_index` is the pre-removal insertion boundary `0..=len`.
+    reorder_drag: Option<(usize, usize)>,
+    /// Parked `(from, to)` reorder for `take_moved`.
+    moved: Option<(usize, usize)>,
     /// Display scale from `layout` — row height, bar, thumbs are
     /// logical pt.
     scale: f32,
@@ -505,6 +518,9 @@ impl ListView {
             vbar_rect: None,
             thumb_drag: None,
             dragging: false,
+            reorderable: false,
+            reorder_drag: None,
+            moved: None,
             scale: 1.0,
             text_painter: None,
         }
@@ -982,6 +998,21 @@ impl ListView {
         self.activated.take()
     }
 
+    /// Drain the parked `(from, to)` reorder — one-shot (see
+    /// [`reorderable`](Self::reorderable)).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::ListView;
+    ///
+    /// let mut l = ListView::new().items(["A", "B"]);
+    /// assert_eq!(l.take_moved(), None);
+    /// ```
+    pub fn take_moved(&mut self) -> Option<(usize, usize)> {
+        self.moved.take()
+    }
+
     /// Applies pending presses/focus moves recorded by row children and
     /// scroll requests parked by the scrollbar (AT actions delivered
     /// through `WidgetArena::internal_widget_mut`).
@@ -1083,6 +1114,24 @@ impl ListView {
         }
         let i = ((position.y - self.viewport.min_y() + self.scroll_y) / row_px) as usize;
         (i < self.items.len()).then_some(i)
+    }
+
+    /// Insertion boundary under `position` for a reorder drag —
+    /// `0..=items.len()`. The top half of a row drops *before* it,
+    /// the bottom half *after* it; outside the viewport clamps to
+    /// the nearest end.
+    fn drop_index_at(&self, position: Vec2) -> usize {
+        let row_px = self.row_px();
+        if row_px <= 0.0 || self.items.is_empty() {
+            return 0;
+        }
+        let raw = (position.y - self.viewport.min_y() + self.scroll_y) / row_px;
+        let i = if raw < 0.0 {
+            0.0
+        } else {
+            raw.floor() + if raw.fract() >= 0.5 { 1.0 } else { 0.0 }
+        };
+        (i as usize).min(self.items.len())
     }
 
     /// Sets the scroll offset, clamped; mirrors state onto rows/bars.
@@ -1423,6 +1472,14 @@ impl Widget for ListView {
                     if *count >= 2 {
                         self.select_index(i);
                         self.activate(i);
+                    } else if self.reorderable
+                        && self.selection_mode == SelectionMode::Single
+                        && self.selected() == Some(i)
+                    {
+                        // Grabbing the already-selected row starts a
+                        // reorder drag instead of re-selecting.
+                        self.reorder_drag = Some((i, i));
+                        return EventResponse::CapturePointer;
                     } else if self.selection_mode == SelectionMode::Multiple && self.shift_held {
                         self.extend_selection_to(i);
                     } else {
@@ -1439,6 +1496,14 @@ impl Widget for ListView {
             WidgetEvent::PointerMoved { position } => {
                 if self.thumb_drag.is_some() {
                     self.drag_thumb(*position);
+                    return EventResponse::RequestRepaint;
+                }
+                if let Some((from, drop)) = self.reorder_drag {
+                    let next = self.drop_index_at(*position);
+                    if next != drop {
+                        self.reorder_drag = Some((from, next));
+                        self.sync_rows();
+                    }
                     return EventResponse::RequestRepaint;
                 }
                 if self.dragging {
@@ -1466,6 +1531,22 @@ impl Widget for ListView {
                 if self.thumb_drag.is_some() {
                     self.thumb_drag = None;
                     self.sync_bars();
+                    return EventResponse::ReleasePointer;
+                }
+                if let Some((from, drop)) = self.reorder_drag.take() {
+                    // `drop` counts positions in the *pre-removal*
+                    // list — after `remove(from)` every boundary past
+                    // `from` shifts down one.
+                    let to = if drop > from { drop - 1 } else { drop };
+                    if to != from && to <= self.items.len() {
+                        let item = self.items.remove(from);
+                        let to = to.min(self.items.len());
+                        self.items.insert(to, item);
+                        self.focused = to;
+                        self.selection.select(to);
+                        self.moved = Some((from, to));
+                        self.sync_rows();
+                    }
                     return EventResponse::ReleasePointer;
                 }
                 if self.dragging {
@@ -1610,6 +1691,25 @@ impl Widget for ListView {
             .push_fill_rect(rect, cx.color(TokenKey::SurfaceColor, SURFACE_BG));
         cx.list
             .push_stroke_rect(rect, cx.pt(1.0), cx.color(TokenKey::BorderColor, BORDER));
+        // Reorder drop indicator — an accent line at the insertion
+        // boundary (skipped for the no-op boundaries adjacent to the
+        // dragged row).
+        if let Some((from, drop)) = self.reorder_drag {
+            if drop != from && drop != from + 1 {
+                let row_px = self.row_px();
+                let y = self.viewport.min_y() + drop as f32 * row_px - self.scroll_y;
+                let t = cx.pt(1.0);
+                cx.list.push_fill_rect(
+                    kurbo::Rect::new(
+                        f64::from(self.viewport.min_x()),
+                        f64::from(y - t),
+                        f64::from(self.viewport.max_x()),
+                        f64::from(y + t),
+                    ),
+                    cx.color(TokenKey::AccentColor, [50, 115, 230, 255]),
+                );
+            }
+        }
     }
 
     fn child_count(&self) -> usize {
@@ -1981,5 +2081,106 @@ mod tests {
         };
         assert_eq!(event(&mut l, &press), EventResponse::Ignored);
         assert_eq!(event(&mut l, &key("ArrowDown")), EventResponse::Ignored);
+    }
+
+    fn press_at(y: f32) -> WidgetEvent {
+        WidgetEvent::PointerPressed {
+            position: Vec2::new(10.0, y),
+            button: PointerButton::Primary,
+            count: 1,
+        }
+    }
+
+    fn release_at(y: f32) -> WidgetEvent {
+        WidgetEvent::PointerReleased {
+            position: Vec2::new(10.0, y),
+            button: PointerButton::Primary,
+        }
+    }
+
+    #[test]
+    fn reorder_drag_moves_selected_row_down() {
+        let mut l = make_view(5, 200.0, 200.0);
+        l.reorderable = true;
+        l.set_selected(0);
+        // Grab the selected row (y=12 → row 0).
+        assert_eq!(
+            event(&mut l, &press_at(12.0)),
+            EventResponse::CapturePointer
+        );
+        // Bottom half of row 2 → drop boundary 3 → lands at index 2.
+        event(
+            &mut l,
+            &WidgetEvent::PointerMoved {
+                position: Vec2::new(10.0, 2.0 * 24.0 + 18.0),
+            },
+        );
+        assert_eq!(
+            event(&mut l, &release_at(66.0)),
+            EventResponse::ReleasePointer
+        );
+        assert_eq!(l.take_moved(), Some((0, 2)));
+        assert_eq!(l.item(2), Some("Item 0"));
+        assert_eq!(l.selected(), Some(2));
+    }
+
+    #[test]
+    fn reorder_drag_moves_row_up() {
+        let mut l = make_view(5, 200.0, 200.0);
+        l.reorderable = true;
+        l.set_selected(3);
+        // Grab row 3 (y = 3*24 + 12).
+        event(&mut l, &press_at(3.0 * 24.0 + 12.0));
+        // Top half of row 0 → drop boundary 0.
+        event(
+            &mut l,
+            &WidgetEvent::PointerMoved {
+                position: Vec2::new(10.0, 6.0),
+            },
+        );
+        event(&mut l, &release_at(6.0));
+        assert_eq!(l.take_moved(), Some((3, 0)));
+        assert_eq!(l.item(0), Some("Item 3"));
+    }
+
+    #[test]
+    fn reorder_press_on_unselected_row_selects_instead() {
+        let mut l = make_view(5, 200.0, 200.0);
+        l.reorderable = true;
+        l.set_selected(0);
+        // Press row 2 — not selected → normal selection, no reorder.
+        event(&mut l, &press_at(2.0 * 24.0 + 12.0));
+        assert_eq!(l.selected(), Some(2));
+        event(&mut l, &release_at(2.0 * 24.0 + 12.0));
+        assert_eq!(l.take_moved(), None);
+    }
+
+    #[test]
+    fn reorder_noop_drop_keeps_order() {
+        let mut l = make_view(5, 200.0, 200.0);
+        l.reorderable = true;
+        l.set_selected(1);
+        event(&mut l, &press_at(24.0 + 12.0));
+        // Release without moving — drop boundary is the row itself.
+        event(&mut l, &release_at(24.0 + 12.0));
+        assert_eq!(l.take_moved(), None);
+        assert_eq!(l.item(1), Some("Item 1"));
+    }
+
+    #[test]
+    fn multiple_mode_drag_still_extends_not_reorders() {
+        let mut l = make_view(5, 200.0, 200.0).selection_mode(SelectionMode::Multiple);
+        l.reorderable = true;
+        l.set_selected(1);
+        event(&mut l, &press_at(24.0 + 12.0));
+        event(
+            &mut l,
+            &WidgetEvent::PointerMoved {
+                position: Vec2::new(10.0, 3.0 * 24.0 + 12.0),
+            },
+        );
+        event(&mut l, &release_at(3.0 * 24.0 + 12.0));
+        assert_eq!(l.take_moved(), None);
+        assert_eq!(l.item(1), Some("Item 1"));
     }
 }
