@@ -800,6 +800,21 @@ pub mod settings_row;
 /// ```
 pub mod status_bar;
 
+/// Severity status lamp — a filled status-colored dot with an
+/// optional label and `pulse` halo (industrial HMI lamp, Ant
+/// `Badge.Status`). Display-only; the app flips states through
+/// `set_status`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::status_dot::{Status, StatusDot};
+///
+/// let d = StatusDot::new("Pump A").status(Status::Ok);
+/// assert_eq!(d.status_value(), Status::Ok);
+/// ```
+pub mod status_dot;
+
 /// Split button — primary-action zone fused with a chevron that
 /// parks a dropdown request (WinUI `SplitButton`).
 ///
@@ -1842,6 +1857,7 @@ pub use split_view::{SplitOrientation, SplitView};
 pub use stack::Stack;
 pub use statistic::{Statistic, Trend};
 pub use status_bar::{StatusBar, StatusItem};
+pub use status_dot::{Status, StatusDot};
 pub use steps::{Step, Steps};
 pub use swipe_actions::{SwipeAction, SwipeActions, SwipeEdge};
 pub use switch::Switch;
