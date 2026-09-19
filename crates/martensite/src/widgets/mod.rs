@@ -43,6 +43,19 @@
 //! recurses into them after the parent's chrome, and the AccessKit
 //! adapter emits them as virtual nodes in the accessibility tree.
 
+/// Vertically stacked collapsible sections (Ant Collapse / MUI
+/// Accordion) with managed expansion.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::accordion::Accordion;
+///
+/// let a = Accordion::new();
+/// assert!(a.sections.is_empty());
+/// ```
+pub mod accordion;
+
 /// Interactive button widget.
 ///
 /// # Examples
@@ -55,6 +68,19 @@
 /// ```
 pub mod button;
 
+/// Elevated content surface with title and action row (M3 / Ant
+/// Card).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::card::Card;
+///
+/// let c = Card::new();
+/// assert!(c.title.is_none());
+/// ```
+pub mod card;
+
 /// Toggleable checkbox widget.
 ///
 /// # Examples
@@ -66,6 +92,19 @@ pub mod button;
 /// assert!(!cb.checked);
 /// ```
 pub mod checkbox;
+
+/// Compact pill chip for selection, input, or actions (M3 chips /
+/// Ant Tag).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::chip::Chip;
+///
+/// let c = Chip::new("Tag");
+/// assert!(!c.selected);
+/// ```
+pub mod chip;
 
 /// Box container layout primitive.
 ///
@@ -88,6 +127,19 @@ pub mod container;
 /// let row = Flex::row();
 /// ```
 pub mod flex;
+
+/// Titled frame container with optional checkable title (QGroupBox /
+/// GTK Frame).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::group_box::GroupBox;
+///
+/// let gb = GroupBox::new("Options");
+/// assert_eq!(gb.title, "Options");
+/// ```
+pub mod group_box;
 
 /// Z-ordered layering stack.
 ///
@@ -261,6 +313,17 @@ pub mod slider;
 /// ```
 pub mod radio;
 
+/// Dual-thumb range slider widget.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::RangeSlider;
+///
+/// let rs = RangeSlider::new(0.0, 100.0).with_range(20.0, 80.0);
+/// ```
+pub mod range_slider;
+
 /// ARIA APG scroll view with smart scrollbars and rubber-band
 /// overscroll.
 ///
@@ -272,6 +335,29 @@ pub mod radio;
 /// let v = ScrollView::new(Text::new("content"));
 /// ```
 pub mod scrollview;
+
+/// Single-select segmented pill strip (radio-group semantics).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Segmented;
+///
+/// let seg = Segmented::new().options(vec!["A", "B"]);
+/// assert_eq!(seg.selected_index(), 0);
+/// ```
+pub mod segmented;
+
+/// Numeric spin box with ▲/▼ step buttons and an editable field.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::SpinBox;
+///
+/// let sb = SpinBox::new().range(0.0, 10.0).suffix(" px");
+/// ```
+pub mod spinbox;
 
 /// ARIA APG select-only combobox with an overlay listbox popup.
 ///
@@ -295,6 +381,18 @@ pub mod dropdown;
 /// ```
 pub mod tabs;
 
+/// Pressed-state (latched) toggle button.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::ToggleButton;
+///
+/// let b = ToggleButton::new("Bold").pressed(true);
+/// assert!(b.pressed);
+/// ```
+pub mod toggle_button;
+
 /// ARIA APG tooltip with an overlay bubble and `aria-describedby`.
 ///
 /// # Examples
@@ -306,9 +404,12 @@ pub mod tabs;
 /// ```
 pub mod tooltip;
 
+pub use accordion::Accordion;
 pub use banner::{Banner, Severity};
 pub use button::Button;
-pub use checkbox::CheckBox;
+pub use card::{Card, CardVariant};
+pub use checkbox::{CheckBox, CheckState};
+pub use chip::{Chip, ChipKind};
 pub use container::Container;
 pub use dialog::Dialog;
 pub use disclosure::Disclosure;
@@ -316,16 +417,21 @@ pub use drawer::Drawer;
 pub use dropdown::Dropdown;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
+pub use group_box::GroupBox;
 pub use media::{MediaView, VideoFit};
 pub use progress::{ProgressBar, Spinner};
 pub use radio::{RadioGroup, RadioOption};
+pub use range_slider::{RangeSlider, RangeThumb};
 pub use scrollview::{ScrollBarWidget, ScrollView};
+pub use segmented::{Segment, Segmented};
 pub use separator::Separator;
 pub use slider::{Slider, SliderOrientation};
+pub use spinbox::SpinBox;
 pub use stack::Stack;
 pub use switch::Switch;
 pub use tabs::{TabActivation, TabItem, Tabs};
 pub use text::Text;
 pub use text_input::TextInput;
 pub use toast::{Toast, ToastHost};
+pub use toggle_button::ToggleButton;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
