@@ -381,6 +381,23 @@ pub mod form_field;
 /// ```
 pub mod gauge;
 
+/// Column-grid layout container — Ant `Row`/`Col` style: a fixed
+/// column count with per-cell `col_span`/`row_span` and automatic
+/// left-to-right placement that wraps to fresh rows.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::prelude::*;
+/// use martensite::widgets::grid::{Grid, GridCell};
+///
+/// let g = Grid::new().columns(12)
+///     .cell(GridCell::new(Text::new("half")).col_span(6))
+///     .cell(GridCell::new(Text::new("half")).col_span(6));
+/// assert_eq!(g.cell_count(), 2);
+/// ```
+pub mod grid;
+
 /// Titled frame container with optional checkable title (QGroupBox /
 /// GTK Frame).
 ///
@@ -1291,6 +1308,7 @@ pub use flex::{Flex, FlexDirection};
 pub use float_button::FloatButton;
 pub use form_field::{FormField, LabelPosition};
 pub use gauge::Gauge;
+pub use grid::{Grid, GridCell};
 pub use group_box::GroupBox;
 pub use image::{Image, ImageFit};
 pub use kbd::Kbd;
