@@ -1199,6 +1199,21 @@ pub mod log_view;
 /// ```
 pub mod markdown;
 
+/// Horizontally scrolling text ticker (LED marquee / news-crawl
+/// idiom) — text slides left at a configurable device-px speed and
+/// wraps back in from the right after a gap, all inside the widget
+/// clip. `Space` toggles pause while focused.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::marquee::Marquee;
+///
+/// let m = Marquee::new("Breaking news").speed(60.0);
+/// assert_eq!(m.text(), "Breaking news");
+/// ```
+pub mod marquee;
+
 /// Masonry layout — children flow into the currently-shortest
 /// column (Pinterest layout, CSS `masonry`).
 ///
@@ -2036,6 +2051,7 @@ pub use link::Link;
 pub use list_view::{ListView, SelectionMode, SelectionModel};
 pub use log_view::{LogLine, LogSeverity, LogView};
 pub use markdown::Markdown;
+pub use marquee::Marquee;
 pub use masonry::Masonry;
 pub use media::{MediaView, VideoFit};
 pub use media_controls::MediaControls;
