@@ -1757,6 +1757,20 @@ pub mod tree_select;
 /// ```
 pub mod tree_view;
 
+/// Squarified treemap — area-proportional item cells laid out by the
+/// worst-aspect-ratio folding algorithm (Ant `Treemap`, d3 treemap).
+/// Palette-cycled cells, fit-checked labels, hover index seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::treemap::{Treemap, TreemapItem};
+///
+/// let t = Treemap::new().item(TreemapItem::new("src", 60.0));
+/// assert_eq!(t.items.len(), 1);
+/// ```
+pub mod treemap;
+
 /// Tiled text overlay for stamping watermarks over content (Ant
 /// `Watermark`) — a leaf meant for [`Stack`] layering.
 ///
@@ -1925,6 +1939,7 @@ pub use tour::{Tour, TourStep};
 pub use transfer::{MoveDir, Transfer};
 pub use tree_select::TreeSelect;
 pub use tree_view::{TreeNode, TreeView};
+pub use treemap::{Treemap, TreemapItem};
 pub use watermark::Watermark;
 pub use wheel_picker::WheelPicker;
 pub use wizard::Wizard;
