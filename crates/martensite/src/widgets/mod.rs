@@ -456,6 +456,22 @@ pub mod container;
 /// ```
 pub mod context_menu;
 
+/// Tick-driven countdown timer display (pomodoro / cycle-time
+/// idiom) — `MM:SS` (or `H:MM:SS`) face decrementing each frame,
+/// warning color under a threshold, alert color at zero, a
+/// one-shot `take_elapsed` flag, and `Space` pause/resume.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::countdown::Countdown;
+/// use std::time::Duration;
+///
+/// let c = Countdown::new(Duration::from_secs(90));
+/// assert_eq!(c.remaining().as_secs(), 90);
+/// ```
+pub mod countdown;
+
 /// Read-only date field with a calendar-grid popup (`QDateEdit` /
 /// `GtkCalendar` / WinUI `CalendarDatePicker`) — min/max clamping,
 /// host-injected "today", `take_selected` pick seam.
@@ -2046,6 +2062,7 @@ pub use command_link::CommandLink;
 pub use command_palette::{CommandAction, CommandPalette};
 pub use container::Container;
 pub use context_menu::ContextMenu;
+pub use countdown::Countdown;
 pub use date_picker::{Date, DatePicker};
 pub use descriptions::{DescriptionItem, Descriptions};
 pub use dial::Dial;
