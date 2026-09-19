@@ -703,6 +703,22 @@ pub mod header_bar;
 /// ```
 pub mod heat_map;
 
+/// Binned frequency chart — contiguous equal-width bars over a
+/// numeric range (the distribution/density idiom, complementing
+/// `BarChart`'s categorical columns). Takes raw samples (auto-
+/// binned over their span) or pre-binned counts; hovering a bin
+/// parks its index in `take_hovered`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::histogram::Histogram;
+///
+/// let h = Histogram::new().bins(4).samples([0.1, 0.4, 0.6, 0.9]);
+/// assert_eq!(h.bin_count(), 4);
+/// ```
+pub mod histogram;
+
 /// Raster image display with aspect-fit modes (`Contain`, `Cover`,
 /// `Fill`, `None`).
 ///
