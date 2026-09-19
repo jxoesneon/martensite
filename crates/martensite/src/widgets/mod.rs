@@ -565,6 +565,21 @@ pub mod form_field;
 /// ```
 pub mod funnel_chart;
 
+/// Horizontal task-bar timeline (MS Project / enterprise Gantt
+/// idiom) — rounded bars positioned by start day and duration
+/// across a day-scale axis, task names down a left column, day
+/// ticks along the bottom, and a progress-shaded segment per bar.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::gantt::Gantt;
+///
+/// let g = Gantt::new().total_days(14.0).task("Build", 3.0, 5.0);
+/// assert_eq!(g.task_count(), 1);
+/// ```
+pub mod gantt;
+
 /// Radial gauge display — value arc with zone colors, ticks, and a
 /// centered readout (WCT `RadialGauge`, SwiftUI `Gauge`).
 ///
@@ -1939,6 +1954,7 @@ pub use flow_box::{FlowBox, FlowSelection};
 pub use font_button::FontButton;
 pub use form_field::{FormField, LabelPosition};
 pub use funnel_chart::FunnelChart;
+pub use gantt::{Gantt, GanttTask};
 pub use gauge::Gauge;
 pub use grid::{Grid, GridCell};
 pub use group_box::GroupBox;
