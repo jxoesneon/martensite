@@ -1086,6 +1086,21 @@ pub mod masonry;
 /// ```
 pub mod media;
 
+/// Transport strip for `MediaView` (WinUI `MediaTransportControls`)
+/// — play/pause, elapsed/total labels, draggable seek bar, volume
+/// slider + mute, fullscreen button. Driven: user intent drains via
+/// `take_*` seams and the app reflects decoder state back.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::media_controls::MediaControls;
+///
+/// let mc = MediaControls::new().duration(120.0);
+/// assert_eq!(mc.duration_value(), 120.0);
+/// ```
+pub mod media_controls;
+
 /// Menu item model and the `Role::Menu` popup surface (items,
 /// submenus, checkables, radios, separators, headings).
 ///
@@ -1787,6 +1802,7 @@ pub use log_view::{LogLine, LogSeverity, LogView};
 pub use markdown::Markdown;
 pub use masonry::Masonry;
 pub use media::{MediaView, VideoFit};
+pub use media_controls::MediaControls;
 pub use mention::Mention;
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
 pub use menu_bar::MenuBar;
