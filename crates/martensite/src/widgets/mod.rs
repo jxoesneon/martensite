@@ -135,6 +135,23 @@ pub mod badge;
 /// ```
 pub mod button;
 
+/// Always-visible month-grid date selector (Ant `Calendar` panel /
+/// `QCalendarWidget` / GTK `Calendar`). `DatePicker` hides its grid
+/// behind a popup; `Calendar` renders the month inline with chevron
+/// navigation, a weekday header, today/selection/range states, and
+/// arrow-key focus.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::calendar::Calendar;
+/// use martensite::widgets::date_picker::Date;
+///
+/// let cal = Calendar::new().date(Date { year: 2024, month: 6, day: 15 });
+/// assert_eq!(cal.displayed_month(), (2024, 6));
+/// ```
+pub mod calendar;
+
 /// Elevated content surface with title and action row (M3 / Ant
 /// Card).
 ///
@@ -1127,6 +1144,7 @@ pub use banner::{Banner, Severity};
 pub use bottom_sheet::BottomSheet;
 pub use breadcrumb::Breadcrumb;
 pub use button::Button;
+pub use calendar::Calendar;
 pub use card::{Card, CardVariant};
 pub use cascader::{Cascader, CascaderOption};
 pub use checkbox::{CheckBox, CheckState};
