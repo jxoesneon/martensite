@@ -31,6 +31,9 @@ use martensite::core::{
 use martensite::prelude::Signal;
 use martensite::widgets::{Banner, Dialog, Disclosure, Severity, Switch, Toast, ToastHost};
 use martensite::widgets::{Drawer, Flex, Text};
+use martensite::widgets::{
+    KeyCapture, Rating, Segmented, SettingsGroup, SettingsRow, SpinBox,
+};
 
 /// The toast inbox — producers `lock().push(Toast)`; the host drains
 /// them on the next tick.
@@ -108,6 +111,51 @@ impl ShellOverlays {
         let alerts = Switch::new("row alerts")
             .on(self.alerts_on.get())
             .with_text_painter(painter.clone());
+        // Dogfood the preferences widgets — a carded SettingsGroup
+        // whose rows carry the newer facade controls as trailing
+        // editors.
+        let prefs = SettingsGroup::new("Inspector preferences")
+            .carded(true)
+            .row(
+                SettingsRow::new("Density")
+                    .subtitle("Row height preset")
+                    .trailing(
+                        Segmented::new()
+                            .options(["Compact", "Normal", "Roomy"])
+                            .selected(1)
+                            .with_text_painter(painter.clone()),
+                    ),
+            )
+            .row(
+                SettingsRow::new("Refresh cadence")
+                    .subtitle("Telemetry tick rate")
+                    .trailing(
+                        SpinBox::new()
+                            .range(1.0, 60.0)
+                            .suffix(" Hz")
+                            .with_text_painter(painter.clone()),
+                    ),
+            )
+            .row(
+                SettingsRow::new("Confidence floor")
+                    .subtitle("Minimum score for flags")
+                    .trailing(
+                        Rating::new()
+                            .max(5)
+                            .value(3.0)
+                            .with_text_painter(painter.clone()),
+                    ),
+            )
+            .row(
+                SettingsRow::new("Focus shortcut")
+                    .subtitle("Capture a key chord")
+                    .trailing(
+                        KeyCapture::new()
+                            .placeholder("press keys…")
+                            .with_text_painter(painter.clone()),
+                    ),
+            )
+            .with_text_painter(painter.clone());
         let content = Flex::column().gap(8.0).children([
             Box::new(
                 Banner::new(Severity::Info, "Inspector attached")
@@ -124,6 +172,7 @@ impl ShellOverlays {
                     .child(alerts)
                     .with_text_painter(painter.clone()),
             ),
+            Box::new(prefs),
         ]);
         Drawer::new("Inspector")
             .width(300.0)
