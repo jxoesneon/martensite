@@ -1880,6 +1880,22 @@ pub mod tree_view;
 /// ```
 pub mod treemap;
 
+/// Running-total bridge chart (McKinsey / finance waterfall
+/// idiom) — floating delta columns spanning previous-to-new
+/// cumulative totals, full columns for totals, dashed connectors
+/// between consecutive tops, and a hover seam parking the column
+/// index.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::waterfall::Waterfall;
+///
+/// let w = Waterfall::new().total("Start", 100.0).delta("Gain", 25.0);
+/// assert_eq!(w.entry_count(), 2);
+/// ```
+pub mod waterfall;
+
 /// Tiled text overlay for stamping watermarks over content (Ant
 /// `Watermark`) — a leaf meant for [`Stack`] layering.
 ///
@@ -2085,6 +2101,7 @@ pub use transfer::{MoveDir, Transfer};
 pub use tree_select::TreeSelect;
 pub use tree_view::{TreeNode, TreeView};
 pub use treemap::{Treemap, TreemapItem};
+pub use waterfall::{Waterfall, WaterfallEntry};
 pub use watermark::Watermark;
 pub use waveform::Waveform;
 pub use wheel_picker::WheelPicker;
