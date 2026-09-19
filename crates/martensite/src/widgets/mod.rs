@@ -1163,6 +1163,20 @@ pub mod kbd;
 /// ```
 pub mod keyboard_shortcuts;
 
+/// Telephony 3×4 digit pad (POS / dialer idiom) — rounded cells
+/// for `1`–`9`, `*`, `0`, `#` that park the pressed character in
+/// `take_pressed`, with keyboard digits and `Backspace` (`'\x08'`)
+/// routed through the same seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::keypad::Keypad;
+///
+/// assert_eq!(Keypad::new().key_count(), 12);
+/// ```
+pub mod keypad;
+
 /// Seven-segment digit display (Qt `QLCDNumber`) — a fixed-cell
 /// right-aligned readout with ghost segments on the glass.
 /// Display-only.
@@ -2137,6 +2151,7 @@ pub use ip_input::IpInput;
 pub use kbd::Kbd;
 pub use key_capture::KeyCapture;
 pub use keyboard_shortcuts::{KeyboardShortcuts, ShortcutGroup, ShortcutRow};
+pub use keypad::Keypad;
 pub use lcd_number::LcdNumber;
 pub use level_bar::{LevelBar, LevelZone};
 pub use line_chart::{LineChart, LineSeries};
