@@ -1863,6 +1863,21 @@ pub mod treemap;
 /// ```
 pub mod watermark;
 
+/// Amplitude-column audio display (SoundCloud / Audacity waveform
+/// idiom) — symmetric peak columns around the midline split into
+/// played (accent) and unplayed (muted) regions by the playhead
+/// fraction, with a click-to-seek seam and a playhead line.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::waveform::Waveform;
+///
+/// let w = Waveform::new().peaks([0.2, 0.8, 0.5]).position(0.3);
+/// assert_eq!(w.peak_count(), 3);
+/// ```
+pub mod waveform;
+
 /// Vertically scrollable option drum that snaps to the centered row
 /// (iOS `UIPickerView`, SwiftUI wheel style).
 ///
@@ -2039,6 +2054,7 @@ pub use tree_select::TreeSelect;
 pub use tree_view::{TreeNode, TreeView};
 pub use treemap::{Treemap, TreemapItem};
 pub use watermark::Watermark;
+pub use waveform::Waveform;
 pub use wheel_picker::WheelPicker;
 pub use wizard::Wizard;
 pub use xy_pad::XYPad;
