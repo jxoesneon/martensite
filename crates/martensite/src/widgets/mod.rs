@@ -326,6 +326,34 @@ pub mod progress;
 /// ```
 pub mod separator;
 
+/// Bottom-of-window status strip (QStatusBar / WPF `StatusBar`) —
+/// left zone widgets, a permanent/temporary message zone, and
+/// right-docked permanent widgets.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::StatusBar;
+///
+/// let mut bar = StatusBar::new().message("Ready");
+/// bar.temporary("Saving…");
+/// assert_eq!(bar.current_message(), "Saving…");
+/// ```
+pub mod status_bar;
+
+/// Wizard progress indicator — numbered step nodes connected by
+/// lines (Ant `Steps`, Carbon `ProgressIndicator`, `QWizard` header).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::steps::Steps;
+///
+/// let s = Steps::new().steps(["Account", "Profile", "Done"]).current(1);
+/// assert_eq!(s.current_step(), 1);
+/// ```
+pub mod steps;
+
 /// Pill toggle switch.
 ///
 /// # Examples
@@ -441,6 +469,18 @@ pub mod menu;
 /// assert_eq!(bar.menu_count(), 1);
 /// ```
 pub mod menu_bar;
+
+/// Page switcher — prev/next arrows + a windowed page run with
+/// ellipsis gaps (Ant `Pagination`, Carbon `Pagination`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Pagination;
+///
+/// let p = Pagination::new().total_pages(20).current(7);
+/// ```
+pub mod pagination;
 
 /// Mini anchored confirmation bubble (Ant `Popconfirm`) — question,
 /// Confirm/Cancel pair, arrow tail, `ConfirmResult` seam.
@@ -608,6 +648,20 @@ pub mod tabs;
 /// ```
 pub mod toggle_button;
 
+/// Horizontal strip of action items (QToolBar / NSToolbar / WinUI
+/// `CommandBar`) — buttons, arbitrary widgets, separators, flexible
+/// spacers, and a `»` overflow collapse.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Button, Toolbar};
+///
+/// let bar = Toolbar::new().item(Button::new("New")).spacer().item(Button::new("About"));
+/// assert_eq!(bar.item_count(), 3);
+/// ```
+pub mod toolbar;
+
 /// ARIA APG tooltip with an overlay bubble and `aria-describedby`.
 ///
 /// # Examples
@@ -658,6 +712,7 @@ pub use list_view::{ListView, SelectionMode, SelectionModel};
 pub use media::{MediaView, VideoFit};
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
 pub use menu_bar::MenuBar;
+pub use pagination::Pagination;
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
 pub use progress::{ProgressBar, Spinner};
@@ -671,6 +726,8 @@ pub use skeleton::{Skeleton, SkeletonShape};
 pub use slider::{Slider, SliderOrientation};
 pub use spinbox::SpinBox;
 pub use stack::Stack;
+pub use status_bar::{StatusBar, StatusItem};
+pub use steps::{Step, Steps};
 pub use switch::Switch;
 pub use tabs::{TabActivation, TabItem, Tabs};
 pub use text::Text;
@@ -678,5 +735,6 @@ pub use text_area::TextArea;
 pub use text_input::TextInput;
 pub use toast::{Toast, ToastHost};
 pub use toggle_button::ToggleButton;
+pub use toolbar::Toolbar;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
 pub use tree_view::{TreeNode, TreeView};
