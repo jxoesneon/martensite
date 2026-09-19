@@ -255,6 +255,18 @@ pub mod banner;
 /// ```
 pub mod bottom_sheet;
 
+/// Breadcrumb path strip — navigable segments with ellipsis collapse
+/// when the path overflows (WinUI `BreadcrumbBar`, `NSPathControl`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Breadcrumb;
+///
+/// let b = Breadcrumb::new().segments(["Home", "Docs", "API"]);
+/// ```
+pub mod breadcrumb;
+
 /// Modal dialog card for the overlay layer.
 ///
 /// # Examples
@@ -626,6 +638,7 @@ pub use avatar::Avatar;
 pub use badge::Badge;
 pub use banner::{Banner, Severity};
 pub use bottom_sheet::BottomSheet;
+pub use breadcrumb::Breadcrumb;
 pub use button::Button;
 pub use card::{Card, CardVariant};
 pub use checkbox::{CheckBox, CheckState};
