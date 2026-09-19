@@ -1039,6 +1039,21 @@ pub mod menu;
 /// ```
 pub mod menu_bar;
 
+/// Button face that opens a `Menu` popup below it (GTK `MenuButton`,
+/// WinUI `DropDownButton`) — shares `MenuBar`/`ContextMenu`'s
+/// `MenuStack` overlay machinery and `MenuPath` activation seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{MenuButton, MenuItem};
+///
+/// let mut b = MenuButton::new("Actions", vec![MenuItem::action("A")]);
+/// b.open();
+/// assert!(b.is_open());
+/// ```
+pub mod menu_button;
+
 /// Text field with a trigger-character suggestion popup — the Ant
 /// `Mentions` / Slack `@`-completion pattern. Shares `AutoComplete`'s
 /// APG editable-combobox architecture: the popup is an overlay
@@ -1665,6 +1680,7 @@ pub use media::{MediaView, VideoFit};
 pub use mention::Mention;
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
 pub use menu_bar::MenuBar;
+pub use menu_button::MenuButton;
 pub use nav_rail::{NavDestination, NavRail};
 pub use nav_stack::NavStack;
 pub use otp_input::OtpInput;
