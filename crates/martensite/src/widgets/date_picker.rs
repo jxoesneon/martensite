@@ -24,6 +24,11 @@
 //!   `Escape` closes.
 //! - **Range**: [`DatePicker::min_date`]/[`DatePicker::max_date`] clamp
 //!   the pickable range — out-of-range cells are inert and dimmed.
+//! - **Range mode**: [`DatePicker::range_mode`] switches the popup to
+//!   `Ant RangePicker` two-click span picking — first pick anchors
+//!   (stay open, hover previews the span), second completes, commits
+//!   to [`DatePicker::take_range`], and closes. The face shows
+//!   `"start – end"`.
 //!
 //! The face emits `Role::ComboBox` with `aria-haspopup="dialog"`,
 //! `aria-expanded`, and the formatted date as its value; the popup
@@ -309,6 +314,8 @@ fn format_into(out: &mut String, fmt: &str, date: Date) {
 struct CalendarChannel {
     /// A day the user picked (click or `Enter` on the focus cell).
     picked: Option<Date>,
+    /// A completed `(start, end)` range (range mode only).
+    ranged: Option<(Date, Date)>,
     /// The surface asked to close without picking (embedded `Escape`).
     close_requested: bool,
 }
@@ -324,6 +331,14 @@ struct CalendarSurface {
     view_month: u32,
     /// The currently committed value — painted as the selected cell.
     selected: Option<Date>,
+    /// Two-click range picking (`Ant RangePicker` semantics): first
+    /// pick anchors, second completes and closes.
+    range_mode: bool,
+    /// The committed `(start, end)` span — painted as a wash with
+    /// accent endpoints.
+    range: Option<(Date, Date)>,
+    /// The in-progress range anchor (range mode only).
+    anchor: Option<Date>,
     /// Host-injected "today" — ringed when visible.
     today: Option<Date>,
     /// Inclusive pickable bounds.
@@ -445,12 +460,33 @@ impl CalendarSurface {
     }
 
     /// Writes the pick into the shared channel — the face commits and
-    /// closes on the next `sync_overlay`.
-    fn pick(&self, date: Date) {
-        self.channel
-            .lock()
-            .expect("calendar channel poisoned")
-            .picked = Some(date);
+    /// closes on the next `sync_overlay`. Range mode: first pick sets
+    /// the anchor (stay open); second completes the span, normalizes
+    /// order, and asks to close — the `Ant RangePicker` flow.
+    fn pick(&mut self, date: Date) {
+        let mut channel = self.channel.lock().expect("calendar channel poisoned");
+        if self.range_mode {
+            match self.anchor {
+                None => self.anchor = Some(date),
+                Some(a) => {
+                    let (lo, hi) = if date < a { (date, a) } else { (a, date) };
+                    channel.ranged = Some((lo, hi));
+                    channel.close_requested = true;
+                    self.anchor = None;
+                }
+            }
+        } else {
+            channel.picked = Some(date);
+        }
+    }
+
+    /// The span highlighted right now: the committed range, or the
+    /// provisional `anchor..hover` preview while picking.
+    fn active_span(&self) -> Option<(Date, Date)> {
+        match self.anchor {
+            Some(a) => self.hover.map(|h| if h < a { (h, a) } else { (a, h) }),
+            None => self.range,
+        }
     }
 }
 
@@ -707,7 +743,10 @@ impl Widget for CalendarSurface {
                 );
                 let in_month = date.month == self.view_month && date.year == self.view_year;
                 let pickable = self.pickable(date);
-                let is_selected = self.selected == Some(date);
+                let span = self.active_span();
+                let in_span = span.is_some_and(|(lo, hi)| date >= lo && date <= hi);
+                let is_endpoint = span.is_some_and(|(lo, hi)| date == lo || date == hi);
+                let is_selected = self.selected == Some(date) || is_endpoint;
                 let is_today = self.today == Some(date);
                 let is_focus = self.focus == date && in_month;
                 let is_hover = self.hover == Some(date);
@@ -717,7 +756,7 @@ impl Widget for CalendarSurface {
                         &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
                         accent,
                     );
-                } else if is_hover && pickable {
+                } else if (in_span && in_month) || (is_hover && pickable) {
                     cx.list.push_fill_shape(
                         krect,
                         &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
@@ -831,6 +870,12 @@ pub struct DatePicker {
     pub week_starts_monday: bool,
     /// The committed value.
     date: Option<Date>,
+    /// Two-click range picking — `Ant RangePicker` semantics.
+    pub range_mode: bool,
+    /// The committed `(start, end)` span (range mode).
+    range: Option<(Date, Date)>,
+    /// One-shot span awaiting [`DatePicker::take_range`].
+    range_pending: Option<(Date, Date)>,
     /// Whether the popup is logically open.
     open: bool,
     /// Overlay entry id of the open popup.
@@ -874,6 +919,9 @@ impl DatePicker {
             today: None,
             week_starts_monday: true,
             date: None,
+            range_mode: false,
+            range: None,
+            range_pending: None,
             open: false,
             popup_id: None,
             channel: Arc::new(Mutex::new(CalendarChannel::default())),
@@ -1035,6 +1083,90 @@ impl DatePicker {
     /// Shares a [`crate::text_paint::TextPainter`] so `paint` emits
     /// real glyph runs instead of `DrawText` placeholder boxes.
     #[must_use]
+    /// Switches the popup to two-click range picking (`Ant
+    /// `RangePicker` semantics): first pick anchors, second completes
+    /// and closes. Completed spans park in
+    /// [`take_range`](Self::take_range); single-day `take_selected`
+    /// is unused in this mode.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::DatePicker;
+    ///
+    /// let dp = DatePicker::new().range_mode(true);
+    /// assert!(dp.range_mode);
+    /// ```
+    pub fn range_mode(mut self, on: bool) -> Self {
+        self.range_mode = on;
+        self
+    }
+
+    /// Sets the committed range programmatically (range mode).
+    /// Normalized to chronological order; does not feed
+    /// [`take_range`](Self::take_range).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{Date, DatePicker};
+    ///
+    /// let mut dp = DatePicker::new().range_mode(true);
+    /// dp.set_range((
+    ///     Date { year: 2024, month: 6, day: 20 },
+    ///     Date { year: 2024, month: 6, day: 10 },
+    /// ));
+    /// assert_eq!(
+    ///     dp.range_value(),
+    ///     Some((
+    ///         Date { year: 2024, month: 6, day: 10 },
+    ///         Date { year: 2024, month: 6, day: 20 },
+    ///     ))
+    /// );
+    /// ```
+    pub fn set_range(&mut self, span: (Date, Date)) {
+        let (a, b) = span;
+        self.range = Some(if b < a { (b, a) } else { (a, b) });
+    }
+
+    /// The committed `(start, end)` span (range mode).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::DatePicker;
+    ///
+    /// let dp = DatePicker::new().range_mode(true);
+    /// assert_eq!(dp.range_value(), None);
+    /// ```
+    pub fn range_value(&self) -> Option<(Date, Date)> {
+        self.range
+    }
+
+    /// Drains the span the user completed in the popup (range mode).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::DatePicker;
+    ///
+    /// let mut dp = DatePicker::new().range_mode(true);
+    /// assert_eq!(dp.take_range(), None);
+    /// ```
+    pub fn take_range(&mut self) -> Option<(Date, Date)> {
+        self.range_pending.take()
+    }
+
+    /// Installs a shared shaped-text painter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::DatePicker;
+    ///
+    /// let dp = DatePicker::new();
+    /// let _ = dp.text();
+    /// ```
     pub fn with_text_painter(mut self, painter: crate::text_paint::SharedTextPainter) -> Self {
         self.text_painter = Some(painter);
         self
@@ -1093,6 +1225,17 @@ impl DatePicker {
     /// assert_eq!(dp.text(), "2024-06-15");
     /// ```
     pub fn text(&self) -> String {
+        if self.range_mode {
+            return match self.range {
+                Some((a, b)) => {
+                    let (mut sa, mut sb) = (String::new(), String::new());
+                    format_into(&mut sa, &self.format, a);
+                    format_into(&mut sb, &self.format, b);
+                    format!("{sa} – {sb}")
+                }
+                None => self.placeholder.clone(),
+            };
+        }
         match self.date {
             Some(d) => {
                 let mut s = String::new();
@@ -1233,16 +1376,22 @@ impl DatePicker {
     /// ```
     pub fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
         // Drain the channel: a picked day commits + queues + closes.
-        let (picked, close_req) = {
+        let (picked, ranged, close_req) = {
             let mut channel = self.channel.lock().expect("calendar channel poisoned");
             (
                 channel.picked.take(),
+                channel.ranged.take(),
                 std::mem::take(&mut channel.close_requested),
             )
         };
         if let Some(date) = picked {
             self.date = Some(date);
             self.selected_pending = Some(date);
+            self.open = false;
+        }
+        if let Some(span) = ranged {
+            self.range = Some(span);
+            self.range_pending = Some(span);
             self.open = false;
         }
         if close_req {
@@ -1279,6 +1428,9 @@ impl DatePicker {
                 view_year,
                 view_month,
                 selected: self.date,
+                range_mode: self.range_mode,
+                range: self.range,
+                anchor: None,
                 today: self.today,
                 min: self.min_date,
                 max: self.max_date,
@@ -1899,5 +2051,103 @@ mod tests {
         assert_eq!(node.value(), Some("2024-06-15"));
         assert_eq!(node.has_popup(), Some(accesskit::HasPopup::Dialog));
         assert_eq!(node.is_expanded(), Some(true));
+    }
+
+    #[test]
+    fn range_mode_two_picks_commit_and_close() {
+        let mut dp = DatePicker::new().range_mode(true).today(Date {
+            year: 2024,
+            month: 6,
+            day: 10,
+        });
+        laid_out(&mut dp);
+        let mut o = overlay();
+        dp.open();
+        dp.sync_overlay(&mut o);
+        o.layout_pass();
+        let id = dp.popup_id.unwrap();
+        let bounds = o.entry_bounds(id).unwrap();
+        {
+            let surface = o.widget_at_mut(id, &[]).expect("surface widget");
+            // Focus starts on `today` (Jun 10) → Enter anchors.
+            surface_event(surface, bounds, &key("Enter"));
+        }
+        dp.sync_overlay(&mut o);
+        assert!(dp.is_open());
+        assert_eq!(dp.take_range(), None);
+        {
+            let surface = o.widget_at_mut(id, &[]).expect("surface widget");
+            // Four days later completes the span.
+            for _ in 0..4 {
+                surface_event(surface, bounds, &key("ArrowRight"));
+            }
+            surface_event(surface, bounds, &key("Enter"));
+        }
+        dp.sync_overlay(&mut o);
+        assert!(!dp.is_open());
+        assert_eq!(
+            dp.take_range(),
+            Some((
+                Date {
+                    year: 2024,
+                    month: 6,
+                    day: 10
+                },
+                Date {
+                    year: 2024,
+                    month: 6,
+                    day: 14
+                },
+            ))
+        );
+        assert_eq!(dp.text(), "2024-06-10 – 2024-06-14");
+        assert_eq!(dp.take_range(), None);
+    }
+
+    #[test]
+    fn range_mode_reverse_pick_normalizes() {
+        let mut dp = DatePicker::new().range_mode(true).today(Date {
+            year: 2024,
+            month: 6,
+            day: 10,
+        });
+        laid_out(&mut dp);
+        let mut o = overlay();
+        dp.open();
+        dp.sync_overlay(&mut o);
+        o.layout_pass();
+        let id = dp.popup_id.unwrap();
+        let bounds = o.entry_bounds(id).unwrap();
+        let surface = o.widget_at_mut(id, &[]).expect("surface widget");
+        surface_event(surface, bounds, &key("Enter")); // anchor Jun 10
+        for _ in 0..5 {
+            surface_event(surface, bounds, &key("ArrowLeft"));
+        }
+        surface_event(surface, bounds, &key("Enter")); // pick Jun 5
+        dp.sync_overlay(&mut o);
+        assert_eq!(
+            dp.range_value(),
+            Some((
+                Date {
+                    year: 2024,
+                    month: 6,
+                    day: 5
+                },
+                Date {
+                    year: 2024,
+                    month: 6,
+                    day: 10
+                },
+            ))
+        );
+    }
+
+    #[test]
+    fn range_mode_placeholder_until_complete() {
+        let mut dp = DatePicker::new()
+            .range_mode(true)
+            .placeholder("Pick a range");
+        laid_out(&mut dp);
+        assert_eq!(dp.text(), "Pick a range");
     }
 }
