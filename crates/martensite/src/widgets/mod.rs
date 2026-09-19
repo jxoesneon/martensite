@@ -794,6 +794,21 @@ pub mod bullet_chart;
 /// ```
 pub mod bottom_sheet;
 
+/// Five-number statistical summary chart (Tukey box-and-whisker /
+/// Ant `Box` idiom) — a q1→q3 box with a median line and whisker
+/// caps to min/max per series along a shared value axis, series
+/// names underneath, and a hover seam parking the series index.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::box_plot::{BoxPlot, BoxSeries};
+///
+/// let p = BoxPlot::new().series(BoxSeries::new("A", 0.0, 1.0, 2.0, 3.0, 4.0));
+/// assert_eq!(p.series_count(), 1);
+/// ```
+pub mod box_plot;
+
 /// Breadcrumb path strip — navigable segments with ellipsis collapse
 /// when the path overflows (WinUI `BreadcrumbBar`, `NSPathControl`).
 ///
@@ -1949,6 +1964,7 @@ pub use badge::Badge;
 pub use banner::{Banner, Severity};
 pub use bar_chart::BarChart;
 pub use bottom_sheet::BottomSheet;
+pub use box_plot::{BoxPlot, BoxSeries};
 pub use breadcrumb::Breadcrumb;
 pub use bullet_chart::BulletChart;
 pub use button::Button;
