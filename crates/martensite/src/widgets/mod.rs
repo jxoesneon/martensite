@@ -187,6 +187,22 @@ pub mod chip;
 /// ```
 pub mod color_picker;
 
+/// Fuzzy action launcher (KDE `KCommandBar`, cmdk `Command`, VS Code
+/// `Ctrl+Shift+P`) — a search-field trigger whose scored result list
+/// hangs in an overlay `ListBox`, mirroring `AutoComplete`'s
+/// `Role::ComboBox` wiring.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{CommandAction, CommandPalette};
+///
+/// let mut pal = CommandPalette::new().actions([CommandAction::new("a", "Alpha")]);
+/// pal.open();
+/// assert!(pal.is_open());
+/// ```
+pub mod command_palette;
+
 /// Box container layout primitive.
 ///
 /// # Examples
@@ -899,6 +915,7 @@ pub use card::{Card, CardVariant};
 pub use checkbox::{CheckBox, CheckState};
 pub use chip::{Chip, ChipKind};
 pub use color_picker::{hsv_to_rgb, rgb_to_hsv, Color, ColorPicker};
+pub use command_palette::{CommandAction, CommandPalette};
 pub use container::Container;
 pub use context_menu::ContextMenu;
 pub use date_picker::{Date, DatePicker};

@@ -61,6 +61,23 @@ const FOCUS_RING: [u8; 4] = [60, 110, 220, 128];
 /// Tab face hover/selected background.
 const TAB_BG: [u8; 4] = [240, 242, 246, 255];
 
+/// Width reserved for the `×` affordance on a closable tab.
+const CLOSE_W: f32 = 18.0;
+
+/// Remaps an index after `remove(from)` + `insert(to)` so tracked
+/// positions (selection, focus) follow their tab.
+fn remap_moved_index(i: usize, from: usize, to: usize) -> usize {
+    if i == from {
+        to
+    } else if from < i && i <= to {
+        i - 1
+    } else if to <= i && i < from {
+        i + 1
+    } else {
+        i
+    }
+}
+
 /// Whether selecting a tab happens automatically on focus or manually
 /// via `Enter`/`Space`.
 ///
@@ -99,6 +116,9 @@ pub struct TabItem {
     activation_pending: bool,
     /// Parked `SemanticAction::Focus` for the owner to apply.
     focus_pending: bool,
+    /// Whether the trailing `×` affordance is shown (mirrored from
+    /// the owning `Tabs::closable`).
+    closable: bool,
     /// Shared shaped-text painter from the owning `Tabs`.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
@@ -114,6 +134,7 @@ impl TabItem {
             enabled: true,
             activation_pending: false,
             focus_pending: false,
+            closable: false,
             text_painter: None,
         }
     }
@@ -202,16 +223,18 @@ impl Widget for TabItem {
                 .push_stroke_shape(rect, &tab_shape, cx.pt(2.0), wash);
         }
         let font_px = cx.pt(14.0);
+        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+        let close_w = if self.closable { cx.pt(CLOSE_W) } else { 0.0 };
         // Clip the label to the tab slot — a long title can't spill
-        // into the neighbouring tab.
+        // into the neighbouring tab or under the close affordance.
         let text_x = b.min_x() + cx.pt(12.0);
         crate::text_paint::paint_label_clipped(
-            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+            painter,
             cx.list,
             kurbo::Rect::new(
                 f64::from(text_x),
                 f64::from(b.min_y()),
-                f64::from(b.max_x() - cx.pt(8.0)),
+                f64::from(b.max_x() - cx.pt(8.0) - close_w),
                 f64::from(b.max_y()),
             ),
             kurbo::Point::new(
@@ -222,6 +245,26 @@ impl Widget for TabItem {
             font_px,
             cx.color(TokenKey::TextColor, INK),
         );
+        if self.closable {
+            let glyph_px = cx.pt(11.0);
+            crate::text_paint::paint_label_clipped(
+                painter,
+                cx.list,
+                kurbo::Rect::new(
+                    f64::from(b.max_x() - close_w - cx.pt(4.0)),
+                    f64::from(b.min_y()),
+                    f64::from(b.max_x() - cx.pt(4.0)),
+                    f64::from(b.max_y()),
+                ),
+                kurbo::Point::new(
+                    f64::from(b.max_x() - close_w - cx.pt(2.0)),
+                    f64::from(b.min_y() + (b.height() - glyph_px) / 2.0),
+                ),
+                "×",
+                glyph_px,
+                cx.color(TokenKey::TextMutedColor, INK),
+            );
+        }
     }
 }
 
@@ -230,8 +273,16 @@ impl Widget for TabItem {
 struct TabStrip {
     /// The tabs.
     tabs: Vec<TabItem>,
-    /// Tab bounds from the last layout pass.
+    /// Natural (unscrolled, unclipped) tab bounds from layout.
     tab_bounds: Vec<Rect>,
+    /// Horizontal scroll offset applied when the natural tab widths
+    /// overflow the strip (`0` when everything fits).
+    scroll_x: f32,
+    /// Strip bounds from the last layout pass — the clip window for
+    /// [`child_bounds`](Widget::child_bounds).
+    strip_bounds: Rect,
+    /// Total natural tab width from the last layout pass.
+    natural_w: f32,
 }
 
 impl TabStrip {
@@ -239,7 +290,48 @@ impl TabStrip {
         Self {
             tabs: labels.into_iter().map(TabItem::new).collect(),
             tab_bounds: Vec::new(),
+            scroll_x: 0.0,
+            strip_bounds: Rect::default(),
+            natural_w: 0.0,
         }
+    }
+
+    /// Estimated natural width of `tab` — matches `TabItem::measure`.
+    /// Associated (no `&self`) so it stays callable while `self.tabs`
+    /// is mutably borrowed in `layout`.
+    fn natural_width(tab: &TabItem, scale: f32) -> f32 {
+        let extra = if tab.closable { CLOSE_W } else { 0.0 };
+        (24.0 + 8.0 * tab.label.chars().count() as f32 + extra) * scale
+    }
+
+    /// Clamps `scroll_x` into `0..=overflow` using the stored
+    /// `natural_w`/`strip_bounds` from the last layout.
+    fn clamp_scroll(&mut self) {
+        let overflow = (self.natural_w - self.strip_bounds.width()).max(0.0);
+        self.scroll_x = self.scroll_x.clamp(0.0, overflow);
+    }
+
+    /// `tab_bounds[i]` translated by the scroll offset and clipped to
+    /// the strip window — what the framework sees for paint and events.
+    fn scrolled_bounds(&self, index: usize) -> Option<Rect> {
+        let r = *self.tab_bounds.get(index)?;
+        let x = r.min_x() - self.scroll_x;
+        let left = x.max(self.strip_bounds.min_x());
+        let right = (x + r.width()).min(self.strip_bounds.max_x());
+        Some(Rect::new(
+            left,
+            r.min_y(),
+            (right - left).max(0.0),
+            r.height(),
+        ))
+    }
+
+    /// Tab index under `position` (in scrolled space), or `None`.
+    fn index_at(&self, position: Vec2) -> Option<usize> {
+        (0..self.tab_bounds.len()).find(|&i| {
+            self.scrolled_bounds(i)
+                .is_some_and(|b| b.contains(position))
+        })
     }
 }
 
@@ -254,19 +346,42 @@ impl Widget for TabStrip {
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         let n = self.tabs.len();
         self.tab_bounds.clear();
+        self.strip_bounds = bounds;
         if n == 0 {
+            self.natural_w = 0.0;
             return;
         }
-        let w = bounds.width() / n as f32;
-        for (i, tab) in self.tabs.iter_mut().enumerate() {
-            let rect = Rect::new(
-                bounds.min_x() + i as f32 * w,
-                bounds.min_y(),
-                w,
-                bounds.height(),
-            );
-            self.tab_bounds.push(rect);
-            cx.layout_child(tab, rect);
+        self.natural_w = self
+            .tabs
+            .iter()
+            .map(|t| Self::natural_width(t, cx.scale))
+            .sum();
+        self.clamp_scroll();
+        if self.natural_w <= bounds.width() {
+            // Everything fits — equal-split fills the strip.
+            let w = bounds.width() / n as f32;
+            for (i, tab) in self.tabs.iter_mut().enumerate() {
+                let rect = Rect::new(
+                    bounds.min_x() + i as f32 * w,
+                    bounds.min_y(),
+                    w,
+                    bounds.height(),
+                );
+                self.tab_bounds.push(rect);
+                cx.layout_child(tab, rect);
+            }
+        } else {
+            // Overflow — natural positions; the scroll offset applies
+            // at `child_bounds` read time so wheel scrolling needs no
+            // relayout pass.
+            let mut x = bounds.min_x();
+            for tab in self.tabs.iter_mut() {
+                let w = Self::natural_width(tab, cx.scale);
+                let rect = Rect::new(x, bounds.min_y(), w, bounds.height());
+                self.tab_bounds.push(rect);
+                cx.layout_child(tab, rect);
+                x += w;
+            }
         }
     }
 
@@ -288,7 +403,13 @@ impl Widget for TabStrip {
     }
 
     fn child_bounds(&self, index: usize) -> Option<Rect> {
-        self.tab_bounds.get(index).copied()
+        self.scrolled_bounds(index)
+    }
+
+    fn clips_children(&self) -> bool {
+        // Only worth a clip pair when tabs actually overflow — an
+        // equal-split strip can't paint outside itself.
+        self.natural_w > self.strip_bounds.width()
     }
 }
 
@@ -425,6 +546,14 @@ pub struct Tabs {
     pub enabled: bool,
     /// Activation mode.
     pub activation: TabActivation,
+    /// Whether tabs show a trailing `×` affordance. Pressing it (or
+    /// middle-clicking the tab) parks a request readable via
+    /// [`take_close_requested`](Self::take_close_requested); the app
+    /// decides whether to honour it with [`close_tab`](Self::close_tab).
+    pub closable: bool,
+    /// Whether tabs can be reordered by dragging. Each move parks a
+    /// `(from, to)` pair readable via [`take_moved`](Self::take_moved).
+    pub movable: bool,
     /// The tab strip (internal child 0).
     strip: TabStrip,
     /// The panels (internal child 1).
@@ -442,6 +571,14 @@ pub struct Tabs {
     /// Shared shaped-text painter — propagated to tabs in
     /// `sync_children`. See [`crate::text_paint`].
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Parked close request (tab index) from a `×` or middle-click.
+    close_requested: Option<usize>,
+    /// Parked reorder notification `(from, to)` from the last drag move.
+    moved: Option<(usize, usize)>,
+    /// Tab index under an in-progress primary-button press/drag.
+    press_tab: Option<usize>,
+    /// Whether the current press has turned into a reorder drag.
+    dragging: bool,
 }
 
 impl Tabs {
@@ -460,6 +597,8 @@ impl Tabs {
             label: None,
             enabled: true,
             activation: TabActivation::Automatic,
+            closable: false,
+            movable: false,
             strip: TabStrip::new(std::iter::empty::<String>()),
             panels: PanelSet {
                 panels: Vec::new(),
@@ -471,6 +610,10 @@ impl Tabs {
             strip_bounds: None,
             panel_bounds: None,
             text_painter: None,
+            close_requested: None,
+            moved: None,
+            press_tab: None,
+            dragging: false,
         }
     }
 
@@ -554,6 +697,46 @@ impl Tabs {
     #[must_use]
     pub fn activation(mut self, activation: TabActivation) -> Self {
         self.activation = activation;
+        self
+    }
+
+    /// Sets whether tabs show a trailing `×` affordance. Pressing it
+    /// (or middle-clicking a tab) parks a close request the app reads
+    /// via [`take_close_requested`](Self::take_close_requested) and
+    /// honours — or vetoes — with [`close_tab`](Self::close_tab).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Tabs;
+    ///
+    /// let t = Tabs::with_labels(["A"]).closable(true);
+    /// assert!(t.closable);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn closable(mut self, closable: bool) -> Self {
+        self.closable = closable;
+        self.sync_children();
+        self
+    }
+
+    /// Sets whether tabs can be reordered by dragging them past a
+    /// sibling. Each move parks a `(from, to)` pair readable via
+    /// [`take_moved`](Self::take_moved).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Tabs;
+    ///
+    /// let t = Tabs::with_labels(["A"]).movable(true);
+    /// assert!(t.movable);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn movable(mut self, movable: bool) -> Self {
+        self.movable = movable;
         self
     }
 
@@ -663,6 +846,107 @@ impl Tabs {
         self.sync_children();
     }
 
+    /// Takes the parked close request, if any. The request identifies
+    /// the tab whose `×` affordance was pressed (or that was
+    /// middle-clicked); the app decides whether to call
+    /// [`close_tab`](Self::close_tab), show a confirmation, or ignore it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Tabs;
+    ///
+    /// let mut t = Tabs::with_labels(["A"]).closable(true);
+    /// assert_eq!(t.take_close_requested(), None);
+    /// ```
+    #[inline]
+    pub fn take_close_requested(&mut self) -> Option<usize> {
+        self.close_requested.take()
+    }
+
+    /// Takes the parked reorder notification `(from, to)`, if any.
+    /// Fires once per boundary crossed during a drag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Tabs;
+    ///
+    /// let mut t = Tabs::with_labels(["A", "B"]).movable(true);
+    /// assert_eq!(t.take_moved(), None);
+    /// ```
+    #[inline]
+    pub fn take_moved(&mut self) -> Option<(usize, usize)> {
+        self.moved.take()
+    }
+
+    /// Removes the tab and its panel at `index`. Selection and roving
+    /// focus clamp onto a surviving tab.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Tabs;
+    ///
+    /// let mut t = Tabs::with_labels(["A", "B", "C"]);
+    /// t.close_tab(1);
+    /// assert_eq!(t.tab_count(), 2);
+    /// ```
+    pub fn close_tab(&mut self, index: usize) {
+        if index >= self.strip.tabs.len() {
+            return;
+        }
+        self.strip.tabs.remove(index);
+        self.panels.panels.remove(index);
+        let n = self.strip.tabs.len();
+        if n == 0 {
+            self.selected = 0;
+            self.focused = 0;
+        } else {
+            // Closing a tab before the selection shifts it left one
+            // slot; closing the selection itself keeps the slot
+            // (now showing the next tab) or clamps at the end.
+            if self.selected > index {
+                self.selected -= 1;
+            } else {
+                self.selected = self.selected.min(n - 1);
+            }
+            if self.focused > index {
+                self.focused -= 1;
+            } else {
+                self.focused = self.focused.min(n - 1);
+            }
+        }
+        self.sync_children();
+    }
+
+    /// Moves the tab at `from` to `to`, carrying its panel. Selection
+    /// and roving focus follow the moved tab.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Tabs;
+    ///
+    /// let mut t = Tabs::with_labels(["A", "B", "C"]);
+    /// t.activate(0);
+    /// t.move_tab(0, 2);
+    /// assert_eq!(t.selected(), 2);
+    /// ```
+    pub fn move_tab(&mut self, from: usize, to: usize) {
+        let n = self.strip.tabs.len();
+        if from >= n || to >= n || from == to {
+            return;
+        }
+        let tab = self.strip.tabs.remove(from);
+        self.strip.tabs.insert(to, tab);
+        let panel = self.panels.panels.remove(from);
+        self.panels.panels.insert(to, panel);
+        self.selected = remap_moved_index(self.selected, from, to);
+        self.focused = remap_moved_index(self.focused, from, to);
+        self.sync_children();
+    }
+
     /// Applies pending activations parked by tab children (AT actions
     /// delivered through `WidgetArena::internal_widget_mut`).
     ///
@@ -717,6 +1001,7 @@ impl Tabs {
             tab.pos_in_set = i + 1;
             tab.set_size = n;
             tab.enabled = self.enabled;
+            tab.closable = self.closable;
             tab.text_painter = self.text_painter.clone();
         }
         for (i, panel) in self.panels.panels.iter_mut().enumerate() {
@@ -836,6 +1121,28 @@ impl Widget for Tabs {
                 button: PointerButton::Primary,
                 ..
             } => {
+                // Close affordance: the trailing `CLOSE_W` zone of a
+                // closable tab parks a request instead of activating.
+                if self.closable {
+                    if let Some(i) = self.strip.index_at(*position) {
+                        if let Some(r) = self.strip.scrolled_bounds(i) {
+                            if position.x >= r.max_x() - CLOSE_W * cx.scale {
+                                self.close_requested = Some(i);
+                                return EventResponse::Handled;
+                            }
+                        }
+                    }
+                }
+                // Movable strips claim tab presses themselves so a
+                // drag can become a reorder; a release without drag
+                // re-arms the activation manually.
+                if self.movable {
+                    if let Some(i) = self.strip.index_at(*position) {
+                        self.press_tab = Some(i);
+                        self.dragging = false;
+                        return EventResponse::CapturePointer;
+                    }
+                }
                 // Forward through the child protocol: the strip
                 // bounds-gates to the tab under the press (which parks
                 // an activation applied below); the panel set gates to
@@ -862,6 +1169,66 @@ impl Widget for Tabs {
                 }
                 self.poll_pending();
                 response
+            }
+            WidgetEvent::PointerPressed {
+                position,
+                button: PointerButton::Middle,
+                ..
+            } => {
+                // Browser convention: middle-click closes a closable
+                // tab regardless of where in the slot it lands.
+                if self.closable {
+                    if let Some(i) = self.strip.index_at(*position) {
+                        self.close_requested = Some(i);
+                        return EventResponse::Handled;
+                    }
+                }
+                EventResponse::Ignored
+            }
+            WidgetEvent::PointerMoved { position, .. } => {
+                let Some(from) = self.press_tab else {
+                    return EventResponse::Ignored;
+                };
+                if let Some(to) = self.strip.index_at(*position) {
+                    if to != from {
+                        self.move_tab(from, to);
+                        self.moved = Some((from, to));
+                        self.dragging = true;
+                        self.press_tab = Some(to);
+                        return EventResponse::RequestRepaint;
+                    }
+                }
+                EventResponse::Handled
+            }
+            WidgetEvent::PointerReleased {
+                button: PointerButton::Primary,
+                ..
+            } if self.press_tab.is_some() => {
+                let i = self.press_tab.take().unwrap_or(0);
+                if !self.dragging {
+                    // A press that never became a drag is a click —
+                    // arm the tab's parked activation (the same flag
+                    // its own press would have set) and apply it.
+                    if let Some(tab) = self.strip.tabs.get_mut(i) {
+                        tab.activation_pending = true;
+                    }
+                    self.poll_pending();
+                }
+                self.dragging = false;
+                EventResponse::Handled
+            }
+            WidgetEvent::Scroll { position, delta } => {
+                // Wheel over the strip scrolls overflowing tabs;
+                // unconsumed deltas chain to an ancestor scroller.
+                if self.strip_bounds.is_some_and(|b| b.contains(*position)) {
+                    let before = self.strip.scroll_x;
+                    self.strip.scroll_x -= delta.x + delta.y;
+                    self.strip.clamp_scroll();
+                    if self.strip.scroll_x != before {
+                        return EventResponse::RequestRepaint;
+                    }
+                }
+                EventResponse::Ignored
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
                 "ArrowRight" => {
@@ -1083,5 +1450,153 @@ mod tests {
         assert_eq!(tab.event(&mut cx), EventResponse::Handled);
         t.poll_pending();
         assert_eq!(t.selected(), 2);
+    }
+
+    #[test]
+    fn close_zone_requests_without_activating() {
+        let mut t = Tabs::with_labels(["A", "B"]).closable(true);
+        laid_out(&mut t, 300.0, 200.0);
+        // Tab 0 spans 0..150; its close zone is the trailing CLOSE_W.
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(145.0, 16.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(event(&mut t, &press), EventResponse::Handled);
+        assert_eq!(t.take_close_requested(), Some(0));
+        assert_eq!(t.selected(), 0);
+        // Honouring the request removes the tab and its panel.
+        t.close_tab(0);
+        assert_eq!(t.tab_count(), 1);
+        assert_eq!(t.child(1).unwrap().child_count(), 1);
+    }
+
+    #[test]
+    fn middle_click_requests_close() {
+        let mut t = Tabs::with_labels(["A", "B"]).closable(true);
+        laid_out(&mut t, 300.0, 200.0);
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(80.0, 16.0),
+            button: PointerButton::Middle,
+            count: 1,
+        };
+        assert_eq!(event(&mut t, &press), EventResponse::Handled);
+        assert_eq!(t.take_close_requested(), Some(0));
+    }
+
+    #[test]
+    fn non_closable_ignores_close_zone() {
+        let mut t = Tabs::with_labels(["A", "B"]);
+        laid_out(&mut t, 300.0, 200.0);
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(145.0, 16.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        // Falls through to the tab — a normal activation.
+        assert_eq!(event(&mut t, &press), EventResponse::CaptureFocus);
+        assert_eq!(t.take_close_requested(), None);
+    }
+
+    #[test]
+    fn close_tab_shifts_selection() {
+        let mut t = Tabs::with_labels(["A", "B", "C"]);
+        t.activate(2);
+        t.close_tab(0);
+        assert_eq!(t.selected(), 1);
+        assert_eq!(t.focused_index(), 1);
+        // Closing the selected tab keeps the slot (next tab slides in).
+        t.close_tab(1);
+        assert_eq!(t.selected(), 0);
+        t.close_tab(0);
+        assert_eq!(t.tab_count(), 0);
+        assert_eq!(t.selected(), 0);
+    }
+
+    #[test]
+    fn move_tab_follows_selection() {
+        let mut t = Tabs::with_labels(["A", "B", "C"]);
+        t.activate(0);
+        t.move_tab(0, 2);
+        assert_eq!(t.selected(), 2);
+        assert_eq!(t.focused_index(), 2);
+        // An unrelated index shifts through the move.
+        let mut t = Tabs::with_labels(["A", "B", "C"]);
+        t.activate(2);
+        t.move_tab(0, 1);
+        assert_eq!(t.selected(), 2);
+        t.move_tab(2, 0);
+        assert_eq!(t.selected(), 0);
+    }
+
+    #[test]
+    fn movable_press_release_activates() {
+        let mut t = Tabs::with_labels(["A", "B", "C"]).movable(true);
+        laid_out(&mut t, 300.0, 200.0);
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(250.0, 16.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(event(&mut t, &press), EventResponse::CapturePointer);
+        assert_eq!(t.selected(), 0);
+        let release = WidgetEvent::PointerReleased {
+            position: Vec2::new(250.0, 16.0),
+            button: PointerButton::Primary,
+        };
+        assert_eq!(event(&mut t, &release), EventResponse::Handled);
+        assert_eq!(t.selected(), 2);
+    }
+
+    #[test]
+    fn movable_drag_reorders() {
+        let mut t = Tabs::with_labels(["A", "B", "C"]).movable(true);
+        laid_out(&mut t, 300.0, 200.0);
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(50.0, 16.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(event(&mut t, &press), EventResponse::CapturePointer);
+        let drag = WidgetEvent::PointerMoved {
+            position: Vec2::new(250.0, 16.0),
+        };
+        assert_eq!(event(&mut t, &drag), EventResponse::RequestRepaint);
+        // Dragging tab 0 onto tab 2's slot moves it there in one step.
+        assert_eq!(t.take_moved(), Some((0, 2)));
+        assert_eq!(t.take_moved(), None);
+        let release = WidgetEvent::PointerReleased {
+            position: Vec2::new(250.0, 16.0),
+            button: PointerButton::Primary,
+        };
+        assert_eq!(event(&mut t, &release), EventResponse::Handled);
+        // A drag is not a click — the dragged tab keeps its
+        // selection rather than activating the slot it landed on.
+        assert_eq!(t.selected(), 2);
+    }
+
+    #[test]
+    fn overflow_wheel_scrolls_strip() {
+        let labels = [
+            "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+        ];
+        let mut t = Tabs::with_labels(labels);
+        laid_out(&mut t, 200.0, 200.0);
+        let strip = t.child(0).unwrap();
+        // Natural widths exceed the 200px strip — scroll engages.
+        assert!(strip.clips_children());
+        let scroll = WidgetEvent::Scroll {
+            position: Vec2::new(100.0, 16.0),
+            delta: Vec2::new(0.0, -30.0),
+        };
+        assert_eq!(event(&mut t, &scroll), EventResponse::RequestRepaint);
+        // Scrolling back up clamps at zero and reports Ignored once
+        // nothing moves.
+        let back = WidgetEvent::Scroll {
+            position: Vec2::new(100.0, 16.0),
+            delta: Vec2::new(0.0, 500.0),
+        };
+        let _ = event(&mut t, &back);
+        assert_eq!(event(&mut t, &back), EventResponse::Ignored);
     }
 }
