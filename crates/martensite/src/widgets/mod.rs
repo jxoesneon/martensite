@@ -791,6 +791,19 @@ pub mod skeleton;
 /// ```
 pub mod spinbox;
 
+/// KPI block — title, large formatted value, prefix/suffix, and a
+/// coloured trend indicator (Ant `Statistic`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Statistic, Trend};
+///
+/// let s = Statistic::new("Uptime", "99.9%").trend(Trend::Up, "+0.1%");
+/// assert_eq!(s.value_text(), "99.9%");
+/// ```
+pub mod statistic;
+
 /// ARIA APG select-only combobox with an overlay listbox popup.
 ///
 /// # Examples
@@ -969,6 +982,7 @@ pub use slider::{Slider, SliderOrientation};
 pub use spinbox::SpinBox;
 pub use split_view::{SplitOrientation, SplitView};
 pub use stack::Stack;
+pub use statistic::{Statistic, Trend};
 pub use status_bar::{StatusBar, StatusItem};
 pub use steps::{Step, Steps};
 pub use switch::Switch;
