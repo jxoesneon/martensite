@@ -359,6 +359,22 @@ pub mod chip_group;
 /// ```
 pub mod clamp;
 
+/// Read-only monospace code display with a line-number gutter
+/// (editor / review-tool idiom) — the `current` line gets an
+/// accent wash, clicking a line parks its index in
+/// `take_selected`, and mouse-wheel scrolls with a `follow` flag
+/// keeping `current` visible.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::code_view::CodeView;
+///
+/// let c = CodeView::new().lines(["fn main() {", "}"]);
+/// assert_eq!(c.line_count(), 2);
+/// ```
+pub mod code_view;
+
 /// Color-swatch button face that parks a picker request (GTK
 /// `ColorButton`, `NSColorWell`) — checkerboard-backed swatch plus
 /// optional title; activation drains via `take_activated` for the app
