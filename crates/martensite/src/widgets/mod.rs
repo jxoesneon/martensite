@@ -82,6 +82,21 @@ pub mod accordion;
 /// ```
 pub mod action_sheet;
 
+/// Concentric progress rings (Apple Watch Activity idiom) — up to
+/// five named arcs sweeping from twelve o'clock around a shared
+/// center, with dimmed track circles underneath and the average
+/// completion at the center.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::activity_ring::ActivityRing;
+///
+/// let a = ActivityRing::new().ring("Move", 0.8, [255, 60, 80, 255]);
+/// assert_eq!(a.ring_count(), 1);
+/// ```
+pub mod activity_ring;
+
 /// Modal severity-tinted alert card for the overlay layer (NSAlert /
 /// `AlertDialog`) — title, message, footer buttons, `AlertResult` seam.
 ///
@@ -1922,6 +1937,7 @@ pub mod xy_pad;
 pub use about::About;
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
+pub use activity_ring::{ActivityRing, Ring};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
 pub use analog_clock::AnalogClock;
 pub use anchor::{Anchor, AnchorItem};
