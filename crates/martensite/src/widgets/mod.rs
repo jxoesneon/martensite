@@ -254,6 +254,21 @@ pub mod checkbox;
 /// ```
 pub mod chip;
 
+/// Preset color-swatch grid — the curated palette row (Ant
+/// `ColorPicker` presets / `NSColorList`) where click selects and
+/// parks `(index, rgba)` in `take_selected`. Unlike `ColorPicker`'s
+/// free-form spectrum, a palette is the fixed swatch list.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::color_palette::ColorPalette;
+///
+/// let p = ColorPalette::new().swatches([[255, 0, 0, 255]]);
+/// assert_eq!(p.swatch_count(), 1);
+/// ```
+pub mod color_palette;
+
 /// Color well with an HSV picker popup (WinUI `ColorPicker` /
 /// `NSColorWell`) — SV square, hue/alpha strips, live `take_edited`
 /// seam plus an OK-confirm `take_selected` seam.
@@ -1324,6 +1339,7 @@ pub use carousel::Carousel;
 pub use cascader::{Cascader, CascaderOption};
 pub use checkbox::{CheckBox, CheckState};
 pub use chip::{Chip, ChipKind};
+pub use color_palette::ColorPalette;
 pub use color_picker::{hsv_to_rgb, rgb_to_hsv, Color, ColorPicker};
 pub use command_palette::{CommandAction, CommandPalette};
 pub use container::Container;
