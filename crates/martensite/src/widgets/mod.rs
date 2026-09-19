@@ -1065,6 +1065,20 @@ pub mod page_header;
 /// ```
 pub mod pagination;
 
+/// Page-dot strip — WinUI `PipsPager` / iOS `UIPageControl`: `count`
+/// dots with `current` emphasized, press-to-select, sliding window for
+/// long lists. Pair with `Carousel` or any custom page switcher.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::pips_pager::PipsPager;
+///
+/// let p = PipsPager::new(5);
+/// assert_eq!(p.current, 0);
+/// ```
+pub mod pips_pager;
+
 /// Mini anchored confirmation bubble (Ant `Popconfirm`) — question,
 /// Confirm/Cancel pair, arrow tail, `ConfirmResult` seam.
 ///
@@ -1582,6 +1596,7 @@ pub use nav_stack::NavStack;
 pub use otp_input::OtpInput;
 pub use page_header::PageHeader;
 pub use pagination::Pagination;
+pub use pips_pager::PipsPager;
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
 pub use progress::{ProgressBar, Spinner};
