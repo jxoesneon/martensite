@@ -1516,6 +1516,21 @@ pub mod page_header;
 /// ```
 pub mod pagination;
 
+/// Musical keyboard strip (DAW piano-roll / MIDI-input idiom) —
+/// `octaves` white keys with overlay black keys; clicks and
+/// drags (glissando) park the struck semitone index in
+/// `take_struck`, and held keys highlight.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::piano_keys::PianoKeys;
+///
+/// let p = PianoKeys::new().octaves(2);
+/// assert_eq!(p.note_count(), 24);
+/// ```
+pub mod piano_keys;
+
 /// Proportional wedge chart — pie or donut ring (Ant `Pie`, Swift
 /// `SectorMark`). Angle+radius hit-testing, categorical palette,
 /// per-slice press selection.
