@@ -493,6 +493,20 @@ pub mod float_button;
 /// ```
 pub mod flow_box;
 
+/// Font-swatch button face that parks a chooser request (GTK
+/// `FontButton` / `NSFontPanel` well) — `"Family NN"` face plus a
+/// disclosure chevron; activation drains via `take_activated`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::font_button::FontButton;
+///
+/// let fb = FontButton::new("Inter", 13.0);
+/// assert_eq!(fb.family(), "Inter");
+/// ```
+pub mod font_button;
+
 /// Labeled control row with a validation strip — the Ant `Form.Item`
 /// pattern: label (top or left column), one control child, and an
 /// error/hint message line that takes space only when it has content.
@@ -1721,6 +1735,7 @@ pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use float_button::FloatButton;
 pub use flow_box::{FlowBox, FlowSelection};
+pub use font_button::FontButton;
 pub use form_field::{FormField, LabelPosition};
 pub use gauge::Gauge;
 pub use grid::{Grid, GridCell};
