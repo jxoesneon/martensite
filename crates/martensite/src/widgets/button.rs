@@ -18,7 +18,7 @@ use glam::Vec2;
 use kurbo::Shape as _;
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
-    Widget, WidgetEvent,
+    SemanticAction, Widget, WidgetEvent,
 };
 use martensite_core::TokenKey;
 use martensite_core::{NodeFlags, Rect};
@@ -37,6 +37,20 @@ const INK_DISABLED: [u8; 4] = [160, 160, 165, 255];
 const CORNER_RADIUS: f64 = 4.0;
 /// Horizontal padding between the border and the label.
 const TEXT_PAD_X: f32 = 10.0;
+
+/// Enter and Space activate a focused button — the same keys every
+/// platform button idiom accepts.
+fn is_activation_key(key: &str) -> bool {
+    matches!(key, "Enter" | "Space" | " ")
+}
+
+/// Multiplies the RGB channels of a resolved colour — used for the
+/// pressed-face tint so the effect applies on top of whichever face
+/// the active theme resolved.
+fn shade(color: [u8; 4], factor: f32) -> [u8; 4] {
+    let scale = |c: u8| (f32::from(c) * factor).round().clamp(0.0, 255.0) as u8;
+    [scale(color[0]), scale(color[1]), scale(color[2]), color[3]]
+}
 
 /// An interactive button widget with an accessible label.
 ///
@@ -63,6 +77,17 @@ pub struct Button {
     pub tooltip: Option<String>,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Pointer currently held down on the button (press-to-release
+    /// span; the visual "pressed" state is `held && inside`).
+    held: bool,
+    /// Whether the pointer is inside the face while `held` — dragging
+    /// out and releasing cancels the activation, matching platform
+    /// button semantics.
+    inside: bool,
+    /// One-shot activation flag set when a press completes inside the
+    /// face (or Enter/Space/AT Click fires) — drained by
+    /// [`Button::take_activated`].
+    activated: bool,
     /// Shared shaped-text painter — when set, `paint` emits real
     /// `GlyphRun`s; without it the label falls back to `DrawText`
     /// placeholder boxes. See [`crate::text_paint`].
@@ -87,6 +112,9 @@ impl Button {
             enabled: true,
             tooltip: None,
             cached_bounds: Rect::default(),
+            held: false,
+            inside: false,
+            activated: false,
             text_painter: None,
         }
     }
@@ -106,6 +134,40 @@ impl Button {
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
+    }
+
+    /// Drains the one-shot activation flag: returns `true` once per
+    /// completed activation — a primary-button release inside the face
+    /// after a press, an Enter/Space key release, or an accessibility
+    /// `Click` action. Parent widgets poll this to react to clicks.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// let mut btn = Button::new("OK");
+    /// assert!(!btn.take_activated());
+    /// ```
+    #[inline]
+    pub fn take_activated(&mut self) -> bool {
+        std::mem::take(&mut self.activated)
+    }
+
+    /// Whether the button is currently drawn in its pressed state —
+    /// a held press with the pointer still inside the face.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// assert!(!Button::new("OK").is_pressed());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_pressed(&self) -> bool {
+        self.held && self.inside
     }
 
     /// Sets the tooltip text.
@@ -197,11 +259,67 @@ impl Widget for Button {
         match cx.event {
             WidgetEvent::PointerPressed {
                 button: PointerButton::Primary,
+                position,
                 ..
+            } if cx.bounds.contains(*position) => {
+                self.held = true;
+                self.inside = true;
+                // Capture so the release reaches us even when the
+                // pointer is dragged off the face — that release
+                // cancels rather than activates.
+                EventResponse::CapturePointer
             }
-            | WidgetEvent::KeyPressed { .. } => EventResponse::RequestRepaint,
-            WidgetEvent::PointerReleased { .. } | WidgetEvent::KeyReleased { .. } => {
+            WidgetEvent::PointerMoved { position } if self.held => {
+                let inside = cx.bounds.contains(*position);
+                if inside != self.inside {
+                    self.inside = inside;
+                    EventResponse::RequestRepaint
+                } else {
+                    EventResponse::Handled
+                }
+            }
+            WidgetEvent::PointerReleased {
+                button: PointerButton::Primary,
+                position,
+            } if self.held => {
+                self.held = false;
+                if cx.bounds.contains(*position) {
+                    self.activated = true;
+                }
+                self.inside = false;
+                EventResponse::ReleasePointer
+            }
+            WidgetEvent::KeyPressed { key, repeat } if is_activation_key(key) => {
+                if !*repeat {
+                    self.held = true;
+                    self.inside = true;
+                }
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::KeyReleased { key } if is_activation_key(key) => {
+                if self.held {
+                    self.activated = true;
+                }
+                self.held = false;
+                self.inside = false;
                 EventResponse::Handled
+            }
+            WidgetEvent::SemanticAction(SemanticAction::Click) => {
+                self.activated = true;
+                EventResponse::Handled
+            }
+            WidgetEvent::FocusLost if self.held => {
+                // A keyboard-armed button disarms on focus loss.
+                self.held = false;
+                self.inside = false;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::PointerLeave if self.held => {
+                // Pointer capture means the press survives leaving the
+                // face — only the pressed *visual* drops until the
+                // pointer re-enters or releases.
+                self.inside = false;
+                EventResponse::RequestRepaint
             }
             _ => EventResponse::Ignored,
         }
@@ -216,8 +334,13 @@ impl Widget for Button {
             f64::from(b.max_y()),
         );
         let (face, ink) = if self.enabled {
+            let face = cx.color(TokenKey::SurfaceColor, FACE_ENABLED);
             (
-                cx.color(TokenKey::SurfaceColor, FACE_ENABLED),
+                if self.is_pressed() {
+                    shade(face, 0.9)
+                } else {
+                    face
+                },
                 cx.color(TokenKey::TextColor, INK_ENABLED),
             )
         } else {

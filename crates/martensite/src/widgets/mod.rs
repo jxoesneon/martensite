@@ -424,6 +424,18 @@ pub mod radio;
 /// ```
 pub mod range_slider;
 
+/// Status result page — coloured status glyph + title + subtitle +
+/// action buttons, centred in the view (Ant `Result`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{ResultPage, ResultStatus};
+///
+/// let r = ResultPage::new(ResultStatus::Success).title("Saved");
+/// ```
+pub mod result_page;
+
 /// ARIA APG scroll view with smart scrollbars and rubber-band
 /// overscroll.
 ///
@@ -448,6 +460,19 @@ pub mod scrollview;
 /// ```
 pub mod segmented;
 
+/// Shimmer loading placeholder — block, circle, or text lines — that
+/// can wrap and hide a child while `loading` holds (Ant `Skeleton`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Skeleton;
+///
+/// let s = Skeleton::lines(3);
+/// assert!(s.is_loading());
+/// ```
+pub mod skeleton;
+
 /// Numeric spin box with ▲/▼ step buttons and an editable field.
 ///
 /// # Examples
@@ -469,6 +494,18 @@ pub mod spinbox;
 /// let dd = Dropdown::new(["Small", "Medium", "Large"]);
 /// ```
 pub mod dropdown;
+
+/// Centred icon + title + description + action placeholder for empty
+/// views (ADW `StatusPage`, Ant `Empty`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::EmptyState;
+///
+/// let e = EmptyState::new("No results").action("Clear filter");
+/// ```
+pub mod empty_state;
 
 /// ARIA APG tabs widget (tab list + tab panels).
 ///
@@ -530,6 +567,7 @@ pub use dialog::Dialog;
 pub use disclosure::Disclosure;
 pub use drawer::Drawer;
 pub use dropdown::Dropdown;
+pub use empty_state::EmptyState;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use group_box::GroupBox;
@@ -541,9 +579,11 @@ pub use menu_bar::MenuBar;
 pub use progress::{ProgressBar, Spinner};
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
+pub use result_page::{ResultAction, ResultPage, ResultStatus};
 pub use scrollview::{ScrollBarWidget, ScrollView};
 pub use segmented::{Segment, Segmented};
 pub use separator::Separator;
+pub use skeleton::{Skeleton, SkeletonShape};
 pub use slider::{Slider, SliderOrientation};
 pub use spinbox::SpinBox;
 pub use stack::Stack;
