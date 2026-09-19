@@ -248,6 +248,19 @@ pub mod dial;
 /// ```
 pub mod flex;
 
+/// Radial gauge display — value arc with zone colors, ticks, and a
+/// centered readout (WCT `RadialGauge`, SwiftUI `Gauge`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::gauge::Gauge;
+///
+/// let g = Gauge::new().range(0.0, 100.0).value(62.0);
+/// assert_eq!(g.get_value(), 62.0);
+/// ```
+pub mod gauge;
+
 /// Titled frame container with optional checkable title (QGroupBox /
 /// GTK Frame).
 ///
@@ -883,6 +896,7 @@ pub use dropdown::Dropdown;
 pub use empty_state::EmptyState;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
+pub use gauge::Gauge;
 pub use group_box::GroupBox;
 pub use image::{Image, ImageFit};
 pub use key_capture::KeyCapture;
