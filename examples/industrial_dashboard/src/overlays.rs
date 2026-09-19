@@ -31,9 +31,8 @@ use martensite::core::{
 use martensite::prelude::Signal;
 use martensite::widgets::{Banner, Dialog, Disclosure, Severity, Switch, Toast, ToastHost};
 use martensite::widgets::{Drawer, Flex, Text};
-use martensite::widgets::{
-    KeyCapture, Rating, Segmented, SettingsGroup, SettingsRow, SpinBox,
-};
+use martensite::widgets::{KeyCapture, Rating, Segmented, SettingsGroup, SettingsRow, SpinBox};
+use martensite::widgets::{LogSeverity, LogView, Status as DotStatus, StatusDot};
 
 /// The toast inbox — producers `lock().push(Toast)`; the host drains
 /// them on the next tick.
@@ -156,6 +155,48 @@ impl ShellOverlays {
                     ),
             )
             .with_text_painter(painter.clone());
+        // Dogfood StatusDot — a feeds card whose rows carry live-ish
+        // status lamps (pulse on the healthy feed).
+        let feeds = SettingsGroup::new("Feeds")
+            .carded(true)
+            .row(
+                SettingsRow::new("Field bus")
+                    .subtitle("Modbus heartbeat")
+                    .trailing(
+                        StatusDot::new("online")
+                            .status(DotStatus::Ok)
+                            .pulse(true)
+                            .with_text_painter(painter.clone()),
+                    ),
+            )
+            .row(
+                SettingsRow::new("Cell telemetry")
+                    .subtitle("RF uplink")
+                    .trailing(
+                        StatusDot::new("degraded")
+                            .status(DotStatus::Warning)
+                            .with_text_painter(painter.clone()),
+                    ),
+            )
+            .row(
+                SettingsRow::new("Remote archive")
+                    .subtitle("Nightly sync target")
+                    .trailing(
+                        StatusDot::new("offline")
+                            .status(DotStatus::Off)
+                            .with_text_painter(painter.clone()),
+                    ),
+            )
+            .with_text_painter(painter.clone());
+        // Dogfood LogView — a small event feed under a disclosure.
+        let mut feed = LogView::new()
+            .max_lines(200)
+            .with_text_painter(painter.clone());
+        feed.push(LogSeverity::Info, "inspector attached");
+        feed.push(LogSeverity::Info, "telemetry tick 60 Hz");
+        feed.push(LogSeverity::Warning, "cell 3 uplink jitter 240 ms");
+        feed.push(LogSeverity::Error, "archive sync stalled — retrying");
+        feed.push(LogSeverity::Debug, "drawer opened via toolbar");
         let content = Flex::column().gap(8.0).children([
             Box::new(
                 Banner::new(Severity::Info, "Inspector attached")
@@ -173,6 +214,12 @@ impl ShellOverlays {
                     .with_text_painter(painter.clone()),
             ),
             Box::new(prefs),
+            Box::new(feeds),
+            Box::new(
+                Disclosure::new("Event feed")
+                    .child(feed)
+                    .with_text_painter(painter.clone()),
+            ),
         ]);
         Drawer::new("Inspector")
             .width(300.0)
