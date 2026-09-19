@@ -893,6 +893,20 @@ pub mod kbd;
 /// ```
 pub mod keyboard_shortcuts;
 
+/// Seven-segment digit display (Qt `QLCDNumber`) — a fixed-cell
+/// right-aligned readout with ghost segments on the glass.
+/// Display-only.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::lcd_number::LcdNumber;
+///
+/// let lcd = LcdNumber::new().value(42.0).digits(5);
+/// assert_eq!(lcd.value, 42.0);
+/// ```
+pub mod lcd_number;
+
 /// Level/capacity meter — battery, disk-usage, or signal-strength
 /// indicator with zone colors (GTK `GtkLevelBar`, `NSLevelIndicator`).
 ///
@@ -1597,6 +1611,7 @@ pub use inline_edit::InlineEdit;
 pub use kbd::Kbd;
 pub use key_capture::KeyCapture;
 pub use keyboard_shortcuts::{KeyboardShortcuts, ShortcutGroup, ShortcutRow};
+pub use lcd_number::LcdNumber;
 pub use level_bar::{LevelBar, LevelZone};
 pub use link::Link;
 pub use list_view::{ListView, SelectionMode, SelectionModel};
