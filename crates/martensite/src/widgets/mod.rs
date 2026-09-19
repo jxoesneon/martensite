@@ -126,6 +126,23 @@ pub mod auto_complete;
 /// ```
 pub mod avatar;
 
+/// Overlapping avatar stack — members paint left-to-right on top of
+/// each other; beyond `max_count` the extras collapse into a trailing
+/// `+N` chip (Ant `Avatar.Group`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Avatar, AvatarGroup};
+///
+/// let g = AvatarGroup::new()
+///     .member(Avatar::new("Ada Lovelace"))
+///     .member(Avatar::new("Grace Hopper"))
+///     .max_count(1);
+/// assert_eq!(g.overflow_count(), 1);
+/// ```
+pub mod avatar_group;
+
 /// Notification badge — count pill, capped `99+`, or bare dot,
 /// standalone or anchored to a wrapped child's top-right corner.
 ///
@@ -1295,6 +1312,7 @@ pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
 pub use anchor::{Anchor, AnchorItem};
 pub use auto_complete::{AutoComplete, FilterMode};
 pub use avatar::Avatar;
+pub use avatar_group::AvatarGroup;
 pub use badge::Badge;
 pub use banner::{Banner, Severity};
 pub use bottom_sheet::BottomSheet;
