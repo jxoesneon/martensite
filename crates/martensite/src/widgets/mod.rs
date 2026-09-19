@@ -1384,6 +1384,21 @@ pub mod nav_rail;
 /// ```
 pub mod nav_stack;
 
+/// Mechanical-reel digit counter (trip-odometer / web hit-counter
+/// idiom) — a row of digit windows, each reel rolling upward
+/// through neighboring digits toward its target on `tick`, clipped
+/// to the window like a real odometer drum.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::odometer::Odometer;
+///
+/// let o = Odometer::new().digits(5).value(42);
+/// assert_eq!(o.reading(), 42);
+/// ```
+pub mod odometer;
+
 /// Segmented one-time-code / PIN field (Ant `Input.OTP`).
 ///
 /// # Examples
@@ -2123,6 +2138,7 @@ pub use menu_bar::MenuBar;
 pub use menu_button::MenuButton;
 pub use nav_rail::{NavDestination, NavRail};
 pub use nav_stack::NavStack;
+pub use odometer::Odometer;
 pub use otp_input::OtpInput;
 pub use page_header::PageHeader;
 pub use pagination::Pagination;
