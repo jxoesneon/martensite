@@ -1510,6 +1510,21 @@ pub mod empty_state;
 /// ```
 pub mod expander_row;
 
+/// File-name button face that parks a chooser request (GTK
+/// `FileChooserButton`, `NSOpenPanel` well) — folder/document glyph
+/// plus file name or placeholder; activation drains via
+/// `take_activated` for the app to mount a platform dialog.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::file_chooser_button::FileChooserButton;
+///
+/// let b = FileChooserButton::new().placeholder("Choose…");
+/// assert!(b.selected_name().is_none());
+/// ```
+pub mod file_chooser_button;
+
 /// Virtualized data grid — pinned sortable/resizable column header
 /// over a scrollable striped body (QTableView, GTK `ColumnView`,
 /// WinUI `DataGrid`, Ant `Table`).
@@ -1747,6 +1762,7 @@ pub use dropdown::Dropdown;
 pub use empty_state::EmptyState;
 pub use expander_row::ExpanderRow;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
+pub use file_chooser_button::{ChooserMode, FileChooserButton};
 pub use flex::{Flex, FlexDirection};
 pub use float_button::FloatButton;
 pub use flow_box::{FlowBox, FlowSelection};
