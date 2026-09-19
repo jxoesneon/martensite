@@ -1690,6 +1690,21 @@ pub mod result_page;
 /// ```
 pub mod ribbon;
 
+/// Measurement-scale strip (design-tool ruler idiom) — major and
+/// minor ticks across a value range on a horizontal or vertical
+/// strip, a marker line at `position`, and click/drag picking that
+/// parks the value in `take_picked`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::ruler::Ruler;
+///
+/// let r = Ruler::new().range(0.0, 300.0).ticks(50.0, 10.0);
+/// assert_eq!(r.major_step_value(), 50.0);
+/// ```
+pub mod ruler;
+
 /// XY point-cloud chart (Ant `Scatter`, Qt `QScatterSeries`) —
 /// marker dots inside a gridded axis frame, auto-fit or pinned
 /// ranges, nearest-point hover seam for tooltips.
