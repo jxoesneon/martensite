@@ -964,6 +964,21 @@ pub mod nav_stack;
 /// ```
 pub mod otp_input;
 
+/// Page-top bar with a back chevron, title/subtitle, and a trailing
+/// action slot (Ant `PageHeader`). Left-anchored content chrome —
+/// unlike `HeaderBar`'s centered window-title idiom.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::page_header::PageHeader;
+/// use martensite::widgets::Button;
+///
+/// let h = PageHeader::new("Orders").back(true).action(Button::new("New"));
+/// assert_eq!(h.action_count(), 1);
+/// ```
+pub mod page_header;
+
 /// Page switcher — prev/next arrows + a windowed page run with
 /// ellipsis gaps (Ant `Pagination`, Carbon `Pagination`).
 ///
@@ -1471,6 +1486,7 @@ pub use menu_bar::MenuBar;
 pub use nav_rail::{NavDestination, NavRail};
 pub use nav_stack::NavStack;
 pub use otp_input::OtpInput;
+pub use page_header::PageHeader;
 pub use pagination::Pagination;
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
