@@ -226,6 +226,20 @@ pub mod button;
 /// ```
 pub mod calendar;
 
+/// OHLC financial chart — high–low wicks plus open–close bodies in
+/// success/error tones (Qt `QCandlestickSeries`, trading-view
+/// candles). Y range auto-fits or pins; hover parks the candle index.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::candlestick::{Candle, Candlestick};
+///
+/// let c = Candlestick::new().candle(Candle::new(10.0, 12.0, 9.0, 11.0));
+/// assert_eq!(c.candle_count(), 1);
+/// ```
+pub mod candlestick;
+
 /// Elevated content surface with title and action row (M3 / Ant
 /// Card).
 ///
@@ -1799,6 +1813,7 @@ pub use bottom_sheet::BottomSheet;
 pub use breadcrumb::Breadcrumb;
 pub use button::Button;
 pub use calendar::{Calendar, CalendarSelection};
+pub use candlestick::{Candle, Candlestick};
 pub use card::{Card, CardVariant};
 pub use carousel::Carousel;
 pub use cascader::{Cascader, CascaderOption};
