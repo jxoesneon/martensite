@@ -396,6 +396,19 @@ pub mod separator;
 /// ```
 pub mod status_bar;
 
+/// Two-pane container with a draggable divider (Qt `QSplitter`,
+/// `NSSplitViewController`, WinUI `SplitView`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::split_view::SplitView;
+///
+/// let s = SplitView::horizontal().ratio(0.3);
+/// assert_eq!(s.get_ratio(), 0.3);
+/// ```
+pub mod split_view;
+
 /// Wizard progress indicator — numbered step nodes connected by
 /// lines (Ant `Steps`, Carbon `ProgressIndicator`, `QWizard` header).
 ///
@@ -895,6 +908,7 @@ pub use separator::Separator;
 pub use skeleton::{Skeleton, SkeletonShape};
 pub use slider::{Slider, SliderOrientation};
 pub use spinbox::SpinBox;
+pub use split_view::{SplitOrientation, SplitView};
 pub use stack::Stack;
 pub use status_bar::{StatusBar, StatusItem};
 pub use steps::{Step, Steps};
