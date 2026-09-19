@@ -280,6 +280,7 @@ pub mod text_input;
 /// let widget = ExternalEngine::new(handle, surface);
 /// ```
 pub mod external;
+
 /// Hardware video presentation widget.
 ///
 /// # Examples
