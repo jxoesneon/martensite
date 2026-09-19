@@ -719,6 +719,21 @@ pub mod header_bar;
 /// ```
 pub mod heat_map;
 
+/// Hex-dump display (binary-inspection / dev-tool idiom) — rows
+/// of `offset hh hh … |ascii|`: muted offset column, 16 hex
+/// pairs with an 8-byte gap, and a printable-ASCII gutter.
+/// Clicking a byte cell parks its index in `take_selected`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::hex_view::HexView;
+///
+/// let h = HexView::new().bytes(vec![0xde, 0xad, 0xbe, 0xef]);
+/// assert_eq!(h.row_count(), 1);
+/// ```
+pub mod hex_view;
+
 /// Binned frequency chart — contiguous equal-width bars over a
 /// numeric range (the distribution/density idiom, complementing
 /// `BarChart`'s categorical columns). Takes raw samples (auto-
