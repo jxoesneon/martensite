@@ -952,6 +952,19 @@ pub mod tree_view;
 /// ```
 pub mod watermark;
 
+/// Multi-step flow — `Steps` header, one visible page, and a
+/// back/next/cancel footer (`QWizard`, Ant Steps+form idiom).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Text, Wizard};
+///
+/// let w = Wizard::new().step("a", Text::new("p")).step("b", Text::new("q"));
+/// assert_eq!(w.step_count(), 2);
+/// ```
+pub mod wizard;
+
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
@@ -1025,3 +1038,4 @@ pub use toolbar::Toolbar;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
 pub use tree_view::{TreeNode, TreeView};
 pub use watermark::Watermark;
+pub use wizard::Wizard;
