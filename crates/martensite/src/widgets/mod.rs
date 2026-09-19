@@ -948,6 +948,20 @@ pub mod level_bar;
 /// ```
 pub mod link;
 
+/// Multi-series XY line chart (Ant `Line`, Swift `LineMark`) — the
+/// full-size companion to `Sparkline`: shared domain, baseline ticks,
+/// pointer-proximity series highlight.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::line_chart::{LineChart, LineSeries};
+///
+/// let c = LineChart::new().series(LineSeries::new("S", [1.0, 2.0]));
+/// assert_eq!(c.series.len(), 1);
+/// ```
+pub mod line_chart;
+
 /// Virtualized selectable list of string rows (APG listbox).
 ///
 /// # Examples
@@ -1642,6 +1656,7 @@ pub use key_capture::KeyCapture;
 pub use keyboard_shortcuts::{KeyboardShortcuts, ShortcutGroup, ShortcutRow};
 pub use lcd_number::LcdNumber;
 pub use level_bar::{LevelBar, LevelZone};
+pub use line_chart::{LineChart, LineSeries};
 pub use link::Link;
 pub use list_view::{ListView, SelectionMode, SelectionModel};
 pub use markdown::Markdown;
