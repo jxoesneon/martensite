@@ -15,6 +15,12 @@
 //! `PageUp`/`PageDown` step a month, and `Enter`/`Space` select the
 //! focus cell. Selections park in [`Calendar::take_selected`].
 //!
+//! [`CalendarSelection::Range`] switches clicks to the Ant
+//! `RangePicker` model: first click anchors, second completes (the
+//! pair normalizes to `start <= end`), a third re-anchors. The
+//! committed pair parks in [`Calendar::take_range`], interior cells
+//! get a hover wash, and hovering while anchored previews the span.
+//!
 //! # Examples
 //!
 //! ```
@@ -76,6 +82,26 @@ const WEEKDAYS_SUN: [&str; 7] = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 /// English weekday abbreviations, Monday-first.
 const WEEKDAYS_MON: [&str; 7] = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
+/// What a click selects.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::calendar::CalendarSelection;
+///
+/// assert_eq!(CalendarSelection::default(), CalendarSelection::Day);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CalendarSelection {
+    /// A single day (the default) — `take_selected`.
+    #[default]
+    Day,
+    /// A start→end range — first click anchors, second completes
+    /// (either order; the pair normalizes), parking `(start, end)`
+    /// in `take_range`. A third click re-anchors.
+    Range,
+}
+
 /// An always-visible month-grid date selector — see the module docs.
 ///
 /// `Calendar` is a leaf widget: it paints its own chrome (header, day
@@ -95,6 +121,15 @@ pub struct Calendar {
     enabled: bool,
     /// Selected date (accent-filled cell).
     selected: Option<Date>,
+    /// Click semantics — single day or range.
+    mode: CalendarSelection,
+    /// Committed range endpoints, normalized `start <= end`.
+    range_start: Option<Date>,
+    range_end: Option<Date>,
+    /// First range click awaiting its partner.
+    range_anchor: Option<Date>,
+    /// Parked `(start, end)` for `take_range`.
+    range_pending: Option<(Date, Date)>,
     /// Date that gets the accent ring.
     today: Option<Date>,
     /// Pickable range; out-of-range cells are inert.
@@ -154,6 +189,11 @@ impl Calendar {
             label: "Calendar".into(),
             enabled: true,
             selected: None,
+            mode: CalendarSelection::Day,
+            range_start: None,
+            range_end: None,
+            range_anchor: None,
+            range_pending: None,
             today: None,
             min: None,
             max: None,
@@ -280,6 +320,95 @@ impl Calendar {
         self
     }
 
+    /// Set click semantics — single day or range (the Ant
+    /// `RangePicker` picking model).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::calendar::{Calendar, CalendarSelection};
+    ///
+    /// let cal = Calendar::new().selection(CalendarSelection::Range);
+    /// ```
+    pub fn selection(mut self, mode: CalendarSelection) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Preselect a range (normalized to `start <= end`) and navigate
+    /// to `start`'s month.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::calendar::{Calendar, CalendarSelection};
+    /// use martensite::widgets::date_picker::Date;
+    ///
+    /// let cal = Calendar::new()
+    ///     .selection(CalendarSelection::Range)
+    ///     .range(Date { year: 2024, month: 6, day: 20 }, Date { year: 2024, month: 6, day: 10 });
+    /// assert_eq!(
+    ///     cal.range_value(),
+    ///     Some((Date { year: 2024, month: 6, day: 10 }, Date { year: 2024, month: 6, day: 20 }))
+    /// );
+    /// ```
+    pub fn range(mut self, start: Date, end: Date) -> Self {
+        self.set_range(start, end);
+        self
+    }
+
+    /// Set (or re-set) the committed range programmatically
+    /// (normalized; navigates to `start`'s month).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::calendar::Calendar;
+    /// use martensite::widgets::date_picker::Date;
+    ///
+    /// let mut cal = Calendar::new();
+    /// cal.set_range(Date { year: 2024, month: 1, day: 5 }, Date { year: 2024, month: 1, day: 2 });
+    /// assert_eq!(cal.range_value().unwrap().0.day, 2);
+    /// ```
+    pub fn set_range(&mut self, start: Date, end: Date) {
+        let (lo, hi) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        self.range_start = Some(lo);
+        self.range_end = Some(hi);
+        self.range_anchor = None;
+        self.view = (lo.year, lo.month);
+    }
+
+    /// The committed `(start, end)` range, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::calendar::Calendar;
+    ///
+    /// assert_eq!(Calendar::new().range_value(), None);
+    /// ```
+    pub fn range_value(&self) -> Option<(Date, Date)> {
+        self.range_start.zip(self.range_end)
+    }
+
+    /// Drain the parked user range — one-shot.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::calendar::Calendar;
+    ///
+    /// let mut cal = Calendar::new();
+    /// assert_eq!(cal.take_range(), None);
+    /// ```
+    pub fn take_range(&mut self) -> Option<(Date, Date)> {
+        self.range_pending.take()
+    }
+
     /// The selected date, if any.
     ///
     /// # Examples
@@ -356,6 +485,53 @@ impl Calendar {
     /// ```
     pub fn take_selected(&mut self) -> Option<Date> {
         self.pending.take()
+    }
+
+    /// The active range span for painting — the committed range, or
+    /// the anchor→hover preview while the second click is pending.
+    fn active_span(&self) -> Option<(Date, Date)> {
+        if self.mode != CalendarSelection::Range {
+            return None;
+        }
+        if let (Some(a), Some(b)) = (self.range_start, self.range_end) {
+            return Some((a, b));
+        }
+        let anchor = self.range_anchor?;
+        if let Some(Hit::Day(i)) = self.hover {
+            let hov = self.cells.get(i)?.date;
+            return Some(if hov <= anchor {
+                (hov, anchor)
+            } else {
+                (anchor, hov)
+            });
+        }
+        Some((anchor, anchor))
+    }
+
+    /// Apply a pick — single-day or range-anchor/complete.
+    fn pick(&mut self, d: Date) {
+        match self.mode {
+            CalendarSelection::Day => {
+                self.selected = Some(d);
+                self.pending = Some(d);
+            }
+            CalendarSelection::Range => {
+                if let Some(anchor) = self.range_anchor.take() {
+                    let (lo, hi) = if d <= anchor {
+                        (d, anchor)
+                    } else {
+                        (anchor, d)
+                    };
+                    self.range_start = Some(lo);
+                    self.range_end = Some(hi);
+                    self.range_pending = Some((lo, hi));
+                } else {
+                    self.range_anchor = Some(d);
+                    self.range_start = Some(d);
+                    self.range_end = None;
+                }
+            }
+        }
     }
 
     /// Step the displayed month by `delta` (±1 for the chevrons).
@@ -458,8 +634,7 @@ impl Calendar {
                     if !self.pickable(d) {
                         return EventResponse::Ignored;
                     }
-                    self.selected = Some(d);
-                    self.pending = Some(d);
+                    self.pick(d);
                     return EventResponse::RequestRepaint;
                 }
                 EventResponse::Ignored
@@ -617,6 +792,7 @@ impl Widget for Calendar {
         // Day cells.
         let shape = martensite_core::shape::Shape::rounded(cx.pt(6.0));
         let day_size = 12.0 * cx.scale;
+        let span = self.active_span();
         for (i, cell) in self.cells.iter().enumerate() {
             let r = kurbo::Rect::new(
                 f64::from(b.min_x() + cell.rect.min_x()),
@@ -625,13 +801,19 @@ impl Widget for Calendar {
                 f64::from(b.min_y() + cell.rect.max_y()),
             );
             let picked = self.selected == Some(cell.date);
+            let endpoint = span
+                .map(|(lo, hi)| cell.date == lo || cell.date == hi)
+                .unwrap_or(false);
+            let in_span = span
+                .map(|(lo, hi)| cell.date > lo && cell.date < hi)
+                .unwrap_or(false);
             let is_today = self.today == Some(cell.date);
             let in_range = self.pickable(cell.date);
             let hovered = self.enabled && self.hover == Some(Hit::Day(i)) && in_range;
 
-            if picked && in_range {
+            if (picked || endpoint) && in_range {
                 cx.list.push_fill_shape(r, &shape, accent);
-            } else if hovered {
+            } else if (in_span && in_range) || hovered {
                 cx.list.push_fill_shape(r, &shape, hover_wash);
             }
             if is_today && !picked {
@@ -642,7 +824,7 @@ impl Widget for Calendar {
             }
             let day_ink = if !self.enabled || !in_range {
                 muted
-            } else if picked {
+            } else if picked || endpoint {
                 [255, 255, 255, 255]
             } else if cell.in_month {
                 ink
@@ -710,9 +892,8 @@ impl Widget for Calendar {
                         if !self.pickable(d) {
                             return EventResponse::Ignored;
                         }
-                        self.selected = Some(d);
+                        self.pick(d);
                         self.view = (d.year, d.month);
-                        self.pending = Some(d);
                         EventResponse::RequestRepaint
                     }
                     None => EventResponse::Ignored,
@@ -1036,5 +1217,85 @@ mod tests {
                 day: 1
             }
         );
+    }
+
+    fn click_day(cal: &mut Calendar, day: u32) {
+        let i = cal
+            .cells
+            .iter()
+            .position(|c| c.in_month && c.date.day == day)
+            .unwrap();
+        let c = cal.cells[i].rect;
+        ev(
+            cal,
+            WidgetEvent::PointerReleased {
+                position: Vec2::new(c.min_x() + 2.0, c.min_y() + 2.0),
+                button: PointerButton::Primary,
+            },
+        );
+    }
+
+    #[test]
+    fn range_mode_two_clicks_commit_normalized() {
+        let mut cal = Calendar::new().selection(CalendarSelection::Range);
+        cal.set_displayed_month(2024, 6);
+        lay(&mut cal, 280.0);
+        // Click 20 then 10 — the pair normalizes to (10, 20).
+        click_day(&mut cal, 20);
+        assert_eq!(cal.take_range(), None);
+        click_day(&mut cal, 10);
+        assert_eq!(
+            cal.take_range(),
+            Some((
+                Date {
+                    year: 2024,
+                    month: 6,
+                    day: 10
+                },
+                Date {
+                    year: 2024,
+                    month: 6,
+                    day: 20
+                }
+            ))
+        );
+        assert_eq!(cal.take_range(), None);
+    }
+
+    #[test]
+    fn range_mode_third_click_reanchors() {
+        let mut cal = Calendar::new().selection(CalendarSelection::Range);
+        cal.set_displayed_month(2024, 6);
+        lay(&mut cal, 280.0);
+        click_day(&mut cal, 5);
+        click_day(&mut cal, 10);
+        assert!(cal.take_range().is_some());
+        // Third click starts a fresh anchor.
+        click_day(&mut cal, 25);
+        assert_eq!(cal.take_range(), None);
+        click_day(&mut cal, 28);
+        let (lo, hi) = cal.take_range().unwrap();
+        assert_eq!((lo.day, hi.day), (25, 28));
+    }
+
+    #[test]
+    fn range_mode_single_day_span() {
+        let mut cal = Calendar::new().selection(CalendarSelection::Range);
+        cal.set_displayed_month(2024, 6);
+        lay(&mut cal, 280.0);
+        click_day(&mut cal, 15);
+        click_day(&mut cal, 15);
+        let (lo, hi) = cal.take_range().unwrap();
+        assert_eq!(lo, hi);
+    }
+
+    #[test]
+    fn day_mode_unaffected_by_range_state() {
+        let mut cal = Calendar::new();
+        cal.set_displayed_month(2024, 6);
+        lay(&mut cal, 280.0);
+        click_day(&mut cal, 15);
+        assert!(cal.take_selected().is_some());
+        assert_eq!(cal.take_range(), None);
     }
 }

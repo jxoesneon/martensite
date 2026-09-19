@@ -1488,7 +1488,7 @@ pub use bar_chart::BarChart;
 pub use bottom_sheet::BottomSheet;
 pub use breadcrumb::Breadcrumb;
 pub use button::Button;
-pub use calendar::Calendar;
+pub use calendar::{Calendar, CalendarSelection};
 pub use card::{Card, CardVariant};
 pub use carousel::Carousel;
 pub use cascader::{Cascader, CascaderOption};
