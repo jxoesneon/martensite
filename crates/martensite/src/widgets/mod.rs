@@ -939,6 +939,19 @@ pub mod tooltip;
 /// ```
 pub mod tree_view;
 
+/// Tiled text overlay for stamping watermarks over content (Ant
+/// `Watermark`) — a leaf meant for [`Stack`] layering.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Watermark;
+///
+/// let wm = Watermark::new("Draft").opacity(0.2);
+/// assert_eq!(wm.text(), "Draft");
+/// ```
+pub mod watermark;
+
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
@@ -1011,3 +1024,4 @@ pub use token_field::TokenField;
 pub use toolbar::Toolbar;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
 pub use tree_view::{TreeNode, TreeView};
+pub use watermark::Watermark;
