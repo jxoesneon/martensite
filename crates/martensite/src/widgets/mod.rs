@@ -800,6 +800,20 @@ pub mod kbd;
 /// ```
 pub mod level_bar;
 
+/// Inline hyperlink label — underlined accent text that parks its
+/// target in `take_activated` on click, `Enter`, or AT `Click` (Ant
+/// `Typography.Link`, GTK `LinkButton`). The shell owns navigation.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::link::Link;
+///
+/// let l = Link::new("Docs").target("https://docs.rs");
+/// assert_eq!(l.href(), Some("https://docs.rs"));
+/// ```
+pub mod link;
+
 /// Virtualized selectable list of string rows (APG listbox).
 ///
 /// # Examples
@@ -1427,6 +1441,7 @@ pub use image::{Image, ImageFit};
 pub use kbd::Kbd;
 pub use key_capture::KeyCapture;
 pub use level_bar::{LevelBar, LevelZone};
+pub use link::Link;
 pub use list_view::{ListView, SelectionMode, SelectionModel};
 pub use markdown::Markdown;
 pub use masonry::Masonry;
