@@ -2166,6 +2166,22 @@ pub mod wheel_picker;
 /// ```
 pub mod wizard;
 
+/// Weight-scaled packed word display (Ant `WordCloud` / tag-cloud
+/// idiom) — the heaviest words render largest in a categorical
+/// palette, packed row-wise across the surface. Clicking a word
+/// parks its original index in `take_clicked`; hovering parks
+/// `take_hovered`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::word_cloud::WordCloud;
+///
+/// let w = WordCloud::new().word("rust", 10.0).word("gui", 5.0);
+/// assert_eq!(w.max_weight(), 10.0);
+/// ```
+pub mod word_cloud;
+
 /// Two-dimensional drag controller (Kaoss-pad / Ableton XY idiom) —
 /// a square pad whose thumb tracks a normalized `(x, y)` value with
 /// crosshair guides, arrow-key nudges, `Home`/`End` snaps, and a
