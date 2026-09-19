@@ -890,6 +890,21 @@ pub mod popover;
 /// ```
 pub mod property_grid;
 
+/// QR barcode renderer — paints a precomputed module matrix with the
+/// standard quiet zone (Ant `QRCode` display side). Encoding is
+/// app-space: feed `from_matrix`/`from_bits` the output of `qrcode`,
+/// `fast_qr`, or your own encoder.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::qr_code::QrCode;
+///
+/// let qr = QrCode::from_matrix(vec![vec![false; 21]; 21]);
+/// assert_eq!(qr.module_count(), 21);
+/// ```
+pub mod qr_code;
+
 /// ARIA APG slider widget.
 ///
 /// # Examples
@@ -1298,6 +1313,7 @@ pub use property_grid::{
     PropertyEditor, PropertyGrid, PropertyRow, PropertyRowKey, PropertySection,
 };
 pub use pull_to_refresh::PullToRefresh;
+pub use qr_code::QrCode;
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
 pub use rating::Rating;
