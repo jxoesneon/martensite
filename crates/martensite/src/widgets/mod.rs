@@ -637,6 +637,24 @@ pub mod heat_map;
 /// ```
 pub mod image;
 
+/// Pan/zoom image viewport — the photo-viewer idiom. `Scroll` zooms
+/// around the pointer, primary-drag pans (clamped so a quarter of
+/// the image stays reachable), double-click or `0` resets to fit,
+/// and `+`/`-` zoom from the keyboard. A checkerboard underlay
+/// reads alpha as transparency.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::image_viewer::ImageViewer;
+/// use martensite_core::ImageData;
+///
+/// let data = ImageData::from_rgba(4, 4, vec![0; 4 * 4 * 4]).unwrap();
+/// let viewer = ImageViewer::new(data);
+/// assert_eq!(viewer.zoom(), 1.0);
+/// ```
+pub mod image_viewer;
+
 /// Freehand stroke-capture surface — the signature-pad / sketch
 /// idiom. Primary-drag collects canvas-clamped points into strokes;
 /// each released stroke is parked in `take_stroke`, `Backspace`
