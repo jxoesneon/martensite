@@ -56,6 +56,33 @@
 /// ```
 pub mod accordion;
 
+/// Bottom action sheet — tappable action rows with destructive/cancel
+/// semantics (iOS action sheet, Ant `ActionSheet`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::ActionSheet;
+///
+/// let s = ActionSheet::new().action("Save").destructive("Delete");
+/// ```
+pub mod action_sheet;
+
+/// Modal severity-tinted alert card for the overlay layer (NSAlert /
+/// `AlertDialog`) — title, message, footer buttons, `AlertResult` seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::alert_dialog::{AlertDialog, AlertRole};
+///
+/// let d = AlertDialog::new()
+///     .title("Delete?")
+///     .button("OK", AlertRole::Confirm);
+/// assert_eq!(d.buttons.len(), 1);
+/// ```
+pub mod alert_dialog;
+
 /// Circular user avatar — image content clipped to the silhouette, or
 /// initials on an accent disc.
 ///
@@ -215,6 +242,18 @@ pub mod stack;
 /// assert_eq!(b.message, "Heads up");
 /// ```
 pub mod banner;
+
+/// Edge-bottom sheet with snap-point detents and a drag handle
+/// (Material bottom sheet).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::BottomSheet;
+///
+/// let s = BottomSheet::new().detents(&[0.35, 0.9]);
+/// ```
+pub mod bottom_sheet;
 
 /// Modal dialog card for the overlay layer.
 ///
@@ -391,6 +430,33 @@ pub mod menu;
 /// ```
 pub mod menu_bar;
 
+/// Mini anchored confirmation bubble (Ant `Popconfirm`) — question,
+/// Confirm/Cancel pair, arrow tail, `ConfirmResult` seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Popconfirm;
+///
+/// let c = Popconfirm::new().question("Sure?");
+/// assert!(!c.is_open());
+/// ```
+pub mod popconfirm;
+
+/// Anchored bubble with an arrow tail (GtkPopover / NSPopover) —
+/// optional title, single content child, `BoundsEdge` placement with
+/// flip, `autohide` light-dismiss semantics.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Popover, Text};
+///
+/// let p = Popover::new().title("Info").child(Text::new("body"));
+/// assert!(!p.is_open());
+/// ```
+pub mod popover;
+
 /// ARIA APG slider widget.
 ///
 /// # Examples
@@ -554,9 +620,12 @@ pub mod tooltip;
 pub mod tree_view;
 
 pub use accordion::Accordion;
+pub use action_sheet::{ActionSheet, ActionSheetResult};
+pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
 pub use avatar::Avatar;
 pub use badge::Badge;
 pub use banner::{Banner, Severity};
+pub use bottom_sheet::BottomSheet;
 pub use button::Button;
 pub use card::{Card, CardVariant};
 pub use checkbox::{CheckBox, CheckState};
@@ -576,6 +645,8 @@ pub use list_view::{ListView, SelectionMode, SelectionModel};
 pub use media::{MediaView, VideoFit};
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
 pub use menu_bar::MenuBar;
+pub use popconfirm::{ConfirmResult, Popconfirm};
+pub use popover::Popover;
 pub use progress::{ProgressBar, Spinner};
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
