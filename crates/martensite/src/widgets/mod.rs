@@ -479,6 +479,19 @@ pub mod settings_row;
 /// ```
 pub mod status_bar;
 
+/// Split button — primary-action zone fused with a chevron that
+/// parks a dropdown request (WinUI `SplitButton`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::SplitButton;
+///
+/// let mut b = SplitButton::new("Save");
+/// assert!(!b.take_dropped());
+/// ```
+pub mod split_button;
+
 /// Two-pane container with a draggable divider (Qt `QSplitter`,
 /// `NSSplitViewController`, WinUI `SplitView`).
 ///
@@ -738,6 +751,21 @@ pub mod popconfirm;
 /// assert!(!p.is_open());
 /// ```
 pub mod popover;
+
+/// Two-column property inspector (Qt PropertyBrowser / Xcode
+/// inspector) — `name | value` rows with inline Text/Bool/Choice
+/// editors under collapsible section headers, `take_changed` seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{PropertyGrid, PropertyRow};
+///
+/// let g = PropertyGrid::new()
+///     .section("Transform", [PropertyRow::bool("Visible", true)]);
+/// assert_eq!(g.row_count(), 1);
+/// ```
+pub mod property_grid;
 
 /// ARIA APG slider widget.
 ///
@@ -1120,6 +1148,9 @@ pub use pagination::Pagination;
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
 pub use progress::{ProgressBar, Spinner};
+pub use property_grid::{
+    PropertyEditor, PropertyGrid, PropertyRow, PropertyRowKey, PropertySection,
+};
 pub use pull_to_refresh::PullToRefresh;
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
@@ -1133,6 +1164,7 @@ pub use settings_row::{SettingsGroup, SettingsRow};
 pub use skeleton::{Skeleton, SkeletonShape};
 pub use slider::{Slider, SliderOrientation};
 pub use spinbox::SpinBox;
+pub use split_button::SplitButton;
 pub use split_view::{SplitOrientation, SplitView};
 pub use stack::Stack;
 pub use statistic::{Statistic, Trend};
