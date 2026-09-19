@@ -988,6 +988,21 @@ pub mod settings_row;
 /// ```
 pub mod signal_strength;
 
+/// Charge-level battery indicator — the status-bar glyph idiom:
+/// a rounded body with a terminal nub and a level-proportional
+/// fill that shifts green to amber to red, plus a `charging` bolt
+/// overlay. Display-only companion to `SignalStrength`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::battery::Battery;
+///
+/// let b = Battery::new().level(0.65).charging(true);
+/// assert!(b.is_charging());
+/// ```
+pub mod battery;
+
 /// Bottom-of-window status strip (QStatusBar / WPF `StatusBar`) —
 /// left zone widgets, a permanent/temporary message zone, and
 /// right-docked permanent widgets.
