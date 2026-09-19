@@ -839,6 +839,22 @@ pub mod dropdown;
 /// ```
 pub mod empty_state;
 
+/// Virtualized data grid — pinned sortable/resizable column header
+/// over a scrollable striped body (QTableView, GTK `ColumnView`,
+/// WinUI `DataGrid`, Ant `Table`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::{Table, TableColumn};
+///
+/// let t = Table::new()
+///     .columns([TableColumn::new("name", "Name")])
+///     .row(["Ada"]);
+/// assert_eq!(t.row_count(), 1);
+/// ```
+pub mod table;
+
 /// ARIA APG tabs widget (tab list + tab panels).
 ///
 /// # Examples
@@ -915,6 +931,19 @@ pub mod toolbar;
 /// assert_eq!(t.token_list().len(), 2);
 /// ```
 pub mod token_field;
+
+/// Guided-tour overlay — coach-mark cards over a dimmed backdrop
+/// with an optional spotlight cutout (Ant `Tour`, driver.js).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Tour;
+///
+/// let t = Tour::new().step("Welcome", "This is the app.", None);
+/// assert_eq!(t.step_count(), 1);
+/// ```
+pub mod tour;
 
 /// ARIA APG tooltip with an overlay bubble and `aria-describedby`.
 ///
@@ -1025,6 +1054,7 @@ pub use statistic::{Statistic, Trend};
 pub use status_bar::{StatusBar, StatusItem};
 pub use steps::{Step, Steps};
 pub use switch::Switch;
+pub use table::{SortDir, Table, TableAlign, TableColumn};
 pub use tabs::{TabActivation, TabItem, Tabs};
 pub use text::Text;
 pub use text_area::TextArea;
@@ -1036,6 +1066,7 @@ pub use toggle_button::ToggleButton;
 pub use token_field::TokenField;
 pub use toolbar::Toolbar;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
+pub use tour::{Tour, TourStep};
 pub use tree_view::{TreeNode, TreeView};
 pub use watermark::Watermark;
 pub use wizard::Wizard;
