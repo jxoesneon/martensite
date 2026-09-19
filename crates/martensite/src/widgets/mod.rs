@@ -181,6 +181,23 @@ pub mod calendar;
 /// ```
 pub mod card;
 
+/// Paged content rotator — one child page visible at a time with dot
+/// indicators, side arrow zones, arrow/PageUp/PageDown/Home/End keys,
+/// and horizontal `Scroll` paging (Ant `Carousel`). Hidden pages
+/// report `None` bounds and drop out of traversal.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::prelude::*;
+/// use martensite::widgets::carousel::Carousel;
+///
+/// let mut c = Carousel::new().page(Text::new("a")).page(Text::new("b"));
+/// c.go_to(1);
+/// assert_eq!(c.current(), 1);
+/// ```
+pub mod carousel;
+
 /// Cascading column picker — drill-down option lists whose leaf
 /// click commits the full value path (macOS `NSBrowser`, Ant
 /// `Cascader`).
@@ -675,6 +692,19 @@ pub mod external;
 /// ```
 pub mod key_capture;
 
+/// Keyboard-key cap chip — the `<kbd>` element: a small beveled box
+/// around a key name for docs, shortcut hints, and menus. Pair with
+/// `KeyCapture` (recording) and `KeyMap` (dispatch).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::kbd::Kbd;
+///
+/// assert_eq!(Kbd::new("⌘").text(), "⌘");
+/// ```
+pub mod kbd;
+
 /// Level/capacity meter — battery, disk-usage, or signal-strength
 /// indicator with zone colors (GTK `GtkLevelBar`, `NSLevelIndicator`).
 ///
@@ -900,6 +930,21 @@ pub mod rating;
 /// let r = ResultPage::new(ResultStatus::Success).title("Saved");
 /// ```
 pub mod result_page;
+
+/// Corner ribbon overlay — an Ant `Badge.Ribbon` band pinned to a
+/// corner of the wrapped child carrying short status text ("Beta",
+/// "New"). Chrome only; the child keeps full bounds and event flow.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::prelude::*;
+/// use martensite::widgets::ribbon::Ribbon;
+///
+/// let r = Ribbon::new("Beta").child(Container::new());
+/// assert_eq!(r.text(), "Beta");
+/// ```
+pub mod ribbon;
 
 /// ARIA APG scroll view with smart scrollbars and rubber-band
 /// overscroll.
@@ -1193,6 +1238,7 @@ pub use breadcrumb::Breadcrumb;
 pub use button::Button;
 pub use calendar::Calendar;
 pub use card::{Card, CardVariant};
+pub use carousel::Carousel;
 pub use cascader::{Cascader, CascaderOption};
 pub use checkbox::{CheckBox, CheckState};
 pub use chip::{Chip, ChipKind};
@@ -1215,6 +1261,7 @@ pub use form_field::{FormField, LabelPosition};
 pub use gauge::Gauge;
 pub use group_box::GroupBox;
 pub use image::{Image, ImageFit};
+pub use kbd::Kbd;
 pub use key_capture::KeyCapture;
 pub use level_bar::{LevelBar, LevelZone};
 pub use list_view::{ListView, SelectionMode, SelectionModel};
@@ -1237,6 +1284,7 @@ pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
 pub use rating::Rating;
 pub use result_page::{ResultAction, ResultPage, ResultStatus};
+pub use ribbon::{Ribbon, RibbonCorner};
 pub use scrollview::{ScrollBarWidget, ScrollView};
 pub use search_field::SearchField;
 pub use segmented::{Segment, Segmented};
