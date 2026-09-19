@@ -83,6 +83,20 @@ pub mod action_sheet;
 /// ```
 pub mod alert_dialog;
 
+/// Editable text input with a filtered suggestion popup (Qt
+/// `QCompleter`, WinUI `AutoSuggestBox`, Ant `AutoComplete`) —
+/// `Role::ComboBox` + overlay `ListBox` wiring.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::auto_complete::AutoComplete;
+///
+/// let ac = AutoComplete::new().suggestions(["Apple", "Banana"]);
+/// assert_eq!(ac.suggestion_count(), 2);
+/// ```
+pub mod auto_complete;
+
 /// Circular user avatar — image content clipped to the silhouette, or
 /// initials on an accent disc.
 ///
@@ -671,6 +685,20 @@ pub mod result_page;
 /// ```
 pub mod scrollview;
 
+/// Dedicated search input (NSSearchField, Carbon `Search`) — a
+/// magnifier-prefixed, clearable `TextInput` child with an `Enter`
+/// submit seam and `Role::SearchInput` accessibility.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::search_field::SearchField;
+///
+/// let s = SearchField::new().placeholder("Search…");
+/// assert_eq!(s.value(), "");
+/// ```
+pub mod search_field;
+
 /// Single-select segmented pill strip (radio-group semantics).
 ///
 /// # Examples
@@ -781,6 +809,19 @@ pub mod toggle_button;
 /// ```
 pub mod toolbar;
 
+/// Chip-ized token entry field — typed text commits into removable
+/// tokens (AppKit `NSTokenField`, WCT `TokenizingTextBox`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::token_field::TokenField;
+///
+/// let t = TokenField::new().tokens(["rust", "gui"]);
+/// assert_eq!(t.token_list().len(), 2);
+/// ```
+pub mod token_field;
+
 /// ARIA APG tooltip with an overlay bubble and `aria-describedby`.
 ///
 /// # Examples
@@ -807,6 +848,7 @@ pub mod tree_view;
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
+pub use auto_complete::{AutoComplete, FilterMode};
 pub use avatar::Avatar;
 pub use badge::Badge;
 pub use banner::{Banner, Severity};
@@ -847,6 +889,7 @@ pub use range_slider::{RangeSlider, RangeThumb};
 pub use rating::Rating;
 pub use result_page::{ResultAction, ResultPage, ResultStatus};
 pub use scrollview::{ScrollBarWidget, ScrollView};
+pub use search_field::SearchField;
 pub use segmented::{Segment, Segmented};
 pub use separator::Separator;
 pub use skeleton::{Skeleton, SkeletonShape};
@@ -863,6 +906,7 @@ pub use text_input::TextInput;
 pub use time_picker::{Time, TimePicker};
 pub use toast::{Toast, ToastHost};
 pub use toggle_button::ToggleButton;
+pub use token_field::TokenField;
 pub use toolbar::Toolbar;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
 pub use tree_view::{TreeNode, TreeView};
