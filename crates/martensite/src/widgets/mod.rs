@@ -722,6 +722,21 @@ pub mod banner;
 /// ```
 pub mod bar_chart;
 
+/// Stephen Few bullet graph — a compact KPI strip reading
+/// value-vs-target against qualitative range bands (poor / ok /
+/// good). The measure paints as a solid bar, the comparative
+/// target as a tick, and label + formatted value sit at the edges.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::bullet_chart::BulletChart;
+///
+/// let c = BulletChart::new().label("Revenue").value(75.0).target(90.0);
+/// assert_eq!(c.measure_value(), 75.0);
+/// ```
+pub mod bullet_chart;
+
 /// Edge-bottom sheet with snap-point detents and a drag handle
 /// (Material bottom sheet).
 ///
@@ -1874,6 +1889,7 @@ pub use banner::{Banner, Severity};
 pub use bar_chart::BarChart;
 pub use bottom_sheet::BottomSheet;
 pub use breadcrumb::Breadcrumb;
+pub use bullet_chart::BulletChart;
 pub use button::Button;
 pub use calendar::{Calendar, CalendarSelection};
 pub use candlestick::{Candle, Candlestick};
