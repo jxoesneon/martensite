@@ -1021,6 +1021,21 @@ pub mod scrollview;
 /// ```
 pub mod search_field;
 
+/// Inline word-sized trend chart — line, translucent area, or bars,
+/// normalized to the series' min/max with an endpoint dot (Tufte
+/// sparkline / Swift Charts mini-series). Display-only; pair with
+/// `Statistic` for the readout.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::sparkline::{Sparkline, SparkStyle};
+///
+/// let s = Sparkline::new([1.0, 3.0, 2.0]).style(SparkStyle::Area);
+/// assert_eq!(s.point_count(), 3);
+/// ```
+pub mod sparkline;
+
 /// Single-select segmented pill strip (radio-group semantics).
 ///
 /// # Examples
@@ -1344,6 +1359,7 @@ pub use separator::Separator;
 pub use settings_row::{SettingsGroup, SettingsRow};
 pub use skeleton::{Skeleton, SkeletonShape};
 pub use slider::{Slider, SliderOrientation};
+pub use sparkline::{SparkStyle, Sparkline};
 pub use spinbox::SpinBox;
 pub use split_button::SplitButton;
 pub use split_view::{SplitOrientation, SplitView};
