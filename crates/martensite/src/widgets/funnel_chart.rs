@@ -263,7 +263,12 @@ impl Widget for FunnelChart {
             path.close_path();
             let mut color = PALETTE[i % PALETTE.len()];
             if self.hovered == Some(i) {
-                color = [color[0].saturating_add(30), color[1].saturating_add(30), color[2].saturating_add(30), 255];
+                color = [
+                    color[0].saturating_add(30),
+                    color[1].saturating_add(30),
+                    color[2].saturating_add(30),
+                    255,
+                ];
             }
             cx.list.push_path(path, color);
 
