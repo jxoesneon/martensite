@@ -1107,6 +1107,20 @@ pub mod page_header;
 /// ```
 pub mod pagination;
 
+/// Proportional wedge chart — pie or donut ring (Ant `Pie`, Swift
+/// `SectorMark`). Angle+radius hit-testing, categorical palette,
+/// per-slice press selection.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::pie_chart::{PieChart, PieSlice};
+///
+/// let c = PieChart::new(vec![PieSlice::new(1.0, "A")]).donut();
+/// assert!(c.is_donut());
+/// ```
+pub mod pie_chart;
+
 /// Page-dot strip — WinUI `PipsPager` / iOS `UIPageControl`: `count`
 /// dots with `current` emphasized, press-to-select, sliding window for
 /// long lists. Pair with `Carousel` or any custom page switcher.
@@ -1641,6 +1655,7 @@ pub use nav_stack::NavStack;
 pub use otp_input::OtpInput;
 pub use page_header::PageHeader;
 pub use pagination::Pagination;
+pub use pie_chart::{PieChart, PieSlice};
 pub use pips_pager::PipsPager;
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
