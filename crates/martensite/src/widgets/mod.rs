@@ -210,6 +210,19 @@ pub mod context_menu;
 /// ```
 pub mod date_picker;
 
+/// Rotary knob — circular value control with a 270° sweep
+/// (Qt `QDial`, audio-plugin knob idiom).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::dial::Dial;
+///
+/// let d = Dial::new().range(0.0, 100.0).value(25.0);
+/// assert_eq!(d.get_value(), 25.0);
+/// ```
+pub mod dial;
+
 /// Flexbox row and column layout.
 ///
 /// # Examples
@@ -807,6 +820,7 @@ pub use color_picker::{hsv_to_rgb, rgb_to_hsv, Color, ColorPicker};
 pub use container::Container;
 pub use context_menu::ContextMenu;
 pub use date_picker::{Date, DatePicker};
+pub use dial::Dial;
 pub use dialog::Dialog;
 pub use disclosure::Disclosure;
 pub use drawer::Drawer;
