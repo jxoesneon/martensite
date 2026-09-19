@@ -537,7 +537,10 @@ mod tests {
         lay(&mut fb, 200.0);
         let short = fb.child_bounds(0).unwrap();
         let tall = fb.child_bounds(1).unwrap();
-        assert!((short.min_y() - 10.0).abs() < 0.5, "short cell centers in the 30px row");
+        assert!(
+            (short.min_y() - 10.0).abs() < 0.5,
+            "short cell centers in the 30px row"
+        );
         assert_eq!(tall.min_y(), 0.0);
         assert_eq!(fb.content_height(), 30.0);
     }
