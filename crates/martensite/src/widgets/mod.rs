@@ -83,6 +83,22 @@ pub mod action_sheet;
 /// ```
 pub mod alert_dialog;
 
+/// Scroll-spy navigation rail — a vertical link list where the active
+/// section follows scroll position (Ant `Anchor`). Clicks park the
+/// target in `take_clicked`; the app reports position via
+/// `set_active`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::anchor::{Anchor, AnchorItem};
+///
+/// let mut a = Anchor::new().items([AnchorItem::new("Top", "top")]);
+/// a.set_active(0);
+/// assert_eq!(a.active(), Some(0));
+/// ```
+pub mod anchor;
+
 /// Editable text input with a filtered suggestion popup (Qt
 /// `QCompleter`, WinUI `AutoSuggestBox`, Ant `AutoComplete`) —
 /// `Role::ComboBox` + overlay `ListBox` wiring.
@@ -319,6 +335,21 @@ pub mod flex;
 /// assert!(!FloatButton::back_top().visible);
 /// ```
 pub mod float_button;
+
+/// Labeled control row with a validation strip — the Ant `Form.Item`
+/// pattern: label (top or left column), one control child, and an
+/// error/hint message line that takes space only when it has content.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::form_field::FormField;
+/// use martensite::widgets::TextInput;
+///
+/// let f = FormField::new().label("Host").required(true).child(TextInput::new("x"));
+/// assert!(f.error().is_none());
+/// ```
+pub mod form_field;
 
 /// Radial gauge display — value arc with zone colors, ticks, and a
 /// centered readout (WCT `RadialGauge`, SwiftUI `Gauge`).
@@ -668,6 +699,21 @@ pub mod level_bar;
 /// assert_eq!(l.item_count(), 3);
 /// ```
 pub mod list_view;
+
+/// Read-only Markdown rich-text renderer — a pragmatic subset
+/// (headings, paragraphs, code blocks, quotes, lists, rules; inline
+/// emphasis, code, links) flowed as styled runs (Ant `Typography`,
+/// `QTextEdit` markdown mode).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::Markdown;
+///
+/// let m = Markdown::new("# Hi\n\nsome *text*");
+/// assert_eq!(m.source(), "# Hi\n\nsome *text*");
+/// ```
+pub mod markdown;
 
 /// Masonry layout — children flow into the currently-shortest
 /// column (Pinterest layout, CSS `masonry`).
@@ -1137,6 +1183,7 @@ pub mod wizard;
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
+pub use anchor::{Anchor, AnchorItem};
 pub use auto_complete::{AutoComplete, FilterMode};
 pub use avatar::Avatar;
 pub use badge::Badge;
@@ -1164,12 +1211,14 @@ pub use empty_state::EmptyState;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use flex::{Flex, FlexDirection};
 pub use float_button::FloatButton;
+pub use form_field::{FormField, LabelPosition};
 pub use gauge::Gauge;
 pub use group_box::GroupBox;
 pub use image::{Image, ImageFit};
 pub use key_capture::KeyCapture;
 pub use level_bar::{LevelBar, LevelZone};
 pub use list_view::{ListView, SelectionMode, SelectionModel};
+pub use markdown::Markdown;
 pub use masonry::Masonry;
 pub use media::{MediaView, VideoFit};
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
