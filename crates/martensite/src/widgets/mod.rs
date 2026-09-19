@@ -1241,6 +1241,22 @@ pub mod keypad;
 /// ```
 pub mod lcd_number;
 
+/// Dot-matrix LED display (departure-board / marquee-sign idiom) —
+/// a `cols × rows` grid of circular dots with `set`/`toggle`/
+/// `fill_all`/`clear_all` control. Lit dots paint in the accent
+/// color (or `on_color`), unlit as faint ghosts. Display-only.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::led_matrix::LedMatrix;
+///
+/// let mut m = LedMatrix::new(8, 8);
+/// m.set(2, 3, true);
+/// assert!(m.get(2, 3));
+/// ```
+pub mod led_matrix;
+
 /// Level/capacity meter — battery, disk-usage, or signal-strength
 /// indicator with zone colors (GTK `GtkLevelBar`, `NSLevelIndicator`).
 ///
