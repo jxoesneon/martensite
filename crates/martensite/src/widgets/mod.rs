@@ -331,6 +331,20 @@ pub mod color_palette;
 /// ```
 pub mod color_picker;
 
+/// Win32 command-link button — a full-width action row with a bold
+/// label, smaller explanatory note, and trailing `›`. The
+/// "descriptive action" between a button and a link.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::command_link::CommandLink;
+///
+/// let c = CommandLink::new("Create project").note("From a template");
+/// assert_eq!(c.label, "Create project");
+/// ```
+pub mod command_link;
+
 /// Fuzzy action launcher (KDE `KCommandBar`, cmdk `Command`, VS Code
 /// `Ctrl+Shift+P`) — a search-field trigger whose scored result list
 /// hangs in an overlay `ListBox`, mirroring `AutoComplete`'s
@@ -1557,6 +1571,7 @@ pub use chip_group::{ChipGroup, ChipSelection};
 pub use clamp::Clamp;
 pub use color_palette::ColorPalette;
 pub use color_picker::{hsv_to_rgb, rgb_to_hsv, Color, ColorPicker};
+pub use command_link::CommandLink;
 pub use command_palette::{CommandAction, CommandPalette};
 pub use container::Container;
 pub use context_menu::ContextMenu;
