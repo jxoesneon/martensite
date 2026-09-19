@@ -316,6 +316,21 @@ pub mod chip_group;
 /// ```
 pub mod clamp;
 
+/// Color-swatch button face that parks a picker request (GTK
+/// `ColorButton`, `NSColorWell`) — checkerboard-backed swatch plus
+/// optional title; activation drains via `take_activated` for the app
+/// to mount a `ColorPicker`/`ColorPalette` popup.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::color_button::ColorButton;
+///
+/// let cb = ColorButton::new([220, 60, 60, 255]).title("Accent");
+/// assert_eq!(cb.color()[0], 220);
+/// ```
+pub mod color_button;
+
 /// Preset color-swatch grid — the curated palette row (Ant
 /// `ColorPicker` presets / `NSColorList`) where click selects and
 /// parks `(index, rgba)` in `take_selected`. Unlike `ColorPicker`'s
@@ -1686,6 +1701,7 @@ pub use checkbox::{CheckBox, CheckState};
 pub use chip::{Chip, ChipKind};
 pub use chip_group::{ChipGroup, ChipSelection};
 pub use clamp::Clamp;
+pub use color_button::ColorButton;
 pub use color_palette::ColorPalette;
 pub use color_picker::{hsv_to_rgb, rgb_to_hsv, Color, ColorPicker};
 pub use command_link::CommandLink;
