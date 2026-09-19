@@ -113,6 +113,20 @@ pub mod alert_dialog;
 /// ```
 pub mod anchor;
 
+/// Clock-face display — hour/minute/second hands over a ticked dial
+/// (Qt `QAnalogClock`). Display-only and driven: the app sets the
+/// time from a timer tick; the widget never reads the wall clock.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::analog_clock::AnalogClock;
+///
+/// let clock = AnalogClock::new().time(10, 9, 30);
+/// assert_eq!(clock.time_value(), (10, 9, 30));
+/// ```
+pub mod analog_clock;
+
 /// Editable text input with a filtered suggestion popup (Qt
 /// `QCompleter`, WinUI `AutoSuggestBox`, Ant `AutoComplete`) —
 /// `Role::ComboBox` + overlay `ListBox` wiring.
@@ -1696,6 +1710,7 @@ pub use about::About;
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
+pub use analog_clock::AnalogClock;
 pub use anchor::{Anchor, AnchorItem};
 pub use aspect_frame::AspectFrame;
 pub use auto_complete::{AutoComplete, FilterMode};
