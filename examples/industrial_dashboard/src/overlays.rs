@@ -30,6 +30,7 @@ use martensite::core::{
 };
 use martensite::prelude::Signal;
 use martensite::widgets::{Banner, Dialog, Disclosure, Severity, Switch, Toast, ToastHost};
+use martensite::widgets::{BulletChart, Spectrum, Waveform, XYPad};
 use martensite::widgets::{Drawer, Flex, Text};
 use martensite::widgets::{KeyCapture, Rating, Segmented, SettingsGroup, SettingsRow, SpinBox};
 use martensite::widgets::{LogSeverity, LogView, Status as DotStatus, StatusDot};
@@ -197,6 +198,57 @@ impl ShellOverlays {
         feed.push(LogSeverity::Warning, "cell 3 uplink jitter 240 ms");
         feed.push(LogSeverity::Error, "archive sync stalled — retrying");
         feed.push(LogSeverity::Debug, "drawer opened via toolbar");
+        // Dogfood BulletChart — cell KPIs reading value-vs-target
+        // over qualitative bands, the standard OEE strip.
+        let kpis = Flex::column().gap(4.0).children([
+            Box::new(
+                BulletChart::new()
+                    .label("OEE")
+                    .value(78.0)
+                    .target(85.0)
+                    .ranges([60.0, 80.0, 100.0])
+                    .with_text_painter(painter.clone()),
+            ) as Box<dyn Widget>,
+            Box::new(
+                BulletChart::new()
+                    .label("Yield")
+                    .value(94.0)
+                    .target(92.0)
+                    .ranges([70.0, 85.0, 100.0])
+                    .with_text_painter(painter.clone()),
+            ),
+            Box::new(
+                BulletChart::new()
+                    .label("Throughput")
+                    .value(61.0)
+                    .target(75.0)
+                    .ranges([50.0, 70.0, 100.0])
+                    .with_text_painter(painter.clone()),
+            ),
+        ]);
+        // Dogfood Waveform + Spectrum — a vibration monitor pairing
+        // the amplitude signature with its band decomposition.
+        let vibration = Flex::column().gap(4.0).children([
+            Box::new(
+                Waveform::new()
+                    .label("Spindle vibration")
+                    .peaks([
+                        0.2, 0.35, 0.6, 0.4, 0.9, 0.55, 0.3, 0.7, 0.45, 0.25, 0.8, 0.5, 0.35, 0.6,
+                        0.3, 0.2,
+                    ])
+                    .position(0.4),
+            ) as Box<dyn Widget>,
+            Box::new(
+                Spectrum::new()
+                    .label("Band analysis")
+                    .bands([0.3, 0.55, 0.8, 0.65, 0.4, 0.7, 0.35, 0.2]),
+            ),
+        ]);
+        // Dogfood XYPad — a robot-jog pad for cell positioning.
+        let jog = XYPad::new()
+            .labels("X jog", "Y jog")
+            .value(0.5, 0.5)
+            .with_text_painter(painter.clone());
         let content = Flex::column().gap(8.0).children([
             Box::new(
                 Banner::new(Severity::Info, "Inspector attached")
@@ -215,6 +267,21 @@ impl ShellOverlays {
             ),
             Box::new(prefs),
             Box::new(feeds),
+            Box::new(
+                Disclosure::new("Cell KPIs")
+                    .child(kpis)
+                    .with_text_painter(painter.clone()),
+            ),
+            Box::new(
+                Disclosure::new("Vibration")
+                    .child(vibration)
+                    .with_text_painter(painter.clone()),
+            ),
+            Box::new(
+                Disclosure::new("Jog")
+                    .child(jog)
+                    .with_text_painter(painter.clone()),
+            ),
             Box::new(
                 Disclosure::new("Event feed")
                     .child(feed)
