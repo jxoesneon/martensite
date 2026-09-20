@@ -807,18 +807,17 @@ fn parse_info(text: &str) -> CliDocInfo {
 fn read_page_size(path: &Path, backend: PdfBackend, page: u32) -> Option<CliPageSize> {
     let file = path.to_string_lossy();
     match backend {
-        // `pdfinfo -f N -l N` prints "Page    N size: W x H pts".
-        // SEMANTIC NOTE — poppler resolves rotation and UserUnit
-        // through the FULL page-tree inheritance chain (PDF spec
-        // §7.7.3.4 lists UserUnit among inheritable page attrs),
-        // whereas the mupdf arm deliberately uses page-local
-        // UserUnit only — empirical testing on mupdf-tools 1.28.4
-        // showed `mutool draw` ignores an *inherited* UserUnit.
-        // The two backends therefore diverge on a page that relies
-        // on inherited UserUnit: poppler scales, mupdf doesn't.
-        // Both match their own rasterizers, so each is internally
-        // consistent; normalizing would mean overriding poppler's
-        // spec-correct behavior to mimic a mupdf quirk.
+        // `pdfinfo -f N -l N` prints "Page    N size: W x H pts"
+        // (the effective CropBox, *unrotated*) plus a separate
+        // "Page    N rot:   R" line — `parse_pdfinfo_size` applies
+        // the rotation so this returns what `-cropbox` renders.
+        //
+        // SEMANTIC NOTE — poppler 26.09 IGNORES `/UserUnit`
+        // entirely (page-local and inherited alike, in both pdfinfo
+        // and pdftoppm — verified empirically), while mupdf scales
+        // by page-local UserUnit. The backends therefore disagree
+        // on `/UserUnit` pages; each stays internally consistent —
+        // normalizing would mean *removing* scaling mupdf applies.
         PdfBackend::Poppler => {
             let n = (page + 1).to_string();
             let out = run("pdfinfo", &["-f", &n, "-l", &n, file.as_ref()], 60)?;
@@ -1276,6 +1275,12 @@ fn render_ppm_to(path: &Path, backend: PdfBackend, page: u32, dpi: f32) -> Optio
             // `-singlefile` → writes literally "<prefix>.ppm". PPM
             // is pdftoppm's *default* format — there is no `-ppm`
             // flag; passing one makes it exit with usage.
+            // `-cropbox` is REQUIRED: pdftoppm rasterizes the
+            // MediaBox by default, but `page_size` reports the
+            // CropBox — without it a cropped page renders the wrong
+            // region at the wrong dims (verified on poppler 26.09:
+            // MediaBox 612x792 + CropBox 540x684 + /Rotate 90
+            // produced 792x612 instead of 684x540).
             run(
                 "pdftoppm",
                 &[
@@ -1286,6 +1291,7 @@ fn render_ppm_to(path: &Path, backend: PdfBackend, page: u32, dpi: f32) -> Optio
                     "-r",
                     &d,
                     "-singlefile",
+                    "-cropbox",
                     file.as_ref(),
                     &prefix_s,
                 ],
@@ -1764,6 +1770,60 @@ page 1 = 3 0 R
             Some(CliPageSize {
                 width: 630.0,
                 height: 540.0
+            })
+        );
+    }
+
+    /// The cropbox contract e2e: `pdfinfo` reports the CropBox and
+    /// `pdftoppm -cropbox` rasterizes it, so `render_page`'s bitmap
+    /// dims must equal `page_size`. Without `-cropbox` pdftoppm
+    /// renders the MediaBox — for this doc 792x612 while page_size
+    /// says 684x540 (verified against poppler 26.09).
+    #[test]
+    fn poppler_end_to_end_cropped_rotated_render() {
+        if !(have("pdfinfo") && have("pdftoppm")) {
+            return; // poppler not installed — nothing to test
+        }
+        let doc = SubprocessDocument::open(
+            &CliSource::Bytes(test_pdf_extra(&[(
+                612,
+                792,
+                "/CropBox [36 36 576 720] /Rotate 90",
+            )])),
+            PdfBackend::Poppler,
+        )
+        .unwrap();
+        // CropBox 540×684, rotated 90 → 684×540.
+        assert_eq!(
+            doc.page_size(0),
+            Some(CliPageSize {
+                width: 684.0,
+                height: 540.0
+            })
+        );
+        let bmp = doc.render_page(0, 684).expect("poppler renders");
+        assert_eq!((bmp.width, bmp.height), (684, 540));
+    }
+
+    /// `/UserUnit` divergence documented in `read_page_size`:
+    /// poppler ignores it (612×792 both in pdfinfo and the raster),
+    /// mupdf scales (1224×1584). Asserting poppler's actual
+    /// behavior so the inconsistency is a test, not folklore.
+    #[test]
+    fn poppler_ignores_user_unit() {
+        if !(have("pdfinfo") && have("pdftoppm")) {
+            return;
+        }
+        let doc = SubprocessDocument::open(
+            &CliSource::Bytes(test_pdf_extra(&[(612, 792, "/UserUnit 2")])),
+            PdfBackend::Poppler,
+        )
+        .unwrap();
+        assert_eq!(
+            doc.page_size(0),
+            Some(CliPageSize {
+                width: 612.0,
+                height: 792.0
             })
         );
     }
