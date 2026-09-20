@@ -1493,6 +1493,21 @@ pub mod box_plot;
 /// ```
 pub mod breadcrumb;
 
+/// Breakout-room panel (Zoom/Teams idiom) — rows of named rooms
+/// with occupancy counts and Join buttons; clicks park the room
+/// index in `take_joined`. Full rooms and the current room are
+/// inert.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::breakout_rooms::{BreakoutRooms, Room};
+///
+/// let r = BreakoutRooms::new().room(Room::new("Design", 4));
+/// assert_eq!(r.room_count(), 1);
+/// ```
+pub mod breakout_rooms;
+
 /// Modal dialog card for the overlay layer.
 ///
 /// # Examples
@@ -3917,6 +3932,7 @@ pub use battery::Battery;
 pub use bottom_sheet::BottomSheet;
 pub use box_plot::{BoxPlot, BoxSeries};
 pub use breadcrumb::Breadcrumb;
+pub use breakout_rooms::{BreakoutRooms, Room};
 pub use bullet_chart::BulletChart;
 pub use burndown::Burndown;
 pub use button::Button;
