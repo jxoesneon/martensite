@@ -600,11 +600,14 @@ mod tests {
     fn face_tap_presses() {
         let mut c = ChessClock::new(Duration::from_secs(60));
         laid_out(&mut c);
-        ev(&mut c, &WidgetEvent::PointerPressed {
-            button: PointerButton::Primary,
-            position: Vec2::new(180.0, 36.0), // right face = Black
-            count: 1,
-        });
+        ev(
+            &mut c,
+            &WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                position: Vec2::new(180.0, 36.0), // right face = Black
+                count: 1,
+            },
+        );
         assert_eq!(c.running(), Some(ClockSide::White));
     }
 
@@ -614,10 +617,13 @@ mod tests {
         laid_out(&mut c);
         c.press(ClockSide::White);
         c.tick(Duration::from_secs(30));
-        ev(&mut c, &WidgetEvent::KeyPressed {
-            key: "r".to_string(),
-            repeat: false,
-        });
+        ev(
+            &mut c,
+            &WidgetEvent::KeyPressed {
+                key: "r".to_string(),
+                repeat: false,
+            },
+        );
         assert_eq!(c.remaining(ClockSide::Black).as_secs(), 60);
         assert_eq!(c.moves(), 0);
     }

@@ -453,15 +453,21 @@ mod tests {
             (rect.min_x() + rect.max_x()) / 2.0,
             (rect.min_y() + rect.max_y()) / 2.0,
         );
-        ev(z, &WidgetEvent::PointerPressed {
-            button: PointerButton::Primary,
-            position: p,
-            count: 1,
-        });
-        ev(z, &WidgetEvent::PointerReleased {
-            button: PointerButton::Primary,
-            position: p,
-        });
+        ev(
+            z,
+            &WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                position: p,
+                count: 1,
+            },
+        );
+        ev(
+            z,
+            &WidgetEvent::PointerReleased {
+                button: PointerButton::Primary,
+                position: p,
+            },
+        );
     }
 
     #[test]
@@ -486,10 +492,13 @@ mod tests {
             ("0", ZoomAction::Fit),
             ("1", ZoomAction::Reset),
         ] {
-            ev(&mut z, &WidgetEvent::KeyPressed {
-                key: key.to_string(),
-                repeat: false,
-            });
+            ev(
+                &mut z,
+                &WidgetEvent::KeyPressed {
+                    key: key.to_string(),
+                    repeat: false,
+                },
+            );
             assert_eq!(z.take_action(), Some(want));
         }
     }
