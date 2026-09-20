@@ -3035,6 +3035,20 @@ pub mod week_view;
 /// ```
 pub mod wheel_picker;
 
+/// Caption button cluster (Windows min/max/close flat buttons or
+/// macOS traffic lights) — presses park `WindowAction` in
+/// `take_action`; the shell owns the window ops. Slots into
+/// `HeaderBar`'s trailing zone for a custom title bar.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::window_controls::WindowControls;
+///
+/// assert_eq!(WindowControls::new().button_count(), 3);
+/// ```
+pub mod window_controls;
+
 /// Multi-step flow — `Steps` header, one visible page, and a
 /// back/next/cancel footer (`QWizard`, Ant Steps+form idiom).
 ///
@@ -3306,6 +3320,7 @@ pub use waveform::Waveform;
 pub use weather::{Weather, WeatherCondition};
 pub use week_view::{WeekEvent, WeekView};
 pub use wheel_picker::WheelPicker;
+pub use window_controls::{CaptionStyle, WindowAction, WindowControls};
 pub use wizard::Wizard;
 pub use word_cloud::WordCloud;
 pub use xy_pad::XYPad;
