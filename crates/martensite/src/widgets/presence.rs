@@ -63,7 +63,7 @@ pub enum PresenceStatus {
 
 impl PresenceStatus {
     /// Fallback dot color.
-    fn color(self) -> [u8; 4] {
+    pub(crate) fn color(self) -> [u8; 4] {
         match self {
             Self::Online => ONLINE,
             Self::Away => AWAY,
@@ -73,7 +73,7 @@ impl PresenceStatus {
     }
 
     /// Theme token for the dot.
-    fn token(self) -> TokenKey {
+    pub(crate) fn token(self) -> TokenKey {
         match self {
             Self::Online => TokenKey::SuccessColor,
             Self::Away => TokenKey::WarningColor,

@@ -173,6 +173,21 @@ pub mod anchor;
 /// ```
 pub mod analog_clock;
 
+/// Conference roster (Zoom/Meet participants panel) — rows of
+/// `Attendee` with a `PresenceStatus` dot, name, speaking
+/// highlight, and muted / raised-hand badges. Clicks park
+/// `take_selected`; `raised_hands` lists hands-up indices.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::attendee_list::{Attendee, AttendeeList};
+///
+/// let a = AttendeeList::new().attendee(Attendee::new("Ana"));
+/// assert_eq!(a.attendee_count(), 1);
+/// ```
+pub mod attendee_list;
+
 /// Editable text input with a filtered suggestion popup (Qt
 /// `QCompleter`, WinUI `AutoSuggestBox`, Ant `AutoComplete`) —
 /// `Role::ComboBox` + overlay `ListBox` wiring.
@@ -3454,6 +3469,7 @@ pub use alpha_slider::AlphaSlider;
 pub use analog_clock::AnalogClock;
 pub use anchor::{Anchor, AnchorItem};
 pub use aspect_frame::AspectFrame;
+pub use attendee_list::{Attendee, AttendeeList};
 pub use auto_complete::{AutoComplete, FilterMode};
 pub use avatar::Avatar;
 pub use avatar_group::AvatarGroup;
