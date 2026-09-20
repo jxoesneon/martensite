@@ -3335,6 +3335,22 @@ pub mod volume;
 /// ```
 pub mod vu_meter;
 
+/// Conference lobby (Zoom/Meet admit panel) — queued attendees
+/// with per-row ✓/✕ buttons parking `take_admitted`/`take_denied`,
+/// and a header "Admit all" parking `usize::MAX`. Companion to
+/// `AttendeeList`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::waiting_room::WaitingRoom;
+///
+/// let mut w = WaitingRoom::new();
+/// w.queue("Ana");
+/// assert_eq!(w.waiting_count(), 1);
+/// ```
+pub mod waiting_room;
+
 /// Running-total bridge chart (McKinsey / finance waterfall
 /// idiom) — floating delta columns spanning previous-to-new
 /// cumulative totals, full columns for totals, dashed connectors
@@ -3739,6 +3755,7 @@ pub use violin::Violin;
 pub use virtual_keyboard::VirtualKeyboard;
 pub use volume::Volume;
 pub use vu_meter::VuMeter;
+pub use waiting_room::WaitingRoom;
 pub use waterfall::{Waterfall, WaterfallEntry};
 pub use watermark::Watermark;
 pub use waveform::Waveform;
