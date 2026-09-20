@@ -3078,6 +3078,21 @@ pub mod task_switcher;
 /// ```
 pub mod terminal;
 
+/// Theme gallery (GNOME Tweaks / macOS Appearance idiom) — each
+/// `ThemeOption` paints as a miniature window mock in its own
+/// colors with the selected card ringed. Clicks park
+/// `take_selected`; `ArrowLeft`/`ArrowRight` move the selection.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::theme_picker::{ThemeOption, ThemePicker};
+///
+/// let t = ThemePicker::new().option(ThemeOption::new("Dark", [30; 4], [235; 4], [1; 4]));
+/// assert_eq!(t.option_count(), 1);
+/// ```
+pub mod theme_picker;
+
 /// Classic temperature-scale indicator — bulb + column fill
 /// against a ticked `min..=max` range, with `warning`/`critical`
 /// thresholds tinting the fluid. Status-display companion to
@@ -3828,6 +3843,7 @@ pub use terminal::Terminal;
 pub use text::Text;
 pub use text_area::TextArea;
 pub use text_input::TextInput;
+pub use theme_picker::{ThemeOption, ThemePicker};
 pub use thermometer::Thermometer;
 pub use ticker_tape::{TickerItem, TickerTape};
 pub use time_picker::{Time, TimePicker};
