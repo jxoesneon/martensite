@@ -1,0 +1,30 @@
+[package]
+name = "martensite-print"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Printer enumeration and print-job submission abstraction with scripted test backends."
+readme = "README.md"
+
+[dependencies]
+# Optional dependency on the OS print backend crate. When the `platform`
+# feature is enabled, `default_platform_printer` returns a real OS print
+# driver (CUPS `lp`/`lpstat` on macOS and Linux, PowerShell
+# `Get-Printer`/`Out-Printer` on Windows) instead of a stub.
+martensite-print-platform = { workspace = true, optional = true }
+
+[features]
+default = []
+# Enables real OS print integration via `martensite-print-platform`.
+# When disabled, all platform backends fall back to safe stubs that
+# report `PrintOutcome::Unsupported`.
+platform = ["dep:martensite-print-platform"]
+
+[lints]
+workspace = true

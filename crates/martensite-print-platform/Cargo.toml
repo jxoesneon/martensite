@@ -1,0 +1,16 @@
+[package]
+name = "martensite-print-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "OS-native print backends for Martensite (CUPS on macOS/Linux, PowerShell on Windows)."
+readme = "README.md"
+
+[lints]
+workspace = true
