@@ -2415,6 +2415,19 @@ pub mod pagination;
 /// ```
 pub mod password_strength;
 
+/// Android-style 3×3 unlock pattern — drag connects dots (each
+/// usable once), release parks the index sequence in
+/// `take_pattern` for the host to verify.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::pattern_lock::PatternLock;
+///
+/// assert_eq!(PatternLock::new().dot_count(), 9);
+/// ```
+pub mod pattern_lock;
+
 /// Musical keyboard strip (DAW piano-roll / MIDI-input idiom) —
 /// `octaves` white keys with overlay black keys; clicks and
 /// drags (glissando) park the struck semitone index in
@@ -3806,6 +3819,7 @@ pub use page_flip::PageFlip;
 pub use page_header::PageHeader;
 pub use pagination::Pagination;
 pub use password_strength::PasswordStrength;
+pub use pattern_lock::PatternLock;
 pub use piano_keys::PianoKeys;
 pub use pie_chart::{PieChart, PieSlice};
 pub use pip::Pip;
