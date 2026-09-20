@@ -3146,6 +3146,22 @@ pub mod toggle_button;
 /// ```
 pub mod toolbar;
 
+/// Collapsing toolbar strip (Qt extension / VS Code `···` idiom)
+/// — labeled pills laid out left-to-right; items that don't fit
+/// fold behind a trailing chevron. Item clicks park
+/// `take_activated`; the chevron parks `take_overflow` with the
+/// hidden indices.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::toolbar_overflow::ToolbarOverflow;
+///
+/// let t = ToolbarOverflow::new().item("Save").item("Share");
+/// assert_eq!(t.item_count(), 2);
+/// ```
+pub mod toolbar_overflow;
+
 /// Chip-ized token entry field — typed text commits into removable
 /// tokens (AppKit `NSTokenField`, WCT `TokenizingTextBox`).
 ///
@@ -3805,6 +3821,7 @@ pub use toggle_button::ToggleButton;
 pub use token_field::TokenField;
 pub use tool_palette::{ToolItem, ToolPalette};
 pub use toolbar::Toolbar;
+pub use toolbar_overflow::ToolbarOverflow;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
 pub use tour::{Tour, TourStep};
 pub use transfer::{MoveDir, Transfer};
