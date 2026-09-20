@@ -2268,6 +2268,21 @@ pub mod popconfirm;
 /// ```
 pub mod popover;
 
+/// User-presence chip — initials disc with a colored status dot
+/// plus an optional name/status line (Teams/Slack presence idiom).
+/// Distinct from `Avatar`: presence is about state, not image
+/// chrome.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::presence::{Presence, PresenceStatus};
+///
+/// let p = Presence::new("Ada Lovelace", PresenceStatus::Online);
+/// assert_eq!(p.status(), PresenceStatus::Online);
+/// ```
+pub mod presence;
+
 /// Two-column property inspector (Qt PropertyBrowser / Xcode
 /// inspector) — `name | value` rows with inline Text/Bool/Choice
 /// editors under collapsible section headers, `take_changed` seam.
@@ -3320,6 +3335,7 @@ pub use polar_area::PolarArea;
 pub use poll::{Poll, PollOption};
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
+pub use presence::{Presence, PresenceStatus};
 pub use progress::{ProgressBar, Spinner};
 pub use property_grid::{
     PropertyEditor, PropertyGrid, PropertyRow, PropertyRowKey, PropertySection,
