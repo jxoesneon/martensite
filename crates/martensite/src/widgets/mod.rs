@@ -641,6 +641,22 @@ pub mod countdown;
 /// ```
 pub mod countdown_ring;
 
+/// iTunes-style cover browser — the selected `Thumbnail` fronts
+/// center full-size while neighbors recede to the sides scaled
+/// down; arrows/scroll step the selection, side-cover clicks
+/// select, index parks in `take_selected`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::coverflow::Coverflow;
+/// use martensite::widgets::Thumbnail;
+///
+/// let c = Coverflow::new().item(Thumbnail::new("A", [255, 0, 0, 255]));
+/// assert_eq!(c.item_count(), 1);
+/// ```
+pub mod coverflow;
+
 /// Draggable, resizable crop region overlay (photo-editor crop
 /// tool) — normalized coordinates, corner handles, optional aspect
 /// lock, scrim + rule-of-thirds paint, `take_changed` seam.
@@ -3276,6 +3292,7 @@ pub use container::Container;
 pub use context_menu::ContextMenu;
 pub use countdown::Countdown;
 pub use countdown_ring::CountdownRing;
+pub use coverflow::Coverflow;
 pub use crop_box::CropBox;
 pub use curve_editor::CurveEditor;
 pub use date_picker::{Date, DatePicker};
