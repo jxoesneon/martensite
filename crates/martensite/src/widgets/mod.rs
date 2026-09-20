@@ -1364,6 +1364,19 @@ pub mod split_view;
 /// ```
 pub mod steps;
 
+/// Tick-driven lap timer — start/stop/reset, split recording via
+/// `l`, lap pips under the face. Pairs with `Countdown` and
+/// `DigitalClock`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::stopwatch::Stopwatch;
+///
+/// assert_eq!(Stopwatch::new().face(), "00:00.00");
+/// ```
+pub mod stopwatch;
+
 /// Scrolling time-series trace (oscilloscope / strip-recorder
 /// idiom) — `push` appends to a bounded ring, the newest sample
 /// anchors the right edge and older data scrolls left, with a
@@ -3038,6 +3051,7 @@ pub use statistic::{Statistic, Trend};
 pub use status_bar::{StatusBar, StatusItem};
 pub use status_dot::{Status, StatusDot};
 pub use steps::{Step, Steps};
+pub use stopwatch::Stopwatch;
 pub use stream_graph::StreamGraph;
 pub use strip_chart::StripChart;
 pub use sunburst::{Sunburst, SunburstNode};
