@@ -498,6 +498,22 @@ pub mod chip_group;
 /// ```
 pub mod clamp;
 
+/// Clipboard manager history panel (Windows `Win+V`, CopyQ) —
+/// newest-first snippet rows, `push` evicting the oldest unpinned
+/// entry past `max`, clicks parking `take_pasted`, and `set_pinned`
+/// pinning entries against eviction.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::clipboard_history::ClipboardHistory;
+///
+/// let mut h = ClipboardHistory::new();
+/// h.push("hello");
+/// assert_eq!(h.entry_count(), 1);
+/// ```
+pub mod clipboard_history;
+
 /// Read-only monospace code display with a line-number gutter
 /// (editor / review-tool idiom) — the `current` line gets an
 /// accent wash, clicking a line parks its index in
@@ -3513,6 +3529,7 @@ pub use chess_clock::{ChessClock, ClockSide};
 pub use chip::{Chip, ChipKind};
 pub use chip_group::{ChipGroup, ChipSelection};
 pub use clamp::Clamp;
+pub use clipboard_history::{ClipEntry, ClipboardHistory};
 pub use code_view::CodeView;
 pub use color_button::ColorButton;
 pub use color_palette::ColorPalette;
