@@ -97,6 +97,22 @@ pub mod action_sheet;
 /// ```
 pub mod activity_ring;
 
+/// Industrial alarm list with an acknowledge lifecycle (the HMI/SCADA
+/// alarm-banner idiom) — severity-edged rows, per-row `ACK` chips, and
+/// unacknowledged `Error` rows that flash on `tick` until acked.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::alarm_panel::{Alarm, AlarmPanel};
+/// use martensite::widgets::banner::Severity;
+///
+/// let mut p = AlarmPanel::new();
+/// p.push(Alarm::new(Severity::Error, "Tank 4 overpressure"));
+/// assert_eq!(p.unacked_count(), 1);
+/// ```
+pub mod alarm_panel;
+
 /// Modal severity-tinted alert card for the overlay layer (NSAlert /
 /// `AlertDialog`) — title, message, footer buttons, `AlertResult` seam.
 ///
@@ -2712,6 +2728,7 @@ pub use about::About;
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
 pub use activity_ring::{ActivityRing, Ring};
+pub use alarm_panel::{Alarm, AlarmPanel, AlarmState};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
 pub use analog_clock::AnalogClock;
 pub use anchor::{Anchor, AnchorItem};
