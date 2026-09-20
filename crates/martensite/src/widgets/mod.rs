@@ -2093,6 +2093,21 @@ pub mod table;
 /// ```
 pub mod tabs;
 
+/// Classic temperature-scale indicator — bulb + column fill
+/// against a ticked `min..=max` range, with `warning`/`critical`
+/// thresholds tinting the fluid. Status-display companion to
+/// `Battery` and `VuMeter`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::thermometer::Thermometer;
+///
+/// let t = Thermometer::new().range(0.0, 100.0).value(42.0);
+/// assert_eq!(t.reading(), 42.0);
+/// ```
+pub mod thermometer;
+
 /// Segmented time-of-day field with inline hour/minute/AM-PM
 /// editing (`QTimeEdit` / WinUI `TimePicker`) — arrow stepping,
 /// two-digit rollover typing, `take_edited` seam.
