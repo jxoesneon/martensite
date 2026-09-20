@@ -765,6 +765,21 @@ pub mod countdown;
 /// ```
 pub mod countdown_ring;
 
+/// Click-to-copy inline text (Ant `Typography copyable`, commit-hash
+/// chip idiom) — text with a trailing copy icon parking
+/// `take_copied` for the host, a ~1.2 s ✓ flash on `tick`, and
+/// `Enter`/`Space` keyboard copy.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::copyable::Copyable;
+///
+/// let c = Copyable::new("a1b2c3");
+/// assert_eq!(c.text(), "a1b2c3");
+/// ```
+pub mod copyable;
+
 /// iTunes-style cover browser — the selected `Thumbnail` fronts
 /// center full-size while neighbors recede to the sides scaled
 /// down; arrows/scroll step the selection, side-cover clicks
@@ -3801,6 +3816,7 @@ pub use confetti::Confetti;
 pub use container::Container;
 pub use context_menu::ContextMenu;
 pub use cookie_banner::{CookieBanner, CookieConsent};
+pub use copyable::Copyable;
 pub use countdown::Countdown;
 pub use countdown_ring::CountdownRing;
 pub use coverflow::Coverflow;
