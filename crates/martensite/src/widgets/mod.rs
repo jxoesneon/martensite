@@ -188,6 +188,33 @@ pub mod analog_clock;
 /// ```
 pub mod app_grid;
 
+/// File-attachment chip (email composer / chat idiom) — type
+/// glyph + name + human size, optional upload bar, and a ×
+/// affordance parking `take_removed`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::attachment::Attachment;
+///
+/// let a = Attachment::new("report.pdf", 204_800);
+/// assert_eq!(a.size_label(), "200 KB");
+/// ```
+pub mod attachment;
+
+/// Aspect-ratio-locked container (GTK `AspectFrame`) — the child
+/// gets the largest rect preserving `ratio`, centered by xalign/
+/// yalign. For video surfaces and previews that must not stretch.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::aspect_frame::AspectFrame;
+///
+/// assert_eq!(AspectFrame::new(16.0 / 9.0).ratio, 16.0 / 9.0);
+/// ```
+pub mod aspect_frame;
+
 /// Conference roster (Zoom/Meet participants panel) — rows of
 /// `Attendee` with a `PresenceStatus` dot, name, speaking
 /// highlight, and muted / raised-hand badges. Clicks park
@@ -216,19 +243,6 @@ pub mod attendee_list;
 /// assert_eq!(ac.suggestion_count(), 2);
 /// ```
 pub mod auto_complete;
-
-/// Aspect-ratio-locked container (GTK `AspectFrame`) — the child
-/// gets the largest rect preserving `ratio`, centered by xalign/
-/// yalign. For video surfaces and previews that must not stretch.
-///
-/// # Examples
-///
-/// ```
-/// use martensite::widgets::aspect_frame::AspectFrame;
-///
-/// assert_eq!(AspectFrame::new(16.0 / 9.0).ratio, 16.0 / 9.0);
-/// ```
-pub mod aspect_frame;
 
 /// Circular user avatar — image content clipped to the silhouette, or
 /// initials on an accent disc.
@@ -3786,6 +3800,7 @@ pub use analog_clock::AnalogClock;
 pub use anchor::{Anchor, AnchorItem};
 pub use app_grid::{AppEntry, AppGrid};
 pub use aspect_frame::AspectFrame;
+pub use attachment::Attachment;
 pub use attendee_list::{Attendee, AttendeeList};
 pub use auto_complete::{AutoComplete, FilterMode};
 pub use avatar::Avatar;
