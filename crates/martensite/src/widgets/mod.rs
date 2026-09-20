@@ -894,6 +894,21 @@ pub mod banner;
 /// ```
 pub mod bar_chart;
 
+/// Code-39 linear barcode display — the 1D companion to
+/// `QrCode`. Accepts the 43-symbol Code-39 alphabet, renders
+/// nine-element bar/space patterns inside `*` guards with
+/// quiet zones and an optional text strip — real, scannable
+/// output.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::barcode::Barcode;
+///
+/// assert_eq!(Barcode::new().text("SKU-42").symbols(), 6);
+/// ```
+pub mod barcode;
+
 /// Stephen Few bullet graph — a compact KPI strip reading
 /// value-vs-target against qualitative range bands (poor / ok /
 /// good). The measure paints as a solid bar, the comparative
