@@ -419,6 +419,20 @@ pub mod color_palette;
 /// ```
 pub mod color_picker;
 
+/// Hue ring with a draggable selector — the classic color-wheel
+/// picker; design-tool sibling of `ColorPicker`. Dragging the
+/// selector sweeps the hue; `rgb` converts the pick (with
+/// saturation/brightness) to RGBA bytes.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::color_wheel::ColorWheel;
+///
+/// assert_eq!(ColorWheel::new().hue(120.0).rgb(), [0, 255, 0, 255]);
+/// ```
+pub mod color_wheel;
+
 /// Win32 command-link button — a full-width action row with a bold
 /// label, smaller explanatory note, and trailing `›`. The
 /// "descriptive action" between a button and a link.
