@@ -572,21 +572,21 @@ pub mod command_link;
 /// ```
 pub mod command_palette;
 
-/// Celebration particle burst (checkout-success idiom) —
-/// `burst` spawns colored particles at a normalized origin,
-/// `tick` integrates fall/drift/fade, `take_done` fires when the
-/// last particle dies. Pure decoration, no hit-testing.
+/// Nested comment list (forum/blog idiom) — avatar dot, author +
+/// timestamp header, body, per-depth indent with a reply connector
+/// rail. Reply clicks park `take_reply`; `Up`/`Down` + `Enter`
+/// reply from the keyboard. Distinct from `MessageList`'s flat
+/// chat bubbles.
 ///
 /// # Examples
 ///
 /// ```
-/// use martensite::widgets::confetti::Confetti;
+/// use martensite::widgets::comment_thread::{Comment, CommentThread};
 ///
-/// let mut c = Confetti::new().count(10);
-/// c.burst(0.5, 0.0);
-/// assert_eq!(c.particle_count(), 10);
+/// let t = CommentThread::new().comment(Comment::new(1, "ana", "2h", "Hi"));
+/// assert_eq!(t.comment_count(), 1);
 /// ```
-pub mod confetti;
+pub mod comment_thread;
 
 /// Cardinal heading indicator (navigation / embedded-instrument
 /// idiom) — `N E S W` letters and tick marks around a circular
@@ -602,6 +602,22 @@ pub mod confetti;
 /// assert_eq!(c.cardinal(), "SE");
 /// ```
 pub mod compass;
+
+/// Celebration particle burst (checkout-success idiom) —
+/// `burst` spawns colored particles at a normalized origin,
+/// `tick` integrates fall/drift/fade, `take_done` fires when the
+/// last particle dies. Pure decoration, no hit-testing.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::confetti::Confetti;
+///
+/// let mut c = Confetti::new().count(10);
+/// c.burst(0.5, 0.0);
+/// assert_eq!(c.particle_count(), 10);
+/// ```
+pub mod confetti;
 
 /// Box container layout primitive.
 ///
@@ -3346,6 +3362,7 @@ pub use color_picker::{hsv_to_rgb, rgb_to_hsv, Color, ColorPicker};
 pub use color_wheel::ColorWheel;
 pub use command_link::CommandLink;
 pub use command_palette::{CommandAction, CommandPalette};
+pub use comment_thread::{Comment, CommentThread};
 pub use compass::Compass;
 pub use confetti::Confetti;
 pub use container::Container;
