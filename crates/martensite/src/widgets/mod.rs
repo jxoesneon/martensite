@@ -2796,6 +2796,21 @@ pub mod search_bar;
 /// ```
 pub mod search_field;
 
+/// Feed post card (Twitter/Mastodon idiom) — author row with
+/// avatar swatch and handle, body text, and a bottom action bar
+/// of `CardAction`s; clicks park `take_action` and the first
+/// action toggles `set_liked` state.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::social_card::SocialCard;
+///
+/// let c = SocialCard::new("Ana", "@ana", "2h", "hi");
+/// assert_eq!(c.action_count(), 3);
+/// ```
+pub mod social_card;
+
 /// Inline word-sized trend chart — line, translucent area, or bars,
 /// normalized to the series' min/max with an endpoint dot (Tufte
 /// sparkline / Swift Charts mini-series). Display-only; pair with
@@ -3752,6 +3767,7 @@ pub use settings_row::{SettingsGroup, SettingsRow};
 pub use signal_strength::SignalStrength;
 pub use skeleton::{Skeleton, SkeletonShape};
 pub use slider::{Slider, SliderOrientation};
+pub use social_card::{CardAction, SocialCard};
 pub use sparkline::{SparkStyle, Sparkline};
 pub use spectrum::Spectrum;
 pub use speed_dial::SpeedDial;
