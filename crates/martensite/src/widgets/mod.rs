@@ -284,6 +284,25 @@ pub mod candlestick;
 /// ```
 pub mod card;
 
+/// Fanned card stack — only the front card is interactive, with up
+/// to two cards behind peeking at the bottom edge. A horizontal drag
+/// past the swipe threshold dismisses the front card; arrow keys
+/// cycle without dismissing (the Tinder/card-stack idiom).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::card_deck::CardDeck;
+/// use martensite::widgets::text::Text;
+///
+/// let mut d = CardDeck::new()
+///     .card(Text::new("a"))
+///     .card(Text::new("b"));
+/// d.cycle_next();
+/// assert_eq!(d.depth(), 2);
+/// ```
+pub mod card_deck;
+
 /// Paged content rotator — one child page visible at a time with dot
 /// indicators, side arrow zones, arrow/PageUp/PageDown/Home/End keys,
 /// and horizontal `Scroll` paging (Ant `Carousel`). Hidden pages
@@ -2765,6 +2784,7 @@ pub use button::Button;
 pub use calendar::{Calendar, CalendarSelection};
 pub use candlestick::{Candle, Candlestick};
 pub use card::{Card, CardVariant};
+pub use card_deck::CardDeck;
 pub use carousel::Carousel;
 pub use cascader::{Cascader, CascaderOption};
 pub use checkbox::{CheckBox, CheckState};
