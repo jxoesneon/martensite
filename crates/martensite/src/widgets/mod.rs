@@ -2895,6 +2895,20 @@ pub mod toolbar;
 /// ```
 pub mod token_field;
 
+/// Compact grid of single-select tool buttons (Photoshop tools
+/// palette idiom) — one tool is always active, clicks park the
+/// index in `take_selected`, grid arrows navigate. Modal tool
+/// choice, unlike `Toolbar`'s action strip.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::tool_palette::{ToolItem, ToolPalette};
+///
+/// assert_eq!(ToolPalette::new().tool(ToolItem::new("✏", "Pencil")).tool_count(), 1);
+/// ```
+pub mod tool_palette;
+
 /// Guided-tour overlay — coach-mark cards over a dimmed backdrop
 /// with an optional spotlight cutout (Ant `Tour`, driver.js).
 ///
@@ -3445,6 +3459,7 @@ pub use timeline::{Timeline, TimelineDot, TimelineItem};
 pub use toast::{Toast, ToastHost};
 pub use toggle_button::ToggleButton;
 pub use token_field::TokenField;
+pub use tool_palette::{ToolItem, ToolPalette};
 pub use toolbar::Toolbar;
 pub use tooltip::{Tooltip, TooltipBubble, DEFAULT_TOOLTIP_DELAY_MS, TOOLTIP_HOVER_GRACE_MS};
 pub use tour::{Tour, TourStep};
