@@ -1663,6 +1663,23 @@ pub mod menu_button;
 /// ```
 pub mod mention;
 
+/// Scrolling chat transcript — alternating sent/received
+/// bubbles with sender + timestamp meta lines; the wheel
+/// scrolls the backlog and `follow` snaps to the newest bubble
+/// while pinned to the bottom. Pairs with `TypingIndicator`
+/// and `Mention`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::message_list::{Message, MessageList};
+///
+/// let mut l = MessageList::new();
+/// l.push(Message::sent("hi"));
+/// assert_eq!(l.len(), 1);
+/// ```
+pub mod message_list;
+
 /// Tick-driven tempo indicator — beat lamps (accent on the
 /// downbeat) over a BPM label; click or Space toggles the run
 /// state, `take_beat` parks each crossing for host audio, and
