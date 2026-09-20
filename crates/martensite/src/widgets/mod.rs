@@ -2794,6 +2794,19 @@ pub mod venn;
 /// ```
 pub mod violin;
 
+/// Speaker icon + gain rail + mute toggle (system-tray / media
+/// volume idiom) — drag, scroll, or arrow through `0..=max` with
+/// optional boost range; icon click or `m` toggles mute.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::volume::Volume;
+///
+/// assert_eq!(Volume::new().gain(0.5).gain_value(), 0.5);
+/// ```
+pub mod volume;
+
 /// Multi-channel VU / PPM level meter — instantaneous
 /// channel strips over a green→amber→red zone gradient with
 /// slowly decaying peak-hold markers, driven by `push` or
@@ -3135,6 +3148,7 @@ pub use treemap::{Treemap, TreemapItem};
 pub use typing_indicator::TypingIndicator;
 pub use venn::Venn;
 pub use violin::Violin;
+pub use volume::Volume;
 pub use vu_meter::VuMeter;
 pub use waterfall::{Waterfall, WaterfallEntry};
 pub use watermark::Watermark;
