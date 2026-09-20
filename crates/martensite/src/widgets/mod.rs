@@ -1356,6 +1356,21 @@ pub mod text_input;
 /// ```
 pub mod external;
 
+/// Collapsible JSON tree (DevTools / Postman idiom) — one row
+/// per visible node with indent guides, disclosure triangles,
+/// and type-colored values; clicking toggles expansion and
+/// parks the child path in `take_toggled`; the wheel scrolls.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::json_view::{JsonNode, JsonView};
+///
+/// let v = JsonView::new(JsonNode::array("", [JsonNode::null("")]));
+/// assert_eq!(v.visible_rows(), 2);
+/// ```
+pub mod json_view;
+
 /// Card board (Trello / Ant-board idiom) — equal-width lanes
 /// of stacked cards; dragging lifts the card and shows a drop
 /// slot under the pointer, the board performs the move and
