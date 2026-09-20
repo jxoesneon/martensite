@@ -349,6 +349,20 @@ pub mod carousel;
 /// ```
 pub mod cascader;
 
+/// Scrollable list of checkable rows (installer / software-picker
+/// idiom) — click or Space toggles, `checked_indices` for the host,
+/// `take_changed` seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::check_list::CheckList;
+///
+/// let c = CheckList::new().items(["a", "b"]);
+/// assert_eq!(c.item_count(), 2);
+/// ```
+pub mod check_list;
+
 /// Toggleable checkbox widget.
 ///
 /// # Examples
@@ -2953,6 +2967,7 @@ pub use card::{Card, CardVariant};
 pub use card_deck::CardDeck;
 pub use carousel::Carousel;
 pub use cascader::{Cascader, CascaderOption};
+pub use check_list::{CheckItem, CheckList};
 pub use checkbox::{CheckBox, CheckState};
 pub use chess_board::{ChessBoard, Piece, Side};
 pub use chip::{Chip, ChipKind};
