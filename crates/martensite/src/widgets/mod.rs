@@ -2815,6 +2815,19 @@ pub mod watermark;
 /// ```
 pub mod waveform;
 
+/// Compact weather display — painted condition glyph, temperature,
+/// location, and hi/lo pair (dashboard weather-card idiom).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::weather::{Weather, WeatherCondition};
+///
+/// let w = Weather::new().condition(WeatherCondition::Rain);
+/// assert_eq!(w.summary(), "Rain, 20°C");
+/// ```
+pub mod weather;
+
 /// Seven-day timed agenda grid — all-day strip, hour lines, colored
 /// event blocks, and click seams for events and empty slots.
 ///
@@ -3083,6 +3096,7 @@ pub use vu_meter::VuMeter;
 pub use waterfall::{Waterfall, WaterfallEntry};
 pub use watermark::Watermark;
 pub use waveform::Waveform;
+pub use weather::{Weather, WeatherCondition};
 pub use week_view::{WeekEvent, WeekView};
 pub use wheel_picker::WheelPicker;
 pub use wizard::Wizard;
