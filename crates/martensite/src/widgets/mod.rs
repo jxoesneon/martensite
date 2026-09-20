@@ -173,6 +173,21 @@ pub mod anchor;
 /// ```
 pub mod analog_clock;
 
+/// Paginated launcher icon grid (GNOME apps view / iOS home
+/// screen) — `AppEntry` icon swatches with captions flowing across
+/// fixed-size pages, `ArrowLeft`/`ArrowRight` paging with a dot
+/// indicator, clicks parking `take_activated`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::app_grid::{AppEntry, AppGrid};
+///
+/// let g = AppGrid::new().app(AppEntry::new("Files", [1; 4]));
+/// assert_eq!(g.app_count(), 1);
+/// ```
+pub mod app_grid;
+
 /// Conference roster (Zoom/Meet participants panel) — rows of
 /// `Attendee` with a `PresenceStatus` dot, name, speaking
 /// highlight, and muted / raised-hand badges. Clicks park
@@ -3548,6 +3563,7 @@ pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
 pub use alpha_slider::AlphaSlider;
 pub use analog_clock::AnalogClock;
 pub use anchor::{Anchor, AnchorItem};
+pub use app_grid::{AppEntry, AppGrid};
 pub use aspect_frame::AspectFrame;
 pub use attendee_list::{Attendee, AttendeeList};
 pub use auto_complete::{AutoComplete, FilterMode};
