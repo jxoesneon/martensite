@@ -2434,6 +2434,21 @@ pub mod otp_input;
 /// ```
 pub mod org_chart;
 
+/// Velocity-pad matrix (MPC / Launchpad idiom) — a `cols`×`rows`
+/// grid of colored pads that brighten while pressed, slide with
+/// drags, park the index in `take_triggered`, and decay host-armed
+/// `flash` pulses on `tick`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::pad_grid::PadGrid;
+///
+/// let g = PadGrid::new(4, 4).pad_color(0, [220, 80, 80, 255]);
+/// assert_eq!(g.pad_count(), 16);
+/// ```
+pub mod pad_grid;
+
 /// Ebook-reader two-page spread — left/right page faces with a
 /// gutter; edge clicks or arrows turn spreads, parking the new
 /// left-page index in `take_turned`. `n–m / N` counter.
@@ -3952,6 +3967,7 @@ pub use now_playing::NowPlaying;
 pub use odometer::Odometer;
 pub use org_chart::{OrgChart, OrgNode};
 pub use otp_input::OtpInput;
+pub use pad_grid::PadGrid;
 pub use page_flip::PageFlip;
 pub use page_header::PageHeader;
 pub use pagination::Pagination;
