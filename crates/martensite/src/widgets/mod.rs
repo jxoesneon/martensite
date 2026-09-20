@@ -1519,6 +1519,21 @@ pub mod disclosure;
 /// ```
 pub mod dock;
 
+/// Browser-style download row — icon + name + progress bar +
+/// speed/ETA info line, with state-dependent pause / resume /
+/// cancel / show-in-folder / retry buttons parking a
+/// `DownloadAction` in `take_action`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::download_item::{DownloadItem, DownloadState};
+///
+/// let d = DownloadItem::new("setup.dmg", 1_048_576).progress(0.4);
+/// assert_eq!(d.state, DownloadState::Downloading);
+/// ```
+pub mod download_item;
+
 /// Edge-docked drawer / side panel for the overlay layer.
 ///
 /// # Examples
@@ -3862,6 +3877,7 @@ pub use diff_view::{DiffKind, DiffView};
 pub use digital_clock::DigitalClock;
 pub use disclosure::Disclosure;
 pub use dock::{Dock, DockItem};
+pub use download_item::{DownloadAction, DownloadItem, DownloadState};
 pub use drawer::Drawer;
 pub use dropdown::Dropdown;
 pub use emoji_picker::{Emoji, EmojiPicker};
