@@ -702,6 +702,22 @@ pub mod coverflow;
 /// ```
 pub mod crop_box;
 
+/// Design-tool hairlines — vertical + horizontal guides tracking
+/// the pointer with an `x, y` readout chip; movement parks
+/// normalized coords in `take_moved`, `PointerLeave` clears.
+/// Companion to `Magnifier`/`Ruler`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::crosshair::Crosshair;
+///
+/// let mut c = Crosshair::new();
+/// c.set_position(glam::Vec2::new(0.5, 0.5));
+/// assert_eq!(c.position(), Some(glam::Vec2::new(0.5, 0.5)));
+/// ```
+pub mod crosshair;
+
 /// Cubic-bezier easing editor (DevTools / design-tool idiom) —
 /// two draggable control handles on a gridded pad, endpoints
 /// pinned at (0,0) and (1,1), `bezier`/`css`/`sample` outputs
@@ -3403,6 +3419,7 @@ pub use countdown::Countdown;
 pub use countdown_ring::CountdownRing;
 pub use coverflow::Coverflow;
 pub use crop_box::CropBox;
+pub use crosshair::Crosshair;
 pub use curve_editor::CurveEditor;
 pub use date_picker::{Date, DatePicker};
 pub use descriptions::{DescriptionItem, Descriptions};
