@@ -1438,6 +1438,21 @@ pub mod split_flap;
 /// ```
 pub mod split_view;
 
+/// Instrument×step toggle grid with a tick-driven playhead column
+/// (TR-808 / DAW step-sequencer idiom) — clicks park
+/// `(row, col, on)` in `take_changed`, playhead advances park the
+/// column in `take_step`, Space toggles play. Completes the music
+/// family with `PianoKeys`/`Metronome`/`Equalizer`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::step_sequencer::StepSequencer;
+///
+/// assert_eq!(StepSequencer::new(4, 16).row_count(), 4);
+/// ```
+pub mod step_sequencer;
+
 /// Wizard progress indicator — numbered step nodes connected by
 /// lines (Ant `Steps`, Carbon `ProgressIndicator`, `QWizard` header).
 ///
@@ -3392,6 +3407,7 @@ pub use stack_light::{Lamp, StackLight};
 pub use statistic::{Statistic, Trend};
 pub use status_bar::{StatusBar, StatusItem};
 pub use status_dot::{Status, StatusDot};
+pub use step_sequencer::StepSequencer;
 pub use steps::{Step, Steps};
 pub use stopwatch::Stopwatch;
 pub use stream_graph::StreamGraph;
