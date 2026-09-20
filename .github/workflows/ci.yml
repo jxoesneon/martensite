@@ -406,7 +406,7 @@ jobs:
   # pipeline:
   #
   #   1. Scope: all non-vendored publishable crates with a library target
-  #      (29 — martensite-macros is proc-macro-only and excluded). The
+  #      (42 — martensite-macros is proc-macro-only and excluded). The
   #      three vendored
   #      forks (martensite-vello, martensite-cosmic-text,
   #      martensite-accesskit-winit) are excluded because their surface
@@ -415,7 +415,7 @@ jobs:
   #      (it uses `version.workspace = true`). Only vello
   #      (0.10.0-martensite.1) and cosmic-text (0.19.0-martensite.1)
   #      carry `-martensite.N` prerelease versions off the workspace
-  #      bump cadence. Checking all 29 non-vendored publishable crates against
+  #      bump cadence. Checking all 42 non-vendored publishable crates against
   #      crates.io baselines is feasible only because each matrix leg
   #      is an independent parallel job; a serial `--workspace` run
   #      would not fit in the pipeline.
@@ -456,6 +456,8 @@ jobs:
           - martensite-clipboard-platform
           - martensite-core
           - martensite-devtools
+          - martensite-dialog
+          - martensite-dialog-platform
           - martensite-dnd
           - martensite-engine-bridge
           - martensite-focus
@@ -470,13 +472,24 @@ jobs:
           - martensite-media
           - martensite-media-platform
           - martensite-motion
+          - martensite-notify
+          - martensite-notify-platform
+          - martensite-pdf
+          - martensite-pdf-platform
+          - martensite-persist
           - martensite-plugin
+          - martensite-print
+          - martensite-print-platform
           - martensite-reactive
           - martensite-render
+          - martensite-share
+          - martensite-share-platform
           - martensite-shell
           - martensite-test
           - martensite-text
           - martensite-theme
+          - martensite-webview
+          - martensite-webview-platform
           - martensite-wgpu
           - martensite-window
     steps:
@@ -506,19 +519,27 @@ jobs:
           WS_VER=$(awk '/^\[workspace\.package\]/{p=1;next}/^\[/{p=0}p&&/^version/{gsub(/"/,"",$3);print $3;exit}' Cargo.toml)
           # `( ... ) || true` keeps a curl/grep failure (e.g. a crate never
           # published to crates.io) from aborting the step under
-          # `bash -eo pipefail`; the empty-BASE → strict=true path below
-          # is the intended fallback. Same idiom as publish.yml.
+          # `bash -eo pipefail`. Same idiom as publish.yml.
           BASE=$( (curl -fsSL -A "martensite-ci (https://github.com/jxoesneon/martensite)" \
             "https://crates.io/api/v1/crates/${{ matrix.crate }}" \
             | grep -oE '"max_version":"[^"]*"' | head -1 \
             | sed 's/.*:"//;s/"$//') || true )
           echo "workspace=${WS_VER} baseline=${BASE:-<none>}"
+          # Crates not yet on crates.io have no baseline to diff against;
+          # semver-checks would fail outright, so the check step below is
+          # skipped until the first publish lands a baseline.
+          if [ -z "$BASE" ]; then
+            echo "has_baseline=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_baseline=true" >> "$GITHUB_OUTPUT"
+          fi
           if [ -z "$BASE" ] || [ "$WS_VER" != "$BASE" ]; then
             echo "strict=true" >> "$GITHUB_OUTPUT"
           else
             echo "strict=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Check ${{ matrix.crate }} against crates.io baseline
+        if: ${{ steps.gate.outputs.has_baseline == 'true' }}
         continue-on-error: ${{ steps.gate.outputs.strict != 'true' }}
         env:
           # The workflow-wide RUSTFLAGS "-D warnings" must not apply to the

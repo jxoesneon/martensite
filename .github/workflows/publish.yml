@@ -127,6 +127,19 @@ jobs:
             martensite-assets
             martensite-devtools
             martensite-plugin
+            martensite-persist
+            martensite-dialog-platform
+            martensite-dialog
+            martensite-notify-platform
+            martensite-notify
+            martensite-print-platform
+            martensite-print
+            martensite-share-platform
+            martensite-share
+            martensite-webview
+            martensite-webview-platform
+            martensite-pdf-platform
+            martensite-pdf
             martensite-blessed
             martensite
           )
@@ -254,6 +267,14 @@ jobs:
           # martensite-accesskit-winit and martensite-access must come
           # before martensite-wgpu (the paint-compliance audit hook makes
           # wgpu depend on access, and access depends on accesskit-winit).
+          # Each service `-platform` crate precedes its abstraction crate
+          # (dialog/notify/print/share/pdf: the abstraction's `platform`
+          # feature depends on it) — except webview, where the direction
+          # is reversed: martensite-webview-platform depends on
+          # martensite-webview (its wire types), so webview ships first.
+          # All must precede martensite, which depends on
+          # martensite-webview, martensite-webview-platform, and
+          # martensite-pdf (+pdf-platform via the `platform` feature).
           CRATES=(
             martensite-reactive
             martensite-macros
@@ -286,6 +307,19 @@ jobs:
             martensite-assets
             martensite-devtools
             martensite-plugin
+            martensite-persist
+            martensite-dialog-platform
+            martensite-dialog
+            martensite-notify-platform
+            martensite-notify
+            martensite-print-platform
+            martensite-print
+            martensite-share-platform
+            martensite-share
+            martensite-webview
+            martensite-webview-platform
+            martensite-pdf-platform
+            martensite-pdf
             martensite-blessed
             martensite
           )

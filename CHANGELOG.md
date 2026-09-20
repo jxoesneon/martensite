@@ -165,6 +165,232 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overlay hit-tests before window content) never seed a drag. The
   dock-area computation is factored into a shared `dock_area()` used
   by both `apply_dock_layout` and the hit-tests.
+- **`TextInput` editing model + shaped caret** — a real cursor model
+  replaces the flat 7pt/char caret estimate: byte-index caret plus
+  selection anchor with click/drag, shift-click and shift-arrow
+  extension, `Home`/`End`, `Backspace`/`Delete` over selections,
+  newline-stripped paste, and the SelectAll/Cut/Copy/Paste chords
+  (clipboard via a transient `default_platform_clipboard` — platform
+  backends aren't `Send`, so they can't live on the widget).
+  `TextPainter` gains `caret_x`/`byte_at` derived from one shape pass
+  over the full text so kerning and ligature context agree with
+  `push`; `TextShaper` gains a defaulted `measure_text` so widgets
+  can measure through the ambient painter without downcasting; the
+  facade enables `martensite-clipboard`'s `platform` feature.
+- **`industrial_dashboard` H.264 decode** — `MediaPanel` attaches the
+  platform decoder (`VideoToolboxDecoder` on macOS, Media Foundation
+  on Windows, VAAPI on Linux — each feature is a no-op off its
+  target), packetizes the checked-in 320x240@30fps Annex-B fixture
+  into avcC access units, and feeds them paced at the stream cadence
+  so the decoder's bounded output queue never drops. The clip loops
+  via `end_of_stream` → drain → `flush`; overlay text reports the
+  real backend/format during warm-up and hides once frames flow.
+- **Opt-in `MissingLocale` audit lint** — `PaintAuditConfig::
+  locale_probe` installs a `(text, scope)` predicate; every visible
+  `DrawText` string it rejects is reported as `MissingLocale`
+  (advisory Info). `DrawGlyphRun` carries no source text and is
+  skipped, as are empty/whitespace strings and fully clipped text.
+  `RenderOrchestrator::set_audit_locale_probe` wires it; the
+  dashboard builds the probe from the shipped FTL resources behind
+  `--audit-locale`, exempting endonyms, non-alphabetic data, and the
+  live filter-field content.
+- **Headless VoiceOver verification** — a dashboard test runs
+  `AccessKitAdapter::build_update` over the real app arena and
+  asserts the semantic tree VoiceOver consumes: `Role::Table`,
+  `Image`, and `MultilineTextInput` for the panels, live labels for
+  each, and the editor publishing its buffer as its value.
+- **Minimum render-area contract** — `Widget::min_render` declares a
+  minimum useful render size (logical points), overridable per node
+  with `ColdNode::with_render_minimum`. When allocated bounds
+  underflow the floor, an `#[non_exhaustive] UnderflowPolicy`
+  decides behavior: `Allow`/`Lint` (advisory — the new
+  `audit_underflow` pass reports the violation, `Lint` marking it a
+  hard requirement), `Clip`, `Hide` (Android INVISIBLE semantics),
+  `Scrim` (a frosted veil that still covers input), `Fallback`
+  (`Widget::paint_underflow` draws a degraded badge), and `Collapse`
+  (Taffy `display:none` frees the slot and reflows siblings).
+- **Multi-click word/line selection** — `WidgetEvent::PointerPressed`
+  gains `count` (1 = single, 2 = double, 3 = triple) computed by an
+  `EventRouter` `ClickTracker`: same pointer and button, within
+  500 ms and a 4 px slop radius — matching macOS `clickCount`, GTK
+  `n_press`, and the web's `MouseEvent.detail`. `TextInput`
+  double-click selects the UAX#29 word segment under the pointer,
+  triple-click selects the whole value, and double-click-drag
+  extends by whole words; `CodeEditor` gains a real selection model
+  (it previously had carets only).
+- **Shape vocabulary** — competitor-level shape support:
+  `CornerStyle` (`Round`/`Cut`/`Notch`/`Scoop`/`Squircle`),
+  per-corner `CornerRadii` with CSS-style scaling, per-corner
+  `CornerStyles`, and a `Shape` enum
+  (rect/pill/ellipse/circle/rounded/styled/path) with
+  `to_path`/`contains`/`flatten` so render and hit-test geometry can
+  never diverge. The paint layer gains `ClipPath`, linear/radial
+  gradient path fills, and `Shape`-aware helpers that fast-path
+  rects and uniform rounds to existing primitives; both backends
+  implement the new commands and the paint audit tracks `ClipPath`
+  in the clip stack. `Widget::hit_shape`/`clip_shape` route painted
+  silhouettes into the hit-test narrow phase and child clipping.
+- **`industrial_dashboard` grid column resize** — column separators
+  paint through the header band and faintly through the rows, plus
+  hairline row separators. Header-band presses inside a divider's
+  grab zone start a `CapturePointer` resize drag clamped to a 40pt
+  floor and the panel edge; a divider press no longer toggles sort,
+  and double-click resets to the shipped width.
+- **Modal overlay system + secondary window** — `OverlayLayer` gains
+  true modality: modal entries paint a `ScrimColor` scrim, block
+  positional input beneath the topmost modal, and gate popups below
+  them. New anchors cover `Center` (dialogs), `Edge{Left,Right,
+  Top,Bottom}` (drawers/sheets), and `Viewport{h,v,margin}` (toast
+  stacks); `OverlayOptions` adds `modal`/`scrim`/`scrim_dismiss`/
+  `passthrough` — passthrough lets toast strips ignore clicks
+  between cards, survive blanket outside-press dismissal, and never
+  become the `Escape` target. The example app opens a real secondary
+  OS window — its own arena, router, focus manager, surface, and
+  orchestrator sharing the primary window's `GpuContext`, with theme
+  changes propagated live.
+- **Facade widget library (~250 new widgets)** — the largest single
+  expansion of the widget set, all with AccessKit roles, shaped
+  text, theme-token chrome, and HiDPI-aware measure/paint:
+  - Charts & data viz — `LineChart`, `PieChart`, `BarChart`,
+    `ScatterChart`, `Candlestick`, `RadarChart`, `PolarArea`,
+    `Treemap`, `Sunburst`, `StreamGraph`, `Waterfall`, `FunnelChart`,
+    `BulletChart`, `BoxPlot`, `Violin`, `Histogram`, `HeatMap`,
+    `Sparkline`, `ActivityRing`, `Gantt`, `Burndown`, `Sankey`,
+    `Venn`, `WordCloud`, `Spectrum`, `Waveform`, `StripChart`,
+    `Legend`.
+  - Data display, documents & diagrams — `Table`, `ListView`
+    (drag-reorder), `Grid`, `PropertyGrid`, `Descriptions`,
+    `Inspector`, `GraphView`, `OrgChart`, `MindMap`, `Fishbone`,
+    `JsonView`, `TreeView`, `Timeline`, `FlowBox`, `Masonry`,
+    `MergeView`, `DiffView`, `HexView`, `CodeView`, `LogView`,
+    `Markdown`, `Terminal`.
+  - Navigation & window chrome — `NavRail`, `NavStack`, `Breadcrumb`,
+    `Pagination`, `Steps`, `MenuBar`, `MenuButton`, `ContextMenu`,
+    `CommandPalette`, `Toolbar`, `ToolbarOverflow`, `StatusBar`,
+    `HeaderBar`, `PageHeader`, `Ribbon`, `TaskSwitcher`,
+    `WindowControls`, `Dock`, `AppGrid`, `ControlCenter`,
+    `AddressBar`.
+  - Forms, input & pickers — `FormField`, `SearchBar`, `SearchField`,
+    `TokenField`, `AutoComplete`, `InlineEdit`, `TextArea`,
+    `OtpInput`, `KeyCapture`, `IpInput`, `Keypad`, `VirtualKeyboard`,
+    `PatternLock`, `Rating`, `LevelBar`, `PasswordStrength`, `Dial`,
+    `WheelPicker`, `Cascader`, `Transfer`, `Mention`, `TreeSelect`,
+    `ChipGroup`, `Segmented`, `ToggleButton`, tri-state `CheckBox`,
+    `SpinBox`, `RangeSlider`, `AlphaSlider`, `HueSlider`,
+    `ColorWheel`, `ColorPalette`, `ColorPicker`, `ColorButton`,
+    `FontButton`, `DatePicker` (with range mode), `Calendar` (range
+    selection), `TimePicker`, `CheckList`, `SettingsRow`/
+    `SettingsGroup`, `FileChooserButton`.
+  - Feedback & overlays — `Dialog`, `Drawer`, `AlertDialog`,
+    `Popover`, `Popconfirm`, `BottomSheet`, `ActionSheet`,
+    `Toast`/`ToastHost`, `Banner`, `Disclosure`, `Separator`,
+    `Switch`, `ProgressBar`, `NotificationCenter`, `UpdatePrompt`,
+    `CookieBanner`, `EmptyState`, `Skeleton`, `ResultPage`,
+    `Watermark`, `Splash`, `Tour`, `Wizard`, `HoverCard`, `Pip`,
+    `FloatButton`/`BackTop`, `PullToRefresh`, `SwipeActions`,
+    `Lightbox`.
+  - Status, media & instruments — `Battery`, `SignalStrength`,
+    `StatusDot`, `StackLight`, `AlarmPanel`, `Gauge`, `Compass`,
+    `Thermometer`, `Odometer`, `LcdNumber`, `LedMatrix`,
+    `DigitalClock`, `AnalogClock`, `Countdown`, `CountdownRing`,
+    `Stopwatch`, `TickerTape`, `Statistic`, `MediaControls`,
+    `NowPlaying`, `Playlist`, `Equalizer`, `VuMeter`, `Tuner`,
+    `Metronome`, `StepSequencer`, `PadGrid`, `PianoKeys`,
+    `Fretboard`, `Joystick`, `XYPad`, `Captions`, `Volume`,
+    `Marquee`, `SplitFlap`.
+  - Communication, conference & app idioms — `ChatInput`,
+    `MessageList`, `CommentThread`, `TypingIndicator`, `Presence`,
+    `AttendeeList`, `BreakoutRooms`, `WaitingRoom`, `VideoGrid`,
+    `CallControls`, `Poll`, `ReactionBar`, `EmojiPicker`, `Avatar`,
+    `AvatarGroup`, `Badge`, `Image`, `Chip`, `Link`, `Kbd`,
+    `KeyboardShortcuts`, `CommandLink`, `SplitButton`, `SpeedDial`,
+    `Copyable`, `Anchor`, `Card`, `CardDeck`, `GroupBox`,
+    `Accordion`, `ExpanderRow`, `Carousel`, `PipsPager`,
+    `PricingTable`, `HeroHeader`, `ReleaseNotes`, `Ticket`,
+    `SocialCard`, `Attachment`, `DownloadItem`, `DevicePicker`,
+    `ClipboardHistory`, `ThemePicker`, `About`, `RatingSummary`,
+    `Quadrant`, `WorldClock`, `UnitConverter`, `Weather`,
+    `WeekView`, `QrCode`, `Barcode`, `ChessBoard`, `ChessClock`,
+    `Flashcard`, `ScratchCard`, `Confetti`, `RubberBand`, `CropBox`,
+    `Magnifier`, `Viewport`, `Minimap`, `Crosshair`, `Ruler`,
+    `CurveEditor`, `GradientEditor`, `InkCanvas`, `ImageViewer`,
+    `Filmstrip`, `Coverflow`, `PageFlip`, `SplitView`, `AspectFrame`,
+    `Clamp`, `ScrollIndicator`, `ResizeHandle`, and `PerfOverlay`
+    (developer FPS/frame-time HUD with budget line).
+- **Native service crates** — five new abstraction crates, four of
+  them pairing a safe abstraction (scripted test backends;
+  `platform`-off defaults degrade to honest stubs reporting
+  `Cancelled`/`Unsupported`/no-op) with an opt-in `platform`
+  feature backed by a sibling `-platform` crate — the same split as
+  `martensite-clipboard`:
+  `martensite-dialog`/`martensite-dialog-platform` — open,
+  multi-open, save, and pick-folder sheets (NSOpenPanel via
+  `osascript`, WinForms via PowerShell, zenity/kdialog on Linux);
+  `martensite-notify`/`martensite-notify-platform` — OS
+  notifications (AppleScript `display notification`, `notify-send`,
+  PowerShell toast); `martensite-print`/`martensite-print-platform`
+  — printer enumeration and job submission (CUPS `lp`/`lpstat` on
+  macOS/Linux, PowerShell `Get-Printer`/`Out-Printer` on Windows);
+  `martensite-share`/`martensite-share-platform` — share-sheet and
+  reveal-in-folder (`open`/`open -R` on macOS, `xdg-open`/`gio` on
+  Linux, `explorer`/`start` on Windows); `martensite-persist` —
+  key-value settings/state persistence (JSON file store, memory
+  store, per-OS config dirs; needs no platform pair).
+- **`martensite-webview` + facade `WebView` widget** —
+  embedded-webview surface contract (`WebViewCommand`,
+  `WebViewEvent`, `WebViewState`, `WebViewHost`) plus
+  `SimulatedWebView`, a deterministic in-process engine that runs
+  the full load lifecycle for tests, previews, and headless.
+  `martensite-webview-platform` supplies the hosts expressible
+  without engine FFI — `FetchWebView` (real `curl` fetches with
+  `<title>` extraction and retained body) and
+  `SystemBrowserWebView` (OS-browser handoff) — implementing
+  `WebViewHost` directly, so `WebView::native()` works against real
+  network/OS integration while a true embedded engine
+  (WKWebView/WebView2/WebKitGTK) remains future work.
+- **`martensite-pdf` + facade `PdfView` widget** — document/raster
+  contract (`PdfDocument`, `PdfProvider`, `PdfSource`,
+  `PdfPageBitmap`) with `BlankPdfDocument`, a procedural N-page
+  backend that rasterizes real pixels for tests; the `platform`
+  feature adapts `martensite-pdf-platform`, which rasterizes through
+  the host's PDF CLIs — poppler `pdftoppm`/`pdfinfo` or mupdf
+  `mutool` — so real documents render without linking a PDF engine.
+- **Gesture recognizer** — `martensite-window`'s `GestureRecognizer`
+  consumes raw `PointerEvent`s (per-finger `PointerId`/
+  `PointerKind`) in parallel with normal dispatch and emits
+  `Gesture::{LongPress, Swipe, Pinch}` deltas. Passive — it never
+  consumes events; time is caller-supplied for determinism; pinch
+  pairs are touch-only and baselines re-anchor on finger-set
+  changes.
+- **IME preedit pipeline** — `WidgetEvent::ImePreedit` carries the
+  in-flight composition and caret byte-range;
+  `EventRouter::dispatch_ime_event` maps the normalized `ImeEvent`
+  stream (winit `Commit`/`Preedit`, lifecycle variants dropped) to
+  the focused widget. `TextInput` and `TextArea` store the
+  composition, paint it underlined at the caret, and clear it on
+  commit, empty preedit, or focus loss; the dashboard's
+  main/subwindow loops forward `WindowEvent::Ime` through
+  `ime_event_for_winit`.
+
+### Changed
+
+- `Tabs` gains the universal tab-bar triad — a trailing close
+  affordance (plus browser-style middle-click) that parks
+  `take_close_requested` for the app to honour or veto via
+  `close_tab`, drag-to-reorder with `take_moved` notifications, and
+  a wheel-scrollable strip that switches to natural widths on
+  overflow (the scroll offset applies at `child_bounds` read time,
+  so no relayout is needed).
+- `Spinner` gains active gating, speed, thickness, and an optional
+  label.
+- `industrial_dashboard` inspector drawer now dogfoods the new
+  facade widgets: a carded `SettingsGroup` exercising `Segmented`,
+  `SpinBox`, `Rating`, and `KeyCapture` as `SettingsRow` trailing
+  editors; `StatusDot` + `LogView`; `BulletChart`, `Spectrum`,
+  `Waveform`, and `XYPad`; and the HMI pass — Environment
+  (`Thermometer` + `Battery`), Alarm bus (`VuMeter` + `Equalizer`),
+  Shift clock (`DigitalClock`), Pressure (`StripChart`), and Console
+  (`Terminal`) disclosures.
 
 ### Fixed
 
@@ -238,6 +464,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now offered to the topmost popup's content first; `Ignored` falls
   through to the focused arena widget as before, so combobox
   typeahead keeps working.
+- `FocusManager` gained `apply_tab` — the turnkey counterpart of
+  `tab` that performs the full validate/move/dispatch transition.
+  The dashboard's Tab handler previously paired `tab` with
+  `apply_focus_request` — a silent no-op, since `tab` commits
+  `current_focus` before returning and the follow-up request then
+  saw `prev == next` and dispatched nothing: panels never lit their
+  focus rings and the previously focused widget kept its focused
+  visuals.
+- `Dropdown` and `Tooltip` only consulted their anchor at open time,
+  so a resize, scale change, or dock rearrange left the popup
+  stranded at the stale position. Both now track the last-applied
+  anchor and call `OverlayLayer::set_anchor` when it changes,
+  guarded on `OverlayAnchor`/`Rect` equality so a settled popup
+  never re-marks layout.
+- `industrial_dashboard`: `panel_chrome` emitted the hairline/focus
+  ring before the panel painted its content, so full-width bands
+  (grid header, row fills, scrollbars) overwrote the outline edge
+  segments. The outline is now split into `panel_border`, emitted at
+  the end of each panel paint.
+- `industrial_dashboard`: grid rows straddling the top clip edge
+  still emitted glyph runs that painted nothing (each also earned a
+  spurious contrast check), and a panel squeezed by dock
+  rearrangement stacked all five y-axis labels into an overlapping
+  pile. Rows now skip text whose glyph band sits fully above the
+  clip, and the telemetry axis keeps only labels whose bands clear
+  each other.
+- Shaped labels painted through `paint_label` had no clip — an
+  over-long value spilled past its container. `paint_label_clipped`
+  wraps `paint_label` in `push_clip`/`pop_clip` and is applied to
+  every fixed-chrome label (toast, banner, dialog, drawer,
+  disclosure, dropdown face + options, tabs, switch, checkbox,
+  radio, button, tooltip); `TextInput` clips its run to the face
+  shape and scrolls horizontally to keep the caret visible; `Text`
+  clips glyph runs to the allocated rect so unbreakable strings
+  cannot overflow layout.
 
 ## [0.18.0] - 2026-09-16
 
