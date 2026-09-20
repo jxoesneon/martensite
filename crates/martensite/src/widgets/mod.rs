@@ -720,6 +720,20 @@ pub mod container;
 /// ```
 pub mod context_menu;
 
+/// GDPR consent strip — policy message with Accept / Decline /
+/// Customize buttons and an optional policy link; clicks park a
+/// `CookieConsent` in `take_consent` for the host to persist.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::cookie_banner::CookieBanner;
+///
+/// let b = CookieBanner::new("We use cookies");
+/// assert_eq!(b.pending(), None);
+/// ```
+pub mod cookie_banner;
+
 /// Tick-driven countdown timer display (pomodoro / cycle-time
 /// idiom) — `MM:SS` (or `H:MM:SS`) face decrementing each frame,
 /// warning color under a threshold, alert color at zero, a
@@ -3772,6 +3786,7 @@ pub use compass::Compass;
 pub use confetti::Confetti;
 pub use container::Container;
 pub use context_menu::ContextMenu;
+pub use cookie_banner::{CookieBanner, CookieConsent};
 pub use countdown::Countdown;
 pub use countdown_ring::CountdownRing;
 pub use coverflow::Coverflow;
