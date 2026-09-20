@@ -1312,6 +1312,21 @@ pub mod text_input;
 /// ```
 pub mod external;
 
+/// Card board (Trello / Ant-board idiom) — equal-width lanes
+/// of stacked cards; dragging lifts the card and shows a drop
+/// slot under the pointer, the board performs the move and
+/// parks `(from_col, card_index, to_col)` in `take_moved`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::kanban::Kanban;
+///
+/// let k = Kanban::new().column("Todo").card("Todo", "Task");
+/// assert_eq!(k.card_count(0), 1);
+/// ```
+pub mod kanban;
+
 /// Keyboard-shortcut recorder field (Qt `QKeySequenceEdit`, KDE
 /// `KKeySequenceWidget`).
 ///
