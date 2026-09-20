@@ -621,6 +621,23 @@ pub mod descriptions;
 /// ```
 pub mod dial;
 
+/// Horizontal thumbnail strip with selection — the photo-editor
+/// filmstrip / gallery picker idiom. Click selects and parks the
+/// index in `take_selected`; `←`/`→` move the selection; the wheel
+/// scrolls the strip when it overflows.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::filmstrip::{Filmstrip, Thumbnail};
+///
+/// let f = Filmstrip::new()
+///     .thumb(Thumbnail::new("DSC_001", [80, 120, 200, 255]))
+///     .thumb(Thumbnail::new("DSC_002", [200, 120, 80, 255]));
+/// assert_eq!(f.thumb_count(), 2);
+/// ```
+pub mod filmstrip;
+
 /// Flexbox row and column layout.
 ///
 /// # Examples
@@ -2863,6 +2880,7 @@ pub use equalizer::Equalizer;
 pub use expander_row::ExpanderRow;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use file_chooser_button::{ChooserMode, FileChooserButton};
+pub use filmstrip::{Filmstrip, Thumbnail};
 pub use flex::{Flex, FlexDirection};
 pub use float_button::FloatButton;
 pub use flow_box::{FlowBox, FlowSelection};
