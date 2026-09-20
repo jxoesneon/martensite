@@ -2269,6 +2269,23 @@ pub mod venn;
 /// ```
 pub mod violin;
 
+/// Multi-channel VU / PPM level meter — instantaneous
+/// channel strips over a green→amber→red zone gradient with
+/// slowly decaying peak-hold markers, driven by `push` or
+/// `levels`. Companion to `Spectrum` and `Waveform` in the
+/// audio-display family.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::vu_meter::VuMeter;
+///
+/// let mut v = VuMeter::new().channels(2);
+/// v.push([0.8, 0.4]);
+/// assert_eq!(v.peak_list()[0], 0.8);
+/// ```
+pub mod vu_meter;
+
 /// Running-total bridge chart (McKinsey / finance waterfall
 /// idiom) — floating delta columns spanning previous-to-new
 /// cumulative totals, full columns for totals, dashed connectors
