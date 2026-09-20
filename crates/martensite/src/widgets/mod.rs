@@ -3354,6 +3354,23 @@ pub mod wizard;
 /// ```
 pub mod word_cloud;
 
+/// Multi-timezone clock list (GNOME Clocks idiom) — `city · UTC±h
+/// · HH:MM` rows ticking off a host-set UTC base with `±1d`
+/// day-shift markers. `set_utc` seeds, `tick` advances.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::world_clock::WorldClock;
+/// use martensite::widgets::Time;
+///
+/// let w = WorldClock::new()
+///     .with_utc(Time { hour: 12, minute: 0 })
+///     .zone("Tokyo", 540);
+/// assert_eq!(w.local(0), Some(Time { hour: 21, minute: 0 }));
+/// ```
+pub mod world_clock;
+
 /// Two-dimensional drag controller (Kaoss-pad / Ableton XY idiom) —
 /// a square pad whose thumb tracks a normalized `(x, y)` value with
 /// crosshair guides, arrow-key nudges, `Home`/`End` snaps, and a
@@ -3617,5 +3634,6 @@ pub use wheel_picker::WheelPicker;
 pub use window_controls::{CaptionStyle, WindowAction, WindowControls};
 pub use wizard::Wizard;
 pub use word_cloud::WordCloud;
+pub use world_clock::{WorldClock, ZoneEntry};
 pub use xy_pad::XYPad;
 pub use zoom_controls::{ZoomAction, ZoomControls};
