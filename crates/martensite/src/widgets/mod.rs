@@ -1327,6 +1327,20 @@ pub mod external;
 /// ```
 pub mod kanban;
 
+/// Spring-return analog stick (gamepad idiom) — draggable
+/// knob inside a circular gate, normalized `-1..=1` offset
+/// with a dead zone, snaps back to center on release. Arrow
+/// keys nudge, `Escape` recenters.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::joystick::Joystick;
+///
+/// assert_eq!(Joystick::new().value_xy(), (0.0, 0.0));
+/// ```
+pub mod joystick;
+
 /// Keyboard-shortcut recorder field (Qt `QKeySequenceEdit`, KDE
 /// `KKeySequenceWidget`).
 ///
