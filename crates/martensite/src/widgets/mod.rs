@@ -962,6 +962,21 @@ pub mod dialog;
 /// ```
 pub mod diff_view;
 
+/// Tick-driven digital time display — monospace block digits
+/// over a dark face, `hh:mm` (+ `:ss`), 12/24-hour modes, and an
+/// optional blinking colon. Textual sibling of `AnalogClock`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::digital_clock::DigitalClock;
+/// use martensite::widgets::Time;
+///
+/// let c = DigitalClock::new().time(Time { hour: 9, minute: 30 });
+/// assert_eq!(c.text(), "09:30");
+/// ```
+pub mod digital_clock;
+
 /// Collapsible section with a disclosure chevron.
 ///
 /// # Examples
