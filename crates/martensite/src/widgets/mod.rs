@@ -580,6 +580,19 @@ pub mod context_menu;
 /// ```
 pub mod countdown;
 
+/// Draggable, resizable crop region overlay (photo-editor crop
+/// tool) — normalized coordinates, corner handles, optional aspect
+/// lock, scrim + rule-of-thirds paint, `take_changed` seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::crop_box::CropBox;
+///
+/// assert_eq!(CropBox::new().crop(0.1, 0.1, 0.8, 0.8).crop_rect(), (0.1, 0.1, 0.8, 0.8));
+/// ```
+pub mod crop_box;
+
 /// Cubic-bezier easing editor (DevTools / design-tool idiom) —
 /// two draggable control handles on a gridded pad, endpoints
 /// pinned at (0,0) and (1,1), `bezier`/`css`/`sample` outputs
@@ -2956,6 +2969,7 @@ pub use compass::Compass;
 pub use container::Container;
 pub use context_menu::ContextMenu;
 pub use countdown::Countdown;
+pub use crop_box::CropBox;
 pub use curve_editor::CurveEditor;
 pub use date_picker::{Date, DatePicker};
 pub use descriptions::{DescriptionItem, Descriptions};
