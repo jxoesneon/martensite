@@ -1205,6 +1205,20 @@ pub mod header_bar;
 /// ```
 pub mod heat_map;
 
+/// Landing-page hero block — eyebrow caption, big centered title,
+/// subtitle, and primary / secondary CTAs parking a `HeroAction`
+/// in `take_action`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::hero_header::HeroHeader;
+///
+/// let h = HeroHeader::new("Ship faster").subtitle("Rust widgets");
+/// assert_eq!(h.title, "Ship faster");
+/// ```
+pub mod hero_header;
+
 /// Hex-dump display (binary-inspection / dev-tool idiom) — rows
 /// of `offset hh hh … |ascii|`: muted offset column, 16 hex
 /// pairs with an 8-byte gap, and a printable-ASCII gutter.
@@ -3964,6 +3978,7 @@ pub use grid::{Grid, GridCell};
 pub use group_box::GroupBox;
 pub use header_bar::HeaderBar;
 pub use heat_map::HeatMap;
+pub use hero_header::{HeroAction, HeroHeader};
 pub use hex_view::HexView;
 pub use histogram::Histogram;
 pub use hover_card::HoverCard;
