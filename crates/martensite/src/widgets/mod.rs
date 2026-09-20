@@ -2590,6 +2590,22 @@ pub mod presence;
 /// ```
 pub mod property_grid;
 
+/// 2×2 priority matrix (Eisenhower / magic-quadrant idiom) —
+/// perpendicular axes with named ends, four region captions, and
+/// plotted `QuadrantItem` points on normalized -1..1
+/// coordinates; clicks park `take_selected`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::quadrant::{Quadrant, QuadrantItem};
+///
+/// let q = Quadrant::new("Urgent", "Important")
+///     .item(QuadrantItem::new("Fix crash", 0.8, 0.9));
+/// assert_eq!(q.item_count(), 1);
+/// ```
+pub mod quadrant;
+
 /// QR barcode renderer — paints a precomputed module matrix with the
 /// standard quiet zone (Ant `QRCode` display side). Encoding is
 /// app-space: feed `from_matrix`/`from_bits` the output of `qrcode`,
@@ -3836,6 +3852,7 @@ pub use property_grid::{
 };
 pub use pull_to_refresh::PullToRefresh;
 pub use qr_code::QrCode;
+pub use quadrant::{Quadrant, QuadrantItem};
 pub use radar_chart::{RadarChart, RadarSeries};
 pub use radial_menu::RadialMenu;
 pub use radio::{RadioGroup, RadioOption};
