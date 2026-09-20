@@ -128,6 +128,21 @@ pub mod alarm_panel;
 /// ```
 pub mod alert_dialog;
 
+/// Opacity rail over a checkerboard backing, with a draggable
+/// handle picking alpha in `0.0..=1.0` — the alpha strip in every
+/// color picker.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::alpha_slider::AlphaSlider;
+///
+/// let mut s = AlphaSlider::new().alpha(0.5);
+/// s.set_alpha(2.0);
+/// assert_eq!(s.alpha_value(), 1.0);
+/// ```
+pub mod alpha_slider;
+
 /// Scroll-spy navigation rail — a vertical link list where the active
 /// section follows scroll position (Ant `Anchor`). Clicks park the
 /// target in `take_clicked`; the app reports position via
@@ -2780,6 +2795,7 @@ pub use action_sheet::{ActionSheet, ActionSheetResult};
 pub use activity_ring::{ActivityRing, Ring};
 pub use alarm_panel::{Alarm, AlarmPanel, AlarmState};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
+pub use alpha_slider::AlphaSlider;
 pub use analog_clock::AnalogClock;
 pub use anchor::{Anchor, AnchorItem};
 pub use aspect_frame::AspectFrame;
