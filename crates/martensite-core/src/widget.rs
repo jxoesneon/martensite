@@ -377,6 +377,23 @@ pub enum WidgetEvent {
         /// The committed text.
         text: String,
     },
+    /// An IME composition is in progress — the **preedit** string the
+    /// user is composing but has not yet committed.
+    ///
+    /// Widgets should render `text` at the insertion caret, typically
+    /// underlined, in place of committed text until the matching
+    /// [`ImeCommitted`](Self::ImeCommitted) arrives. `cursor` is the
+    /// byte-range of the caret inside `text` (`None` = caret hidden).
+    /// An empty `text` clears any displayed preedit (the composition was
+    /// cancelled or ended without a commit).
+    ///
+    /// On platforms without an IME this variant never arrives.
+    ImePreedit {
+        /// The in-progress composition string.
+        text: String,
+        /// Byte-range of the caret within `text`, if shown.
+        cursor: Option<(usize, usize)>,
+    },
     /// The pointer entered the widget's bounds (hover begin). Sent to
     /// the previously-unhovered widget when the hovered hit-test
     /// target changes, paired with [`PointerLeave`](Self::PointerLeave)

@@ -86,8 +86,9 @@ pub use csd::{csd_region_for_point, CsdController, CsdHitRegion};
 pub use dpi::DpiScale;
 pub use event::{
     convert_drop_event, convert_modifiers, convert_modifiers_state, convert_mouse_button,
-    convert_window_event, DropAction, DropEvent, EventDispatchOutcome, EventRouter, ModifierKeys,
-    MouseTracker, PointerCapture, PointerEvent, PointerId, PointerKind, PointerState,
+    convert_window_event, ime_event_for_winit, DropAction, DropEvent, EventDispatchOutcome,
+    EventRouter, ImeEvent, ModifierKeys, MouseTracker, PointerCapture, PointerEvent, PointerId,
+    PointerKind, PointerState,
 };
 pub use hit_test::{AffineTransform, ClipShape, HitTestResult, HitTester, RoundedRect};
 pub use lifecycle::{surface_lifecycle, SurfaceLifecycle};

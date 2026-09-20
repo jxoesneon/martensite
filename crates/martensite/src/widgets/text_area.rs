@@ -328,6 +328,10 @@ pub struct TextArea {
     /// Sticky preferred column for vertical caret moves — `None` after
     /// any horizontal move, click, or edit.
     preferred_col: Option<usize>,
+    /// In-flight IME composition — the preedit string and its caret
+    /// byte-range, rendered underlined at the insertion caret until the
+    /// matching `ImeCommitted` arrives (or an empty preedit clears it).
+    preedit: Option<(String, Option<(usize, usize)>)>,
 }
 
 impl Clone for TextArea {
@@ -356,6 +360,7 @@ impl Clone for TextArea {
             edited: self.edited,
             caret: self.caret.clone(),
             preferred_col: self.preferred_col,
+            preedit: self.preedit.clone(),
         }
     }
 }
@@ -406,6 +411,7 @@ impl TextArea {
             edited: false,
             caret: None,
             preferred_col: None,
+            preedit: None,
         }
     }
 
@@ -731,6 +737,40 @@ impl TextArea {
     #[inline]
     pub fn caret_tracker(&self) -> Option<&CaretTracker> {
         self.caret.as_ref()
+    }
+
+    /// The in-flight IME composition string, if one is being composed.
+    ///
+    /// Set by `WidgetEvent::ImePreedit` and cleared by `ImeCommitted`,
+    /// an empty preedit, or focus loss. The string is rendered
+    /// underlined at the caret — it is not part of
+    /// [`value`](Self::value) until committed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextArea;
+    ///
+    /// assert!(TextArea::new().preedit().is_none());
+    /// ```
+    #[inline]
+    pub fn preedit(&self) -> Option<&str> {
+        self.preedit.as_ref().map(|(t, _)| t.as_str())
+    }
+
+    /// The caret byte-range inside the current [`preedit`](Self::preedit)
+    /// string, if the IME reports one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextArea;
+    ///
+    /// assert!(TextArea::new().preedit_cursor().is_none());
+    /// ```
+    #[inline]
+    pub fn preedit_cursor(&self) -> Option<(usize, usize)> {
+        self.preedit.as_ref().and_then(|(_, c)| *c)
     }
 
     // ---- editing-model helpers --------------------------------------
@@ -1559,10 +1599,20 @@ impl Widget for TextArea {
                 self.shift_held = false;
                 self.dragging = false;
                 self.bar_drag = None;
+                self.preedit = None;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::ImePreedit { text, cursor } => {
+                self.preedit = if text.is_empty() {
+                    None
+                } else {
+                    Some((text.clone(), *cursor))
+                };
                 EventResponse::RequestRepaint
             }
             WidgetEvent::ImeCommitted { text } if !self.read_only => {
                 // Unlike `TextInput`, committed newlines are kept.
+                self.preedit = None;
                 self.insert_str(text);
                 EventResponse::RequestRepaint
             }
@@ -1772,12 +1822,33 @@ impl Widget for TextArea {
 
             // Caret at the shaped boundary for the primary cursor —
             // measured through the same shape pass as the painted
-            // glyphs, so it cannot drift on mixed-width text.
+            // glyphs, so it cannot drift on mixed-width text. While an
+            // IME composition is in flight the preedit string paints
+            // underlined at the caret and the caret trails its end.
             if self.focused && i == caret_row {
                 let cx_x = f64::from(content_x + caret_off);
+                let mut pre_w = 0.0_f32;
+                if let Some((pre, _)) = &self.preedit {
+                    crate::text_paint::paint_label(
+                        painter,
+                        cx.list,
+                        kurbo::Point::new(cx_x, f64::from(y)),
+                        pre,
+                        font_px,
+                        ink,
+                    );
+                    pre_w = painter
+                        .and_then(|p| p.measure_text(pre, font_px))
+                        .unwrap_or_else(|| pre.chars().count() as f32 * char_w);
+                    let uy = f64::from(row_bottom) - cx.ptf(2.0);
+                    let mut u = kurbo::BezPath::new();
+                    u.move_to((cx_x, uy));
+                    u.line_to((cx_x + f64::from(pre_w), uy));
+                    cx.list.push_stroke_path(u, cx.pt(1.0), ink);
+                }
                 let mut path = kurbo::BezPath::new();
-                path.move_to((cx_x, f64::from(y) + cx.ptf(2.0)));
-                path.line_to((cx_x, f64::from(row_bottom) - cx.ptf(2.0)));
+                path.move_to((cx_x + f64::from(pre_w), f64::from(y) + cx.ptf(2.0)));
+                path.line_to((cx_x + f64::from(pre_w), f64::from(row_bottom) - cx.ptf(2.0)));
                 cx.list
                     .push_stroke_path(path, cx.pt(1.0), cx.color(TokenKey::TextColor, CARET));
             }
@@ -2014,6 +2085,31 @@ mod tests {
         let mut area = TextArea::new();
         area.event(&mut ev(&ime("a\u{7}b\tc")));
         assert_eq!(area.value(), "ab\tc");
+    }
+
+    #[test]
+    fn text_area_ime_preedit_lifecycle() {
+        let mut area = TextArea::new();
+        let pre = |text: &str, cursor: Option<(usize, usize)>| WidgetEvent::ImePreedit {
+            text: text.to_string(),
+            cursor,
+        };
+        area.event(&mut ev(&pre("wip", Some((0, 3)))));
+        assert_eq!(area.preedit(), Some("wip"));
+        assert_eq!(area.preedit_cursor(), Some((0, 3)));
+        // Commit inserts the text and clears the composition.
+        area.event(&mut ev(&ime("done")));
+        assert_eq!(area.preedit(), None);
+        assert_eq!(area.value(), "done");
+        // An empty preedit clears without touching the value, and
+        // focus loss clears any in-flight composition.
+        area.event(&mut ev(&pre("x", None)));
+        area.event(&mut ev(&pre("", None)));
+        assert_eq!(area.preedit(), None);
+        area.event(&mut ev(&pre("y", None)));
+        area.event(&mut ev(&WidgetEvent::FocusLost));
+        assert_eq!(area.preedit(), None);
+        assert_eq!(area.value(), "done");
     }
 
     #[test]

@@ -35,8 +35,8 @@ use martensite::wgpu::{
     RenderOrchestrator, SurfaceWrapper,
 };
 use martensite::window::event::{
-    EventRouter, ModifierKeys, MouseButton as MButton, PointerEvent, PointerId, PointerKind,
-    PointerState,
+    ime_event_for_winit, EventRouter, ModifierKeys, MouseButton as MButton, PointerEvent,
+    PointerId, PointerKind, PointerState,
 };
 use martensite::window::WindowId;
 
@@ -1529,6 +1529,18 @@ impl ApplicationHandler for App {
                     }
                 }
                 self.sync_focus();
+            }
+            WindowEvent::Ime(ime) => {
+                // IME composition stream — Preedit/Commit route to the
+                // focused widget; Enabled/Disabled are host lifecycle
+                // and drop out of `ime_event_for_winit` as `None`.
+                if let Some(ev) = ime_event_for_winit(&ime) {
+                    let focused = self.focus.current_focus();
+                    if let Some(arena) = &mut self.arena {
+                        self.router.dispatch_ime_event(arena, focused, &ev);
+                    }
+                    self.sync_focus();
+                }
             }
             WindowEvent::RedrawRequested => self.redraw(),
             _ => {}

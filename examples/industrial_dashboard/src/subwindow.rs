@@ -27,8 +27,8 @@ use martensite::widgets::{
     Banner, Container, Disclosure, Flex, ProgressBar, Severity, Switch, Text,
 };
 use martensite::window::event::{
-    EventRouter, ModifierKeys, MouseButton as MButton, PointerEvent, PointerId, PointerKind,
-    PointerState,
+    ime_event_for_winit, EventRouter, ModifierKeys, MouseButton as MButton, PointerEvent,
+    PointerId, PointerKind, PointerState,
 };
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, WindowEvent};
@@ -254,6 +254,16 @@ impl SubWindow {
                     event.repeat,
                 );
                 self.sync_focus();
+            }
+            WindowEvent::Ime(ime) => {
+                // Preedit/Commit route to the focused widget; host
+                // lifecycle variants drop out as `None`.
+                if let Some(ev) = ime_event_for_winit(ime) {
+                    let focused = self.focus.current_focus();
+                    self.router
+                        .dispatch_ime_event(&mut self.arena, focused, &ev);
+                    self.sync_focus();
+                }
             }
             WindowEvent::RedrawRequested => self.render(gpu),
             _ => {}

@@ -284,6 +284,10 @@ pub struct TextInput {
     /// `true` while a `secure` field's reveal toggle shows the real
     /// text instead of bullets.
     revealed: bool,
+    /// In-flight IME composition — the preedit string and its caret
+    /// byte-range, rendered underlined at the insertion caret until the
+    /// matching `ImeCommitted` arrives (or an empty preedit clears it).
+    preedit: Option<(String, Option<(usize, usize)>)>,
     /// Set when a user-driven edit mutates `value` — the
     /// [`take_edited`](Self::take_edited) out-seam (mirrors
     /// `Banner::take_dismissed`).
@@ -325,6 +329,7 @@ impl Clone for TextInput {
             ),
             word_mod_held: self.word_mod_held,
             revealed: self.revealed,
+            preedit: self.preedit.clone(),
             edited: self.edited,
             undo: self.undo.clone(),
             redo: self.redo.clone(),
@@ -371,6 +376,7 @@ impl TextInput {
             scroll_x: std::sync::atomic::AtomicU32::new(0),
             word_mod_held: false,
             revealed: false,
+            preedit: None,
             edited: false,
             undo: VecDeque::new(),
             redo: VecDeque::new(),
@@ -537,6 +543,40 @@ impl TextInput {
     #[inline]
     pub fn set_revealed(&mut self, revealed: bool) {
         self.revealed = revealed;
+    }
+
+    /// The in-flight IME composition string, if one is being composed.
+    ///
+    /// Set by `WidgetEvent::ImePreedit` and cleared by `ImeCommitted`,
+    /// an empty preedit, or focus loss. The string is rendered
+    /// underlined at the insertion caret — it is not part of
+    /// [`value`](Self::value) until committed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    ///
+    /// assert!(TextInput::new("T").preedit().is_none());
+    /// ```
+    #[inline]
+    pub fn preedit(&self) -> Option<&str> {
+        self.preedit.as_ref().map(|(t, _)| t.as_str())
+    }
+
+    /// The caret byte-range inside the current [`preedit`](Self::preedit)
+    /// string, if the IME reports one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    ///
+    /// assert!(TextInput::new("T").preedit_cursor().is_none());
+    /// ```
+    #[inline]
+    pub fn preedit_cursor(&self) -> Option<(usize, usize)> {
+        self.preedit.as_ref().and_then(|(_, c)| *c)
     }
 
     /// Sets the leading adornment — muted static text (or a short
@@ -1493,9 +1533,19 @@ impl Widget for TextInput {
                 self.shift_held = false;
                 self.word_mod_held = false;
                 self.dragging = false;
+                self.preedit = None;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::ImePreedit { text, cursor } => {
+                self.preedit = if text.is_empty() {
+                    None
+                } else {
+                    Some((text.clone(), *cursor))
+                };
                 EventResponse::RequestRepaint
             }
             WidgetEvent::ImeCommitted { text } if !self.read_only => {
+                self.preedit = None;
                 self.insert_str(text);
                 EventResponse::RequestRepaint
             }
@@ -1675,6 +1725,34 @@ impl Widget for TextInput {
             caret.line_to((caret_x, f64::from(face_bottom) - cx.ptf(4.0)));
             cx.list
                 .push_stroke_path(caret, cx.pt(1.0), cx.color(TokenKey::TextColor, CARET));
+        }
+
+        // IME preedit — the in-progress composition paints underlined
+        // at the insertion caret (standard IME presentation); it is not
+        // part of `value` until committed.
+        if self.focused {
+            if let Some((pre, _)) = &self.preedit {
+                let painter =
+                    crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+                let px = text_x + self.offset_x(cx, self.cursor, font_px);
+                let ink = cx.color(TokenKey::TextColor, INK);
+                crate::text_paint::paint_label(
+                    painter,
+                    cx.list,
+                    kurbo::Point::new(f64::from(px), f64::from(text_y)),
+                    pre,
+                    font_px,
+                    ink,
+                );
+                let w = painter
+                    .and_then(|p| p.measure_text(pre, font_px))
+                    .unwrap_or_else(|| pre.chars().count() as f32 * cx.pt(7.0));
+                let uy = f64::from(face_bottom) - cx.ptf(3.0);
+                let mut u = kurbo::BezPath::new();
+                u.move_to((f64::from(px), uy));
+                u.line_to((f64::from(px + w), uy));
+                cx.list.push_stroke_path(u, cx.pt(1.0), ink);
+            }
         }
 
         // Right-edge affordances — the eye toggles masked ↔ plain on
@@ -1872,6 +1950,13 @@ mod tests {
         }
     }
 
+    fn preedit(text: &str, cursor: Option<(usize, usize)>) -> WidgetEvent {
+        WidgetEvent::ImePreedit {
+            text: text.to_string(),
+            cursor,
+        }
+    }
+
     fn key(name: &str) -> WidgetEvent {
         WidgetEvent::KeyPressed {
             key: name.to_string(),
@@ -1888,6 +1973,32 @@ mod tests {
         input.event(&mut ev(&ime("X")));
         assert_eq!(input.value, "aXbc");
         assert_eq!(input.cursor, 2);
+    }
+
+    #[test]
+    fn text_input_ime_preedit_lifecycle() {
+        let mut input = TextInput::new("F");
+        input.event(&mut ev(&preedit("nich", Some((0, 4)))));
+        assert_eq!(input.preedit(), Some("nich"));
+        assert_eq!(input.preedit_cursor(), Some((0, 4)));
+        // Commit inserts the text and clears the composition.
+        input.event(&mut ev(&ime("日本")));
+        assert_eq!(input.preedit(), None);
+        assert_eq!(input.value, "日本");
+        // An empty preedit clears without touching the value.
+        input.event(&mut ev(&preedit("x", None)));
+        input.event(&mut ev(&preedit("", None)));
+        assert_eq!(input.preedit(), None);
+        assert_eq!(input.value, "日本");
+    }
+
+    #[test]
+    fn text_input_preedit_cleared_on_focus_loss() {
+        let mut input = TextInput::new("F");
+        input.event(&mut ev(&preedit("wip", None)));
+        assert_eq!(input.preedit(), Some("wip"));
+        input.event(&mut ev(&WidgetEvent::FocusLost));
+        assert_eq!(input.preedit(), None);
     }
 
     #[test]

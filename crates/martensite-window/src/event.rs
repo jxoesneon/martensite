@@ -1043,6 +1043,110 @@ impl EventRouter {
         self.drain_focus(arena);
         result
     }
+
+    /// Routes an IME event to the focused widget and delivers it.
+    ///
+    /// `ImeEvent::Committed` becomes [`WidgetEvent::ImeCommitted`];
+    /// `ImeEvent::Preedit` becomes [`WidgetEvent::ImePreedit`]. Follows
+    /// the same focused-widget routing as
+    /// [`dispatch_keyboard_event`](Self::dispatch_keyboard_event).
+    /// Returns `None` when no widget is focused.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    /// use martensite_window::event::{EventRouter, ImeEvent};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let root = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// let mut router = EventRouter::new();
+    /// // No focus → no delivery.
+    /// assert!(router
+    ///     .dispatch_ime_event(&mut arena, None, &ImeEvent::Committed("a".into()))
+    ///     .is_none());
+    /// ```
+    pub fn dispatch_ime_event(
+        &mut self,
+        arena: &mut WidgetArena,
+        focused: Option<WidgetId>,
+        event: &ImeEvent,
+    ) -> Option<EventResponse> {
+        let widget_event = match event {
+            ImeEvent::Committed(text) => WidgetEvent::ImeCommitted { text: text.clone() },
+            ImeEvent::Preedit { text, cursor } => WidgetEvent::ImePreedit {
+                text: text.clone(),
+                cursor: *cursor,
+            },
+        };
+        let result = match self.route_keyboard_event(focused) {
+            EventDispatchOutcome::Handled(id) => Some(arena.dispatch_event(id, &widget_event)),
+            _ => None,
+        };
+        self.drain_focus(arena);
+        result
+    }
+}
+
+/// A normalized IME event destined for the focused widget.
+///
+/// This is the widget-delivery subset of winit's
+/// [`Ime`](winit::event::Ime): `Enabled`/`Disabled` are lifecycle
+/// notifications for the host (keyboard visibility, capability tracking)
+/// rather than widget events, so they are not represented here. A
+/// cancelled or ended composition arrives as
+/// [`Preedit`](Self::Preedit) with empty `text`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_window::event::ImeEvent;
+///
+/// let e = ImeEvent::Preedit {
+///     text: "かな".to_string(),
+///     cursor: Some((0, 3)),
+/// };
+/// assert!(matches!(e, ImeEvent::Preedit { .. }));
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImeEvent {
+    /// The composition committed `text` to the widget.
+    Committed(String),
+    /// The composition string changed (or cleared when `text` is empty).
+    Preedit {
+        /// The in-progress composition.
+        text: String,
+        /// Byte-range of the caret within `text`, if shown.
+        cursor: Option<(usize, usize)>,
+    },
+}
+
+/// Maps a winit [`Ime`](winit::event::Ime) event to an [`ImeEvent`].
+///
+/// `Enabled`/`Disabled` return `None` — they are host lifecycle
+/// notifications, not widget events. `Preedit` carries the composition
+/// string and caret byte-range; `Commit` carries the committed text.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_window::event::{ime_event_for_winit, ImeEvent};
+///
+/// let e = winit::event::Ime::Commit("é".to_string());
+/// assert_eq!(ime_event_for_winit(&e), Some(ImeEvent::Committed("é".into())));
+/// ```
+#[must_use]
+pub fn ime_event_for_winit(ime: &winit::event::Ime) -> Option<ImeEvent> {
+    match ime {
+        winit::event::Ime::Commit(text) => Some(ImeEvent::Committed(text.clone())),
+        winit::event::Ime::Preedit(text, cursor) => Some(ImeEvent::Preedit {
+            text: text.clone(),
+            cursor: *cursor,
+        }),
+        // Enabled/Disabled are host lifecycle notifications, not
+        // widget-delivery events; future winit variants are ignored too.
+        _ => None,
+    }
 }
 
 /// Converts a normalized [`PointerEvent`] into the widget-level
@@ -1992,6 +2096,54 @@ mod tests {
             router.route_keyboard_event(None),
             EventDispatchOutcome::Ignored
         );
+    }
+
+    #[test]
+    fn router_ime_event_delivers_to_focused() {
+        use martensite_core::DummyWidget;
+        let mut arena = WidgetArena::new();
+        let widget =
+            arena.insert_with_widget(hot_node(0.0, 0.0, 10.0, 10.0), Box::new(DummyWidget));
+        let mut router = EventRouter::new();
+
+        // No focus → no delivery.
+        assert!(router
+            .dispatch_ime_event(&mut arena, None, &ImeEvent::Committed("a".into()))
+            .is_none());
+        // Both variants deliver to the focused widget.
+        assert!(router
+            .dispatch_ime_event(&mut arena, Some(widget), &ImeEvent::Committed("x".into()))
+            .is_some());
+        assert!(router
+            .dispatch_ime_event(
+                &mut arena,
+                Some(widget),
+                &ImeEvent::Preedit {
+                    text: "w".into(),
+                    cursor: Some((0, 1)),
+                }
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn ime_event_for_winit_maps_variants() {
+        let commit = winit::event::Ime::Commit("é".into());
+        assert_eq!(
+            ime_event_for_winit(&commit),
+            Some(ImeEvent::Committed("é".into()))
+        );
+        let pre = winit::event::Ime::Preedit("nich".into(), Some((0, 4)));
+        assert_eq!(
+            ime_event_for_winit(&pre),
+            Some(ImeEvent::Preedit {
+                text: "nich".into(),
+                cursor: Some((0, 4)),
+            })
+        );
+        // Lifecycle notifications never reach widgets.
+        assert!(ime_event_for_winit(&winit::event::Ime::Enabled).is_none());
+        assert!(ime_event_for_winit(&winit::event::Ime::Disabled).is_none());
     }
 
     // -----------------------------------------------------------------
