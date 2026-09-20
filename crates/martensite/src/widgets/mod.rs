@@ -2371,6 +2371,21 @@ pub mod sankey;
 /// ```
 pub mod scatter_chart;
 
+/// iOS-style overlay scroll thumb — a thin rounded pill that
+/// flashes on `flash()`/scroll updates and fades on `tick`.
+/// Display-only (no hit-testing); the host feeds `set_scroll`
+/// position + visible fraction for custom scrollables.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::scroll_indicator::ScrollIndicator;
+///
+/// let i = ScrollIndicator::vertical().scroll(0.5, 0.25);
+/// assert_eq!(i.scroll_fraction(), 0.5);
+/// ```
+pub mod scroll_indicator;
+
 /// ARIA APG scroll view with smart scrollbars and rubber-band
 /// overscroll.
 ///
@@ -3143,6 +3158,7 @@ pub use ribbon::{Ribbon, RibbonCorner};
 pub use ruler::{Ruler, RulerOrientation};
 pub use sankey::Sankey;
 pub use scatter_chart::{ScatterChart, ScatterSeries};
+pub use scroll_indicator::ScrollIndicator;
 pub use scrollview::{ScrollBarWidget, ScrollView};
 pub use search_bar::SearchBar;
 pub use search_field::SearchField;
