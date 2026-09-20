@@ -2778,6 +2778,20 @@ pub mod typing_indicator;
 /// ```
 pub mod venn;
 
+/// Pannable, zoomable canvas hosting one child (Figma / map / CAD
+/// idiom) — middle-drag pans, wheel zooms around the cursor, `0`
+/// fits, `Home` resets; `to_content`/`to_screen` convert between
+/// view and content space.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::viewport::Viewport;
+///
+/// assert_eq!(Viewport::new().zoom(2.0).zoom_value(), 2.0);
+/// ```
+pub mod viewport;
+
 /// Mirrored-density distribution chart (violin-plot idiom) —
 /// symmetric silhouettes per category from `0..=1` half-width
 /// profiles, with a center line and quartile ticks. Hovering a
@@ -3147,6 +3161,7 @@ pub use tree_view::{TreeNode, TreeView};
 pub use treemap::{Treemap, TreemapItem};
 pub use typing_indicator::TypingIndicator;
 pub use venn::Venn;
+pub use viewport::Viewport;
 pub use violin::Violin;
 pub use volume::Volume;
 pub use vu_meter::VuMeter;
