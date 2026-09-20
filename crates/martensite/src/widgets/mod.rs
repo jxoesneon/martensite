@@ -1804,6 +1804,21 @@ pub mod qr_code;
 /// ```
 pub mod radar_chart;
 
+/// Pie-menu selector — equal annular sectors around a
+/// dead-zone center (marking-menu / game-ui idiom). Click a
+/// sector to park its index in `take_selected`; arrows cycle
+/// the highlight, Enter confirms.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::radial_menu::RadialMenu;
+///
+/// let r = RadialMenu::new().items(["Cut", "Copy", "Paste"]);
+/// assert_eq!(r.item_count(), 3);
+/// ```
+pub mod radial_menu;
+
 /// ARIA APG slider widget.
 ///
 /// # Examples
