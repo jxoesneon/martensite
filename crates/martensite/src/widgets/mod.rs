@@ -1159,6 +1159,19 @@ pub mod digital_clock;
 /// ```
 pub mod disclosure;
 
+/// macOS-style icon dock with proximity magnification, running dots,
+/// and a click-to-launch seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::dock::{Dock, DockItem};
+///
+/// let d = Dock::new().item(DockItem::new("App", [80, 120, 200, 255]));
+/// assert_eq!(d.item_count(), 1);
+/// ```
+pub mod dock;
+
 /// Edge-docked drawer / side panel for the overlay layer.
 ///
 /// # Examples
@@ -2887,6 +2900,7 @@ pub use dialog::Dialog;
 pub use diff_view::{DiffKind, DiffView};
 pub use digital_clock::DigitalClock;
 pub use disclosure::Disclosure;
+pub use dock::{Dock, DockItem};
 pub use drawer::Drawer;
 pub use dropdown::Dropdown;
 pub use empty_state::EmptyState;
