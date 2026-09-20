@@ -2808,6 +2808,20 @@ pub mod tree_view;
 /// ```
 pub mod treemap;
 
+/// Chromatic tuner display — a ±50¢ deviation needle on a
+/// semicircular gauge with a green in-tune band and a large note
+/// readout; `set_pitch` feeds readings, `take_steady` reports a
+/// held in-tune pitch. Music-family companion to `Fretboard`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::tuner::Tuner;
+///
+/// assert!(Tuner::new().note("A").cents(0.0).in_tune());
+/// ```
+pub mod tuner;
+
 /// Bouncing three-dot "composing" affordance from chat UIs —
 /// `tick` advances a staggered wave across the dots; `active`
 /// gates the animation so hosts can park it statically.
@@ -3235,6 +3249,7 @@ pub use transfer::{MoveDir, Transfer};
 pub use tree_select::TreeSelect;
 pub use tree_view::{TreeNode, TreeView};
 pub use treemap::{Treemap, TreemapItem};
+pub use tuner::Tuner;
 pub use typing_indicator::TypingIndicator;
 pub use venn::Venn;
 pub use viewport::Viewport;
