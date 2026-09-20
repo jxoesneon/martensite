@@ -734,6 +734,21 @@ pub mod container;
 /// ```
 pub mod context_menu;
 
+/// Quick-settings panel (macOS Control Center / Android QS idiom) —
+/// a two-column grid of toggle tiles plus full-width slider rows;
+/// tile clicks park `take_toggled`, slider drags park
+/// `take_adjusted` as `(index, fraction)`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::control_center::ControlCenter;
+///
+/// let c = ControlCenter::new().tile("📶", "Wi-Fi", true);
+/// assert!(c.is_on(0));
+/// ```
+pub mod control_center;
+
 /// GDPR consent strip — policy message with Accept / Decline /
 /// Customize buttons and an optional policy link; clicks park a
 /// `CookieConsent` in `take_consent` for the host to persist.
@@ -747,6 +762,21 @@ pub mod context_menu;
 /// assert_eq!(b.pending(), None);
 /// ```
 pub mod cookie_banner;
+
+/// Click-to-copy inline text (Ant `Typography copyable`, commit-hash
+/// chip idiom) — text with a trailing copy icon parking
+/// `take_copied` for the host, a ~1.2 s ✓ flash on `tick`, and
+/// `Enter`/`Space` keyboard copy.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::copyable::Copyable;
+///
+/// let c = Copyable::new("a1b2c3");
+/// assert_eq!(c.text(), "a1b2c3");
+/// ```
+pub mod copyable;
 
 /// Tick-driven countdown timer display (pomodoro / cycle-time
 /// idiom) — `MM:SS` (or `H:MM:SS`) face decrementing each frame,
@@ -778,21 +808,6 @@ pub mod countdown;
 /// assert_eq!(CountdownRing::new(Duration::from_secs(60)).fraction(), 1.0);
 /// ```
 pub mod countdown_ring;
-
-/// Click-to-copy inline text (Ant `Typography copyable`, commit-hash
-/// chip idiom) — text with a trailing copy icon parking
-/// `take_copied` for the host, a ~1.2 s ✓ flash on `tick`, and
-/// `Enter`/`Space` keyboard copy.
-///
-/// # Examples
-///
-/// ```
-/// use martensite::widgets::copyable::Copyable;
-///
-/// let c = Copyable::new("a1b2c3");
-/// assert_eq!(c.text(), "a1b2c3");
-/// ```
-pub mod copyable;
 
 /// iTunes-style cover browser — the selected `Thumbnail` fronts
 /// center full-size while neighbors recede to the sides scaled
@@ -3875,6 +3890,7 @@ pub use compass::Compass;
 pub use confetti::Confetti;
 pub use container::Container;
 pub use context_menu::ContextMenu;
+pub use control_center::ControlCenter;
 pub use cookie_banner::{CookieBanner, CookieConsent};
 pub use copyable::Copyable;
 pub use countdown::Countdown;
