@@ -860,6 +860,21 @@ pub mod hex_view;
 /// ```
 pub mod histogram;
 
+/// Rainbow hue rail with a draggable handle — the hue strip in
+/// every color picker. Click or drag to set a hue in degrees;
+/// `←`/`→` step by one.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::hue_slider::HueSlider;
+///
+/// let mut s = HueSlider::new().hue(200.0);
+/// s.set_hue(480.0);
+/// assert_eq!(s.hue_value(), 120.0);
+/// ```
+pub mod hue_slider;
+
 /// Raster image display with aspect-fit modes (`Contain`, `Cover`,
 /// `Fill`, `None`).
 ///
@@ -2834,6 +2849,7 @@ pub use header_bar::HeaderBar;
 pub use heat_map::HeatMap;
 pub use hex_view::HexView;
 pub use histogram::Histogram;
+pub use hue_slider::HueSlider;
 pub use image::{Image, ImageFit};
 pub use image_viewer::ImageViewer;
 pub use ink_canvas::{InkCanvas, Stroke};
