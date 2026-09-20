@@ -1543,6 +1543,21 @@ pub mod menu_button;
 /// ```
 pub mod mention;
 
+/// Document-overview strip (editor minimap idiom) — squashed
+/// content bars down a narrow column plus a translucent viewport
+/// rect at `scroll`; clicking or dragging parks the picked scroll
+/// fraction in `take_scrolled`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::minimap::Minimap;
+///
+/// let m = Minimap::new().lines([20u32, 8, 35]).viewport(0.4);
+/// assert_eq!(m.line_count(), 3);
+/// ```
+pub mod minimap;
+
 /// Vertical icon+label destination rail for app-level navigation
 /// (Material 3 `NavigationRail`, WinUI `NavigationView` rail mode).
 ///
