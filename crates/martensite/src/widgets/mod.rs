@@ -2574,6 +2574,23 @@ pub mod password_strength;
 /// ```
 pub mod pattern_lock;
 
+/// Paged PDF viewer — wraps a `martensite-pdf` `PdfDocument` and
+/// renders the current page via `push_image`; defaults to the
+/// procedural `BlankPdfDocument` so the scaffold shows a real
+/// raster until a pdfium/mupdf backend lands. `PageUp`/`PageDown`,
+/// `Home`/`End`, `+`/`-`/`0` drive page and zoom.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::pdf_view::PdfView;
+///
+/// let mut v = PdfView::new();
+/// v.next_page();
+/// assert_eq!(v.page(), 1);
+/// ```
+pub mod pdf_view;
+
 /// Developer stats HUD (Chrome DevTools / Unity overlay idiom) —
 /// the host pushes per-frame ms samples via `push_frame`; the
 /// widget keeps a 120-sample ring and renders an fps readout plus
@@ -4111,6 +4128,7 @@ pub use page_header::PageHeader;
 pub use pagination::Pagination;
 pub use password_strength::PasswordStrength;
 pub use pattern_lock::PatternLock;
+pub use pdf_view::{PdfView, ZoomMode};
 pub use perf_overlay::PerfOverlay;
 pub use piano_keys::PianoKeys;
 pub use pie_chart::{PieChart, PieSlice};
