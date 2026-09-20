@@ -2058,6 +2058,22 @@ pub mod mention;
 /// ```
 pub mod message_list;
 
+/// Three-pane merge display (Meld / GitLens conflict-resolver
+/// idiom) — aligned `Ours | Result | Theirs` rows, conflict rows
+/// tinted, per-row `‹`/`›` accept buttons writing the chosen side
+/// into the result and parking `take_choice`. Sibling of
+/// `DiffView`'s unified-diff column.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::merge_view::{MergeRow, MergeView};
+///
+/// let mut m = MergeView::new().row(MergeRow::conflict("a", "", "b"));
+/// assert_eq!(m.conflict_count(), 1);
+/// ```
+pub mod merge_view;
+
 /// Tick-driven tempo indicator — beat lamps (accent on the
 /// downbeat) over a BPM label; click or Space toggles the run
 /// state, `take_beat` parks each crossing for host audio, and
@@ -3488,6 +3504,7 @@ pub use mention::Mention;
 pub use menu::{Menu, MenuItem, MenuPath, MenuState};
 pub use menu_bar::MenuBar;
 pub use menu_button::MenuButton;
+pub use merge_view::{MergeRow, MergeSide, MergeView};
 pub use message_list::{Message, MessageList};
 pub use metronome::Metronome;
 pub use mind_map::MindMap;
