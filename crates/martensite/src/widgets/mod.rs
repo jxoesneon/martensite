@@ -1202,6 +1202,22 @@ pub mod status_bar;
 /// ```
 pub mod status_dot;
 
+/// Industrial andon signal tower — a vertical stack of
+/// independently lit colored lamps (the Banner/Patlite tower-light
+/// idiom), with click-to-toggle and flashing support on `tick`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::stack_light::{Lamp, StackLight};
+///
+/// let t = StackLight::new()
+///     .lamp(Lamp::new("Fault", [235, 87, 87, 255]))
+///     .lamp(Lamp::new("Run", [92, 200, 120, 255]).lit(true));
+/// assert!(t.lit(1));
+/// ```
+pub mod stack_light;
+
 /// Split button — primary-action zone fused with a chevron that
 /// parks a dropdown request (WinUI `SplitButton`).
 ///
@@ -2877,6 +2893,7 @@ pub use split_button::SplitButton;
 pub use split_flap::SplitFlap;
 pub use split_view::{SplitOrientation, SplitView};
 pub use stack::Stack;
+pub use stack_light::{Lamp, StackLight};
 pub use statistic::{Statistic, Trend};
 pub use status_bar::{StatusBar, StatusItem};
 pub use status_dot::{Status, StatusDot};
