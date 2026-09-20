@@ -3139,6 +3139,21 @@ pub mod tuner;
 /// ```
 pub mod typing_indicator;
 
+/// Unit converter (GNOME Calculator idiom) — category pill,
+/// `from`/`to` unit cells that cycle on click, a `⇅` swap, and a
+/// computed result line; `x`/`Up`/`Down` work from the keyboard.
+/// Length, mass, volume, and temperature tables built in.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::unit_converter::{UnitCategory, UnitConverter};
+///
+/// let c = UnitConverter::new().in_category(UnitCategory::Mass).with_value(1.0);
+/// assert!(c.convert().is_some());
+/// ```
+pub mod unit_converter;
+
 /// Two- or three-set overlap diagram — translucent categorical
 /// circles in the classic side-by-side or triangular layout with
 /// a label at each circle's outer point. Hovering a unique region
@@ -3619,6 +3634,7 @@ pub use tree_view::{TreeNode, TreeView};
 pub use treemap::{Treemap, TreemapItem};
 pub use tuner::Tuner;
 pub use typing_indicator::TypingIndicator;
+pub use unit_converter::{UnitCategory, UnitConverter};
 pub use venn::Venn;
 pub use viewport::Viewport;
 pub use violin::Violin;
