@@ -2843,6 +2843,23 @@ pub mod table;
 /// ```
 pub mod tabs;
 
+/// Alt-Tab app switcher strip — horizontal `Thumbnail` tiles with a
+/// focus ring. Arrows/`Tab`/scroll/`cycle` move the ring, `Enter`
+/// or a tile click parks `take_selected`, `Escape` parks
+/// `take_cancelled`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::task_switcher::TaskSwitcher;
+/// use martensite::widgets::Thumbnail;
+///
+/// let mut t = TaskSwitcher::new().item(Thumbnail::new("a", [1; 4]));
+/// t.cycle(1);
+/// assert_eq!(t.current(), Some(0));
+/// ```
+pub mod task_switcher;
+
 /// Scrollback display with a live prompt line — `write` appends
 /// output, the prompt row shows `input` with a blinking caret,
 /// `Enter` echoes `prompt + input` to the scrollback and parks
@@ -3513,6 +3530,7 @@ pub use swipe_actions::{SwipeAction, SwipeActions, SwipeEdge};
 pub use switch::Switch;
 pub use table::{SortDir, Table, TableAlign, TableColumn};
 pub use tabs::{TabActivation, TabItem, Tabs};
+pub use task_switcher::TaskSwitcher;
 pub use terminal::Terminal;
 pub use text::Text;
 pub use text_area::TextArea;
