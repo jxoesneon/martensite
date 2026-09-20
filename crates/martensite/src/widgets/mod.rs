@@ -361,6 +361,19 @@ pub mod cascader;
 /// ```
 pub mod checkbox;
 
+/// Interactive 8×8 chess board — click-click moves, FEN placement,
+/// undo, keyboard navigation, optional coordinate margin.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::chess_board::{ChessBoard, Piece, Side};
+///
+/// let b = ChessBoard::new();
+/// assert_eq!(b.piece_at(0), Some((Piece::Rook, Side::White)));
+/// ```
+pub mod chess_board;
+
 /// Compact pill chip for selection, input, or actions (M3 chips /
 /// Ant Tag).
 ///
@@ -2851,6 +2864,7 @@ pub use card_deck::CardDeck;
 pub use carousel::Carousel;
 pub use cascader::{Cascader, CascaderOption};
 pub use checkbox::{CheckBox, CheckState};
+pub use chess_board::{ChessBoard, Piece, Side};
 pub use chip::{Chip, ChipKind};
 pub use chip_group::{ChipGroup, ChipSelection};
 pub use clamp::Clamp;
