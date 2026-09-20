@@ -718,6 +718,22 @@ pub mod gauge;
 /// ```
 pub mod gradient_editor;
 
+/// Node-link diagram — labeled nodes on straight edges, seeded
+/// on a ring and settled by `relax` spring passes; dragging a
+/// node repins it (parked in `take_moved`), hovering parks the
+/// index in `take_hovered`. The free-form sibling of
+/// `OrgChart`, `MindMap`, and `Sankey`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::graph_view::GraphView;
+///
+/// let g = GraphView::new().node("a").node("b").edge(0, 1);
+/// assert_eq!(g.edge_count(), 1);
+/// ```
+pub mod graph_view;
+
 /// Column-grid layout container — Ant `Row`/`Col` style: a fixed
 /// column count with per-cell `col_span`/`row_span` and automatic
 /// left-to-right placement that wraps to fresh rows.
