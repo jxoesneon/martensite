@@ -2211,6 +2211,21 @@ pub mod pip;
 /// ```
 pub mod playlist;
 
+/// Voting widget — question + option rows that reveal percentage
+/// bars and counts once voted (Slack/Telegram poll idiom). Clicks
+/// cast or move the user's vote and park the index in
+/// `take_voted`; `close` freezes voting.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::poll::{Poll, PollOption};
+///
+/// let p = Poll::new("Lunch?").option(PollOption::new("Pizza", 3));
+/// assert_eq!(p.option_count(), 1);
+/// ```
+pub mod poll;
+
 /// Polar area chart (Nightingale / Coxcomb rose idiom) — every
 /// wedge spans an equal angle and its radius encodes the value
 /// (sqrt-scaled so area stays linear). Hovering a wedge parks its
@@ -3302,6 +3317,7 @@ pub use pip::Pip;
 pub use pips_pager::PipsPager;
 pub use playlist::{Playlist, Track};
 pub use polar_area::PolarArea;
+pub use poll::{Poll, PollOption};
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
 pub use progress::{ProgressBar, Spinner};
