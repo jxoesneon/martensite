@@ -3151,6 +3151,13 @@ name = "martensite-notify-platform"
 version = "0.18.0"
 
 [[package]]
+name = "martensite-persist"
+version = "0.18.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "martensite-plugin"
 version = "0.18.0"
 dependencies = [

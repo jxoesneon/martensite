@@ -19,6 +19,7 @@ members = [
     "crates/martensite-theme",
     "crates/martensite-motion",
     "crates/martensite-notify",
+    "crates/martensite-persist",
     "crates/martensite-media",
     "crates/martensite-media-platform",
     "crates/martensite-history",
@@ -92,6 +93,7 @@ martensite-dnd = { version = "0.18.0", path = "crates/martensite-dnd" }
 martensite-theme = { version = "0.18.0", path = "crates/martensite-theme" }
 martensite-motion = { version = "0.18.0", path = "crates/martensite-motion" }
 martensite-notify = { version = "0.18.0", path = "crates/martensite-notify" }
+martensite-persist = { version = "0.18.0", path = "crates/martensite-persist" }
 martensite-media = { version = "0.18.0", path = "crates/martensite-media" }
 martensite-media-platform = { version = "0.18.0", path = "crates/martensite-media-platform" }
 martensite-history = { version = "0.18.0", path = "crates/martensite-history" }
@@ -170,6 +172,7 @@ notify = "8.2"
 libloading = "0.8"
 naga = { version = "30", features = ["wgsl-in"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.6"
 unicode-bidi = "0.3"
