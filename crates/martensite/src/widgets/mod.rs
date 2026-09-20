@@ -2790,6 +2790,19 @@ pub mod watermark;
 /// ```
 pub mod waveform;
 
+/// Seven-day timed agenda grid — all-day strip, hour lines, colored
+/// event blocks, and click seams for events and empty slots.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::week_view::{WeekView, WeekEvent};
+///
+/// let w = WeekView::new().event(WeekEvent::new("Standup", 0, 9.0, 9.5));
+/// assert_eq!(w.event_count(), 1);
+/// ```
+pub mod week_view;
+
 /// Vertically scrollable option drum that snaps to the centered row
 /// (iOS `UIPickerView`, SwiftUI wheel style).
 ///
@@ -3043,6 +3056,7 @@ pub use vu_meter::VuMeter;
 pub use waterfall::{Waterfall, WaterfallEntry};
 pub use watermark::Watermark;
 pub use waveform::Waveform;
+pub use week_view::{WeekEvent, WeekView};
 pub use wheel_picker::WheelPicker;
 pub use wizard::Wizard;
 pub use word_cloud::WordCloud;
