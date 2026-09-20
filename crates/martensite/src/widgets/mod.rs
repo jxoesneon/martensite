@@ -3412,6 +3412,20 @@ pub mod typing_indicator;
 /// ```
 pub mod unit_converter;
 
+/// Non-modal "update available" card (Sparkle idiom) — icon,
+/// title + version, changelog notes, download progress bar, and
+/// Update / Later buttons parking `take_update`/`take_later`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::update_prompt::UpdatePrompt;
+///
+/// let p = UpdatePrompt::new("1.4.0").notes("Faster startup");
+/// assert_eq!(p.version, "1.4.0");
+/// ```
+pub mod update_prompt;
+
 /// Two- or three-set overlap diagram — translucent categorical
 /// circles in the classic side-by-side or triangular layout with
 /// a label at each circle's outer point. Hovering a unique region
@@ -3941,6 +3955,7 @@ pub use treemap::{Treemap, TreemapItem};
 pub use tuner::Tuner;
 pub use typing_indicator::TypingIndicator;
 pub use unit_converter::{UnitCategory, UnitConverter};
+pub use update_prompt::UpdatePrompt;
 pub use venn::Venn;
 pub use video_grid::{Participant, VideoGrid};
 pub use viewport::Viewport;
