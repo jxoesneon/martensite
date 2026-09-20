@@ -21,6 +21,7 @@ members = [
     "crates/martensite-notify",
     "crates/martensite-persist",
     "crates/martensite-print",
+    "crates/martensite-share",
     "crates/martensite-media",
     "crates/martensite-media-platform",
     "crates/martensite-history",
@@ -40,6 +41,7 @@ members = [
     "crates/martensite-dialog-platform",
     "crates/martensite-notify-platform",
     "crates/martensite-print-platform",
+    "crates/martensite-share-platform",
     "crates/martensite-text-reference",
     "crates/martensite-render-test",
     "crates/martensite-media-test",
@@ -97,6 +99,7 @@ martensite-motion = { version = "0.18.0", path = "crates/martensite-motion" }
 martensite-notify = { version = "0.18.0", path = "crates/martensite-notify" }
 martensite-persist = { version = "0.18.0", path = "crates/martensite-persist" }
 martensite-print = { version = "0.18.0", path = "crates/martensite-print" }
+martensite-share = { version = "0.18.0", path = "crates/martensite-share" }
 martensite-media = { version = "0.18.0", path = "crates/martensite-media" }
 martensite-media-platform = { version = "0.18.0", path = "crates/martensite-media-platform" }
 martensite-history = { version = "0.18.0", path = "crates/martensite-history" }
@@ -114,6 +117,7 @@ martensite-clipboard-platform = { version = "0.18.0", path = "crates/martensite-
 martensite-dialog-platform = { version = "0.18.0", path = "crates/martensite-dialog-platform" }
 martensite-notify-platform = { version = "0.18.0", path = "crates/martensite-notify-platform" }
 martensite-print-platform = { version = "0.18.0", path = "crates/martensite-print-platform" }
+martensite-share-platform = { version = "0.18.0", path = "crates/martensite-share-platform" }
 martensite-host = { version = "0.18.0", path = "crates/martensite-host" }
 martensite-shell = { version = "0.18.0", path = "crates/martensite-shell" }
 martensite-engine-bridge = { version = "0.18.0", path = "crates/martensite-engine-bridge" }

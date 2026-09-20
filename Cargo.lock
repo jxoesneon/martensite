@@ -3171,6 +3171,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "martensite-print"
+version = "0.18.0"
+dependencies = [
+ "martensite-print-platform",
+]
+
+[[package]]
+name = "martensite-print-platform"
+version = "0.18.0"
+
+[[package]]
 name = "martensite-reactive"
 version = "0.18.0"
 dependencies = [
@@ -3207,6 +3218,17 @@ dependencies = [
  "martensite-wgpu",
  "wgpu",
 ]
+
+[[package]]
+name = "martensite-share"
+version = "0.18.0"
+dependencies = [
+ "martensite-share-platform",
+]
+
+[[package]]
+name = "martensite-share-platform"
+version = "0.18.0"
 
 [[package]]
 name = "martensite-shell"

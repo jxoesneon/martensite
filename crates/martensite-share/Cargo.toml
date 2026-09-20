@@ -1,0 +1,30 @@
+[package]
+name = "martensite-share"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Share-sheet / reveal-in-folder abstraction (URI dispatch, mailto drafts, file-manager reveal) with scripted test backends."
+readme = "README.md"
+
+[dependencies]
+# Optional dependency on the OS share backend crate. When the `platform`
+# feature is enabled, `default_platform_share` returns a real OS share
+# driver (`open`/`open -R` on macOS, `xdg-open`/`gio` on Linux,
+# `explorer`/`start` on Windows) instead of a stub.
+martensite-share-platform = { workspace = true, optional = true }
+
+[features]
+default = []
+# Enables real OS share integration via `martensite-share-platform`.
+# When disabled, all platform backends fall back to safe stubs that
+# report `ShareOutcome::Unsupported`.
+platform = ["dep:martensite-share-platform"]
+
+[lints]
+workspace = true
