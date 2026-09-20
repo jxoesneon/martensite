@@ -3051,6 +3051,19 @@ pub mod word_cloud;
 /// ```
 pub mod xy_pad;
 
+/// Map/canvas zoom button cluster (Leaflet corner-control idiom) —
+/// `+`, `−`, optional `fit`/`1:1` buttons and a percent readout;
+/// presses park `ZoomAction` in `take_action` for the host's view.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::zoom_controls::ZoomControls;
+///
+/// assert_eq!(ZoomControls::new().button_count(), 4);
+/// ```
+pub mod zoom_controls;
+
 pub use about::About;
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
@@ -3266,3 +3279,4 @@ pub use wheel_picker::WheelPicker;
 pub use wizard::Wizard;
 pub use word_cloud::WordCloud;
 pub use xy_pad::XYPad;
+pub use zoom_controls::{ZoomAction, ZoomControls};
