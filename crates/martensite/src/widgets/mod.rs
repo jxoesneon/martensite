@@ -708,6 +708,19 @@ pub mod dial;
 /// ```
 pub mod filmstrip;
 
+/// Two-faced flip card (Anki / quiz-deck idiom) — click or Space
+/// flips question to answer and parks the side in `take_flipped`;
+/// `r` returns to the front and `set_card` advances the deck.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::flashcard::Flashcard;
+///
+/// assert!(!Flashcard::new("Q", "A").is_flipped());
+/// ```
+pub mod flashcard;
+
 /// Flexbox row and column layout.
 ///
 /// # Examples
@@ -3145,6 +3158,7 @@ pub use expander_row::ExpanderRow;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use file_chooser_button::{ChooserMode, FileChooserButton};
 pub use filmstrip::{Filmstrip, Thumbnail};
+pub use flashcard::Flashcard;
 pub use flex::{Flex, FlexDirection};
 pub use float_button::FloatButton;
 pub use flow_box::{FlowBox, FlowSelection};
