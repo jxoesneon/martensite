@@ -349,6 +349,23 @@ pub mod carousel;
 /// ```
 pub mod cascader;
 
+/// Message composer — draft field + Send button with optional
+/// attach/emoji affordances (Slack/iMessage idiom). Enter commits
+/// the draft to `take_sent`, Escape clears; attach/emoji park
+/// `take_attach`/`take_emoji`. Completes the chat family with
+/// `MessageList` and `TypingIndicator`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::chat_input::ChatInput;
+///
+/// let mut c = ChatInput::new();
+/// c.insert("hi");
+/// assert_eq!(c.draft(), "hi");
+/// ```
+pub mod chat_input;
+
 /// Scrollable list of checkable rows (installer / software-picker
 /// idiom) — click or Space toggles, `checked_indices` for the host,
 /// `take_changed` seam.
@@ -3165,6 +3182,7 @@ pub use card::{Card, CardVariant};
 pub use card_deck::CardDeck;
 pub use carousel::Carousel;
 pub use cascader::{Cascader, CascaderOption};
+pub use chat_input::ChatInput;
 pub use check_list::{CheckItem, CheckList};
 pub use checkbox::{CheckBox, CheckState};
 pub use chess_board::{ChessBoard, Piece, Side};
