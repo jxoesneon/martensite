@@ -1801,6 +1801,22 @@ pub mod legend;
 /// ```
 pub mod level_bar;
 
+/// Fullscreen media overlay — dim backdrop, centered `Thumbnail`,
+/// ‹ › navigation, × close, counter, caption (photo-viewer
+/// idiom). Backdrop clicks and Escape park `take_closed`; arrows
+/// park `take_navigated`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::lightbox::Lightbox;
+/// use martensite::widgets::Thumbnail;
+///
+/// let l = Lightbox::new().item(Thumbnail::new("a", [1; 4]));
+/// assert_eq!(l.item_count(), 1);
+/// ```
+pub mod lightbox;
+
 /// Inline hyperlink label — underlined accent text that parks its
 /// target in `take_activated` on click, `Enter`, or AT `Click` (Ant
 /// `Typography.Link`, GTK `LinkButton`). The shell owns navigation.
@@ -3377,6 +3393,7 @@ pub use lcd_number::LcdNumber;
 pub use led_matrix::LedMatrix;
 pub use legend::{Legend, LegendEntry};
 pub use level_bar::{LevelBar, LevelZone};
+pub use lightbox::Lightbox;
 pub use line_chart::{LineChart, LineSeries};
 pub use link::Link;
 pub use list_view::{ListView, SelectionMode, SelectionModel};
