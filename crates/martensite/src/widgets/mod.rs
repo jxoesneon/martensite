@@ -2220,6 +2220,22 @@ pub mod tree_view;
 /// ```
 pub mod treemap;
 
+/// Two- or three-set overlap diagram — translucent categorical
+/// circles in the classic side-by-side or triangular layout with
+/// a label at each circle's outer point. Hovering a unique region
+/// parks its set index in `take_hovered`; the shared center parks
+/// `usize::MAX`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::venn::Venn;
+///
+/// let v = Venn::new().set("Rust").set("Go").set("Zig");
+/// assert_eq!(v.set_count(), 3);
+/// ```
+pub mod venn;
+
 /// Running-total bridge chart (McKinsey / finance waterfall
 /// idiom) — floating delta columns spanning previous-to-new
 /// cumulative totals, full columns for totals, dashed connectors
