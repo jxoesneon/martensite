@@ -3386,6 +3386,21 @@ pub mod thermometer;
 /// ```
 pub mod ticker_tape;
 
+/// Event / boarding-pass card — a main face (title, caption,
+/// field grid) separated from a barcode stub by a perforated
+/// edge with notches; clicking the stub tears it off and parks
+/// `true` in `take_torn`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::ticket::Ticket;
+///
+/// let t = Ticket::new("SFO → JFK").field("Seat", "12A");
+/// assert_eq!(t.field_count(), 1);
+/// ```
+pub mod ticket;
+
 /// Segmented time-of-day field with inline hour/minute/AM-PM
 /// editing (`QTimeEdit` / WinUI `TimePicker`) — arrow stepping,
 /// two-digit rollover typing, `take_edited` seam.
@@ -4141,6 +4156,7 @@ pub use text_input::TextInput;
 pub use theme_picker::{ThemeOption, ThemePicker};
 pub use thermometer::Thermometer;
 pub use ticker_tape::{TickerItem, TickerTape};
+pub use ticket::Ticket;
 pub use time_picker::{Time, TimePicker};
 pub use timeline::{Timeline, TimelineDot, TimelineItem};
 pub use toast::{Toast, ToastHost};
