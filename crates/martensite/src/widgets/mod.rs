@@ -2867,6 +2867,19 @@ pub mod viewport;
 /// ```
 pub mod violin;
 
+/// On-screen QWERTY keyboard (OSK / kiosk idiom) — three letter
+/// rows plus momentary Shift, Backspace, and a Space bar; each
+/// released key parks its produced text in `take_pressed`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::virtual_keyboard::VirtualKeyboard;
+///
+/// assert_eq!(VirtualKeyboard::new().key_count(), 30);
+/// ```
+pub mod virtual_keyboard;
+
 /// Speaker icon + gain rail + mute toggle (system-tray / media
 /// volume idiom) — drag, scroll, or arrow through `0..=max` with
 /// optional boost range; icon click or `m` toggles mute.
@@ -3226,6 +3239,7 @@ pub use typing_indicator::TypingIndicator;
 pub use venn::Venn;
 pub use viewport::Viewport;
 pub use violin::Violin;
+pub use virtual_keyboard::VirtualKeyboard;
 pub use volume::Volume;
 pub use vu_meter::VuMeter;
 pub use waterfall::{Waterfall, WaterfallEntry};
