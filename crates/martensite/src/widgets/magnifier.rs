@@ -1,5 +1,6 @@
 //! `Magnifier` — a loupe that renders a zoomed region of a source
-//! [`ImageData`] snapshot (the design-tool / color-pick loupe idiom).
+//! [`ImageData`](martensite_core::paint::ImageData) snapshot (the
+//! design-tool / color-pick loupe idiom).
 //!
 //! The host feeds a snapshot through [`Magnifier::source`]; the
 //! pointer's position inside the widget picks the sample point in

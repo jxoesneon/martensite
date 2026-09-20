@@ -6,7 +6,7 @@
 //! status, a stack light shows a *combination* — e.g. amber
 //! flashing over green. Clicking a lamp toggles it and parks the
 //! index in [`StackLight::take_changed`]; flashing lamps blink on
-//! [`Widget::tick`].
+//! [`Widget::tick`](martensite_core::widget::Widget::tick).
 //!
 //! # Examples
 //!

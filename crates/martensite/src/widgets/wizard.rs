@@ -5,7 +5,7 @@
 //! composition. Pages are real widget children — only the current
 //! page is laid out and receives input. `next` on the final step
 //! parks a finish request; the app reads it via
-//! [`take_finished`](Self::take_finished).
+//! [`take_finished`](crate::widgets::wizard::Wizard::take_finished).
 //!
 //! # Examples
 //!
@@ -105,7 +105,9 @@ impl Widget for WizardPage {
 /// ```
 /// use martensite::widgets::{Text, Wizard};
 ///
-/// let w = Wizard::new().step("a", Text::new("p"));
+/// let w = Wizard::new()
+///     .step("a", Text::new("p"))
+///     .step("b", Text::new("q"));
 /// assert!(w.has_next());
 /// ```
 pub struct Wizard {

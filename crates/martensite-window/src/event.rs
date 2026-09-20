@@ -1151,7 +1151,7 @@ pub fn ime_event_for_winit(ime: &winit::event::Ime) -> Option<ImeEvent> {
 
 /// Converts a normalized [`PointerEvent`] into the widget-level
 /// [`WidgetEvent`] vocabulary. `click_count` is the streak value
-/// computed by the router's [`ClickTracker`] for `Pressed` events;
+/// computed by the router's `ClickTracker` for `Pressed` events;
 /// pass `1` for other states.
 #[must_use]
 pub fn widget_event_for_pointer(event: &PointerEvent, click_count: u8) -> WidgetEvent {

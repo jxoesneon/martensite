@@ -3,7 +3,8 @@
 //!
 //! A transparent overlay leaf: primary press anchors the band, drag
 //! extends it, release finalizes and parks the normalized
-//! [`Rect`] in [`RubberBand::take_selection`] for the host to
+//! [`Rect`](martensite_core::Rect) in [`RubberBand::take_selection`]
+//! for the host to
 //! intersect against its items. [`RubberBand::active`] reports the
 //! live band while dragging so hosts can highlight incrementally.
 //!

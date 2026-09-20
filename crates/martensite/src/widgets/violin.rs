@@ -2,7 +2,7 @@
 //! category — the distribution-shape companion to
 //! [`crate::widgets::box_plot::BoxPlot`]).
 //!
-//! Each [`ViolinSeries`] is a name plus a density profile (`0..=1`
+//! Each `ViolinSeries` is a name plus a density profile (`0..=1`
 //! half-widths sampled top→bottom) rendered as a symmetric
 //! silhouette with a center line and inner quartile tick — the
 //! kernel-density-estimate look. Hovering a violin parks its

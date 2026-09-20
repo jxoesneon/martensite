@@ -1,7 +1,9 @@
-//! `PdfView` — a paged PDF viewer. The widget owns a [`PdfDocument`]
+//! `PdfView` — a paged PDF viewer. The widget owns a
+//! [`PdfDocument`](martensite_pdf::PdfDocument)
 //! (`martensite-pdf`'s raster contract) and paints the current page
 //! via `PaintList::push_image` — the same call a pdfium/mupdf backend
-//! will make once one lands. It defaults to [`BlankPdfDocument`], a
+//! will make once one lands. It defaults to
+//! [`BlankPdfDocument`](martensite_pdf::BlankPdfDocument), a
 //! procedural document that produces real pixels, so the scaffold
 //! shows a genuine page raster immediately rather than a stub.
 //!

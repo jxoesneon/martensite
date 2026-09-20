@@ -120,8 +120,9 @@ impl FileFilter {
 
 /// A request describing one dialog invocation.
 ///
-/// Build with [`FileDialogRequest::open_file`], [`open_files`],
-/// [`pick_folder`], or [`save_file`], then refine with the builder methods.
+/// Build with [`FileDialogRequest::open_file`],
+/// [`FileDialogRequest::open_files`], [`FileDialogRequest::pick_folder`],
+/// or [`FileDialogRequest::save_file`], then refine with the builder methods.
 ///
 /// # Examples
 ///

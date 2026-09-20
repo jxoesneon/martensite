@@ -4,7 +4,9 @@
 //!
 //! [`Terminal::write`] appends output lines; the prompt row at
 //! the bottom shows `prompt` + the in-progress `input` buffer
-//! with a caret that blinks on [`Terminal::tick`]. Character
+//! with a caret that blinks on
+//! [`Terminal::tick`](martensite_core::widget::Widget::tick).
+//! Character
 //! keys append to `input`, `Backspace` deletes, and `Enter`
 //! moves the buffer to the scrollback as a `prompt`-prefixed
 //! echo, parking it in [`Terminal::take_submitted`]. The wheel

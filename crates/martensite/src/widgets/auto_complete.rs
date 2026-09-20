@@ -1170,7 +1170,7 @@ impl AutoComplete {
     /// - rebuilds the live popup's content in place when the filtered
     ///   list changed under it (`OverlayLayer::replace_content`);
     /// - notices overlay-level dismissal (outside press, `Escape`) and
-    ///   runs [`dismiss`](Self::dismiss) so previewed text restores.
+    ///   runs `dismiss` so previewed text restores.
     ///
     /// # Examples
     ///

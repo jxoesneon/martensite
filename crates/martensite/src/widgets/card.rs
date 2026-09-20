@@ -59,7 +59,7 @@ const TITLE_SIZE: f32 = 15.0;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CardVariant {
     /// Surface fill lifted by a subtle offset darker edge (the
-    /// stand-in for a real shadow — see [`SHADOW`]).
+    /// stand-in for a real shadow — see `SHADOW`).
     #[default]
     Elevated,
     /// Flat surface fill, no border and no lift cue.

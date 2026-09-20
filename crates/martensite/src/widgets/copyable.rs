@@ -4,7 +4,8 @@
 //! The text renders with a trailing copy-icon button. Clicking it
 //! parks the text in [`Copyable::take_copied`] for the host to push
 //! to the clipboard, and flashes a check glyph for ~1.2 s (cleared
-//! on [`Widget::tick`]). `Enter`/`Space` copy when focused.
+//! on [`Widget::tick`](martensite_core::widget::Widget::tick)).
+//! `Enter`/`Space` copy when focused.
 //!
 //! # Examples
 //!

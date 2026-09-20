@@ -8,7 +8,8 @@
 //! driven — feed it per-channel samples via [`VuMeter::push`]
 //! or replace all channels with [`VuMeter::levels`]. Each
 //! channel's peak marker holds for [`VuMeter::peak_hold`] then
-//! decays toward the live level on [`Widget::tick`].
+//! decays toward the live level on
+//! [`Widget::tick`](martensite_core::widget::Widget::tick).
 //!
 //! # Examples
 //!

@@ -1,4 +1,5 @@
-//! `ImageViewer` — a pan/zoom viewport over an [`ImageData`]
+//! `ImageViewer` — a pan/zoom viewport over an
+//! [`ImageData`](martensite_core::paint::ImageData)
 //! (Preview-app / photo-viewer idiom).
 //!
 //! The image fits the viewport at `zoom == 1.0`; `Scroll` zooms

@@ -11,7 +11,7 @@
 //! - `Escape` dismisses the topmost popup.
 //!
 //! Entries opened via [`OverlayLayer::open_with`] with
-//! [`OverlayOptions::modal`] change that contract: a scrim covers the
+//! [`OverlayOptions::modal()`](crate::overlay::OverlayOptions::modal) change that contract: a scrim covers the
 //! viewport beneath the topmost modal entry, positional events outside
 //! it are consumed rather than forwarded, and popups below it are
 //! unreachable until it closes — the standard modal-dialog and
@@ -115,7 +115,7 @@ pub enum OverlayAnchor {
     Center,
     /// Spans the full viewport height pinned to the left edge; the
     /// measured width sets the drawer's depth. Modal with a scrim
-    /// when opened via [`OverlayOptions::modal`].
+    /// when opened via [`OverlayOptions::modal()`].
     EdgeLeft,
     /// Spans the full viewport height pinned to the right edge —
     /// inspector drawers, detail panels.

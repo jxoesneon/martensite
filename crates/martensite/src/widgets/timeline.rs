@@ -9,7 +9,7 @@
 //! # Examples
 //!
 //! ```
-//! use martensite::widgets::{Timeline, TimelineItem};
+//! use martensite::widgets::{Timeline, TimelineDot, TimelineItem};
 //!
 //! let tl = Timeline::new()
 //!     .item(TimelineItem::new("Order placed").subtitle("09:41"))

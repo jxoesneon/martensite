@@ -198,7 +198,7 @@ pub struct TableColumn {
 }
 
 impl TableColumn {
-    /// Creates a column with the default width ([`DEFAULT_COL_W`] =
+    /// Creates a column with the default width (`DEFAULT_COL_W` =
     /// 120pt), minimum width (40pt), `sortable: true`, and
     /// [`TableAlign::Start`].
     ///

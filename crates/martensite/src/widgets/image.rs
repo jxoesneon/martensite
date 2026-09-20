@@ -1,6 +1,7 @@
 //! `Image` widget: raster image display with aspect-fit modes.
 //!
-//! The widget carries a decoded [`ImageData`] — a shared, cheaply
+//! The widget carries a decoded
+//! [`ImageData`](martensite_core::paint::ImageData) — a shared, cheaply
 //! clonable RGBA8 buffer — and emits a single
 //! [`PaintCommand::DrawImage`](martensite_core::PaintCommand::DrawImage)
 //! per frame. The destination rectangle is computed from

@@ -67,7 +67,7 @@ const FOCUS_RING: [u8; 4] = [60, 110, 220, 128];
 /// emitted with `Role::RadioButton`.
 ///
 /// The segment's checked/focused flags and geometry mirror group
-/// state via [`Segmented::sync_options`]; pointer and AT activations
+/// state via `Segmented::sync_options`; pointer and AT activations
 /// are parked (`activation_pending`/`focus_pending`) and applied by
 /// the group so the single-checked invariant stays centralized —
 /// the same pending-activation seam [`RadioOption`] uses.

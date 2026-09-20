@@ -1,12 +1,14 @@
 //! Shared shaped-text emission for widgets whose labels change at
 //! paint time.
 //!
-//! [`PaintList::push_text`] emits `DrawText`, which the render backends
+//! [`PaintList::push_text`](martensite_core::paint::PaintList::push_text)
+//! emits `DrawText`, which the render backends
 //! approximate as opaque bounding-box rectangles — real glyph outlines
 //! go through `DrawGlyphRun` + `FontResource`. `Widget::paint` takes
 //! `&self`, so widgets cannot own a `FontManager` and shape lazily the
 //! way `Text` does; `TextPainter` is the interior-mutable escape hatch:
-//! wrap it in a [`SharedTextPainter`] (`Arc<Mutex<…>>`), hand clones to
+//! wrap it in a [`SharedTextPainter`](crate::text_paint::SharedTextPainter)
+//! (`Arc<Mutex<…>>`), hand clones to
 //! every widget that should paint real text, and each `paint` locks it
 //! briefly to shape.
 //!
@@ -285,7 +287,8 @@ impl SharedTextPainter {
     }
 }
 
-/// `SharedTextPainter` satisfies the core [`TextShaper`] seam —
+/// `SharedTextPainter` satisfies the core
+/// [`TextShaper`](martensite_core::paint::TextShaper) seam —
 /// widgets use it as their explicit painter, and
 /// [`martensite_core::WidgetArena::set_text_painter`] stores one as the
 /// arena's ambient painter.

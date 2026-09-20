@@ -4,7 +4,9 @@
 //! too terse and a link is too weak — "the descriptive action row".
 //!
 //! Activation parks in [`CommandLink::take_activated`]; keyboard
-//! `Enter`/`Space` and [`SemanticAction::Click`] activate too.
+//! `Enter`/`Space` and
+//! [`SemanticAction::Click`](martensite_core::SemanticAction::Click)
+//! activate too.
 //!
 //! # Examples
 //!

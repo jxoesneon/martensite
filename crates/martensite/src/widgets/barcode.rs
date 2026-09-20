@@ -7,7 +7,7 @@
 //! bar/space elements (wide = 3× narrow) wrapped in `*` start
 //! and stop guards — the output is a real, scannable Code-39.
 //! Unsupported characters are skipped via
-//! [`Barcode::encode`]'s return value.
+//! `Barcode::encode`'s return value.
 //!
 //! # Examples
 //!

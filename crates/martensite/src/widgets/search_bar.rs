@@ -5,7 +5,8 @@
 //! `search_mode` is off** — the GTK pattern where the app toggles the
 //! property (e.g. from `Ctrl+F` or a toolbar button) and the bar
 //! appears/disappears without manual show/hide bookkeeping. `Escape`
-//! inside the field parks a [`take_close_requested`](Self::take_close_requested)
+//! inside the field parks a
+//! [`take_close_requested`](crate::widgets::search_bar::SearchBar::take_close_requested)
 //! signal so the app can flip `search_mode` back off (or not — the
 //! mode is always app-owned).
 //!

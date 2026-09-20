@@ -13,8 +13,9 @@
 //!   the page step, `Home`/`End` to the range ends, `Enter` commits the
 //!   typed text.
 //! - Pointer: ▲/▼ press steps once; holding the press auto-repeats
-//!   after a short delay (driven by [`Widget::tick`]). A `Scroll` over
-//!   the field steps the value.
+//!   after a short delay (driven by
+//!   [`Widget::tick`](martensite_core::widget::Widget::tick)). A
+//!   `Scroll` over the field steps the value.
 //! - Typed text commits on `Enter`, on focus loss, and before any
 //!   step — an unparseable field restores the formatted value.
 //!

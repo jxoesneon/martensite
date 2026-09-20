@@ -1,5 +1,6 @@
 //! `WebView` — an embedded-webview surface. The widget owns a
-//! [`WebViewHost`] (`martensite-webview`'s engine contract) and paints
+//! [`WebViewHost`](martensite_webview::WebViewHost)
+//! (`martensite-webview`'s engine contract) and paints
 //! the host's state snapshot: a loading progress bar, document title,
 //! URL, and error banner. When the host reports `has_surface() == false`
 //! (the simulated engine, or a backend without raster output yet) the

@@ -5,7 +5,8 @@
 //! calling [`AlarmPanel::acknowledge`] / [`AlarmPanel::acknowledge_all`])
 //! moves it to `Acknowledged` and parks the index in
 //! [`AlarmPanel::take_acked`]. Active `Error` rows flash their edge
-//! on [`Widget::tick`] until acknowledged. The wheel scrolls when
+//! on [`Widget::tick`](martensite_core::widget::Widget::tick) until
+//! acknowledged. The wheel scrolls when
 //! the list overflows.
 //!
 //! Distinct from [`crate::widgets::log_view::LogView`], which is a

@@ -78,7 +78,7 @@ pub enum CornerStyle {
     Scoop,
     /// Continuous superellipse (n=4) corner — CSS `squircle`, iOS
     /// continuous corners, `RoundedSuperellipseBorder`. Emitted as a
-    /// [`SQUIRCLE_SEGMENTS`]-segment polyline.
+    /// `SQUIRCLE_SEGMENTS`-segment polyline.
     Squircle,
 }
 

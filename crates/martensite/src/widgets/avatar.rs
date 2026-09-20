@@ -4,7 +4,8 @@
 //!
 //! The image variant embeds an [`Image`] internal child set to
 //! [`ImageFit::Cover`] and relies on the framework's child-clip
-//! machinery ([`Widget::clips_children`] + [`Widget::clip_shape`]) to
+//! machinery ([`Widget::clips_children`](martensite_core::widget::Widget::clips_children)
+//! + [`Widget::clip_shape`](martensite_core::widget::Widget::clip_shape)) to
 //! crop it to the ellipse — so the same clip governs painting,
 //! hit-testing, and accessibility geometry.
 //!

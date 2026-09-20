@@ -6,7 +6,7 @@
 //! a sector highlights it; clicking parks its index in
 //! [`RadialMenu::take_selected`]. `Up`/`Right` advance the
 //! highlight, `Down`/`Left` retreat, `Enter`/`Space` confirm.
-//! [`RadialMenu::labels`] pairs glyphs with accessibility names.
+//! `RadialMenu::labels` pairs glyphs with accessibility names.
 //!
 //! # Examples
 //!

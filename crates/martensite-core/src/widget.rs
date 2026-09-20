@@ -1024,7 +1024,7 @@ pub trait Widget: Send + Sync + 'static {
     /// assigned the bounds. Engagement requires
     /// [`WidgetArena::update_underflow`](crate::WidgetArena::update_underflow)
     /// (or `update_underflow_all`) to run after bounds assignment; the
-    /// Taffy [`LayoutEngine`] does this automatically. Internal children
+    /// Taffy `LayoutEngine` does this automatically. Internal children
     /// are evaluated threshold-only, without hysteresis.
     ///
     /// # Examples

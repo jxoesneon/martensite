@@ -426,7 +426,7 @@ impl ColdNode {
         }
     }
 
-    /// The effective [`RenderMinimum`] for this node — the instance
+    /// The effective [`crate::widget::RenderMinimum`] for this node — the instance
     /// override when set, else the widget's [`Widget::min_render`]
     /// declaration.
     ///

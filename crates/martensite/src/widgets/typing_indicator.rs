@@ -2,7 +2,8 @@
 //! composing" affordance from chat UIs (iMessage / Slack /
 //! Messenger idiom).
 //!
-//! [`TypingIndicator::tick`] advances a phase each frame; the
+//! [`TypingIndicator::tick`](martensite_core::widget::Widget::tick)
+//! advances a phase each frame; the
 //! three dots rise and fall in a staggered wave. The indicator
 //! is decorative — it carries no state and ignores events.
 //! [`TypingIndicator::active`] gates the animation so hosts can

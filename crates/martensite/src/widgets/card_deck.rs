@@ -1,7 +1,8 @@
 //! `CardDeck` — a fanned stack of child-widget cards where only the
 //! front card is interactive (the Tinder/card-stack idiom).
 //!
-//! Cards are [`Widget`] children; up to two cards behind the front
+//! Cards are [`Widget`](martensite_core::widget::Widget) children; up
+//! to two cards behind the front
 //! peek out at the bottom edge. A horizontal drag past the swipe
 //! threshold dismisses the front card and parks `true` in
 //! [`CardDeck::take_dismissed`]; `←`/`→` cycle the deck without

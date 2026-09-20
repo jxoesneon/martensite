@@ -1,7 +1,8 @@
 //! `Filmstrip` — a horizontal strip of thumbnails with selection
 //! (the photo-editor filmstrip / gallery picker idiom).
 //!
-//! Tiles show an optional [`ImageData`] image (or a flat color
+//! Tiles show an optional [`ImageData`](martensite_core::paint::ImageData)
+//! image (or a flat color
 //! fallback) plus a caption. Click selects and parks the index in
 //! [`Filmstrip::take_selected`]; `←`/`→` move the selection; the
 //! wheel scrolls the strip when it overflows.

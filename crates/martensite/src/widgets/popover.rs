@@ -4,7 +4,7 @@
 //! The `Popover` itself is a zero-size marker placed in the widget
 //! tree where the bubble should point — its layout bounds are the
 //! anchor rect (or [`Popover::anchor`] overrides it). Calling
-//! [`Popover::open`] reconciles a [`PopoverSurface`] into the
+//! [`Popover::open`] reconciles a `PopoverSurface` into the
 //! [`OverlayLayer`](martensite_core::overlay::OverlayLayer) at
 //! `OverlayAnchor::BoundsEdge { rect, edge }` on the next
 //! [`Popover::sync_overlay`]: placed on [`Popover::preferred_edge`]
@@ -15,7 +15,8 @@
 //!   outside press or `Escape` closes the bubble; presses inside it
 //!   are consumed.
 //! - **`autohide(false)`** (GtkPopover semantics): the entry opens
-//!   with [`OverlayOptions::passthrough`] so outside presses fall
+//!   with [`OverlayOptions::passthrough`](martensite_core::overlay::OverlayOptions::passthrough)
+//!   so outside presses fall
 //!   through to the content beneath without closing the bubble.
 //!   Passthrough entries are never the layer's `Escape` target, so the
 //!   surface handles `Escape` itself — `Escape` and explicit

@@ -8,7 +8,9 @@
 //! Beyond plain editing the widget supports a password echo mode
 //! ([`TextInput::secure`]) with an optional reveal toggle
 //! ([`TextInput::revealable`]), `prefix`/`suffix` adornments, a
-//! `clearable` ✕ target, [`ValidationState`] border/message visuals,
+//! `clearable` ✕ target,
+//! [`ValidationState`](crate::widgets::text_input::ValidationState)
+//! border/message visuals,
 //! word-jump editing keys, and a bounded undo/redo stack.
 //!
 //! # Examples

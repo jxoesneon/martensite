@@ -3,7 +3,7 @@
 //!
 //! The face looks like a read-only text field with a calendar glyph;
 //! pressing it (or `Enter`/`Space`/`ArrowDown`, or AT `Expand`/`Click`)
-//! reconciles a [`CalendarSurface`] into the
+//! reconciles a `CalendarSurface` into the
 //! [`OverlayLayer`](martensite_core::overlay::OverlayLayer) at
 //! `OverlayAnchor::Bounds` on the next
 //! [`DatePicker::sync_overlay`] — placed below the face when it fits,
@@ -188,7 +188,7 @@ impl Date {
     }
 
     /// Weekday of a valid date: `0 = Sunday … 6 = Saturday`, matching
-    /// the C `tm_wday` convention. Derived from [`epoch_days`] —
+    /// the C `tm_wday` convention. Derived from `epoch_days` —
     /// `1970-01-01` was a Thursday, so `(epoch + 4) mod 7`.
     ///
     /// # Examples
@@ -829,7 +829,7 @@ impl Widget for CalendarSurface {
 ///
 /// The face is a read-only text field showing the formatted value (or
 /// `placeholder` when empty); the popup is a `Role::Dialog` month grid
-/// reconciled into the [`OverlayLayer`](martensite_core::overlay::OverlayLayer)
+/// reconciled into the [`OverlayLayer`]
 /// by [`DatePicker::sync_overlay`] — call it once per frame before
 /// `OverlayLayer::layout_pass` (the arena does this for registered
 /// widgets).

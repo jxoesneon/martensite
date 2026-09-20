@@ -2,7 +2,8 @@
 //! flip-board idiom).
 //!
 //! `text` sets the target; each cell is an independent flap that
-//! steps through the character set on [`Widget::tick`] until it
+//! steps through the character set on
+//! [`Widget::tick`](martensite_core::widget::Widget::tick) until it
 //! lands on its target — the cascading letter-flip animation.
 //! Cells left of a landed cell settle first, giving the classic
 //! left-to-right ripple. Display-only.

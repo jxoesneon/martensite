@@ -6,7 +6,8 @@
 //! [`DigitalClock::time`] (the same `Time` value
 //! [`crate::widgets::time_picker::TimePicker`] edits), or advance
 //! it automatically — [`DigitalClock::running`] makes each
-//! [`Widget::tick`] accumulate elapsed time. `hh:mm` is the
+//! [`Widget::tick`](martensite_core::widget::Widget::tick) accumulate
+//! elapsed time. `hh:mm` is the
 //! default; [`DigitalClock::show_seconds`] adds `:ss` and
 //! [`DigitalClock::blink`] toggles the colon each half-second.
 //!

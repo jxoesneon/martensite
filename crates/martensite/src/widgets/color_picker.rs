@@ -3,7 +3,7 @@
 //!
 //! The face is a color well — a swatch over a checkerboard (so alpha
 //! reads honestly) with a border; pressing it (or `Enter`/`Space`, or
-//! AT `Click`/`Expand`) reconciles a [`ColorSurface`] into the
+//! AT `Click`/`Expand`) reconciles a `ColorSurface` into the
 //! [`OverlayLayer`](martensite_core::overlay::OverlayLayer) at
 //! `OverlayAnchor::Bounds` on the next
 //! [`ColorPicker::sync_overlay`].

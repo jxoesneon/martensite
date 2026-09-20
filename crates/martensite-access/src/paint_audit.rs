@@ -72,6 +72,9 @@
 //! [`PaintLintKind::ClipOverflow`]: crate::paint_audit::PaintLintKind::ClipOverflow
 //! [`PaintLintKind::OutOfFrame`]: crate::paint_audit::PaintLintKind::OutOfFrame
 //! [`PaintAuditConfig::frame`]: crate::paint_audit::PaintAuditConfig::frame
+//! [`PaintAuditConfig::locale_probe`]: crate::paint_audit::PaintAuditConfig::locale_probe
+//! [`PaintCommand::DrawText`]: martensite_core::PaintCommand::DrawText
+//! [`PaintLintKind::MissingLocale`]: crate::paint_audit::PaintLintKind::MissingLocale
 //!
 //! The audit is advisory — it reports, it never blocks rendering. Font
 //! sizes in a paint list are device pixels; 1pt is approximated as one

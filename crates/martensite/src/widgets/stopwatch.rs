@@ -1,7 +1,8 @@
 //! `Stopwatch` — a tick-driven lap timer (the phone-clock / sprint
 //! timing idiom).
 //!
-//! [`Stopwatch::tick`] accumulates elapsed time while running.
+//! [`Stopwatch::tick`](martensite_core::widget::Widget::tick)
+//! accumulates elapsed time while running.
 //! `Space`/`Enter` toggles start/stop, `l` records a lap into
 //! [`Stopwatch::take_lapped`], `r` resets. Laps store the split time
 //! (elapsed at press); [`Stopwatch::lap_at`] returns splits in order.

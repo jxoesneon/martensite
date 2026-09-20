@@ -3,7 +3,7 @@
 //!
 //! Wraps a single scrollable child. A downward drag past the top
 //! edge reveals an indicator strip and shifts the child downward by
-//! the pull distance; releasing beyond [`PTR_THRESHOLD_PT`] parks a
+//! the pull distance; releasing beyond `PTR_THRESHOLD_PT` parks a
 //! refresh request (`take_refresh`) and holds the indicator open
 //! until the consumer calls [`PullToRefresh::finish_refresh`]. Under
 //! the threshold the pull snaps back.
@@ -13,7 +13,7 @@
 //! this widget exposes the raw gesture machinery and lets the
 //! consumer gate it: forward the drag only when the child reports
 //! top-scroll, or accept the default which arms on any downward
-//! drag starting in the top [`ARM_ZONE_PT`] of the widget.
+//! drag starting in the top `ARM_ZONE_PT` of the widget.
 //!
 //! # Examples
 //!

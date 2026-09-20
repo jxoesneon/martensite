@@ -3,7 +3,7 @@
 //!
 //! Pressing the face (or `Enter`/`Space`/`ArrowDown`, or AT
 //! `Expand`/`Click`) opens the root [`Menu`] at a
-//! `Bounds` anchor below the face through the shared [`MenuStack`]
+//! `Bounds` anchor below the face through the shared `MenuStack`
 //! machinery — submenus, checkables, radios, separators, and
 //! `Escape`/outside-press dismissal all behave exactly as in
 //! `MenuBar`/`ContextMenu`. Activations park as [`MenuPath`]s in

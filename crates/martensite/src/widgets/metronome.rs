@@ -2,7 +2,8 @@
 //! family's rhythm sibling of [`crate::widgets::piano_keys::PianoKeys`]
 //! and [`crate::widgets::equalizer::Equalizer`]).
 //!
-//! While running, [`Metronome::tick`] advances a beat cursor at
+//! While running, [`Metronome::tick`](martensite_core::widget::Widget::tick)
+//! advances a beat cursor at
 //! `bpm`, flashing the current beat lamp (beat 0 is the accent)
 //! and parking the beat index in [`Metronome::take_beat`] each
 //! crossing — hosts drive a click sound from that seam. Click or
