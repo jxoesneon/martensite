@@ -2414,6 +2414,19 @@ pub mod tree_view;
 /// ```
 pub mod treemap;
 
+/// Bouncing three-dot "composing" affordance from chat UIs —
+/// `tick` advances a staggered wave across the dots; `active`
+/// gates the animation so hosts can park it statically.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::typing_indicator::TypingIndicator;
+///
+/// assert!(TypingIndicator::new().is_active());
+/// ```
+pub mod typing_indicator;
+
 /// Two- or three-set overlap diagram — translucent categorical
 /// circles in the classic side-by-side or triangular layout with
 /// a label at each circle's outer point. Hovering a unique region
