@@ -819,6 +819,21 @@ pub mod dial;
 /// ```
 pub mod filmstrip;
 
+/// Ishikawa cause-and-effect diagram — a horizontal spine ending
+/// in an effect box with alternating `Bone` ribs angled off it,
+/// each labeled and carrying cause ticks. Hovering a rib parks
+/// `take_hovered`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::fishbone::{Bone, Fishbone};
+///
+/// let f = Fishbone::new("Defects").bone(Bone::new("People"));
+/// assert_eq!(f.bone_count(), 1);
+/// ```
+pub mod fishbone;
+
 /// Two-faced flip card (Anki / quiz-deck idiom) — click or Space
 /// flips question to answer and parks the side in `take_flipped`;
 /// `r` returns to the front and `set_card` advances the deck.
@@ -3533,6 +3548,7 @@ pub use expander_row::ExpanderRow;
 pub use external::{BindError, ExternalEngine, ExternalEngines, FramePoll};
 pub use file_chooser_button::{ChooserMode, FileChooserButton};
 pub use filmstrip::{Filmstrip, Thumbnail};
+pub use fishbone::{Bone, Fishbone};
 pub use flashcard::Flashcard;
 pub use flex::{Flex, FlexDirection};
 pub use float_button::FloatButton;
