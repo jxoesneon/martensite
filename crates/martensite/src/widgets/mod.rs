@@ -2360,6 +2360,20 @@ pub mod range_slider;
 /// ```
 pub mod rating;
 
+/// Row of emoji reaction chips (Slack/Teams idiom) — click toggles
+/// the user's reaction (count and accent ring update, index parks
+/// in `take_toggled`), optional `+` chip parks `take_add`. Pairs
+/// with `MessageList`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::reaction_bar::{Reaction, ReactionBar};
+///
+/// assert_eq!(ReactionBar::new().reaction(Reaction::new("👍", 3)).reaction_count(), 1);
+/// ```
+pub mod reaction_bar;
+
 /// Standalone draggable split sash (VS Code / `QSplitterHandle`
 /// idiom) — captures the drag and parks the accumulated px delta in
 /// `take_moved`, arrows nudge, double-click parks `take_reset`. For
@@ -3301,6 +3315,7 @@ pub use radial_menu::RadialMenu;
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
 pub use rating::Rating;
+pub use reaction_bar::{Reaction, ReactionBar};
 pub use resize_handle::ResizeHandle;
 pub use result_page::{ResultAction, ResultPage, ResultStatus};
 pub use ribbon::{Ribbon, RibbonCorner};
