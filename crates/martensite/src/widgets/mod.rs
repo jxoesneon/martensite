@@ -2334,6 +2334,23 @@ pub mod table;
 /// ```
 pub mod tabs;
 
+/// Scrollback display with a live prompt line — `write` appends
+/// output, the prompt row shows `input` with a blinking caret,
+/// `Enter` echoes `prompt + input` to the scrollback and parks
+/// it in `take_submitted`. Read-only emulator surface — VT
+/// parsing and PTY wiring are the host's job.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::terminal::Terminal;
+///
+/// let mut t = Terminal::new().prompt("$");
+/// t.submit("ls");
+/// assert_eq!(t.line(0), Some("$ ls"));
+/// ```
+pub mod terminal;
+
 /// Classic temperature-scale indicator — bulb + column fill
 /// against a ticked `min..=max` range, with `warning`/`critical`
 /// thresholds tinting the fluid. Status-display companion to
