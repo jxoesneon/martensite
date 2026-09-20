@@ -46,6 +46,25 @@ use martensite_motion::RubberBandScroller2D;
 
 /// Scrollbar thickness in logical pixels.
 const BAR: f32 = 10.0;
+/// Scroll extent beyond which a measured size is treated as a
+/// "fill" echo rather than real content. 16 Mi pt is roughly 44 km
+/// of UI at 96 dpi — no real document approaches it, but a widget
+/// answering `constraints.max_size` verbatim under an unbounded
+/// measure returns `f32::MAX`, which must collapse to the viewport
+/// instead of becoming the scroll extent (and propagating
+/// effectively-infinite bounds to every descendant's paint loop).
+const MAX_SCROLL_EXTENT: f32 = 16.0 * 1024.0 * 1024.0;
+
+/// `desired` is a real extent when finite and plausible; an
+/// astronomical or non-finite measure means the content fills
+/// whatever it is offered — collapse it to the viewport.
+fn sane_extent(desired: f32, viewport: f32) -> f32 {
+    if desired.is_finite() && desired <= MAX_SCROLL_EXTENT {
+        desired
+    } else {
+        viewport
+    }
+}
 /// Minimum scrollbar thumb length.
 const MIN_THUMB: f32 = 24.0;
 /// Line scroll amount for arrow keys and `ScrollUp/Down` actions.
@@ -806,13 +825,25 @@ impl Widget for ScrollView {
         // content height keeps the latest content visible.
         let old_max = self.max_offset();
         let was_at_bottom = old_max.y > 0.0 && self.offset.y >= old_max.y - 0.5;
-        // Measure the content unbounded to learn its natural size.
-        let desired = self.content.measure(
+        // Measure the content at the viewport's width on the cross
+        // axis so height-for-width content (wrapping text, flow
+        // layouts) packs to the visible column like a real scrolled
+        // window; the scroll axis stays unbounded. `max_size` is an
+        // offer, not a clamp — content that genuinely needs more
+        // width still reports it, keeping the h-bar decision honest.
+        // `sane_extent` then collapses "fill" echoes (`f32::MAX`)
+        // to the viewport so `content_size` can never become an
+        // effectively-infinite extent.
+        let raw = self.content.measure(
             cx,
             LayoutConstraints {
                 min_size: Vec2::ZERO,
-                max_size: Vec2::new(f32::MAX, f32::MAX),
+                max_size: Vec2::new(bounds.width(), f32::MAX),
             },
+        );
+        let desired = Vec2::new(
+            sane_extent(raw.x, bounds.width()),
+            sane_extent(raw.y, bounds.height()),
         );
 
         // Smart scrollbars: shown only when the axis overflows.

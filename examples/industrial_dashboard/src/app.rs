@@ -269,8 +269,8 @@ struct App {
     /// factor is known (F18 — widgets get scale through the signal).
     arena: Option<WidgetArena>,
     root: Option<WidgetId>,
-    panels: [Option<WidgetId>; 5],
-    panel_names: [&'static str; 5],
+    panels: [Option<WidgetId>; 4],
+    panel_names: [&'static str; 4],
     router: EventRouter,
     focus: FocusManager,
     mods: ModifiersState,
@@ -364,14 +364,8 @@ impl App {
             dock_drag: None,
             arena: None,
             root: None,
-            panels: [None, None, None, None, None],
-            panel_names: [
-                "Process Grid",
-                "Telemetry",
-                "Editor",
-                "Media",
-                "Widget Gallery",
-            ],
+            panels: [None, None, None, None],
+            panel_names: ["Process Grid", "Telemetry", "Editor", "Media"],
             router: EventRouter::new(),
             focus: FocusManager::new(),
             mods: ModifiersState::empty(),
@@ -453,34 +447,57 @@ impl App {
             self.toolbar = Some(id);
         }
 
-        let mut panels: [Option<WidgetId>; 5] = [None, None, None, None, None];
-        let widgets: [Box<dyn martensite::core::Widget>; 5] = [
-            Box::new(GridPanel::new(
+        let mut panels: [Option<WidgetId>; 4] = [None, None, None, None];
+        // Each operational panel is wrapped in a ShowcasePanel that
+        // mounts its contextually-related widget sections below the
+        // operational view — the dashboard consumes every facade
+        // widget where it actually belongs.
+        let widgets: [Box<dyn martensite::core::Widget>; 4] = [
+            Box::new(crate::showcase::ShowcasePanel::new(
+                Box::new(GridPanel::new(
+                    scale.clone(),
+                    self.filter_text.clone(),
+                    self.clipboard_out.clone(),
+                )),
+                "Process Grid",
                 scale.clone(),
-                self.filter_text.clone(),
-                self.clipboard_out.clone(),
+                crate::showcase::grid_sections(),
             )),
-            Box::new(TelemetryPanel::new(
+            Box::new(crate::showcase::ShowcasePanel::new(
+                Box::new(TelemetryPanel::new(
+                    scale.clone(),
+                    self.cpu.clone(),
+                    self.mem.clone(),
+                    self.paused.clone(),
+                    self.glow.clone(),
+                    self.tick_ms.clone(),
+                    self.alerts_on.clone(),
+                )),
+                "Telemetry",
                 scale.clone(),
-                self.cpu.clone(),
-                self.mem.clone(),
-                self.paused.clone(),
-                self.glow.clone(),
-                self.tick_ms.clone(),
-                self.alerts_on.clone(),
+                crate::showcase::telemetry_sections(),
             )),
-            Box::new(EditorPanel::new(
+            Box::new(crate::showcase::ShowcasePanel::new(
+                Box::new(EditorPanel::new(
+                    scale.clone(),
+                    EditorSignals {
+                        tab_sel: self.editor_tab.clone(),
+                        open_in: self.open_in.clone(),
+                        doc_out: self.doc_out.clone(),
+                        open_req: self.open_req.clone(),
+                        export_req: self.export_req.clone(),
+                    },
+                )),
+                "Editor",
                 scale.clone(),
-                EditorSignals {
-                    tab_sel: self.editor_tab.clone(),
-                    open_in: self.open_in.clone(),
-                    doc_out: self.doc_out.clone(),
-                    open_req: self.open_req.clone(),
-                    export_req: self.export_req.clone(),
-                },
+                crate::showcase::editor_sections(),
             )),
-            Box::new(MediaPanel::new(scale.clone())),
-            Box::new(crate::gallery::GalleryPanel::new(scale.clone())),
+            Box::new(crate::showcase::ShowcasePanel::new(
+                Box::new(MediaPanel::new(scale.clone())),
+                "Media",
+                scale.clone(),
+                crate::showcase::media_sections(),
+            )),
         ];
         for (i, widget) in widgets.into_iter().enumerate() {
             let mut hot = HotNode::default();
@@ -535,7 +552,7 @@ impl App {
         }
 
         let ids: Vec<u64> = panels.iter().map(|p| p.unwrap().to_u64()).collect();
-        self.dock = build_dock_tree(&ids.try_into().expect("5 panels"));
+        self.dock = build_dock_tree(&ids.try_into().expect("4 panels"));
         self.arena = Some(arena);
         self.root = Some(root);
         self.panels = panels;
@@ -556,13 +573,19 @@ impl App {
     /// without a window so headless callers degrade instead of
     /// panicking.
     fn dock_area(&self) -> martensite::blessed::Rect {
-        let s = self.scale.get();
         let size = self
             .window
             .as_ref()
             .map(|w| w.surface_size())
             .unwrap_or_default();
-        let (w, h) = (f64::from(size.width), f64::from(size.height));
+        self.dock_area_at(size.width, size.height)
+    }
+
+    /// `dock_area` at an explicit surface size — see
+    /// [`Self::apply_dock_layout_at`].
+    fn dock_area_at(&self, width: u32, height: u32) -> martensite::blessed::Rect {
+        let s = self.scale.get();
+        let (w, h) = (f64::from(width), f64::from(height));
         let m = f64::from(MARGIN_PT * s);
         let gap = f64::from(GAP_PT * s);
         let top = m + f64::from(HEADER_PT * s) + gap;
@@ -588,16 +611,26 @@ impl App {
     /// and status strips are hand-painted chrome; Taffy's two-pass
     /// path is exercised only by `--headless`).
     fn apply_dock_layout(&mut self) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        let size = window.surface_size();
+        self.apply_dock_layout_at(size.width, size.height);
+    }
+
+    /// `apply_dock_layout` with an explicit surface size — the real
+    /// path derives `w`/`h` from the window; tests drive this directly
+    /// to exercise geometry without a display server.
+    fn apply_dock_layout_at(&mut self, width: u32, height: u32) {
         // Computed before the arena borrow — `dock_area` is the shared
         // authority for the rect the BSP subdivides (the pointer
         // hit-tests use it too).
-        let area = self.dock_area();
-        let (Some(arena), Some(window)) = (&mut self.arena, &self.window) else {
+        let area = self.dock_area_at(width, height);
+        let Some(arena) = &mut self.arena else {
             return;
         };
         let s = self.scale.get();
-        let size = window.surface_size();
-        let (w, h) = (f64::from(size.width), f64::from(size.height));
+        let (w, h) = (f64::from(width), f64::from(height));
         // Popups clamp into the real window — without this the layer's
         // default zero viewport collapses every popup to a degenerate
         // rect at the origin.
@@ -2304,11 +2337,11 @@ mod tests {
 
     #[test]
     fn dock_drop_center_swaps_panels() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
         let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Center, dragged);
-        assert_eq!(dock.panel_count(), 5);
+        assert_eq!(dock.panel_count(), 4);
         // Same leaves, exchanged payloads.
         assert_eq!(panel_of(&dock, src).widget_id(), 2);
         assert_eq!(panel_of(&dock, dst).widget_id(), 1);
@@ -2316,11 +2349,11 @@ mod tests {
 
     #[test]
     fn dock_drop_right_lands_right_half() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
         let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Right, dragged);
-        assert_eq!(dock.panel_count(), 5);
+        assert_eq!(dock.panel_count(), 4);
         let (dragged, target) = (rect_of(&dock, 1), rect_of(&dock, 2));
         // Same band, dragged on the right half of the target's old rect.
         assert!((dragged.y - target.y).abs() < 1e-6);
@@ -2330,7 +2363,7 @@ mod tests {
 
     #[test]
     fn dock_drop_left_lands_left_half() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
         let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Left, dragged);
@@ -2341,7 +2374,7 @@ mod tests {
 
     #[test]
     fn dock_drop_top_stacks_above() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
         let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Top, dragged);
@@ -2353,7 +2386,7 @@ mod tests {
 
     #[test]
     fn dock_drop_bottom_stacks_below() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
         let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Bottom, dragged);
@@ -2410,9 +2443,9 @@ mod tests {
         app.build_arena();
         let arena = app.arena.as_mut().expect("arena");
         let mut visited = std::collections::HashSet::new();
-        // One full cycle — seven FOCUSABLE nodes: toolbar, five
+        // One full cycle — six FOCUSABLE nodes: toolbar, four
         // panels, status bar.
-        for _ in 0..7 {
+        for _ in 0..6 {
             if let Some(id) = app.focus.apply_tab(arena, TabNavigation::Forward) {
                 visited.insert(id.to_u64());
             }
@@ -2425,18 +2458,49 @@ mod tests {
         }
         assert!(visited.contains(&app.toolbar.expect("toolbar").to_u64()));
         assert!(visited.contains(&app.statusbar.expect("statusbar").to_u64()));
-        assert_eq!(visited.len(), 7);
+        assert_eq!(visited.len(), 6);
+    }
+
+    /// Reproduces the windowed paint audit headless: drive the real
+    /// dock layout at a fixed surface size, build the paint list,
+    /// and audit — no widget may emit text fully outside its clip
+    /// (invisible output = wasted work or a positioning bug).
+    #[test]
+    fn no_text_paints_outside_active_clip() {
+        use martensite::access::paint_audit::{audit_paint_list, PaintAuditConfig, PaintLintKind};
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.build_arena();
+        eprintln!("arena built");
+        app.apply_dock_layout_at(1600, 1000);
+        eprintln!("layout done");
+        let arena = app.arena.as_ref().expect("arena");
+        let mut list = PaintList::new();
+        arena.build_paint_list(app.root.expect("root"), &mut list);
+        eprintln!("paint list: {} commands", list.commands.len());
+        let lints = audit_paint_list(&list, &PaintAuditConfig::default());
+        let clipped: Vec<_> = lints
+            .iter()
+            .filter(|l| matches!(l.kind, PaintLintKind::ClippedText))
+            .collect();
+        for l in &clipped {
+            eprintln!("CLIPPED: {:?}", l.detail);
+        }
+        assert!(
+            clipped.is_empty(),
+            "{} clipped-text findings",
+            clipped.len()
+        );
     }
 
     #[test]
     fn dock_drop_onto_sibling_re_resolves_target() {
         // Editor (3) and Media (4) are siblings — removing 3 promotes
         // 4 into the parent slot, invalidating its NodeId mid-drop.
-        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
         let (src, dst) = (leaf_id(&dock, 3), leaf_id(&dock, 4));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Right, dragged);
-        assert_eq!(dock.panel_count(), 5);
+        assert_eq!(dock.panel_count(), 4);
         let (dragged, target) = (rect_of(&dock, 3), rect_of(&dock, 4));
         assert!((dragged.y - target.y).abs() < 1e-6);
         assert!(dragged.x >= target.x + target.width - 1e-6);

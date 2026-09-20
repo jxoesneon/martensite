@@ -1719,18 +1719,38 @@ impl WidgetArena {
     /// assert_eq!(list.commands.len(), 2);
     /// ```
     pub fn build_paint_list(&self, root: WidgetId, list: &mut PaintList) {
-        self.paint_node(root, list);
+        // `None` = no known viewport (an unlaid-out root has degenerate
+        // bounds) — nothing is culled. `Some` = the surface rect, the
+        // outermost region any paint can show through.
+        let visible = self
+            .get_hot(root)
+            .map(|h| h.bounds)
+            .filter(|b| has_area(*b));
+        self.paint_node(root, list, visible);
         // In-window popups paint above everything else.
         self.overlay
             .paint(list, &self.theme, self.text_painter.as_deref());
     }
 
     /// Recursive helper for [`WidgetArena::build_paint_list`].
-    fn paint_node(&self, id: WidgetId, list: &mut PaintList) {
+    ///
+    /// `visible` is the intersection of every ancestor clip — a node
+    /// whose bounds do not intersect it emits only dead commands
+    /// (backend-clipped output), so the whole subtree is skipped.
+    /// This is what virtualizes scrolled containers: a 300-cell
+    /// scroll region paints its handful of onscreen cells, not all
+    /// 300 every frame. `None` means no region is known (unlaid-out
+    /// tree) and nothing is culled; a node with degenerate bounds is
+    /// kept regardless — it may still emit commands the paint audit
+    /// needs to see.
+    fn paint_node(&self, id: WidgetId, list: &mut PaintList, visible: Option<crate::Rect>) {
         let Some(hot) = self.get_hot(id) else {
             return;
         };
         if !hot.flags.contains(NodeFlags::VISIBLE) {
+            return;
+        }
+        if !paints_in(hot.bounds, visible) {
             return;
         }
         let Some(cold) = self.get_cold(id) else {
@@ -1781,6 +1801,13 @@ impl WidgetArena {
             list.push_clip(rect_to_kurbo(hot.bounds));
         }
 
+        // The `Clip` underflow policy narrows the visible region for
+        // the whole subtree the same way the clip pair does.
+        let body_visible = if matches!(policy, Some(UnderflowPolicy::Clip)) {
+            narrow_visible(visible, hot.bounds)
+        } else {
+            visible
+        };
         paint_widget_body(
             &*cold.widget,
             hot.bounds,
@@ -1788,6 +1815,7 @@ impl WidgetArena {
             &self.theme,
             self.scale_factor,
             self.text_painter.as_deref(),
+            body_visible,
         );
 
         // Arena children honour the node's `CLIPS_CHILDREN` flag: their
@@ -1803,9 +1831,14 @@ impl WidgetArena {
                 None => list.push_clip(kb),
             }
         }
+        let child_visible = if clip_children {
+            narrow_visible(body_visible, hot.bounds)
+        } else {
+            body_visible
+        };
         let mut child = hot.first_child;
         while let Some(child_id) = child {
-            self.paint_node(child_id, list);
+            self.paint_node(child_id, list, child_visible);
             child = self.get_hot(child_id).and_then(|h| h.next_sibling);
         }
         if clip_children {
@@ -1853,6 +1886,50 @@ fn scrim_veil(bounds: crate::Rect, theme: &martensite_theme::Theme) -> ([f32; 4]
     )
 }
 
+/// Does a rectangle enclose positive area? `false` for empty and NaN
+/// rects — both mean "no known allocation" to the paint walk.
+fn has_area(r: crate::Rect) -> bool {
+    r.width() > 0.0 && r.height() > 0.0
+}
+
+/// Do two rectangles share any area? Used by the paint walk to cull
+/// subtrees fully outside the active clip region.
+fn rects_intersect(a: crate::Rect, b: crate::Rect) -> bool {
+    a.min_x() < b.max_x() && b.min_x() < a.max_x() && a.min_y() < b.max_y() && b.min_y() < a.max_y()
+}
+
+/// May a node at `bounds` contribute paint inside `visible`?
+///
+/// The cull is an optimization for offscreen content, not a semantic
+/// filter. `visible == None` means no region is known (unlaid-out
+/// root) — nothing is culled. A widget with degenerate `bounds` was
+/// never allocated; it may still emit commands (widgets can paint
+/// outside their bounds — that is the defect class the paint audit
+/// exists to catch), so it is kept. `Some(empty)` still culls: a clip
+/// narrowed to nothing genuinely shows nothing.
+fn paints_in(bounds: crate::Rect, visible: Option<crate::Rect>) -> bool {
+    match visible {
+        None => true,
+        Some(v) => !has_area(bounds) || rects_intersect(bounds, v),
+    }
+}
+
+/// Narrow the visible region by a clip rect. `None` (no known region)
+/// becomes `Some(clip)` — the clip is the first real bound on
+/// visibility.
+fn narrow_visible(visible: Option<crate::Rect>, clip: crate::Rect) -> Option<crate::Rect> {
+    Some(visible.map_or(clip, |v| rect_intersection(v, clip)))
+}
+
+/// The overlapping region of two rectangles (empty when disjoint).
+fn rect_intersection(a: crate::Rect, b: crate::Rect) -> crate::Rect {
+    let x0 = a.min_x().max(b.min_x());
+    let y0 = a.min_y().max(b.min_y());
+    let x1 = a.max_x().min(b.max_x());
+    let y1 = a.max_y().min(b.max_y());
+    crate::Rect::new(x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0))
+}
+
 /// Convert a [`crate::Rect`] to the `kurbo` rectangle paint commands use.
 pub(crate) fn rect_to_kurbo(rect: crate::Rect) -> kurbo::Rect {
     kurbo::Rect::new(
@@ -1884,12 +1961,13 @@ pub(crate) fn paint_widget_recursive(
     theme: &martensite_theme::Theme,
     scale: f32,
     text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
+    visible: Option<crate::Rect>,
 ) {
     // Scope with no arena handle — callers of this entry point (overlay
     // content) have no `WidgetId` to report. Internal children recurse
     // through this same function and get their own scopes.
     list.push_scope(None, widget.debug_name(), rect_to_kurbo(bounds));
-    paint_widget_body(widget, bounds, list, theme, scale, text_painter);
+    paint_widget_body(widget, bounds, list, theme, scale, text_painter, visible);
     list.pop_scope();
 }
 
@@ -1905,6 +1983,7 @@ fn paint_widget_body(
     theme: &martensite_theme::Theme,
     scale: f32,
     text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
+    visible: Option<crate::Rect>,
 ) {
     let mut cx = PaintContext {
         list,
@@ -1923,10 +2002,20 @@ fn paint_widget_body(
             None => cx.list.push_clip(rect_to_kurbo(bounds)),
         }
     }
+    let child_visible = if clip {
+        narrow_visible(visible, bounds)
+    } else {
+        visible
+    };
     for i in 0..widget.child_count() {
         let (Some(child), Some(child_bounds)) = (widget.child(i), widget.child_bounds(i)) else {
             continue;
         };
+        // Virtualization: a child fully outside the visible region
+        // emits only backend-clipped dead commands — skip it.
+        if !paints_in(child_bounds, child_visible) {
+            continue;
+        }
         paint_underflowed_child(
             child,
             child_bounds,
@@ -1934,6 +2023,7 @@ fn paint_widget_body(
             theme,
             scale,
             text_painter,
+            child_visible,
         );
     }
     if clip {
@@ -1952,6 +2042,7 @@ fn paint_underflowed_child(
     theme: &martensite_theme::Theme,
     scale: f32,
     text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
+    visible: Option<crate::Rect>,
 ) {
     let min = child.min_render();
     let policy = if min.policy.enforces() && min.violated(bounds, scale) {
@@ -1975,15 +2066,23 @@ fn paint_underflowed_child(
         }
         Some(UnderflowPolicy::Clip) => {
             list.push_clip(rect_to_kurbo(bounds));
-            paint_widget_recursive(child, bounds, list, theme, scale, text_painter);
+            paint_widget_recursive(
+                child,
+                bounds,
+                list,
+                theme,
+                scale,
+                text_painter,
+                narrow_visible(visible, bounds),
+            );
             list.pop_clip();
         }
         Some(UnderflowPolicy::Scrim) => {
-            paint_widget_recursive(child, bounds, list, theme, scale, text_painter);
+            paint_widget_recursive(child, bounds, list, theme, scale, text_painter, visible);
             let (rect, radius, color) = scrim_veil(bounds, theme);
             list.push_blurred_rect(rect, radius, color);
         }
-        _ => paint_widget_recursive(child, bounds, list, theme, scale, text_painter),
+        _ => paint_widget_recursive(child, bounds, list, theme, scale, text_painter, visible),
     }
 }
 
@@ -2310,6 +2409,101 @@ mod scope_tests {
             _ => None,
         });
         assert_eq!(name, Some("Process Grid"));
+    }
+
+    /// Widget that clips its single internal child — exercises the
+    /// virtualization cull for widget-internal children.
+    struct ClippingParent {
+        child: DummyWidget,
+        child_bounds: Rect,
+    }
+
+    impl Widget for ClippingParent {
+        fn debug_name(&self) -> &'static str {
+            "ClippingParent"
+        }
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn clips_children(&self) -> bool {
+            true
+        }
+        fn child_count(&self) -> usize {
+            1
+        }
+        fn child(&self, i: usize) -> Option<&dyn Widget> {
+            (i == 0).then_some(&self.child)
+        }
+        fn child_bounds(&self, i: usize) -> Option<Rect> {
+            (i == 0).then_some(self.child_bounds)
+        }
+    }
+
+    fn scope_names(list: &PaintList) -> Vec<&'static str> {
+        list.commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::PushScope { name, .. } => Some(*name),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn paint_culls_arena_child_outside_root_bounds() {
+        let mut arena = WidgetArena::new();
+        let mut root_hot = visible(NodeFlags::empty());
+        root_hot.bounds = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let root = arena.insert_with_widget(root_hot, Box::new(DummyWidget));
+        let mut child_hot = visible(NodeFlags::empty());
+        child_hot.bounds = Rect::new(500.0, 500.0, 10.0, 10.0);
+        let child = arena.insert_with_widget(child_hot, Box::new(DummyWidget));
+        arena.append_child(root, child).unwrap();
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+        // The offscreen child emits only backend-clipped dead commands —
+        // its whole subtree, scope included, is skipped.
+        assert_eq!(scope_names(&list).len(), 1);
+    }
+
+    #[test]
+    fn paint_culls_internal_child_outside_clip() {
+        let mut arena = WidgetArena::new();
+        let mut root_hot = visible(NodeFlags::empty());
+        root_hot.bounds = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let root = arena.insert_with_widget(
+            root_hot,
+            Box::new(ClippingParent {
+                child: DummyWidget,
+                // Fully outside the parent's 100x100 clip.
+                child_bounds: Rect::new(500.0, 500.0, 10.0, 10.0),
+            }),
+        );
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+        assert_eq!(scope_names(&list), vec!["ClippingParent"]);
+    }
+
+    #[test]
+    fn paint_keeps_partially_visible_internal_child() {
+        let mut arena = WidgetArena::new();
+        let mut root_hot = visible(NodeFlags::empty());
+        root_hot.bounds = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let root = arena.insert_with_widget(
+            root_hot,
+            Box::new(ClippingParent {
+                child: DummyWidget,
+                // Straddles the clip edge — the onscreen half still paints.
+                child_bounds: Rect::new(90.0, 90.0, 50.0, 50.0),
+            }),
+        );
+
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+        assert_eq!(scope_names(&list).len(), 2);
     }
 
     #[test]

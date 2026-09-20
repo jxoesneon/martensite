@@ -913,6 +913,17 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
             }) = texts.last().filter(|t| t.idx == i)
             {
                 if clip.is_some_and(|c| fully_outside(&probe.bounds, &c)) {
+                    // Scroll-clipped text *inside* its own widget
+                    // bounds is expected virtualization, not a
+                    // defect — the paint walk already culls whole
+                    // off-view subtrees. The defect class worth
+                    // reporting is text escaping its own
+                    // allocation: it can never be shown.
+                    let inside_own_bounds =
+                        sc.is_some_and(|s| !fully_outside(&probe.bounds, &s.bounds));
+                    if inside_own_bounds {
+                        continue;
+                    }
                     lints.push(PaintLint {
                         kind: PaintLintKind::ClippedText,
                         severity: LintSeverity::Warning,

@@ -41,6 +41,16 @@ const HOVER: TokenKey = TokenKey::TextMutedColor;
 const GAP_PT: f32 = 8.0;
 /// Minimum cell height floor (logical points).
 const MIN_CELL_PT: f32 = 8.0;
+/// Per-cell size ceiling (logical points). A flow box is a grid of
+/// *cells*, not a stack of regions — children are measured with this
+/// as the ceiling on both axes rather than `f32::MAX` or the raw
+/// offered width. Without it, "fill" children (which answer
+/// `constraints.max_size` verbatim, e.g. overlay-style widgets and
+/// `GroupBox`'s width) report an astronomical size; row offsets
+/// then overflow to `inf` and cells land at non-finite coordinates,
+/// turning child paint loops (tiling, stepping) effectively
+/// unbounded.
+const MAX_CELL_PT: f32 = 2048.0;
 
 /// How cells respond to clicks.
 ///
@@ -301,21 +311,51 @@ impl std::fmt::Debug for FlowBox {
 
 impl Widget for FlowBox {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        let gap = cx.pt(self.gap);
+        let min_cell = cx.pt(MIN_CELL_PT);
+        let max_cell = cx.pt(MAX_CELL_PT);
+        let max_w = constraints.max_size.x.max(0.0);
+        // Simulate the same wrap `layout` performs so a `ScrollView`
+        // (which measures content unbounded) learns the true content
+        // height rather than a fill-style echo of `max_size.y`.
+        let mut x = 0.0f32;
+        let mut row_h = 0.0f32;
+        let mut row_w = 0.0f32;
+        let mut total_h = 0.0f32;
+        for child in self.children.iter_mut() {
+            let s = child.measure(
+                cx,
+                LayoutConstraints {
+                    min_size: Vec2::ZERO,
+                    max_size: Vec2::new(max_w.max(min_cell).min(max_cell), max_cell),
+                },
+            );
+            let w = s.x.max(min_cell).min(max_w.max(min_cell)).min(max_cell);
+            let h = s.y.max(min_cell).min(max_cell);
+            if x > 0.0 && x + w > max_w + 0.5 {
+                total_h += row_h + gap;
+                x = 0.0;
+                row_h = 0.0;
+            }
+            x += w + gap;
+            row_w = row_w.max(x - gap);
+            row_h = row_h.max(h);
+        }
+        total_h += row_h;
         Vec2::new(
-            constraints
-                .max_size
-                .x
-                .max(cx.pt(120.0).min(constraints.max_size.x)),
-            constraints
-                .max_size
-                .y
-                .max(cx.pt(40.0).min(constraints.max_size.y)),
+            if max_w.is_finite() {
+                max_w
+            } else {
+                row_w.max(min_cell)
+            },
+            total_h.max(min_cell),
         )
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         let gap = cx.pt(self.gap);
         let min_cell = cx.pt(MIN_CELL_PT);
+        let max_cell = cx.pt(MAX_CELL_PT);
         self.cell_bounds.clear();
         let mut x = bounds.min_x();
         let mut y = bounds.min_y();
@@ -330,11 +370,11 @@ impl Widget for FlowBox {
                 cx,
                 LayoutConstraints {
                     min_size: Vec2::ZERO,
-                    max_size: Vec2::new(bounds.width(), f32::MAX),
+                    max_size: Vec2::new(bounds.width().min(max_cell), max_cell),
                 },
             );
-            let w = s.x.max(min_cell).min(bounds.width());
-            let h = s.y.max(min_cell);
+            let w = s.x.max(min_cell).min(bounds.width()).min(max_cell);
+            let h = s.y.max(min_cell).min(max_cell);
             // Wrap when the cell would overflow the row (unless the
             // row is still empty — an oversized cell gets the row to
             // itself).
@@ -598,5 +638,64 @@ mod tests {
         lay(&mut fb, 100.0);
         // Each row is 20 high + 8 gap between = 48.
         assert_eq!(fb.content_height(), 48.0);
+    }
+
+    /// A fill-style child that answers `max_size` verbatim — the
+    /// overlay-widget idiom that used to poison row heights with
+    /// `f32::MAX`, overflow `y` to `inf`, and hang downstream paint
+    /// loops on non-finite bounds.
+    struct FillCell;
+
+    impl Widget for FillCell {
+        fn measure(&mut self, _cx: &mut LayoutContext, c: LayoutConstraints) -> Vec2 {
+            c.max_size
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+    }
+
+    #[test]
+    fn fill_style_cells_are_capped_not_poisoning() {
+        let mut fb = FlowBox::new().child(FillCell).child(cell(40.0, 20.0));
+        lay(&mut fb, 200.0);
+        for i in 0..2 {
+            let r = fb.child_bounds(i).unwrap();
+            assert!(
+                r.origin.is_finite() && r.size.is_finite(),
+                "cell {i}: {r:?}"
+            );
+            assert!(r.height() <= 2048.5, "cell {i}: {r:?}");
+        }
+        assert!(fb.content_height().is_finite());
+    }
+
+    #[test]
+    fn measure_reports_wrapped_height() {
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        let mut fb = FlowBox::new()
+            .child(cell(80.0, 20.0))
+            .child(cell(80.0, 20.0));
+        // Two 80-wide cells in 100pt wrap onto two rows: 20+8+20.
+        let s = fb.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, f32::MAX),
+            },
+        );
+        assert_eq!(s, Vec2::new(100.0, 48.0));
+        // Unbounded measure of fill children still yields a finite box.
+        let mut fb = FlowBox::new().child(FillCell).child(FillCell);
+        let s = fb.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(f32::MAX, f32::MAX),
+            },
+        );
+        assert!(s.x.is_finite() && s.y.is_finite(), "{s:?}");
     }
 }

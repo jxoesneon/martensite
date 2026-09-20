@@ -906,6 +906,7 @@ impl OverlayLayer {
                     theme,
                     self.scale_factor,
                     text_painter,
+                    Some(self.viewport),
                 );
             }
             list.pop_scope();
