@@ -2574,6 +2574,22 @@ pub mod password_strength;
 /// ```
 pub mod pattern_lock;
 
+/// Developer stats HUD (Chrome DevTools / Unity overlay idiom) —
+/// the host pushes per-frame ms samples via `push_frame`; the
+/// widget keeps a 120-sample ring and renders an fps readout plus
+/// a rolling frame-time bar graph with a 16.7 ms budget line.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::perf_overlay::PerfOverlay;
+///
+/// let mut p = PerfOverlay::new();
+/// p.push_frame(16.7);
+/// assert_eq!(p.fps().round() as u32, 60);
+/// ```
+pub mod perf_overlay;
+
 /// Musical keyboard strip (DAW piano-roll / MIDI-input idiom) —
 /// `octaves` white keys with overlay black keys; clicks and
 /// drags (glissando) park the struck semitone index in
@@ -4080,6 +4096,7 @@ pub use page_header::PageHeader;
 pub use pagination::Pagination;
 pub use password_strength::PasswordStrength;
 pub use pattern_lock::PatternLock;
+pub use perf_overlay::PerfOverlay;
 pub use piano_keys::PianoKeys;
 pub use pie_chart::{PieChart, PieSlice};
 pub use pip::Pip;
