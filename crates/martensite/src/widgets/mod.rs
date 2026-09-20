@@ -866,6 +866,21 @@ pub mod date_picker;
 /// ```
 pub mod descriptions;
 
+/// Grouped audio/video device selector (Zoom device-menu idiom) —
+/// `DeviceKind` sections list checkable device rows; clicks mark the
+/// row active and park `(section, index)` in `take_selected`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::device_picker::{DeviceKind, DevicePicker};
+///
+/// let p = DevicePicker::new()
+///     .section(DeviceKind::Microphone, ["Built-in mic"]);
+/// assert_eq!(p.section_count(), 1);
+/// ```
+pub mod device_picker;
+
 /// Rotary knob — circular value control with a 270° sweep
 /// (Qt `QDial`, audio-plugin knob idiom).
 ///
@@ -3825,6 +3840,7 @@ pub use crosshair::Crosshair;
 pub use curve_editor::CurveEditor;
 pub use date_picker::{Date, DatePicker};
 pub use descriptions::{DescriptionItem, Descriptions};
+pub use device_picker::{DeviceKind, DevicePicker};
 pub use dial::Dial;
 pub use dialog::Dialog;
 pub use diff_view::{DiffKind, DiffView};
