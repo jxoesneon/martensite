@@ -14,6 +14,7 @@ members = [
     "crates/martensite-window",
     "crates/martensite-focus",
     "crates/martensite-clipboard",
+    "crates/martensite-dialog",
     "crates/martensite-dnd",
     "crates/martensite-theme",
     "crates/martensite-motion",
@@ -33,6 +34,7 @@ members = [
     "crates/martensite-host",
     "crates/martensite-shell",
     "crates/martensite-clipboard-platform",
+    "crates/martensite-dialog-platform",
     "crates/martensite-text-reference",
     "crates/martensite-render-test",
     "crates/martensite-media-test",
@@ -83,6 +85,7 @@ martensite-access-platform = { version = "0.18.0", path = "crates/martensite-acc
 martensite-window = { version = "0.18.0", path = "crates/martensite-window" }
 martensite-focus = { version = "0.18.0", path = "crates/martensite-focus" }
 martensite-clipboard = { version = "0.18.0", path = "crates/martensite-clipboard" }
+martensite-dialog = { version = "0.18.0", path = "crates/martensite-dialog" }
 martensite-dnd = { version = "0.18.0", path = "crates/martensite-dnd" }
 martensite-theme = { version = "0.18.0", path = "crates/martensite-theme" }
 martensite-motion = { version = "0.18.0", path = "crates/martensite-motion" }
@@ -100,6 +103,7 @@ cargo-martensite = { version = "0.18.0", path = "tools/cargo-martensite" }
 martensite-cosmic-text = { version = "0.19.0-martensite.1", path = "crates/martensite-cosmic-text" }
 martensite-font-fallback = { version = "0.18.0", path = "crates/martensite-font-fallback" }
 martensite-clipboard-platform = { version = "0.18.0", path = "crates/martensite-clipboard-platform" }
+martensite-dialog-platform = { version = "0.18.0", path = "crates/martensite-dialog-platform" }
 martensite-host = { version = "0.18.0", path = "crates/martensite-host" }
 martensite-shell = { version = "0.18.0", path = "crates/martensite-shell" }
 martensite-engine-bridge = { version = "0.18.0", path = "crates/martensite-engine-bridge" }

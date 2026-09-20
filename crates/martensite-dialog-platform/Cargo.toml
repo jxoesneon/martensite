@@ -1,0 +1,22 @@
+[package]
+name = "martensite-dialog-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "OS-native file dialog backends (osascript, PowerShell WinForms, zenity/kdialog) for martensite-dialog."
+readme = "README.md"
+
+[dependencies]
+# This crate intentionally does NOT depend on `martensite-dialog` to avoid
+# a cyclic dependency. It defines its own `DialogBackend` trait and wire
+# types; `martensite-dialog` wraps this crate's API behind its own
+# `PlatformDialog` trait when the `platform` feature is enabled.
+
+[lints]
+workspace = true

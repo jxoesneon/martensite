@@ -1,0 +1,30 @@
+[package]
+name = "martensite-dialog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Native file/folder dialog abstraction (open, multi-open, save, pick-folder) with scripted test backends."
+readme = "README.md"
+
+[dependencies]
+# Optional dependency on the OS-native dialog backend crate. When the
+# `platform` feature is enabled, `default_platform_dialog` returns a real
+# OS dialog driver (NSOpenPanel via `osascript`, Win32 via PowerShell
+# `System.Windows.Forms`, zenity/kdialog on Linux) instead of a stub.
+martensite-dialog-platform = { workspace = true, optional = true }
+
+[features]
+default = []
+# Enables real OS dialog integration via `martensite-dialog-platform`.
+# When disabled, all platform backends fall back to safe stubs that
+# report `DialogOutcome::Cancelled`.
+platform = ["dep:martensite-dialog-platform"]
+
+[lints]
+workspace = true

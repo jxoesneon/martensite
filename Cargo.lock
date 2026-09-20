@@ -2996,6 +2996,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "martensite-dialog"
+version = "0.18.0"
+dependencies = [
+ "martensite-dialog-platform",
+]
+
+[[package]]
+name = "martensite-dialog-platform"
+version = "0.18.0"
+
+[[package]]
 name = "martensite-dnd"
 version = "0.18.0"
 dependencies = [
