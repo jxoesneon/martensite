@@ -30,6 +30,9 @@ use martensite::core::{
 };
 use martensite::prelude::Signal;
 use martensite::widgets::{Banner, Dialog, Disclosure, Severity, Switch, Toast, ToastHost};
+use martensite::widgets::{
+    Battery, DigitalClock, Equalizer, StripChart, Terminal, Thermometer, Time, VuMeter,
+};
 use martensite::widgets::{BulletChart, Spectrum, Waveform, XYPad};
 use martensite::widgets::{Drawer, Flex, Text};
 use martensite::widgets::{KeyCapture, Rating, Segmented, SettingsGroup, SettingsRow, SpinBox};
@@ -249,6 +252,66 @@ impl ShellOverlays {
             .labels("X jog", "Y jog")
             .value(0.5, 0.5)
             .with_text_painter(painter.clone());
+        // Dogfood Thermometer + Battery — cabinet environment and
+        // the UPS state in one disclosure.
+        let environment = Flex::column().gap(4.0).children([
+            Box::new(
+                Thermometer::new()
+                    .label("Cabinet temp")
+                    .range(-10.0, 80.0)
+                    .value(43.0)
+                    .warning(0.7)
+                    .critical(0.9),
+            ) as Box<dyn Widget>,
+            Box::new(
+                Battery::new()
+                    .label("UPS reserve")
+                    .level(0.72)
+                    .charging(true),
+            ),
+        ]);
+        // Dogfood VuMeter + Equalizer — a channel-strip pair for
+        // the cell's audio alarm bus.
+        let audio_bus = Flex::column().gap(4.0).children([
+            Box::new(
+                VuMeter::new()
+                    .label("Alarm bus")
+                    .channels(2)
+                    .levels([0.62, 0.45]),
+            ) as Box<dyn Widget>,
+            Box::new(
+                Equalizer::new()
+                    .faders(6)
+                    .bands([0.5, 0.65, 0.4, 0.55, 0.7, 0.5]),
+            ),
+        ]);
+        // Dogfood DigitalClock — shift-clock readout.
+        let clock = DigitalClock::new()
+            .time(Time {
+                hour: 14,
+                minute: 32,
+            })
+            .running(true);
+        // Dogfood StripChart — the scrolling pressure trace.
+        let mut telemetry = StripChart::new()
+            .label("Hydraulic pressure")
+            .range(0.0, 10.0);
+        telemetry.extend([
+            4.2, 4.4, 4.1, 4.6, 4.9, 5.2, 4.8, 5.5, 5.8, 5.4, 5.0, 5.6, 6.1, 5.7, 5.3, 5.9, 6.4,
+            6.0, 5.5, 5.1,
+        ]);
+        // Dogfood Terminal — a diagnostics console with a seeded
+        // scrollback.
+        let mut console = Terminal::new()
+            .prompt("cell>")
+            .lines([
+                "boot ok — plc v2.4.1",
+                "field bus attached (modbus:502)",
+                "cell> status",
+                "3 axes online, pressure nominal",
+            ])
+            .with_text_painter(painter.clone());
+        console.write("watchdog armed");
         let content = Flex::column().gap(8.0).children([
             Box::new(
                 Banner::new(Severity::Info, "Inspector attached")
@@ -280,6 +343,31 @@ impl ShellOverlays {
             Box::new(
                 Disclosure::new("Jog")
                     .child(jog)
+                    .with_text_painter(painter.clone()),
+            ),
+            Box::new(
+                Disclosure::new("Environment")
+                    .child(environment)
+                    .with_text_painter(painter.clone()),
+            ),
+            Box::new(
+                Disclosure::new("Alarm bus")
+                    .child(audio_bus)
+                    .with_text_painter(painter.clone()),
+            ),
+            Box::new(
+                Disclosure::new("Shift clock")
+                    .child(clock)
+                    .with_text_painter(painter.clone()),
+            ),
+            Box::new(
+                Disclosure::new("Pressure")
+                    .child(telemetry)
+                    .with_text_painter(painter.clone()),
+            ),
+            Box::new(
+                Disclosure::new("Console")
+                    .child(console)
                     .with_text_painter(painter.clone()),
             ),
             Box::new(
