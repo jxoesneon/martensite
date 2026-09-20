@@ -1897,6 +1897,23 @@ pub mod pie_chart;
 /// ```
 pub mod pips_pager;
 
+/// Ordered media queue — title/subtitle rows with a duration
+/// column, a `▶` now-playing marker, click-to-select, and
+/// drag-to-reorder parking `(from, to)` in `take_moved`.
+/// `Next`/`Previous` wrap the marker. Pairs with
+/// `MediaControls`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::playlist::{Playlist, Track};
+///
+/// let mut p = Playlist::new().track(Track::new("a", "b"));
+/// p.set_current(0);
+/// assert_eq!(p.current(), Some(0));
+/// ```
+pub mod playlist;
+
 /// Polar area chart (Nightingale / Coxcomb rose idiom) — every
 /// wedge spans an equal angle and its radius encodes the value
 /// (sqrt-scaled so area stays linear). Hovering a wedge parks its
@@ -2788,6 +2805,7 @@ pub use pagination::Pagination;
 pub use piano_keys::PianoKeys;
 pub use pie_chart::{PieChart, PieSlice};
 pub use pips_pager::PipsPager;
+pub use playlist::{Playlist, Track};
 pub use polar_area::PolarArea;
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
