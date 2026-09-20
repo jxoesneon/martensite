@@ -2055,6 +2055,21 @@ pub mod nav_stack;
 /// ```
 pub mod notification_center;
 
+/// Media-session card — art swatch, title, artist/album line, and
+/// an elapsed/total mini progress rail (Spotify/Apple Music "now
+/// playing" bar). Metadata companion to `MediaControls` and
+/// `Playlist`; a card click parks `take_clicked`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::now_playing::NowPlaying;
+///
+/// let n = NowPlaying::new("Blue in Green", "Miles Davis").duration(327.0);
+/// assert_eq!(n.duration_value(), 327.0);
+/// ```
+pub mod now_playing;
+
 /// Mechanical-reel digit counter (trip-odometer / web hit-counter
 /// idiom) — a row of digit windows, each reel rolling upward
 /// through neighboring digits toward its target on `tick`, clipped
@@ -3320,6 +3335,7 @@ pub use minimap::Minimap;
 pub use nav_rail::{NavDestination, NavRail};
 pub use nav_stack::NavStack;
 pub use notification_center::{Notification, NotificationCenter};
+pub use now_playing::NowPlaying;
 pub use odometer::Odometer;
 pub use org_chart::{OrgChart, OrgNode};
 pub use otp_input::OtpInput;
