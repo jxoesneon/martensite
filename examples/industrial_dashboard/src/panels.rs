@@ -1599,10 +1599,15 @@ struct Snap {
     cursors: Vec<Cursor>,
 }
 
-/// One open VFS document: the editor model plus its private undo/redo
+/// One open document: the editor model plus its private undo/redo
 /// stacks, scroll position, and the insert-run coalescing flag.
 struct EditorTab {
-    path: &'static str,
+    /// Display name — the VFS path for shipped documents, the file
+    /// name for documents picked in the OS open dialog.
+    name: String,
+    /// The bytes `tab_dirty` compares the live buffer against — VFS
+    /// bytes for shipped documents, file bytes for opened ones.
+    baseline: Vec<u8>,
     editor: CodeEditor,
     undo: VecDeque<Snap>,
     redo: Vec<Snap>,
@@ -1629,6 +1634,48 @@ enum DragGran {
     Line(usize),
 }
 
+/// Tab-strip action-chip labels — right-aligned, they publish the
+/// request signals the app drains into OS file dialogs.
+const OPEN_LABEL: &str = "open…";
+const SAVE_LABEL: &str = "save as…";
+
+/// Outcome signals shared between the editor panel and the app — the
+/// panel owns the buffers but the app owns the OS services, so
+/// requests and payloads travel through cells (the same seam the
+/// toolbar and `clipboard_out` use).
+#[derive(Clone)]
+pub struct EditorSignals {
+    /// Active tab index — seeded from the persisted preference at
+    /// construction; the panel writes it back on every switch so the
+    /// app can persist the last-active document.
+    pub tab_sel: Signal<usize>,
+    /// App → panel: a document picked in the OS open dialog, drained
+    /// in `tick` into a new tab as `(name, contents)`.
+    pub open_in: Signal<Option<(String, String)>>,
+    /// Panel → app: the active tab's `(name, buffer)` — the save
+    /// dialog's payload, republished on change in `tick`.
+    pub doc_out: Signal<Option<(String, String)>>,
+    /// Tab-strip "open…" chip → request an OS open-file dialog.
+    pub open_req: Signal<bool>,
+    /// Tab-strip "save as…" chip → request an OS save-file dialog.
+    pub export_req: Signal<bool>,
+}
+
+/// Detached cells for tests — `Signal` has no `Default`, so tests and
+/// headless harnesses get a freestanding set rather than wiring app
+/// state.
+impl Default for EditorSignals {
+    fn default() -> Self {
+        Self {
+            tab_sel: Signal::new(0),
+            open_in: Signal::new(None),
+            doc_out: Signal::new(None),
+            open_req: Signal::new(false),
+            export_req: Signal::new(false),
+        }
+    }
+}
+
 /// The editor panel: one tab per `SOURCES` document resolved through
 /// `EmbeddedVfs`, a chip strip under the title bar (dirty dot when the
 /// buffer diverges from the VFS bytes, accent underline on the active
@@ -1637,7 +1684,6 @@ enum DragGran {
 /// and `highlight_line` spans mapped to palette colors per glyph
 /// byte-offset.
 pub struct EditorPanel {
-    vfs: EmbeddedVfs,
     tabs: Vec<EditorTab>,
     active: usize,
     text: Mutex<TextPainter>,
@@ -1650,38 +1696,56 @@ pub struct EditorPanel {
     shift_held: bool,
     /// In-progress drag-select; the panel holds pointer capture.
     drag: Option<DragGran>,
+    /// Shared outcome cells — see [`EditorSignals`].
+    tab_sel: Signal<usize>,
+    open_in: Signal<Option<(String, String)>>,
+    doc_out: Signal<Option<(String, String)>>,
+    open_req: Signal<bool>,
+    export_req: Signal<bool>,
+    /// Set by any event that could mutate the buffer or the active
+    /// tab — `tick` republishes `doc_out` only while dirty so an idle
+    /// frame doesn't clone the whole document at 60 Hz.
+    doc_dirty: bool,
 }
 
 impl EditorPanel {
-    pub fn new(scale: Signal<f32>) -> Self {
+    pub fn new(scale: Signal<f32>, signals: EditorSignals) -> Self {
         let vfs = EmbeddedVfs::new(SOURCES);
         // One tab per VFS document — buffers are seeded from
         // `vfs.resolve`, not the static table directly.
         let tabs = SOURCES
             .iter()
-            .map(|&(path, _)| EditorTab {
-                path,
-                editor: CodeEditor::new(
-                    vfs.resolve(path)
-                        .and_then(|b| std::str::from_utf8(b).ok())
-                        .unwrap_or(""),
-                ),
-                undo: VecDeque::new(),
-                redo: Vec::new(),
-                scroll_top: 0,
-                insert_run: false,
+            .map(|&(path, _)| {
+                let bytes = vfs.resolve(path).unwrap_or(b"");
+                EditorTab {
+                    name: path.to_string(),
+                    baseline: bytes.to_vec(),
+                    editor: CodeEditor::new(std::str::from_utf8(bytes).unwrap_or("")),
+                    undo: VecDeque::new(),
+                    redo: Vec::new(),
+                    scroll_top: 0,
+                    insert_run: false,
+                }
             })
             .collect();
+        // Restore the persisted active tab — the signal carries the
+        // app's stored preference, clamped into the shipped set.
+        let active = signals.tab_sel.get().min(SOURCES.len().saturating_sub(1));
         Self {
-            vfs,
             tabs,
-            active: 0,
+            active,
             text: Mutex::new(TextPainter::new()),
             scale,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
             shift_held: false,
             drag: None,
+            tab_sel: signals.tab_sel,
+            open_in: signals.open_in,
+            doc_out: signals.doc_out,
+            open_req: signals.open_req,
+            export_req: signals.export_req,
+            doc_dirty: true,
         }
     }
 
@@ -1761,21 +1825,20 @@ impl EditorPanel {
         }
     }
 
-    /// `true` when the tab's buffer diverges from its VFS bytes — the
-    /// chip's dirty dot.
+    /// `true` when the tab's buffer diverges from its baseline bytes
+    /// (VFS contents for shipped docs, file contents for opened ones)
+    /// — the chip's dirty dot.
     fn tab_dirty(&self, index: usize) -> bool {
         let tab = &self.tabs[index];
-        self.vfs
-            .resolve(tab.path)
-            .is_none_or(|bytes| tab.editor.text().as_bytes() != bytes)
+        tab.editor.text().as_bytes() != tab.baseline.as_slice()
     }
 
-    /// The chip label — path plus a dirty marker.
+    /// The chip label — name plus a dirty marker.
     fn chip_label(&self, index: usize) -> String {
         if self.tab_dirty(index) {
-            format!("{} •", self.tabs[index].path)
+            format!("{} •", self.tabs[index].name)
         } else {
-            self.tabs[index].path.to_string()
+            self.tabs[index].name.clone()
         }
     }
 
@@ -1795,6 +1858,19 @@ impl EditorPanel {
                 r
             })
             .collect()
+    }
+
+    /// Right-aligned action-chip `(x, width)` rects in window
+    /// coordinates — `[open, save as]`, the same shared-geometry
+    /// contract as `chip_rects` (painter and hit-test share it).
+    fn action_rects(&self, text: &mut TextPainter) -> [(f32, f32); 2] {
+        let s = self.s();
+        let w_open = text.measure(OPEN_LABEL, 12.0 * s) + 14.0 * s;
+        let w_save = text.measure(SAVE_LABEL, 12.0 * s) + 14.0 * s;
+        let right = self.bounds.max_x() - 6.0 * s;
+        let save_x = right - w_save;
+        let open_x = save_x - 4.0 * s - w_open;
+        [(open_x, w_open), (save_x, w_save)]
     }
 
     /// The tab-strip band in window coordinates: (top, bottom) — under
@@ -1888,8 +1964,45 @@ impl Widget for EditorPanel {
         self.bounds = bounds;
     }
 
+    fn tick(&mut self, _dt: Duration) -> bool {
+        let mut dirty = false;
+        // A document the app picked in the OS open dialog lands here
+        // as a new active tab — the file read and the dialog stay
+        // app-side; the panel only receives the payload.
+        if let Some((name, text)) = self.open_in.get() {
+            self.open_in.set(None);
+            self.tab_mut().insert_run = false;
+            self.tabs.push(EditorTab {
+                baseline: text.as_bytes().to_vec(),
+                editor: CodeEditor::new(&text),
+                name,
+                undo: VecDeque::new(),
+                redo: Vec::new(),
+                scroll_top: 0,
+                insert_run: false,
+            });
+            self.active = self.tabs.len() - 1;
+            self.doc_dirty = true;
+            dirty = true;
+        }
+        // Publish the active tab for the app's save dialog, and the
+        // selection index for the persisted preference. `doc_out`
+        // republishes only after an event that could have changed the
+        // buffer — cloning a full document every idle frame is waste.
+        if self.doc_dirty {
+            self.doc_dirty = false;
+            self.doc_out
+                .set_if_changed(Some((self.tab().name.clone(), self.tab().editor.text())));
+        }
+        self.tab_sel.set_if_changed(self.active);
+        dirty
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         let s = self.s();
+        // Any event could mutate the buffer or switch tabs — flag the
+        // next tick to republish `doc_out`.
+        self.doc_dirty = true;
         // Matches the painter: title bar + hairline + tab strip +
         // hairline + content padding.
         let (strip_top, strip_bottom) = self.strip_band();
@@ -1910,6 +2023,23 @@ impl Widget for EditorPanel {
                 // Tab-strip clicks switch documents — chips are
                 // hit-tested against the same rects the painter emits.
                 if position.y < strip_bottom {
+                    // Action chips win the strip's right edge — they
+                    // publish request signals the app drains into OS
+                    // file dialogs (the panel stays OS-free).
+                    let acts = {
+                        let mut t = self.text.lock();
+                        self.action_rects(&mut t)
+                    };
+                    for (i, (ax, aw)) in acts.iter().enumerate() {
+                        if position.x >= *ax && position.x < ax + aw {
+                            if i == 0 {
+                                self.open_req.set(true);
+                            } else {
+                                self.export_req.set(true);
+                            }
+                            return EventResponse::CaptureFocus;
+                        }
+                    }
                     // Scoped lock — the guard borrows `self.text` until
                     // its drop point, which would conflict with the
                     // `&mut self` uses below.
@@ -1917,8 +2047,14 @@ impl Widget for EditorPanel {
                         let mut t = self.text.lock();
                         self.chip_rects(&mut t)
                     };
+                    // Same drop rule the painter uses — chips past
+                    // `min(panel-right, action-chips-left)` aren't
+                    // painted, so they mustn't be clickable either.
+                    let tab_limit = acts[0].0 - 4.0 * s;
+                    let limit = tab_limit.min(self.bounds.max_x());
                     if let Some(i) = chips
                         .iter()
+                        .take_while(|(x, w)| x + w <= limit)
                         .position(|(x, w)| position.x >= *x && position.x < x + w)
                     {
                         if i != self.active {
@@ -2153,7 +2289,7 @@ impl Widget for EditorPanel {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::MultilineTextInput);
-        node.set_label(format!("Editor — {}", self.tab().path));
+        node.set_label(format!("Editor — {}", self.tab().name));
         node.set_value(self.tab().editor.text());
     }
 
@@ -2180,7 +2316,7 @@ impl Widget for EditorPanel {
         } else {
             format!("{} lines", tab.editor.lines().len())
         };
-        let title = format!("EDITOR · {}", tab.path);
+        let title = format!("EDITOR · {}", tab.name);
         let inner = panel_chrome(&mut text, cx.list, self.bounds, &title, &right, pal, s);
         let sd = f64::from(s);
         let pad = 8.0 * sd;
@@ -2202,11 +2338,15 @@ impl Widget for EditorPanel {
         // `chip_rects` is the single geometry source — PointerPressed
         // hit-tests the same rects painted here. Chips that can't fit
         // are dropped rather than painted past the panel clip — same
-        // convention as the grid's rightmost-first column drop.
+        // convention as the grid's rightmost-first column drop. The
+        // action chips own the strip's right edge, so tab chips stop
+        // short of it.
+        let acts = self.action_rects(&mut text);
+        let tab_limit = f64::from(acts[0].0) - 4.0 * sd;
         for (i, (chip_x, chip_w)) in self.chip_rects(&mut text).iter().enumerate() {
             let chip_x = f64::from(*chip_x);
             let chip_w = f64::from(*chip_w);
-            if chip_x + chip_w > inner.x1 {
+            if chip_x + chip_w > inner.x1.min(tab_limit) {
                 break;
             }
             let label = self.chip_label(i);
@@ -2237,6 +2377,26 @@ impl Widget for EditorPanel {
                 // under the 4.5:1 AA floor. Active/inactive reads via
                 // the surface fill + accent underline instead.
                 pal.text,
+                None,
+            );
+        }
+        // Action chips — right edge of the strip; pressing them
+        // publishes the request signals the app drains into OS file
+        // dialogs (the panel itself stays OS-free).
+        for (i, label) in [OPEN_LABEL, SAVE_LABEL].iter().enumerate() {
+            let (ax, aw) = (f64::from(acts[i].0), f64::from(acts[i].1));
+            if ax < inner.x0 || ax + aw > inner.x1 {
+                continue;
+            }
+            let r = krect(ax, strip_top + 3.0 * sd, aw, strip_h - 6.0 * sd);
+            cx.list
+                .push_stroke_shape(r, &Shape::rounded(3.0 * s), 1.0, pal.border);
+            text.push(
+                cx.list,
+                Point::new(ax + 7.0 * sd, strip_top + 5.0 * sd),
+                label,
+                12.0 * s,
+                pal.text_muted,
                 None,
             );
         }
@@ -2827,7 +2987,7 @@ mod tests {
     /// the other tab's history.
     #[test]
     fn undo_history_is_per_tab() {
-        let mut p = EditorPanel::new(Signal::new(1.0));
+        let mut p = EditorPanel::new(Signal::new(1.0), EditorSignals::default());
         let bounds = Rect::new(0.0, 0.0, 800.0, 400.0);
         layout_at(&mut p, bounds);
 
@@ -2891,7 +3051,7 @@ mod tests {
     /// contract the framework's `count` field exists for.
     #[test]
     fn editor_multi_click_selects_word_and_line() {
-        let mut p = EditorPanel::new(Signal::new(1.0));
+        let mut p = EditorPanel::new(Signal::new(1.0), EditorSignals::default());
         let bounds = Rect::new(0.0, 0.0, 800.0, 400.0);
         layout_at(&mut p, bounds);
         let (_, strip_bottom) = p.strip_band();
@@ -3028,7 +3188,7 @@ mod decoder_tests {
         );
         assert_eq!(telemetry.min_render().policy, UnderflowPolicy::Scrim);
 
-        let editor = EditorPanel::new(Signal::new(1.0));
+        let editor = EditorPanel::new(Signal::new(1.0), EditorSignals::default());
         assert_eq!(editor.min_render().policy, UnderflowPolicy::Clip);
 
         let media = MediaPanel::new(Signal::new(1.0));

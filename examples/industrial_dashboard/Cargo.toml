@@ -45,6 +45,19 @@ martensite-motion = { workspace = true }
 # resources compile in via `include_str!` from `locales/` and switch
 # live through `martensite_l10n::reactive::L10n`.
 martensite-l10n = { workspace = true }
+# App-side OS services — like the clipboard backend, the native halves
+# aren't `Send`, so widgets publish request Signals and the app layer
+# performs the calls. `platform` compiles the real subprocess backends;
+# each falls back to a safe stub where the OS tooling is absent
+# (`default_platform_*` never fails).
+martensite-persist = { workspace = true }
+# `StateStore::set` is generic (`impl Into<serde_json::Value>`), so the
+# dashboard's `PrefStore` enum names `Value` directly to implement it.
+serde_json = { workspace = true }
+martensite-notify = { workspace = true, features = ["platform"] }
+martensite-dialog = { workspace = true, features = ["platform"] }
+martensite-share = { workspace = true, features = ["platform"] }
+martensite-print = { workspace = true, features = ["platform"] }
 # winit/wgpu feature pins mirror examples/viewport_showcase — the vendored
 # accesskit_winit fork and the wgpu engine both build against these.
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }

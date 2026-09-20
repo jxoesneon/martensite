@@ -44,8 +44,10 @@ const ALERTS: usize = 5;
 const ABOUT: usize = 6;
 const INSPECTOR: usize = 7;
 const CONSOLE: usize = 8;
-const FILTER: usize = 9;
-const N: usize = 10;
+const SHARE: usize = 9;
+const PRINT: usize = 10;
+const FILTER: usize = 11;
+const N: usize = 12;
 
 /// Outcome signals shared between the toolbar and the app — clones
 /// share the same cells, so both sides observe state without
@@ -72,6 +74,12 @@ pub struct ToolbarSignals {
     pub inspector_req: Signal<bool>,
     /// "Console" pressed — the app opens the secondary OS window.
     pub console_req: Signal<bool>,
+    /// "Share" pressed — the app dispatches the telemetry report
+    /// through the OS share service.
+    pub share_req: Signal<bool>,
+    /// "Print" pressed — the app submits the same report to the OS
+    /// spooler.
+    pub print_req: Signal<bool>,
 }
 
 /// The toolbar widget. Outcome signals are shared cells — the app
@@ -95,6 +103,10 @@ pub struct Toolbar {
     inspector_armed: bool,
     /// See `about_armed` — release inside fires the console request.
     console_armed: bool,
+    /// See `about_armed` — release inside fires the share request.
+    share_armed: bool,
+    /// See `about_armed` — release inside fires the print request.
+    print_armed: bool,
     /// Child currently holding a pointer press. While set, positional
     /// events forward to it regardless of hit position — captured
     /// drags (slider thumb, text-input drag-select) leave every child
@@ -109,6 +121,8 @@ pub struct Toolbar {
     about: Button,
     inspector: Button,
     console: Button,
+    share: Button,
+    print: Button,
     filter: TextInput,
     rects: [Rect; N],
     /// Telemetry pause — Space in the Telemetry panel writes the same
@@ -119,8 +133,8 @@ pub struct Toolbar {
     /// Telemetry sample period in milliseconds (20–500).
     tick_ms: Signal<f64>,
     /// Theme selection as a `THEME_OPTIONS` index — bidirectional: the
-    /// dropdown writes it, the app writes it back on `T` cycling, and
-    /// `tick` reconciles the dropdown with app-side changes.
+    /// dropdown writes it, the app may write it back, and `reconcile`
+    /// resyncs the dropdown with app-side changes.
     theme_sel: Signal<usize>,
     /// Grid filter text — `GridPanel` folds it into its `RowFilter`.
     filter_text: Signal<String>,
@@ -133,6 +147,12 @@ pub struct Toolbar {
     inspector_req: Signal<bool>,
     /// "Console" pressed — the app opens the secondary OS window.
     console_req: Signal<bool>,
+    /// "Share" pressed — the app dispatches the telemetry report
+    /// through the OS share service.
+    share_req: Signal<bool>,
+    /// "Print" pressed — the app submits the same report to the OS
+    /// spooler.
+    print_req: Signal<bool>,
 
     /// Last selection index observed — `tick` uses it to tell a popup
     /// commit (dropdown moved) from an external write (signal moved).
@@ -151,7 +171,14 @@ impl Toolbar {
             about_req,
             inspector_req,
             console_req,
+            share_req,
+            print_req,
         } = signals;
+        // Seed every control from its signal — restored/existing
+        // values must survive the first `publish()` (an event can
+        // arrive before the first `tick` reconcile would mirror
+        // them into the widgets).
+        let theme_idx = theme_sel.get().min(THEME_OPTIONS.len() - 1);
         Self {
             scale,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
@@ -161,20 +188,30 @@ impl Toolbar {
             about_armed: false,
             inspector_armed: false,
             console_armed: false,
+            share_armed: false,
+            print_armed: false,
             press_target: None,
             pause: Button::new("Pause").tooltip("pause telemetry (Space in Telemetry works too)"),
-            glow: CheckBox::new("glow").checked(true),
+            glow: CheckBox::new("glow").checked(glow_on.get()),
             tick: Slider::new(20.0, 500.0)
-                .with_value(100.0)
+                .with_value(tick_ms.get())
                 .step(10.0)
                 .label("sample ms"),
-            theme: Dropdown::new(THEME_OPTIONS).label("theme"),
+            theme: {
+                let mut dd = Dropdown::new(THEME_OPTIONS).label("theme");
+                dd.commit(theme_idx);
+                dd
+            },
             sep: Separator::vertical(),
-            alerts: Switch::new("alerts"),
+            alerts: Switch::new("alerts").on(alerts_on.get()),
             about: Button::new("About…").tooltip("modal dialog — scrim + input block"),
             inspector: Button::new("Inspector").tooltip("edge drawer — scrim-tap dismisses"),
             console: Button::new("Console").tooltip("secondary OS window — real surface"),
-            filter: TextInput::new("filter grid").placeholder("filter pid/mem/status…"),
+            share: Button::new("Share").tooltip("share the telemetry report — OS share service"),
+            print: Button::new("Print").tooltip("print the telemetry report — OS spooler"),
+            filter: TextInput::new("filter grid")
+                .placeholder("filter pid/mem/status…")
+                .value(filter_text.get()),
             rects: [Rect::new(0.0, 0.0, 0.0, 0.0); N],
             paused,
             glow_on,
@@ -185,8 +222,36 @@ impl Toolbar {
             about_req,
             inspector_req,
             console_req,
-            last_theme_idx: 0,
+            share_req,
+            print_req,
+            last_theme_idx: theme_idx,
         }
+    }
+
+    /// Mirror externally-written signals into the widgets —
+    /// direction-aware, so an in-flight gesture isn't stomped.
+    /// Called from `tick` AND before forwarding any event: a signal
+    /// written app-side (banner ×, `--theme`, `T` cycle) must be
+    /// mirrored before `publish()` pushes widget state back, or the
+    /// stale widget value resurrects over the external write.
+    fn reconcile(&mut self) -> bool {
+        let mut dirty = false;
+        let sig = self.theme_sel.get().min(THEME_OPTIONS.len() - 1);
+        let cur = self.theme.selected();
+        if cur != self.last_theme_idx {
+            self.theme_sel.set_if_changed(cur);
+            self.last_theme_idx = cur;
+            dirty = true;
+        } else if sig != self.last_theme_idx && !self.theme.is_open() {
+            self.theme.commit(sig);
+            self.last_theme_idx = sig;
+            dirty = true;
+        }
+        if self.alerts.on != self.alerts_on.get() {
+            self.alerts.on = self.alerts_on.get();
+            dirty = true;
+        }
+        dirty
     }
 
     fn s(&self) -> f32 {
@@ -214,6 +279,8 @@ impl Toolbar {
             ABOUT => Some(&mut self.about),
             INSPECTOR => Some(&mut self.inspector),
             CONSOLE => Some(&mut self.console),
+            SHARE => Some(&mut self.share),
+            PRINT => Some(&mut self.print),
             FILTER => Some(&mut self.filter),
             _ => None,
         }
@@ -230,6 +297,8 @@ impl Toolbar {
             ABOUT => Some(&self.about),
             INSPECTOR => Some(&self.inspector),
             CONSOLE => Some(&self.console),
+            SHARE => Some(&self.share),
+            PRINT => Some(&self.print),
             FILTER => Some(&self.filter),
             _ => None,
         }
@@ -279,10 +348,10 @@ impl Widget for Toolbar {
         let mut x = bounds.origin.x + pad;
         let right = bounds.max_x() - pad;
 
-        // Fixed slots for the eight controls; the filter input takes the
+        // Fixed slots for the eleven controls; the filter input takes the
         // remainder (clamped — collapses to nothing under real pressure).
         // Rect is (x, y, width, height) — not min/max corners.
-        let slots: [(usize, f32); 9] = [
+        let slots: [(usize, f32); 11] = [
             (PAUSE, 84.0 * s),
             (GLOW, 76.0 * s),
             (TICK, 180.0 * s),
@@ -292,6 +361,8 @@ impl Widget for Toolbar {
             (ABOUT, 74.0 * s),
             (INSPECTOR, 88.0 * s),
             (CONSOLE, 84.0 * s),
+            (SHARE, 64.0 * s),
+            (PRINT, 60.0 * s),
         ];
         for (i, w) in slots {
             let r = Rect::new(x, y, w.min(right - x).max(0.0), h);
@@ -309,6 +380,10 @@ impl Widget for Toolbar {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        // Mirror external signal writes before dispatch — otherwise
+        // `publish()` below pushes the stale widget value back over
+        // them (e.g. the banner × clearing `alerts_on`).
+        self.reconcile();
         let resp = match cx.event {
             WidgetEvent::SemanticAction(SemanticAction::Focus | SemanticAction::Click) => {
                 EventResponse::CaptureFocus
@@ -345,6 +420,8 @@ impl Widget for Toolbar {
                     self.about_armed = i == ABOUT;
                     self.inspector_armed = i == INSPECTOR;
                     self.console_armed = i == CONSOLE;
+                    self.share_armed = i == SHARE;
+                    self.print_armed = i == PRINT;
                     let focus_ev = if i == FILTER {
                         WidgetEvent::FocusGained
                     } else {
@@ -412,6 +489,18 @@ impl Widget for Toolbar {
                     }
                     self.console_armed = false;
                 }
+                if i == SHARE && self.share_armed && released {
+                    if self.rects[SHARE].contains(pos) {
+                        self.share_req.set(true);
+                    }
+                    self.share_armed = false;
+                }
+                if i == PRINT && self.print_armed && released {
+                    if self.rects[PRINT].contains(pos) {
+                        self.print_req.set(true);
+                    }
+                    self.print_armed = false;
+                }
                 r
             }
             // Non-positional: internal focus decides.
@@ -422,27 +511,7 @@ impl Widget for Toolbar {
     }
 
     fn tick(&mut self, _dt: std::time::Duration) -> bool {
-        let mut dirty = false;
-        // Direction-aware reconcile: a popup commit moves `selected()`
-        // while an app-side change (the `T` cycle, `--theme`) moves the
-        // signal — compare both against the last observed index so each
-        // side updates the other without stomping an in-flight gesture.
-        let sig = self.theme_sel.get().min(THEME_OPTIONS.len() - 1);
-        let cur = self.theme.selected();
-        if cur != self.last_theme_idx {
-            self.theme_sel.set_if_changed(cur);
-            self.last_theme_idx = cur;
-            dirty = true;
-        } else if sig != self.last_theme_idx && !self.theme.is_open() {
-            self.theme.commit(sig);
-            self.last_theme_idx = sig;
-            dirty = true;
-        }
-        // Banner × writes the signal off — mirror it into the switch.
-        if self.alerts.on != self.alerts_on.get() {
-            self.alerts.on = self.alerts_on.get();
-            dirty = true;
-        }
+        let mut dirty = self.reconcile();
         // Space-driven pause (Telemetry panel) re-syncs the label.
         let want = if self.paused.get() { "Resume" } else { "Pause" };
         if self.pause.label != want {
@@ -518,4 +587,60 @@ impl Widget for Toolbar {
 /// Remaining width for the filter slot — never negative.
 fn fw_width(x: f32, right: f32) -> f32 {
     (right - x).max(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn signals() -> ToolbarSignals {
+        ToolbarSignals {
+            paused: Signal::new(false),
+            glow_on: Signal::new(true),
+            tick_ms: Signal::new(100.0),
+            theme_sel: Signal::new(0),
+            filter_text: Signal::new(String::new()),
+            alerts_on: Signal::new(true),
+            about_req: Signal::new(false),
+            inspector_req: Signal::new(false),
+            console_req: Signal::new(false),
+            share_req: Signal::new(false),
+            print_req: Signal::new(false),
+        }
+    }
+
+    #[test]
+    fn seeded_controls_do_not_clobber_restored_signals() {
+        // Same defect class as the status-bar locale fix: a toolbar
+        // built from restored signals must publish them back
+        // unchanged — widget defaults must not overwrite the restore.
+        let sigs = signals();
+        let alerts = sigs.alerts_on.clone();
+        let theme = sigs.theme_sel.clone();
+        theme.set(2); // "System" — as restored from the store
+        let mut tb = Toolbar::new(Signal::new(1.0), sigs);
+        tb.publish();
+        assert!(alerts.get(), "publish clobbered restored alerts_on");
+        assert_eq!(theme.get(), 2, "publish clobbered restored theme_sel");
+    }
+
+    #[test]
+    fn external_signal_write_survives_event_dispatch() {
+        // The banner × clears `alerts_on` app-side while the switch
+        // still shows ON. `event()` must reconcile first — a stale
+        // switch resurrecting the flag was the review finding.
+        let sigs = signals();
+        let alerts = sigs.alerts_on.clone();
+        let mut tb = Toolbar::new(Signal::new(1.0), sigs);
+        alerts.set(false);
+        let ev = WidgetEvent::FocusGained;
+        let mut cx = EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 800.0, 40.0),
+            scale: 1.0,
+        };
+        tb.event(&mut cx);
+        assert!(!alerts.get(), "stale switch resurrected alerts_on");
+        assert!(!tb.alerts.on, "switch not reconciled to external write");
+    }
 }

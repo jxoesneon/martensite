@@ -190,7 +190,13 @@ impl StatusBar {
             scale,
             dd_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             focused: false,
-            dropdown: Dropdown::new(LOCALE_LABELS).label("locale"),
+            // Seed from the signal — a restored locale must not be
+            // stomped back to index 0 by the first `publish()`.
+            dropdown: {
+                let mut dd = Dropdown::new(LOCALE_LABELS).label("locale");
+                dd.commit(locale_sel.get());
+                dd
+            },
             locale_sel,
             spinner: Spinner::new().size(14.0),
             progress: ProgressBar::new().value(0.0),
@@ -458,6 +464,24 @@ mod tests {
         l10n.set_locale("en".parse().expect("valid langid"))
             .expect("en registered");
         assert_eq!(l10n.get("kpi-uptime").as_deref(), Some("UPTIME"));
+    }
+
+    #[test]
+    fn restored_locale_survives_first_publish() {
+        // Regression: the dropdown used to default to index 0, so the
+        // first `publish()` overwrote a restored non-English locale —
+        // reverting the UI AND clobbering the persisted pref on the
+        // next write-through. `StatusBar::new` now seeds the dropdown
+        // from the signal, so publish is a no-op until the user picks.
+        let sel = Signal::new(3usize); // "de" — a restored store value
+        let mut sb = StatusBar::new(
+            Signal::new(1.0f32),
+            sel.clone(),
+            Signal::new(0.5f64),
+            Signal::new(false),
+        );
+        sb.publish();
+        assert_eq!(sel.get(), 3, "publish clobbered the restored locale");
     }
 
     #[test]

@@ -34,15 +34,18 @@ fn main() {
         headless::run();
         return;
     }
-    // `--theme <dark|light|system>` — boots settled into the mode
-    // (default dark). Verification needs a non-animated start so the
-    // paint audit measures final colors, not transition frames.
+    // `--theme <dark|light|system>` — boots settled into the mode,
+    // overriding the persisted preference (which restores when the
+    // flag is absent; the store falls back to dark). Verification
+    // needs a non-animated start so the paint audit measures final
+    // colors, not transition frames.
     let theme = {
         let mut args = std::env::args().skip_while(|a| a != "--theme").skip(1);
         match args.next().as_deref() {
-            Some("light") => app::ThemeChoice::Light,
-            Some("system") => app::ThemeChoice::System,
-            _ => app::ThemeChoice::Dark,
+            Some("light") => Some(app::ThemeChoice::Light),
+            Some("system") => Some(app::ThemeChoice::System),
+            Some("dark") => Some(app::ThemeChoice::Dark),
+            _ => None,
         }
     };
     // `--audit-locale` — opt the paint audit into the `MissingLocale`

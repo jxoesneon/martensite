@@ -40,6 +40,15 @@ use martensite::window::event::{
 };
 use martensite::window::WindowId;
 
+use martensite_dialog::{FileDialogRequest, FileFilter, PlatformDialog};
+use martensite_notify::{Notification, PlatformNotifier, Urgency};
+use martensite_persist::{
+    default_store_path, JsonFileStore, MemoryStore, PersistError, StateStore,
+};
+use martensite_print::{PlatformPrinter, PrintJob, PrintOutcome};
+use martensite_share::{PlatformShare, ShareOutcome, ShareRequest};
+use serde_json::Value;
+
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
@@ -52,7 +61,9 @@ use martensite::devtools::hud::{DiagnosticHud, FrameTiming};
 
 use crate::model::{build_dock_tree, Palette};
 use crate::overlays::{push_toast, ShellOverlays, ToastInbox};
-use crate::panels::{fmt_count, EditorPanel, GridPanel, MediaPanel, TelemetryPanel, TITLE_H};
+use crate::panels::{
+    fmt_count, EditorPanel, EditorSignals, GridPanel, MediaPanel, TelemetryPanel, TITLE_H,
+};
 use crate::statusbar::{build_l10n, StatusBar, LOCALE_CODES, STATUSBAR_W};
 use crate::subwindow::SubWindow;
 use crate::text::TextPainter;
@@ -122,6 +133,30 @@ struct DockDrag {
     active: bool,
 }
 
+/// Hysteresis-gated telemetry alarm watch — each channel notifies
+/// once on entering its band and re-arms when it clears, so a noisy
+/// signal cannot spam the OS notification facility. The toolbar
+/// "alerts" switch is the master gate (the same cell the panel
+/// banner reads).
+#[derive(Default)]
+struct AlarmWatch {
+    /// Armed/disarmed edge — the arming transition itself notifies
+    /// once so the backend's liveness is visible immediately.
+    armed: bool,
+    cpu: bool,
+    mem: bool,
+}
+
+/// The preference set mirrored into `martensite-persist` — written
+/// back (set + atomic flush) whenever a frame observes a change.
+#[derive(Clone, PartialEq)]
+struct Prefs {
+    theme: ThemeChoice,
+    locale: usize,
+    editor_tab: usize,
+    alerts: bool,
+}
+
 /// The application. GPU/window state is created lazily inside
 /// `can_create_surfaces` per the winit 0.31 lifecycle.
 struct App {
@@ -161,11 +196,51 @@ struct App {
     inspector_req: Signal<bool>,
     /// Toolbar "Console" → opens the secondary OS window.
     console_req: Signal<bool>,
+    /// Toolbar "Share" → dispatch the telemetry report through the OS
+    /// share service.
+    share_req: Signal<bool>,
+    /// Toolbar "Print" → submit the same report to the OS spooler.
+    print_req: Signal<bool>,
+    /// Editor "open…" chip → OS open-file dialog request.
+    open_req: Signal<bool>,
+    /// Editor "save as…" chip → OS save-file dialog request.
+    export_req: Signal<bool>,
+    /// App → `EditorPanel`: document picked in the open dialog.
+    open_in: Signal<Option<(String, String)>>,
+    /// `EditorPanel` → app: the active tab's `(name, buffer)` — the
+    /// save dialog's payload.
+    doc_out: Signal<Option<(String, String)>>,
+    /// `EditorPanel`'s active tab — persisted as a preference.
+    editor_tab: Signal<usize>,
     /// Shared toast inbox — cloned into `ShellOverlays`; `redraw`
     /// enqueues toasts for real app actions (copies, theme changes).
     toast_inbox: ToastInbox,
     /// OS clipboard backend — `None` where no native backend exists.
     clipboard: Option<Box<dyn martensite_clipboard_platform::ClipboardBackend>>,
+    /// Settings persistence — a `JsonFileStore` under the per-OS
+    /// config dir, a volatile `MemoryStore` where none resolves.
+    store: PrefStore,
+    /// OS notification facility — a safe stub where no backend exists.
+    notifier: Box<dyn PlatformNotifier>,
+    /// OS file dialogs — a stub reporting `Cancelled` where no backend
+    /// exists. Calls block on the event thread (native modals).
+    dialogs: Box<dyn PlatformDialog>,
+    /// OS share/reveal — a stub reporting `Unsupported` where no
+    /// backend exists.
+    share: Box<dyn PlatformShare>,
+    /// OS print spooler — a stub where no backend exists.
+    printer: Box<dyn PlatformPrinter>,
+    /// Telemetry alarm watch → OS notifications on transitions only.
+    alarm: AlarmWatch,
+    /// The last preference set written through — change detection so
+    /// the store only flushes on real edits.
+    saved_prefs: Prefs,
+    /// `true` when `--theme` was passed on the CLI — the override is
+    /// session-scoped and must not be written back to the store.
+    theme_override: bool,
+    /// Dedup flag for persist-failure toasts — one per failure streak,
+    /// re-armed on the next successful flush.
+    persist_error_shown: bool,
     /// The toolbar strip's arena node (not a dock panel — a fixed band
     /// under the header).
     toolbar: Option<WidgetId>,
@@ -224,7 +299,16 @@ struct App {
 }
 
 impl App {
-    fn new(initial_choice: ThemeChoice, audit_locale: bool) -> Self {
+    fn new(flag_choice: Option<ThemeChoice>, audit_locale: bool) -> Self {
+        // Restore persisted preferences — an explicit `--theme` flag
+        // wins over the store, which wins over the Dark default.
+        let store = open_store();
+        let choice = flag_choice
+            .or_else(|| stored_theme(&store))
+            .unwrap_or(ThemeChoice::Dark);
+        let locale = stored_locale(&store);
+        let editor_tab = stored_tab(&store);
+        let alerts = stored_alerts(&store);
         Self {
             scale: Signal::new(1.0f32),
             cpu: Signal::new(0.42f64),
@@ -232,24 +316,47 @@ impl App {
             paused: Signal::new(false),
             glow: Signal::new(true),
             tick_ms: Signal::new(100.0f64),
-            theme_sel: Signal::new(Self::theme_index(initial_choice)),
+            theme_sel: Signal::new(Self::theme_index(choice)),
             filter_text: Signal::new(String::new()),
             l10n: build_l10n(),
-            locale_sel: Signal::new(0),
+            locale_sel: Signal::new(locale),
+            // `locale_idx` tracks the applied locale, not the request —
+            // a nonzero stored index applies through the first redraw.
             locale_idx: 0,
             clipboard_out: Signal::new(None),
-            alerts_on: Signal::new(false),
+            alerts_on: Signal::new(alerts),
             about_req: Signal::new(false),
             inspector_req: Signal::new(false),
             console_req: Signal::new(false),
+            share_req: Signal::new(false),
+            print_req: Signal::new(false),
+            open_req: Signal::new(false),
+            export_req: Signal::new(false),
+            open_in: Signal::new(None),
+            doc_out: Signal::new(None),
+            editor_tab: Signal::new(editor_tab),
             toast_inbox: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             clipboard: martensite_clipboard_platform::native_backend(),
+            notifier: martensite_notify::default_platform_notifier(),
+            dialogs: martensite_dialog::default_platform_dialog(),
+            share: martensite_share::default_platform_share(),
+            printer: martensite_print::default_platform_printer(),
+            alarm: AlarmWatch::default(),
+            saved_prefs: Prefs {
+                theme: choice,
+                locale,
+                editor_tab,
+                alerts,
+            },
+            theme_override: flag_choice.is_some(),
+            persist_error_shown: false,
+            store,
             toolbar: None,
             statusbar: None,
             shell_overlays: None,
             pal: Palette::dark(),
             themes: ThemeDictionary::new(),
-            theme_choice: initial_choice,
+            theme_choice: choice,
             theme_anim: AnimationDriver::new(),
             theme_fade: None,
             installed_mode: ThemeMode::Dark,
@@ -330,6 +437,8 @@ impl App {
                     about_req: self.about_req.clone(),
                     inspector_req: self.inspector_req.clone(),
                     console_req: self.console_req.clone(),
+                    share_req: self.share_req.clone(),
+                    print_req: self.print_req.clone(),
                 },
             )));
             cold.debug_name = Some("Toolbar");
@@ -354,7 +463,16 @@ impl App {
                 self.tick_ms.clone(),
                 self.alerts_on.clone(),
             )),
-            Box::new(EditorPanel::new(scale.clone())),
+            Box::new(EditorPanel::new(
+                scale.clone(),
+                EditorSignals {
+                    tab_sel: self.editor_tab.clone(),
+                    open_in: self.open_in.clone(),
+                    doc_out: self.doc_out.clone(),
+                    open_req: self.open_req.clone(),
+                    export_req: self.export_req.clone(),
+                },
+            )),
             Box::new(MediaPanel::new(scale.clone())),
         ];
         for (i, widget) in widgets.into_iter().enumerate() {
@@ -895,6 +1013,279 @@ impl App {
         self.theme_fade = Some((id, diff));
     }
 
+    /// The report artifact the Share/Print actions dispatch — built
+    /// from app-owned state so the flow needs no widget internals.
+    fn report_text(&self) -> String {
+        format!(
+            "Industrial Workstation report\n\
+             uptime {}\ncpu_load {:.1}%\nmem_pressure {:.1}%\n\
+             paused {}\nalerts armed {}\nlocale {}\ntheme {:?}\nframe {:.2} ms\n",
+            fmt_uptime(self.started.elapsed().as_secs()),
+            self.cpu.get() * 100.0,
+            self.mem.get() * 100.0,
+            self.paused.get(),
+            self.alerts_on.get(),
+            LOCALE_CODES[self.locale_idx.min(LOCALE_CODES.len() - 1)],
+            self.theme_choice,
+            self.frame_ms,
+        )
+    }
+
+    /// Drains the service request signals the toolbar and the editor
+    /// chips publish — OS file dialogs, share dispatch, and print
+    /// submission all run here, app-side (widgets stay OS-free). The
+    /// dialog backend's `show` blocks on this thread; that's the
+    /// native-modal contract, same as `DialogService` documents.
+    fn drain_service_requests(&mut self) {
+        // Editor "open…" chip → open-file dialog → `open_in` (the
+        // panel drains it into a new tab on its next tick).
+        if self.open_req.get() {
+            self.open_req.set(false);
+            // A stub backend silently reports `Cancelled` — tell the
+            // user instead of letting the click die invisibly.
+            if self.dialogs.platform_name() == "stub" {
+                push_toast(
+                    &self.toast_inbox,
+                    martensite::widgets::Severity::Warning,
+                    "File dialogs unavailable on this platform",
+                );
+            } else {
+                let outcome = self.dialogs.show(
+                    &FileDialogRequest::open_file()
+                        .title("Open into editor")
+                        .filter(FileFilter::new("Text", ["toml", "rs", "txt", "md", "log"])),
+                );
+                if let Some(path) = outcome.path() {
+                    // The buffer is held whole in memory — cap the read
+                    // so a 2 GB log can't balloon the process.
+                    let too_big = std::fs::metadata(path)
+                        .map(|m| m.len() > 16 * 1024 * 1024)
+                        .unwrap_or(false);
+                    match if too_big {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::FileTooLarge,
+                            "file exceeds the 16 MiB editor cap",
+                        ))
+                    } else {
+                        std::fs::read_to_string(path)
+                    } {
+                        Ok(text) => {
+                            let name = path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| "untitled".to_string());
+                            self.open_in.set(Some((name.clone(), text)));
+                            push_toast(
+                                &self.toast_inbox,
+                                martensite::widgets::Severity::Info,
+                                format!("Opened {name}"),
+                            );
+                        }
+                        Err(err) => push_toast(
+                            &self.toast_inbox,
+                            martensite::widgets::Severity::Error,
+                            format!("Open failed: {err}"),
+                        ),
+                    }
+                }
+            }
+        }
+        // Editor "save as…" chip → save dialog → write the buffer the
+        // panel published through `doc_out`, then reveal the file.
+        if self.export_req.get() {
+            self.export_req.set(false);
+            if self.dialogs.platform_name() == "stub" {
+                push_toast(
+                    &self.toast_inbox,
+                    martensite::widgets::Severity::Warning,
+                    "File dialogs unavailable on this platform",
+                );
+            } else if let Some((name, text)) = self.doc_out.get() {
+                let outcome = self.dialogs.show(
+                    &FileDialogRequest::save_file()
+                        .title("Export editor buffer")
+                        .default_name(&name)
+                        .filter(FileFilter::new("Text", ["toml", "rs", "txt", "md"])),
+                );
+                if let Some(path) = outcome.path() {
+                    match std::fs::write(path, &text) {
+                        Ok(()) => {
+                            push_toast(
+                                &self.toast_inbox,
+                                martensite::widgets::Severity::Info,
+                                format!("Exported {name}"),
+                            );
+                            let outcome = self.share.reveal(path);
+                            if !outcome.is_shared() {
+                                push_toast(
+                                    &self.toast_inbox,
+                                    martensite::widgets::Severity::Warning,
+                                    format!("reveal: {outcome:?}"),
+                                );
+                            }
+                        }
+                        Err(err) => push_toast(
+                            &self.toast_inbox,
+                            martensite::widgets::Severity::Error,
+                            format!("Export failed: {err}"),
+                        ),
+                    }
+                }
+            }
+        }
+        // Toolbar "Share" → dispatch the report to the OS share
+        // handler (a mailto draft on the subprocess backends).
+        if self.share_req.get() {
+            self.share_req.set(false);
+            let request =
+                ShareRequest::text(self.report_text()).subject("Industrial Workstation report");
+            match self.share.share(&request) {
+                ShareOutcome::Shared => push_toast(
+                    &self.toast_inbox,
+                    martensite::widgets::Severity::Info,
+                    "Report shared",
+                ),
+                other => push_toast(
+                    &self.toast_inbox,
+                    martensite::widgets::Severity::Warning,
+                    format!("share: {other:?}"),
+                ),
+            }
+        }
+        // Toolbar "Print" → submit the same artifact to the spooler.
+        if self.print_req.get() {
+            self.print_req.set(false);
+            let job = PrintJob::text("Industrial Workstation", self.report_text());
+            match self.printer.print(&job) {
+                PrintOutcome::Submitted { job_id } => push_toast(
+                    &self.toast_inbox,
+                    martensite::widgets::Severity::Info,
+                    match job_id {
+                        Some(id) => format!("Print submitted — {id}"),
+                        None => "Print submitted".to_string(),
+                    },
+                ),
+                PrintOutcome::Cancelled => {}
+                PrintOutcome::Failed(err) => push_toast(
+                    &self.toast_inbox,
+                    martensite::widgets::Severity::Error,
+                    format!("Print failed: {err}"),
+                ),
+            }
+        }
+    }
+
+    /// Telemetry alarm watch — runs after `arena.tick` so the panel's
+    /// fresh samples drive it. Armed by the toolbar "alerts" switch;
+    /// disarming clears all state so re-arming reports a fresh breach
+    /// rather than a stale one. Notifications fire on transitions
+    /// only — the hysteresis band debounces a hovering signal.
+    fn watch_alarms(&mut self) {
+        if !self.alerts_on.get() {
+            self.alarm = AlarmWatch::default();
+            return;
+        }
+        let mut notes = Vec::new();
+        if !self.alarm.armed {
+            self.alarm.armed = true;
+            notes.push(
+                Notification::new("Telemetry watch armed")
+                    .body("cpu_load / mem_pressure thresholds live")
+                    .urgency(Urgency::Low),
+            );
+        }
+        let cpu = self.cpu.get() * 100.0;
+        let mem = self.mem.get() * 100.0;
+        // Wide hysteresis bands: the telemetry feed is synthetic and
+        // oscillates, so a narrow band would flap the alarm on every
+        // crossing. 10/8 points keeps transitions meaningful.
+        for (name, pct, hi, lo, state) in [
+            ("cpu_load", cpu, 82.0, 72.0, &mut self.alarm.cpu),
+            ("mem_pressure", mem, 76.0, 68.0, &mut self.alarm.mem),
+        ] {
+            if !*state && pct >= hi {
+                *state = true;
+                notes.push(
+                    Notification::new("Telemetry alarm")
+                        .body(format!("{name} at {pct:.0}% — above {hi:.0}%"))
+                        .urgency(Urgency::Critical),
+                );
+            } else if *state && pct < lo {
+                *state = false;
+                notes.push(
+                    Notification::new("Telemetry cleared")
+                        .body(format!("{name} back under {lo:.0}%"))
+                        .urgency(Urgency::Low),
+                );
+            }
+        }
+        for note in &notes {
+            if let Err(err) = self.notifier.notify(note) {
+                push_toast(
+                    &self.toast_inbox,
+                    martensite::widgets::Severity::Error,
+                    format!("notification failed: {err}"),
+                );
+            }
+        }
+    }
+
+    /// Preference write-through — compares the live values against the
+    /// last set flushed and rewrites the store on change (the
+    /// `JsonFileStore` flush is atomic, so a change mid-crash can't
+    /// corrupt the file).
+    fn persist_prefs(&mut self) {
+        let prefs = Prefs {
+            theme: self.theme_choice,
+            locale: self.locale_idx,
+            editor_tab: self.editor_tab.get(),
+            alerts: self.alerts_on.get(),
+        };
+        if prefs == self.saved_prefs {
+            return;
+        }
+        let theme = match prefs.theme {
+            ThemeChoice::Dark => "dark",
+            ThemeChoice::Light => "light",
+            ThemeChoice::System => "system",
+        };
+        // A `--theme` CLI override is session-scoped — persisting it
+        // would silently rewrite the user's stored preference.
+        if !self.theme_override {
+            self.store.set("ui.theme", theme);
+        }
+        self.store.set(
+            "ui.locale",
+            LOCALE_CODES[prefs.locale.min(LOCALE_CODES.len() - 1)],
+        );
+        // Tabs opened via "open…" live past `SOURCES` — persisting a
+        // temp index would restore the wrong tab next launch.
+        if prefs.editor_tab < crate::model::SOURCES.len() {
+            self.store.set("ui.editor_tab", prefs.editor_tab as u64);
+        }
+        self.store.set("ui.alerts", prefs.alerts);
+        match self.store.flush() {
+            Ok(()) => {
+                self.persist_error_shown = false;
+                // Only mark the set as flushed on success — on failure
+                // the next frame retries the write.
+                self.saved_prefs = prefs;
+            }
+            Err(err) => {
+                // One toast per failure streak — a dead disk would
+                // otherwise flood the inbox every frame.
+                if !self.persist_error_shown {
+                    self.persist_error_shown = true;
+                    push_toast(
+                        &self.toast_inbox,
+                        martensite::widgets::Severity::Error,
+                        format!("settings not saved: {err}"),
+                    );
+                }
+            }
+        }
+    }
+
     /// One frame: tick widgets, paint, composite, present, feed AT.
     fn redraw(&mut self) {
         if self.window.is_none() || self.orchestrator.is_none() || self.arena.is_none() {
@@ -933,17 +1324,26 @@ impl App {
         }
 
         // Context menu → OS clipboard: the grid publishes the payload;
-        // the backend write happens here, app-side.
+        // the backend write happens here, app-side. The success toast
+        // only fires when a native backend actually wrote — `write`
+        // returns `()`, so an absent backend is the only failure mode
+        // we can detect, and claiming "Copied" then would be a lie.
         if let Some(payload) = self.clipboard_out.get() {
+            self.clipboard_out.set(None);
             if let Some(cb) = self.clipboard.as_mut() {
                 cb.write("text/plain;charset=utf-8", payload.as_bytes());
+                crate::overlays::push_toast(
+                    &self.toast_inbox,
+                    martensite::widgets::Severity::Info,
+                    "Copied to clipboard",
+                );
+            } else {
+                crate::overlays::push_toast(
+                    &self.toast_inbox,
+                    martensite::widgets::Severity::Warning,
+                    "No clipboard backend on this platform",
+                );
             }
-            self.clipboard_out.set(None);
-            crate::overlays::push_toast(
-                &self.toast_inbox,
-                martensite::widgets::Severity::Info,
-                "Copied to clipboard",
-            );
         }
 
         // 0. Theme — advance any in-flight fade and install the
@@ -985,6 +1385,20 @@ impl App {
         //    its pacing queue; dirty widgets mark repaint.
         let t0 = Instant::now();
         self.arena.as_mut().expect("checked").tick(dt);
+
+        // Panel/toolbar service requests → OS dialogs, share, print.
+        // The backends aren't `Send`, so every call happens here,
+        // app-side; widgets only ever publish request Signals. This
+        // runs AFTER the tick so `doc_out` (published inside
+        // `EditorPanel::tick`) reflects this frame's buffer, not last
+        // frame's — an export must contain the latest keystroke.
+        self.drain_service_requests();
+
+        // Alarm watch + preference write-through — after the tick so
+        // the telemetry panel's fresh samples and the editor's latest
+        // tab selection drive them.
+        self.watch_alarms();
+        self.persist_prefs();
 
         // 2. Layout — dock rects into arena nodes.
         if self.needs_layout {
@@ -1082,6 +1496,109 @@ impl App {
         // 7. Telemetry animates — keep the loop alive.
         self.window.as_ref().expect("checked").request_redraw();
     }
+}
+
+/// The dashboard's settings store — `StateStore::set` is generic, so
+/// the trait isn't dyn-compatible; this enum is the concrete seam the
+/// compiler suggests. `JsonFileStore` under the per-OS config dir when
+/// one resolves (and parses), else a volatile `MemoryStore` so the app
+/// still runs where no config root exists.
+enum PrefStore {
+    Json(JsonFileStore),
+    Mem(MemoryStore),
+}
+
+impl StateStore for PrefStore {
+    fn get(&self, key: &str) -> Option<&Value> {
+        match self {
+            Self::Json(s) => s.get(key),
+            Self::Mem(s) => s.get(key),
+        }
+    }
+    fn set(&mut self, key: impl Into<String>, value: impl Into<Value>) {
+        match self {
+            Self::Json(s) => s.set(key, value),
+            Self::Mem(s) => s.set(key, value),
+        }
+    }
+    fn remove(&mut self, key: &str) -> Option<Value> {
+        match self {
+            Self::Json(s) => s.remove(key),
+            Self::Mem(s) => s.remove(key),
+        }
+    }
+    fn keys(&self) -> Vec<String> {
+        match self {
+            Self::Json(s) => s.keys(),
+            Self::Mem(s) => s.keys(),
+        }
+    }
+    fn flush(&mut self) -> Result<(), PersistError> {
+        match self {
+            Self::Json(s) => s.flush(),
+            Self::Mem(s) => s.flush(),
+        }
+    }
+}
+
+/// Opens the settings store — see [`PrefStore`].
+fn open_store() -> PrefStore {
+    // Unit tests must not read (or clobber) the developer's real
+    // settings — always in-memory under `cfg(test)`.
+    if cfg!(test) {
+        return PrefStore::Mem(MemoryStore::new());
+    }
+    let Some(path) = default_store_path("martensite", "industrial-dashboard") else {
+        return PrefStore::Mem(MemoryStore::new());
+    };
+    match JsonFileStore::open(&path) {
+        Ok(store) => PrefStore::Json(store),
+        Err(PersistError::Corrupt(_)) => {
+            // A corrupt file would otherwise fall back to memory
+            // FOREVER — `MemoryStore::flush` is a no-op so nothing
+            // ever rewrites it. Move it aside and start fresh so
+            // persistence self-heals on the next flush.
+            let _ = std::fs::rename(&path, path.with_extension("json.bad"));
+            JsonFileStore::open(&path)
+                .map_or_else(|_| PrefStore::Mem(MemoryStore::new()), PrefStore::Json)
+        }
+        Err(_) => PrefStore::Mem(MemoryStore::new()),
+    }
+}
+
+/// The persisted theme preference, if the store holds a known value.
+fn stored_theme(store: &PrefStore) -> Option<ThemeChoice> {
+    match store.get("ui.theme").and_then(|v| v.as_str()) {
+        Some("light") => Some(ThemeChoice::Light),
+        Some("system") => Some(ThemeChoice::System),
+        Some("dark") => Some(ThemeChoice::Dark),
+        _ => None,
+    }
+}
+
+/// The persisted locale as a `LOCALE_CODES` index (0 = English).
+fn stored_locale(store: &PrefStore) -> usize {
+    store
+        .get("ui.locale")
+        .and_then(|v| v.as_str())
+        .and_then(|code| LOCALE_CODES.iter().position(|c| *c == code))
+        .unwrap_or(0)
+}
+
+/// The persisted editor tab index (clamped by the panel at restore).
+fn stored_tab(store: &PrefStore) -> usize {
+    store
+        .get("ui.editor_tab")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize
+}
+
+/// The persisted alerts-switch state.
+fn stored_alerts(store: &PrefStore) -> bool {
+    store
+        .get("ui.alerts")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
 }
 
 fn fmt_uptime(secs: u64) -> String {
@@ -1331,7 +1848,13 @@ impl ApplicationHandler for App {
         }
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                // Persist pending preference writes — the change
+                // detector flushes on edit, this catches anything
+                // queued in the final frame.
+                let _ = self.store.flush();
+                event_loop.exit();
+            }
             WindowEvent::SurfaceResized(size) => {
                 if size.width > 0 && size.height > 0 {
                     if let (Some(surface), Some(gpu)) = (&mut self.surface, &self.gpu) {
@@ -1434,23 +1957,10 @@ impl ApplicationHandler for App {
                     self.hud.toggle();
                     return;
                 }
-                // T cycles theme Dark → Light → System until the toolbar
-                // dropdown lands; both drive `set_theme_choice`. Cmd is
-                // excluded alongside Ctrl — Cmd+T is browser-adjacent
-                // muscle memory, not a theme request.
-                if pressed
-                    && !self.mods.control_key()
-                    && !self.mods.meta_key()
-                    && matches!(&event.logical_key, Key::Character(c) if c.eq_ignore_ascii_case("t"))
-                {
-                    let next = match self.theme_choice {
-                        ThemeChoice::Dark => ThemeChoice::Light,
-                        ThemeChoice::Light => ThemeChoice::System,
-                        ThemeChoice::System => ThemeChoice::Dark,
-                    };
-                    self.set_theme_choice(next);
-                    return;
-                }
+                // The toolbar theme dropdown is the canonical control —
+                // the transitional bare-`T` shortcut was removed because
+                // it intercepted the keystroke before dispatch, eating
+                // "t" typed into the filter input or the editor.
                 // Cmd/Ctrl+Z → "Undo", +Shift → "Redo", Ctrl+Y →
                 // "Redo", plus the text-editing set A/X/C/V →
                 // "SelectAll"/"Cut"/"Copy"/"Paste".
@@ -1717,13 +2227,14 @@ impl App {
 }
 
 /// Runs the windowed workstation. `main` calls this unless `--headless`
-/// was passed. `initial_choice` selects the boot theme (the app installs
-/// it directly — no startup fade — so `--theme light` lands settled).
+/// was passed. `flag_choice` is the `--theme` override — `None` lets the
+/// persisted preference restore (the app installs the resolved choice
+/// directly, no startup fade, so it lands settled).
 /// `audit_locale` (the `--audit-locale` flag) opts the paint audit into
 /// the `MissingLocale` lint — user-visible strings the shipped FTL
 /// resources don't cover are reported through the same lint channel.
 pub fn run(
-    initial_choice: ThemeChoice,
+    flag_choice: Option<ThemeChoice>,
     audit_locale: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -1733,7 +2244,7 @@ pub fn run(
         .init();
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    event_loop.run_app(App::new(initial_choice, audit_locale))?;
+    event_loop.run_app(App::new(flag_choice, audit_locale))?;
     Ok(())
 }
 
@@ -1863,7 +2374,7 @@ mod tests {
             fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
         }
 
-        let mut app = App::new(ThemeChoice::Dark, false);
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.build_arena();
         {
             let overlay = app.arena.as_mut().expect("arena").overlay_mut();
@@ -1888,7 +2399,7 @@ mod tests {
     /// even though `current_focus` advanced.
     #[test]
     fn tab_traversal_visits_panels_and_chrome() {
-        let mut app = App::new(ThemeChoice::Dark, false);
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.build_arena();
         let arena = app.arena.as_mut().expect("arena");
         let mut visited = std::collections::HashSet::new();
@@ -1929,7 +2440,7 @@ mod tests {
     /// buffer as its value — the content path, headlessly.
     #[test]
     fn a11y_tree_exposes_roles_labels_and_values() {
-        let mut app = App::new(ThemeChoice::Dark, false);
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.build_arena();
         let arena = app.arena.as_mut().expect("arena");
         let mut adapter = AccessKitAdapter::new(app.root.expect("root"));
