@@ -2692,6 +2692,21 @@ pub mod terminal;
 /// ```
 pub mod thermometer;
 
+/// Horizontally scrolling strip of structured market/news items
+/// (Bloomberg ticker idiom) — symbol + price + gain/loss-colored
+/// delta per item, tick-scrolled with wrap, hover pause, and a
+/// `take_selected` click seam. Structured sibling of `Marquee`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::ticker_tape::{TickerItem, TickerTape};
+///
+/// let t = TickerTape::new().item(TickerItem::new("AAPL", "189.30", 0.012));
+/// assert_eq!(t.item_count(), 1);
+/// ```
+pub mod ticker_tape;
+
 /// Segmented time-of-day field with inline hour/minute/AM-PM
 /// editing (`QTimeEdit` / WinUI `TimePicker`) — arrow stepping,
 /// two-digit rollover typing, `take_edited` seam.
@@ -3294,6 +3309,7 @@ pub use text::Text;
 pub use text_area::TextArea;
 pub use text_input::TextInput;
 pub use thermometer::Thermometer;
+pub use ticker_tape::{TickerItem, TickerTape};
 pub use time_picker::{Time, TimePicker};
 pub use timeline::{Timeline, TimelineDot, TimelineItem};
 pub use toast::{Toast, ToastHost};
