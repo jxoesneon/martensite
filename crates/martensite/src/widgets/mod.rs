@@ -1226,6 +1226,21 @@ pub mod ink_canvas;
 /// ```
 pub mod inline_edit;
 
+/// Sectioned property panel (Xcode / Figma right rail) —
+/// collapsible `InspectorSection`s of label/value rows. Section
+/// headers toggle; row clicks park `take_selected` with
+/// `(section, row)`, and `set_value` updates values host-side.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::inspector::Inspector;
+///
+/// let i = Inspector::new().section("Transform").row("X", "12.5");
+/// assert_eq!(i.value_of(0, 0), Some("12.5"));
+/// ```
+pub mod inspector;
+
 /// IPv4 dotted-quad entry (WinForms `IPAddressControl` idiom) —
 /// four [`SpinBox`] octets side by side with painted dot
 /// separators, reading out as `[u8; 4]` with an any-octet
@@ -3702,6 +3717,7 @@ pub use image::{Image, ImageFit};
 pub use image_viewer::ImageViewer;
 pub use ink_canvas::{InkCanvas, Stroke};
 pub use inline_edit::InlineEdit;
+pub use inspector::{Inspector, InspectorRow, InspectorSection};
 pub use ip_input::IpInput;
 pub use joystick::Joystick;
 pub use json_view::{JsonNode, JsonValue, JsonView};
