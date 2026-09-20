@@ -2872,6 +2872,22 @@ pub mod rating_summary;
 /// ```
 pub mod reaction_bar;
 
+/// Versioned changelog list ("What's New" idiom) — per-release
+/// version + date headers with categorized Added / Changed /
+/// Fixed / Removed tag-colored bullets. Display-only; pairs with
+/// `UpdatePrompt`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::release_notes::{ChangeKind, Release, ReleaseNotes};
+///
+/// let n = ReleaseNotes::new()
+///     .release(Release::new("1.4.0").change(ChangeKind::Added, "Dark mode"));
+/// assert_eq!(n.release_count(), 1);
+/// ```
+pub mod release_notes;
+
 /// Standalone draggable split sash (VS Code / `QSplitterHandle`
 /// idiom) — captures the drag and parks the accumulated px delta in
 /// `take_moved`, arrows nudge, double-click parks `take_reset`. For
@@ -4058,6 +4074,7 @@ pub use range_slider::{RangeSlider, RangeThumb};
 pub use rating::Rating;
 pub use rating_summary::RatingSummary;
 pub use reaction_bar::{Reaction, ReactionBar};
+pub use release_notes::{ChangeKind, Release, ReleaseNotes};
 pub use resize_handle::ResizeHandle;
 pub use result_page::{ResultAction, ResultPage, ResultStatus};
 pub use ribbon::{Ribbon, RibbonCorner};
