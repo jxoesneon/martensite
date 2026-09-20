@@ -2729,6 +2729,19 @@ pub mod statistic;
 /// ```
 pub mod dropdown;
 
+/// Categorized emoji grid (chat-composer picker idiom) — sections of
+/// named glyphs; clicking a cell parks the glyph in `take_picked`.
+/// Ships a compact built-in set via `EmojiPicker::standard`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::emoji_picker::EmojiPicker;
+///
+/// assert!(EmojiPicker::standard().emoji_count() >= 40);
+/// ```
+pub mod emoji_picker;
+
 /// Centred icon + title + description + action placeholder for empty
 /// views (ADW `StatusPage`, Ant `Empty`).
 ///
@@ -3352,6 +3365,7 @@ pub use disclosure::Disclosure;
 pub use dock::{Dock, DockItem};
 pub use drawer::Drawer;
 pub use dropdown::Dropdown;
+pub use emoji_picker::{Emoji, EmojiPicker};
 pub use empty_state::EmptyState;
 pub use equalizer::Equalizer;
 pub use expander_row::ExpanderRow;
