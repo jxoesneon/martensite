@@ -2191,6 +2191,21 @@ pub mod otp_input;
 /// ```
 pub mod org_chart;
 
+/// Ebook-reader two-page spread — left/right page faces with a
+/// gutter; edge clicks or arrows turn spreads, parking the new
+/// left-page index in `take_turned`. `n–m / N` counter.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::page_flip::PageFlip;
+///
+/// let mut p = PageFlip::new().pages(["a", "b", "c"]);
+/// p.turn(1);
+/// assert_eq!(p.left_page(), Some(2));
+/// ```
+pub mod page_flip;
+
 /// Page-top bar with a back chevron, title/subtitle, and a trailing
 /// action slot (Ant `PageHeader`). Left-anchored content chrome —
 /// unlike `HeaderBar`'s centered window-title idiom.
@@ -3467,6 +3482,7 @@ pub use now_playing::NowPlaying;
 pub use odometer::Odometer;
 pub use org_chart::{OrgChart, OrgNode};
 pub use otp_input::OtpInput;
+pub use page_flip::PageFlip;
 pub use page_header::PageHeader;
 pub use pagination::Pagination;
 pub use password_strength::PasswordStrength;
