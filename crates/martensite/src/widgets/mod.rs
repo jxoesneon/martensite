@@ -1166,6 +1166,23 @@ pub mod steps;
 /// ```
 pub mod strip_chart;
 
+/// Flowing stacked-area chart (ThemeRiver / streamgraph idiom) —
+/// equal-length layer series stacked symmetrically around a
+/// drifting center baseline in a categorical palette. Hovering a
+/// band parks its layer index in `take_hovered`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::stream_graph::StreamGraph;
+///
+/// let s = StreamGraph::new()
+///     .layer("cpu", [1.0, 3.0, 2.0])
+///     .layer("mem", [0.5, 1.0, 0.8]);
+/// assert_eq!(s.layer_count(), 2);
+/// ```
+pub mod stream_graph;
+
 /// Nested radial hierarchy chart (d3 sunburst / multi-level pie
 /// idiom) — root siblings partition the inner ring by weight and
 /// each node's children subdivide its angular span on the next
