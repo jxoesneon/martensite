@@ -1785,6 +1785,24 @@ pub mod nav_rail;
 /// ```
 pub mod nav_stack;
 
+/// Persistent notification stack (macOS Notification Center / Win11
+/// Action Center idiom) — newest-first cards with per-card `✕`
+/// dismiss, a `Clear all` row, and wheel scrolling when the stack
+/// overflows.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::notification_center::{
+///     Notification, NotificationCenter,
+/// };
+///
+/// let mut c = NotificationCenter::new();
+/// c.push(Notification::new("Build done", "all targets green"));
+/// assert_eq!(c.count(), 1);
+/// ```
+pub mod notification_center;
+
 /// Mechanical-reel digit counter (trip-odometer / web hit-counter
 /// idiom) — a row of digit windows, each reel rolling upward
 /// through neighboring digits toward its target on `tick`, clipped
@@ -2797,6 +2815,7 @@ pub use mind_map::MindMap;
 pub use minimap::Minimap;
 pub use nav_rail::{NavDestination, NavRail};
 pub use nav_stack::NavStack;
+pub use notification_center::{Notification, NotificationCenter};
 pub use odometer::Odometer;
 pub use org_chart::{OrgChart, OrgNode};
 pub use otp_input::OtpInput;
