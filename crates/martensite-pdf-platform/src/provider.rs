@@ -765,6 +765,21 @@ fn read_page_size(path: &Path, backend: PdfBackend, page: u32) -> Option<CliPage
         // == pt — and reads just the PPM header. A hostile MediaBox
         // can rasterize to hundreds of MB; never read it all for two
         // integers. Cached per page.
+        //
+        // KNOWN COST: every first `page_size` call per page pays a
+        // full-page rasterization (bounded by the 120s timeout) just
+        // to read ~30 bytes of header. The cheaper probe is
+        // `mutool pages`, which prints per-page boxes as metadata
+        // with no rasterization — but its output format varies
+        // across mutool versions and was not verifiable in the dev
+        // environment. The render probe was kept because it is
+        // *verified* correct (`.ppm` → P6 suffix mapping, 1-based
+        // pages, px == pt at 72 dpi) and measures the crop box the
+        // rasterizer will actually draw — writing a parser for
+        // unseen `mutool pages` output would repeat the fictional-
+        // parser bug the deduplicated-Mediaboxes approach had.
+        // Revisit once `mutool pages` output is verified on a box
+        // with mupdf-tools installed.
         PdfBackend::Mupdf => {
             let ppm = render_ppm_to(path, backend, page, 72.0)?;
             let head = read_head(&ppm, 128);

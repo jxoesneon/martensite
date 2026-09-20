@@ -12,7 +12,7 @@ PPM output in safe Rust — the same subprocess contract as
 
 | Backend | Tools | Install |
 | --- | --- | --- |
-| `poppler` | `pdfinfo` + `pdftoppm -ppm` | `brew install poppler` · `apt install poppler-utils` · `choco install poppler` |
+| `poppler` | `pdfinfo` + `pdftoppm` (PPM is the default format) | `brew install poppler` · `apt install poppler-utils` · `choco install poppler` |
 | `mupdf` | `mutool info` + `mutool draw` | `brew install mupdf-tools` · `apt install mupdf-tools` |
 
 ## Usage
@@ -34,6 +34,25 @@ crate directly.
 `CliSource::Bytes` sources are materialized to a private
 (`0600`, `create_new`) temp file and removed on drop — including
 when open fails partway.
+
+## Limitations
+
+- Each `page_size`/`render_page` call is a subprocess (bounded by a
+  timeout); `SubprocessDocument` caches page sizes, and the facade
+  adapter caches rendered bitmaps — but the first call per page
+  still pays CLI startup.
+- **MuPDF `page_size` probe cost:** `mutool info` emits a
+  deduplicated `Mediaboxes` list that can't be mapped to page
+  numbers, so the mupdf size probe rasterizes the page at 72 dpi
+  (px == pt) and reads only the PPM header. Correct but expensive —
+  a full raster per first probe per page. The cheaper alternative
+  is `mutool pages` (per-page boxes as metadata, no render); it was
+  not adopted because its output format varies across mutool
+  versions and couldn't be verified in the dev environment. Revisit
+  once verified — see the `KNOWN COST` note in
+  `src/provider.rs`'s `read_page_size`.
+- Pages arrive as P6-PPM pixels — vector-sharp in the CLI's own
+  pipeline, but raster by the time this crate sees them.
 
 ## License
 
