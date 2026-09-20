@@ -13,7 +13,7 @@ PPM output in safe Rust — the same subprocess contract as
 | Backend | Tools | Install |
 | --- | --- | --- |
 | `poppler` | `pdfinfo` + `pdftoppm` (PPM is the default format) | `brew install poppler` · `apt install poppler-utils` · `choco install poppler` |
-| `mupdf` | `mutool info` + `mutool draw` | `brew install mupdf-tools` · `apt install mupdf-tools` |
+| `mupdf` | `mutool info` + `mutool show` + `mutool draw` | `brew install mupdf-tools` · `apt install mupdf-tools` |
 
 ## Usage
 
@@ -41,16 +41,25 @@ when open fails partway.
   timeout); `SubprocessDocument` caches page sizes, and the facade
   adapter caches rendered bitmaps — but the first call per page
   still pays CLI startup.
-- **MuPDF `page_size` probe cost:** `mutool info` emits a
-  deduplicated `Mediaboxes` list that can't be mapped to page
-  numbers, so the mupdf size probe rasterizes the page at 72 dpi
-  (px == pt) and reads only the PPM header. Correct but expensive —
-  a full raster per first probe per page. The cheaper alternative
-  is `mutool pages` (per-page boxes as metadata, no render); it was
-  not adopted because its output format varies across mutool
-  versions and couldn't be verified in the dev environment. Revisit
-  once verified — see the `KNOWN COST` note in
-  `src/provider.rs`'s `read_page_size`.
+- **MuPDF `page_size` probe:** metadata-first — one
+  `mutool show -g <file> pages grep` subprocess reads the whole
+  object table once per document, resolving each page's effective
+  `MediaBox`/`CropBox`/`Rotate` up its `/Parent` chain (matching
+  `pdf_lookup_inherited_page_item`) plus the page's own `UserUnit`,
+  i.e. exactly what `mutool draw` rasterizes — verified end-to-end
+  against mupdf-tools 1.28.4. Pages the object table can't size
+  (no `MediaBox` in the ancestor chain, degenerate dims mupdf
+  clamps to a unit rect, missing object) fall back to rasterizing
+  at 72 dpi (px == pt) and reading only the PPM header; pages whose
+  metadata resolves to an absurd size (>100k pt) are reported
+  unsized rather than rasterized. `mutool info` is never used for
+  sizes — its `Mediaboxes` list is deduplicated and can't be
+  mapped to page numbers.
+- **Poppler `page_size`:** `pdfinfo -f N -l N` reports the raw
+  crop box; the `rot:` line is applied so sizes match the rotated
+  `pdftoppm` raster (and the mupdf backend). `pdfinfo` does not
+  report `/UserUnit` — a rare UserUnit-scaled page sizes
+  differently across backends (poppler ignores it; mupdf scales).
 - Pages arrive as P6-PPM pixels — vector-sharp in the CLI's own
   pipeline, but raster by the time this crate sees them.
 
