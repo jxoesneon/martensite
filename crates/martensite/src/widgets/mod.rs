@@ -2162,6 +2162,21 @@ pub mod pie_chart;
 /// ```
 pub mod pips_pager;
 
+/// Floating picture-in-picture mini window hosting one child —
+/// hover reveals close/expand buttons, drags park cumulative
+/// deltas in `take_dragged` for the host to reposition the
+/// overlay. Video-call / media overlay idiom.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::core::Widget;
+/// use martensite::widgets::Pip;
+///
+/// assert_eq!(Pip::new(martensite_core::DummyWidget).child_count(), 1);
+/// ```
+pub mod pip;
+
 /// Ordered media queue — title/subtitle rows with a duration
 /// column, a `▶` now-playing marker, click-to-select, and
 /// drag-to-reorder parking `(from, to)` in `take_moved`.
@@ -3251,6 +3266,7 @@ pub use pagination::Pagination;
 pub use password_strength::PasswordStrength;
 pub use piano_keys::PianoKeys;
 pub use pie_chart::{PieChart, PieSlice};
+pub use pip::Pip;
 pub use pips_pager::PipsPager;
 pub use playlist::{Playlist, Track};
 pub use polar_area::PolarArea;
