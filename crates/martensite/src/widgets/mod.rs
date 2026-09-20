@@ -1996,6 +1996,18 @@ pub mod page_header;
 /// ```
 pub mod pagination;
 
+/// Segmented password-strength meter (`0`–`4`) with a score-word
+/// label — the zxcvbn-meter / signup-form idiom.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::password_strength::PasswordStrength;
+///
+/// assert_eq!(PasswordStrength::new().score(3).score_value(), 3);
+/// ```
+pub mod password_strength;
+
 /// Musical keyboard strip (DAW piano-roll / MIDI-input idiom) —
 /// `octaves` white keys with overlay black keys; clicks and
 /// drags (glissando) park the struck semitone index in
@@ -2980,6 +2992,7 @@ pub use org_chart::{OrgChart, OrgNode};
 pub use otp_input::OtpInput;
 pub use page_header::PageHeader;
 pub use pagination::Pagination;
+pub use password_strength::PasswordStrength;
 pub use piano_keys::PianoKeys;
 pub use pie_chart::{PieChart, PieSlice};
 pub use pips_pager::PipsPager;
