@@ -3185,6 +3185,21 @@ pub mod unit_converter;
 /// ```
 pub mod venn;
 
+/// Conference participant grid (Zoom/Meet idiom) — equal tiles of
+/// `Participant` swatches with name captions, an accent speaking
+/// ring, and a muted badge; clicks park `take_selected`. Companion
+/// to `CallControls`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::video_grid::{Participant, VideoGrid};
+///
+/// let v = VideoGrid::new().participant(Participant::new("A", [1; 4]));
+/// assert_eq!(v.participant_count(), 1);
+/// ```
+pub mod video_grid;
+
 /// Pannable, zoomable canvas hosting one child (Figma / map / CAD
 /// idiom) — middle-drag pans, wheel zooms around the cursor, `0`
 /// fits, `Home` resets; `to_content`/`to_screen` convert between
@@ -3652,6 +3667,7 @@ pub use tuner::Tuner;
 pub use typing_indicator::TypingIndicator;
 pub use unit_converter::{UnitCategory, UnitConverter};
 pub use venn::Venn;
+pub use video_grid::{Participant, VideoGrid};
 pub use viewport::Viewport;
 pub use violin::Violin;
 pub use virtual_keyboard::VirtualKeyboard;
