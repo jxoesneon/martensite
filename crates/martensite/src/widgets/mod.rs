@@ -2813,6 +2813,21 @@ pub mod sankey;
 /// ```
 pub mod scatter_chart;
 
+/// Scratch-to-reveal card (lottery-ticket idiom) — a child widget
+/// under a metallic foil tile grid; dragging scratches cells away,
+/// and crossing `reveal_threshold` clears the foil and flags
+/// `take_revealed` once.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::scratch_card::ScratchCard;
+///
+/// let c = ScratchCard::new(martensite_core::DummyWidget);
+/// assert_eq!(c.progress(), 0.0);
+/// ```
+pub mod scratch_card;
+
 /// iOS-style overlay scroll thumb — a thin rounded pill that
 /// flashes on `flash()`/scroll updates and fades on `tick`.
 /// Display-only (no hit-testing); the host feeds `set_scroll`
@@ -3866,6 +3881,7 @@ pub use ribbon::{Ribbon, RibbonCorner};
 pub use ruler::{Ruler, RulerOrientation};
 pub use sankey::Sankey;
 pub use scatter_chart::{ScatterChart, ScatterSeries};
+pub use scratch_card::ScratchCard;
 pub use scroll_indicator::ScrollIndicator;
 pub use scrollview::{ScrollBarWidget, ScrollView};
 pub use search_bar::SearchBar;
