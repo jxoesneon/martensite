@@ -1605,6 +1605,20 @@ pub mod mention;
 /// ```
 pub mod minimap;
 
+/// Balanced mind-map diagram — a center root with subtrees
+/// fanned alternately left/right by leaf-count balance,
+/// elbow links, and a hover seam parking the node index.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::mind_map::MindMap;
+///
+/// let m = MindMap::new().root("Plan").child("Plan", "Build");
+/// assert_eq!(m.node_count(), 2);
+/// ```
+pub mod mind_map;
+
 /// Vertical icon+label destination rail for app-level navigation
 /// (Material 3 `NavigationRail`, WinUI `NavigationView` rail mode).
 ///
