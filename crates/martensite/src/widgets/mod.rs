@@ -272,6 +272,21 @@ pub mod button;
 /// ```
 pub mod calendar;
 
+/// Video-call control cluster (Zoom/Meet idiom) — toggle pills for
+/// mic/camera/speaker/share plus a red hang-up. Clicks park
+/// `take_toggled`/`take_hangup`; `m`/`v`/`s`/`d`/`h`/`Escape` are
+/// the keyboard equivalents.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::call_controls::{CallControl, CallControls};
+///
+/// let c = CallControls::new();
+/// assert!(c.is_on(CallControl::Mic));
+/// ```
+pub mod call_controls;
+
 /// OHLC financial chart — high–low wicks plus open–close bodies in
 /// success/error tones (Qt `QCandlestickSeries`, trading-view
 /// candles). Y range auto-fits or pins; hover parks the candle index.
@@ -3438,6 +3453,7 @@ pub use breadcrumb::Breadcrumb;
 pub use bullet_chart::BulletChart;
 pub use button::Button;
 pub use calendar::{Calendar, CalendarSelection};
+pub use call_controls::{CallControl, CallControls};
 pub use candlestick::{Candle, Candlestick};
 pub use card::{Card, CardVariant};
 pub use card_deck::CardDeck;
