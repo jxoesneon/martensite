@@ -572,6 +572,22 @@ pub mod command_link;
 /// ```
 pub mod command_palette;
 
+/// Celebration particle burst (checkout-success idiom) —
+/// `burst` spawns colored particles at a normalized origin,
+/// `tick` integrates fall/drift/fade, `take_done` fires when the
+/// last particle dies. Pure decoration, no hit-testing.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::confetti::Confetti;
+///
+/// let mut c = Confetti::new().count(10);
+/// c.burst(0.5, 0.0);
+/// assert_eq!(c.particle_count(), 10);
+/// ```
+pub mod confetti;
+
 /// Cardinal heading indicator (navigation / embedded-instrument
 /// idiom) — `N E S W` letters and tick marks around a circular
 /// dial with a two-tone needle at `heading` degrees.
@@ -3302,6 +3318,7 @@ pub use color_wheel::ColorWheel;
 pub use command_link::CommandLink;
 pub use command_palette::{CommandAction, CommandPalette};
 pub use compass::Compass;
+pub use confetti::Confetti;
 pub use container::Container;
 pub use context_menu::ContextMenu;
 pub use countdown::Countdown;
