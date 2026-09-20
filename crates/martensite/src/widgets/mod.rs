@@ -2330,6 +2330,21 @@ pub mod skeleton;
 /// ```
 pub mod spectrum;
 
+/// Floating action button that fans out labeled mini-actions on
+/// click (Material Design `SpeedDial`) — FAB toggles, mini-action
+/// clicks park in `take_action`, `Esc` closes.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::speed_dial::SpeedDial;
+///
+/// let mut d = SpeedDial::new().action("Compose").action("Scan");
+/// d.toggle();
+/// assert!(d.is_open());
+/// ```
+pub mod speed_dial;
+
 /// Numeric spin box with ▲/▼ step buttons and an editable field.
 ///
 /// # Examples
@@ -2940,6 +2955,7 @@ pub use skeleton::{Skeleton, SkeletonShape};
 pub use slider::{Slider, SliderOrientation};
 pub use sparkline::{SparkStyle, Sparkline};
 pub use spectrum::Spectrum;
+pub use speed_dial::SpeedDial;
 pub use spinbox::SpinBox;
 pub use split_button::SplitButton;
 pub use split_flap::SplitFlap;
