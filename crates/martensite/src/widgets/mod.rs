@@ -2236,6 +2236,22 @@ pub mod treemap;
 /// ```
 pub mod venn;
 
+/// Mirrored-density distribution chart (violin-plot idiom) —
+/// symmetric silhouettes per category from `0..=1` half-width
+/// profiles, with a center line and quartile ticks. Hovering a
+/// violin's slot parks its index in `take_hovered`. Companion to
+/// `BoxPlot`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::violin::Violin;
+///
+/// let v = Violin::new().series("A", [0.1, 0.9, 1.0, 0.9, 0.1]);
+/// assert_eq!(v.series_count(), 1);
+/// ```
+pub mod violin;
+
 /// Running-total bridge chart (McKinsey / finance waterfall
 /// idiom) — floating delta columns spanning previous-to-new
 /// cumulative totals, full columns for totals, dashed connectors
