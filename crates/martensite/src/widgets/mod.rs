@@ -2270,6 +2270,20 @@ pub mod range_slider;
 /// ```
 pub mod rating;
 
+/// Standalone draggable split sash (VS Code / `QSplitterHandle`
+/// idiom) — captures the drag and parks the accumulated px delta in
+/// `take_moved`, arrows nudge, double-click parks `take_reset`. For
+/// hosts that manage their own split geometry.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::resize_handle::ResizeHandle;
+///
+/// assert_eq!(ResizeHandle::horizontal().take_moved(), None);
+/// ```
+pub mod resize_handle;
+
 /// Status result page — coloured status glyph + title + subtitle +
 /// action buttons, centred in the view (Ant `Result`).
 ///
@@ -3107,6 +3121,7 @@ pub use radial_menu::RadialMenu;
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
 pub use rating::Rating;
+pub use resize_handle::ResizeHandle;
 pub use result_page::{ResultAction, ResultPage, ResultStatus};
 pub use ribbon::{Ribbon, RibbonCorner};
 pub use ruler::{Ruler, RulerOrientation};
