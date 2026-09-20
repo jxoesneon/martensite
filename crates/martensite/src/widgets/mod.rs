@@ -316,6 +316,23 @@ pub mod call_controls;
 /// ```
 pub mod candlestick;
 
+/// Timed subtitle band rendered over media (closed-caption idiom)
+/// — the host loads `CaptionCue`s and calls `set_position` with
+/// the media clock; the active cue paints bottom-centered on a
+/// translucent band. `Role::Status` live region.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::captions::Captions;
+/// use std::time::Duration;
+///
+/// let mut c = Captions::new().cue("Hi", 0.0, 1.0);
+/// c.set_position(Duration::from_secs_f32(0.5));
+/// assert_eq!(c.active_text(), Some("Hi"));
+/// ```
+pub mod captions;
+
 /// Elevated content surface with title and action row (M3 / Ant
 /// Card).
 ///
@@ -3550,6 +3567,7 @@ pub use button::Button;
 pub use calendar::{Calendar, CalendarSelection};
 pub use call_controls::{CallControl, CallControls};
 pub use candlestick::{Candle, Candlestick};
+pub use captions::{CaptionCue, Captions};
 pub use card::{Card, CardVariant};
 pub use card_deck::CardDeck;
 pub use carousel::Carousel;
