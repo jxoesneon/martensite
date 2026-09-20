@@ -1149,6 +1149,20 @@ pub mod hex_view;
 /// ```
 pub mod histogram;
 
+/// Delayed hover preview card (Reddit/GitHub profile popover) —
+/// `tick` accumulates hover time inside the trigger bounds and
+/// opens the title/body card past `delay`; `take_opened` /
+/// `take_closed` report transitions.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::hover_card::HoverCard;
+///
+/// assert!(!HoverCard::new("T", "B").is_open());
+/// ```
+pub mod hover_card;
+
 /// Rainbow hue rail with a draggable handle — the hue strip in
 /// every color picker. Click or drag to set a hue in degrees;
 /// `←`/`→` step by one.
@@ -3742,6 +3756,7 @@ pub use header_bar::HeaderBar;
 pub use heat_map::HeatMap;
 pub use hex_view::HexView;
 pub use histogram::Histogram;
+pub use hover_card::HoverCard;
 pub use hue_slider::HueSlider;
 pub use image::{Image, ImageFit};
 pub use image_viewer::ImageViewer;
