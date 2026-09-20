@@ -1,0 +1,22 @@
+[package]
+name = "martensite-notify-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "OS-native notification backends (osascript, notify-send, PowerShell toast) for martensite-notify."
+readme = "README.md"
+
+[dependencies]
+# This crate intentionally does NOT depend on `martensite-notify` to avoid
+# a cyclic dependency. It defines its own `NotifyBackend` trait and wire
+# types; `martensite-notify` wraps this crate's API behind its own
+# `PlatformNotifier` trait when the `platform` feature is enabled.
+
+[lints]
+workspace = true

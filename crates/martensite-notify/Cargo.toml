@@ -1,0 +1,30 @@
+[package]
+name = "martensite-notify"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "OS notification abstraction (title/body/urgency) with scripted test backends."
+readme = "README.md"
+
+[dependencies]
+# Optional dependency on the OS-native notification backend crate. When the
+# `platform` feature is enabled, `default_platform_notifier` returns a real
+# OS notifier (AppleScript `display notification`, `notify-send`,
+# PowerShell toast) instead of a stub.
+martensite-notify-platform = { workspace = true, optional = true }
+
+[features]
+default = []
+# Enables real OS notification integration via `martensite-notify-platform`.
+# When disabled, all platform backends fall back to safe stubs that discard
+# notifications.
+platform = ["dep:martensite-notify-platform"]
+
+[lints]
+workspace = true

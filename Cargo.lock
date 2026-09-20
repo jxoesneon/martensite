@@ -3140,6 +3140,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "martensite-notify"
+version = "0.18.0"
+dependencies = [
+ "martensite-notify-platform",
+]
+
+[[package]]
+name = "martensite-notify-platform"
+version = "0.18.0"
+
+[[package]]
 name = "martensite-plugin"
 version = "0.18.0"
 dependencies = [
