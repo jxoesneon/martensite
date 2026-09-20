@@ -18,6 +18,7 @@
 //! (windowed-path findings) live in `panels.rs`.
 
 mod app;
+mod gallery;
 mod headless;
 mod media_stream;
 mod menu;

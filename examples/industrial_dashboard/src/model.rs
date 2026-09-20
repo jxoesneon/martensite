@@ -51,12 +51,23 @@ pub fn alert_count(rows: &[MetricRow]) -> usize {
 /// `Vertical` split → left/right children; `Horizontal` → top/bottom.
 /// The tree is the panel-geometry authority: `DockTree::panel_rects`
 /// maps each leaf to a physical rect the arena applies verbatim.
-pub fn build_dock_tree(widget_ids: &[u64; 4]) -> DockTree {
-    let mut tree = DockTree::with_capacity(8);
+pub fn build_dock_tree(widget_ids: &[u64; 5]) -> DockTree {
+    let mut tree = DockTree::with_capacity(10);
     let root = tree.insert_root(DockPanel::new(widget_ids[0], "Process Grid"));
-    let (_left, right) = tree
+    // The widget gallery gets a full-width strip along the bottom —
+    // the card grid wants horizontal room and the 2×2 quad above
+    // keeps the operational panels dominant.
+    let (top, _gallery) = tree
         .split_leaf(
             root,
+            SplitDirection::Horizontal,
+            0.66,
+            DockPanel::new(widget_ids[4], "Widget Gallery"),
+        )
+        .expect("split gallery");
+    let (_left, right) = tree
+        .split_leaf(
+            top,
             SplitDirection::Vertical,
             0.58,
             DockPanel::new(widget_ids[1], "Telemetry"),

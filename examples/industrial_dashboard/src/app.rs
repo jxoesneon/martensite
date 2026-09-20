@@ -269,8 +269,8 @@ struct App {
     /// factor is known (F18 — widgets get scale through the signal).
     arena: Option<WidgetArena>,
     root: Option<WidgetId>,
-    panels: [Option<WidgetId>; 4],
-    panel_names: [&'static str; 4],
+    panels: [Option<WidgetId>; 5],
+    panel_names: [&'static str; 5],
     router: EventRouter,
     focus: FocusManager,
     mods: ModifiersState,
@@ -364,8 +364,14 @@ impl App {
             dock_drag: None,
             arena: None,
             root: None,
-            panels: [None, None, None, None],
-            panel_names: ["Process Grid", "Telemetry", "Editor", "Media"],
+            panels: [None, None, None, None, None],
+            panel_names: [
+                "Process Grid",
+                "Telemetry",
+                "Editor",
+                "Media",
+                "Widget Gallery",
+            ],
             router: EventRouter::new(),
             focus: FocusManager::new(),
             mods: ModifiersState::empty(),
@@ -447,8 +453,8 @@ impl App {
             self.toolbar = Some(id);
         }
 
-        let mut panels: [Option<WidgetId>; 4] = [None, None, None, None];
-        let widgets: [Box<dyn martensite::core::Widget>; 4] = [
+        let mut panels: [Option<WidgetId>; 5] = [None, None, None, None, None];
+        let widgets: [Box<dyn martensite::core::Widget>; 5] = [
             Box::new(GridPanel::new(
                 scale.clone(),
                 self.filter_text.clone(),
@@ -474,6 +480,7 @@ impl App {
                 },
             )),
             Box::new(MediaPanel::new(scale.clone())),
+            Box::new(crate::gallery::GalleryPanel::new(scale.clone())),
         ];
         for (i, widget) in widgets.into_iter().enumerate() {
             let mut hot = HotNode::default();
@@ -528,7 +535,7 @@ impl App {
         }
 
         let ids: Vec<u64> = panels.iter().map(|p| p.unwrap().to_u64()).collect();
-        self.dock = build_dock_tree(&ids.try_into().expect("4 panels"));
+        self.dock = build_dock_tree(&ids.try_into().expect("5 panels"));
         self.arena = Some(arena);
         self.root = Some(root);
         self.panels = panels;
@@ -2297,11 +2304,11 @@ mod tests {
 
     #[test]
     fn dock_drop_center_swaps_panels() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
         let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Center, dragged);
-        assert_eq!(dock.panel_count(), 4);
+        assert_eq!(dock.panel_count(), 5);
         // Same leaves, exchanged payloads.
         assert_eq!(panel_of(&dock, src).widget_id(), 2);
         assert_eq!(panel_of(&dock, dst).widget_id(), 1);
@@ -2309,11 +2316,11 @@ mod tests {
 
     #[test]
     fn dock_drop_right_lands_right_half() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
         let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Right, dragged);
-        assert_eq!(dock.panel_count(), 4);
+        assert_eq!(dock.panel_count(), 5);
         let (dragged, target) = (rect_of(&dock, 1), rect_of(&dock, 2));
         // Same band, dragged on the right half of the target's old rect.
         assert!((dragged.y - target.y).abs() < 1e-6);
@@ -2323,7 +2330,7 @@ mod tests {
 
     #[test]
     fn dock_drop_left_lands_left_half() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
         let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Left, dragged);
@@ -2334,7 +2341,7 @@ mod tests {
 
     #[test]
     fn dock_drop_top_stacks_above() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
         let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Top, dragged);
@@ -2346,7 +2353,7 @@ mod tests {
 
     #[test]
     fn dock_drop_bottom_stacks_below() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
         let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Bottom, dragged);
@@ -2403,9 +2410,9 @@ mod tests {
         app.build_arena();
         let arena = app.arena.as_mut().expect("arena");
         let mut visited = std::collections::HashSet::new();
-        // One full cycle — six FOCUSABLE nodes: toolbar, four panels,
-        // status bar.
-        for _ in 0..6 {
+        // One full cycle — seven FOCUSABLE nodes: toolbar, five
+        // panels, status bar.
+        for _ in 0..7 {
             if let Some(id) = app.focus.apply_tab(arena, TabNavigation::Forward) {
                 visited.insert(id.to_u64());
             }
@@ -2418,18 +2425,18 @@ mod tests {
         }
         assert!(visited.contains(&app.toolbar.expect("toolbar").to_u64()));
         assert!(visited.contains(&app.statusbar.expect("statusbar").to_u64()));
-        assert_eq!(visited.len(), 6);
+        assert_eq!(visited.len(), 7);
     }
 
     #[test]
     fn dock_drop_onto_sibling_re_resolves_target() {
         // Editor (3) and Media (4) are siblings — removing 3 promotes
         // 4 into the parent slot, invalidating its NodeId mid-drop.
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
+        let mut dock = build_dock_tree(&[1, 2, 3, 4, 5]);
         let (src, dst) = (leaf_id(&dock, 3), leaf_id(&dock, 4));
         let dragged = panel_of(&dock, src);
         apply_dock_drop(&mut dock, src, dst, DockDropZone::Right, dragged);
-        assert_eq!(dock.panel_count(), 4);
+        assert_eq!(dock.panel_count(), 5);
         let (dragged, target) = (rect_of(&dock, 3), rect_of(&dock, 4));
         assert!((dragged.y - target.y).abs() < 1e-6);
         assert!(dragged.x >= target.x + target.width - 1e-6);

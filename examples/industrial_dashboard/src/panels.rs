@@ -96,7 +96,7 @@ const GRID_HEADER_H: f32 = 26.0;
 /// under the title bar.
 const TAB_H: f32 = 24.0;
 
-fn to_paint(rect: Rect) -> martensite::render::Rect {
+pub(crate) fn to_paint(rect: Rect) -> martensite::render::Rect {
     martensite::render::Rect::new(
         f64::from(rect.min_x()),
         f64::from(rect.min_y()),
@@ -105,7 +105,7 @@ fn to_paint(rect: Rect) -> martensite::render::Rect {
     )
 }
 
-fn krect(x: f64, y: f64, w: f64, h: f64) -> martensite::render::Rect {
+pub(crate) fn krect(x: f64, y: f64, w: f64, h: f64) -> martensite::render::Rect {
     martensite::render::Rect::new(x, y, x + w, y + h)
 }
 
@@ -117,7 +117,7 @@ fn krect(x: f64, y: f64, w: f64, h: f64) -> martensite::render::Rect {
 /// panel content, or full-width content bands (header rows, selection
 /// stripes, scrollbars) paint over the outline's edge segments.
 #[allow(clippy::too_many_arguments)]
-fn panel_chrome(
+pub(crate) fn panel_chrome(
     painter: &mut TextPainter,
     list: &mut PaintList,
     bounds: Rect,
@@ -185,7 +185,13 @@ fn panel_chrome(
 /// END of a panel's `paint`, after every content band: headers, rows,
 /// and scrollbars all span the full inner width and would otherwise
 /// cover the outline's left/right/bottom segments.
-fn panel_border(list: &mut PaintList, bounds: Rect, pal: &Palette, scale: f32, focused: bool) {
+pub(crate) fn panel_border(
+    list: &mut PaintList,
+    bounds: Rect,
+    pal: &Palette,
+    scale: f32,
+    focused: bool,
+) {
     let b = to_paint(bounds);
     let s = f64::from(scale);
     if focused {
