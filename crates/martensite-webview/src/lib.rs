@@ -18,15 +18,15 @@
 //!
 //! # Architecture
 //!
-//! Unlike the clipboard/dialog/notify pairs there is deliberately **no
-//! `-platform` crate yet**: embedding a real engine needs in-process
-//! FFI (WKWebView `WKWebView`, WebView2 `ICoreWebView2`, WebKitGTK
-//! `webkit_web_view_new`) plus a shared-GPU surface handoff, which a
-//! subprocess cannot provide. This crate pins the contract — commands,
-//! events, state snapshot, surface capability — that a future
-//! `martensite-webview-platform` FFI crate will implement. The facade
-//! `martensite::widgets::WebView` already works end-to-end against
-//! [`SimulatedWebView`].
+//! A full embedded engine (WKWebView `WKWebView`, WebView2
+//! `ICoreWebView2`, WebKitGTK `webkit_web_view_new`) needs in-process
+//! FFI plus a shared-GPU surface handoff, which a subprocess cannot
+//! provide. Until then, `martensite-webview-platform` supplies the
+//! two hosts that *are* expressible through process dispatch —
+//! `FetchWebView` (real `curl` fetches, real `<title>` extraction)
+//! and `SystemBrowserWebView` (OS browser handoff) — implementing
+//! [`WebViewHost`] directly, so the facade `WebView::native()` works
+//! against real network/OS integration today.
 //!
 //! This crate is `#![forbid(unsafe_code)]`.
 //!

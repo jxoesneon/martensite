@@ -1,18 +1,20 @@
 //! PDF document/render contract plus a procedural test backend — the
-//! API surface a real rasterizer (`pdfium`, `mupdf`, Quartz) will
-//! implement.
+//! API surface a rasterizer (`pdfium`, `mutool`, Quartz) implements.
 //!
-//! This crate is deliberately pure-safe, like `martensite-webview`:
-//! PDF rasterization needs an FFI engine wired to a shared surface —
-//! no subprocess can provide it — so a `martensite-pdf-platform` pair
-//! would add nothing yet. The *contract* is what's reusable:
+//! The crate itself is pure-safe; real rasterization arrives through
+//! the `platform` feature, which adapts
+//! `martensite-pdf-platform`'s CLI backends (`pdftoppm`/`pdfinfo`
+//! poppler, `mutool` mupdf) onto `CliPdfProvider`. The *contract*
+//! is what's reusable:
 //!
 //! - [`PdfDocument`] — one opened document: metadata, page sizes,
 //!   `render_page` → RGBA bitmaps (takes `&self`; backends use
 //!   interior mutability so a widget can render inside `paint(&self)`)
 //! - [`PdfProvider`] — the factory that opens [`PdfSource`]s
 //!   (files or byte streams) into `Box<dyn PdfDocument>`
-//! - [`NullPdfProvider`] — the stub the factory returns today
+//! - `CliPdfProvider` — the CLI rasterizer (`platform` feature)
+//! - [`NullPdfProvider`] — the stub the factory returns when no
+//!   rasterizer is available
 //! - [`BlankPdfDocument`] — a procedural document that rasterizes real
 //!   pixels, so tests and the facade `PdfView` exercise the full
 //!   `PaintList::push_image` path
@@ -33,12 +35,16 @@
 
 mod blank;
 mod doc;
+#[cfg(feature = "platform")]
+mod platform;
 
 pub use blank::BlankPdfDocument;
 pub use doc::{
     default_pdf_provider, NullPdfProvider, PageSize, PdfDocInfo, PdfDocument, PdfError,
     PdfPageBitmap, PdfProvider, PdfSource,
 };
+#[cfg(feature = "platform")]
+pub use platform::CliPdfProvider;
 
 #[cfg(test)]
 mod tests {
@@ -78,12 +84,27 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "platform"))]
     fn null_provider_rejects() {
         let mut p = default_pdf_provider();
         assert_eq!(p.backend_name(), "null");
         assert!(matches!(
             p.open(&PdfSource::File(PathBuf::from("/x.pdf"))),
             Err(PdfError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "platform")]
+    fn cli_provider_reports_error() {
+        let mut p = default_pdf_provider();
+        // Rasterizer installed → concrete name; none → the null stub.
+        assert!(matches!(p.backend_name(), "poppler" | "mupdf" | "null"));
+        // Either way a missing file fails: Unsupported (no CLI) or
+        // OpenFailed (CLI present, file absent).
+        assert!(matches!(
+            p.open(&PdfSource::File(PathBuf::from("/x.pdf"))),
+            Err(PdfError::Unsupported(_)) | Err(PdfError::OpenFailed(_))
         ));
     }
 }

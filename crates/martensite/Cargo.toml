@@ -29,7 +29,8 @@ martensite-motion = { workspace = true }
 martensite-history = { workspace = true }
 martensite-assets = { workspace = true }
 martensite-webview = { workspace = true }
-martensite-pdf = { workspace = true }
+martensite-webview-platform = { workspace = true }
+martensite-pdf = { workspace = true, features = ["platform"] }
 martensite-l10n = { workspace = true }
 martensite-media = { workspace = true }
 martensite-engine-bridge = { workspace = true }

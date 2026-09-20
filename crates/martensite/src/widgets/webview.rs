@@ -84,6 +84,23 @@ impl WebView {
         Self::with_host(Box::new(SimulatedWebView::new()))
     }
 
+    /// A webview backed by the best OS-adjacent host —
+    /// `martensite-webview-platform`'s `FetchWebView` (real `curl`
+    /// HTTP fetches) when `curl` is on `$PATH`, else
+    /// `SystemBrowserWebView` (hands navigations to the OS browser).
+    /// Still no raster surface; a real engine backend plugs into
+    /// [`with_host`](Self::with_host).
+    ///
+    /// ```
+    /// use martensite::widgets::webview::WebView;
+    ///
+    /// let wv = WebView::native();
+    /// assert!(matches!(wv.backend_name(), "fetch" | "system-browser"));
+    /// ```
+    pub fn native() -> Self {
+        Self::with_host(martensite_webview_platform::default_platform_host())
+    }
+
     /// A webview backed by an explicit [`WebViewHost`] — the seam a
     /// native engine backend (WKWebView/WebView2/WebKitGTK) plugs into.
     ///

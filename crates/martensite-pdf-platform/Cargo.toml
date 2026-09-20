@@ -1,0 +1,20 @@
+[package]
+name = "martensite-pdf-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "OS-adjacent PDF rasterizer backends for martensite-pdf — poppler (pdftoppm/pdfinfo) and mupdf (mutool) subprocess providers."
+readme = "README.md"
+
+[lints]
+workspace = true
+
+# No dependencies — wire types are defined locally so martensite-pdf
+# can depend on this crate without a cycle (same cycle-break pattern
+# as martensite-share-platform).

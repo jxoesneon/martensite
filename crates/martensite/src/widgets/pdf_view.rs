@@ -103,6 +103,27 @@ impl PdfView {
         Self::with_document(Box::new(BlankPdfDocument::new(3).with_title("Document")))
     }
 
+    /// Open a real document through the build's
+    /// [`default_pdf_provider`](martensite_pdf::default_pdf_provider) —
+    /// the CLI rasterizer (`pdftoppm`/`mutool`) when `martensite-pdf`'s
+    /// `platform` feature is enabled and a toolset is installed.
+    /// Returns the provider's error (`Unsupported` without a backend,
+    /// `OpenFailed` on a bad file) rather than falling back silently.
+    ///
+    /// ```no_run
+    /// use martensite::widgets::pdf_view::PdfView;
+    /// use martensite_pdf::PdfSource;
+    /// use std::path::PathBuf;
+    ///
+    /// let v = PdfView::open(&PdfSource::File(PathBuf::from("spec.pdf")))?;
+    /// assert!(v.page_count() > 0);
+    /// # Ok::<(), martensite_pdf::PdfError>(())
+    /// ```
+    pub fn open(source: &martensite_pdf::PdfSource) -> Result<Self, martensite_pdf::PdfError> {
+        let doc = martensite_pdf::default_pdf_provider().open(source)?;
+        Ok(Self::with_document(doc))
+    }
+
     /// A viewer over an explicit [`PdfDocument`] — the seam a real
     /// rasterizer backend (pdfium, mupdf, Quartz) plugs into.
     ///

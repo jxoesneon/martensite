@@ -2831,6 +2831,7 @@ dependencies = [
  "martensite-text",
  "martensite-theme",
  "martensite-webview",
+ "martensite-webview-platform",
  "martensite-wgpu",
  "martensite-window",
  "parking_lot",
@@ -3155,6 +3156,13 @@ version = "0.18.0"
 [[package]]
 name = "martensite-pdf"
 version = "0.18.0"
+dependencies = [
+ "martensite-pdf-platform",
+]
+
+[[package]]
+name = "martensite-pdf-platform"
+version = "0.18.0"
 
 [[package]]
 name = "martensite-persist"
@@ -3349,6 +3357,13 @@ dependencies = [
 [[package]]
 name = "martensite-webview"
 version = "0.18.0"
+
+[[package]]
+name = "martensite-webview-platform"
+version = "0.18.0"
+dependencies = [
+ "martensite-webview",
+]
 
 [[package]]
 name = "martensite-wgpu"

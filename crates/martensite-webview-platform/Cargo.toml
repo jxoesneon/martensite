@@ -1,0 +1,19 @@
+[package]
+name = "martensite-webview-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "OS-adjacent WebViewHost backends for martensite-webview — real HTTP fetch via curl and system-browser dispatch, no unsafe FFI."
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+martensite-webview = { workspace = true }

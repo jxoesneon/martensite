@@ -14,3 +14,16 @@ readme = "README.md"
 
 [lints]
 workspace = true
+
+[dependencies]
+# Optional dependency on the CLI rasterizer crate. When the `platform`
+# feature is enabled, `default_pdf_provider` returns a real provider
+# backed by `pdftoppm`/`pdfinfo` (poppler) or `mutool` (mupdf) instead
+# of `NullPdfProvider`.
+martensite-pdf-platform = { workspace = true, optional = true }
+
+[features]
+default = []
+# Enables real PDF rasterization via `martensite-pdf-platform`.
+# When disabled, `default_pdf_provider` returns `NullPdfProvider`.
+platform = ["dep:martensite-pdf-platform"]

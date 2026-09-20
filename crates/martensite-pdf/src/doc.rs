@@ -270,21 +270,40 @@ impl PdfProvider for NullPdfProvider {
 
 /// Returns the best available [`PdfProvider`] for the current build.
 ///
-/// There is deliberately no `martensite-pdf-platform` crate yet — real
-/// rasterization needs an FFI engine (pdfium, mupdf) wired to a shared
-/// GPU/CPU surface, which no subprocess provides. Until that backend
-/// lands this returns [`NullPdfProvider`]; applications get real pages
-/// by injecting a provider/document directly (the facade `PdfView`
-/// defaults to [`BlankPdfDocument`](crate::BlankPdfDocument) — see the
-/// crate docs).
+/// With the `platform` feature this probes `$PATH` for a rasterizer
+/// CLI (`pdftoppm`/`pdfinfo` or `mutool` via `martensite-pdf-platform`)
+/// and returns it when found; without the feature — or when no CLI
+/// is installed — [`NullPdfProvider`], whose `open` reports
+/// `Unsupported` so callers can fall back to an injected document
+/// (the facade `PdfView` defaults to
+/// [`BlankPdfDocument`](crate::BlankPdfDocument)).
 ///
 /// # Examples
 ///
 /// ```
 /// use martensite_pdf::{default_pdf_provider, PdfProvider};
 ///
-/// assert_eq!(default_pdf_provider().backend_name(), "null");
+/// // "null" without the platform feature (or no CLI installed);
+/// // "poppler"/"mupdf" when a rasterizer is found.
+/// assert!(!default_pdf_provider().backend_name().is_empty());
 /// ```
 pub fn default_pdf_provider() -> Box<dyn PdfProvider> {
+    default_pdf_provider_impl()
+}
+
+#[cfg(feature = "platform")]
+fn default_pdf_provider_impl() -> Box<dyn PdfProvider> {
+    // Same convention as `martensite-share`'s `default_platform_share`:
+    // probe the host and fall back to the stub when no rasterizer
+    // CLI is installed, so `backend_name` is honest.
+    if martensite_pdf_platform::probe_backend().is_some() {
+        Box::new(crate::platform::CliPdfProvider::new())
+    } else {
+        Box::new(NullPdfProvider::new())
+    }
+}
+
+#[cfg(not(feature = "platform"))]
+fn default_pdf_provider_impl() -> Box<dyn PdfProvider> {
     Box::new(NullPdfProvider::new())
 }
