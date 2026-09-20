@@ -63,6 +63,7 @@ pub mod android;
 pub mod csd;
 pub mod dpi;
 pub mod event;
+pub mod gesture;
 pub mod hit_test;
 pub mod ime;
 pub mod lifecycle;
