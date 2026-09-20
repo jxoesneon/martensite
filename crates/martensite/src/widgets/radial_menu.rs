@@ -341,7 +341,10 @@ impl Widget for RadialMenu {
             let c = self.center();
             let r = self.radius();
             let mid = r * (DEAD + (1.0 - DEAD) * 0.55);
-            let p0 = Vec2::new(c.x + a.cos() * (mid - cx.pt(4.0)), c.y + a.sin() * (mid - cx.pt(4.0)));
+            let p0 = Vec2::new(
+                c.x + a.cos() * (mid - cx.pt(4.0)),
+                c.y + a.sin() * (mid - cx.pt(4.0)),
+            );
             let p1 = Vec2::new(c.x + a.cos() * mid, c.y + a.sin() * mid);
             let mut tick = kurbo::BezPath::new();
             tick.move_to((f64::from(p0.x), f64::from(p0.y)));
@@ -432,7 +435,7 @@ mod tests {
         assert_eq!(r.sector_at(Vec2::new(170.0, 100.0)), Some(1)); // right
         assert_eq!(r.sector_at(Vec2::new(100.0, 170.0)), Some(2)); // bottom
         assert_eq!(r.sector_at(Vec2::new(30.0, 100.0)), Some(3)); // left
-        // Dead zone and outside.
+                                                                  // Dead zone and outside.
         assert_eq!(r.sector_at(Vec2::new(100.0, 100.0)), None);
         assert_eq!(r.sector_at(Vec2::new(195.0, 195.0)), None);
     }

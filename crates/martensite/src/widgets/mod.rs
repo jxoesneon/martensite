@@ -1907,6 +1907,21 @@ pub mod ribbon;
 /// ```
 pub mod ruler;
 
+/// Flow diagram (d3-sankey / energy-flow idiom) — named nodes
+/// layered into columns by longest-path (or `node_at` hints),
+/// sized by throughput, joined by value-width ribbons. Hovering
+/// a ribbon parks its index in `take_hovered`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::sankey::Sankey;
+///
+/// let s = Sankey::new().node("a").node("b").link("a", "b", 4.0);
+/// assert_eq!(s.throughput(0), 4.0);
+/// ```
+pub mod sankey;
+
 /// XY point-cloud chart (Ant `Scatter`, Qt `QScatterSeries`) —
 /// marker dots inside a gridded axis frame, auto-fit or pinned
 /// ranges, nearest-point hover seam for tooltips.
