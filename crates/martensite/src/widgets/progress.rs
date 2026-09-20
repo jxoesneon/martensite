@@ -236,7 +236,8 @@ impl Widget for ProgressBar {
 }
 
 /// A spinning arc indicator. `phase` advances via [`Spinner::tick`]
-/// (dt in seconds, one revolution ≈ 0.8s).
+/// (dt in seconds, `speed` revolutions per second — default 1.25,
+/// one revolution ≈ 0.8s) while [`Spinner::is_active`].
 ///
 /// # Examples
 ///
@@ -246,6 +247,8 @@ impl Widget for ProgressBar {
 /// let mut sp = Spinner::new();
 /// sp.tick(0.4);
 /// assert!(sp.phase > 0.0);
+/// sp.stop();
+/// assert!(!sp.is_active());
 /// ```
 #[derive(Clone, Debug)]
 pub struct Spinner {
@@ -253,6 +256,14 @@ pub struct Spinner {
     pub phase: f32,
     /// Diameter in logical points.
     pub size: f32,
+    /// Accessibility label.
+    pub label: String,
+    /// Revolutions per second while active.
+    speed: f32,
+    /// Arc stroke width, logical points.
+    thickness: f32,
+    /// Whether `tick` advances the phase.
+    active: bool,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
 }
@@ -272,6 +283,10 @@ impl Spinner {
         Self {
             phase: 0.0,
             size: 20.0,
+            label: "Loading".to_string(),
+            speed: 1.25,
+            thickness: 2.0,
+            active: true,
             cached_bounds: Rect::default(),
         }
     }
@@ -283,9 +298,138 @@ impl Spinner {
         self
     }
 
+    /// Accessibility label.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Spinner;
+    ///
+    /// assert_eq!(Spinner::new().label("Saving").label, "Saving");
+    /// ```
+    #[must_use]
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
+    }
+
+    /// Revolutions per second while active (default 1.25).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Spinner;
+    ///
+    /// assert_eq!(Spinner::new().speed(2.0).speed_value(), 2.0);
+    /// ```
+    #[must_use]
+    pub fn speed(mut self, revs_per_sec: f32) -> Self {
+        self.speed = revs_per_sec.max(0.0);
+        self
+    }
+
+    /// Arc stroke width in logical points (default 2.0).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Spinner;
+    ///
+    /// assert_eq!(Spinner::new().thickness(4.0).thickness_value(), 4.0);
+    /// ```
+    #[must_use]
+    pub fn thickness(mut self, w: f32) -> Self {
+        self.thickness = w.max(0.5);
+        self
+    }
+
+    /// Whether `tick` advances the phase (default `true`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Spinner;
+    ///
+    /// assert!(!Spinner::new().active(false).is_active());
+    /// ```
+    #[must_use]
+    pub fn active(mut self, active: bool) -> Self {
+        self.active = active;
+        self
+    }
+
+    /// Revolutions per second.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Spinner;
+    ///
+    /// assert_eq!(Spinner::new().speed_value(), 1.25);
+    /// ```
+    pub fn speed_value(&self) -> f32 {
+        self.speed
+    }
+
+    /// Arc stroke width in logical points.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Spinner;
+    ///
+    /// assert_eq!(Spinner::new().thickness_value(), 2.0);
+    /// ```
+    pub fn thickness_value(&self) -> f32 {
+        self.thickness
+    }
+
+    /// Whether the spinner is animating.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Spinner;
+    ///
+    /// assert!(Spinner::new().is_active());
+    /// ```
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// Starts animating.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Spinner;
+    ///
+    /// let mut sp = Spinner::new().active(false);
+    /// sp.start();
+    /// assert!(sp.is_active());
+    /// ```
+    pub fn start(&mut self) {
+        self.active = true;
+    }
+
+    /// Stops animating (the arc freezes in place).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Spinner;
+    ///
+    /// let mut sp = Spinner::new();
+    /// sp.stop();
+    /// assert!(!sp.is_active());
+    /// ```
+    pub fn stop(&mut self) {
+        self.active = false;
+    }
+
     /// Advances the animation by `dt` seconds.
     pub fn tick(&mut self, dt: f32) {
-        self.phase = (self.phase + dt / 0.8) % 1.0;
+        self.phase = (self.phase + dt * self.speed) % 1.0;
     }
 }
 
@@ -310,10 +454,13 @@ impl Widget for Spinner {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::ProgressIndicator);
-        node.set_label("Loading");
+        node.set_label(self.label.clone());
     }
 
     fn tick(&mut self, dt: std::time::Duration) -> bool {
+        if !self.active {
+            return false;
+        }
         self.tick(dt.as_secs_f32());
         true
     }
@@ -346,8 +493,11 @@ impl Widget for Spinner {
                 path.line_to(p);
             }
         }
-        cx.list
-            .push_stroke_path(path, cx.pt(2.0), cx.color(TokenKey::AccentColor, ACCENT));
+        cx.list.push_stroke_path(
+            path,
+            cx.pt(self.thickness),
+            cx.color(TokenKey::AccentColor, ACCENT),
+        );
     }
 }
 
@@ -399,5 +549,22 @@ mod tests {
             },
         );
         assert_eq!(size, Vec2::new(20.0, 20.0));
+    }
+
+    #[test]
+    fn spinner_stop_freezes_trait_tick() {
+        let mut sp = Spinner::new();
+        sp.stop();
+        assert!(!<Spinner as Widget>::tick(
+            &mut sp,
+            std::time::Duration::from_secs(1)
+        ));
+        assert_eq!(sp.phase, 0.0);
+        sp.start();
+        assert!(<Spinner as Widget>::tick(
+            &mut sp,
+            std::time::Duration::from_millis(400)
+        ));
+        assert!((sp.phase - 0.5).abs() < 1e-6);
     }
 }
