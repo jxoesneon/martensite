@@ -503,6 +503,21 @@ pub mod context_menu;
 /// ```
 pub mod countdown;
 
+/// Cubic-bezier easing editor (DevTools / design-tool idiom) —
+/// two draggable control handles on a gridded pad, endpoints
+/// pinned at (0,0) and (1,1), `bezier`/`css`/`sample` outputs
+/// and a `take_changed` seam.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::curve_editor::CurveEditor;
+///
+/// let c = CurveEditor::new().handles((0.4, 0.0), (0.6, 1.0));
+/// assert_eq!(c.bezier(), (0.4, 0.0, 0.6, 1.0));
+/// ```
+pub mod curve_editor;
+
 /// Read-only date field with a calendar-grid popup (`QDateEdit` /
 /// `GtkCalendar` / WinUI `CalendarDatePicker`) — min/max clamping,
 /// host-injected "today", `take_selected` pick seam.
