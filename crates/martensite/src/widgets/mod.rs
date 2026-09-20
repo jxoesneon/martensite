@@ -1681,6 +1681,21 @@ pub mod lcd_number;
 /// ```
 pub mod led_matrix;
 
+/// Chart series key (matplotlib / ECharts legend idiom) — colored
+/// swatches + labels in a wrapping flow; click or Space toggles an
+/// entry's dimmed "hidden series" state and parks the index in
+/// `take_toggled`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::legend::Legend;
+///
+/// let l = Legend::new().entry("Alpha", [96, 165, 250, 255]);
+/// assert_eq!(l.entry_count(), 1);
+/// ```
+pub mod legend;
+
 /// Level/capacity meter — battery, disk-usage, or signal-strength
 /// indicator with zone colors (GTK `GtkLevelBar`, `NSLevelIndicator`).
 ///
@@ -3106,6 +3121,7 @@ pub use keyboard_shortcuts::{KeyboardShortcuts, ShortcutGroup, ShortcutRow};
 pub use keypad::Keypad;
 pub use lcd_number::LcdNumber;
 pub use led_matrix::LedMatrix;
+pub use legend::{Legend, LegendEntry};
 pub use level_bar::{LevelBar, LevelZone};
 pub use line_chart::{LineChart, LineSeries};
 pub use link::Link;
