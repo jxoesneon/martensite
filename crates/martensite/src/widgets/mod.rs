@@ -97,6 +97,20 @@ pub mod action_sheet;
 /// ```
 pub mod activity_ring;
 
+/// Browser location bar — security chip (🔒/⚠/loading), URL
+/// display with an emphasized domain, a reload/stop button, and a
+/// thin load-progress line; clicks park an `AddressAction` in
+/// `take_action`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::address_bar::{AddressBar, SecurityState};
+///
+/// assert_eq!(AddressBar::new("https://a.b").state(), SecurityState::Secure);
+/// ```
+pub mod address_bar;
+
 /// Industrial alarm list with an acknowledge lifecycle (the HMI/SCADA
 /// alarm-banner idiom) — severity-edged rows, per-row `ACK` chips, and
 /// unacknowledged `Error` rows that flash on `tick` until acked.
@@ -3838,6 +3852,7 @@ pub use about::About;
 pub use accordion::Accordion;
 pub use action_sheet::{ActionSheet, ActionSheetResult};
 pub use activity_ring::{ActivityRing, Ring};
+pub use address_bar::{AddressAction, AddressBar, SecurityState};
 pub use alarm_panel::{Alarm, AlarmPanel, AlarmState};
 pub use alert_dialog::{AlertDialog, AlertResult, AlertRole, AlertSeverity};
 pub use alpha_slider::AlphaSlider;
