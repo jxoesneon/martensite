@@ -2877,6 +2877,21 @@ pub mod speed_dial;
 /// ```
 pub mod spinbox;
 
+/// Application splash screen — centered logo letter-mark, app
+/// name, version caption, a determinate progress bar, and a
+/// status line. Display-only; the host drives `set_progress` /
+/// `set_status` during init.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::splash::Splash;
+///
+/// let s = Splash::new("Martensite").version("0.18.0");
+/// assert_eq!(s.app_name(), "Martensite");
+/// ```
+pub mod splash;
+
 /// KPI block — title, large formatted value, prefix/suffix, and a
 /// coloured trend indicator (Ant `Statistic`).
 ///
@@ -3741,6 +3756,7 @@ pub use sparkline::{SparkStyle, Sparkline};
 pub use spectrum::Spectrum;
 pub use speed_dial::SpeedDial;
 pub use spinbox::SpinBox;
+pub use splash::Splash;
 pub use split_button::SplitButton;
 pub use split_flap::SplitFlap;
 pub use split_view::{SplitOrientation, SplitView};
