@@ -594,6 +594,21 @@ pub mod context_menu;
 /// ```
 pub mod countdown;
 
+/// Circular countdown timer (iOS Clock / workout-ring idiom) —
+/// fractional sub-second remaining drives a smoothly draining arc
+/// clockwise from 12 o'clock around an `MM:SS` readout. Space
+/// toggles, `r` resets, `take_finished` reports expiry.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::countdown_ring::CountdownRing;
+/// use std::time::Duration;
+///
+/// assert_eq!(CountdownRing::new(Duration::from_secs(60)).fraction(), 1.0);
+/// ```
+pub mod countdown_ring;
+
 /// Draggable, resizable crop region overlay (photo-editor crop
 /// tool) — normalized coordinates, corner handles, optional aspect
 /// lock, scrim + rule-of-thirds paint, `take_changed` seam.
@@ -3025,6 +3040,7 @@ pub use compass::Compass;
 pub use container::Container;
 pub use context_menu::ContextMenu;
 pub use countdown::Countdown;
+pub use countdown_ring::CountdownRing;
 pub use crop_box::CropBox;
 pub use curve_editor::CurveEditor;
 pub use date_picker::{Date, DatePicker};
