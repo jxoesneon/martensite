@@ -2153,6 +2153,21 @@ pub mod dropdown;
 /// ```
 pub mod empty_state;
 
+/// Bank of vertical gain faders (graphic-EQ / mixer channel
+/// strip idiom) — drag sliders over a unity marker, arrow
+/// keys nudge the focused band, `0` resets to unity. Control
+/// companion to the `Spectrum` display.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::equalizer::Equalizer;
+///
+/// let e = Equalizer::new().bands([0.5, 0.7, 0.3]);
+/// assert_eq!(e.gain(1), 0.7);
+/// ```
+pub mod equalizer;
+
 /// A settings row that expands to reveal indented nested child rows
 /// (libadwaita `AdwExpanderRow`) — activatable `SettingsRow` header,
 /// caret affordance, `ArrowRight`/`ArrowLeft` + semantic
