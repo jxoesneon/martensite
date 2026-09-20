@@ -2655,6 +2655,21 @@ pub mod range_slider;
 /// ```
 pub mod rating;
 
+/// Aggregate review block (App Store idiom) — large weighted
+/// average, total-review caption, and a five-row distribution of
+/// filled bars from 5★ to 1★ fed by `counts`. Display-only;
+/// companion to `Rating`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::rating_summary::RatingSummary;
+///
+/// let r = RatingSummary::new().counts([10, 4, 2, 1, 0]);
+/// assert_eq!(r.total(), 17);
+/// ```
+pub mod rating_summary;
+
 /// Row of emoji reaction chips (Slack/Teams idiom) — click toggles
 /// the user's reaction (count and accent ring update, index parks
 /// in `take_toggled`), optional `+` chip parks `take_add`. Pairs
@@ -3797,6 +3812,7 @@ pub use radial_menu::RadialMenu;
 pub use radio::{RadioGroup, RadioOption};
 pub use range_slider::{RangeSlider, RangeThumb};
 pub use rating::Rating;
+pub use rating_summary::RatingSummary;
 pub use reaction_bar::{Reaction, ReactionBar};
 pub use resize_handle::ResizeHandle;
 pub use result_page::{ResultAction, ResultPage, ResultStatus};
