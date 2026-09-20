@@ -388,6 +388,21 @@ pub mod checkbox;
 /// ```
 pub mod chess_board;
 
+/// Dual-sided game clock (FIDE idiom) — tapping a face presses its
+/// plunger: that side stops, the opponent runs; `tick` drains the
+/// running side, expiry parks `take_flagged`, optional Fischer
+/// increment. Companion to `ChessBoard`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::chess_clock::ChessClock;
+/// use std::time::Duration;
+///
+/// assert_eq!(ChessClock::new(Duration::from_secs(300)).moves(), 0);
+/// ```
+pub mod chess_clock;
+
 /// Compact pill chip for selection, input, or actions (M3 chips /
 /// Ant Tag).
 ///
@@ -3096,6 +3111,7 @@ pub use cascader::{Cascader, CascaderOption};
 pub use check_list::{CheckItem, CheckList};
 pub use checkbox::{CheckBox, CheckState};
 pub use chess_board::{ChessBoard, Piece, Side};
+pub use chess_clock::{ChessClock, ClockSide};
 pub use chip::{Chip, ChipKind};
 pub use chip_group::{ChipGroup, ChipSelection};
 pub use clamp::Clamp;
