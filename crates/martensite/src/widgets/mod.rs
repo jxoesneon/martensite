@@ -1648,6 +1648,21 @@ pub mod menu_button;
 /// ```
 pub mod mention;
 
+/// Tick-driven tempo indicator — beat lamps (accent on the
+/// downbeat) over a BPM label; click or Space toggles the run
+/// state, `take_beat` parks each crossing for host audio, and
+/// `tap` derives tempo. The rhythm sibling of `PianoKeys`
+/// and `Equalizer`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::metronome::Metronome;
+///
+/// assert_eq!(Metronome::new().bpm(96).bpm_value(), 96);
+/// ```
+pub mod metronome;
+
 /// Document-overview strip (editor minimap idiom) — squashed
 /// content bars down a narrow column plus a translucent viewport
 /// rect at `scroll`; clicking or dragging parks the picked scroll
