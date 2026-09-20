@@ -1707,6 +1707,19 @@ pub mod list_view;
 /// ```
 pub mod log_view;
 
+/// Design-tool loupe — renders a zoomed region of a source
+/// `ImageData` snapshot in a clipped lens with crosshair; clicks
+/// park source coordinates in `take_picked` for eyedropper flows.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::magnifier::Magnifier;
+///
+/// assert_eq!(Magnifier::new().zoom(8.0).zoom_value(), 8.0);
+/// ```
+pub mod magnifier;
+
 /// Read-only Markdown rich-text renderer — a pragmatic subset
 /// (headings, paragraphs, code blocks, quotes, lists, rules; inline
 /// emphasis, code, links) flowed as styled runs (Ant `Typography`,
@@ -2997,6 +3010,7 @@ pub use line_chart::{LineChart, LineSeries};
 pub use link::Link;
 pub use list_view::{ListView, SelectionMode, SelectionModel};
 pub use log_view::{LogLine, LogSeverity, LogView};
+pub use magnifier::Magnifier;
 pub use markdown::Markdown;
 pub use marquee::Marquee;
 pub use masonry::Masonry;
