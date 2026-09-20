@@ -1,0 +1,16 @@
+[package]
+name = "martensite-webview"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Embedded-webview surface contract — state, commands, events, host trait, and a simulated engine for tests."
+readme = "README.md"
+
+[lints]
+workspace = true

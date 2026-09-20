@@ -37,6 +37,7 @@ members = [
     "crates/martensite-font-fallback",
     "crates/martensite-host",
     "crates/martensite-shell",
+    "crates/martensite-webview",
     "crates/martensite-clipboard-platform",
     "crates/martensite-dialog-platform",
     "crates/martensite-notify-platform",
@@ -120,6 +121,7 @@ martensite-print-platform = { version = "0.18.0", path = "crates/martensite-prin
 martensite-share-platform = { version = "0.18.0", path = "crates/martensite-share-platform" }
 martensite-host = { version = "0.18.0", path = "crates/martensite-host" }
 martensite-shell = { version = "0.18.0", path = "crates/martensite-shell" }
+martensite-webview = { version = "0.18.0", path = "crates/martensite-webview" }
 martensite-engine-bridge = { version = "0.18.0", path = "crates/martensite-engine-bridge" }
 
 # Core rendering stack — versions verified against crates.io on 2026-09-06

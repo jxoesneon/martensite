@@ -2829,6 +2829,7 @@ dependencies = [
  "martensite-test",
  "martensite-text",
  "martensite-theme",
+ "martensite-webview",
  "martensite-wgpu",
  "martensite-window",
  "parking_lot",
@@ -3339,6 +3340,10 @@ dependencies = [
  "web-sys",
  "winit",
 ]
+
+[[package]]
+name = "martensite-webview"
+version = "0.18.0"
 
 [[package]]
 name = "martensite-wgpu"

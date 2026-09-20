@@ -3824,6 +3824,21 @@ pub mod waveform;
 /// ```
 pub mod weather;
 
+/// Embedded-webview surface — wraps a `WebViewHost` engine and paints
+/// its loading/title/URL state; placeholder body until a native
+/// backend with a raster surface is injected.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::webview::WebView;
+///
+/// let mut wv = WebView::new();
+/// wv.navigate("https://example.com");
+/// assert_eq!(wv.url(), "https://example.com");
+/// ```
+pub mod webview;
+
 /// Seven-day timed agenda grid — all-day strip, hour lines, colored
 /// event blocks, and click seams for events and empty slots.
 ///
@@ -4204,6 +4219,7 @@ pub use waterfall::{Waterfall, WaterfallEntry};
 pub use watermark::Watermark;
 pub use waveform::Waveform;
 pub use weather::{Weather, WeatherCondition};
+pub use webview::WebView;
 pub use week_view::{WeekEvent, WeekView};
 pub use wheel_picker::WheelPicker;
 pub use window_controls::{CaptionStyle, WindowAction, WindowControls};
