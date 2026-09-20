@@ -1276,6 +1276,22 @@ pub mod barcode;
 /// ```
 pub mod bullet_chart;
 
+/// Agile sprint burndown chart — the ideal diagonal from total
+/// work to zero with the actual remaining-work polyline the host
+/// extends per `push_day`, red when running above ideal. Hovered
+/// day columns park `take_hovered`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::burndown::Burndown;
+///
+/// let mut b = Burndown::new(40.0, 10);
+/// b.push_day(36.0);
+/// assert_eq!(b.remaining(), Some(36.0));
+/// ```
+pub mod burndown;
+
 /// Edge-bottom sheet with snap-point detents and a drag handle
 /// (Material bottom sheet).
 ///
@@ -3513,6 +3529,7 @@ pub use bottom_sheet::BottomSheet;
 pub use box_plot::{BoxPlot, BoxSeries};
 pub use breadcrumb::Breadcrumb;
 pub use bullet_chart::BulletChart;
+pub use burndown::Burndown;
 pub use button::Button;
 pub use calendar::{Calendar, CalendarSelection};
 pub use call_controls::{CallControl, CallControls};
