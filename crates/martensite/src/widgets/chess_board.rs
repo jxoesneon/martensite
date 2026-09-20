@@ -135,6 +135,12 @@ pub enum Side {
     Black,
 }
 
+/// A square's occupant.
+type Cell = Option<(Piece, Side)>;
+
+/// One undo record: `(from, to, captured)`.
+type MoveRecord = (usize, usize, Cell);
+
 /// An 8×8 chess board — see the module docs.
 ///
 /// ```
@@ -146,11 +152,11 @@ pub struct ChessBoard {
     /// Accessibility label.
     pub label: String,
     /// `rank * 8 + file`; `None` = empty square.
-    cells: [Option<(Piece, Side)>; 64],
+    cells: [Cell; 64],
     selected: Option<usize>,
     focus: usize,
     moved: Option<(usize, usize)>,
-    history: Vec<(usize, usize, Option<(Piece, Side)>)>,
+    history: Vec<MoveRecord>,
     flip: bool,
     readonly: bool,
     coords: bool,
