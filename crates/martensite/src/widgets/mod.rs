@@ -656,6 +656,21 @@ pub mod form_field;
 /// ```
 pub mod funnel_chart;
 
+/// Guitar chord diagram — six strings over four frets with
+/// finger dots and X/O nut markers; clicking a fret cell toggles
+/// a dot and parks `(string, fret)` in `take_edited`. The
+/// tablature sibling of `PianoKeys`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::fretboard::Fretboard;
+///
+/// let f = Fretboard::new().set(0, 3).mute(5);
+/// assert_eq!(f.fret_of(0), Some(3));
+/// ```
+pub mod fretboard;
+
 /// Horizontal task-bar timeline (MS Project / enterprise Gantt
 /// idiom) — rounded bars positioned by start day and duration
 /// across a day-scale axis, task names down a left column, day
