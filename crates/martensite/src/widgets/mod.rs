@@ -1795,6 +1795,22 @@ pub mod odometer;
 /// ```
 pub mod otp_input;
 
+/// Top-down hierarchy diagram (organization chart idiom) —
+/// `(title, subtitle)` cards with elbow connectors, the root
+/// centered over its subtree and siblings on even spacing;
+/// hovering a card parks its DFS index in `take_hovered`.
+/// The vertical sibling of `MindMap`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::org_chart::{OrgChart, OrgNode};
+///
+/// let o = OrgChart::new(OrgNode::new("CEO", "").child(OrgNode::new("CTO", "")));
+/// assert_eq!(o.node_count(), 2);
+/// ```
+pub mod org_chart;
+
 /// Page-top bar with a back chevron, title/subtitle, and a trailing
 /// action slot (Ant `PageHeader`). Left-anchored content chrome —
 /// unlike `HeaderBar`'s centered window-title idiom.
