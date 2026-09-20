@@ -2782,6 +2782,20 @@ pub mod result_page;
 /// ```
 pub mod ribbon;
 
+/// Drag-marquee selection overlay (desktop / file-manager idiom) —
+/// primary press anchors the band, drag extends it, release parks
+/// the normalized `Rect` in `take_selection`; `active()` reports
+/// the live band for incremental highlighting.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::rubber_band::RubberBand;
+///
+/// assert_eq!(RubberBand::new().active(), None);
+/// ```
+pub mod rubber_band;
+
 /// Measurement-scale strip (design-tool ruler idiom) — major and
 /// minor ticks across a value range on a horizontal or vertical
 /// strip, a marker line at `position`, and click/drag picking that
@@ -3907,6 +3921,7 @@ pub use reaction_bar::{Reaction, ReactionBar};
 pub use resize_handle::ResizeHandle;
 pub use result_page::{ResultAction, ResultPage, ResultStatus};
 pub use ribbon::{Ribbon, RibbonCorner};
+pub use rubber_band::RubberBand;
 pub use ruler::{Ruler, RulerOrientation};
 pub use sankey::Sankey;
 pub use scatter_chart::{ScatterChart, ScatterSeries};
