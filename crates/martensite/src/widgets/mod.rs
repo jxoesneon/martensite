@@ -2677,6 +2677,20 @@ pub mod popconfirm;
 /// ```
 pub mod popover;
 
+/// Pricing-tier card row (SaaS pricing-page idiom) — name, price +
+/// period, ✓/✕ feature list, and a per-tier CTA parking the index
+/// in `take_chosen`; `recommended` tiers get an accent ring.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::pricing_table::{Plan, PricingTable};
+///
+/// let t = PricingTable::new().plan(Plan::new("Pro", "$9").feature("SSO"));
+/// assert_eq!(t.plan_count(), 1);
+/// ```
+pub mod pricing_table;
+
 /// User-presence chip — initials disc with a colored status dot
 /// plus an optional name/status line (Teams/Slack presence idiom).
 /// Distinct from `Avatar`: presence is about state, not image
@@ -4014,6 +4028,7 @@ pub use poll::{Poll, PollOption};
 pub use popconfirm::{ConfirmResult, Popconfirm};
 pub use popover::Popover;
 pub use presence::{Presence, PresenceStatus};
+pub use pricing_table::{Plan, PricingTable};
 pub use progress::{ProgressBar, Spinner};
 pub use property_grid::{
     PropertyEditor, PropertyGrid, PropertyRow, PropertyRowKey, PropertySection,
