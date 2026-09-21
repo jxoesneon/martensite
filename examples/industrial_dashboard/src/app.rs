@@ -2207,7 +2207,11 @@ impl ApplicationHandler for App {
             return;
         }
         let now = Instant::now();
-        if self.frame_due || now >= self.next_frame {
+        // Queued assistive-technology actions are drained in `redraw` —
+        // while paused there is no animation beat, so a pending request
+        // must wake the loop itself or AXPress would never dispatch.
+        let pending_at = !self.actions.lock().is_empty();
+        if self.frame_due || pending_at || now >= self.next_frame {
             // Input arrived or the frame deadline passed — animate now.
             self.frame_due = false;
             self.next_frame = now + FRAME_INTERVAL;
@@ -2216,8 +2220,11 @@ impl ApplicationHandler for App {
             }
             event_loop.set_control_flow(ControlFlow::Poll);
         } else if self.paused.get() {
-            // Paused: no animation beat — input and AX still wake us.
-            event_loop.set_control_flow(ControlFlow::Wait);
+            // Paused: no animation beat — input wakes us instantly, and
+            // a 10 Hz wake polls the AT-action queue (accesskit_winit's
+            // QueueActions doesn't post a user event, so without this an
+            // AXPress issued while paused would sit until real input).
+            event_loop.set_control_flow(ControlFlow::WaitUntil(now + A11Y_EMIT_INTERVAL));
         } else {
             event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
         }
