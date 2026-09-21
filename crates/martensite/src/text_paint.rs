@@ -322,6 +322,24 @@ pub(crate) fn resolve_painter<'a>(
         .or(ambient)
 }
 
+/// Case-aware label width estimate (logical pt at the 14 pt UI font):
+/// uppercase letters and digits run ~9.6 pt, other chars ~7.6 pt.
+/// Layout-side sibling of [`paint_label_clipped`] — widgets whose
+/// measure is an estimate (tabs, buttons) share it so the estimate
+/// stays consistent everywhere. Callers add their own padding.
+pub(crate) fn estimate_label_width(label: &str) -> f32 {
+    label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_uppercase() || c.is_ascii_digit() {
+                9.6
+            } else {
+                7.6
+            }
+        })
+        .sum()
+}
+
 /// Emits `text` through `painter` when present, else falls back to
 /// [`PaintList::push_text`]'s placeholder boxes. `pub(crate)` — the
 /// facade widgets share this so the opt-in is one line in each `paint`.

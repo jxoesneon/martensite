@@ -64,6 +64,13 @@ const TAB_BG: [u8; 4] = [240, 242, 246, 255];
 /// Width reserved for the `×` affordance on a closable tab.
 const CLOSE_W: f32 = 18.0;
 
+/// Case-aware label width estimate (logical pt): the shared 14 pt
+/// per-char estimate plus 24 pt of horizontal padding and `CLOSE_W`
+/// when the tab is closable.
+fn label_width(label: &str, closable: bool) -> f32 {
+    24.0 + crate::text_paint::estimate_label_width(label) + if closable { CLOSE_W } else { 0.0 }
+}
+
 /// Remaps an index after `remove(from)` + `insert(to)` so tracked
 /// positions (selection, focus) follow their tab.
 fn remap_moved_index(i: usize, from: usize, to: usize) -> usize {
@@ -143,8 +150,9 @@ impl TabItem {
 impl Widget for TabItem {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Approximate label width — real shaping lives in the
-        // `martensite-text` pipeline.
-        let w = cx.pt(24.0 + 8.0 * self.label.chars().count() as f32);
+        // `martensite-text` pipeline. Case-aware: uppercase/digits run
+        // wider than mixed case at the tab font size.
+        let w = cx.pt(label_width(&self.label, self.closable));
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
             cx.pt(STRIP_H).min(constraints.max_size.y.max(0.0)),
@@ -300,8 +308,7 @@ impl TabStrip {
     /// Associated (no `&self`) so it stays callable while `self.tabs`
     /// is mutably borrowed in `layout`.
     fn natural_width(tab: &TabItem, scale: f32) -> f32 {
-        let extra = if tab.closable { CLOSE_W } else { 0.0 };
-        (24.0 + 8.0 * tab.label.chars().count() as f32 + extra) * scale
+        label_width(&tab.label, tab.closable) * scale
     }
 
     /// Clamps `scroll_x` into `0..=overflow` using the stored

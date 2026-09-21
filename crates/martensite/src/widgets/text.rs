@@ -714,7 +714,12 @@ impl Widget for Text {
             return;
         };
 
-        let color = self.color.map_or([0, 0, 0, 255], |c| c.to_srgba8());
+        // Unstyled text follows the theme's text token so labels stay
+        // legible on dark themes; explicit `color` still wins.
+        let color = self.color.map_or_else(
+            || cx.color(martensite_theme::TokenKey::TextColor, [0, 0, 0, 255]),
+            |c| c.to_srgba8(),
+        );
         let origin = cx.bounds.origin;
 
         // Glyphs are clipped to the widget's allocated rect — an

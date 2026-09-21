@@ -209,6 +209,10 @@ pub struct Flex {
     pub gap: f32,
     /// The child widgets.
     pub children: Vec<Box<dyn Widget>>,
+    /// Per-child flex weight, parallel to `children` (`0.0` =
+    /// intrinsic size; `> 0.0` = share of the leftover main axis).
+    /// Children pushed directly onto `children` default to `0.0`.
+    flex: Vec<f32>,
     /// Cached child sizes from the last measure pass.
     child_sizes: Vec<Vec2>,
     /// Cached bounds from the last layout pass.
@@ -236,6 +240,7 @@ impl Flex {
             cross_axis_alignment: CrossAxisAlignment::default(),
             gap: 0.0,
             children: Vec::new(),
+            flex: Vec::new(),
             child_sizes: Vec::new(),
             cached_bounds: Rect::default(),
             child_rects: Vec::new(),
@@ -339,9 +344,61 @@ impl Flex {
     /// ```
     #[inline]
     #[must_use]
-    pub fn child(mut self, child: impl Widget + 'static) -> Self {
+    pub fn child(self, child: impl Widget + 'static) -> Self {
+        self.child_flex(child, 0.0)
+    }
+
+    /// Adds a child that takes `weight` shares of the leftover main
+    /// axis (Qt stretch factor / Flutter `Expanded` / CSS `flex-grow`).
+    ///
+    /// Intrinsic (`weight == 0`) children are measured first; the
+    /// remaining main-axis space, minus gaps, is split among weighted
+    /// children in proportion to their weights and each is laid out at
+    /// exactly its share. A weighted [`DummyWidget`] is a spacer. When
+    /// the main axis is unbounded (e.g. inside a scroll view along
+    /// that axis) weighted children fall back to intrinsic size.
+    ///
+    /// [`DummyWidget`]: martensite_core::widget::DummyWidget
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{Container, Flex};
+    ///
+    /// let row = Flex::row()
+    ///     .child_flex(Container::new(), 2.0)
+    ///     .child_flex(Container::new(), 1.0);
+    /// assert_eq!(row.flex_weight(0), 2.0);
+    /// assert_eq!(row.flex_weight(1), 1.0);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn child_flex(mut self, child: impl Widget + 'static, weight: f32) -> Self {
         self.children.push(Box::new(child));
+        self.flex.push(weight.max(0.0));
         self
+    }
+
+    /// The flex weight of the child at `index` (`0.0` for intrinsic
+    /// children and out-of-range indices).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{Container, Flex};
+    ///
+    /// let row = Flex::row().child(Container::new());
+    /// assert_eq!(row.flex_weight(0), 0.0);
+    /// assert_eq!(row.flex_weight(7), 0.0);
+    /// ```
+    #[inline]
+    pub fn flex_weight(&self, index: usize) -> f32 {
+        self.flex.get(index).copied().unwrap_or(0.0)
+    }
+
+    /// Sum of all flex weights.
+    fn total_flex(&self) -> f32 {
+        (0..self.children.len()).map(|i| self.flex_weight(i)).sum()
     }
 
     /// Adds multiple child widgets.
@@ -359,6 +416,8 @@ impl Flex {
     #[inline]
     #[must_use]
     pub fn children(mut self, children: impl IntoIterator<Item = Box<dyn Widget>>) -> Self {
+        let children: Vec<Box<dyn Widget>> = children.into_iter().collect();
+        self.flex.resize(self.children.len() + children.len(), 0.0);
         self.children.extend(children);
         self
     }
@@ -482,18 +541,32 @@ impl Widget for Flex {
         let mut total_main = 0.0f32;
         let mut max_cross = 0.0f32;
         let total_gap = self.gap * (n.saturating_sub(1)) as f32;
+        let max_main = self.direction.main(constraints.max_size);
+        let cross_limit = self.direction.cross(constraints.max_size);
 
-        for child in &mut self.children {
+        // Pass 1: measure intrinsic (weight-0) children greedily in
+        // order. Weighted children get a placeholder and are measured
+        // in pass 2 once the leftover main-axis space is known. When
+        // the main axis is unbounded there is no leftover to split,
+        // so weighted children measure intrinsically like the rest.
+        // `f32::MAX` is the "unbounded" sentinel used by this widget
+        // (see the intrinsic path below), so only a strictly smaller
+        // max counts as bounded for flex purposes.
+        let main_bounded = max_main < f32::MAX;
+        for (i, child) in self.children.iter_mut().enumerate() {
+            let weight = self.flex.get(i).copied().unwrap_or(0.0);
+            if weight > 0.0 && main_bounded {
+                self.child_sizes.push(Vec2::ZERO);
+                continue;
+            }
             // Give each child the remaining main-axis space after
             // accounting for previously-measured siblings and gaps.
             // Only check the main-axis constraint, not the cross-axis.
-            let max_main = self.direction.main(constraints.max_size);
             let remaining_main = if max_main.is_finite() {
                 (max_main - total_main - total_gap).max(0.0)
             } else {
                 f32::MAX
             };
-            let cross_limit = self.direction.cross(constraints.max_size);
             let child_max = if self.direction.is_row() {
                 Vec2::new(remaining_main, cross_limit)
             } else {
@@ -507,6 +580,37 @@ impl Widget for Flex {
             self.child_sizes.push(size);
             total_main += self.direction.main(size);
             max_cross = max_cross.max(self.direction.cross(size));
+        }
+
+        // Pass 2: split the leftover main-axis space among weighted
+        // children in proportion to their weights. Each weighted child
+        // is measured against its share, then forced to exactly that
+        // share on the main axis (Flutter `Expanded` tight semantics);
+        // its reported cross-axis size is kept.
+        let total_flex = self.total_flex();
+        if main_bounded && total_flex > 0.0 {
+            let leftover = (max_main - total_main - total_gap).max(0.0);
+            for (i, child) in self.children.iter_mut().enumerate() {
+                let weight = self.flex.get(i).copied().unwrap_or(0.0);
+                if weight <= 0.0 {
+                    continue;
+                }
+                let share = leftover * weight / total_flex;
+                let child_max = if self.direction.is_row() {
+                    Vec2::new(share, cross_limit)
+                } else {
+                    Vec2::new(cross_limit, share)
+                };
+                let child_constraints = LayoutConstraints {
+                    min_size: Vec2::ZERO,
+                    max_size: child_max,
+                };
+                let measured = child.measure(cx, child_constraints);
+                let size = self.direction.vec(share, self.direction.cross(measured));
+                self.child_sizes[i] = size;
+                total_main += share;
+                max_cross = max_cross.max(self.direction.cross(size));
+            }
         }
 
         total_main += total_gap;
@@ -523,6 +627,31 @@ impl Widget for Flex {
 
         let total_main = self.direction.main(bounds.size);
         let cross_size = self.direction.cross(bounds.size);
+
+        // Recompute weighted children's main-axis sizes against the
+        // real layout bounds: `measure` may have seen a different max
+        // (e.g. a stretched column inside a taller row), so the shares
+        // cached there would under- or over-fill this bounds.
+        let total_flex = self.total_flex();
+        if total_flex > 0.0 {
+            let total_gap = self.gap * (n.saturating_sub(1)) as f32;
+            let intrinsic_main: f32 = (0..n)
+                .filter(|&i| self.flex.get(i).copied().unwrap_or(0.0) <= 0.0)
+                .map(|i| {
+                    self.direction
+                        .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO))
+                })
+                .sum();
+            let leftover = (total_main - intrinsic_main - total_gap).max(0.0);
+            for i in 0..n {
+                let weight = self.flex.get(i).copied().unwrap_or(0.0);
+                if weight > 0.0 {
+                    let share = leftover * weight / total_flex;
+                    let size = self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO);
+                    self.child_sizes[i] = self.direction.vec(share, self.direction.cross(size));
+                }
+            }
+        }
 
         let children_main: f32 = self
             .child_sizes
@@ -620,6 +749,18 @@ mod tests {
 
     fn make_cx(hot: &mut HotNode) -> LayoutContext<'_> {
         LayoutContext { hot, scale: 1.0 }
+    }
+
+    /// A test widget that reports a fixed size clamped to the
+    /// max constraint.
+    struct Fixed(Vec2);
+
+    impl Widget for Fixed {
+        fn measure(&mut self, _cx: &mut LayoutContext, c: LayoutConstraints) -> Vec2 {
+            self.0.clamp(Vec2::ZERO, c.max_size)
+        }
+
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
     }
 
     #[test]
@@ -791,5 +932,146 @@ mod tests {
         let debug = format!("{:?}", f);
         assert!(debug.contains("Flex"));
         assert!(debug.contains("Row"));
+    }
+
+    #[test]
+    fn flex_weights_split_leftover() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row()
+            .gap(10.0)
+            .child(Fixed(Vec2::new(50.0, 20.0)))
+            .child_flex(Fixed(Vec2::new(10.0, 10.0)), 1.0)
+            .child_flex(Fixed(Vec2::new(10.0, 10.0)), 2.0);
+        f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(310.0, 100.0),
+            },
+        );
+        f.layout(&mut cx, Rect::new(0.0, 0.0, 310.0, 100.0));
+        // leftover = 310 - 50 - 2*10 = 240; shares 80 / 160.
+        assert_eq!(f.child_rects[0], Rect::new(0.0, 0.0, 50.0, 100.0));
+        assert_eq!(f.child_rects[1], Rect::new(60.0, 0.0, 80.0, 100.0));
+        assert_eq!(f.child_rects[2], Rect::new(150.0, 0.0, 160.0, 100.0));
+    }
+
+    #[test]
+    fn flex_weights_split_leftover_column() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::column()
+            .gap(10.0)
+            .child(Fixed(Vec2::new(20.0, 50.0)))
+            .child_flex(Fixed(Vec2::new(10.0, 10.0)), 1.0)
+            .child_flex(Fixed(Vec2::new(10.0, 10.0)), 2.0);
+        f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, 310.0),
+            },
+        );
+        f.layout(&mut cx, Rect::new(0.0, 0.0, 100.0, 310.0));
+        assert_eq!(f.child_rects[0], Rect::new(0.0, 0.0, 100.0, 50.0));
+        assert_eq!(f.child_rects[1], Rect::new(0.0, 60.0, 100.0, 80.0));
+        assert_eq!(f.child_rects[2], Rect::new(0.0, 150.0, 100.0, 160.0));
+    }
+
+    #[test]
+    fn flex_weights_all_weighted_fill() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row()
+            .child_flex(Fixed(Vec2::new(10.0, 10.0)), 1.0)
+            .child_flex(Fixed(Vec2::new(10.0, 10.0)), 1.0);
+        let size = f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(200.0, 50.0),
+            },
+        );
+        assert_eq!(size.x, 200.0);
+        f.layout(&mut cx, Rect::new(0.0, 0.0, 200.0, 50.0));
+        assert_eq!(f.child_rects[0], Rect::new(0.0, 0.0, 100.0, 50.0));
+        assert_eq!(f.child_rects[1], Rect::new(100.0, 0.0, 100.0, 50.0));
+    }
+
+    #[test]
+    fn flex_weights_zero_weight_unchanged() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row()
+            .child(Fixed(Vec2::new(30.0, 10.0)))
+            .child(Fixed(Vec2::new(40.0, 10.0)));
+        let size = f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(200.0, 50.0),
+            },
+        );
+        assert_eq!(size, Vec2::new(70.0, 10.0));
+        f.layout(&mut cx, Rect::new(0.0, 0.0, 200.0, 50.0));
+        // Start alignment: leftover is unused, intrinsic sizes kept.
+        assert_eq!(f.child_rects[0], Rect::new(0.0, 0.0, 30.0, 50.0));
+        assert_eq!(f.child_rects[1], Rect::new(30.0, 0.0, 40.0, 50.0));
+    }
+
+    #[test]
+    fn flex_weights_unbounded_main_falls_back() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row()
+            .child(Fixed(Vec2::new(30.0, 10.0)))
+            .child_flex(Fixed(Vec2::new(40.0, 10.0)), 1.0);
+        let size = f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(f32::MAX, 50.0),
+            },
+        );
+        // Unbounded main axis: the weighted child falls back to its
+        // intrinsic size instead of taking a share of "infinity".
+        assert_eq!(size, Vec2::new(70.0, 10.0));
+    }
+
+    #[test]
+    fn flex_weights_layout_uses_real_bounds() {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut f = Flex::row()
+            .child(Fixed(Vec2::new(10.0, 10.0)))
+            .child_flex(Fixed(Vec2::new(10.0, 10.0)), 1.0);
+        f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(100.0, 50.0),
+            },
+        );
+        // Measure saw max 100 (share 90), but layout gets 400.
+        f.layout(&mut cx, Rect::new(0.0, 0.0, 400.0, 50.0));
+        assert_eq!(f.child_rects[0], Rect::new(0.0, 0.0, 10.0, 50.0));
+        assert_eq!(f.child_rects[1], Rect::new(10.0, 0.0, 390.0, 50.0));
+    }
+
+    #[test]
+    fn flex_children_builder_keeps_flex_parallel() {
+        let items: Vec<Box<dyn Widget>> = vec![
+            Box::new(Fixed(Vec2::new(10.0, 10.0))),
+            Box::new(Fixed(Vec2::new(20.0, 10.0))),
+        ];
+        let f = Flex::row()
+            .child_flex(Fixed(Vec2::new(5.0, 5.0)), 2.0)
+            .children(items);
+        assert_eq!(f.child_count(), 3);
+        assert_eq!(f.flex.len(), f.children.len());
+        assert_eq!(f.flex_weight(0), 2.0);
+        assert_eq!(f.flex_weight(1), 0.0);
+        assert_eq!(f.flex_weight(2), 0.0);
     }
 }

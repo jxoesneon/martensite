@@ -4,12 +4,13 @@
 //!
 //! ## Layout grammar
 //!
-//! - [`zone_header`] renders the uniform zone title: 12 pt muted
-//!   uppercase text over a hairline, matching `panel_chrome`'s
-//!   language. Zone names are domain names ("MAINTENANCE SCHEDULE"),
-//!   never widget names ("Gantt").
-//! - [`ZONE_GAP`]/[`ZONE_PAD`] are the only spacing tokens inside
-//!   zones — no ad-hoc gutters.
+//! - Page columns are `Flex::column().gap(ZONE_STACK)`; the tab label
+//!   is the page title (no in-page header widget).
+//! - [`row()`] mounts banded surfaces top-aligned; [`strip()`] mounts
+//!   rows of intrinsic controls center-aligned. All bands in one row
+//!   share a single band height.
+//! - [`ZONE_GAP`]/[`ZONE_PAD`]/[`ZONE_STACK`] are the only spacing
+//!   tokens inside zones — no ad-hoc gutters.
 //! - One visible surface per zone: alternate views live behind
 //!   selector chrome (`Tabs`, `Segmented`, `Dropdown` for >8
 //!   destinations) — never a scroll wall of every option.
@@ -32,19 +33,24 @@
 use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect, Widget,
 };
-use martensite::widgets::text::Text;
+use martensite::widgets::aspect_frame::AspectFrame;
+use martensite::widgets::flex::{CrossAxisAlignment, Flex};
 use std::time::Duration;
 
 use crate::domain::PlantModel;
-use crate::model::Palette;
 
 /// Spacing between elements inside a zone (logical pt).
 pub const ZONE_GAP: f32 = 8.0;
+/// Spacing between rows in a page column (logical pt).
+pub const ZONE_STACK: f32 = 12.0;
 /// Padding between a zone's chrome and its content (logical pt).
 pub const ZONE_PAD: f32 = 12.0;
-/// Zone header text size — the published type-ramp step for section
-/// titles (12 pt muted uppercase; panel titles are 12 pt).
-pub const ZONE_HEADER_PT: f32 = 12.0;
+/// Band height: sparklines, strips, progress, pickers (logical pt).
+pub const BAND_S: f32 = 120.0;
+/// Band height: charts, gauges, calendars, lists (logical pt).
+pub const BAND_M: f32 = 200.0;
+/// Band height: tables, kanban, viewers, terminals, trees (logical pt).
+pub const BAND_L: f32 = 300.0;
 /// Selector strips cap at this many visible entries before overflow
 /// routes to a `Dropdown`.
 pub const MAX_SELECTOR_ENTRIES: usize = 8;
@@ -58,71 +64,110 @@ const MAX_REPORTED_DIM: f32 = 4096.0;
 /// a sane content surface, not a tower.
 const FILL_FALLBACK: f32 = 480.0;
 
-/// The uniform zone header: muted uppercase title over a hairline.
-/// Paints its own chrome so it drops into a `Flex` column directly.
-pub struct ZoneHeader {
-    text: Text,
-    label: &'static str,
-    bounds: Rect,
-    scale: f32,
+/// A content row inside a page column — `ZONE_GAP` between children,
+/// top-aligned so banded surfaces sit at the top of the row (bands
+/// carry their own height). Every row must carry at least one
+/// `child_flex` so it fills its width (layout grammar rule 1).
+pub fn row() -> Flex {
+    Flex::row()
+        .gap(ZONE_GAP)
+        .cross_axis_alignment(CrossAxisAlignment::Start)
 }
 
-impl ZoneHeader {
-    pub fn new(label: &'static str) -> Self {
-        Self {
-            text: Text::new(label).font_size(ZONE_HEADER_PT),
-            label,
-            bounds: Rect::default(),
-            scale: 1.0,
-        }
+/// A control strip — a `row()` for intrinsic controls (buttons,
+/// switches, fields, badges, pickers, labels), center-aligned so mixed
+/// control heights sit on one optical line. No banded children.
+pub fn strip() -> Flex {
+    Flex::row()
+        .gap(ZONE_GAP)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+}
+
+/// Aspect-framed mount — keeps a genuinely aspect-locked view's
+/// proportions inside a weighted band (QR, barcode, sunburst,
+/// avatar/photo tiles, video). Never for time-series charts, lists,
+/// or tables — those take `band` + `child_flex`.
+pub fn framed(ratio: f32, w: impl Widget + 'static) -> AspectFrame {
+    AspectFrame::new(ratio).xalign(0.5).child(w)
+}
+
+/// A fixed-height surface mount: measures to the row's full width at
+/// `height` pt and lays its child out to the full bounds. Every
+/// fill-style surface (chart, viewer, table, terminal, kanban, tree,
+/// list, canvas, video, map) is mounted through a band; intrinsic
+/// controls never are.
+pub struct Band {
+    child: Box<dyn Widget>,
+    height: f32,
+    bounds: Rect,
+}
+
+/// Mount `w` in a [`Band`] at `height_pt` logical points.
+pub fn band(height_pt: f32, w: impl Widget + 'static) -> Band {
+    Band {
+        child: Box::new(w),
+        height: height_pt,
+        bounds: Rect::default(),
     }
 }
 
-impl Widget for ZoneHeader {
+impl Widget for Band {
     fn debug_name(&self) -> &'static str {
-        "Zone Header"
+        "Band"
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> glam::Vec2 {
-        let s = self.text.measure(cx, c);
-        glam::Vec2::new(c.max_size.x, s.y + 8.0)
+        let w = if c.max_size.x.is_finite() && c.max_size.x <= MAX_REPORTED_DIM {
+            c.max_size.x
+        } else {
+            FILL_FALLBACK.max(0.0)
+        };
+        let size = glam::Vec2::new(w, cx.pt(self.height));
+        // Composite children (`Flex`, `Tabs`, `Stack`) fill their
+        // layout caches in `measure` — they must see the band's
+        // allotment even though the band's own size is fixed.
+        self.child.measure(
+            cx,
+            LayoutConstraints {
+                min_size: glam::Vec2::ZERO,
+                max_size: size,
+            },
+        );
+        size
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
-        self.scale = cx.scale;
-        let s = self.text.measure(
+        // Weighted rows hand the band a width `measure` never saw —
+        // re-measure tight so the child's caches match these bounds.
+        self.child.measure(
             cx,
             LayoutConstraints {
                 min_size: glam::Vec2::ZERO,
                 max_size: bounds.size,
             },
         );
-        self.text.layout(
-            cx,
-            Rect::new(bounds.min_x(), bounds.min_y(), bounds.width(), s.y),
-        );
-    }
-
-    fn paint(&self, cx: &mut PaintContext) {
-        self.text.paint(cx);
-        // Hairline under the title — the zone separator.
-        let pal = Palette::from_theme(cx.theme);
-        let y = f64::from(self.bounds.max_y() - 1.0);
-        cx.list.push_fill_rect(
-            crate::panels::krect(
-                f64::from(self.bounds.min_x()),
-                y,
-                f64::from(self.bounds.width()),
-                1.0,
-            ),
-            pal.hairline(),
-        );
+        self.child.layout(cx, bounds);
     }
 
     fn accessibility(&self, node: &mut accesskit::Node) {
-        node.set_role(accesskit::Role::Heading);
-        node.set_label(self.label);
+        node.set_role(accesskit::Role::Group);
+    }
+
+    fn child_count(&self) -> usize {
+        1
+    }
+
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        (index == 0).then_some(&*self.child)
+    }
+
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        (index == 0).then_some(&mut *self.child)
+    }
+
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        (index == 0).then_some(self.bounds)
     }
 }
 
@@ -434,6 +479,35 @@ mod tests {
             1,
             "a pull-only mount has no push-side mutation to re-layout"
         );
+    }
+
+    #[test]
+    fn band_measures_height_and_lays_child_to_bounds() {
+        let layouts = Arc::new(AtomicUsize::new(0));
+        let mut b = band(
+            BAND_M,
+            Probe {
+                layouts: Arc::clone(&layouts),
+                last_bounds: Rect::default(),
+            },
+        );
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 2.0,
+        };
+        let size = b.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: glam::Vec2::ZERO,
+                max_size: glam::Vec2::new(640.0, f32::MAX),
+            },
+        );
+        assert_eq!(size, glam::Vec2::new(640.0, BAND_M * 2.0));
+        let bounds = Rect::new(4.0, 8.0, 320.0, 160.0);
+        b.layout(&mut cx, bounds);
+        assert_eq!(layouts.load(Ordering::Relaxed), 1);
+        assert_eq!(b.child_bounds(0), Some(bounds));
     }
 
     #[test]

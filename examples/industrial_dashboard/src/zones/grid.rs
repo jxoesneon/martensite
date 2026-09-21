@@ -50,7 +50,6 @@ use martensite::widgets::about::About;
 use martensite::widgets::accordion::Accordion;
 use martensite::widgets::anchor::{Anchor, AnchorItem};
 use martensite::widgets::app_grid::{AppEntry, AppGrid};
-use martensite::widgets::aspect_frame::AspectFrame;
 use martensite::widgets::attachment::Attachment;
 use martensite::widgets::badge::Badge;
 use martensite::widgets::barcode::Barcode;
@@ -83,7 +82,6 @@ use martensite::widgets::gantt::Gantt;
 use martensite::widgets::graph_view::GraphView;
 use martensite::widgets::grid::{Grid, GridCell};
 use martensite::widgets::group_box::GroupBox;
-use martensite::widgets::hero_header::{HeroAction, HeroHeader};
 use martensite::widgets::hex_view::HexView;
 use martensite::widgets::inline_edit::InlineEdit;
 use martensite::widgets::inspector::Inspector;
@@ -143,7 +141,8 @@ use martensite::widgets::wizard::Wizard;
 use crate::domain::{
     AlarmSeverity, Asset, AssetKind, AssetStatus, MaintTask, PlantModel, WoStatus, WorkOrder,
 };
-use crate::zone::{Bound, ZoneHeader, ZONE_GAP};
+use crate::zone::{band, framed, row, strip, Bound, BAND_L, BAND_M, BAND_S, ZONE_GAP, ZONE_STACK};
+use martensite::core::widget::DummyWidget;
 
 /// Sim "today" — the schedule's day-0 (docket date, deterministic).
 const BASE_DAY: Date = Date {
@@ -182,8 +181,8 @@ const PRIORITY_COLORS: [[u8; 4]; 4] = [
 /// are domain names ("WORK ORDERS"), never widget names.
 pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
     vec![
-        ("ASSET REGISTRY", registry(model)),
-        ("ASSET DETAIL", detail(model)),
+        ("REGISTRY", registry(model)),
+        ("DETAIL", detail(model)),
         ("WORK ORDERS", work_orders(model)),
         ("MAINTENANCE", maintenance(model)),
         ("DOCUMENTS", documents(model)),
@@ -195,16 +194,6 @@ pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-/// A content row inside a page column.
-fn row() -> Flex {
-    Flex::row().gap(ZONE_GAP)
-}
-
-/// Aspect-framed mount — keeps a view's proportions inside the row.
-fn framed(ratio: f32, w: impl martensite::core::Widget + 'static) -> AspectFrame {
-    AspectFrame::new(ratio).child(w)
-}
 
 /// Recursive Site→Line→Cell tree as `TreeNode`s (label = asset name).
 fn asset_tree(m: &PlantModel, parent: Option<u32>) -> Vec<TreeNode> {
@@ -1348,15 +1337,46 @@ fn registry(m: &PlantModel) -> Flex {
     };
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("ASSET REGISTRY"))
-        .child(row().child(search).child(site).child(cascade))
-        .child(row().child(kind).child(tree_sel).child(crumb))
-        .child(row().child(pager).child(rail).child(badge))
+        .gap(ZONE_STACK)
+        .child(
+            strip()
+                .child(search)
+                .child(site)
+                .child(cascade)
+                .child_flex(DummyWidget, 1.0),
+        )
+        .child(
+            strip()
+                .child(kind)
+                .child(tree_sel)
+                .child(crumb)
+                .child_flex(DummyWidget, 1.0),
+        )
+        .child(
+            strip()
+                .child(pager)
+                .child(rail)
+                .child(badge)
+                .child_flex(DummyWidget, 1.0),
+        )
         .child(Separator::horizontal())
-        .child(row().child(split_view).child(handle))
-        .child(row().child(refresh).child(apps).child(dock))
-        .child(row().child(flow).child(nav).child(summary))
+        .child(
+            row()
+                .child_flex(band(BAND_L, split_view), 1.0)
+                .child(handle),
+        )
+        .child(
+            row()
+                .child_flex(band(BAND_L, refresh), 2.0)
+                .child_flex(band(BAND_L, apps), 1.0)
+                .child(dock),
+        )
+        .child(
+            row()
+                .child_flex(band(BAND_M, flow), 1.0)
+                .child_flex(band(BAND_M, nav), 1.0)
+                .child_flex(band(BAND_M, summary), 1.0),
+        )
 }
 
 /// The paged register table for `registry`.
@@ -1797,8 +1817,7 @@ fn detail(m: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("ASSET DETAIL"))
+        .gap(ZONE_STACK)
         .child(header)
         .child(headline)
         .child(
@@ -1808,8 +1827,21 @@ fn detail(m: &PlantModel) -> Flex {
                 .cell(GridCell::new(Clamp::new().maximum(560.0).child(grid)).col_span(7))
                 .cell(GridCell::new(inspector).col_span(5)),
         )
-        .child(row().child(lamp).child(rating).child(note_edit))
-        .child(GroupBox::new("IDENTITY").child(row().child(qr).child(bar).child(summary_text)))
+        .child(
+            strip()
+                .child(lamp)
+                .child(rating)
+                .child(note_edit)
+                .child_flex(DummyWidget, 1.0),
+        )
+        .child(
+            GroupBox::new("IDENTITY").child(
+                row()
+                    .child_flex(band(BAND_S, framed(1.0, qr)), 1.0)
+                    .child_flex(band(BAND_S, bar), 1.0)
+                    .child_flex(summary_text, 1.0),
+            ),
+        )
         .child(
             Accordion::new()
                 .allow_multiple(true)
@@ -1839,25 +1871,30 @@ fn kind_name(k: AssetKind) -> &'static str {
 // ---------------------------------------------------------------------------
 
 fn work_orders(m: &PlantModel) -> Flex {
-    // Banner — both CTAs write the model: New WO appends, secondary
-    // acks the whole alarm board.
-    let hero = Bound::new(
-        HeroHeader::new("Work orders")
-            .eyebrow("PLANT EAST — MAINTENANCE")
-            .subtitle("queued → in progress → review → done")
-            .primary("New WO")
-            .secondary("Ack all alarms"),
-        m,
-    )
-    .pull(|w: &mut HeroHeader, m| match w.take_action() {
-        Some(HeroAction::Primary) => create_wo(m, WoIntake::default()),
-        Some(HeroAction::Secondary) => {
+    // Action strip — the two CTAs write the model exactly as the old
+    // banner did: New WO appends, ack-all clears the alarm board.
+    let status = Bound::new(Text::new("—").font_size(11.0), m).push(|w: &mut Text, m| {
+        let wos = m.work_orders.get();
+        let n = |s: WoStatus| wos.iter().filter(|w| w.status == s).count();
+        w.set_content(format!(
+            "{} queued · {} in progress · {} review",
+            n(WoStatus::Queued),
+            n(WoStatus::InProgress),
+            n(WoStatus::Review)
+        ));
+    });
+    let new_wo = Bound::new(Button::new("New WO"), m).pull(|w: &mut Button, m| {
+        if w.take_activated() {
+            create_wo(m, WoIntake::default());
+        }
+    });
+    let ack_all = Bound::new(Button::new("Ack all alarms"), m).pull(|w: &mut Button, m| {
+        if w.take_activated() {
             for a in m.active_alarms() {
                 m.ack_alarm(a.id);
             }
             m.log(usize::MAX, "all active alarms acknowledged");
         }
-        None => {}
     });
 
     // Kanban — columns are `WoStatus::columns()`; a drop writes
@@ -2604,20 +2641,37 @@ fn work_orders(m: &PlantModel) -> Flex {
     };
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("WORK ORDERS"))
-        .child(hero)
-        .child(kanban)
-        .child(row().child(table).child(stepper).child(pips))
+        .gap(ZONE_STACK)
+        .child(strip().child_flex(status, 1.0).child(new_wo).child(ack_all))
+        .child(row().child_flex(band(BAND_L, kanban), 1.0))
+        .child(row().child_flex(band(BAND_L, table), 1.0))
+        .child(
+            strip()
+                .child(stepper)
+                .child(pips)
+                .child_flex(DummyWidget, 1.0),
+        )
         .child(
             row()
-                .child(switcher)
-                .child(checklist)
-                .child(transfer)
-                .child(crew),
+                .child_flex(band(BAND_M, checklist), 1.0)
+                .child_flex(band(BAND_M, transfer), 1.0),
         )
-        .child(row().child(ticket).child(deck).child(wizard).child(notes))
-        .child(row().child(sel_card).child(advance))
+        .child(
+            row()
+                .child_flex(band(BAND_M, switcher), 1.0)
+                .child_flex(band(BAND_M, crew), 1.0),
+        )
+        .child(
+            row()
+                .child_flex(band(BAND_M, ticket), 1.0)
+                .child_flex(band(BAND_M, deck), 1.0),
+        )
+        .child(
+            row()
+                .child_flex(band(BAND_M, wizard), 2.0)
+                .child_flex(band(BAND_M, notes), 1.0),
+        )
+        .child(strip().child_flex(sel_card, 1.0).child(advance))
         .child(drawer)
 }
 
@@ -2861,11 +2915,23 @@ fn maintenance(m: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("MAINTENANCE"))
-        .child(row().child(framed(2.4, gantt)).child(week))
-        .child(row().child(calendar).child(picker).child(timeline))
-        .child(row().child(progress).child(summary))
+        .gap(ZONE_STACK)
+        .child(
+            row()
+                .child_flex(band(BAND_L, gantt), 3.0)
+                .child_flex(band(BAND_L, week), 2.0),
+        )
+        .child(
+            row()
+                .child_flex(band(BAND_M, calendar), 1.0)
+                .child_flex(band(BAND_M, timeline), 1.0),
+        )
+        .child(
+            row()
+                .child_flex(band(BAND_S, picker), 1.0)
+                .child_flex(band(BAND_S, progress), 1.0),
+        )
+        .child(strip().child(summary).child_flex(DummyWidget, 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -3325,11 +3391,19 @@ fn documents(m: &PlantModel) -> Flex {
     );
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("DOCUMENTS"))
-        .child(row().child(json).child(hex).child(journal))
-        .child(viewers)
-        .child(row().child(scroller).child(indicator))
+        .gap(ZONE_STACK)
+        .child(
+            row()
+                .child_flex(band(BAND_L, json), 1.0)
+                .child_flex(band(BAND_L, hex), 1.0)
+                .child_flex(band(BAND_L, journal), 1.0),
+        )
+        .child(band(BAND_L, viewers))
+        .child(
+            row()
+                .child_flex(band(BAND_M, scroller), 1.0)
+                .child(indicator),
+        )
         .child(files)
 }
 
@@ -3636,12 +3710,15 @@ fn diagnostics(m: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("DIAGNOSTICS"))
-        .child(Clamp::new().maximum(760.0).child(term))
-        .child(row().child(palette).child(ack_all).child(help))
-        .child(row().child(settings).child(about))
-        .child(perf)
+        .gap(ZONE_STACK)
+        .child(row().child_flex(band(BAND_L, term), 1.0))
+        .child(strip().child_flex(palette, 1.0).child(ack_all).child(help))
+        .child(
+            row()
+                .child_flex(band(BAND_M, settings), 1.0)
+                .child_flex(band(BAND_M, about), 1.0),
+        )
+        .child(band(BAND_S, perf))
 }
 
 // ---------------------------------------------------------------------------
@@ -3898,25 +3975,33 @@ fn hierarchy(m: &PlantModel) -> Flex {
     };
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("HIERARCHY"))
-        .child(row().child(viewport).child(org))
+        .gap(ZONE_STACK)
         .child(
             row()
-                .child(framed(
-                    1.1,
-                    Stack::new()
-                        .alignment(StackAlignment::Center)
-                        .child(sunburst)
-                        .child(Text::new("OEE-weighted").font_size(10.0)),
-                ))
-                .child(framed(1.6, sankey)),
+                .child_flex(band(BAND_L, viewport), 2.0)
+                .child_flex(band(BAND_L, org), 1.0),
         )
         .child(
             row()
-                .child(mind)
-                .child(Container::new().padding_uniform(4.0).child(fish)),
+                .child_flex(
+                    band(
+                        BAND_M,
+                        framed(
+                            1.0,
+                            Stack::new()
+                                .alignment(StackAlignment::Center)
+                                .child(sunburst)
+                                .child(Text::new("OEE-weighted").font_size(11.0)),
+                        ),
+                    ),
+                    1.0,
+                )
+                .child_flex(band(BAND_M, sankey), 1.0),
         )
+        .child(row().child_flex(band(BAND_M, mind), 1.0).child_flex(
+            band(BAND_M, Container::new().padding_uniform(4.0).child(fish)),
+            1.0,
+        ))
 }
 
 /// Unique asset ids named by `material_flow` — the Sankey's node set.

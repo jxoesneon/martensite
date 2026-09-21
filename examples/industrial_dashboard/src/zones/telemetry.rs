@@ -39,7 +39,6 @@ use std::time::{Duration, Instant};
 use martensite::widgets::activity_ring::ActivityRing;
 use martensite::widgets::alarm_panel::{Alarm as PanelAlarm, AlarmPanel};
 use martensite::widgets::analog_clock::AnalogClock;
-use martensite::widgets::aspect_frame::AspectFrame;
 use martensite::widgets::attendee_list::{Attendee, AttendeeList};
 use martensite::widgets::avatar::Avatar;
 use martensite::widgets::avatar_group::AvatarGroup;
@@ -102,7 +101,8 @@ use crate::domain::{
     Alarm as DomAlarm, AlarmSeverity, Asset, AssetKind, AssetStatus, CrewMember, MaintTask,
     PlantModel, WoStatus, HISTORY_LEN,
 };
-use crate::zone::{Bound, ZoneHeader, ZONE_GAP};
+use crate::zone::{band, framed, row, strip, Bound, BAND_L, BAND_M, BAND_S, ZONE_GAP, ZONE_STACK};
+use martensite::core::widget::DummyWidget;
 
 /// Simulated shift starts at 06:00 — every clock widget's offset.
 const SHIFT_START_HOUR: u32 = 6;
@@ -126,12 +126,12 @@ const SEV_COLORS: [[u8; 4]; 3] = [[96, 165, 250, 255], [250, 190, 60, 255], [230
 /// domain names ("ALARM BOARD"), never widget names.
 pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
     vec![
-        ("PROCESS TRENDS", trends(model)),
+        ("TRENDS", trends(model)),
         ("INSTRUMENTS", instruments(model)),
-        ("ALARM BOARD", alarm_board(model)),
+        ("ALARMS", alarm_board(model)),
         ("DISTRIBUTIONS", distributions(model)),
         ("SCHEDULE", schedule(model)),
-        ("SHIFT CREW", crew(model)),
+        ("CREW", crew(model)),
         ("SYSTEM", system(model)),
     ]
 }
@@ -140,19 +140,9 @@ pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// A content row inside a page column.
-fn row() -> Flex {
-    Flex::row().gap(ZONE_GAP)
-}
-
-/// Aspect-framed chart mount — keeps proportions inside the row.
-fn framed(ratio: f32, w: impl martensite::core::Widget + 'static) -> AspectFrame {
-    AspectFrame::new(ratio).child(w)
-}
-
 /// Signal-family group label — the council's chart-grouping grammar.
 fn group_label(text: &'static str) -> Text {
-    Text::new(text).font_size(10.0)
+    Text::new(text).font_size(11.0)
 }
 
 /// `Signal<Vec<f64>>` ring → chart points.
@@ -457,225 +447,257 @@ fn trends(m: &PlantModel) -> Flex {
         BarChart::new().bars(bars).label("mem bucket mean %")
     };
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("PROCESS TRENDS"))
+        .gap(ZONE_STACK)
         .child(group_label("CPU LOAD — 240-SAMPLE RING"))
         .child(
             row()
-                .child(framed(
-                    2.2,
-                    Bound::new(
-                        LineChart::new()
-                            .series(LineSeries::new("cpu", hist(&m.cpu_hist)))
-                            .axis(true),
-                        m,
-                    )
-                    .push({
-                        let mut last = hist_sig(m);
-                        move |c: &mut LineChart, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                if let Some(s) = c.series.first_mut() {
-                                    s.points = hist(&m.cpu_hist);
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            LineChart::new()
+                                .series(LineSeries::new("cpu", hist(&m.cpu_hist)))
+                                .axis(true),
+                            m,
+                        )
+                        .push({
+                            let mut last = hist_sig(m);
+                            move |c: &mut LineChart, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    if let Some(s) = c.series.first_mut() {
+                                        s.points = hist(&m.cpu_hist);
+                                    }
+                                    last = sig;
                                 }
-                                last = sig;
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    2.2,
-                    Bound::new(
-                        StripChart::new()
-                            .capacity(HISTORY_LEN)
-                            .range(0.0, 1.0)
-                            .label("cpu stream"),
-                        m,
-                    )
-                    .push({
-                        // Mounted empty — first tick fills the strip.
-                        let mut last = None;
-                        move |s: &mut StripChart, m| {
-                            let sig = hist_sig(m);
-                            if Some(sig) != last {
-                                s.clear();
-                                s.extend(hist(&m.cpu_hist));
-                                last = Some(sig);
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            Candlestick::new()
+                                .candles(candles(m))
+                                .y_range(0.0, 1.0)
+                                .grid(true),
+                            m,
+                        )
+                        .push({
+                            let mut last = hist_sig(m);
+                            move |c: &mut Candlestick, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    *c = Candlestick::new()
+                                        .candles(candles(m))
+                                        .y_range(0.0, 1.0)
+                                        .grid(true);
+                                    last = sig;
+                                }
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    1.7,
-                    Bound::new(
-                        Candlestick::new()
-                            .candles(candles(m))
-                            .y_range(0.0, 1.0)
-                            .grid(true),
-                        m,
-                    )
-                    .push({
-                        let mut last = hist_sig(m);
-                        move |c: &mut Candlestick, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                *c = Candlestick::new()
-                                    .candles(candles(m))
-                                    .y_range(0.0, 1.0)
-                                    .grid(true);
-                                last = sig;
+                        }),
+                    ),
+                    1.0,
+                ),
+        )
+        .child(
+            row()
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            StripChart::new()
+                                .capacity(HISTORY_LEN)
+                                .range(0.0, 1.0)
+                                .label("cpu stream"),
+                            m,
+                        )
+                        .push({
+                            // Mounted empty — first tick fills the strip.
+                            let mut last = None;
+                            move |s: &mut StripChart, m| {
+                                let sig = hist_sig(m);
+                                if Some(sig) != last {
+                                    s.clear();
+                                    s.extend(hist(&m.cpu_hist));
+                                    last = Some(sig);
+                                }
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    2.4,
-                    Bound::new(
-                        Sparkline::new(hist(&m.cpu_hist))
-                            .style(SparkStyle::Area)
-                            .label("cpu area"),
-                        m,
-                    )
-                    .push({
-                        let mut last = hist_sig(m);
-                        move |s: &mut Sparkline, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                s.set_data(hist(&m.cpu_hist));
-                                last = sig;
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            Sparkline::new(hist(&m.cpu_hist))
+                                .style(SparkStyle::Area)
+                                .label("cpu area"),
+                            m,
+                        )
+                        .push({
+                            let mut last = hist_sig(m);
+                            move |s: &mut Sparkline, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    s.set_data(hist(&m.cpu_hist));
+                                    last = sig;
+                                }
                             }
-                        }
-                    }),
-                )),
+                        }),
+                    ),
+                    1.0,
+                ),
         )
         .child(group_label("MEMORY — SAME RING, OTHER VIEWS"))
         .child(
             row()
-                .child(framed(
-                    2.2,
-                    Bound::new(
-                        LineChart::new()
-                            .series(LineSeries::new("mem", hist(&m.mem_hist)))
-                            .axis(true),
-                        m,
-                    )
-                    .push({
-                        let mut last = hist_sig(m);
-                        move |c: &mut LineChart, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                if let Some(s) = c.series.first_mut() {
-                                    s.points = hist(&m.mem_hist);
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            LineChart::new()
+                                .series(LineSeries::new("mem", hist(&m.mem_hist)))
+                                .axis(true),
+                            m,
+                        )
+                        .push({
+                            let mut last = hist_sig(m);
+                            move |c: &mut LineChart, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    if let Some(s) = c.series.first_mut() {
+                                        s.points = hist(&m.mem_hist);
+                                    }
+                                    last = sig;
                                 }
-                                last = sig;
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    2.4,
-                    Bound::new(
-                        Sparkline::new(hist(&m.mem_hist))
-                            .style(SparkStyle::Bars)
-                            .label("mem bars"),
-                        m,
-                    )
-                    .push({
-                        let mut last = hist_sig(m);
-                        move |s: &mut Sparkline, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                s.set_data(hist(&m.mem_hist));
-                                last = sig;
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            Sparkline::new(hist(&m.mem_hist))
+                                .style(SparkStyle::Bars)
+                                .label("mem bars"),
+                            m,
+                        )
+                        .push({
+                            let mut last = hist_sig(m);
+                            move |s: &mut Sparkline, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    s.set_data(hist(&m.mem_hist));
+                                    last = sig;
+                                }
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    1.9,
-                    Bound::new(mem_bars(m), m).push({
-                        let mut last = hist_sig(m);
-                        move |b: &mut BarChart, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                *b = mem_bars(m);
-                                last = sig;
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(mem_bars(m), m).push({
+                            let mut last = hist_sig(m);
+                            move |b: &mut BarChart, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    *b = mem_bars(m);
+                                    last = sig;
+                                }
                             }
-                        }
-                    }),
-                )),
+                        }),
+                    ),
+                    1.0,
+                ),
         )
         .child(group_label("DERIVED — SAME SIGNALS, OTHER SHAPES"))
         .child(
             row()
-                .child(framed(
-                    2.4,
-                    Bound::new(
-                        StreamGraph::new()
-                            .layer("cpu", hist(&m.cpu_hist))
-                            .layer("mem", hist(&m.mem_hist))
-                            .label("load layers"),
-                        m,
-                    )
-                    .push({
-                        // One rev covers both rings — `push_history`
-                        // bumps it after updating cpu and mem.
-                        let mut last = hist_sig(m);
-                        move |g: &mut StreamGraph, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                *g = StreamGraph::new()
-                                    .layer("cpu", hist(&m.cpu_hist))
-                                    .layer("mem", hist(&m.mem_hist))
-                                    .label("load layers");
-                                last = sig;
-                            }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    2.6,
-                    Bound::new(HeatMap::new(6, 40), m).push({
-                        // Mounted empty — the first tick fills the grid.
-                        let mut last = None;
-                        move |hm: &mut HeatMap, m| {
-                            let sig = hist_sig(m);
-                            if Some(sig) != last {
-                                let h = m.cpu_hist.get();
-                                for r in 0..6 {
-                                    for c in 0..40 {
-                                        let v = h.get(r * 40 + c).copied().unwrap_or(0.0);
-                                        hm.set_cell(r, c, (v * 10.0) as f32);
-                                    }
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            StreamGraph::new()
+                                .layer("cpu", hist(&m.cpu_hist))
+                                .layer("mem", hist(&m.mem_hist))
+                                .label("load layers"),
+                            m,
+                        )
+                        .push({
+                            // One rev covers both rings — `push_history`
+                            // bumps it after updating cpu and mem.
+                            let mut last = hist_sig(m);
+                            move |g: &mut StreamGraph, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    *g = StreamGraph::new()
+                                        .layer("cpu", hist(&m.cpu_hist))
+                                        .layer("mem", hist(&m.mem_hist))
+                                        .label("load layers");
+                                    last = sig;
                                 }
-                                last = Some(sig);
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    1.9,
-                    Bound::new(
-                        Histogram::new()
-                            .bins(10)
-                            .samples(hist(&m.cpu_hist))
-                            .label("cpu distribution"),
-                        m,
-                    )
-                    .push({
-                        let mut last = hist_sig(m);
-                        move |h: &mut Histogram, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                *h = Histogram::new()
-                                    .bins(10)
-                                    .samples(hist(&m.cpu_hist))
-                                    .label("cpu distribution");
-                                last = sig;
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(HeatMap::new(6, 40), m).push({
+                            // Mounted empty — the first tick fills the grid.
+                            let mut last = None;
+                            move |hm: &mut HeatMap, m| {
+                                let sig = hist_sig(m);
+                                if Some(sig) != last {
+                                    let h = m.cpu_hist.get();
+                                    for r in 0..6 {
+                                        for c in 0..40 {
+                                            let v = h.get(r * 40 + c).copied().unwrap_or(0.0);
+                                            hm.set_cell(r, c, (v * 10.0) as f32);
+                                        }
+                                    }
+                                    last = Some(sig);
+                                }
                             }
-                        }
-                    }),
-                )),
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            Histogram::new()
+                                .bins(10)
+                                .samples(hist(&m.cpu_hist))
+                                .label("cpu distribution"),
+                            m,
+                        )
+                        .push({
+                            let mut last = hist_sig(m);
+                            move |h: &mut Histogram, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    *h = Histogram::new()
+                                        .bins(10)
+                                        .samples(hist(&m.cpu_hist))
+                                        .label("cpu distribution");
+                                    last = sig;
+                                }
+                            }
+                        }),
+                    ),
+                    1.0,
+                ),
         )
 }
 
@@ -699,127 +721,157 @@ fn cpu_gauge(model: &PlantModel) -> Bound<Gauge> {
 
 fn instruments(m: &PlantModel) -> Flex {
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("INSTRUMENTS"))
+        .gap(ZONE_STACK)
         .child(group_label("ANALOG — LIVE LOAD"))
         .child(
             row()
-                .child(framed(1.2, cpu_gauge(m)))
-                .child(framed(
-                    1.2,
-                    Bound::new(
-                        Dial::new()
-                            .range(80.0, 160.0)
-                            .value(120.0)
-                            .step(0.5)
-                            .enabled(false),
-                        m,
-                    )
-                    .push(|d: &mut Dial, m| {
-                        d.set_value(m.acoustic.get().dominant_hz);
-                    }),
-                ))
-                .child(framed(
-                    1.2,
-                    Bound::new(
-                        Thermometer::new()
-                            .range(0.0, 100.0)
-                            .value(0.0)
-                            .units("%")
-                            .warning(0.7)
-                            .critical(0.9)
-                            .ticks(5)
-                            .label("mem %"),
-                        m,
-                    )
-                    .push({
-                        // Reads `mem` only — re-seat when the sample moves.
-                        let mut last = None;
-                        move |t: &mut Thermometer, m| {
-                            let sig = m.mem.get().to_bits();
-                            if Some(sig) != last {
-                                *t = Thermometer::new()
-                                    .range(0.0, 100.0)
-                                    .value((m.mem.get() * 100.0) as f32)
-                                    .units("%")
-                                    .warning(0.7)
-                                    .critical(0.9)
-                                    .ticks(5)
-                                    .label("mem %");
-                                last = Some(sig);
+                .child_flex(band(BAND_M, framed(1.0, cpu_gauge(m))), 1.0)
+                .child_flex(
+                    band(
+                        BAND_M,
+                        framed(
+                            1.0,
+                            Bound::new(
+                                Dial::new()
+                                    .range(80.0, 160.0)
+                                    .value(120.0)
+                                    .step(0.5)
+                                    .enabled(false),
+                                m,
+                            )
+                            .push(|d: &mut Dial, m| {
+                                d.set_value(m.acoustic.get().dominant_hz);
+                            }),
+                        ),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            Thermometer::new()
+                                .range(0.0, 100.0)
+                                .value(0.0)
+                                .units("%")
+                                .warning(0.7)
+                                .critical(0.9)
+                                .ticks(5)
+                                .label("mem %"),
+                            m,
+                        )
+                        .push({
+                            // Reads `mem` only — re-seat when the sample moves.
+                            let mut last = None;
+                            move |t: &mut Thermometer, m| {
+                                let sig = m.mem.get().to_bits();
+                                if Some(sig) != last {
+                                    *t = Thermometer::new()
+                                        .range(0.0, 100.0)
+                                        .value((m.mem.get() * 100.0) as f32)
+                                        .units("%")
+                                        .warning(0.7)
+                                        .critical(0.9)
+                                        .ticks(5)
+                                        .label("mem %");
+                                    last = Some(sig);
+                                }
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    1.2,
-                    Bound::new(
-                        LevelBar::new()
-                            .value(0.0)
-                            .zones(0.5, 0.75, 0.9)
-                            .segments(10),
-                        m,
-                    )
-                    .push(|l: &mut LevelBar, m| l.set_value(m.cpu.get() as f32)),
-                )),
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            LevelBar::new()
+                                .value(0.0)
+                                .zones(0.5, 0.75, 0.9)
+                                .segments(10),
+                            m,
+                        )
+                        .push(|l: &mut LevelBar, m| l.set_value(m.cpu.get() as f32)),
+                    ),
+                    1.0,
+                ),
         )
         .child(group_label("EFFECTIVENESS — OEE"))
         .child(
             row()
-                .child(Bound::new(ProgressBar::new().value(0.0), m).push({
-                    // `plant_oee` folds the cell assets — gate on them.
-                    let mut last = None;
-                    move |p: &mut ProgressBar, m| {
-                        let sig = assets_sig(m);
-                        if Some(sig) != last {
-                            *p = ProgressBar::new().value(m.plant_oee() as f32);
-                            last = Some(sig);
-                        }
-                    }
-                }))
-                .child(framed(
-                    1.1,
-                    Bound::new(ActivityRing::new().label("load goals"), m).push({
-                        // cpu + mem live signals plus the OEE rollup.
-                        let mut last = None;
-                        move |a: &mut ActivityRing, m| {
-                            let sig = (m.cpu.get().to_bits(), m.mem.get().to_bits(), assets_sig(m));
-                            if Some(sig) != last {
-                                *a = ActivityRing::new()
-                                    .label("load goals")
-                                    .ring("CPU", m.cpu.get() as f32, [96, 165, 250, 255])
-                                    .ring("MEM", m.mem.get() as f32, [110, 180, 130, 255])
-                                    .ring("OEE", m.plant_oee() as f32, [250, 190, 60, 255]);
-                                last = Some(sig);
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(ProgressBar::new().value(0.0), m).push({
+                            // `plant_oee` folds the cell assets — gate on them.
+                            let mut last = None;
+                            move |p: &mut ProgressBar, m| {
+                                let sig = assets_sig(m);
+                                if Some(sig) != last {
+                                    *p = ProgressBar::new().value(m.plant_oee() as f32);
+                                    last = Some(sig);
+                                }
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    2.4,
-                    Bound::new(
-                        BulletChart::new()
-                            .label("OEE %")
-                            .value(0.0)
-                            .target(85.0)
-                            .ranges([60.0, 80.0, 100.0]),
-                        m,
-                    )
-                    .push({
-                        let mut last = None;
-                        move |b: &mut BulletChart, m| {
-                            let sig = assets_sig(m);
-                            if Some(sig) != last {
-                                *b = BulletChart::new()
-                                    .label("OEE %")
-                                    .value((m.plant_oee() * 100.0) as f32)
-                                    .target(85.0)
-                                    .ranges([60.0, 80.0, 100.0]);
-                                last = Some(sig);
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        framed(
+                            1.0,
+                            Bound::new(ActivityRing::new().label("load goals"), m).push({
+                                // cpu + mem live signals plus the OEE rollup.
+                                let mut last = None;
+                                move |a: &mut ActivityRing, m| {
+                                    let sig = (
+                                        m.cpu.get().to_bits(),
+                                        m.mem.get().to_bits(),
+                                        assets_sig(m),
+                                    );
+                                    if Some(sig) != last {
+                                        *a = ActivityRing::new()
+                                            .label("load goals")
+                                            .ring("CPU", m.cpu.get() as f32, [96, 165, 250, 255])
+                                            .ring("MEM", m.mem.get() as f32, [110, 180, 130, 255])
+                                            .ring("OEE", m.plant_oee() as f32, [250, 190, 60, 255]);
+                                        last = Some(sig);
+                                    }
+                                }
+                            }),
+                        ),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            BulletChart::new()
+                                .label("OEE %")
+                                .value(0.0)
+                                .target(85.0)
+                                .ranges([60.0, 80.0, 100.0]),
+                            m,
+                        )
+                        .push({
+                            let mut last = None;
+                            move |b: &mut BulletChart, m| {
+                                let sig = assets_sig(m);
+                                if Some(sig) != last {
+                                    *b = BulletChart::new()
+                                        .label("OEE %")
+                                        .value((m.plant_oee() * 100.0) as f32)
+                                        .target(85.0)
+                                        .ranges([60.0, 80.0, 100.0]);
+                                    last = Some(sig);
+                                }
                             }
-                        }
-                    }),
-                ))
+                        }),
+                    ),
+                    1.0,
+                )
                 .child(
                     Bound::new(Spinner::new().label("LINE"), m).push(|s: &mut Spinner, m| {
                         let run = m.line_running.get() && !m.paused.get();
@@ -835,7 +887,7 @@ fn instruments(m: &PlantModel) -> Flex {
         )
         .child(group_label("NUMERIC — SIM CLOCK & STATE"))
         .child(
-            row()
+            strip()
                 .child(
                     Bound::new(LcdNumber::new().value(0.0).digits(3).decimals(1), m)
                         .push(|l: &mut LcdNumber, m| l.value = m.cpu.get() * 100.0),
@@ -863,11 +915,12 @@ fn instruments(m: &PlantModel) -> Flex {
                             }
                         },
                     ),
-                ),
+                )
+                .child_flex(DummyWidget, 1.0),
         )
         .child(group_label("KPI — HEADLINES"))
         .child(
-            row()
+            strip()
                 .child(
                     Bound::new(
                         Statistic::new("PLANT OEE", "—")
@@ -925,7 +978,8 @@ fn instruments(m: &PlantModel) -> Flex {
                             }
                         }
                     }),
-                ),
+                )
+                .child_flex(DummyWidget, 1.0),
         )
 }
 
@@ -987,45 +1041,48 @@ fn empty_state_of(m: &PlantModel) -> EmptyState {
 
 fn alarm_board(m: &PlantModel) -> Flex {
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("ALARM BOARD"))
+        .gap(ZONE_STACK)
         .child(
             row()
-                .child(
-                    Bound::new(AlarmPanel::new().label("ACTIVE ALARMS"), m)
-                        .pull(|p: &mut AlarmPanel, m| {
-                            // Row ACK chip → acknowledge the model alarm.
-                            if let Some(i) = p.take_acked() {
-                                if let Some(a) = visible_alarms(m).get(i) {
-                                    m.ack_alarm(a.id);
-                                }
-                            }
-                        })
-                        .push({
-                            // Filter mask + alarm store + asset names —
-                            // a message/name edit re-seats too, which the
-                            // old id-list key missed.
-                            let mut last: Option<(u8, u64, u64)> = None;
-                            move |p: &mut AlarmPanel, m| {
-                                let sig = (m.alarm_filter.get(), alarms_sig(m), assets_sig(m));
-                                if Some(sig) != last {
-                                    while p.count() > 0 {
-                                        p.clear(0);
+                .child_flex(
+                    band(
+                        BAND_L,
+                        Bound::new(AlarmPanel::new().label("ACTIVE ALARMS"), m)
+                            .pull(|p: &mut AlarmPanel, m| {
+                                // Row ACK chip → acknowledge the model alarm.
+                                if let Some(i) = p.take_acked() {
+                                    if let Some(a) = visible_alarms(m).get(i) {
+                                        m.ack_alarm(a.id);
                                     }
-                                    // push() prepends — iterate reversed so
-                                    // index 0 is the most severe alarm.
-                                    for a in visible_alarms(m).iter().rev() {
-                                        p.push(
-                                            PanelAlarm::new(widget_sev(a.severity), a.message)
-                                                .source(m.asset_name(a.asset)),
-                                        );
-                                    }
-                                    last = Some(sig);
                                 }
-                            }
-                        }),
+                            })
+                            .push({
+                                // Filter mask + alarm store + asset names —
+                                // a message/name edit re-seats too, which the
+                                // old id-list key missed.
+                                let mut last: Option<(u8, u64, u64)> = None;
+                                move |p: &mut AlarmPanel, m| {
+                                    let sig = (m.alarm_filter.get(), alarms_sig(m), assets_sig(m));
+                                    if Some(sig) != last {
+                                        while p.count() > 0 {
+                                            p.clear(0);
+                                        }
+                                        // push() prepends — iterate reversed so
+                                        // index 0 is the most severe alarm.
+                                        for a in visible_alarms(m).iter().rev() {
+                                            p.push(
+                                                PanelAlarm::new(widget_sev(a.severity), a.message)
+                                                    .source(m.asset_name(a.asset)),
+                                            );
+                                        }
+                                        last = Some(sig);
+                                    }
+                                }
+                            }),
+                    ),
+                    2.0,
                 )
-                .child(
+                .child_flex(
                     Flex::column()
                         .gap(ZONE_GAP)
                         .child(
@@ -1064,10 +1121,11 @@ fn alarm_board(m: &PlantModel) -> Flex {
                             Bound::new(Badge::wrap(Text::new("ACTIVE ALARMS")).with_count(0), m)
                                 .push(|b: &mut Badge, m| b.count = active_count(m) as u32),
                         ),
+                    1.0,
                 ),
         )
         .child(
-            row()
+            strip()
                 .child(
                     Bound::new(filter_chips(m.alarm_filter.get()), m)
                         .pull(|g: &mut ChipGroup, m| {
@@ -1094,7 +1152,7 @@ fn alarm_board(m: &PlantModel) -> Flex {
                             }
                         }),
                 )
-                .child(
+                .child_flex(
                     Bound::new(banner_of(m), m)
                         .pull(|b: &mut Banner, m| {
                             // Dismissing the top banner acknowledges it.
@@ -1116,87 +1174,104 @@ fn alarm_board(m: &PlantModel) -> Flex {
                                 }
                             }
                         }),
+                    1.0,
                 ),
         )
         .child(
             row()
-                .child(
-                    Bound::new(empty_state_of(m), m)
-                        .pull(|e: &mut EmptyState, m| {
-                            // "ACK ALL" button press.
-                            if e.take_activated() {
-                                for a in m.active_alarms() {
-                                    m.ack_alarm(a.id);
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(empty_state_of(m), m)
+                            .pull(|e: &mut EmptyState, m| {
+                                // "ACK ALL" button press.
+                                if e.take_activated() {
+                                    for a in m.active_alarms() {
+                                        m.ack_alarm(a.id);
+                                    }
                                 }
-                            }
-                        })
-                        .push({
-                            let mut last = usize::MAX;
-                            move |e: &mut EmptyState, m| {
-                                let n = active_count(m);
-                                if n != last {
-                                    *e = empty_state_of(m);
-                                    last = n;
+                            })
+                            .push({
+                                let mut last = usize::MAX;
+                                move |e: &mut EmptyState, m| {
+                                    let n = active_count(m);
+                                    if n != last {
+                                        *e = empty_state_of(m);
+                                        last = n;
+                                    }
                                 }
-                            }
-                        }),
+                            }),
+                    ),
+                    1.0,
                 )
-                .child(framed(
-                    1.1,
-                    Bound::new(
-                        CountdownRing::new(Duration::from_secs(u64::from(ALARM_SLA_MIN) * 60))
-                            .warn_under(Duration::from_secs(10 * 60))
-                            .label("SLA"),
-                        m,
-                    )
-                    .push(|c: &mut CountdownRing, m| {
-                        // Oldest unacked alarm vs. its response budget —
-                        // folded off the store, no list materialized.
-                        let oldest = m
-                            .alarms
-                            .get()
-                            .iter()
-                            .filter(|a| a.active && !a.acked)
-                            .map(|a| a.raised_min)
-                            .min();
-                        let rem = match oldest {
-                            Some(raised) => (i64::from(ALARM_SLA_MIN)
-                                - (i64::from(m.shift_minute.get()) - i64::from(raised)))
-                            .max(0) as u64,
-                            None => u64::from(ALARM_SLA_MIN),
-                        };
-                        c.set_remaining(Duration::from_secs(rem * 60));
-                        c.set_running(!m.paused.get());
-                    }),
-                ))
-                .child(Bound::new(Marquee::new("—"), m).push({
-                    // Text derives from the top visible alarm + its
-                    // asset label — folds stand in for the
-                    // sorted-list probe. `set_paused` stays ungated
-                    // (cheap bool).
-                    let mut last = None;
-                    move |mq: &mut Marquee, m| {
-                        mq.set_paused(m.reduced_motion.get());
-                        let sig = (m.alarm_filter.get(), alarms_sig(m), assets_sig(m));
-                        if Some(sig) != last {
-                            let text = match visible_alarms(m).first() {
-                                Some(a) => format!(
-                                    "▲ {} — {} @ {}",
-                                    a.severity.label(),
-                                    a.message,
-                                    m.asset_name(a.asset)
-                                ),
-                                None => "NO ACTIVE ALARMS — ALL CHANNELS NOMINAL".to_string(),
-                            };
-                            // `set_text` rewinds the scroll — skip it
-                            // when a sig change left the text identical.
-                            if mq.text() != text {
-                                mq.set_text(text);
+                .child_flex(
+                    band(
+                        BAND_M,
+                        framed(
+                            1.0,
+                            Bound::new(
+                                CountdownRing::new(Duration::from_secs(
+                                    u64::from(ALARM_SLA_MIN) * 60,
+                                ))
+                                .warn_under(Duration::from_secs(10 * 60))
+                                .label("SLA"),
+                                m,
+                            )
+                            .push(|c: &mut CountdownRing, m| {
+                                // Oldest unacked alarm vs. its response budget —
+                                // folded off the store, no list materialized.
+                                let oldest = m
+                                    .alarms
+                                    .get()
+                                    .iter()
+                                    .filter(|a| a.active && !a.acked)
+                                    .map(|a| a.raised_min)
+                                    .min();
+                                let rem = match oldest {
+                                    Some(raised) => (i64::from(ALARM_SLA_MIN)
+                                        - (i64::from(m.shift_minute.get()) - i64::from(raised)))
+                                    .max(0)
+                                        as u64,
+                                    None => u64::from(ALARM_SLA_MIN),
+                                };
+                                c.set_remaining(Duration::from_secs(rem * 60));
+                                c.set_running(!m.paused.get());
+                            }),
+                        ),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    Bound::new(Marquee::new("—"), m).push({
+                        // Text derives from the top visible alarm + its
+                        // asset label — folds stand in for the
+                        // sorted-list probe. `set_paused` stays ungated
+                        // (cheap bool).
+                        let mut last = None;
+                        move |mq: &mut Marquee, m| {
+                            mq.set_paused(m.reduced_motion.get());
+                            let sig = (m.alarm_filter.get(), alarms_sig(m), assets_sig(m));
+                            if Some(sig) != last {
+                                let text = match visible_alarms(m).first() {
+                                    Some(a) => format!(
+                                        "▲ {} — {} @ {}",
+                                        a.severity.label(),
+                                        a.message,
+                                        m.asset_name(a.asset)
+                                    ),
+                                    None => "NO ACTIVE ALARMS — ALL CHANNELS NOMINAL".to_string(),
+                                };
+                                // `set_text` rewinds the scroll — skip it
+                                // when a sig change left the text identical.
+                                if mq.text() != text {
+                                    mq.set_text(text);
+                                }
+                                last = Some(sig);
                             }
-                            last = Some(sig);
                         }
-                    }
-                }))
+                    }),
+                    1.0,
+                )
                 .child(Bound::new(ToastHost::new(), m).push({
                     // Seeded alarms are already seen — only transitions
                     // (new ids appearing active) raise a toast. The store
@@ -1420,203 +1495,244 @@ fn polar_of(m: &PlantModel) -> PolarArea {
 
 fn distributions(m: &PlantModel) -> Flex {
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("DISTRIBUTIONS"))
+        .gap(ZONE_STACK)
         .child(group_label("ALARMS & WORK — WHERE ATTENTION SITS"))
         .child(
             row()
-                .child(framed(
+                .child_flex(
+                    band(
+                        BAND_M,
+                        framed(
+                            1.0,
+                            Bound::new(PieChart::new(alarm_slices(m)).donut(), m)
+                                .pull(|p: &mut PieChart, m| {
+                                    // Slice click drills the board's severity
+                                    // filter — `1 << i` is a bitmask, so bound
+                                    // the widget-supplied index to the 3
+                                    // severities (`i >= 8` would overflow).
+                                    if let Some(i) = p.take_selected() {
+                                        if i < 3 {
+                                            m.alarm_filter.set_if_changed(1u8 << i);
+                                        }
+                                    }
+                                })
+                                .push({
+                                    let mut last = m.alarm_distribution();
+                                    move |p: &mut PieChart, m| {
+                                        let sig = m.alarm_distribution();
+                                        if sig != last {
+                                            // `slices` is a plain field — no
+                                            // setter on PieChart; writing it in
+                                            // place keeps hover/press state.
+                                            p.slices = alarm_slices(m);
+                                            last = sig;
+                                        }
+                                    }
+                                }),
+                        ),
+                    ),
                     1.0,
-                    Bound::new(PieChart::new(alarm_slices(m)).donut(), m)
-                        .pull(|p: &mut PieChart, m| {
-                            // Slice click drills the board's severity
-                            // filter — `1 << i` is a bitmask, so bound
-                            // the widget-supplied index to the 3
-                            // severities (`i >= 8` would overflow).
-                            if let Some(i) = p.take_selected() {
-                                if i < 3 {
-                                    m.alarm_filter.set_if_changed(1u8 << i);
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(treemap_of(m), m)
+                            .pull(|t: &mut Treemap, m| {
+                                // Hovering a cell inspects it (shared selection).
+                                if let Some(i) = t.take_hovered() {
+                                    if let Some(c) = cells(m).get(i) {
+                                        m.selected_asset.set_if_changed(Some(c.id));
+                                    }
                                 }
-                            }
-                        })
-                        .push({
-                            let mut last = m.alarm_distribution();
-                            move |p: &mut PieChart, m| {
-                                let sig = m.alarm_distribution();
+                            })
+                            .push({
+                                // Gate the re-seat — an ungated rebuild
+                                // would drop hover/press state every tick.
+                                let mut last = assets_sig(m);
+                                move |t: &mut Treemap, m| {
+                                    let sig = assets_sig(m);
+                                    if sig != last {
+                                        *t = treemap_of(m);
+                                        last = sig;
+                                    }
+                                }
+                            }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(funnel_of(m), m).push({
+                            let mut last = wos_sig(m);
+                            move |f: &mut FunnelChart, m| {
+                                let sig = wos_sig(m);
                                 if sig != last {
-                                    // `slices` is a plain field — no
-                                    // setter on PieChart; writing it in
-                                    // place keeps hover/press state.
-                                    p.slices = alarm_slices(m);
+                                    *f = funnel_of(m);
                                     last = sig;
                                 }
                             }
                         }),
-                ))
-                .child(framed(
-                    1.7,
-                    Bound::new(treemap_of(m), m)
-                        .pull(|t: &mut Treemap, m| {
-                            // Hovering a cell inspects it (shared selection).
-                            if let Some(i) = t.take_hovered() {
-                                if let Some(c) = cells(m).get(i) {
-                                    m.selected_asset.set_if_changed(Some(c.id));
-                                }
-                            }
-                        })
-                        .push({
-                            // Gate the re-seat — an ungated rebuild
-                            // would drop hover/press state every tick.
-                            let mut last = assets_sig(m);
-                            move |t: &mut Treemap, m| {
-                                let sig = assets_sig(m);
-                                if sig != last {
-                                    *t = treemap_of(m);
-                                    last = sig;
-                                }
-                            }
-                        }),
-                ))
-                .child(framed(
-                    1.6,
-                    Bound::new(funnel_of(m), m).push({
-                        let mut last = wos_sig(m);
-                        move |f: &mut FunnelChart, m| {
-                            let sig = wos_sig(m);
-                            if sig != last {
-                                *f = funnel_of(m);
-                                last = sig;
-                            }
-                        }
-                    }),
-                )),
+                    ),
+                    1.0,
+                ),
         )
         .child(group_label("MATERIAL FLOW — REAL LINE TOPOLOGY"))
         .child(
             row()
-                .child(framed(
-                    1.7,
-                    Bound::new(sankey_of(m), m).push({
-                        // Flow edges + the asset names the labels read.
-                        let mut last = (flow_sig(m), assets_sig(m));
-                        move |s: &mut Sankey, m| {
-                            let sig = (flow_sig(m), assets_sig(m));
-                            if sig != last {
-                                *s = sankey_of(m);
-                                last = sig;
-                            }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    1.5,
-                    Bound::new(graph_of(m), m)
-                        .pull(|g: &mut GraphView, m| {
-                            if let Some(i) = g.take_hovered() {
-                                if let Some(id) = flow_node_ids(m).get(i) {
-                                    m.selected_asset.set_if_changed(Some(*id));
-                                }
-                            }
-                        })
-                        .push({
-                            // Gate the rebuild so force-layout settles —
-                            // flow edges + the asset names they label with.
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(sankey_of(m), m).push({
+                            // Flow edges + the asset names the labels read.
                             let mut last = (flow_sig(m), assets_sig(m));
-                            move |g: &mut GraphView, m| {
+                            move |s: &mut Sankey, m| {
                                 let sig = (flow_sig(m), assets_sig(m));
                                 if sig != last {
-                                    *g = graph_of(m);
+                                    *s = sankey_of(m);
                                     last = sig;
                                 }
                             }
                         }),
-                ))
-                .child(framed(
-                    1.2,
-                    Bound::new(radar_of(m), m).push({
-                        let mut last = radar_sig(m);
-                        move |r: &mut RadarChart, m| {
-                            let sig = radar_sig(m);
-                            if sig != last {
-                                *r = radar_of(m);
-                                last = sig;
-                            }
-                        }
-                    }),
-                )),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(graph_of(m), m)
+                            .pull(|g: &mut GraphView, m| {
+                                if let Some(i) = g.take_hovered() {
+                                    if let Some(id) = flow_node_ids(m).get(i) {
+                                        m.selected_asset.set_if_changed(Some(*id));
+                                    }
+                                }
+                            })
+                            .push({
+                                // Gate the rebuild so force-layout settles —
+                                // flow edges + the asset names they label with.
+                                let mut last = (flow_sig(m), assets_sig(m));
+                                move |g: &mut GraphView, m| {
+                                    let sig = (flow_sig(m), assets_sig(m));
+                                    if sig != last {
+                                        *g = graph_of(m);
+                                        last = sig;
+                                    }
+                                }
+                            }),
+                    ),
+                    1.0,
+                ),
         )
         .child(group_label("OEE — SHAPE OF THE FLEET"))
         .child(
             row()
-                .child(framed(
-                    2.0,
-                    Bound::new(waterfall_of(m), m).push({
-                        let mut last = assets_sig(m);
-                        move |w: &mut Waterfall, m| {
-                            let sig = assets_sig(m);
-                            if sig != last {
-                                *w = waterfall_of(m);
-                                last = sig;
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(waterfall_of(m), m).push({
+                            let mut last = assets_sig(m);
+                            move |w: &mut Waterfall, m| {
+                                let sig = assets_sig(m);
+                                if sig != last {
+                                    *w = waterfall_of(m);
+                                    last = sig;
+                                }
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    1.8,
-                    Bound::new(scatter_of(m), m).push({
-                        let mut last = assets_sig(m);
-                        move |s: &mut ScatterChart, m| {
-                            let sig = assets_sig(m);
-                            if sig != last {
-                                *s = scatter_of(m);
-                                last = sig;
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(scatter_of(m), m).push({
+                            let mut last = assets_sig(m);
+                            move |s: &mut ScatterChart, m| {
+                                let sig = assets_sig(m);
+                                if sig != last {
+                                    *s = scatter_of(m);
+                                    last = sig;
+                                }
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    1.9,
-                    Bound::new(boxplot_of(m), m).push({
-                        let mut last = assets_sig(m);
-                        move |b: &mut BoxPlot, m| {
-                            let sig = assets_sig(m);
-                            if sig != last {
-                                *b = boxplot_of(m);
-                                last = sig;
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(boxplot_of(m), m).push({
+                            let mut last = assets_sig(m);
+                            move |b: &mut BoxPlot, m| {
+                                let sig = assets_sig(m);
+                                if sig != last {
+                                    *b = boxplot_of(m);
+                                    last = sig;
+                                }
                             }
-                        }
-                    }),
-                )),
+                        }),
+                    ),
+                    1.0,
+                ),
         )
         .child(
             row()
-                .child(framed(
-                    1.9,
-                    Bound::new(violin_of(m), m).push({
-                        let mut last = assets_sig(m);
-                        move |v: &mut Violin, m| {
-                            let sig = assets_sig(m);
-                            if sig != last {
-                                *v = violin_of(m);
-                                last = sig;
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(violin_of(m), m).push({
+                            let mut last = assets_sig(m);
+                            move |v: &mut Violin, m| {
+                                let sig = assets_sig(m);
+                                if sig != last {
+                                    *v = violin_of(m);
+                                    last = sig;
+                                }
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
+                        }),
+                    ),
                     1.0,
-                    Bound::new(polar_of(m), m).push({
-                        // Alarms supply the counts, assets the labels.
-                        let mut last = (alarms_sig(m), assets_sig(m));
-                        move |p: &mut PolarArea, m| {
-                            let sig = (alarms_sig(m), assets_sig(m));
-                            if sig != last {
-                                *p = polar_of(m);
-                                last = sig;
-                            }
-                        }
-                    }),
-                )),
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        framed(
+                            1.0,
+                            Bound::new(polar_of(m), m).push({
+                                // Alarms supply the counts, assets the labels.
+                                let mut last = (alarms_sig(m), assets_sig(m));
+                                move |p: &mut PolarArea, m| {
+                                    let sig = (alarms_sig(m), assets_sig(m));
+                                    if sig != last {
+                                        *p = polar_of(m);
+                                        last = sig;
+                                    }
+                                }
+                            }),
+                        ),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        framed(
+                            1.0,
+                            Bound::new(radar_of(m), m).push({
+                                let mut last = radar_sig(m);
+                                move |r: &mut RadarChart, m| {
+                                    let sig = radar_sig(m);
+                                    if sig != last {
+                                        *r = radar_of(m);
+                                        last = sig;
+                                    }
+                                }
+                            }),
+                        ),
+                    ),
+                    1.0,
+                ),
         )
 }
 
@@ -1697,10 +1813,9 @@ fn timeline_of(m: &PlantModel) -> Timeline {
 
 fn schedule(m: &PlantModel) -> Flex {
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("SCHEDULE"))
-        .child(framed(
-            2.6,
+        .gap(ZONE_STACK)
+        .child(band(
+            BAND_L,
             Bound::new(gantt_of(m), m).push({
                 // Task labels bake in crew names — gate on both stores.
                 let mut last = (schedule_sig(m), crew_sig(m));
@@ -1715,107 +1830,127 @@ fn schedule(m: &PlantModel) -> Flex {
         ))
         .child(
             row()
-                .child(framed(
-                    1.5,
-                    Bound::new(
-                        {
-                            let mut w = WeekView::new().label("THIS WEEK");
-                            for (e, _) in week_events(m) {
-                                w = w.event(e);
-                            }
-                            w
-                        },
-                        m,
-                    )
-                    .pull(|w: &mut WeekView, m| {
-                        // Empty-slot click → operator reserves a maint block.
-                        if let Some((day, _hour)) = w.take_slot() {
-                            let mut s = m.schedule.get();
-                            let id = s.iter().map(|t| t.id).max().unwrap_or(0) + 1;
-                            s.push(MaintTask {
-                                id,
-                                title: "Operator block",
-                                asset: 3,
-                                start_day: day.min(13) as u8,
-                                days: 1,
-                                done: false,
-                                crew: 0,
-                            });
-                            m.schedule.set_if_changed(s);
-                        }
-                        // Event click → toggle the task's done flag.
-                        if let Some(i) = w.take_clicked() {
-                            if let Some((_, ti)) = week_events(m).get(i) {
-                                let mut s = m.schedule.get();
-                                if let Some(t) = s.get_mut(*ti) {
-                                    t.done = !t.done;
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            {
+                                let mut w = WeekView::new().label("THIS WEEK");
+                                for (e, _) in week_events(m) {
+                                    w = w.event(e);
                                 }
+                                w
+                            },
+                            m,
+                        )
+                        .pull(|w: &mut WeekView, m| {
+                            // Empty-slot click → operator reserves a maint block.
+                            if let Some((day, _hour)) = w.take_slot() {
+                                let mut s = m.schedule.get();
+                                let id = s.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+                                s.push(MaintTask {
+                                    id,
+                                    title: "Operator block",
+                                    asset: 3,
+                                    start_day: day.min(13) as u8,
+                                    days: 1,
+                                    done: false,
+                                    crew: 0,
+                                });
                                 m.schedule.set_if_changed(s);
                             }
-                        }
-                    })
-                    .push({
-                        let mut last = schedule_sig(m);
-                        move |w: &mut WeekView, m| {
-                            let sig = schedule_sig(m);
-                            if sig != last {
-                                let mut nw = WeekView::new().label("THIS WEEK");
-                                for (e, _) in week_events(m) {
-                                    nw = nw.event(e);
+                            // Event click → toggle the task's done flag.
+                            if let Some(i) = w.take_clicked() {
+                                if let Some((_, ti)) = week_events(m).get(i) {
+                                    let mut s = m.schedule.get();
+                                    if let Some(t) = s.get_mut(*ti) {
+                                        t.done = !t.done;
+                                    }
+                                    m.schedule.set_if_changed(s);
                                 }
-                                *w = nw;
-                                last = sig;
                             }
-                        }
-                    }),
-                ))
-                .child(framed(
-                    1.5,
-                    Bound::new(timeline_of(m), m).push({
-                        let mut last = log_sig(m);
-                        move |t: &mut Timeline, m| {
-                            let sig = log_sig(m);
-                            if sig != last {
-                                *t = timeline_of(m);
-                                last = sig;
+                        })
+                        .push({
+                            let mut last = schedule_sig(m);
+                            move |w: &mut WeekView, m| {
+                                let sig = schedule_sig(m);
+                                if sig != last {
+                                    let mut nw = WeekView::new().label("THIS WEEK");
+                                    for (e, _) in week_events(m) {
+                                        nw = nw.event(e);
+                                    }
+                                    *w = nw;
+                                    last = sig;
+                                }
                             }
-                        }
-                    }),
-                )),
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(timeline_of(m), m).push({
+                            let mut last = log_sig(m);
+                            move |t: &mut Timeline, m| {
+                                let sig = log_sig(m);
+                                if sig != last {
+                                    *t = timeline_of(m);
+                                    last = sig;
+                                }
+                            }
+                        }),
+                    ),
+                    1.0,
+                ),
         )
         .child(
             row()
-                .child(Bound::new(ProgressBar::new().value(0.0), m).push({
-                    // The rendered fraction is itself the signature.
-                    let mut last = None;
-                    move |p: &mut ProgressBar, m| {
-                        let s = m.schedule.get();
-                        let done = s.iter().filter(|t| t.done).count();
-                        let sig = (done, s.len());
-                        if Some(sig) != last {
-                            *p = ProgressBar::new().value(if s.is_empty() {
-                                0.0
-                            } else {
-                                done as f32 / s.len() as f32
-                            });
-                            last = Some(sig);
-                        }
-                    }
-                }))
-                .child(framed(
-                    1.1,
-                    Bound::new(
-                        CountdownRing::new(Duration::from_secs(u64::from(SHIFT_LEN_MIN) * 60))
-                            .warn_under(Duration::from_secs(30 * 60))
-                            .label("SHIFT END"),
-                        m,
-                    )
-                    .push(|c: &mut CountdownRing, m| {
-                        let rem = SHIFT_LEN_MIN.saturating_sub(m.shift_minute.get());
-                        c.set_remaining(Duration::from_secs(u64::from(rem) * 60));
-                        c.set_running(!m.paused.get());
-                    }),
-                ))
+                .child_flex(
+                    band(
+                        BAND_S,
+                        Bound::new(ProgressBar::new().value(0.0), m).push({
+                            // The rendered fraction is itself the signature.
+                            let mut last = None;
+                            move |p: &mut ProgressBar, m| {
+                                let s = m.schedule.get();
+                                let done = s.iter().filter(|t| t.done).count();
+                                let sig = (done, s.len());
+                                if Some(sig) != last {
+                                    *p = ProgressBar::new().value(if s.is_empty() {
+                                        0.0
+                                    } else {
+                                        done as f32 / s.len() as f32
+                                    });
+                                    last = Some(sig);
+                                }
+                            }
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_S,
+                        framed(
+                            1.0,
+                            Bound::new(
+                                CountdownRing::new(Duration::from_secs(
+                                    u64::from(SHIFT_LEN_MIN) * 60,
+                                ))
+                                .warn_under(Duration::from_secs(30 * 60))
+                                .label("SHIFT END"),
+                                m,
+                            )
+                            .push(|c: &mut CountdownRing, m| {
+                                let rem = SHIFT_LEN_MIN.saturating_sub(m.shift_minute.get());
+                                c.set_remaining(Duration::from_secs(u64::from(rem) * 60));
+                                c.set_running(!m.paused.get());
+                            }),
+                        ),
+                    ),
+                    1.0,
+                )
                 .child(
                     Bound::new(Countdown::new(Duration::from_secs(0)).label("NEXT TASK"), m).push(
                         |c: &mut Countdown, m| {
@@ -1891,72 +2026,79 @@ fn org_of(m: &PlantModel) -> OrgChart {
 
 fn crew(m: &PlantModel) -> Flex {
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("SHIFT CREW"))
+        .gap(ZONE_STACK)
         .child(
             row()
-                .child(framed(
-                    1.6,
-                    Bound::new(org_of(m), m).push({
-                        let mut last = crew_sig(m);
-                        move |o: &mut OrgChart, m| {
-                            let sig = crew_sig(m);
-                            if sig != last {
-                                *o = org_of(m);
-                                last = sig;
-                            }
-                        }
-                    }),
-                ))
-                .child({
-                    // Builder shared by the mount and the membership-
-                    // change re-seat (a joined member can't be added
-                    // by index — the widget needs a rebuild).
-                    let build_list = |m: &PlantModel| {
-                        let mut l = AttendeeList::new().label("CREW");
-                        for c in m.crew.get() {
-                            l = l.attendee(Attendee::new(c.name).status(crew_status(c.presence)));
-                        }
-                        l
-                    };
-                    Bound::new(build_list(m), m)
-                        .pull(|l: &mut AttendeeList, m| {
-                            // Selecting a member pages them — looped
-                            // into the log.
-                            if let Some(i) = l.take_selected() {
-                                if let Some(c) = m.crew.get().get(i) {
-                                    m.log(usize::MAX, format!("{} paged to control", c.name));
-                                }
-                            }
-                        })
-                        .push({
-                            // Roster fold — presence edits re-run the
-                            // status pass; identical rosters skip it.
-                            // Names can't be rewritten by index, so a
-                            // membership or rename change re-seats.
+                .child_flex(
+                    band(
+                        BAND_L,
+                        Bound::new(org_of(m), m).push({
                             let mut last = crew_sig(m);
-                            let mut last_names = crew_names_sig(m);
-                            move |l: &mut AttendeeList, m| {
+                            move |o: &mut OrgChart, m| {
                                 let sig = crew_sig(m);
                                 if sig != last {
+                                    *o = org_of(m);
                                     last = sig;
-                                    let crew = m.crew.get();
-                                    let names = crew_names_sig(m);
-                                    if names != last_names || l.attendee_count() != crew.len() {
-                                        last_names = names;
-                                        *l = build_list(m);
-                                    } else {
-                                        for (i, c) in crew.iter().enumerate() {
-                                            l.set_status(i, crew_status(c.presence));
+                                }
+                            }
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(BAND_L, {
+                        // Builder shared by the mount and the membership-
+                        // change re-seat (a joined member can't be added
+                        // by index — the widget needs a rebuild).
+                        let build_list = |m: &PlantModel| {
+                            let mut l = AttendeeList::new().label("CREW");
+                            for c in m.crew.get() {
+                                l = l.attendee(
+                                    Attendee::new(c.name).status(crew_status(c.presence)),
+                                );
+                            }
+                            l
+                        };
+                        Bound::new(build_list(m), m)
+                            .pull(|l: &mut AttendeeList, m| {
+                                // Selecting a member pages them — looped
+                                // into the log.
+                                if let Some(i) = l.take_selected() {
+                                    if let Some(c) = m.crew.get().get(i) {
+                                        m.log(usize::MAX, format!("{} paged to control", c.name));
+                                    }
+                                }
+                            })
+                            .push({
+                                // Roster fold — presence edits re-run the
+                                // status pass; identical rosters skip it.
+                                // Names can't be rewritten by index, so a
+                                // membership or rename change re-seats.
+                                let mut last = crew_sig(m);
+                                let mut last_names = crew_names_sig(m);
+                                move |l: &mut AttendeeList, m| {
+                                    let sig = crew_sig(m);
+                                    if sig != last {
+                                        last = sig;
+                                        let crew = m.crew.get();
+                                        let names = crew_names_sig(m);
+                                        if names != last_names || l.attendee_count() != crew.len() {
+                                            last_names = names;
+                                            *l = build_list(m);
+                                        } else {
+                                            for (i, c) in crew.iter().enumerate() {
+                                                l.set_status(i, crew_status(c.presence));
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        })
-                }),
+                            })
+                    }),
+                    1.0,
+                ),
         )
         .child(
-            row()
+            strip()
                 .child(Bound::new(AvatarGroup::new().label("ON SHIFT"), m).push({
                     // Mounted empty — first tick seats the roster.
                     let mut last = None;
@@ -2051,20 +2193,27 @@ fn crew(m: &PlantModel) -> Flex {
                             }
                         }
                     })
-                }),
+                })
+                .child_flex(DummyWidget, 1.0),
         )
         .child(group_label("SHIFT CLOCK — SIM TIME"))
         .child(
             row()
-                .child(framed(
-                    1.0,
-                    Bound::new(AnalogClock::new().show_seconds(true), m).push(
-                        |c: &mut AnalogClock, m| {
-                            let t = shift_time(m);
-                            c.set_time(t.hour as u8, t.minute as u8, 0);
-                        },
+                .child_flex(
+                    band(
+                        BAND_M,
+                        framed(
+                            1.0,
+                            Bound::new(AnalogClock::new().show_seconds(true), m).push(
+                                |c: &mut AnalogClock, m| {
+                                    let t = shift_time(m);
+                                    c.set_time(t.hour as u8, t.minute as u8, 0);
+                                },
+                            ),
+                        ),
                     ),
-                ))
+                    1.0,
+                )
                 .child(
                     Bound::new(
                         DigitalClock::new()
@@ -2088,16 +2237,20 @@ fn crew(m: &PlantModel) -> Flex {
                         }
                     }),
                 )
-                .child(
-                    Bound::new(
-                        WorldClock::new()
-                            .zone("PLANT EAST", -300)
-                            .zone("PLANT WEST", -480)
-                            .zone("HQ", 60)
-                            .label("SITES"),
-                        m,
-                    )
-                    .push(|w: &mut WorldClock, m| w.set_utc(shift_time(m))),
+                .child_flex(
+                    band(
+                        BAND_M,
+                        Bound::new(
+                            WorldClock::new()
+                                .zone("PLANT EAST", -300)
+                                .zone("PLANT WEST", -480)
+                                .zone("HQ", 60)
+                                .label("SITES"),
+                            m,
+                        )
+                        .push(|w: &mut WorldClock, m| w.set_utc(shift_time(m))),
+                    ),
+                    1.0,
                 ),
         )
 }
@@ -2108,46 +2261,55 @@ fn crew(m: &PlantModel) -> Flex {
 
 fn system(m: &PlantModel) -> Flex {
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("SYSTEM"))
+        .gap(ZONE_STACK)
         .child(
             row()
-                .child(Bound::new(PerfOverlay::new().label("FRAME MS"), m).push({
-                    // Real frame cadence — inter-tick wall interval.
-                    let mut last = Instant::now();
-                    move |p: &mut PerfOverlay, _m| {
-                        let now = Instant::now();
-                        p.push_frame(now.duration_since(last).as_secs_f32() * 1000.0);
-                        last = now;
-                    }
-                }))
-                .child(
-                    Bound::new(
-                        LedMatrix::new(16, 5)
-                            .on_color([92, 200, 120, 255])
-                            .label("CPU METER"),
-                        m,
-                    )
-                    .push({
-                        // Last 16 ring samples as column heights —
-                        // repaint only when a new sample lands.
-                        let mut last = None;
-                        move |mx: &mut LedMatrix, m| {
-                            let sig = hist_sig(m);
-                            if Some(sig) != last {
-                                let h = m.cpu_hist.get();
-                                let tail = &h[h.len().saturating_sub(16)..];
-                                for c in 0..16 {
-                                    let v = tail.get(c).copied().unwrap_or(0.0);
-                                    let height = (v * 5.0).round() as usize;
-                                    for r in 0..5 {
-                                        mx.set(c, r, r < height);
-                                    }
-                                }
-                                last = Some(sig);
+                .child_flex(
+                    band(
+                        BAND_S,
+                        Bound::new(PerfOverlay::new().label("FRAME MS"), m).push({
+                            // Real frame cadence — inter-tick wall interval.
+                            let mut last = Instant::now();
+                            move |p: &mut PerfOverlay, _m| {
+                                let now = Instant::now();
+                                p.push_frame(now.duration_since(last).as_secs_f32() * 1000.0);
+                                last = now;
                             }
-                        }
-                    }),
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_S,
+                        Bound::new(
+                            LedMatrix::new(16, 5)
+                                .on_color([92, 200, 120, 255])
+                                .label("CPU METER"),
+                            m,
+                        )
+                        .push({
+                            // Last 16 ring samples as column heights —
+                            // repaint only when a new sample lands.
+                            let mut last = None;
+                            move |mx: &mut LedMatrix, m| {
+                                let sig = hist_sig(m);
+                                if Some(sig) != last {
+                                    let h = m.cpu_hist.get();
+                                    let tail = &h[h.len().saturating_sub(16)..];
+                                    for c in 0..16 {
+                                        let v = tail.get(c).copied().unwrap_or(0.0);
+                                        let height = (v * 5.0).round() as usize;
+                                        for r in 0..5 {
+                                            mx.set(c, r, r < height);
+                                        }
+                                    }
+                                    last = Some(sig);
+                                }
+                            }
+                        }),
+                    ),
+                    1.0,
                 )
                 .child(
                     Bound::new(Stopwatch::new().running(true).label("LINE RUN"), m)
@@ -2171,7 +2333,7 @@ fn system(m: &PlantModel) -> Flex {
         )
         .child(group_label("CONTROLS — WRITE BACK TO THE MODEL"))
         .child(
-            row()
+            strip()
                 .child(
                     Bound::new(Switch::new("LINE RUNNING").on(m.line_running.get()), m)
                         .pull(|s: &mut Switch, m| {
@@ -2215,11 +2377,12 @@ fn system(m: &PlantModel) -> Flex {
                                 s.on = m.reduced_motion.get();
                             }
                         }),
-                ),
+                )
+                .child_flex(DummyWidget, 1.0),
         )
         .child(group_label("LAMPS — GLOBAL STATE"))
         .child(
-            row()
+            strip()
                 .child(
                     Bound::new(StatusDot::new("LINE RUN").status(Status::Ok), m).push(
                         |d: &mut StatusDot, m| {
@@ -2252,7 +2415,8 @@ fn system(m: &PlantModel) -> Flex {
                             });
                         },
                     ),
-                ),
+                )
+                .child_flex(DummyWidget, 1.0),
         )
 }
 
@@ -2285,12 +2449,12 @@ mod tests {
         assert_eq!(
             labels,
             [
-                "PROCESS TRENDS",
+                "TRENDS",
                 "INSTRUMENTS",
-                "ALARM BOARD",
+                "ALARMS",
                 "DISTRIBUTIONS",
                 "SCHEDULE",
-                "SHIFT CREW",
+                "CREW",
                 "SYSTEM",
             ]
         );

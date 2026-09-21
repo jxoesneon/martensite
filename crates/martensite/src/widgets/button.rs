@@ -13,6 +13,7 @@
 //! assert_eq!(btn.label, "Click me");
 //! ```
 
+use crate::text_paint::estimate_label_width;
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use kurbo::Shape as _;
@@ -222,8 +223,14 @@ impl Button {
 
 impl Widget for Button {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        // A button has a default minimum size of 80x32 logical pt.
-        let min_w = cx.pt(80.0).min(constraints.max_size.x.max(0.0));
+        // A button has a default minimum size of 80x32 logical pt, but
+        // grows to fit its label (same case-aware estimate as tabs) —
+        // a fixed 80 pt slot clipped every label past ~8 chars.
+        let label_w = cx.pt(estimate_label_width(&self.label) + 2.0 * TEXT_PAD_X);
+        let min_w = cx
+            .pt(80.0)
+            .max(label_w)
+            .min(constraints.max_size.x.max(0.0));
         let min_h = cx.pt(32.0).min(constraints.max_size.y.max(0.0));
         Vec2::new(min_w, min_h)
     }

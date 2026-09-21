@@ -101,7 +101,8 @@ use martensite::widgets::Thumbnail;
 use parking_lot::Mutex;
 
 use crate::domain::{AssetKind, CrewMember, PlantModel, Presence, Room};
-use crate::zone::{Bound, ZoneHeader, ZONE_GAP};
+use crate::zone::{band, framed, row, strip, Bound, BAND_L, BAND_M, BAND_S, ZONE_STACK};
+use martensite::core::widget::DummyWidget;
 
 // ---------------------------------------------------------------------------
 // Domain constants — the fictional facility's camera/loop inventory.
@@ -447,13 +448,13 @@ pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
     let eq_trim = Signal::new(vec![1.0f64; 16]);
 
     vec![
-        ("SHIFT COMMS", comms_page(model)),
+        ("COMMS", comms_page(model)),
         ("ROOMS", rooms_page(model)),
-        ("CAMERAS / PTZ", cameras_page(model)),
+        ("CAMERAS", cameras_page(model)),
         ("TRANSPORT", transport_page(model, rate)),
-        ("ACOUSTIC MONITOR", acoustic_page(model, eq_trim)),
-        ("ALARM TONES", tones_page(model)),
-        ("INSPECTION PHOTOS", photos_page(model)),
+        ("ACOUSTIC", acoustic_page(model, eq_trim)),
+        ("TONES", tones_page(model)),
+        ("PHOTOS", photos_page(model)),
     ]
 }
 
@@ -641,24 +642,29 @@ fn comms_page(model: &PlantModel) -> Flex {
     };
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("SHIFT COMMS"))
+        .gap(ZONE_STACK)
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
-                .child(
-                    Bound::new(MessageList::new().label("SHIFT LOG"), model)
-                        .push(sync_message_list()),
+            row()
+                .child_flex(
+                    band(
+                        BAND_L,
+                        Bound::new(MessageList::new().label("SHIFT LOG"), model)
+                            .push(sync_message_list()),
+                    ),
+                    1.0,
                 )
-                .child(
-                    Bound::new(CommentThread::new().label("THREADED"), model)
-                        .push(sync_comment_thread()),
+                .child_flex(
+                    band(
+                        BAND_L,
+                        Bound::new(CommentThread::new().label("THREADED"), model)
+                            .push(sync_comment_thread()),
+                    ),
+                    1.0,
                 ),
         )
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
-                .child(
+            strip()
+                .child_flex(
                     Bound::new(
                         ChatInput::new()
                             .placeholder("Message #shift-a…")
@@ -667,18 +673,19 @@ fn comms_page(model: &PlantModel) -> Flex {
                         model,
                     )
                     .pull(drain_chat_input),
+                    1.0,
                 )
                 .child(mention)
                 .child(typing),
         )
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(reactions)
                 .child(emoji)
-                .child(poll),
+                .child(poll)
+                .child_flex(DummyWidget, 1.0),
         )
-        .child(Flex::row().gap(ZONE_GAP).child(announcements))
+        .child(row().child_flex(band(BAND_M, announcements), 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -850,11 +857,22 @@ fn rooms_page(model: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("ROOMS"))
-        .child(Flex::row().gap(ZONE_GAP).child(huddle).child(roster))
-        .child(Flex::row().gap(ZONE_GAP).child(waiting).child(breakout))
-        .child(Flex::row().gap(ZONE_GAP).child(floor).child(control))
+        .gap(ZONE_STACK)
+        .child(
+            row()
+                .child_flex(band(BAND_L, huddle), 1.0)
+                .child_flex(band(BAND_L, roster), 1.0),
+        )
+        .child(
+            row()
+                .child_flex(band(BAND_M, waiting), 1.0)
+                .child_flex(band(BAND_M, breakout), 1.0),
+        )
+        .child(
+            row()
+                .child_flex(band(BAND_S, floor), 1.0)
+                .child_flex(band(BAND_S, control), 1.0),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,19 +1084,26 @@ fn cameras_page(model: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("CAMERAS / PTZ"))
-        .child(Flex::row().gap(ZONE_GAP).child(view).child(pip))
-        .child(Flex::row().gap(ZONE_GAP).child(wall).child(stills))
+        .gap(ZONE_STACK)
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            row()
+                .child_flex(band(BAND_L, view), 2.0)
+                .child_flex(band(BAND_L, framed(1.5, pip)), 1.0),
+        )
+        .child(
+            row()
+                .child_flex(band(BAND_M, wall), 1.0)
+                .child_flex(band(BAND_M, stills), 1.0),
+        )
+        .child(
+            strip()
                 .child(stick)
                 .child(pad)
                 .child(tilt)
-                .child(zoom),
+                .child(zoom)
+                .child_flex(DummyWidget, 1.0),
         )
-        .child(Flex::row().gap(ZONE_GAP).child(selector).child(readout))
+        .child(strip().child(selector).child_flex(readout, 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -1343,18 +1368,15 @@ fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Flex {
         });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("TRANSPORT"))
-        .child(Flex::row().gap(ZONE_GAP).child(controls).child(now_playing))
+        .gap(ZONE_STACK)
+        .child(strip().child_flex(controls, 2.0).child(now_playing))
+        .child(strip().child_flex(seek, 1.0).child(volume).child(rate_menu))
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
-                .child(seek)
-                .child(volume)
-                .child(rate_menu),
+            row()
+                .child_flex(band(BAND_M, playlist), 1.0)
+                .child_flex(band(BAND_M, coverflow), 1.0),
         )
-        .child(Flex::row().gap(ZONE_GAP).child(playlist).child(coverflow))
-        .child(Flex::row().gap(ZONE_GAP).child(carousel))
+        .child(row().child_flex(band(BAND_M, carousel), 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -1470,17 +1492,19 @@ fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("ACOUSTIC MONITOR"))
-        .child(Flex::row().gap(ZONE_GAP).child(spectrum).child(wave))
+        .gap(ZONE_STACK)
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
-                .child(meter)
-                .child(loudness)
-                .child(equalizer),
+            row()
+                .child_flex(band(BAND_M, spectrum), 1.0)
+                .child_flex(band(BAND_M, wave), 1.0),
         )
-        .child(Flex::row().gap(ZONE_GAP).child(line).child(freq))
+        .child(
+            row()
+                .child_flex(band(BAND_M, meter), 1.0)
+                .child_flex(band(BAND_M, equalizer), 2.0)
+                .child(loudness),
+        )
+        .child(strip().child(line).child_flex(freq, 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -1599,17 +1623,19 @@ fn tones_page(model: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("ALARM TONES"))
-        .child(Flex::row().gap(ZONE_GAP).child(keys).child(seq))
+        .gap(ZONE_STACK)
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
-                .child(fret)
-                .child(metro)
-                .child(tuner),
+            row()
+                .child_flex(band(BAND_M, keys), 1.0)
+                .child_flex(band(BAND_M, seq), 2.0),
         )
-        .child(Flex::row().gap(ZONE_GAP).child(program))
+        .child(
+            row()
+                .child_flex(band(BAND_M, fret), 1.0)
+                .child(metro)
+                .child_flex(band(BAND_M, tuner), 1.0),
+        )
+        .child(strip().child_flex(program, 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -1705,10 +1731,13 @@ fn photos_page(model: &PlantModel) -> Flex {
         });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("INSPECTION PHOTOS"))
-        .child(Flex::row().gap(ZONE_GAP).child(thumb).child(viewer))
-        .child(Flex::row().gap(ZONE_GAP).child(lightbox))
+        .gap(ZONE_STACK)
+        .child(
+            row()
+                .child_flex(band(BAND_L, framed(1.5, thumb)), 1.0)
+                .child_flex(band(BAND_L, viewer), 2.0),
+        )
+        .child(row().child_flex(band(BAND_M, lightbox), 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -1738,20 +1767,15 @@ mod tests {
         assert_eq!(
             names,
             [
-                "SHIFT COMMS",
+                "COMMS",
                 "ROOMS",
-                "CAMERAS / PTZ",
+                "CAMERAS",
                 "TRANSPORT",
-                "ACOUSTIC MONITOR",
-                "ALARM TONES",
-                "INSPECTION PHOTOS",
+                "ACOUSTIC",
+                "TONES",
+                "PHOTOS",
             ]
         );
-        // Every page opens with the zone header chrome.
-        for (_, page) in &pgs {
-            let first = page.child(0).expect("page has children");
-            assert_eq!(first.debug_name(), "Zone Header");
-        }
     }
 
     #[test]

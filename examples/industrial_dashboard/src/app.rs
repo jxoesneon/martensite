@@ -10,7 +10,7 @@
 //! surface" (GPU pipeline, accessibility, focus).
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use accesskit::{ActionRequest, TreeUpdate};
 use parking_lot::Mutex;
@@ -50,7 +50,7 @@ use martensite_share::{PlatformShare, ShareOutcome, ShareRequest};
 use serde_json::Value;
 
 use winit::application::ApplicationHandler;
-use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -74,6 +74,22 @@ const HEADER_PT: f32 = 52.0;
 pub(crate) const STATUS_PT: f32 = 30.0;
 const MARGIN_PT: f32 = 12.0;
 const GAP_PT: f32 = 10.0;
+
+/// Min interval between full a11y tree emissions. `build_update` emits
+/// the entire tree — thousands of nodes — so running it per frame at
+/// 50+ Hz saturates both the app and System Events. 100 ms (10 Hz) is
+/// well under any AT client's polling cadence, while `a11y_force`
+/// (AT action dispatched or focus moved) still emits immediately so
+/// interactive latency stays one frame.
+const A11Y_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Animation frame period — the dashboard beats at 30 Hz. Industrial
+/// telemetry doesn't need 60 fps, and a paced loop leaves idle gaps on
+/// the main thread for accessibility queries and input to be serviced
+/// (an unpaced redraw loop starved AX reads to >1 s per attribute).
+/// Input events set `frame_due` so interaction latency stays one event,
+/// not one interval.
+const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 /// AccessKit wiring. The winit adapter must exist before the window is
 /// first shown; the initial tree is staged through `initial` so the
@@ -289,6 +305,21 @@ struct App {
     surface: Option<SurfaceWrapper<'static>>,
     orchestrator: Option<RenderOrchestrator>,
     a11y: Option<A11y>,
+    /// Last time the a11y tree update was emitted — throttles the
+    /// full-tree rebuild to `A11Y_EMIT_INTERVAL`.
+    a11y_last_emit: Instant,
+    /// Set when an AT action ran or focus moved — forces an emit on the
+    /// next frame regardless of the throttle.
+    a11y_force: bool,
+    /// The focus value emitted in the last update — change detection.
+    a11y_last_focus: Option<WidgetId>,
+    /// Deadline for the next animation frame — `about_to_wait` sleeps
+    /// the event loop until then (`FRAME_INTERVAL` pacing).
+    next_frame: Instant,
+    /// Set by any window event other than `RedrawRequested` — input
+    /// gets a frame on the next loop iteration instead of waiting out
+    /// the animation interval.
+    frame_due: bool,
     chrome: TextPainter,
     recovery: RecoveryMachine,
     needs_layout: bool,
@@ -393,6 +424,11 @@ impl App {
             surface: None,
             orchestrator: None,
             a11y: None,
+            a11y_last_emit: Instant::now(),
+            a11y_force: true,
+            a11y_last_focus: None,
+            next_frame: Instant::now(),
+            frame_due: true,
             chrome: TextPainter::new(),
             recovery: RecoveryMachine::new(),
             needs_layout: true,
@@ -1566,21 +1602,35 @@ impl App {
         let _ = (t1, t2);
 
         // 6. Assistive tech: drain queued AT actions into the arena,
-        //    then emit the tree (only when a client is attached).
+        //    then emit the tree (only when a client is attached). The
+        //    full-tree rebuild is throttled to `A11Y_EMIT_INTERVAL`;
+        //    an AT action or a focus change forces an immediate emit.
         if let Some(a11y) = &mut self.a11y {
             let arena = self.arena.as_mut().expect("checked");
+            let mut dispatched = false;
             for request in std::mem::take(&mut *self.actions.lock()) {
                 if let Some(action) = a11y.tree.decode_action(arena, &request) {
                     dispatch_a11y_action(arena, &action);
+                    dispatched = true;
                 }
             }
-            a11y.tree.set_focus(self.focus.current_focus());
-            a11y.adapter
-                .update_if_active(|| a11y.tree.build_update(arena));
+            let focus = self.focus.current_focus();
+            a11y.tree.set_focus(focus);
+            if dispatched || focus != self.a11y_last_focus {
+                self.a11y_force = true;
+            }
+            if self.a11y_force || self.a11y_last_emit.elapsed() >= A11Y_EMIT_INTERVAL {
+                a11y.adapter
+                    .update_if_active(|| a11y.tree.build_update(arena));
+                self.a11y_force = false;
+                self.a11y_last_emit = Instant::now();
+                self.a11y_last_focus = focus;
+            }
         }
 
-        // 7. Telemetry animates — keep the loop alive.
-        self.window.as_ref().expect("checked").request_redraw();
+        // 7. Pacing lives in `about_to_wait` — the loop wakes at the
+        //    next frame deadline instead of re-drawing immediately.
+        self.next_frame = now + FRAME_INTERVAL;
     }
 }
 
@@ -1815,7 +1865,10 @@ impl ApplicationHandler for App {
             .create_window(
                 WindowAttributes::default()
                     .with_title("Martensite — Industrial Workstation")
-                    .with_surface_size(PhysicalSize::new(1680, 980))
+                    // Logical, not physical — on a 2× display a
+                    // physical 1680×980 opens at 840×490 pt, under
+                    // every zone's 320×240 minimum.
+                    .with_surface_size(LogicalSize::new(1600.0, 1000.0))
                     .with_visible(false),
             )
             .expect("create window")
@@ -2139,7 +2192,34 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => self.redraw(),
-            _ => {}
+            _ => {
+                // Any other event may have mutated widget state — draw
+                // it on the next iteration rather than waiting out the
+                // animation interval.
+                self.frame_due = true;
+            }
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        if self.window.is_none() {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
+        }
+        let now = Instant::now();
+        if self.frame_due || now >= self.next_frame {
+            // Input arrived or the frame deadline passed — animate now.
+            self.frame_due = false;
+            self.next_frame = now + FRAME_INTERVAL;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            event_loop.set_control_flow(ControlFlow::Poll);
+        } else if self.paused.get() {
+            // Paused: no animation beat — input and AX still wake us.
+            event_loop.set_control_flow(ControlFlow::Wait);
+        } else {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
         }
     }
 }
@@ -2329,7 +2409,10 @@ pub fn run(
         )
         .init();
     let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
+    // Wait, not Poll: the trailing request_redraw() in `redraw` is
+    // vsync-paced, so the loop still ticks ~60 Hz while animating but
+    // sleeps between events instead of busy-spinning.
+    event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(App::new(flag_choice, audit_locale))?;
     Ok(())
 }

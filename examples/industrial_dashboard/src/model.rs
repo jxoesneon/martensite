@@ -42,37 +42,42 @@ pub fn alert_count(rows: &[MetricRow]) -> usize {
 ///
 /// ```text
 /// ┌──────────────────┬───────────────┐
-/// │                  │  TELEMETRY    │
-/// │  PROCESS GRID    ├───────────────┤
-/// │  (left 58%)      │  EDITOR │MEDIA│
+/// │  PROCESS GRID    │  TELEMETRY    │
+/// ├──────────────────┼───────────────┤
+/// │  EDITOR          │  MEDIA        │
 /// └──────────────────┴───────────────┘
 /// ```
 ///
 /// `Vertical` split → left/right children; `Horizontal` → top/bottom.
 /// The tree is the panel-geometry authority: `DockTree::panel_rects`
 /// maps each leaf to a physical rect the arena applies verbatim.
+///
+/// The bottom row spans the full window width — nesting Media as a
+/// corner of the right column (the old topology) left it ~16% of the
+/// window, under the 320pt zone minimum, so it fell back to the
+/// "enlarge to restore" placeholder at every reasonable size.
 pub fn build_dock_tree(widget_ids: &[u64; 4]) -> DockTree {
     let mut tree = DockTree::with_capacity(8);
     let root = tree.insert_root(DockPanel::new(widget_ids[0], "Process Grid"));
-    let top = root;
-    let (_left, right) = tree
+    let (_top, bottom) = tree
         .split_leaf(
-            top,
-            SplitDirection::Vertical,
-            0.58,
-            DockPanel::new(widget_ids[1], "Telemetry"),
-        )
-        .expect("split vertical");
-    let (_telemetry, bottom) = tree
-        .split_leaf(
-            right,
+            root,
             SplitDirection::Horizontal,
             0.55,
             DockPanel::new(widget_ids[2], "Editor"),
         )
         .expect("split horizontal");
-    // Editor gets the wider share — code needs horizontal room; the
-    // letterboxed media surface stays legible smaller.
+    let (_grid, _telemetry) = tree
+        .split_leaf(
+            _top,
+            SplitDirection::Vertical,
+            0.58,
+            DockPanel::new(widget_ids[1], "Telemetry"),
+        )
+        .expect("split grid");
+    // Editor gets the wider share — code needs horizontal room; Media
+    // still lands ~38% of the full window width (≈575pt at 1512),
+    // comfortably above the zone minimum.
     tree.split_leaf(
         bottom,
         SplitDirection::Vertical,

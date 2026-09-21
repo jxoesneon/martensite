@@ -11,7 +11,7 @@
 //! ZonePanel
 //! ├── operational view (the existing panel widget, untouched)
 //! └── Tabs — domain-named zone pages, one shown at a time
-//!       └── page: Flex column of ZoneHeader + Bound widgets
+//!       └── page: Flex column of Bound widgets
 //! ```
 //!
 //! The page builders live in the sibling modules; this file owns the
@@ -39,7 +39,7 @@ pub mod telemetry;
 
 /// Fraction of the panel height the operational view keeps — zone
 /// tabs fill the remainder.
-const OP_FRAC: f32 = 0.55;
+const OP_FRAC: f32 = 0.45;
 
 /// A panel = operational view on top + domain-named zone pages below.
 /// The operational widget is untouched (keeps its own chrome, focus,
@@ -132,8 +132,14 @@ impl Widget for ZonePanel {
         // `inner_h` never exceeds the panel — a degenerate-height
         // panel gives the zones region 0pt (the underflow fallback
         // paints "enlarge to restore" anyway).
+        // The operational view keeps at least its own declared
+        // `min_render` height (in pt, scaled) so a shorter panel
+        // never pushes it into its underflow placeholder just to
+        // give the zones a fixed fraction.
+        let inner_min = self.inner.min_render().size.y * s;
         let inner_h = (bounds.height() * OP_FRAC)
             .max(TITLE_H * s + 24.0)
+            .max(inner_min)
             .min(bounds.height())
             .max(0.0);
         self.inner_bounds = Rect::new(bounds.min_x(), bounds.min_y(), bounds.width(), inner_h);

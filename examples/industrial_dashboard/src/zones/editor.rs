@@ -109,7 +109,8 @@ use martensite::widgets::wheel_picker::WheelPicker;
 use parking_lot::Mutex;
 
 use crate::domain::{Asset, MaintTask, PlantModel, WoPriority, WoStatus, WorkOrder};
-use crate::zone::{Bound, ZoneHeader, ZONE_GAP};
+use crate::zone::{band, framed, row, strip, Bound, BAND_L, BAND_M, BAND_S, ZONE_GAP, ZONE_STACK};
+use martensite::core::widget::DummyWidget;
 
 // ---------------------------------------------------------------------------
 // Shared binding helpers.
@@ -147,7 +148,7 @@ fn field(label: &'static str, control: impl Widget + 'static) -> FormField {
         .child(control)
 }
 
-/// A hint line — static chrome like `ZoneHeader`, not a bound widget.
+/// A hint line — static chrome, not a bound widget.
 fn hint(text: &'static str) -> Text {
     Text::new(text).font_size(11.0)
 }
@@ -753,41 +754,40 @@ fn work_order_form(model: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("WORK ORDER FORM"))
+        .gap(ZONE_STACK)
         .child(header)
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("TITLE", title))
-                .child(field("QUICK EDIT", quick)),
+                .child(field("QUICK EDIT", quick))
+                .child_flex(DummyWidget, 1.0),
         )
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("STATUS", status))
-                .child(field("PRIORITY", priority)),
+                .child(field("PRIORITY", priority))
+                .child_flex(DummyWidget, 1.0),
         )
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("ASSIGNEE", assignee))
-                .child(field("DUE DAY", due)),
+                .child(field("DUE DAY", due))
+                .child_flex(DummyWidget, 1.0),
         )
-        .child(Flex::row().gap(ZONE_GAP).child(field("PROGRESS", progress)))
+        .child(strip().child_flex(field("PROGRESS", progress), 1.0))
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("CHECKLIST", checklist))
-                .child(field("TAGS", tags)),
+                .child(field("TAGS", tags))
+                .child_flex(DummyWidget, 1.0),
         )
-        .child(Flex::row().gap(ZONE_GAP).child(field("NOTES", notes)))
+        .child(strip().child_flex(field("NOTES", notes), 1.0))
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(validate)
                 .child(done)
-                .child(reopen),
+                .child(reopen)
+                .child_flex(DummyWidget, 1.0),
         )
 }
 
@@ -998,24 +998,23 @@ fn scheduling(model: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("SCHEDULING"))
+        .gap(ZONE_STACK)
         .child(hint(
             "due date, weekday drum, and the month grid edit one field — selected WO due_day",
         ))
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("DUE DATE", date))
-                .child(field("WEEKDAY", wheel)),
+                .child(field("WEEKDAY", wheel))
+                .child_flex(DummyWidget, 1.0),
         )
-        .child(Flex::row().gap(ZONE_GAP).child(field("MONTH", cal)))
+        .child(row().child_flex(field("MONTH", band(BAND_M, cal)), 1.0))
         .child(task_note)
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("TASK WINDOW", range))
-                .child(field("SHIFT CLOCK", clock)),
+                .child(field("SHIFT CLOCK", clock))
+                .child_flex(DummyWidget, 1.0),
         )
 }
 
@@ -1274,40 +1273,39 @@ fn appearance(model: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("APPEARANCE"))
+        .gap(ZONE_STACK)
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("FONT PT", font_spin))
                 .child(field("FONT PT", font_slide))
-                .child(font_btn),
+                .child(font_btn)
+                .child_flex(DummyWidget, 1.0),
         )
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(autosave)
                 .child(wrap)
                 .child(motion)
-                .child(alerts),
+                .child(alerts)
+                .child_flex(DummyWidget, 1.0),
         )
-        .child(Flex::row().gap(ZONE_GAP).child(tour))
+        .child(strip().child(tour).child_flex(DummyWidget, 1.0))
         .child(hint(
             "the whole color suite edits the single console accent — every picker stays in sync",
         ))
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("ACCENT", picker))
                 .child(field("HUE", hue))
-                .child(field("ALPHA", alpha)),
+                .child(field("ALPHA", alpha))
+                .child_flex(DummyWidget, 1.0),
         )
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("WHEEL", wheel))
                 .child(field("SWATCHES", palette))
-                .child(accent_btn),
+                .child(accent_btn)
+                .child_flex(DummyWidget, 1.0),
         )
 }
 
@@ -1627,28 +1625,27 @@ fn command_surface(model: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("COMMAND SURFACE"))
+        .gap(ZONE_STACK)
         .child(hint(
             "menu bar + toolbar are the primary system — tabs mount ONE alternate at a time",
         ))
-        .child(Flex::row().gap(ZONE_GAP).child(menubar))
-        .child(Flex::row().gap(ZONE_GAP).child(toolbar))
-        .child(alternates)
+        .child(strip().child_flex(menubar, 1.0))
+        .child(strip().child_flex(toolbar, 1.0))
+        .child(band(BAND_L, alternates))
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(asset_ctx)
                 .child(trip)
-                .child(ack_link),
+                .child(ack_link)
+                .child_flex(DummyWidget, 1.0),
         )
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(ack_btn)
                 .child(line_btn)
                 .child(lock_btn)
-                .child(new_btn),
+                .child(new_btn)
+                .child_flex(DummyWidget, 1.0),
         )
 }
 
@@ -1795,14 +1792,13 @@ fn console_lock(model: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("CONSOLE LOCK"))
+        .gap(ZONE_STACK)
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(status)
                 .child(who)
-                .child(lock),
+                .child(lock)
+                .child_flex(DummyWidget, 1.0),
         )
         .child(hint(
             "any enrolled factor unlocks — pattern, PIN pad, OTP, or password",
@@ -1810,19 +1806,19 @@ fn console_lock(model: &PlantModel) -> Flex {
         .child(
             GroupBox::new("UNLOCK FACTORS").child(
                 Flex::column().gap(ZONE_GAP).child(
-                    Flex::row()
-                        .gap(ZONE_GAP)
+                    strip()
                         .child(field("PATTERN", pattern))
-                        .child(field("PIN", keypad)),
+                        .child(field("PIN", keypad))
+                        .child_flex(DummyWidget, 1.0),
                 ),
             ),
         )
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("OTP", otp))
                 .child(field("PASSWORD", password))
-                .child(strength),
+                .child(strength)
+                .child_flex(DummyWidget, 1.0),
         )
 }
 
@@ -1969,20 +1965,17 @@ fn annotation(model: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("ANNOTATION & SIGN-OFF"))
+        .gap(ZONE_STACK)
         .child(target)
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
-                .child(field("MARKUP", markup))
+            row()
+                .child_flex(field("MARKUP", band(BAND_M, markup)), 1.0)
                 .child(undo_btn),
         )
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
-                .child(field("SIGN-OFF", signoff))
-                .child(field("PHOTO CROP", crop)),
+            row()
+                .child_flex(field("SIGN-OFF", band(BAND_M, signoff)), 1.0)
+                .child_flex(field("PHOTO CROP", band(BAND_M, crop)), 1.0),
         )
 }
 
@@ -2178,22 +2171,20 @@ fn lookup(model: &PlantModel) -> Flex {
     });
 
     Flex::column()
-        .gap(ZONE_GAP)
-        .child(ZoneHeader::new("SCAN & LOOKUP"))
+        .gap(ZONE_STACK)
         .child(hint(
             "submit a serial or name to select the asset — the search also drives the grid filter",
         ))
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
+            strip()
                 .child(field("LOOKUP", search))
-                .child(field("ASSET PATH", cascader)),
+                .child(field("ASSET PATH", cascader))
+                .child_flex(DummyWidget, 1.0),
         )
         .child(
-            Flex::row()
-                .gap(ZONE_GAP)
-                .child(qr)
-                .child(code)
+            row()
+                .child_flex(band(BAND_S, framed(1.0, qr)), 1.0)
+                .child_flex(band(BAND_S, framed(3.0, code)), 2.0)
                 .child(copyable)
                 .child(import),
         )
@@ -2229,13 +2220,13 @@ fn asset_options(m: &PlantModel) -> Vec<CascaderOption> {
 /// never widget names.
 pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
     vec![
-        ("WORK ORDER FORM", work_order_form(model)),
+        ("WORK ORDER", work_order_form(model)),
         ("SCHEDULING", scheduling(model)),
         ("APPEARANCE", appearance(model)),
-        ("COMMAND SURFACE", command_surface(model)),
+        ("COMMANDS", command_surface(model)),
         ("CONSOLE LOCK", console_lock(model)),
-        ("ANNOTATION & SIGN-OFF", annotation(model)),
-        ("SCAN & LOOKUP", lookup(model)),
+        ("SIGN-OFF", annotation(model)),
+        ("SCAN", lookup(model)),
     ]
 }
 
