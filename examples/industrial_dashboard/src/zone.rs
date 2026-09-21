@@ -149,6 +149,21 @@ pub struct Bound<W: Widget> {
     /// Whether `.push()` installed a reflect closure — push mutations
     /// dirty the node, so `tick` reports `true` while one is present.
     has_push: bool,
+    /// Last layout allotment — replayed onto the widget after a push
+    /// so a rebuilt/replaced widget never paints with zeroed layout
+    /// state (bounds, cached child rects). The arena's layout pass is
+    /// resize-gated; without this a `*w = build(m)` reflect would sit
+    /// unlaid-out (or panic on a stale layout cache) until the next
+    /// window resize.
+    last_layout: Option<(Rect, f32)>,
+    /// Scratch hot node for post-push re-layouts. `Widget::layout`
+    /// needs a `LayoutContext`, which borrows a `HotNode` — outside
+    /// the arena's layout pass there is no shared node to borrow, so
+    /// flag unions (`FOCUSABLE`) land here instead. That matches the
+    /// staleness semantics any between-layouts mutation already has:
+    /// the arena's own flag union only refreshes on real layout
+    /// passes. Seeded from the real node on every real `layout`.
+    scratch_hot: martensite::core::HotNode,
 }
 
 impl<W: Widget> Bound<W> {
@@ -163,6 +178,8 @@ impl<W: Widget> Bound<W> {
             pull: Box::new(|_, _| {}),
             push: Box::new(|_, _| {}),
             has_push: false,
+            last_layout: None,
+            scratch_hot: martensite::core::HotNode::default(),
         }
     }
 
@@ -211,6 +228,11 @@ impl<W: Widget> Widget for Bound<W> {
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.last_layout = Some((bounds, cx.scale));
+        // Seed the scratch from the shared node so a post-push
+        // re-layout keeps the flags this subtree already unioned in.
+        self.scratch_hot.flags = cx.hot.flags;
+        self.scratch_hot.bounds = bounds;
         self.widget.layout(cx, bounds);
     }
 
@@ -226,9 +248,25 @@ impl<W: Widget> Widget for Bound<W> {
         (self.pull)(&mut self.widget, &self.model);
         let dirty = self.widget.tick(dt);
         (self.push)(&mut self.widget, &self.model);
-        // A push reflect may mutate the widget after `tick` captured
-        // its flag — conservatively report dirty whenever a push ran,
-        // else pushed state changes would skip paint/a11y re-emission.
+        // A push reflect may mutate — or wholly replace — the widget
+        // after `tick` captured its flag. Conservatively report dirty
+        // whenever a push ran, and re-run `layout` against the last
+        // allotment so replaced widgets never reach `paint` with
+        // zeroed layout state (empty cached rect vectors → index
+        // panics; zero bounds → invisible output). Layout is cheap
+        // arithmetic over already-computed measures; pushes are
+        // signature-gated, so the common case is a no-op reflect.
+        if self.has_push {
+            if let Some((bounds, scale)) = self.last_layout {
+                self.widget.layout(
+                    &mut LayoutContext {
+                        hot: &mut self.scratch_hot,
+                        scale,
+                    },
+                    bounds,
+                );
+            }
+        }
         dirty || self.has_push
     }
 
@@ -302,5 +340,117 @@ impl<W: Widget> Widget for Bound<W> {
     #[cfg(feature = "devtools-timemachine")]
     fn timemachine_restore(&mut self, state: &dyn martensite::core::TimemachineState) -> bool {
         self.widget.timemachine_restore(state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use martensite::core::HotNode;
+    use martensite::reactive::Signal;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Counts layout passes and records the last allotment — proves
+    /// `Bound` re-lays-out a pushed widget before the next paint.
+    struct Probe {
+        layouts: Arc<AtomicUsize>,
+        last_bounds: Rect,
+    }
+
+    impl Widget for Probe {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> glam::Vec2 {
+            glam::Vec2::new(10.0, 10.0)
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
+            self.last_bounds = bounds;
+            self.layouts.fetch_add(1, Ordering::Relaxed);
+        }
+        fn paint(&self, _cx: &mut PaintContext) {}
+    }
+
+    fn model() -> PlantModel {
+        PlantModel::seeded(
+            Signal::new(0.4),
+            Signal::new(0.6),
+            Signal::new(false),
+            Signal::new(true),
+            Signal::new(String::new()),
+        )
+    }
+
+    #[test]
+    fn push_relayouts_against_last_allotment() {
+        let m = model();
+        let layouts = Arc::new(AtomicUsize::new(0));
+        let mut b = Bound::new(
+            Probe {
+                layouts: Arc::clone(&layouts),
+                last_bounds: Rect::default(),
+            },
+            &m,
+        )
+        .push(|_w: &mut Probe, _m| {});
+        let mut hot = HotNode::default();
+        let bounds = Rect::new(4.0, 8.0, 100.0, 50.0);
+        b.layout(
+            &mut LayoutContext {
+                hot: &mut hot,
+                scale: 2.0,
+            },
+            bounds,
+        );
+        assert_eq!(layouts.load(Ordering::Relaxed), 1);
+        // A push-bearing tick must re-run layout — a rebuilt widget
+        // would otherwise paint with zeroed layout state.
+        b.tick(Duration::from_millis(16));
+        assert_eq!(layouts.load(Ordering::Relaxed), 2);
+        assert_eq!(b.inner().last_bounds, bounds);
+    }
+
+    #[test]
+    fn pull_only_mount_does_not_relayout() {
+        let m = model();
+        let layouts = Arc::new(AtomicUsize::new(0));
+        let mut b = Bound::new(
+            Probe {
+                layouts: Arc::clone(&layouts),
+                last_bounds: Rect::default(),
+            },
+            &m,
+        )
+        .pull(|_w: &mut Probe, _m| {});
+        let mut hot = HotNode::default();
+        b.layout(
+            &mut LayoutContext {
+                hot: &mut hot,
+                scale: 1.0,
+            },
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+        );
+        b.tick(Duration::from_millis(16));
+        assert_eq!(
+            layouts.load(Ordering::Relaxed),
+            1,
+            "a pull-only mount has no push-side mutation to re-layout"
+        );
+    }
+
+    #[test]
+    fn unlaid_out_push_mount_skips_relayout() {
+        // A Bound that was never laid out (hidden tab) must not
+        // conjure a layout from nothing.
+        let m = model();
+        let layouts = Arc::new(AtomicUsize::new(0));
+        let mut b = Bound::new(
+            Probe {
+                layouts: Arc::clone(&layouts),
+                last_bounds: Rect::default(),
+            },
+            &m,
+        )
+        .push(|_w: &mut Probe, _m| {});
+        b.tick(Duration::from_millis(16));
+        assert_eq!(layouts.load(Ordering::Relaxed), 0);
     }
 }

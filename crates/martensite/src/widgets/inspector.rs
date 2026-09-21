@@ -321,37 +321,14 @@ impl Inspector {
         self.selected.take()
     }
 
-    fn rebuild_rows(&mut self) {
-        // Row rects are recomputed in layout; nothing to do until
-        // the next layout pass, but drop stale hover state.
-        self.hovered = None;
-    }
-}
-
-impl Widget for Inspector {
-    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let s = cx.scale;
-        let mut rows = self.sections.len() as f32 * HEAD_PT;
-        for sec in &self.sections {
-            if sec.open {
-                rows += sec.rows.len() as f32 * self.row_height;
-            }
-        }
-        Vec2::new(
-            (260.0 * s).min(constraints.max_size.x.max(0.0)),
-            ((rows + PAD_PT * 2.0) * s).min(constraints.max_size.y.max(0.0)),
-        )
-    }
-
-    fn min_render(&self) -> RenderMinimum {
-        RenderMinimum::new(Vec2::new(180.0, HEAD_PT + PAD_PT * 2.0))
-            .with_policy(UnderflowPolicy::Lint)
-    }
-
-    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
-        self.bounds = bounds;
-        self.scale = cx.scale;
-        let s = cx.scale;
+    /// Recomputes `head_rects`/`row_rects` from the stored bounds —
+    /// the same math `layout` runs. Event-side mutations (section
+    /// toggles) can't wait for the next layout pass: the app's layout
+    /// is resize-gated, so stale rects would paint ghost rows under
+    /// the collapsed section indefinitely.
+    fn compute_rects(&mut self) {
+        let s = self.scale;
+        let bounds = self.bounds;
         let mut y = bounds.min_y() + PAD_PT * s;
         self.head_rects.clear();
         self.row_rects.clear();
@@ -379,6 +356,38 @@ impl Widget for Inspector {
                 }
             }
         }
+    }
+
+    fn rebuild_rows(&mut self) {
+        self.hovered = None;
+        self.compute_rects();
+    }
+}
+
+impl Widget for Inspector {
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        let s = cx.scale;
+        let mut rows = self.sections.len() as f32 * HEAD_PT;
+        for sec in &self.sections {
+            if sec.open {
+                rows += sec.rows.len() as f32 * self.row_height;
+            }
+        }
+        Vec2::new(
+            (260.0 * s).min(constraints.max_size.x.max(0.0)),
+            ((rows + PAD_PT * 2.0) * s).min(constraints.max_size.y.max(0.0)),
+        )
+    }
+
+    fn min_render(&self) -> RenderMinimum {
+        RenderMinimum::new(Vec2::new(180.0, HEAD_PT + PAD_PT * 2.0))
+            .with_policy(UnderflowPolicy::Lint)
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.bounds = bounds;
+        self.scale = cx.scale;
+        self.compute_rects();
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -444,7 +453,12 @@ impl Widget for Inspector {
         );
         let shape = martensite_core::shape::Shape::rounded(4.0 * s);
         for (si, sec) in self.sections.iter().enumerate() {
-            let hr = self.head_rects[si];
+            // `head_rects` is a layout-side cache — a widget painted
+            // before its first layout (or rebuilt post-layout) has
+            // sections but no rects; skip rather than panic.
+            let Some(&hr) = self.head_rects.get(si) else {
+                continue;
+            };
             let khr = kurbo::Rect::new(
                 f64::from(hr.min_x()),
                 f64::from(hr.min_y()),
@@ -478,7 +492,12 @@ impl Widget for Inspector {
             );
         }
         for (r, si, ri) in &self.row_rects {
-            let row = &self.sections[*si].rows[*ri];
+            // Stale `row_rects` can outlive the sections they were
+            // built from (event-mutated or rebuilt widget) — treat a
+            // dangling index as "nothing to paint", never a panic.
+            let Some(row) = self.sections.get(*si).and_then(|s| s.rows.get(*ri)) else {
+                continue;
+            };
             let kr = kurbo::Rect::new(
                 f64::from(r.min_x()),
                 f64::from(r.min_y()),
