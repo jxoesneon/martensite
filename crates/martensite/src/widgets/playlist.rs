@@ -115,7 +115,10 @@ pub struct Playlist {
     hover: Option<usize>,
     drag: Option<usize>,
     drop_at: Option<usize>,
-    moved: Option<(usize, usize)>,
+    /// FIFO of `(from, to)` reorders — several drags can land between
+    /// drains, so a single `Option` would silently drop all but the
+    /// last.
+    moved: std::collections::VecDeque<(usize, usize)>,
     selected: Option<usize>,
     scroll: f32,
     bounds: Rect,
@@ -154,7 +157,7 @@ impl Playlist {
             hover: None,
             drag: None,
             drop_at: None,
-            moved: None,
+            moved: std::collections::VecDeque::new(),
             selected: None,
             scroll: 0.0,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
@@ -295,7 +298,8 @@ impl Playlist {
         self.selected
     }
 
-    /// Drains the last `(from, to)` reorder.
+    /// Drains the oldest pending `(from, to)` reorder. Call in a
+    /// `while let` loop to consume every reorder since the last drain.
     ///
     /// ```
     /// use martensite::widgets::playlist::Playlist;
@@ -303,7 +307,7 @@ impl Playlist {
     /// assert_eq!(Playlist::new().take_moved(), None);
     /// ```
     pub fn take_moved(&mut self) -> Option<(usize, usize)> {
-        self.moved.take()
+        self.moved.pop_front()
     }
 
     /// Row index under `y` (widget coords).
@@ -434,7 +438,7 @@ impl Widget for Playlist {
                         };
                         self.current = remap(self.current);
                         self.selected = remap(self.selected);
-                        self.moved = Some((from, to));
+                        self.moved.push_back((from, to));
                     }
                     self.drop_at = None;
                     return EventResponse::RequestRepaint;

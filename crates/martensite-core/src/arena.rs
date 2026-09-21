@@ -604,10 +604,17 @@ impl WidgetArena {
     }
 
     /// Recursive helper for [`tick`](Self::tick): ticks `widget` then
-    /// its internal children, `true` if any returned `true`.
+    /// its internal children, `true` if any returned `true`. Children
+    /// with no allocated bounds are skipped — the same "not presented"
+    /// signal the paint walk uses (`TabPanelChild` reports `None` for
+    /// hidden panels), so hidden views stop ticking and stop marking
+    /// the frame dirty.
     fn tick_recursive(widget: &mut dyn Widget, dt: Duration) -> bool {
         let mut dirty = widget.tick(dt);
         for i in 0..widget.child_count() {
+            if widget.child_bounds(i).is_none() {
+                continue;
+            }
             if let Some(child) = widget.child_mut(i) {
                 dirty |= Self::tick_recursive(child, dt);
             }
@@ -616,9 +623,14 @@ impl WidgetArena {
     }
 
     /// Recursive helper for [`sync_overlays`](Self::sync_overlays).
+    /// Unallocated children are skipped like [`tick_recursive`] — a
+    /// hidden view must not register overlay content either.
     fn sync_overlay_recursive(widget: &mut dyn Widget, overlay: &mut OverlayLayer) {
         widget.sync_overlay(overlay);
         for i in 0..widget.child_count() {
+            if widget.child_bounds(i).is_none() {
+                continue;
+            }
             if let Some(child) = widget.child_mut(i) {
                 Self::sync_overlay_recursive(child, overlay);
             }
@@ -2504,6 +2516,92 @@ mod scope_tests {
         let mut list = PaintList::new();
         arena.build_paint_list(root, &mut list);
         assert_eq!(scope_names(&list).len(), 2);
+    }
+
+    /// A widget counting its own ticks — proves `tick_recursive`
+    /// skips children with no allocated bounds (the "not presented"
+    /// signal hidden tabs and suspended controls rely on).
+    struct TickCounter(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Widget for TickCounter {
+        fn debug_name(&self) -> &'static str {
+            "TickCounter"
+        }
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn tick(&mut self, _dt: std::time::Duration) -> bool {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            false
+        }
+    }
+
+    /// Parent whose single child is presented only when `shown` —
+    /// mirrors `TabPanelChild`'s `child_bounds → None` gate. The flag
+    /// is a shared atomic so the test can flip it without downcasting
+    /// (`as_any_mut` is feature-gated).
+    struct ShownGatedParent {
+        child: TickCounter,
+        shown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Widget for ShownGatedParent {
+        fn debug_name(&self) -> &'static str {
+            "ShownGatedParent"
+        }
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn child_count(&self) -> usize {
+            1
+        }
+        fn child(&self, i: usize) -> Option<&dyn Widget> {
+            (i == 0).then_some(&self.child)
+        }
+        fn child_mut(&mut self, i: usize) -> Option<&mut dyn Widget> {
+            (i == 0).then_some(&mut self.child)
+        }
+        fn child_bounds(&self, i: usize) -> Option<Rect> {
+            (i == 0 && self.shown.load(std::sync::atomic::Ordering::Relaxed))
+                .then_some(Rect::new(0.0, 0.0, 10.0, 10.0))
+        }
+    }
+
+    #[test]
+    fn tick_skips_unallocated_internal_child() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let shown = Arc::new(AtomicBool::new(false));
+        let mut arena = WidgetArena::new();
+        let _root = arena.insert_with_widget(
+            visible(NodeFlags::empty()),
+            Box::new(ShownGatedParent {
+                child: TickCounter(ticks.clone()),
+                shown: shown.clone(),
+            }),
+        );
+
+        arena.tick(Duration::from_millis(16));
+        arena.tick(Duration::from_millis(16));
+        assert_eq!(
+            ticks.load(Ordering::Relaxed),
+            0,
+            "hidden child must not tick"
+        );
+
+        // Re-show the child: the same walk ticks it again.
+        shown.store(true, Ordering::Relaxed);
+        arena.tick(Duration::from_millis(16));
+        assert_eq!(
+            ticks.load(Ordering::Relaxed),
+            1,
+            "shown child resumes ticking"
+        );
     }
 
     #[test]

@@ -313,17 +313,19 @@ impl TabStrip {
 
     /// `tab_bounds[i]` translated by the scroll offset and clipped to
     /// the strip window — what the framework sees for paint and events.
+    /// A tab fully scrolled out reports `None` — the "not presented"
+    /// signal — so the paint/tick/hit walks skip it entirely instead
+    /// of painting a label out of a zero-width rect.
     fn scrolled_bounds(&self, index: usize) -> Option<Rect> {
         let r = *self.tab_bounds.get(index)?;
         let x = r.min_x() - self.scroll_x;
         let left = x.max(self.strip_bounds.min_x());
         let right = (x + r.width()).min(self.strip_bounds.max_x());
-        Some(Rect::new(
-            left,
-            r.min_y(),
-            (right - left).max(0.0),
-            r.height(),
-        ))
+        let w = right - left;
+        if w <= 0.0 {
+            return None;
+        }
+        Some(Rect::new(left, r.min_y(), w, r.height()))
     }
 
     /// Tab index under `position` (in scrolled space), or `None`.

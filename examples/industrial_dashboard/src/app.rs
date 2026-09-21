@@ -232,6 +232,10 @@ struct App {
     printer: Box<dyn PlatformPrinter>,
     /// Telemetry alarm watch → OS notifications on transitions only.
     alarm: AlarmWatch,
+    /// The simulated-plant backend every zone widget binds to —
+    /// seeded once, driven by the frame loop (`push_history`,
+    /// `tick_acoustic`, `tick_minute`), read/written by `Bound`s.
+    model: crate::domain::PlantModel,
     /// The last preference set written through — change detection so
     /// the store only flushes on real edits.
     saved_prefs: Prefs,
@@ -294,6 +298,10 @@ struct App {
     last_frame: Instant,
     started: Instant,
     frame_ms: f64,
+    /// Accumulators driving the plant model: telemetry history samples
+    /// at 4 Hz, the shift clock ticks one minute per real second.
+    hist_acc: f64,
+    minute_acc: f64,
     #[cfg(feature = "devtools")]
     hud: DiagnosticHud,
 }
@@ -309,22 +317,29 @@ impl App {
         let locale = stored_locale(&store);
         let editor_tab = stored_tab(&store);
         let alerts = stored_alerts(&store);
+        // Shared signals — the PlantModel binds to these exact cells
+        // so toolbar/panel writes are visible to every Bound widget.
+        let cpu = Signal::new(0.42f64);
+        let mem = Signal::new(0.61f64);
+        let paused = Signal::new(false);
+        let alerts_sig = Signal::new(alerts);
+        let filter_text = Signal::new(String::new());
         Self {
             scale: Signal::new(1.0f32),
-            cpu: Signal::new(0.42f64),
-            mem: Signal::new(0.61f64),
-            paused: Signal::new(false),
+            cpu: cpu.clone(),
+            mem: mem.clone(),
+            paused: paused.clone(),
             glow: Signal::new(true),
             tick_ms: Signal::new(100.0f64),
             theme_sel: Signal::new(Self::theme_index(choice)),
-            filter_text: Signal::new(String::new()),
+            filter_text: filter_text.clone(),
             l10n: build_l10n(),
             locale_sel: Signal::new(locale),
             // `locale_idx` tracks the applied locale, not the request —
             // a nonzero stored index applies through the first redraw.
             locale_idx: 0,
             clipboard_out: Signal::new(None),
-            alerts_on: Signal::new(alerts),
+            alerts_on: alerts_sig.clone(),
             about_req: Signal::new(false),
             inspector_req: Signal::new(false),
             console_req: Signal::new(false),
@@ -342,6 +357,7 @@ impl App {
             share: martensite_share::default_platform_share(),
             printer: martensite_print::default_platform_printer(),
             alarm: AlarmWatch::default(),
+            model: crate::domain::PlantModel::seeded(cpu, mem, paused, alerts_sig, filter_text),
             saved_prefs: Prefs {
                 theme: choice,
                 locale,
@@ -384,6 +400,8 @@ impl App {
             last_frame: Instant::now(),
             started: Instant::now(),
             frame_ms: 0.0,
+            hist_acc: 0.0,
+            minute_acc: 0.0,
             #[cfg(feature = "devtools")]
             hud: DiagnosticHud::new(),
         }
@@ -448,12 +466,11 @@ impl App {
         }
 
         let mut panels: [Option<WidgetId>; 4] = [None, None, None, None];
-        // Each operational panel is wrapped in a ShowcasePanel that
-        // mounts its contextually-related widget sections below the
-        // operational view — the dashboard consumes every facade
-        // widget where it actually belongs.
+        // Each operational panel is wrapped in a ZonePanel: the
+        // operational view on top, domain-named zone pages below —
+        // every zone widget is Bound to the shared PlantModel.
         let widgets: [Box<dyn martensite::core::Widget>; 4] = [
-            Box::new(crate::showcase::ShowcasePanel::new(
+            Box::new(crate::zones::ZonePanel::new(
                 Box::new(GridPanel::new(
                     scale.clone(),
                     self.filter_text.clone(),
@@ -461,9 +478,9 @@ impl App {
                 )),
                 "Process Grid",
                 scale.clone(),
-                crate::showcase::grid_sections(),
+                crate::zones::grid::pages(&self.model),
             )),
-            Box::new(crate::showcase::ShowcasePanel::new(
+            Box::new(crate::zones::ZonePanel::new(
                 Box::new(TelemetryPanel::new(
                     scale.clone(),
                     self.cpu.clone(),
@@ -475,9 +492,9 @@ impl App {
                 )),
                 "Telemetry",
                 scale.clone(),
-                crate::showcase::telemetry_sections(),
+                crate::zones::telemetry::pages(&self.model),
             )),
-            Box::new(crate::showcase::ShowcasePanel::new(
+            Box::new(crate::zones::ZonePanel::new(
                 Box::new(EditorPanel::new(
                     scale.clone(),
                     EditorSignals {
@@ -490,13 +507,13 @@ impl App {
                 )),
                 "Editor",
                 scale.clone(),
-                crate::showcase::editor_sections(),
+                crate::zones::editor::pages(&self.model),
             )),
-            Box::new(crate::showcase::ShowcasePanel::new(
+            Box::new(crate::zones::ZonePanel::new(
                 Box::new(MediaPanel::new(scale.clone())),
                 "Media",
                 scale.clone(),
-                crate::showcase::media_sections(),
+                crate::zones::media::pages(&self.model),
             )),
         ];
         for (i, widget) in widgets.into_iter().enumerate() {
@@ -1396,7 +1413,11 @@ impl App {
             if let Some((id, diff)) = self.theme_fade.take() {
                 self.theme_anim.advance(dt.as_secs_f32());
                 let t = self.theme_anim.position(id).unwrap_or(1.0);
-                if self.theme_anim.is_settled(id) || t >= 0.999 {
+                // Reduced-motion jumps to the destination — no
+                // crossfade (a real HMI accessibility gate; zone
+                // widgets consult the same signal for their own
+                // animation loops).
+                if self.model.reduced_motion.get() || self.theme_anim.is_settled(id) || t >= 0.999 {
                     arena.set_theme(target);
                     self.theme_anim.remove_settled();
                 } else {
@@ -1425,6 +1446,31 @@ impl App {
         //    its pacing queue; dirty widgets mark repaint.
         let t0 = Instant::now();
         self.arena.as_mut().expect("checked").tick(dt);
+
+        // Drive the plant model AFTER the tick so history/acoustic
+        // read this frame's fresh cpu/mem samples. History samples at
+        // 4 Hz (240-sample ring ≈ 1 min window); the shift clock
+        // advances one simulated minute per real second so the demo
+        // stays visibly alive. The toolbar pause freezes the whole
+        // simulation — not just the gauges — so both drivers gate on
+        // it. `while` drains keep sampling cadence after a hitch
+        // instead of dropping the accumulated time.
+        if !self.paused.get() {
+            self.hist_acc += dt.as_secs_f64();
+            while self.hist_acc >= 0.25 {
+                self.hist_acc -= 0.25;
+                self.model.push_history();
+            }
+            self.minute_acc += dt.as_secs_f64();
+            while self.minute_acc >= 1.0 {
+                self.minute_acc -= 1.0;
+                self.model.tick_minute();
+            }
+            // Acoustic monitoring is part of the sim — pause freezes
+            // the spectrum/VU/tuner along with history and the clock.
+            self.model
+                .tick_acoustic(self.started.elapsed().as_secs_f64());
+        }
 
         // Panel/toolbar service requests → OS dialogs, share, print.
         // The backends aren't `Send`, so every call happens here,

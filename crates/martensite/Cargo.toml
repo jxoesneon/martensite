@@ -83,6 +83,10 @@ decoder-videotoolbox = ["martensite-media/decoder-videotoolbox"]
 decoder-mf = ["martensite-media/decoder-mf"]
 decoder-vaapi = ["martensite-media/decoder-vaapi"]
 decoder-ffmpeg = ["martensite-media/decoder-ffmpeg"]
+# Time-travel debugging state capture (martensite-devtools). Mirrors
+# martensite-core's feature so widget wrappers built on the facade
+# can forward the timemachine hooks correctly.
+devtools-timemachine = ["martensite-core/devtools-timemachine"]
 
 [package.metadata.docs.rs]
 features = ["docs-rs"]

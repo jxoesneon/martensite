@@ -18,17 +18,24 @@
 //! (windowed-path findings) live in `panels.rs`.
 
 mod app;
+mod domain;
 mod headless;
 mod media_stream;
 mod menu;
 mod model;
 mod overlays;
 mod panels;
+// Verified widget constructors kept as inventory for the separate
+// widget catalog — the operational dashboard mounts widgets through
+// `zones/` (model-bound), not the catalog's card format.
+#[allow(dead_code)]
 mod showcase;
 mod statusbar;
 mod subwindow;
 mod text;
 mod toolbar;
+mod zone;
+mod zones;
 
 fn main() {
     if std::env::args().any(|a| a == "--headless") {

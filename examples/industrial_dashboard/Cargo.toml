@@ -19,6 +19,10 @@ default = []
 # histogram). Off by default so the headless example stays quiet; the
 # HUD types come from the facade's `martensite::devtools` re-export.
 devtools = []
+# Passthrough so `Bound<W>` can forward `as_any_mut`/`timemachine_*`
+# when the trait exposes them — keeps the wrapper transparent under
+# `--all-features` builds.
+devtools-timemachine = ["martensite/devtools-timemachine"]
 
 [dependencies]
 # Platform video decoders for the media panel — each backend is a no-op

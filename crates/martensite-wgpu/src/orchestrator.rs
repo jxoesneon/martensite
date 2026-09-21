@@ -214,6 +214,21 @@ struct PaintAuditState {
     config: martensite_access::paint_audit::PaintAuditConfig,
     /// Per-frame dedup so findings do not re-log at frame rate.
     reporter: martensite_access::paint_audit::LintReporter,
+    /// Frame counter for throttling — the text-overlap pass is
+    /// quadratic in painted texts, so the audit runs every
+    /// `AUDIT_INTERVAL` frames rather than on the frame path.
+    frames: u32,
+}
+
+/// Audit cadence — every 30 frames ≈ 2 Hz at 60 fps. Findings are
+/// still near-live but the O(texts²) overlap pass can't consume the
+/// frame budget.
+const AUDIT_INTERVAL: u32 = 30;
+
+/// Whether the paint audit runs this frame — extracted so the cadence
+/// contract is testable without a GPU context.
+fn audit_due(frames: u32) -> bool {
+    frames.is_multiple_of(AUDIT_INTERVAL)
 }
 
 /// One pooled Vello segment texture: storage target + cached
@@ -324,6 +339,7 @@ impl RenderOrchestrator {
                 Some(PaintAuditState {
                     config: martensite_access::paint_audit::PaintAuditConfig::default(),
                     reporter: martensite_access::paint_audit::LintReporter::new(),
+                    frames: 0,
                 })
             } else {
                 None
@@ -354,10 +370,12 @@ impl RenderOrchestrator {
     }
 
     /// Enables the advisory paint-compliance audit with the given
-    /// configuration. The audit runs on every [`render`](Self::render)
-    /// call and reports each unique finding once via `tracing`. It is
-    /// enabled by default in debug builds (`debug_assertions`) and off in
-    /// release builds.
+    /// configuration. The audit runs every [`AUDIT_INTERVAL`]-th
+    /// [`render`](Self::render) call — the text-overlap pass is
+    /// quadratic, so a per-frame audit would consume the frame
+    /// budget — and reports each unique finding once via `tracing`.
+    /// It is enabled by default in debug builds (`debug_assertions`)
+    /// and off in release builds.
     ///
     /// # Examples
     ///
@@ -372,6 +390,7 @@ impl RenderOrchestrator {
         self.paint_audit = Some(PaintAuditState {
             config,
             reporter: martensite_access::paint_audit::LintReporter::new(),
+            frames: 0,
         });
     }
 
@@ -560,14 +579,18 @@ impl RenderOrchestrator {
         // be painted. Never blocks; findings are deduped and reported via
         // `tracing::warn`. The drawable frame feeds the OutOfFrame check.
         if let Some(audit) = &mut self.paint_audit {
-            audit.config.frame = Some(kurbo::Rect::new(
-                0.0,
-                0.0,
-                f64::from(self.frame_size.0),
-                f64::from(self.frame_size.1),
-            ));
-            let lints = martensite_access::paint_audit::audit_paint_list(paint_list, &audit.config);
-            audit.reporter.report(&lints);
+            audit.frames = audit.frames.wrapping_add(1);
+            if audit_due(audit.frames) {
+                audit.config.frame = Some(kurbo::Rect::new(
+                    0.0,
+                    0.0,
+                    f64::from(self.frame_size.0),
+                    f64::from(self.frame_size.1),
+                ));
+                let lints =
+                    martensite_access::paint_audit::audit_paint_list(paint_list, &audit.config);
+                audit.reporter.report(&lints);
+            }
         }
         let use_cpu = self.config.prefer_cpu
             || (self.config.allow_software_fallback && recovery.is_fallback_cpu());
@@ -1779,6 +1802,22 @@ impl RenderOrchestrator {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn audit_cadence_is_every_interval_frame() {
+        use super::{audit_due, AUDIT_INTERVAL};
+        // Frame 0 is unreachable (`frames` increments before the gate)
+        // but the function itself must report due there — it is the
+        // modulo contract, not a call-site artifact.
+        assert!(audit_due(0));
+        assert!(!audit_due(1));
+        assert!(!audit_due(AUDIT_INTERVAL - 1));
+        assert!(audit_due(AUDIT_INTERVAL));
+        assert!(!audit_due(AUDIT_INTERVAL + 1));
+        assert!(audit_due(AUDIT_INTERVAL * 2));
+        // Wrapping counter must not break the cadence.
+        assert!(audit_due(u32::MAX - (u32::MAX % AUDIT_INTERVAL)));
+    }
+
     use super::*;
     use martensite_render::Rect;
     use std::time::{Duration, Instant};

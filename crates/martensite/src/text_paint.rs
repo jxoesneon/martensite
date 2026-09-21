@@ -355,6 +355,13 @@ pub(crate) fn paint_label_clipped(
     size_px: f32,
     color: [u8; 4],
 ) {
+    // A degenerate or inverted clip provably paints nothing — emitting
+    // the clip+text anyway is dead work the paint audit flags as
+    // clipped text. Narrow widgets (a face too small for its label)
+    // hit this path legitimately.
+    if clip.x1 <= clip.x0 || clip.y1 <= clip.y0 {
+        return;
+    }
     list.push_clip(clip);
     paint_label(painter, list, origin, text, size_px, color);
     list.pop_clip();

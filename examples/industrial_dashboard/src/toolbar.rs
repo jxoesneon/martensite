@@ -364,8 +364,20 @@ impl Widget for Toolbar {
             (SHARE, 64.0 * s),
             (PRINT, 60.0 * s),
         ];
+        // A slot renders only when it fits fully — a partially-shown
+        // control emits text past its own bounds (the paint audit's
+        // clipped-text findings). Slots that can't fit are suspended:
+        // `child_bounds` reports `None`, removing the child from
+        // paint, tick, and hit-testing until the toolbar widens.
         for (i, w) in slots {
-            let r = Rect::new(x, y, w.min(right - x).max(0.0), h);
+            if right - x < w {
+                self.rects[i] = Rect::new(x, y, 0.0, h);
+                if self.key_target == Some(i) {
+                    self.key_target = None;
+                }
+                continue;
+            }
+            let r = Rect::new(x, y, w, h);
             self.rects[i] = r;
             if let Some(c) = self.child_mut_at(i) {
                 cx.layout_child(c, r);
@@ -374,8 +386,12 @@ impl Widget for Toolbar {
         }
         let r = Rect::new(x, y, fw_width(x, right), h);
         self.rects[FILTER] = r;
-        if let Some(c) = self.child_mut_at(FILTER) {
-            cx.layout_child(c, r);
+        if r.width() >= MIN_SLOT_W {
+            if let Some(c) = self.child_mut_at(FILTER) {
+                cx.layout_child(c, r);
+            }
+        } else if self.key_target == Some(FILTER) {
+            self.key_target = None;
         }
     }
 
@@ -545,7 +561,13 @@ impl Widget for Toolbar {
     }
 
     fn child_bounds(&self, index: usize) -> Option<Rect> {
-        self.rects.get(index).copied()
+        // Degenerate slots suspend their child — the paint walk, tick
+        // walk, and default event forwarding all honour `None` as
+        // "not presented".
+        self.rects
+            .get(index)
+            .copied()
+            .filter(|r| r.width() >= MIN_SLOT_W)
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -588,6 +610,10 @@ impl Widget for Toolbar {
 fn fw_width(x: f32, right: f32) -> f32 {
     (right - x).max(0.0)
 }
+
+/// Narrowest slot that still presents a control — below this the slot
+/// is suspended (no paint/tick/events) rather than clipped.
+const MIN_SLOT_W: f32 = 4.0;
 
 #[cfg(test)]
 mod tests {
@@ -642,5 +668,42 @@ mod tests {
         tb.event(&mut cx);
         assert!(!alerts.get(), "stale switch resurrected alerts_on");
         assert!(!tb.alerts.on, "switch not reconciled to external write");
+    }
+
+    #[test]
+    fn narrow_toolbar_suspends_slots_that_cannot_fit() {
+        // The 524 clipped-text findings: right-edge slots painted
+        // labels past their clamped rects. Now a slot renders only
+        // when it fits fully — `child_bounds → None` suspends it.
+        let mut tb = Toolbar::new(Signal::new(1.0), signals());
+        let mut hot = martensite::core::HotNode::default();
+        let mut cx = martensite::core::LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        // ~350pt holds only the first few slots (PAUSE 84 + GLOW 76 +
+        // TICK 180 already exceed it with gaps).
+        tb.layout(&mut cx, Rect::new(0.0, 0.0, 350.0, 40.0));
+
+        let presented: Vec<usize> = (0..N).filter(|&i| tb.child_bounds(i).is_some()).collect();
+        assert!(
+            presented.len() < N,
+            "every slot still presented at 350pt — suspension is broken"
+        );
+        // Presented slots must fit fully inside the toolbar.
+        for i in presented {
+            let r = tb.child_bounds(i).expect("checked");
+            assert!(
+                r.width() >= MIN_SLOT_W && r.max_x() <= 350.0 + 0.01,
+                "slot {i} partially shown: {r:?}"
+            );
+        }
+        // The first slot always fits.
+        assert!(tb.child_bounds(PAUSE).is_some());
+
+        // Widening restores the suspended slots.
+        tb.layout(&mut cx, Rect::new(0.0, 0.0, 1600.0, 40.0));
+        let restored: Vec<usize> = (0..N).filter(|&i| tb.child_bounds(i).is_some()).collect();
+        assert_eq!(restored.len(), N, "slots did not restore at full width");
     }
 }
