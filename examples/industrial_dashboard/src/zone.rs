@@ -33,7 +33,9 @@
 use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect, Widget,
 };
+use martensite::reactive::Signal;
 use martensite::widgets::aspect_frame::AspectFrame;
+use martensite::widgets::disclosure::Disclosure;
 use martensite::widgets::flex::{CrossAxisAlignment, Flex};
 use std::time::Duration;
 
@@ -54,6 +56,19 @@ pub const BAND_L: f32 = 300.0;
 /// Selector strips cap at this many visible entries before overflow
 /// routes to a `Dropdown`.
 pub const MAX_SELECTOR_ENTRIES: usize = 8;
+/// Below this content width (pt) a page's rail stacks under/above the
+/// primary instead of sitting beside it (grammar Δ10).
+pub const RAIL_STACK_W: f32 = 560.0;
+/// Below this content width (pt) the rail collapses into a
+/// user-toggleable `Disclosure` — never under/over the artifact for
+/// left masters: masters stay above, detail rails below.
+pub const RAIL_DISCLOSE_W: f32 = 380.0;
+/// Detail-rail width as a fraction of the wide page body.
+pub const RAIL_FRAC: f32 = 0.34;
+/// Chooser (left-master) width as a fraction — narrower than a rail.
+pub const MASTER_FRAC: f32 = 0.30;
+/// Maximum width of a `Centered` variant's task surface (pt).
+pub const CENTERED_W: f32 = 560.0;
 
 /// Fill-widget guard: a widget that reports a dimension beyond this
 /// (the "echo the offered `f32::MAX`" pattern — drawers, watermarks)
@@ -166,6 +181,587 @@ impl Widget for Band {
         (index == 0).then_some(&mut *self.child)
     }
 
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        (index == 0).then_some(self.bounds)
+    }
+}
+
+/// A scroll mount: content taller than its allotment scrolls inside
+/// the bounded region (smart bars — no chrome when it fits). Use for
+/// detail columns, dossiers, and launcher stacks whose intrinsic
+/// height legitimately exceeds the pane. Never mount a `fill` surface
+/// inside it — weighted children see an unbounded main axis and fall
+/// back to intrinsic size.
+pub fn scroll(w: impl Widget + 'static) -> martensite::widgets::ScrollView {
+    martensite::widgets::ScrollView::new(w)
+}
+
+/// A stretch mount: takes whatever the parent offers on both axes.
+/// The page-grammar's workhorse — primary surfaces mount through
+/// `fill` so a bounded `Tabs` panel distributes real space by
+/// `child_flex` weight instead of fixed band heights. Inside an
+/// unbounded scroller it reports [`FILL_FALLBACK`] (never `f32::MAX`,
+/// so it can sit in a bounded or unbounded context safely — but per
+/// the grammar it must not be mounted inside a `ScrollView`; the
+/// surface scrolls internally when it needs to).
+pub struct Fill {
+    child: Box<dyn Widget>,
+    bounds: Rect,
+}
+
+/// Mount `w` stretched to the offered bounds.
+pub fn fill(w: impl Widget + 'static) -> Fill {
+    Fill {
+        child: Box::new(w),
+        bounds: Rect::default(),
+    }
+}
+
+impl Widget for Fill {
+    fn debug_name(&self) -> &'static str {
+        "Fill"
+    }
+
+    fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> glam::Vec2 {
+        let tame = |v: f32| {
+            if v.is_finite() && v <= MAX_REPORTED_DIM {
+                v.max(0.0)
+            } else {
+                FILL_FALLBACK
+            }
+        };
+        let size = glam::Vec2::new(tame(c.max_size.x), tame(c.max_size.y));
+        self.child.measure(
+            cx,
+            LayoutConstraints {
+                min_size: glam::Vec2::ZERO,
+                max_size: size,
+            },
+        );
+        size
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.bounds = bounds;
+        self.child.measure(
+            cx,
+            LayoutConstraints {
+                min_size: glam::Vec2::ZERO,
+                max_size: bounds.size,
+            },
+        );
+        self.child.layout(cx, bounds);
+    }
+
+    fn accessibility(&self, node: &mut accesskit::Node) {
+        node.set_role(accesskit::Role::Group);
+    }
+
+    fn child_count(&self) -> usize {
+        1
+    }
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        (index == 0).then_some(&*self.child)
+    }
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        (index == 0).then_some(&mut *self.child)
+    }
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        (index == 0).then_some(self.bounds)
+    }
+}
+
+/// Page layout variant — the schema's declared shape, driving how the
+/// rail/master sits relative to the primary surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Variant {
+    /// One dominant surface, no rail (charts theater, terminal).
+    Theater,
+    /// Uniform cell grid, no rail (gauges, cameras wall).
+    Wall,
+    /// Narrow centered task surface (console lock, sign-off).
+    Centered,
+    /// `primary | rail` — the rail is detail-of-selection, collapses
+    /// below the primary.
+    MasterDetail,
+    /// `master | artifact` — the master (chooser) sits left and
+    /// collapses *above* the artifact it selects.
+    MasterLeft,
+}
+
+/// A zone page — the ratified presentation grammar made executable.
+/// Every page declares:
+///
+/// ```text
+/// question — the operator question it answers (doc comment)
+/// variant  — Variant
+/// strip    — optional context strip (filters/selectors/primary verb)
+/// primary  — the dominant surface
+/// rail     — optional detail-of-selection rail (Disclosure-wrapped)
+/// ```
+///
+/// Collapse (reads `zone_width`, published by `ZonePanel::layout`):
+///
+/// - `≥ RAIL_STACK_W` — side by side (rail right / master left).
+/// - `< RAIL_STACK_W` — stacked: detail rail *below*, master *above*.
+/// - `< RAIL_DISCLOSE_W` — the rail/master becomes a user-toggleable
+///   `Disclosure`; masters keep document order before the artifact.
+pub struct Page {
+    variant: Variant,
+    strip: Option<Box<dyn Widget>>,
+    primary: Box<dyn Widget>,
+    /// Rail/master content — always Disclosure-wrapped so the <380pt
+    /// collapse is a state flip, not a re-mount. At ≥ RAIL_DISCLOSE_W
+    /// layout forces it open (a rail can't hide while there's room).
+    rail: Option<Disclosure>,
+    zone_width: Signal<f32>,
+    bounds: Rect,
+    strip_b: Rect,
+    prim_b: Rect,
+    rail_b: Rect,
+}
+
+impl Page {
+    /// `primary` is the dominant surface — mount it through [`fill`]
+    /// (or a widget that fills bounds) so it stretches.
+    pub fn new(variant: Variant, primary: impl Widget + 'static, zone_width: &Signal<f32>) -> Self {
+        Self {
+            variant,
+            strip: None,
+            primary: Box::new(primary),
+            rail: None,
+            zone_width: zone_width.clone(),
+            bounds: Rect::default(),
+            strip_b: Rect::default(),
+            prim_b: Rect::default(),
+            rail_b: Rect::default(),
+        }
+    }
+
+    /// Context strip — filters/selectors/the primary verb only. The
+    /// strip is scroll-mounted so an over-wide control set scrolls
+    /// horizontally instead of crushing trailing controls to 0pt.
+    pub fn strip(mut self, s: impl Widget + 'static) -> Self {
+        self.strip = Some(Box::new(scroll(s)));
+        self
+    }
+
+    /// Detail rail (`MasterDetail`) or chooser (`MasterLeft`) —
+    /// `title` becomes the Disclosure's landmark label. The content
+    /// is scroll-mounted: detail taller than the rail scrolls inside
+    /// the disclosure rather than crushing trailing children.
+    pub fn rail(mut self, title: &str, r: impl Widget + 'static) -> Self {
+        self.rail = Some(Disclosure::new(title.to_string()).child(scroll(r)));
+        self
+    }
+
+    fn child_count_inner(&self) -> usize {
+        self.strip.is_some() as usize + 1 + self.rail.is_some() as usize
+    }
+
+    /// Document order: strip → (master?) → primary → (rail?). For
+    /// `MasterLeft` the rail slot *is* the master, ordered before the
+    /// artifact — selection context always precedes detail.
+    fn order(&self) -> Vec<usize> {
+        let mut v = Vec::new();
+        if self.strip.is_some() {
+            v.push(0);
+        }
+        match self.variant {
+            Variant::MasterLeft => {
+                if self.rail.is_some() {
+                    v.push(2);
+                }
+                v.push(1);
+            }
+            _ => {
+                v.push(1);
+                if self.rail.is_some() {
+                    v.push(2);
+                }
+            }
+        }
+        v
+    }
+
+    fn slot(&self, i: usize) -> Option<&dyn Widget> {
+        match i {
+            0 => self.strip.as_deref(),
+            1 => Some(&*self.primary),
+            2 => self.rail.as_ref().map(|d| d as &dyn Widget),
+            _ => None,
+        }
+    }
+    fn slot_mut(&mut self, i: usize) -> Option<&mut dyn Widget> {
+        match i {
+            0 => self.strip.as_deref_mut(),
+            1 => Some(&mut *self.primary),
+            2 => self.rail.as_mut().map(|d| d as &mut dyn Widget),
+            _ => None,
+        }
+    }
+    fn slot_bounds(&self, i: usize) -> Rect {
+        match i {
+            0 => self.strip_b,
+            1 => self.prim_b,
+            _ => self.rail_b,
+        }
+    }
+}
+
+impl Widget for Page {
+    fn debug_name(&self) -> &'static str {
+        "Page"
+    }
+
+    fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> glam::Vec2 {
+        let w = if c.max_size.x.is_finite() && c.max_size.x <= MAX_REPORTED_DIM {
+            c.max_size.x.max(0.0)
+        } else {
+            FILL_FALLBACK
+        };
+        let strip_h = self
+            .strip
+            .as_mut()
+            .map(|s| {
+                s.measure(
+                    cx,
+                    LayoutConstraints {
+                        min_size: glam::Vec2::ZERO,
+                        max_size: glam::Vec2::new(w, f32::MAX),
+                    },
+                )
+                .y
+            })
+            .unwrap_or(0.0);
+        // Report a bounded intrinsic — the Tabs panel hands real
+        // bounds at layout; measure exists so scroller-style parents
+        // and tests get a sane request instead of f32::MAX.
+        let h = if c.max_size.y.is_finite() && c.max_size.y <= MAX_REPORTED_DIM {
+            c.max_size.y
+        } else {
+            strip_h + FILL_FALLBACK
+        };
+        self.primary.measure(
+            cx,
+            LayoutConstraints {
+                min_size: glam::Vec2::ZERO,
+                max_size: glam::Vec2::new(w, (h - strip_h).max(0.0)),
+            },
+        );
+        if let Some(r) = self.rail.as_mut() {
+            r.measure(
+                cx,
+                LayoutConstraints {
+                    min_size: glam::Vec2::ZERO,
+                    max_size: glam::Vec2::new(w * RAIL_FRAC, (h - strip_h).max(0.0)),
+                },
+            );
+        }
+        glam::Vec2::new(w, h.max(strip_h))
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.bounds = bounds;
+        let s = cx.scale;
+        let w_pt = self
+            .zone_width
+            .get()
+            .max(bounds.width() / s.max(f32::EPSILON));
+        let gap = cx.pt(ZONE_GAP);
+        let pad_top = bounds.min_y();
+
+        // Strip — intrinsic height, full width.
+        let mut body_y = pad_top;
+        if let Some(strip) = self.strip.as_mut() {
+            let h = strip
+                .measure(
+                    cx,
+                    LayoutConstraints {
+                        min_size: glam::Vec2::ZERO,
+                        max_size: glam::Vec2::new(bounds.width(), f32::MAX),
+                    },
+                )
+                .y;
+            self.strip_b = Rect::new(bounds.min_x(), body_y, bounds.width(), h);
+            strip.layout(cx, self.strip_b);
+            body_y += h + gap;
+        } else {
+            self.strip_b = Rect::default();
+        }
+        let body = Rect::new(
+            bounds.min_x(),
+            body_y,
+            bounds.width(),
+            (bounds.max_y() - body_y).max(0.0),
+        );
+
+        let Some(rail) = self.rail.as_mut() else {
+            // Theater / Wall / Centered-without-rail: primary owns body.
+            self.prim_b = if self.variant == Variant::Centered {
+                let cw = body.width().min(cx.pt(CENTERED_W));
+                Rect::new(
+                    body.min_x() + (body.width() - cw) * 0.5,
+                    body.min_y(),
+                    cw,
+                    body.height(),
+                )
+            } else {
+                body
+            };
+            self.rail_b = Rect::default();
+            self.primary.layout(cx, self.prim_b);
+            return;
+        };
+        let wide = w_pt >= RAIL_STACK_W;
+        let narrow = w_pt < RAIL_DISCLOSE_W;
+        if !narrow {
+            // At stacking/wide widths the rail is always open — a rail
+            // only collapses into a toggleable disclosure when there
+            // isn't room to show it.
+            rail.set_open(true);
+        }
+
+        let centered_body = if self.variant == Variant::Centered {
+            let cw = body.width().min(cx.pt(CENTERED_W));
+            Rect::new(
+                body.min_x() + (body.width() - cw) * 0.5,
+                body.min_y(),
+                cw,
+                body.height(),
+            )
+        } else {
+            body
+        };
+        let body = centered_body;
+
+        match (self.variant, wide) {
+            (Variant::MasterLeft, true) => {
+                let mw = body.width() * MASTER_FRAC;
+                self.rail_b = Rect::new(body.min_x(), body.min_y(), mw, body.height());
+                self.prim_b = Rect::new(
+                    body.min_x() + mw + gap,
+                    body.min_y(),
+                    (body.width() - mw - gap).max(0.0),
+                    body.height(),
+                );
+            }
+            (_, true) => {
+                let rw = body.width() * RAIL_FRAC;
+                self.prim_b = Rect::new(
+                    body.min_x(),
+                    body.min_y(),
+                    (body.width() - rw - gap).max(0.0),
+                    body.height(),
+                );
+                self.rail_b = Rect::new(
+                    body.min_x() + body.width() - rw,
+                    body.min_y(),
+                    rw,
+                    body.height(),
+                );
+            }
+            (Variant::MasterLeft, false) => {
+                // Master above the artifact it selects.
+                let mh = body.height() * if narrow { 0.0 } else { 0.38 };
+                if narrow {
+                    // Disclosure header height — measure closed.
+                    let was = rail.open;
+                    rail.set_open(false);
+                    let hh = rail
+                        .measure(
+                            cx,
+                            LayoutConstraints {
+                                min_size: glam::Vec2::ZERO,
+                                max_size: glam::Vec2::new(body.width(), f32::MAX),
+                            },
+                        )
+                        .y;
+                    rail.set_open(was);
+                    let dh = if rail.open { body.height() * 0.5 } else { hh };
+                    self.rail_b = Rect::new(body.min_x(), body.min_y(), body.width(), dh);
+                    self.prim_b = Rect::new(
+                        body.min_x(),
+                        body.min_y() + dh + gap,
+                        body.width(),
+                        (body.height() - dh - gap).max(0.0),
+                    );
+                } else {
+                    self.rail_b = Rect::new(body.min_x(), body.min_y(), body.width(), mh);
+                    self.prim_b = Rect::new(
+                        body.min_x(),
+                        body.min_y() + mh + gap,
+                        body.width(),
+                        (body.height() - mh - gap).max(0.0),
+                    );
+                }
+            }
+            (_, false) => {
+                // Detail rail below the primary.
+                if narrow {
+                    let was = rail.open;
+                    rail.set_open(false);
+                    let hh = rail
+                        .measure(
+                            cx,
+                            LayoutConstraints {
+                                min_size: glam::Vec2::ZERO,
+                                max_size: glam::Vec2::new(body.width(), f32::MAX),
+                            },
+                        )
+                        .y;
+                    rail.set_open(was);
+                    let dh = if rail.open { body.height() * 0.42 } else { hh };
+                    self.rail_b = Rect::new(body.min_x(), body.max_y() - dh, body.width(), dh);
+                    self.prim_b = Rect::new(
+                        body.min_x(),
+                        body.min_y(),
+                        body.width(),
+                        (body.height() - dh - gap).max(0.0),
+                    );
+                } else {
+                    let rh = body.height() * 0.38;
+                    self.prim_b = Rect::new(
+                        body.min_x(),
+                        body.min_y(),
+                        body.width(),
+                        (body.height() - rh - gap).max(0.0),
+                    );
+                    self.rail_b = Rect::new(body.min_x(), body.max_y() - rh, body.width(), rh);
+                }
+            }
+        }
+        self.primary.layout(cx, self.prim_b);
+        rail.layout(cx, self.rail_b);
+    }
+
+    fn paint(&self, _cx: &mut PaintContext) {}
+
+    fn clips_children(&self) -> bool {
+        true
+    }
+
+    fn accessibility(&self, node: &mut accesskit::Node) {
+        node.set_role(accesskit::Role::Group);
+    }
+
+    fn child_count(&self) -> usize {
+        self.child_count_inner()
+    }
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        self.order().get(index).and_then(|&s| self.slot(s))
+    }
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        self.order().get(index).and_then(|&s| self.slot_mut(s))
+    }
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        self.order().get(index).map(|&s| self.slot_bounds(s))
+    }
+}
+
+/// Exclusive view swapper — exactly one child visible at a time,
+/// selected by a `Signal<usize>`. All views stay mounted and laid
+/// out, so selection/scroll/focus state survives a swap (the
+/// grammar's "state carries across selector swaps" rule). The
+/// context-strip `Segmented` writes the signal; hidden views are
+/// inert (no events, no paint, no a11y children).
+pub struct Swap {
+    views: Vec<Box<dyn Widget>>,
+    sel: Signal<usize>,
+    bounds: Rect,
+    active: usize,
+}
+
+impl Swap {
+    /// `sel` is the view index signal — a strip `Segmented` writes it.
+    pub fn new(sel: &Signal<usize>) -> Self {
+        Self {
+            views: Vec::new(),
+            sel: sel.clone(),
+            bounds: Rect::default(),
+            active: 0,
+        }
+    }
+
+    /// Add a view; index order matches the selector's option order.
+    pub fn view(mut self, w: impl Widget + 'static) -> Self {
+        self.views.push(Box::new(w));
+        self
+    }
+}
+
+impl Widget for Swap {
+    fn debug_name(&self) -> &'static str {
+        "Swap"
+    }
+
+    fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> glam::Vec2 {
+        let mut size = glam::Vec2::ZERO;
+        for v in self.views.iter_mut() {
+            let s = v.measure(cx, c);
+            size = size.max(s);
+        }
+        size
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.bounds = bounds;
+        self.active = self.sel.get().min(self.views.len().saturating_sub(1));
+        // Every view gets real bounds — a hidden view swapped in later
+        // must not surface with stale/zero geometry.
+        for v in self.views.iter_mut() {
+            v.layout(cx, bounds);
+        }
+    }
+
+    fn paint(&self, _cx: &mut PaintContext) {}
+
+    fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        match self.views.get_mut(self.active) {
+            Some(v) => v.event(cx),
+            None => EventResponse::Ignored,
+        }
+    }
+
+    fn tick(&mut self, dt: Duration) -> bool {
+        let sel = self.sel.get().min(self.views.len().saturating_sub(1));
+        let swapped = sel != self.active;
+        self.active = sel;
+        let mut dirty = swapped;
+        // Only the visible view ticks — hidden views are suspended,
+        // matching the Tabs pages' suspend-inactive invariant.
+        if let Some(v) = self.views.get_mut(self.active) {
+            dirty |= v.tick(dt);
+        }
+        dirty
+    }
+
+    fn clips_children(&self) -> bool {
+        true
+    }
+
+    fn accessibility(&self, node: &mut accesskit::Node) {
+        node.set_role(accesskit::Role::Group);
+    }
+
+    fn child_count(&self) -> usize {
+        // Only the active view is an a11y/hit-test child — hidden
+        // views are inert (the hidden-tab-panel rule, applied to
+        // in-page swaps).
+        usize::from(self.active < self.views.len())
+    }
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        (index == 0)
+            .then(|| self.views.get(self.active))
+            .flatten()
+            .map(|v| &**v)
+    }
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        (index == 0)
+            .then(|| self.views.get_mut(self.active))
+            .flatten()
+            .map(|v| &mut **v)
+    }
     fn child_bounds(&self, index: usize) -> Option<Rect> {
         (index == 0).then_some(self.bounds)
     }
@@ -303,13 +899,21 @@ impl<W: Widget> Widget for Bound<W> {
         // signature-gated, so the common case is a no-op reflect.
         if self.has_push {
             if let Some((bounds, scale)) = self.last_layout {
-                self.widget.layout(
-                    &mut LayoutContext {
-                        hot: &mut self.scratch_hot,
-                        scale,
+                let mut lcx = LayoutContext {
+                    hot: &mut self.scratch_hot,
+                    scale,
+                };
+                // A `*w = build(m)` re-seat produces a widget whose
+                // layout caches (Flex::child_sizes, …) are empty —
+                // measure first or every child lays out at ZERO.
+                self.widget.measure(
+                    &mut lcx,
+                    LayoutConstraints {
+                        min_size: glam::Vec2::ZERO,
+                        max_size: bounds.size,
                     },
-                    bounds,
                 );
+                self.widget.layout(&mut lcx, bounds);
             }
         }
         dirty || self.has_push
@@ -516,6 +1120,96 @@ mod tests {
         b.layout(&mut cx, bounds);
         assert_eq!(layouts.load(Ordering::Relaxed), 1);
         assert_eq!(b.child_bounds(0), Some(bounds));
+    }
+
+    /// A re-seated Flex must lay children out at real bounds — the
+    /// push relayout path measures first, so a swapped-in widget
+    /// never paints with zeroed caches.
+    #[test]
+    fn reseated_flex_children_get_real_bounds() {
+        use martensite::widgets::button::Button;
+        use martensite::widgets::flex::Flex;
+        let m = model();
+        let mut b = Bound::new(
+            Flex::column()
+                .gap(ZONE_GAP)
+                .child_flex(Button::new("a"), 1.0)
+                .child(Button::new("b")),
+            &m,
+        )
+        .push(move |w: &mut Flex, m| {
+            if m.selected_asset.get().is_some() {
+                *w = Flex::column()
+                    .gap(ZONE_GAP)
+                    .child_flex(Button::new("x"), 1.0)
+                    .child(Button::new("y"));
+            }
+        });
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        let bounds = Rect::new(0.0, 0.0, 300.0, 200.0);
+        b.layout(&mut cx, bounds);
+        m.selected_asset.set(Some(1));
+        b.tick(Duration::from_millis(16));
+        let h0 = b.child_bounds(0).map(|r| r.size.y).unwrap_or(-1.0);
+        assert!(h0 > 100.0, "re-seated flex child 0 got height {h0}");
+    }
+
+    /// The Page + Swap + weighted-Flex stack from the zone pages:
+    /// children must receive real bounds after a tick re-seat.
+    #[test]
+    fn page_swap_children_get_real_bounds() {
+        use martensite::widgets::button::Button;
+        use martensite::widgets::flex::Flex;
+        let m = model();
+        let sel = Signal::new(0usize);
+        // Mirror the register column: Bound-wrapped weighted + plain
+        // children, matching the zone-page composition exactly.
+        let big = Bound::new(Button::new("big"), &m).push(|w: &mut Button, m| {
+            let _ = m;
+            let _ = w;
+        });
+        let view = Flex::column()
+            .gap(ZONE_GAP)
+            .child_flex(big, 1.0)
+            .child(Bound::new(Button::new("small"), &m));
+        let rail_col = Flex::column()
+            .gap(ZONE_GAP)
+            .child(Button::new("rail-a"))
+            .child_flex(Button::new("rail-b"), 1.0);
+        let mut page = Page::new(
+            Variant::MasterDetail,
+            fill(Swap::new(&sel).view(view)),
+            &m.zone_width,
+        )
+        .strip(strip().child(Button::new("s")))
+        .rail("R", rail_col);
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        // Arena order: measure, layout, tick.
+        page.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: glam::Vec2::ZERO,
+                max_size: glam::Vec2::new(926.0, 205.0),
+            },
+        );
+        page.layout(&mut cx, Rect::new(0.0, 0.0, 926.0, 205.0));
+        page.tick(Duration::from_millis(16));
+        // children: strip(0), primary(1), rail(2)
+        for i in 0..page.child_count() {
+            eprintln!("child {i} -> {:?}", page.child_bounds(i));
+        }
+        let prim = page.child_bounds(1).expect("primary");
+        assert!(prim.size.y > 50.0, "primary height {}", prim.size.y);
+        let rail = page.child_bounds(2).expect("rail");
+        assert!(rail.size.y > 50.0, "rail height {}", rail.size.y);
     }
 
     #[test]

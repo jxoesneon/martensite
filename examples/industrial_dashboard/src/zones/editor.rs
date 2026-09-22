@@ -81,8 +81,10 @@ use martensite::widgets::hue_slider::HueSlider;
 use martensite::widgets::ink_canvas::InkCanvas;
 use martensite::widgets::inline_edit::InlineEdit;
 use martensite::widgets::keypad::Keypad;
+use martensite::widgets::list_view::{ListView, SelectionMode};
 use martensite::widgets::menu::MenuItem;
 use martensite::widgets::menu_bar::MenuBar;
+use martensite::widgets::nav_rail::NavRail;
 use martensite::widgets::otp_input::OtpInput;
 use martensite::widgets::password_strength::PasswordStrength;
 use martensite::widgets::pattern_lock::PatternLock;
@@ -98,7 +100,6 @@ use martensite::widgets::speed_dial::SpeedDial;
 use martensite::widgets::spinbox::SpinBox;
 use martensite::widgets::status_dot::{Status as DotStatus, StatusDot};
 use martensite::widgets::switch::Switch;
-use martensite::widgets::tabs::Tabs;
 use martensite::widgets::text::Text;
 use martensite::widgets::text_area::TextArea;
 use martensite::widgets::text_input::TextInput;
@@ -109,7 +110,9 @@ use martensite::widgets::wheel_picker::WheelPicker;
 use parking_lot::Mutex;
 
 use crate::domain::{Asset, MaintTask, PlantModel, WoPriority, WoStatus, WorkOrder};
-use crate::zone::{band, framed, row, strip, Bound, BAND_L, BAND_M, BAND_S, ZONE_GAP, ZONE_STACK};
+use crate::zone::{
+    band, framed, row, strip, Bound, Page, Swap, Variant, BAND_M, BAND_S, ZONE_GAP, ZONE_STACK,
+};
 use martensite::core::widget::DummyWidget;
 
 // ---------------------------------------------------------------------------
@@ -302,6 +305,8 @@ fn dispatch(m: &PlantModel, cmd: Cmd) {
                 due_day: 0,
                 progress: 0.0,
                 notes: String::new(),
+                signature: None,
+                photo: None,
             });
             m.work_orders.set(wos);
             m.selected_wo.set(Some(id));
@@ -350,7 +355,7 @@ fn dispatch(m: &PlantModel, cmd: Cmd) {
 // WORK ORDER FORM — the inspector. Every field writes `update_wo`.
 // ---------------------------------------------------------------------------
 
-fn work_order_form(model: &PlantModel) -> Flex {
+fn work_order_form(model: &PlantModel) -> Page {
     // Live inspector card — rebuilt only when the shown summary moves.
     let header = Bound::new(
         Descriptions::new()
@@ -753,7 +758,7 @@ fn work_order_form(model: &PlantModel) -> Flex {
         }
     });
 
-    Flex::column()
+    let primary = Flex::column()
         .gap(ZONE_STACK)
         .child(header)
         .child(
@@ -788,7 +793,15 @@ fn work_order_form(model: &PlantModel) -> Flex {
                 .child(done)
                 .child(reopen)
                 .child_flex(DummyWidget, 1.0),
-        )
+        );
+    Page::new(
+        Variant::MasterDetail,
+        // A form column taller than a short zone — scroll-mounted so
+        // the footer buttons never crush to zero.
+        crate::zone::fill(crate::zone::scroll(primary)),
+        &model.zone_width,
+    )
+    .rail("Work order", wo_rail(model))
 }
 
 /// The progress slider's binding, factored out so tests can drive the
@@ -831,7 +844,7 @@ fn progress_slider(model: &PlantModel, initial: f64) -> Bound<Slider> {
 // SCHEDULING — due_day views, task window, shift clock.
 // ---------------------------------------------------------------------------
 
-fn scheduling(model: &PlantModel) -> Flex {
+fn scheduling(model: &PlantModel) -> Page {
     let wo0 = sel_wo(model);
     let due0 = wo0.as_ref().map(|w| w.due_day).unwrap_or(0);
 
@@ -997,7 +1010,7 @@ fn scheduling(model: &PlantModel) -> Flex {
         }
     });
 
-    Flex::column()
+    let primary = Flex::column()
         .gap(ZONE_STACK)
         .child(hint(
             "due date, weekday drum, and the month grid edit one field — selected WO due_day",
@@ -1015,14 +1028,26 @@ fn scheduling(model: &PlantModel) -> Flex {
                 .child(field("TASK WINDOW", range))
                 .child(field("SHIFT CLOCK", clock))
                 .child_flex(DummyWidget, 1.0),
-        )
+        );
+    Page::new(
+        Variant::MasterDetail,
+        // Form column — scroll-mounted so a short zone scrolls rather
+        // than crushing the trailing rows.
+        crate::zone::fill(crate::zone::scroll(primary)),
+        &model.zone_width,
+    )
+    .rail("Work order", wo_rail(model))
 }
 
 // ---------------------------------------------------------------------------
 // APPEARANCE — console preferences + the accent color suite.
 // ---------------------------------------------------------------------------
 
-fn appearance(model: &PlantModel) -> Flex {
+/// APPEARANCE — "how does this console look and behave?" MasterLeft:
+/// a section rail (Typography | Behavior | Accent) selects the
+/// detail surface via `editor_section`; the accent suite edits one
+/// `editor_accent` signal so every picker stays in sync.
+fn appearance(model: &PlantModel) -> Page {
     let font0 = model.editor_font_pt.get();
 
     // Font size — two controls on one signal (they stay in sync).
@@ -1272,15 +1297,41 @@ fn appearance(model: &PlantModel) -> Flex {
         }
     });
 
-    Flex::column()
-        .gap(ZONE_STACK)
-        .child(
-            strip()
-                .child(field("FONT PT", font_spin))
-                .child(field("FONT PT", font_slide))
-                .child(font_btn)
-                .child_flex(DummyWidget, 1.0),
+    // Section rail — `editor_section` names the detail surface.
+    let sec_sel = Signal::new(model.editor_section.get() as usize);
+    let nav = {
+        let ss = sec_sel.clone();
+        Bound::new(
+            NavRail::new()
+                .destination("Aa", "Typography")
+                .destination("⚙", "Behavior")
+                .destination("◐", "Accent")
+                .selected(sec_sel.get()),
+            model,
         )
+        .pull(move |w: &mut NavRail, m| {
+            if let Some(i) = w.take_activated() {
+                ss.set_if_changed(i);
+                m.editor_section.set_if_changed(i as u8);
+            }
+        })
+        .push(move |w: &mut NavRail, m| {
+            let s = m.editor_section.get() as usize;
+            if w.selected_index() != Some(s) {
+                w.set_selected(Some(s));
+            }
+        })
+    };
+
+    let typography = Flex::column().gap(ZONE_GAP).child(
+        strip()
+            .child(field("FONT PT", font_spin))
+            .child(field("FONT PT", font_slide))
+            .child(font_btn)
+            .child_flex(DummyWidget, 1.0),
+    );
+    let behavior = Flex::column()
+        .gap(ZONE_GAP)
         .child(
             strip()
                 .child(autosave)
@@ -1289,7 +1340,9 @@ fn appearance(model: &PlantModel) -> Flex {
                 .child(alerts)
                 .child_flex(DummyWidget, 1.0),
         )
-        .child(strip().child(tour).child_flex(DummyWidget, 1.0))
+        .child(strip().child(tour).child_flex(DummyWidget, 1.0));
+    let accent = Flex::column()
+        .gap(ZONE_GAP)
         .child(hint(
             "the whole color suite edits the single console accent — every picker stays in sync",
         ))
@@ -1306,7 +1359,19 @@ fn appearance(model: &PlantModel) -> Flex {
                 .child(field("SWATCHES", palette))
                 .child(accent_btn)
                 .child_flex(DummyWidget, 1.0),
-        )
+        );
+
+    let primary = Swap::new(&sec_sel)
+        .view(typography)
+        .view(behavior)
+        .view(accent);
+
+    Page::new(
+        Variant::MasterLeft,
+        crate::zone::fill(primary),
+        &model.zone_width,
+    )
+    .rail("Section", nav)
 }
 
 /// A `Bound<Switch>` on a boolean signal — the slot reconcile shared
@@ -1383,7 +1448,13 @@ fn toggle_check(
 // COMMAND SURFACE — one action set, mutually-exclusive alternates.
 // ---------------------------------------------------------------------------
 
-fn command_surface(model: &PlantModel) -> Flex {
+/// CHROME — "which command surface fits this job?" Master-detail |
+/// strip: chrome selector (Bars | Overlays | Launchers | Actions)
+/// writes `active_chrome` | primary: the selected chrome, live |
+/// rail: the `commands` registry filtered to the active chrome —
+/// activating an entry routes it through `dispatch` like the real
+/// surface would.
+fn command_surface(model: &PlantModel) -> Page {
     // Primary: MenuBar + Toolbar dispatch the same action set.
     let menubar = Bound::new(
         MenuBar::new().menu(
@@ -1523,13 +1594,6 @@ fn command_surface(model: &PlantModel) -> Flex {
         }),
     );
 
-    let alternates = Tabs::new()
-        .tab("PALETTE", palette)
-        .tab("RADIAL", radial)
-        .tab("DIAL", dial)
-        .tab("FAB", fab)
-        .tab("RIBBON", ribbon);
-
     // Context menu on the selected asset + a confirmed destructive
     // action + a command link — same action set, asset-scoped.
     let asset_ctx = Bound::new(
@@ -1624,14 +1688,49 @@ fn command_surface(model: &PlantModel) -> Flex {
         }
     });
 
-    Flex::column()
-        .gap(ZONE_STACK)
-        .child(hint(
-            "menu bar + toolbar are the primary system — tabs mount ONE alternate at a time",
-        ))
+    // Chrome selector — `active_chrome` names the previewed surface.
+    let chrome_sel = Signal::new(model.active_chrome.get() as usize);
+    let chrome_view = {
+        let cs = chrome_sel.clone();
+        Bound::new(
+            Segmented::new()
+                .options(["Bars", "Overlays", "Launchers", "Actions"])
+                .selected(chrome_sel.get())
+                .label("chrome"),
+            model,
+        )
+        .pull(move |w: &mut Segmented, m| {
+            if let Some(i) = w.take_selected() {
+                cs.set_if_changed(i);
+                m.active_chrome.set_if_changed(i as u8);
+            }
+        })
+        .push(move |w: &mut Segmented, m| {
+            let s = m.active_chrome.get() as usize;
+            if w.selected_index() != s {
+                w.set_selected(s);
+            }
+        })
+    };
+
+    // Primary — one chrome at a time, selected by the strip.
+    let bars = Flex::column()
+        .gap(ZONE_GAP)
+        .child(hint("menu bar + toolbar dispatch the same verbs"))
         .child(strip().child_flex(menubar, 1.0))
-        .child(strip().child_flex(toolbar, 1.0))
-        .child(band(BAND_L, alternates))
+        .child(strip().child_flex(toolbar, 1.0));
+    let overlays = Flex::column()
+        .gap(ZONE_GAP)
+        .child(hint("overlay idioms — invoked, never docked"))
+        .child_flex(band(BAND_M, palette), 1.0)
+        .child(
+            row()
+                .child_flex(band(BAND_M, radial), 1.0)
+                .child_flex(band(BAND_M, dial), 1.0),
+        );
+    let launchers = Flex::column()
+        .gap(ZONE_GAP)
+        .child(hint("right-click the context card; trip needs a confirm"))
         .child(
             strip()
                 .child(asset_ctx)
@@ -1639,6 +1738,10 @@ fn command_surface(model: &PlantModel) -> Flex {
                 .child(ack_link)
                 .child_flex(DummyWidget, 1.0),
         )
+        .child(strip().child(fab).child_flex(ribbon, 1.0));
+    let actions = Flex::column()
+        .gap(ZONE_GAP)
+        .child(hint("the same verbs as plain buttons"))
         .child(
             strip()
                 .child(ack_btn)
@@ -1646,7 +1749,93 @@ fn command_surface(model: &PlantModel) -> Flex {
                 .child(lock_btn)
                 .child(new_btn)
                 .child_flex(DummyWidget, 1.0),
-        )
+        );
+    let primary = Swap::new(&chrome_sel)
+        .view(bars)
+        .view(overlays)
+        .view(launchers)
+        .view(actions);
+
+    // Rail — the command registry filtered to the active chrome's
+    // bits; activation routes through `dispatch` (real write path).
+    let registry = {
+        fn bit_of(sel: usize) -> u8 {
+            match sel {
+                0 => 0b001000, // Bars → menubar(+toolbar shares it)
+                1 => 0b010001, // Overlays → palette + radial
+                2 => 0b000100, // Launchers → context
+                _ => 0b111111, // Actions → everything
+            }
+        }
+        fn items_of(m: &PlantModel, sel: usize) -> Vec<String> {
+            let bit = bit_of(sel);
+            m.commands
+                .get()
+                .iter()
+                .filter(|c| c.chromes & bit != 0)
+                .map(|c| c.label.to_string())
+                .collect()
+        }
+        let cs = chrome_sel.clone();
+        let cs2 = chrome_sel.clone();
+        let mut last = (chrome_sel.get(), usize::MAX);
+        let mut lv = ListView::new()
+            .items(items_of(model, chrome_sel.get()))
+            .selection_mode(SelectionMode::Single)
+            .label("command registry");
+        lv.set_selected(0);
+        Bound::new(lv, model)
+            .pull(move |w: &mut ListView, m| {
+                if let Some(i) = w.take_activated().or_else(|| w.selected()) {
+                    let bit = bit_of(cs.get());
+                    let ids: Vec<&'static str> = m
+                        .commands
+                        .get()
+                        .iter()
+                        .filter(|c| c.chromes & bit != 0)
+                        .map(|c| c.id)
+                        .collect();
+                    if let Some(id) = ids.get(i) {
+                        if let Some(cmd) = cmd_of(id) {
+                            dispatch(m, cmd);
+                        } else {
+                            m.log(usize::MAX, format!("command {id} routed"));
+                        }
+                    }
+                }
+            })
+            .push(move |w: &mut ListView, m| {
+                let k = (cs2.get(), m.commands.get().len());
+                if k != last {
+                    last = k;
+                    w.set_items(items_of(m, cs2.get()));
+                }
+            })
+    };
+
+    Page::new(
+        Variant::MasterDetail,
+        crate::zone::fill(primary),
+        &model.zone_width,
+    )
+    .strip(strip().child(chrome_view).child_flex(DummyWidget, 1.0))
+    .rail("Commands", registry)
+}
+
+/// Registry id → `Cmd` — the CHROME rail's dispatch mapping. Returns
+/// `None` for registry entries with no direct verb (navigation,
+/// filters) — those log instead.
+fn cmd_of(id: &str) -> Option<Cmd> {
+    Some(match id {
+        "wo.new" => Cmd::NewWo,
+        "alarm.ack" => Cmd::AckAll,
+        "line.toggle" => Cmd::ToggleLine,
+        "line.trip" => Cmd::TripLine,
+        "lock.toggle" => Cmd::LockConsole,
+        "asset.inspect" => Cmd::InspectAsset,
+        "asset.diagnose" => Cmd::Diagnose,
+        _ => return None,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1659,7 +1848,7 @@ const CONSOLE_PIN: &str = "4471";
 const CONSOLE_OTP: &str = "447100";
 const CONSOLE_PW: &str = "martensite";
 
-fn console_lock(model: &PlantModel) -> Flex {
+fn console_lock(model: &PlantModel) -> Page {
     // Status — the lock indicator reflects console_locked.
     let status = Bound::new(
         StatusDot::new("CONSOLE — ACTIVE").status(DotStatus::Ok),
@@ -1791,7 +1980,7 @@ fn console_lock(model: &PlantModel) -> Flex {
         }
     });
 
-    Flex::column()
+    let primary = Flex::column()
         .gap(ZONE_STACK)
         .child(
             strip()
@@ -1816,17 +2005,24 @@ fn console_lock(model: &PlantModel) -> Flex {
         .child(
             strip()
                 .child(field("OTP", otp))
-                .child(field("PASSWORD", password))
-                .child(strength)
-                .child_flex(DummyWidget, 1.0),
+                .child_flex(field("PASSWORD", password), 1.0),
         )
+        // The strength meter sits under the password field — the
+        // standard pairing — not squeezed into the field row where an
+        // over-wide strip crushes it to zero width.
+        .child(strip().child_flex(strength, 1.0));
+    Page::new(
+        Variant::Centered,
+        crate::zone::fill(crate::zone::scroll(primary)),
+        &model.zone_width,
+    )
 }
 
 // ---------------------------------------------------------------------------
 // ANNOTATION & SIGN-OFF — markup, crop memory, supervisor signature.
 // ---------------------------------------------------------------------------
 
-fn annotation(model: &PlantModel) -> Flex {
+fn annotation(model: &PlantModel) -> Page {
     let asset0 = model.selected_asset.get();
     let target = live_text(model, |m| {
         match m.selected_asset.get().map(|id| (id, m.asset_name(id))) {
@@ -1905,6 +2101,7 @@ fn annotation(model: &PlantModel) -> Flex {
             };
             let was_review = wo.status == WoStatus::Review;
             m.update_wo(|wo| {
+                wo.signature = Some(crate::domain::Signature::Ink);
                 wo.status = WoStatus::Review;
                 for item in wo.checklist.iter_mut() {
                     if item.0.contains("Sign-off") || item.0.contains("sign-off") {
@@ -1944,6 +2141,12 @@ fn annotation(model: &PlantModel) -> Flex {
             while let Some(r) = w.take_changed() {
                 if let Some(id) = m.selected_asset.get() {
                     crops.lock().insert(id, r);
+                    m.update_wo(|wo| {
+                        wo.photo = Some(format!(
+                            "crop@{id}:{:.2},{:.2},{:.2},{:.2}",
+                            r.0, r.1, r.2, r.3
+                        ));
+                    });
                 }
             }
         }
@@ -1964,7 +2167,7 @@ fn annotation(model: &PlantModel) -> Flex {
         }
     });
 
-    Flex::column()
+    let primary = Flex::column()
         .gap(ZONE_STACK)
         .child(target)
         .child(
@@ -1974,9 +2177,14 @@ fn annotation(model: &PlantModel) -> Flex {
         )
         .child(
             row()
-                .child_flex(field("SIGN-OFF", band(BAND_M, signoff)), 1.0)
-                .child_flex(field("PHOTO CROP", band(BAND_M, crop)), 1.0),
-        )
+                .child_flex(field("SIGN-OFF", band(BAND_M, signoff)), 3.0)
+                .child_flex(field("PHOTO CROP", band(BAND_M, crop)), 2.0),
+        );
+    Page::new(
+        Variant::Centered,
+        crate::zone::fill(primary),
+        &model.zone_width,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -2035,7 +2243,9 @@ fn find_asset(m: &PlantModel, q: &str) -> Option<Asset> {
         })
 }
 
-fn lookup(model: &PlantModel) -> Flex {
+/// The scan/lookup station — mounted as DETAIL's "Scan" dossier
+/// lens (Process Grid zone), not a standalone page.
+pub(crate) fn scan_lookup(model: &PlantModel) -> Flex {
     // Search — live grid filter + submit = the "scan" lookup.
     let search = Bound::new(
         SearchField::new()
@@ -2218,15 +2428,78 @@ fn asset_options(m: &PlantModel) -> Vec<CascaderOption> {
 /// Domain-named zone pages for the Editor panel — `(tab label, page
 /// column)` pairs. Tab labels are DOMAIN names ("WORK ORDER FORM"),
 /// never widget names.
-pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
+///
+/// The shared `selected_wo` rail — chooser + readout. WORK ORDER and
+/// SCHEDULING both edit the selected order, so both carry it.
+fn wo_rail(model: &PlantModel) -> Flex {
+    let pick = {
+        let build = |m: &PlantModel| {
+            Dropdown::new(m.work_orders.get().iter().map(|w| format!("WO-{}", w.id)))
+                .label("work order")
+        };
+        let mut last = wo_sig(model);
+        let mut last_i = usize::MAX;
+        Bound::new(build(model), model)
+            .pull(move |w: &mut Dropdown, m| {
+                let i = w.selected();
+                if i != last_i {
+                    last_i = i;
+                    if let Some(wo) = m.work_orders.get().get(i) {
+                        m.selected_wo.set_if_changed(Some(wo.id));
+                    }
+                }
+            })
+            .push(move |w: &mut Dropdown, m| {
+                let s = wo_sig(m);
+                if s != last {
+                    last = s;
+                    *w = build(m);
+                    if let Some(i) = m
+                        .selected_wo
+                        .get()
+                        .and_then(|id| m.work_orders.get().iter().position(|w| w.id == id))
+                    {
+                        w.commit(i);
+                    }
+                }
+            })
+    };
+    let detail = Bound::new(Descriptions::new(), model).push(|d: &mut Descriptions, m| {
+        *d = match sel_wo(m) {
+            Some(w) => Descriptions::new()
+                .title(format!("WO-{}", w.id))
+                .bordered(true)
+                .item("asset", m.asset_name(w.asset))
+                .item("status", w.status.label())
+                .item("priority", w.priority.label())
+                .item("due", format!("day {}", w.due_day + 1)),
+            None => Descriptions::new()
+                .title("WO")
+                .item("state", "none selected"),
+        };
+    });
+    Flex::column().gap(ZONE_GAP).child(pick).child(detail)
+}
+
+/// `work_orders` store signature for rail re-seats.
+fn wo_sig(m: &PlantModel) -> u64 {
+    let wos = m.work_orders.get();
+    let mut h = 0xcbf29ce484222325u64;
+    for w in &wos {
+        h = (h ^ w.id as u64).wrapping_mul(0x100000001b3);
+        h = (h ^ w.status as u64).wrapping_mul(0x100000001b3);
+    }
+    h ^ wos.len() as u64
+}
+
+pub fn pages(model: &PlantModel) -> Vec<(&'static str, Page)> {
     vec![
         ("WORK ORDER", work_order_form(model)),
         ("SCHEDULING", scheduling(model)),
         ("APPEARANCE", appearance(model)),
-        ("COMMANDS", command_surface(model)),
+        ("CHROME", command_surface(model)),
         ("CONSOLE LOCK", console_lock(model)),
         ("SIGN-OFF", annotation(model)),
-        ("SCAN", lookup(model)),
     ]
 }
 
@@ -2255,7 +2528,7 @@ mod tests {
     fn pages_are_domain_named() {
         let m = model();
         let pages = pages(&m);
-        assert_eq!(pages.len(), 7);
+        assert_eq!(pages.len(), 6);
         for (label, _page) in &pages {
             assert!(
                 !label.is_empty() && label.chars().all(|c| !c.is_lowercase()),

@@ -41,13 +41,15 @@ const TICK: usize = 2;
 const THEME: usize = 3;
 const SEP: usize = 4;
 const ALERTS: usize = 5;
-const ABOUT: usize = 6;
-const INSPECTOR: usize = 7;
-const CONSOLE: usize = 8;
-const SHARE: usize = 9;
-const PRINT: usize = 10;
-const FILTER: usize = 11;
-const N: usize = 12;
+const COMMANDS: usize = 6;
+const BELL: usize = 7;
+const ABOUT: usize = 8;
+const INSPECTOR: usize = 9;
+const CONSOLE: usize = 10;
+const SHARE: usize = 11;
+const PRINT: usize = 12;
+const FILTER: usize = 13;
+const N: usize = 14;
 
 /// Outcome signals shared between the toolbar and the app — clones
 /// share the same cells, so both sides observe state without
@@ -68,6 +70,12 @@ pub struct ToolbarSignals {
     /// Row-alert strip toggle — `TelemetryPanel` shows its `Banner`
     /// while set; the switch writes, the banner's × clears.
     pub alerts_on: Signal<bool>,
+    /// "Commands" pressed — the app navigates to Editor ▸ CHROME
+    /// (the `CommandPalette` surface).
+    pub commands_req: Signal<bool>,
+    /// "Alerts" pressed — the app navigates to Media ▸ COMMS (the
+    /// `NotificationCenter` announcements surface).
+    pub bell_req: Signal<bool>,
     /// "About" pressed — `ShellOverlays` opens the modal dialog.
     pub about_req: Signal<bool>,
     /// "Inspector" pressed — `ShellOverlays` opens the drawer.
@@ -107,6 +115,10 @@ pub struct Toolbar {
     share_armed: bool,
     /// See `about_armed` — release inside fires the print request.
     print_armed: bool,
+    /// See `about_armed` — release inside fires the commands request.
+    commands_armed: bool,
+    /// See `about_armed` — release inside fires the bell request.
+    bell_armed: bool,
     /// Child currently holding a pointer press. While set, positional
     /// events forward to it regardless of hit position — captured
     /// drags (slider thumb, text-input drag-select) leave every child
@@ -118,6 +130,8 @@ pub struct Toolbar {
     theme: Dropdown,
     sep: Separator,
     alerts: Switch,
+    commands: Button,
+    bell: Button,
     about: Button,
     inspector: Button,
     console: Button,
@@ -141,6 +155,10 @@ pub struct Toolbar {
     /// Row-alert strip toggle — `TelemetryPanel` shows its `Banner`
     /// while set; the switch writes, the banner's × clears.
     alerts_on: Signal<bool>,
+    /// "Commands" pressed — navigate to the `CommandPalette` surface.
+    commands_req: Signal<bool>,
+    /// "Alerts" pressed — navigate to the `NotificationCenter` surface.
+    bell_req: Signal<bool>,
     /// "About" pressed — `ShellOverlays` opens the modal dialog.
     about_req: Signal<bool>,
     /// "Inspector" pressed — `ShellOverlays` opens the drawer.
@@ -168,6 +186,8 @@ impl Toolbar {
             theme_sel,
             filter_text,
             alerts_on,
+            commands_req,
+            bell_req,
             about_req,
             inspector_req,
             console_req,
@@ -190,6 +210,8 @@ impl Toolbar {
             console_armed: false,
             share_armed: false,
             print_armed: false,
+            commands_armed: false,
+            bell_armed: false,
             press_target: None,
             pause: Button::new("Pause").tooltip("pause telemetry (Space in Telemetry works too)"),
             glow: CheckBox::new("glow").checked(glow_on.get()),
@@ -204,6 +226,8 @@ impl Toolbar {
             },
             sep: Separator::vertical(),
             alerts: Switch::new("alerts").on(alerts_on.get()),
+            commands: Button::new("⌘ Commands").tooltip("command palette — Editor ▸ CHROME"),
+            bell: Button::new("Alerts").tooltip("announcements — Media ▸ COMMS"),
             about: Button::new("About…").tooltip("modal dialog — scrim + input block"),
             inspector: Button::new("Inspector").tooltip("edge drawer — scrim-tap dismisses"),
             console: Button::new("Console").tooltip("secondary OS window — real surface"),
@@ -219,6 +243,8 @@ impl Toolbar {
             theme_sel,
             filter_text,
             alerts_on,
+            commands_req,
+            bell_req,
             about_req,
             inspector_req,
             console_req,
@@ -276,6 +302,8 @@ impl Toolbar {
             THEME => Some(&mut self.theme),
             SEP => Some(&mut self.sep),
             ALERTS => Some(&mut self.alerts),
+            COMMANDS => Some(&mut self.commands),
+            BELL => Some(&mut self.bell),
             ABOUT => Some(&mut self.about),
             INSPECTOR => Some(&mut self.inspector),
             CONSOLE => Some(&mut self.console),
@@ -294,6 +322,8 @@ impl Toolbar {
             THEME => Some(&self.theme),
             SEP => Some(&self.sep),
             ALERTS => Some(&self.alerts),
+            COMMANDS => Some(&self.commands),
+            BELL => Some(&self.bell),
             ABOUT => Some(&self.about),
             INSPECTOR => Some(&self.inspector),
             CONSOLE => Some(&self.console),
@@ -348,16 +378,18 @@ impl Widget for Toolbar {
         let mut x = bounds.origin.x + pad;
         let right = bounds.max_x() - pad;
 
-        // Fixed slots for the eleven controls; the filter input takes the
+        // Fixed slots for the thirteen controls; the filter input takes the
         // remainder (clamped — collapses to nothing under real pressure).
         // Rect is (x, y, width, height) — not min/max corners.
-        let slots: [(usize, f32); 11] = [
+        let slots: [(usize, f32); 13] = [
             (PAUSE, 84.0 * s),
             (GLOW, 76.0 * s),
             (TICK, 180.0 * s),
             (THEME, 120.0 * s),
             (SEP, 9.0 * s),
             (ALERTS, 104.0 * s),
+            (COMMANDS, 112.0 * s),
+            (BELL, 66.0 * s),
             (ABOUT, 74.0 * s),
             (INSPECTOR, 88.0 * s),
             (CONSOLE, 84.0 * s),
@@ -438,6 +470,8 @@ impl Widget for Toolbar {
                     self.console_armed = i == CONSOLE;
                     self.share_armed = i == SHARE;
                     self.print_armed = i == PRINT;
+                    self.commands_armed = i == COMMANDS;
+                    self.bell_armed = i == BELL;
                     let focus_ev = if i == FILTER {
                         WidgetEvent::FocusGained
                     } else {
@@ -516,6 +550,18 @@ impl Widget for Toolbar {
                         self.print_req.set(true);
                     }
                     self.print_armed = false;
+                }
+                if i == COMMANDS && self.commands_armed && released {
+                    if self.rects[COMMANDS].contains(pos) {
+                        self.commands_req.set(true);
+                    }
+                    self.commands_armed = false;
+                }
+                if i == BELL && self.bell_armed && released {
+                    if self.rects[BELL].contains(pos) {
+                        self.bell_req.set(true);
+                    }
+                    self.bell_armed = false;
                 }
                 r
             }
@@ -621,6 +667,8 @@ mod tests {
 
     fn signals() -> ToolbarSignals {
         ToolbarSignals {
+            commands_req: Signal::new(false),
+            bell_req: Signal::new(false),
             paused: Signal::new(false),
             glow_on: Signal::new(true),
             tick_ms: Signal::new(100.0),

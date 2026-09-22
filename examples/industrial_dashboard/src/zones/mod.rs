@@ -23,14 +23,15 @@ use martensite::core::{
 };
 use martensite::reactive::Signal;
 use martensite::render::Point;
-use martensite::widgets::flex::Flex;
-use martensite::widgets::scrollview::ScrollView;
 use martensite::widgets::tabs::Tabs;
 use parking_lot::Mutex;
+use std::time::Duration;
 
+use crate::domain::PlantModel;
 use crate::model::Palette;
 use crate::panels::{krect, panel_border, TITLE_H};
 use crate::text::TextPainter;
+use crate::zone::Page;
 
 pub mod editor;
 pub mod grid;
@@ -38,17 +39,25 @@ pub mod media;
 pub mod telemetry;
 
 /// Fraction of the panel height the operational view keeps — zone
-/// tabs fill the remainder.
-const OP_FRAC: f32 = 0.45;
+/// tabs fill the remainder (~70%, per the ratified layout grammar).
+const OP_FRAC: f32 = 0.30;
 
 /// A panel = operational view on top + domain-named zone pages below.
 /// The operational widget is untouched (keeps its own chrome, focus,
 /// events); the `Tabs` provides one-visible-surface semantics — hidden
 /// pages are suspended by the arena's bounds-gated paint/tick walks.
+///
+/// Cross-zone navigation: an artifact action writes
+/// `model.page_request[zone_index] = Some(page)`; `tick` drains the
+/// slot (take semantics — cleared on consume) and activates the tab.
+/// `layout` publishes the content width into `model.zone_width`,
+/// which `Page` reads for its rail-collapse breakpoints.
 pub struct ZonePanel {
     inner: Box<dyn Widget>,
     zones: Tabs,
     title: &'static str,
+    zone_index: usize,
+    model: PlantModel,
     bounds: Rect,
     inner_bounds: Rect,
     zones_bounds: Rect,
@@ -57,28 +66,36 @@ pub struct ZonePanel {
 }
 
 impl ZonePanel {
-    /// `pages` are `(domain label, page column)` pairs — the zone's
-    /// tab names are domain names, never widget names.
+    /// `pages` are `(domain label, Page)` pairs — the zone's tab names
+    /// are domain names, never widget names. `zone_index` is the
+    /// panel's slot in `model.page_request` (0=grid, 1=telemetry,
+    /// 2=editor, 3=media).
     pub fn new(
         inner: Box<dyn Widget>,
         title: &'static str,
         scale: Signal<f32>,
-        pages: Vec<(&'static str, Flex)>,
+        model: &PlantModel,
+        zone_index: usize,
+        pages: Vec<(&'static str, Page)>,
     ) -> Self {
         let mut zones = Tabs::new();
         for (label, page) in pages {
             // ZONE_PAD insets every page's content from the tab
             // chrome — the published grammar token, applied here so
-            // page builders stay flush-left internally.
+            // page builders stay flush-left internally. No ScrollView
+            // wrapper: pages are bounded-fill layouts; dense surfaces
+            // scroll internally.
             let padded = martensite::widgets::container::Container::new()
                 .padding_uniform(crate::zone::ZONE_PAD)
                 .child(page);
-            zones = zones.tab(label, ScrollView::new(padded));
+            zones = zones.tab(label, padded);
         }
         Self {
             inner,
             zones,
             title,
+            zone_index,
+            model: model.clone(),
             bounds: Rect::default(),
             inner_bounds: Rect::default(),
             zones_bounds: Rect::default(),
@@ -149,14 +166,33 @@ impl Widget for ZonePanel {
             bounds.width(),
             (bounds.height() - inner_h - 1.0).max(0.0),
         );
+        // Publish the content width (pt) — `Page` reads it for the
+        // rail-collapse breakpoints. Guarded so hover-noise relayouts
+        // don't churn the signal.
+        let w_pt = bounds.width() / s.max(f32::EPSILON);
+        if (self.model.zone_width.get() - w_pt).abs() > 0.5 {
+            self.model.zone_width.set(w_pt);
+        }
         self.inner.layout(cx, self.inner_bounds);
         self.zones.layout(cx, self.zones_bounds);
     }
 
-    // No `tick` override — `inner`/`zones` are internal children and
-    // the arena's bounds-gated `tick_recursive` already ticks them
-    // through `child_mut`. Ticking them here too would double their
-    // rate (the TelemetryPanel's `elapsed += dt` would run at 2×).
+    // The drain lives in `tick` — `inner`/`zones` are internal
+    // children and the arena's bounds-gated `tick_recursive` already
+    // ticks them through `child_mut`, so this override only handles
+    // the nav request (ticking children here too would double their
+    // rate — the TelemetryPanel's `elapsed += dt` would run at 2×).
+    fn tick(&mut self, _dt: Duration) -> bool {
+        let mut req = self.model.page_request.get();
+        match req.get_mut(self.zone_index).and_then(Option::take) {
+            Some(page) => {
+                self.model.page_request.set(req);
+                self.zones.activate(page as usize);
+                true
+            }
+            None => false,
+        }
+    }
 
     fn paint(&self, cx: &mut PaintContext) {
         let pal = Palette::from_theme(cx.theme);
@@ -217,5 +253,55 @@ impl Widget for ZonePanel {
             "{} — operational view with functional zones",
             self.title
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zone::{fill, Page, Variant};
+    use martensite::core::widget::DummyWidget;
+
+    fn model() -> PlantModel {
+        PlantModel::seeded(
+            Signal::new(0.4),
+            Signal::new(0.6),
+            Signal::new(false),
+            Signal::new(true),
+            Signal::new(String::new()),
+        )
+    }
+
+    /// Toolbar chrome launchers write `page_request[zone]`; the owning
+    /// ZonePanel's `tick` must drain the slot and activate the tab —
+    /// exactly once.
+    #[test]
+    fn page_request_activates_the_zone_tab() {
+        let m = model();
+        let page = |m: &PlantModel| Page::new(Variant::Theater, fill(DummyWidget), &m.zone_width);
+        let mut panel = ZonePanel::new(
+            Box::new(DummyWidget),
+            "TEST",
+            Signal::new(1.0),
+            &m,
+            2,
+            vec![
+                ("A", page(&m)),
+                ("B", page(&m)),
+                ("C", page(&m)),
+                ("CHROME", page(&m)),
+            ],
+        );
+        m.request_page(2, 3);
+        assert!(panel.tick(Duration::from_millis(16)));
+        assert_eq!(panel.zones.selected(), 3);
+        assert_eq!(m.page_request.get()[2], None, "request left pending");
+        // A second tick must not re-fire — the slot is drained.
+        assert!(!panel.tick(Duration::from_millis(16)));
+        // A request for another zone leaves this panel alone.
+        m.request_page(0, 1);
+        assert!(!panel.tick(Duration::from_millis(16)));
+        assert_eq!(panel.zones.selected(), 3);
+        assert_eq!(m.page_request.get()[0], Some(1));
     }
 }

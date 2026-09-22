@@ -80,8 +80,27 @@ impl Widget for Separator {
         // A thin cross-axis cell that leaves a little breathing room
         // around the 1px line itself.
         match self.direction {
-            FlexDirection::Row => Vec2::new(constraints.max_size.x.max(0.0), cx.pt(9.0)),
-            FlexDirection::Column => Vec2::new(cx.pt(9.0), constraints.max_size.y.max(0.0)),
+            // Report the offer only when it's bounded — `f32::MAX` is
+            // the layout system's unbounded sentinel (it's finite, so
+            // `is_finite` can't detect it). A row measuring children
+            // for height must not get MAX echoed back as the
+            // separator's "intrinsic" length.
+            FlexDirection::Row => Vec2::new(
+                if constraints.max_size.x < f32::MAX {
+                    constraints.max_size.x.max(0.0)
+                } else {
+                    cx.pt(96.0)
+                },
+                cx.pt(9.0),
+            ),
+            FlexDirection::Column => Vec2::new(
+                cx.pt(9.0),
+                if constraints.max_size.y < f32::MAX {
+                    constraints.max_size.y.max(0.0)
+                } else {
+                    cx.pt(28.0)
+                },
+            ),
         }
     }
 

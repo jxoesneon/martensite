@@ -632,6 +632,14 @@ impl Widget for Flex {
         // real layout bounds: `measure` may have seen a different max
         // (e.g. a stretched column inside a taller row), so the shares
         // cached there would under- or over-fill this bounds.
+        // `child_sizes` is populated by `measure`; a widget swapped in
+        // post-measure (Bound re-seat, Swap view change) can reach
+        // layout with a short cache — pad with ZERO so the weighted
+        // redistribution below still assigns flexed children their
+        // shares. The next measure refills the real intrinsics.
+        if self.child_sizes.len() < n {
+            self.child_sizes.resize(n, Vec2::ZERO);
+        }
         let total_flex = self.total_flex();
         if total_flex > 0.0 {
             let total_gap = self.gap * (n.saturating_sub(1)) as f32;

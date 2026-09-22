@@ -39,6 +39,9 @@ pub struct Asset {
     pub installed: u16,
     /// Free-text operator note — editable through InlineEdit/TextArea.
     pub note: &'static str,
+    /// Health index 0..1 — sim-owned write (degraded assets trend
+    /// down); the DETAIL rail's Rating displays it read-only.
+    pub health: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +93,27 @@ pub struct WorkOrder {
     pub progress: f64,
     /// Operator notes — TextArea/Markdown edit this.
     pub notes: String,
+    /// Completion sign-off — the SIGN-OFF page writes it (typed name
+    /// or an ink-canvas stroke record).
+    pub signature: Option<Signature>,
+    /// Captured evidence photo id — the CropBox capture sink.
+    pub photo: Option<String>,
+}
+
+/// A work-order sign-off — typed name or ink stroke.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Signature {
+    Typed(String),
+    Ink,
+}
+
+impl Signature {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Typed(name) => name.as_str(),
+            Self::Ink => "(signed)",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,6 +175,9 @@ pub struct MaintTask {
     pub done: bool,
     /// Crew index — the schedule's swimlane.
     pub crew: usize,
+    /// Percent complete 0..1 — the MAINTENANCE task rail shows and
+    /// the ProgressBar reflects it.
+    pub progress: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +198,35 @@ pub struct LogEntry {
     pub text: String,
     /// Pinned entries surface in the Announcements/Banner zone.
     pub pinned: bool,
+    /// Channel the entry was posted to — COMMS filters by
+    /// `channel_sel`; DIAGNOSTICS tails `System`.
+    pub channel: LogChannel,
+    /// Work order this entry discusses (`None` = general) — the
+    /// WORK ORDERS CommentThread filters on it.
+    pub wo: Option<u32>,
+}
+
+/// Shift-log channel — ops radio chatter vs. crew chat vs. system
+/// annunciator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogChannel {
+    Ops,
+    Comms,
+    System,
+}
+
+impl LogChannel {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ops => "OPS",
+            Self::Comms => "COMMS",
+            Self::System => "SYSTEM",
+        }
+    }
+    /// Channel index order for `channel_sel` Segmented strips.
+    pub fn all() -> [LogChannel; 3] {
+        [Self::Ops, Self::Comms, Self::System]
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +339,73 @@ pub struct JogState {
 }
 
 // ---------------------------------------------------------------------------
+// Documents — the DOCUMENTS page's store. Manuals, logs, and reports
+// attached to assets; the left ListView selects, viewers render.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocEntry {
+    pub id: u32,
+    pub title: &'static str,
+    /// Owning asset (`None` = site-wide document).
+    pub asset: Option<u32>,
+    pub kind: DocKind,
+    /// Structured body — JSON viewer/tree renders it.
+    pub body: &'static str,
+    /// Raw payload — HexView renders it.
+    pub bytes: &'static [u8],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocKind {
+    Manual,
+    Report,
+    Firmware,
+    Log,
+}
+
+impl DocKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Manual => "Manual",
+            Self::Report => "Report",
+            Self::Firmware => "Firmware",
+            Self::Log => "Log",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Recordings — camera-loop archive the TRANSPORT page scrubs. The
+// CAMERAS record verb appends; MediaView/SeekBar/Filmstrip read.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Recording {
+    pub id: u32,
+    pub title: &'static str,
+    /// Camera index in the zone's camera set.
+    pub camera: usize,
+    /// Length in seconds.
+    pub secs: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Command registry — every console verb (CommandPalette, Terminal,
+// launcher buttons) resolves through this one list, so CHROME can
+// preview exactly what each chrome exposes.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommandSpec {
+    pub id: &'static str,
+    pub label: &'static str,
+    /// Chromes that surface it — bit flags (1=palette 2=terminal
+    /// 4=context 8=menubar 16=radial 32=taskswitcher).
+    pub chromes: u8,
+}
+
+// ---------------------------------------------------------------------------
 // The model.
 // ---------------------------------------------------------------------------
 
@@ -375,6 +498,41 @@ pub struct PlantModel {
     /// Votes for the standing crew poll ("approve the Saturday
     /// maintenance window?") — Poll widget binds: [yes, no, abstain].
     pub poll_votes: Signal<[u32; 3]>,
+
+    // --- documents / selections / navigation (dashboard grammar Δ3) ---
+    pub docs: Signal<Vec<DocEntry>>,
+    pub selected_doc: Signal<Option<u32>>,
+    /// Selected maintenance task — MAINTENANCE writes, SCHEDULE reads.
+    pub selected_task: Signal<Option<u32>>,
+    /// Selected alarm — ALARMS board writes, its rail details.
+    pub selected_alarm: Signal<Option<u32>>,
+    /// Selected crew member — CREW/ROOMS write, rails detail.
+    pub selected_member: Signal<Option<usize>>,
+    /// Camera-loop archive + playhead selection (TRANSPORT).
+    pub recordings: Signal<Vec<Recording>>,
+    pub selected_recording: Signal<Option<u32>>,
+    /// Console verbs — CommandPalette/Terminal/CHROME preview share it.
+    pub commands: Signal<Vec<CommandSpec>>,
+    /// Cross-zone navigation requests — an artifact action writes
+    /// `page_request[zone] = Some(page)`; `ZonePanel::tick` drains
+    /// (take) and activates the tab. Cleared on consume so rebuilds
+    /// never re-fire stale requests.
+    pub page_request: Signal<[Option<u8>; 4]>,
+    /// Zone content width in pt — `ZonePanel::layout` publishes;
+    /// `Page` reads it for rail collapse breakpoints.
+    pub zone_width: Signal<f32>,
+    /// Shell toast inbox — any zone enqueues a `Toast`; the
+    /// `ShellOverlays` owner drains it into the viewport-anchored
+    /// `ToastHost`. Toasts are chrome, not page layout.
+    pub toast_inbox: crate::overlays::ToastInbox,
+
+    // --- page-scoped presentation selections (not persisted) ---
+    /// COMMS channel Segmented — filters the message list.
+    pub channel_sel: Signal<u8>,
+    /// CHROME chrome Segmented — which chrome the preview details.
+    pub active_chrome: Signal<u8>,
+    /// APPEARANCE left-nav — which picker section the rail shows.
+    pub editor_section: Signal<u8>,
 }
 
 /// Ring-buffer length for the telemetry history signals.
@@ -434,6 +592,20 @@ impl PlantModel {
             media_vol: Signal::new(0.8),
             camera_sel: Signal::new(0),
             poll_votes: Signal::new([4, 1, 2]),
+            docs: Signal::new(seed_docs()),
+            selected_doc: Signal::new(Some(1)),
+            selected_task: Signal::new(Some(4)),
+            selected_alarm: Signal::new(Some(102)),
+            selected_member: Signal::new(Some(0)),
+            recordings: Signal::new(seed_recordings()),
+            selected_recording: Signal::new(Some(1)),
+            commands: Signal::new(seed_commands()),
+            page_request: Signal::new([None; 4]),
+            zone_width: Signal::new(960.0),
+            toast_inbox: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            channel_sel: Signal::new(0),
+            active_chrome: Signal::new(0),
+            editor_section: Signal::new(0),
         }
     }
 
@@ -461,6 +633,19 @@ impl PlantModel {
     /// unbounded log would grow their cost linearly with session
     /// length.
     pub fn log(&self, author: usize, text: impl Into<String>) {
+        self.log_ch(author, text, LogChannel::Ops, None);
+    }
+
+    /// Channel/WO-tagged append — COMMS posts to `channel_sel`, the
+    /// CommentThread posts under `selected_wo`, the Terminal echoes to
+    /// `System`.
+    pub fn log_ch(
+        &self,
+        author: usize,
+        text: impl Into<String>,
+        channel: LogChannel,
+        wo: Option<u32>,
+    ) {
         let mut log = self.shift_log.get();
         log.push(LogEntry {
             id: self
@@ -470,12 +655,54 @@ impl PlantModel {
             author,
             text: text.into(),
             pinned: false,
+            channel,
+            wo,
         });
         let over = log.len().saturating_sub(LOG_CAP);
         if over > 0 {
             log.drain(..over);
         }
         self.shift_log.set(log);
+    }
+
+    /// Request a zone page — `page_request[zone] = Some(page)`;
+    /// `ZonePanel::tick` drains the slot and activates the tab.
+    pub fn request_page(&self, zone: usize, page: u8) {
+        let mut req = self.page_request.get();
+        req[zone] = Some(page);
+        self.page_request.set(req);
+    }
+
+    /// Mutate one maintenance task — the MAINTENANCE rail's
+    /// rebook/progress write path. No-op closures skip the `set`.
+    pub fn update_task(&self, id: u32, f: impl FnOnce(&mut MaintTask)) {
+        let mut s = self.schedule.get();
+        match s.iter_mut().find(|t| t.id == id) {
+            Some(t) => {
+                let before = t.clone();
+                f(t);
+                if *t == before {
+                    return;
+                }
+            }
+            None => return,
+        }
+        self.schedule.set(s);
+    }
+
+    /// Append a camera-loop recording — the CAMERAS record verb's
+    /// write path. Returns the new id.
+    pub fn add_recording(&self, title: &'static str, camera: usize, secs: u32) -> u32 {
+        let mut recs = self.recordings.get();
+        let id = recs.iter().map(|r| r.id).max().unwrap_or(0) + 1;
+        recs.push(Recording {
+            id,
+            title,
+            camera,
+            secs,
+        });
+        self.recordings.set(recs);
+        id
     }
 
     /// Acknowledge an alarm — AlarmPanel/ContextMenu/Button write path.
@@ -769,6 +996,14 @@ fn a(
     installed: u16,
     note: &'static str,
 ) -> Asset {
+    // Health derives from status+OEE — the sim owns it (degraded/down
+    // trend lower); DETAIL's Rating renders it read-only.
+    let health = match status {
+        AssetStatus::Running => (0.6 + oee * 0.4).min(1.0),
+        AssetStatus::Degraded => 0.35 + oee * 0.3,
+        AssetStatus::Down => 0.08,
+        AssetStatus::Maintenance => 0.5,
+    };
     Asset {
         id,
         parent,
@@ -779,6 +1014,7 @@ fn a(
         serial,
         installed,
         note,
+        health,
     }
 }
 
@@ -801,6 +1037,8 @@ fn seed_work_orders() -> Vec<WorkOrder> {
             due_day: 1,
             progress: 0.65,
             notes: "Runout 0.04mm before regrind.".into(),
+            signature: None,
+            photo: None,
         },
         WorkOrder {
             id: 4470,
@@ -813,6 +1051,8 @@ fn seed_work_orders() -> Vec<WorkOrder> {
             due_day: 3,
             progress: 0.0,
             notes: String::new(),
+            signature: None,
+            photo: None,
         },
         WorkOrder {
             id: 4471,
@@ -830,6 +1070,8 @@ fn seed_work_orders() -> Vec<WorkOrder> {
             due_day: 0,
             progress: 0.5,
             notes: "Joint-3 torque drift — escalate if >5%.".into(),
+            signature: None,
+            photo: None,
         },
         WorkOrder {
             id: 4472,
@@ -842,6 +1084,8 @@ fn seed_work_orders() -> Vec<WorkOrder> {
             due_day: 2,
             progress: 1.0,
             notes: "Awaiting QA sign-off.".into(),
+            signature: Some(Signature::Typed("I. Chen".into())),
+            photo: None,
         },
         WorkOrder {
             id: 4473,
@@ -854,6 +1098,8 @@ fn seed_work_orders() -> Vec<WorkOrder> {
             due_day: 4,
             progress: 0.1,
             notes: "HVAC skid down — line 4 on hold.".into(),
+            signature: None,
+            photo: None,
         },
     ]
 }
@@ -868,6 +1114,7 @@ fn seed_schedule() -> Vec<MaintTask> {
             days: 2,
             done: false,
             crew: 0,
+            progress: 0.0,
         },
         MaintTask {
             id: 2,
@@ -877,6 +1124,7 @@ fn seed_schedule() -> Vec<MaintTask> {
             days: 1,
             done: false,
             crew: 1,
+            progress: 0.0,
         },
         MaintTask {
             id: 3,
@@ -886,6 +1134,7 @@ fn seed_schedule() -> Vec<MaintTask> {
             days: 3,
             done: false,
             crew: 2,
+            progress: 0.0,
         },
         MaintTask {
             id: 4,
@@ -895,6 +1144,7 @@ fn seed_schedule() -> Vec<MaintTask> {
             days: 2,
             done: false,
             crew: 0,
+            progress: 0.4,
         },
         MaintTask {
             id: 5,
@@ -904,6 +1154,7 @@ fn seed_schedule() -> Vec<MaintTask> {
             days: 1,
             done: false,
             crew: 3,
+            progress: 0.0,
         },
         MaintTask {
             id: 6,
@@ -913,6 +1164,7 @@ fn seed_schedule() -> Vec<MaintTask> {
             days: 3,
             done: false,
             crew: 4,
+            progress: 0.15,
         },
         MaintTask {
             id: 7,
@@ -922,28 +1174,77 @@ fn seed_schedule() -> Vec<MaintTask> {
             days: 1,
             done: true,
             crew: 1,
+            progress: 1.0,
         },
     ]
 }
 
 fn seed_shift_log() -> Vec<LogEntry> {
+    use LogChannel::*;
     [
-        (6, usize::MAX, "Shift A started — Line 4 in PM window", true),
-        (47, 0, "K7 torque drift ~3%, monitoring", false),
-        (88, 3, "WO-4472 pressure test passed", false),
-        (140, usize::MAX, "Temp alarm cleared on Weld-B", false),
-        (176, 1, "Die swap done ahead of schedule", false),
-        (210, 4, "HVAC-Skid-11 compressor fault confirmed", false),
+        (
+            6,
+            usize::MAX,
+            "Shift A started — Line 4 in PM window",
+            true,
+            System,
+            None,
+        ),
+        (47, 0, "K7 torque drift ~3%, monitoring", false, Ops, None),
+        (
+            88,
+            3,
+            "WO-4472 pressure test passed",
+            false,
+            Comms,
+            Some(4472),
+        ),
+        (
+            140,
+            usize::MAX,
+            "Temp alarm cleared on Weld-B",
+            false,
+            System,
+            None,
+        ),
+        (
+            176,
+            1,
+            "Die swap done ahead of schedule",
+            false,
+            Comms,
+            Some(4469),
+        ),
+        (
+            210,
+            4,
+            "HVAC-Skid-11 compressor fault confirmed",
+            false,
+            Ops,
+            Some(4473),
+        ),
+        (
+            215,
+            0,
+            "Bearing 6204 on-site, swapping now",
+            false,
+            Comms,
+            Some(4471),
+        ),
     ]
     .into_iter()
     .enumerate()
-    .map(|(i, (minute, author, text, pinned))| LogEntry {
-        id: i as u64,
-        minute,
-        author,
-        text: text.into(),
-        pinned,
-    })
+    .map(
+        |(i, (minute, author, text, pinned, channel, wo))| LogEntry {
+            id: i as u64,
+            minute,
+            author,
+            text: text.into(),
+            pinned,
+            channel,
+            wo,
+        },
+    )
     .collect()
 }
 
@@ -1076,5 +1377,121 @@ fn seed_flow() -> Vec<(u32, u32, f64)> {
         (4, 5, 12.0), // Line B → Line C
         (5, 6, 9.5),  // Line C → Packaging
         (4, 6, 4.0),  // Line B → Packaging
+    ]
+}
+
+fn seed_docs() -> Vec<DocEntry> {
+    use DocKind::*;
+    vec![
+        DocEntry {
+            id: 1,
+            title: "Line 2 service manual",
+            asset: Some(4),
+            kind: Manual,
+            body: "{\"line\": \"LN-E2\", \"rev\": \"C\", \"sections\": [\"safety\", \"lubrication\", \"torque spec\"], \"pages\": 148}",
+            bytes: b"SERVICE MANUAL LN-E2 REV C - torque spec table, lubrication chart, bearing kit list.",
+        },
+        DocEntry {
+            id: 2,
+            title: "K7 firmware blob",
+            asset: Some(7),
+            kind: Firmware,
+            body: "{\"device\": \"RA-K7\", \"fw\": \"4.2.1\", \"crc\": \"0x9AE3\", \"joints\": 6}",
+            bytes: b"\x7fK7FW\x04\x02\x01RA-K7-2211\x9a\xe3 torque-cal joint3 +5%",
+        },
+        DocEntry {
+            id: 3,
+            title: "Shift A handover report",
+            asset: None,
+            kind: Report,
+            body: "{\"shift\": \"A\", \"oee\": 0.84, \"alarms\": 3, \"open_wos\": 2, \"note\": \"Line 4 PM until 14:00\"}",
+            bytes: b"SHIFT A HANDOVER - OEE 84%, 3 active alarms, 2 open WOs, Line 4 PM window.",
+        },
+        DocEntry {
+            id: 4,
+            title: "Weld-B scan journal",
+            asset: Some(8),
+            kind: Log,
+            body: "{\"asset\": \"WC-B-0944\", \"scans\": 12, \"defects\": 0, \"last\": \"pass\"}",
+            bytes: b"WELD SCAN JOURNAL WC-B - 12 scans, 0 defects, last result PASS.",
+        },
+    ]
+}
+
+fn seed_recordings() -> Vec<Recording> {
+    vec![
+        Recording {
+            id: 1,
+            title: "CAM-01 aisle loop",
+            camera: 0,
+            secs: 95,
+        },
+        Recording {
+            id: 2,
+            title: "CAM-02 east yard",
+            camera: 1,
+            secs: 140,
+        },
+        Recording {
+            id: 3,
+            title: "CAM-03 dock doors",
+            camera: 2,
+            secs: 60,
+        },
+    ]
+}
+
+fn seed_commands() -> Vec<CommandSpec> {
+    vec![
+        CommandSpec {
+            id: "wo.new",
+            label: "New work order",
+            chromes: 0b111111,
+        },
+        CommandSpec {
+            id: "wo.advance",
+            label: "Advance selected WO",
+            chromes: 0b110111,
+        },
+        CommandSpec {
+            id: "alarm.ack",
+            label: "Ack all alarms",
+            chromes: 0b110111,
+        },
+        CommandSpec {
+            id: "alarm.filter",
+            label: "Filter alarms…",
+            chromes: 0b010001,
+        },
+        CommandSpec {
+            id: "asset.search",
+            label: "Find asset…",
+            chromes: 0b111111,
+        },
+        CommandSpec {
+            id: "nav.registry",
+            label: "Go to REGISTRY",
+            chromes: 0b110001,
+        },
+        CommandSpec {
+            id: "nav.detail",
+            label: "Open asset detail",
+            chromes: 0b110001,
+        },
+        CommandSpec {
+            id: "cam.record",
+            label: "Record camera loop",
+            chromes: 0b010101,
+        },
+        CommandSpec {
+            id: "sys.snapshot",
+            label: "Snapshot diagnostics",
+            chromes: 0b010011,
+        },
+        CommandSpec {
+            id: "lock.toggle",
+            label: "Lock console",
+            chromes: 0b111001,
+        },
     ]
 }

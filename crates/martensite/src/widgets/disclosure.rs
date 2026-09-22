@@ -108,9 +108,14 @@ impl Widget for Disclosure {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let header_h = cx.pt(HEADER_H);
         let w = constraints.max_size.x.max(0.0);
-        let body = if self.open {
-            if let Some(child) = &mut self.child {
-                child.measure(cx, constraints).y
+        // Measure the content even when closed — a disclosure opened
+        // after layout (`set_open`, the Page rail's responsive
+        // collapse) lays out the child, and a child whose caches were
+        // never populated renders every row at zero height.
+        let body = if let Some(child) = &mut self.child {
+            let m = child.measure(cx, constraints).y;
+            if self.open {
+                m
             } else {
                 0.0
             }
@@ -133,6 +138,16 @@ impl Widget for Disclosure {
         );
         if self.open {
             if let Some(child) = &mut self.child {
+                // Re-measure tight against the real allotment — the
+                // measure pass may have seen a smaller offer (or run
+                // while closed), leaving the child's caches stale.
+                child.measure(
+                    cx,
+                    LayoutConstraints {
+                        min_size: Vec2::ZERO,
+                        max_size: self.body_rect.size,
+                    },
+                );
                 cx.layout_child(child.as_mut(), self.body_rect);
             }
         }

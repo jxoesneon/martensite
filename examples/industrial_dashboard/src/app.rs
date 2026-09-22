@@ -206,6 +206,10 @@ struct App {
     clipboard_out: Signal<Option<String>>,
     /// Toolbar "alerts" switch ↔ `TelemetryPanel` banner.
     alerts_on: Signal<bool>,
+    /// Toolbar "⌘ Commands" → navigate to Editor ▸ CHROME.
+    commands_req: Signal<bool>,
+    /// Toolbar "Alerts" → navigate to Media ▸ COMMS announcements.
+    bell_req: Signal<bool>,
     /// Toolbar "About…" → `ShellOverlays` modal dialog.
     about_req: Signal<bool>,
     /// Toolbar "Inspector" → `ShellOverlays` edge drawer.
@@ -355,6 +359,17 @@ impl App {
         let paused = Signal::new(false);
         let alerts_sig = Signal::new(alerts);
         let filter_text = Signal::new(String::new());
+        let toast_inbox: ToastInbox = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut model = crate::domain::PlantModel::seeded(
+            cpu.clone(),
+            mem.clone(),
+            paused.clone(),
+            alerts_sig.clone(),
+            filter_text.clone(),
+        );
+        // The shell inbox IS the model's inbox — zones enqueue, the
+        // ShellOverlays owner drains into the viewport ToastHost.
+        model.toast_inbox = toast_inbox.clone();
         Self {
             scale: Signal::new(1.0f32),
             cpu: cpu.clone(),
@@ -371,6 +386,8 @@ impl App {
             locale_idx: 0,
             clipboard_out: Signal::new(None),
             alerts_on: alerts_sig.clone(),
+            commands_req: Signal::new(false),
+            bell_req: Signal::new(false),
             about_req: Signal::new(false),
             inspector_req: Signal::new(false),
             console_req: Signal::new(false),
@@ -381,14 +398,14 @@ impl App {
             open_in: Signal::new(None),
             doc_out: Signal::new(None),
             editor_tab: Signal::new(editor_tab),
-            toast_inbox: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            toast_inbox,
             clipboard: martensite_clipboard_platform::native_backend(),
             notifier: martensite_notify::default_platform_notifier(),
             dialogs: martensite_dialog::default_platform_dialog(),
             share: martensite_share::default_platform_share(),
             printer: martensite_print::default_platform_printer(),
             alarm: AlarmWatch::default(),
-            model: crate::domain::PlantModel::seeded(cpu, mem, paused, alerts_sig, filter_text),
+            model,
             saved_prefs: Prefs {
                 theme: choice,
                 locale,
@@ -488,6 +505,8 @@ impl App {
                     theme_sel: self.theme_sel.clone(),
                     filter_text: self.filter_text.clone(),
                     alerts_on: self.alerts_on.clone(),
+                    commands_req: self.commands_req.clone(),
+                    bell_req: self.bell_req.clone(),
                     about_req: self.about_req.clone(),
                     inspector_req: self.inspector_req.clone(),
                     console_req: self.console_req.clone(),
@@ -514,6 +533,8 @@ impl App {
                 )),
                 "Process Grid",
                 scale.clone(),
+                &self.model,
+                0,
                 crate::zones::grid::pages(&self.model),
             )),
             Box::new(crate::zones::ZonePanel::new(
@@ -528,6 +549,8 @@ impl App {
                 )),
                 "Telemetry",
                 scale.clone(),
+                &self.model,
+                1,
                 crate::zones::telemetry::pages(&self.model),
             )),
             Box::new(crate::zones::ZonePanel::new(
@@ -543,12 +566,16 @@ impl App {
                 )),
                 "Editor",
                 scale.clone(),
+                &self.model,
+                2,
                 crate::zones::editor::pages(&self.model),
             )),
             Box::new(crate::zones::ZonePanel::new(
                 Box::new(MediaPanel::new(scale.clone())),
                 "Media",
                 scale.clone(),
+                &self.model,
+                3,
                 crate::zones::media::pages(&self.model),
             )),
         ];
@@ -841,6 +868,31 @@ impl App {
                 format!("{:.0}%", self.cpu.get() * 100.0),
                 pal.accent,
             ),
+            // Plant status objects — last in the vec so they're the
+            // last chips dropped under width pressure (they're the
+            // most operationally important).
+            (
+                chip("kpi-line", "LINE"),
+                if self.model.line_running.get() {
+                    chip("kpi-line-run", "RUN")
+                } else {
+                    chip("kpi-line-held", "HELD")
+                },
+                if self.model.line_running.get() {
+                    pal.ok
+                } else {
+                    pal.warn
+                },
+            ),
+            (
+                chip("kpi-alarms", "ALARMS"),
+                format!("{}", self.model.active_alarms().len()),
+                if self.model.active_alarms().is_empty() {
+                    pal.text_muted
+                } else {
+                    pal.error
+                },
+            ),
         ];
         // Least important first — pop until the title keeps ~180pt.
         let min_title_w = 180.0 * sd;
@@ -1122,6 +1174,17 @@ impl App {
     /// dialog backend's `show` blocks on this thread; that's the
     /// native-modal contract, same as `DialogService` documents.
     fn drain_service_requests(&mut self) {
+        // Toolbar chrome launchers → zone navigation. Zone/page
+        // indices follow `zones::mod` (0=grid, 1=telemetry, 2=editor,
+        // 3=media) and each zone's `pages()` order.
+        if self.commands_req.get() {
+            self.commands_req.set(false);
+            self.model.request_page(2, 3); // Editor ▸ CHROME
+        }
+        if self.bell_req.get() {
+            self.bell_req.set(false);
+            self.model.request_page(3, 0); // Media ▸ COMMS
+        }
         // Editor "open…" chip → open-file dialog → `open_in` (the
         // panel drains it into a new tab on its next tick).
         if self.open_req.get() {
@@ -2731,6 +2794,22 @@ mod tests {
         }
     }
 
+    /// The toolbar's chrome launchers translate into zone page
+    /// requests: Commands → Editor ▸ CHROME (2,3), Bell → Media ▸
+    /// COMMS (3,0). The ZonePanel tick then activates the tab.
+    #[test]
+    fn chrome_launchers_navigate() {
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.commands_req.set(true);
+        app.bell_req.set(true);
+        app.drain_service_requests();
+        let req = app.model.page_request.get();
+        assert_eq!(req[2], Some(3), "commands → editor CHROME");
+        assert_eq!(req[3], Some(0), "bell → media COMMS");
+        assert!(!app.commands_req.get());
+        assert!(!app.bell_req.get());
+    }
+
     /// Scratch: dump every audit lint at a given scale/size.
     #[test]
     fn dump_all_lints() {
@@ -2774,7 +2853,7 @@ mod tests {
         }
 
         let app = App::new(Some(ThemeChoice::Dark), false);
-        type ZonePages = Vec<(&'static str, Flex)>;
+        type ZonePages = Vec<(&'static str, crate::zone::Page)>;
         let mut pages_by_zone: Vec<(&str, f32, f32, ZonePages)> = vec![];
         for zw in [
             700.0f32, 900.0, 1100.0, 1324.0, 1500.0, 1828.0, 2100.0, 2400.0,

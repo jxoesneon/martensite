@@ -4,3 +4,7 @@ kpi-cpu = CPU
 kpi-mem = MEM
 kpi-procs = PROCS
 kpi-uptime = UPTIME
+kpi-line = LINE
+kpi-alarms = ALARMS
+kpi-line-run = RUN
+kpi-line-held = HELD

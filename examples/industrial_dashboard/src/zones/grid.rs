@@ -64,6 +64,7 @@ use martensite::widgets::clamp::Clamp;
 use martensite::widgets::clipboard_history::ClipboardHistory;
 use martensite::widgets::code_view::CodeView;
 use martensite::widgets::command_palette::{CommandAction, CommandPalette};
+use martensite::widgets::comment_thread::{Comment, CommentThread};
 use martensite::widgets::container::Container;
 use martensite::widgets::date_picker::{Date, DatePicker};
 use martensite::widgets::descriptions::Descriptions;
@@ -139,9 +140,12 @@ use martensite::widgets::week_view::{WeekEvent, WeekView};
 use martensite::widgets::wizard::Wizard;
 
 use crate::domain::{
-    AlarmSeverity, Asset, AssetKind, AssetStatus, MaintTask, PlantModel, WoStatus, WorkOrder,
+    AlarmSeverity, Asset, AssetKind, AssetStatus, DocKind, MaintTask, PlantModel, WoStatus,
+    WorkOrder,
 };
-use crate::zone::{band, framed, row, strip, Bound, BAND_L, BAND_M, BAND_S, ZONE_GAP, ZONE_STACK};
+use crate::zone::{
+    band, fill, framed, row, strip, Bound, Page, Swap, Variant, BAND_M, ZONE_GAP, ZONE_STACK,
+};
 use martensite::core::widget::DummyWidget;
 
 /// Sim "today" — the schedule's day-0 (docket date, deterministic).
@@ -179,7 +183,7 @@ const PRIORITY_COLORS: [[u8; 4]; 4] = [
 
 /// Domain-named zone pages for the Process Grid panel — tab labels
 /// are domain names ("WORK ORDERS"), never widget names.
-pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
+pub fn pages(model: &PlantModel) -> Vec<(&'static str, Page)> {
     vec![
         ("REGISTRY", registry(model)),
         ("DETAIL", detail(model)),
@@ -318,18 +322,6 @@ fn update_wo_id(m: &PlantModel, id: u32, f: impl FnOnce(&mut WorkOrder)) {
         f(w);
         if *w != before {
             m.work_orders.set(wos);
-        }
-    }
-}
-
-/// Mutate one maintenance task by id. No-op closures skip `set`.
-fn update_task(m: &PlantModel, id: u32, f: impl FnOnce(&mut MaintTask)) {
-    let mut s = m.schedule.get();
-    if let Some(t) = s.iter_mut().find(|t| t.id == id) {
-        let before = t.clone();
-        f(t);
-        if *t != before {
-            m.schedule.set(s);
         }
     }
 }
@@ -522,6 +514,8 @@ fn create_wo(m: &PlantModel, intake: WoIntake) {
         due_day: intake.due.min(6),
         progress: 0.0,
         notes: String::new(),
+        signature: None,
+        photo: None,
     });
     m.work_orders.set(wos);
     m.selected_wo.set(Some(id));
@@ -618,7 +612,7 @@ fn fw_blob(serial: &str) -> Vec<u8> {
 }
 
 /// Sim-clock label "HH:MM" for a shift minute (shift starts 06:00).
-fn shift_hhmm(minute: u32) -> String {
+pub(crate) fn shift_hhmm(minute: u32) -> String {
     format!("{:02}:{:02}", (6 + minute / 60) % 24, minute % 60)
 }
 
@@ -657,13 +651,22 @@ fn registry_ids(m: &PlantModel, kind: usize, page: usize) -> Vec<u32> {
 // is filtered by `filter_text`, kind Segmented, and the page strip.
 // ---------------------------------------------------------------------------
 
-fn registry(m: &PlantModel) -> Flex {
+/// REGISTRY — "which asset am I looking at, and what state is it in?"
+/// master-detail | strip: scope controls (search/site/kind/view/path
+/// pickers) | primary: the register (swap: split tree+table | list |
+/// quick launchers) | selection: `selected_asset` | rail: selected
+/// asset card + ancestry path + register summary.
+fn registry(m: &PlantModel) -> Page {
     // View-state signals shared between selector chrome and the
     // register views (the toolbar's outcome-signal pattern, local to
     // this page).
     let kind_sel = Signal::new(0usize);
     let page_sel = Signal::new(0usize);
     let split = Signal::new(0.42f32);
+    // Primary surface swap — Register (split tree+table) | List |
+    // Launchers (grid/dock quick-jump). A page-scoped presentation
+    // selection, like `channel_sel`/`active_chrome`.
+    let view_sel = Signal::new(0usize);
 
     // --- selector chrome -------------------------------------------------
     let search = {
@@ -937,6 +940,25 @@ fn registry(m: &PlantModel) -> Flex {
             if n != last {
                 last = n;
                 *w = Badge::wrap(Text::new("assets on record")).with_count(n as u32);
+            }
+        })
+    };
+
+    // Primary view selector — the Swap's index signal. Lives in the
+    // strip: it re-scopes the primary surface, which is what strips
+    // are for.
+    let view = {
+        let sig = view_sel.clone();
+        Bound::new(
+            Segmented::new()
+                .options(["Register", "List", "Launch", "Browse"])
+                .selected(0)
+                .label("register view"),
+            m,
+        )
+        .pull(move |w: &mut Segmented, _m| {
+            if let Some(i) = w.take_selected() {
+                sig.set_if_changed(i);
             }
         })
     };
@@ -1336,47 +1358,102 @@ fn registry(m: &PlantModel) -> Flex {
         })
     };
 
-    Flex::column()
+    // --- rail: detail-of-`selected_asset` -----------------------------
+    // Section 1 — SELECTION: the asset card + ancestry path + the
+    // "open in DETAIL" nav verb (a real cross-page request).
+    let sel_card = {
+        let build = |m: &PlantModel| match sel_asset(m) {
+            Some(a) => Descriptions::new()
+                .title(a.name)
+                .item("Kind", kind_name(a.kind))
+                .item("Status", a.status.label())
+                .item("OEE", format!("{:.0}%", a.oee * 100.0))
+                .item("Serial", a.serial)
+                .item("Installed", a.installed.to_string())
+                .bordered(true)
+                .column_count(2),
+            None => Descriptions::new()
+                .title("No selection")
+                .item("—", "pick an asset in the register")
+                .column_count(1),
+        };
+        let mut last = (m.selected_asset.get(), assets_sig(m));
+        Bound::new(build(m), m).push(move |w: &mut Descriptions, m| {
+            let k = (m.selected_asset.get(), assets_sig(m));
+            if k != last {
+                last = k;
+                *w = build(m);
+            }
+        })
+    };
+    let open_detail = Bound::new(Button::new("Open detail →"), m).pull(|w: &mut Button, m| {
+        if w.take_activated() {
+            m.request_page(0, 1); // Process Grid → DETAIL
+        }
+    });
+    let rail_col = Flex::column()
         .gap(ZONE_STACK)
         .child(
+            GroupBox::new("SELECTION").child(
+                Flex::column()
+                    .gap(ZONE_GAP)
+                    .child(sel_card)
+                    .child(crumb)
+                    .child_flex(band(BAND_M, nav), 1.0)
+                    .child(open_detail),
+            ),
+        )
+        .child(
+            GroupBox::new("REGISTER").child(
+                Flex::column()
+                    .gap(ZONE_GAP)
+                    .child(summary)
+                    .child(strip().child(badge).child_flex(DummyWidget, 1.0))
+                    .child(rail),
+            ),
+        );
+
+    // --- primary: one surface, three presentations of one dataset ---
+    // The standalone sash is a *vertical* bar for a horizontal split —
+    // it belongs in a row, at the split's right edge (also the
+    // keyboard-focusable splitter: SplitView's embedded sash is not
+    // reachable by keyboard). Stacked in a column it would measure
+    // (thick, full-height) and starve the weighted split.
+    let register = Flex::column()
+        .gap(6.0)
+        .child_flex(
+            Flex::row()
+                .gap(ZONE_GAP)
+                .child_flex(split_view, 1.0)
+                .child(handle),
+            1.0,
+        )
+        // Pager foots the register — a strip child, it would eat the
+        // scope controls' width.
+        .child(strip().child_flex(DummyWidget, 1.0).child(pager));
+    let launchers = row()
+        .child_flex(fill(apps), 1.0)
+        .child_flex(fill(flow), 1.0)
+        .child(dock);
+    // The Cascader is a Miller-columns browser — a primary-surface
+    // lens ("Browse"), not a strip field.
+    let primary = Swap::new(&view_sel)
+        .view(register)
+        .view(refresh)
+        .view(launchers)
+        .view(cascade);
+
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+        .strip(
             strip()
                 .child(search)
                 .child(site)
-                .child(cascade)
-                .child_flex(DummyWidget, 1.0),
-        )
-        .child(
-            strip()
                 .child(kind)
+                .child(view)
                 .child(tree_sel)
-                .child(crumb)
                 .child_flex(DummyWidget, 1.0),
         )
-        .child(
-            strip()
-                .child(pager)
-                .child(rail)
-                .child(badge)
-                .child_flex(DummyWidget, 1.0),
-        )
-        .child(Separator::horizontal())
-        .child(
-            row()
-                .child_flex(band(BAND_L, split_view), 1.0)
-                .child(handle),
-        )
-        .child(
-            row()
-                .child_flex(band(BAND_L, refresh), 2.0)
-                .child_flex(band(BAND_L, apps), 1.0)
-                .child(dock),
-        )
-        .child(
-            row()
-                .child_flex(band(BAND_M, flow), 1.0)
-                .child_flex(band(BAND_M, nav), 1.0)
-                .child_flex(band(BAND_M, summary), 1.0),
-        )
+        .rail("Asset", rail_col)
 }
 
 /// The paged register table for `registry`.
@@ -1426,7 +1503,11 @@ fn registry_list_items(m: &PlantModel, ids: &[u32]) -> Vec<String> {
 // live inspector, identity codes, notes, alarms.
 // ---------------------------------------------------------------------------
 
-fn detail(m: &PlantModel) -> Flex {
+/// DETAIL — "what's the full record of this asset?" master-detail |
+/// strip: back/ack header + dossier Segmented | primary: the dossier
+/// (swap: editable record | live inspector | identity codes) |
+/// selection: `selected_asset` | rail: condition + notes sections.
+fn detail(m: &PlantModel) -> Page {
     // Header — back clears the selection (a real deselect write);
     // the action is a bound button that acks every alarm on the
     // selected asset.
@@ -1816,44 +1897,83 @@ fn detail(m: &PlantModel) -> Flex {
         });
     });
 
-    Flex::column()
+    // Dossier view selector — Record | Inspector | Identity swap.
+    let dossier_sel = Signal::new(0usize);
+    let dossier = {
+        let sig = dossier_sel.clone();
+        Bound::new(
+            Segmented::new()
+                .options(["Record", "Inspector", "Identity", "Scan", "Photos"])
+                .selected(0)
+                .label("dossier view"),
+            m,
+        )
+        .pull(move |w: &mut Segmented, _m| {
+            if let Some(i) = w.take_selected() {
+                sig.set_if_changed(i);
+            }
+        })
+    };
+
+    // --- primary: one dossier, three lenses --------------------------
+    let identity = Flex::column().gap(ZONE_GAP).child(headline).child_flex(
+        Grid::new()
+            .columns(12)
+            .gap(ZONE_GAP)
+            .cell(GridCell::new(framed(1.0, qr)).col_span(4))
+            .cell(GridCell::new(bar).col_span(4))
+            .cell(GridCell::new(summary_text).col_span(4)),
+        1.0,
+    );
+    // The record form clamps at a readable width — a property grid
+    // stretched full-theater is a slop tell.
+    let primary = Swap::new(&dossier_sel)
+        .view(Clamp::new().maximum(560.0).child(grid))
+        .view(inspector)
+        .view(identity)
+        .view(crate::zones::editor::scan_lookup(m))
+        .view(crate::zones::media::inspection_photos(m));
+
+    // --- rail: detail-of-`selected_asset`, three named sections ------
+    let rail_col = Flex::column()
         .gap(ZONE_STACK)
-        .child(header)
-        .child(headline)
         .child(
-            Grid::new()
-                .columns(12)
-                .gap(ZONE_GAP)
-                .cell(GridCell::new(Clamp::new().maximum(560.0).child(grid)).col_span(7))
-                .cell(GridCell::new(inspector).col_span(5)),
-        )
-        .child(
-            strip()
-                .child(lamp)
-                .child(rating)
-                .child(note_edit)
-                .child_flex(DummyWidget, 1.0),
-        )
-        .child(
-            GroupBox::new("IDENTITY").child(
-                row()
-                    .child_flex(band(BAND_S, framed(1.0, qr)), 1.0)
-                    .child_flex(band(BAND_S, bar), 1.0)
-                    .child_flex(summary_text, 1.0),
+            GroupBox::new("CONDITION").child(
+                strip()
+                    .child(lamp)
+                    .child(rating)
+                    .child_flex(DummyWidget, 1.0),
             ),
         )
-        .child(
-            Accordion::new()
-                .allow_multiple(true)
-                .section("Operator note", note_pad)
-                .section("Sibling cells", siblings),
-        )
-        .child(
+        .child_flex(
             ExpanderRow::new("Alarms on this asset")
                 .subtitle("double-click a row to ack")
                 .icon("⚠")
                 .child(alarm_list),
+            1.0,
         )
+        .child_flex(
+            Accordion::new()
+                .allow_multiple(true)
+                .section(
+                    "Operator note",
+                    Flex::column()
+                        .gap(ZONE_GAP)
+                        .child(note_edit)
+                        .child_flex(note_pad, 1.0),
+                )
+                .section("Sibling cells", siblings),
+            1.0,
+        );
+
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+        .strip(
+            Flex::column()
+                .gap(ZONE_GAP)
+                .child(header)
+                .child(strip().child(dossier).child_flex(DummyWidget, 1.0)),
+        )
+        .rail("Asset", rail_col)
 }
 
 /// `AssetKind` display name.
@@ -1870,9 +1990,18 @@ fn kind_name(k: AssetKind) -> &'static str {
 // checklist + crew ops on WO-4471, intake wizard.
 // ---------------------------------------------------------------------------
 
-fn work_orders(m: &PlantModel) -> Flex {
-    // Action strip — the two CTAs write the model exactly as the old
-    // banner did: New WO appends, ack-all clears the alarm board.
+/// WORK ORDERS — "what's in the pipeline, and what does the selected
+/// order need?" master-detail | strip: status filter + view swap +
+/// New/Advance verbs | primary: Swap[Kanban board | register |
+/// triage | intake wizard] | selection: `selected_wo` | rail:
+/// EXECUTION (ticket/steps/checklist/crew) + DISCUSSION (thread +
+/// notes on `selected_wo`).
+fn work_orders(m: &PlantModel) -> Page {
+    // Page-scoped presentation state — the primary surface swap and
+    // the register's status filter.
+    let view_sel = Signal::new(0usize);
+    let status_filter = Signal::new(0usize); // 0=all, else WoStatus idx+1
+
     let status = Bound::new(Text::new("—").font_size(11.0), m).push(|w: &mut Text, m| {
         let wos = m.work_orders.get();
         let n = |s: WoStatus| wos.iter().filter(|w| w.status == s).count();
@@ -1883,19 +2012,46 @@ fn work_orders(m: &PlantModel) -> Flex {
             n(WoStatus::Review)
         ));
     });
-    let new_wo = Bound::new(Button::new("New WO"), m).pull(|w: &mut Button, m| {
-        if w.take_activated() {
-            create_wo(m, WoIntake::default());
-        }
-    });
-    let ack_all = Bound::new(Button::new("Ack all alarms"), m).pull(|w: &mut Button, m| {
-        if w.take_activated() {
-            for a in m.active_alarms() {
-                m.ack_alarm(a.id);
+    let new_wo = {
+        let vs = view_sel.clone();
+        Bound::new(Button::new("New WO"), m).pull(move |w: &mut Button, _m| {
+            if w.take_activated() {
+                // The verb opens the intake surface — the wizard
+                // consumes the operator's choices into `create_wo`.
+                vs.set(3);
             }
-            m.log(usize::MAX, "all active alarms acknowledged");
-        }
-    });
+        })
+    };
+    let view = {
+        let sig = view_sel.clone();
+        Bound::new(
+            Segmented::new()
+                .options(["Board", "Register", "Triage", "Intake"])
+                .selected(0)
+                .label("pipeline view"),
+            m,
+        )
+        .pull(move |w: &mut Segmented, _m| {
+            if let Some(i) = w.take_selected() {
+                sig.set_if_changed(i);
+            }
+        })
+    };
+    let filter = {
+        let sig = status_filter.clone();
+        Bound::new(
+            Segmented::new()
+                .options(["All", "Queued", "Active", "Review", "Done"])
+                .selected(0)
+                .label("status filter"),
+            m,
+        )
+        .pull(move |w: &mut Segmented, _m| {
+            if let Some(i) = w.take_selected() {
+                sig.set_if_changed(i);
+            }
+        })
+    };
 
     // Kanban — columns are `WoStatus::columns()`; a drop writes
     // `move_wo`, a card click selects the WO.
@@ -1946,9 +2102,23 @@ fn work_orders(m: &PlantModel) -> Flex {
             })
     };
 
-    // Register — row select writes `selected_wo`.
+    // Register — row select writes `selected_wo`; the strip's status
+    // filter scopes the row set.
     let table = {
-        let build = |m: &PlantModel| {
+        let sf = status_filter.clone();
+        let filtered = move |m: &PlantModel| -> Vec<WorkOrder> {
+            m.work_orders
+                .get()
+                .into_iter()
+                .filter(|w| {
+                    sf.get() == 0
+                        || WoStatus::columns()
+                            .get(sf.get() - 1)
+                            .is_some_and(|s| *s == w.status)
+                })
+                .collect()
+        };
+        let build = |m: &PlantModel, view: &[WorkOrder]| {
             let mut t = Table::new()
                 .columns([
                     TableColumn::new("wo", "WO").width(64.0),
@@ -1959,7 +2129,7 @@ fn work_orders(m: &PlantModel) -> Flex {
                 ])
                 .striped(true)
                 .label("work order register");
-            for w in m.work_orders.get() {
+            for w in view {
                 t = t.row([
                     format!("WO-{}", w.id),
                     m.asset_name(w.asset).to_string(),
@@ -1970,26 +2140,44 @@ fn work_orders(m: &PlantModel) -> Flex {
             }
             t
         };
-        let mut last = (wos_sig(m), assets_sig(m));
+        let mut view = filtered(m);
+        let mut last = (wos_sig(m), assets_sig(m), status_filter.get());
         let mut last_sel = m.selected_wo.get();
-        Bound::new(build(m), m)
-            .pull(|w: &mut Table, m| {
-                if let Some(i) = w.take_activated().or_else(|| w.selected()) {
-                    if let Some(wo) = m.work_orders.get().get(i) {
-                        m.selected_wo.set_if_changed(Some(wo.id));
+        let sf2 = status_filter.clone();
+        Bound::new(build(m, &view), m)
+            .pull({
+                let sf = status_filter.clone();
+                move |w: &mut Table, m| {
+                    if let Some(i) = w.take_activated().or_else(|| w.selected()) {
+                        let id = m
+                            .work_orders
+                            .get()
+                            .into_iter()
+                            .filter(|w| {
+                                sf.get() == 0
+                                    || WoStatus::columns()
+                                        .get(sf.get() - 1)
+                                        .is_some_and(|s| *s == w.status)
+                            })
+                            .nth(i)
+                            .map(|w| w.id);
+                        if let Some(id) = id {
+                            m.selected_wo.set_if_changed(Some(id));
+                        }
                     }
                 }
             })
             .push(move |w: &mut Table, m| {
-                let s = (wos_sig(m), assets_sig(m));
+                let s = (wos_sig(m), assets_sig(m), sf2.get());
                 if s != last {
                     last = s;
-                    *w = build(m);
+                    view = filtered(m);
+                    *w = build(m, &view);
                 }
                 let sel = m.selected_wo.get();
                 if sel != last_sel {
                     last_sel = sel;
-                    match sel.and_then(|id| m.work_orders.get().iter().position(|w| w.id == id)) {
+                    match sel.and_then(|id| view.iter().position(|w| w.id == id)) {
                         Some(i) => w.select(i),
                         None => w.clear_selection(),
                     }
@@ -2527,7 +2715,73 @@ fn work_orders(m: &PlantModel) -> Flex {
         })
     };
 
-    // Inspector drawer — the selected WO's fields, live.
+    // WO discussion — `shift_log` entries tagged `wo == selected_wo`.
+    // The ChatInput composer appends under the selected order (the
+    // CommentThread is display-only; input rides ChatInput).
+    let thread = {
+        let build = |m: &PlantModel| {
+            let sel = m.selected_wo.get();
+            let mut t = CommentThread::new().label("wo discussion");
+            for e in m
+                .shift_log
+                .get()
+                .iter()
+                .filter(|e| e.wo == sel && e.wo.is_some())
+            {
+                let who = if e.author == usize::MAX {
+                    "SCADA".to_string()
+                } else {
+                    m.crew
+                        .get()
+                        .get(e.author)
+                        .map(|c| c.name)
+                        .unwrap_or("crew")
+                        .to_string()
+                };
+                t = t.comment(Comment::new(
+                    e.id,
+                    who,
+                    shift_hhmm(e.minute),
+                    e.text.clone(),
+                ));
+            }
+            t
+        };
+        let mut last = (
+            m.selected_wo.get(),
+            m.log_seq.load(std::sync::atomic::Ordering::Relaxed),
+        );
+        Bound::new(build(m), m).push(move |w: &mut CommentThread, m| {
+            let k = (
+                m.selected_wo.get(),
+                m.log_seq.load(std::sync::atomic::Ordering::Relaxed),
+            );
+            if k != last {
+                last = k;
+                *w = build(m);
+            }
+        })
+    };
+    let compose = Bound::new(
+        martensite::widgets::chat_input::ChatInput::new()
+            .placeholder("comment on this work order…")
+            .attachable(false)
+            .emoji_button(false)
+            .label("wo comment"),
+        m,
+    )
+    .pull(|w: &mut martensite::widgets::chat_input::ChatInput, m| {
+        while let Some(text) = w.take_sent() {
+            m.log_ch(
+                0,
+                text,
+                crate::domain::LogChannel::Comms,
+                m.selected_wo.get(),
+            );
+        }
+    });
+
+    // Inspector — the selected WO's fields, live.
     let wo_inspector = {
         let build = |m: &PlantModel| {
             let w = sel_wo(m);
@@ -2571,17 +2825,8 @@ fn work_orders(m: &PlantModel) -> Flex {
         })
     };
 
-    let drawer = Bound::new(
-        Drawer::new("WO inspector")
-            .width(280.0)
-            .content(wo_inspector),
-        m,
-    )
-    .pull(|w: &mut Drawer, m| {
-        if w.take_close_requested() {
-            m.log(usize::MAX, "WO inspector drawer closed");
-        }
-    });
+    // (The docked Drawer is gone — the WO inspector is rail content
+    // now, per the grammar's "overlay idioms never dock" rule.)
 
     // Selected-WO card — live summary text under static chrome; the
     // Advance button beside it moves the WO one stage on. (`Card`'s
@@ -2590,11 +2835,15 @@ fn work_orders(m: &PlantModel) -> Flex {
     let sel_text = Bound::new(Text::new("—").font_size(11.0), m).push(|w: &mut Text, m| {
         w.set_content(match sel_wo(m) {
             Some(w) => format!(
-                "{} · {} · {} · {:.0}% done",
+                "{} · {} · {} · {:.0}% done · {}",
                 w.title,
                 w.status.label(),
                 w.priority.label(),
-                w.progress * 100.0
+                w.progress * 100.0,
+                w.signature
+                    .as_ref()
+                    .map(|s| format!("signed {}", s.label()))
+                    .unwrap_or_else(|| "unsigned".to_string()),
             ),
             None => "no work order selected".to_string(),
         });
@@ -2640,39 +2889,70 @@ fn work_orders(m: &PlantModel) -> Flex {
         })
     };
 
-    Flex::column()
-        .gap(ZONE_STACK)
-        .child(strip().child_flex(status, 1.0).child(new_wo).child(ack_all))
-        .child(row().child_flex(band(BAND_L, kanban), 1.0))
-        .child(row().child_flex(band(BAND_L, table), 1.0))
-        .child(
-            strip()
-                .child(stepper)
-                .child(pips)
-                .child_flex(DummyWidget, 1.0),
-        )
-        .child(
-            row()
-                .child_flex(band(BAND_M, checklist), 1.0)
-                .child_flex(band(BAND_M, transfer), 1.0),
-        )
-        .child(
-            row()
-                .child_flex(band(BAND_M, switcher), 1.0)
-                .child_flex(band(BAND_M, crew), 1.0),
-        )
-        .child(
-            row()
-                .child_flex(band(BAND_M, ticket), 1.0)
-                .child_flex(band(BAND_M, deck), 1.0),
-        )
-        .child(
-            row()
-                .child_flex(band(BAND_M, wizard), 2.0)
-                .child_flex(band(BAND_M, notes), 1.0),
-        )
-        .child(strip().child_flex(sel_card, 1.0).child(advance))
+    // --- primary: one pipeline, four presentations -------------------
+    // Board = kanban, Register = filtered table, Triage = switcher +
+    // dismiss-deck, Intake = the wizard.
+    let triage = Flex::column()
+        .gap(ZONE_GAP)
+        .child(switcher)
+        .child_flex(deck, 1.0);
+    let primary = Swap::new(&view_sel)
+        .view(kanban)
+        .view(table)
+        .view(triage)
+        .view(wizard);
+
+    // --- rail: detail-of-`selected_wo`, two named sections -----------
+    // EXECUTION — the order's card, pipeline stepper, ops checklist,
+    // inspector, and the crew assignment surface.
+    // The inspector rides in a Drawer — its close affordance is a
+    // real deselect write (`selected_wo = None`), matching DETAIL's
+    // back-button deselect.
+    let drawer = Bound::new(
+        Drawer::new("WO inspector")
+            .width(280.0)
+            .content(wo_inspector),
+        m,
+    )
+    .pull(|w: &mut Drawer, m| {
+        if w.take_close_requested() {
+            m.selected_wo.set_if_changed(None);
+            m.log(usize::MAX, "WO inspector closed");
+        }
+    });
+    let execution = Flex::column()
+        .gap(ZONE_GAP)
+        .child(sel_card)
+        .child(ticket)
+        .child(stepper)
+        .child(pips)
+        .child(checklist)
         .child(drawer)
+        .child(transfer)
+        .child(band(BAND_M, crew));
+    // DISCUSSION — comments tagged to this WO + its notes field.
+    let discussion = Flex::column()
+        .gap(ZONE_GAP)
+        .child_flex(thread, 1.0)
+        .child(compose)
+        .child(notes);
+    let rail_col = Flex::column()
+        .gap(ZONE_STACK)
+        .child_flex(GroupBox::new("EXECUTION").child(execution), 3.0)
+        .child_flex(GroupBox::new("DISCUSSION").child(discussion), 2.0);
+
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+        .strip(
+            strip()
+                .child(filter)
+                .child(view)
+                .child(status)
+                .child_flex(DummyWidget, 1.0)
+                .child(Separator::vertical())
+                .child(new_wo)
+                .child(advance),
+        )
+        .rail("Work order", ScrollView::new(rail_col))
 }
 
 // ---------------------------------------------------------------------------
@@ -2680,8 +2960,21 @@ fn work_orders(m: &PlantModel) -> Flex {
 // `task_sel` is the page's shared selection signal.
 // ---------------------------------------------------------------------------
 
-fn maintenance(m: &PlantModel) -> Flex {
-    let task_sel = Signal::new(m.schedule.get().first().map(|t| t.id).unwrap_or(0));
+/// MAINTENANCE — "what's overdue, and where do I rebook this task?"
+/// master-detail | strip: task picker + overdue filter | primary:
+/// Gantt (dominant, mutation) + WeekView booking grid (secondary
+/// ≤40%) | selection: `selected_task` | rail: REBOOK (window pickers
+/// + progress) + PLAN (milestone timeline).
+fn maintenance(m: &PlantModel) -> Page {
+    // The page's selection signal is the model's `selected_task` —
+    // SCHEDULE reads it too (cross-page shared selection).
+    let task_sel_u32 = || m.selected_task.get().unwrap_or(0);
+    let _ = task_sel_u32;
+    // Back-compat shim: the bindings below were written against a
+    // plain `Signal<u32>`; `task_sel` mirrors `selected_task` both
+    // ways via the Bound pulls (widget writes → model; model writes
+    // → widget view state).
+    let task_sel = Signal::new(m.selected_task.get().unwrap_or(0));
 
     // Gantt — task bars from the schedule; hovering a bar selects the
     // task (the pickers below then edit it).
@@ -2702,6 +2995,7 @@ fn maintenance(m: &PlantModel) -> Flex {
                 if let Some(i) = w.take_hovered() {
                     if let Some(t) = m.schedule.get().get(i) {
                         ts.set_if_changed(t.id);
+                        m.selected_task.set_if_changed(Some(t.id));
                     }
                 }
             })
@@ -2741,12 +3035,14 @@ fn maintenance(m: &PlantModel) -> Flex {
                         days: 1,
                         done: false,
                         crew: 0,
+                        progress: 0.0,
                     });
                     m.schedule.set(s);
                 }
                 if let Some(i) = w.take_clicked() {
                     if let Some(t) = m.schedule.get().get(i) {
                         ts.set_if_changed(t.id);
+                        m.selected_task.set_if_changed(Some(t.id));
                         m.selected_asset.set_if_changed(Some(t.asset));
                     }
                 }
@@ -2782,7 +3078,7 @@ fn maintenance(m: &PlantModel) -> Flex {
                 if let Some((a, b)) = w.take_range() {
                     let start = (daynum(a) - daynum(BASE_DAY)).clamp(0, 13) as u8;
                     let days = ((daynum(b) - daynum(a)).abs() + 1).clamp(1, 14) as u8;
-                    update_task(m, ts.get(), |t| {
+                    m.update_task(ts.get(), |t| {
                         t.start_day = start;
                         t.days = days;
                     });
@@ -2822,7 +3118,7 @@ fn maintenance(m: &PlantModel) -> Flex {
                 if let Some((a, b)) = w.take_range() {
                     let start = (daynum(a) - daynum(BASE_DAY)).clamp(0, 13) as u8;
                     let days = ((daynum(b) - daynum(a)).abs() + 1).clamp(1, 14) as u8;
-                    update_task(m, ts.get(), |t| {
+                    m.update_task(ts.get(), |t| {
                         t.start_day = start;
                         t.days = days;
                     });
@@ -2914,24 +3210,67 @@ fn maintenance(m: &PlantModel) -> Flex {
         }
     });
 
-    Flex::column()
+    // Task picker — the strip's scope control for the rail's
+    // rebooking surface (writes the shared `selected_task`).
+    let task_pick = {
+        let ts = task_sel.clone();
+        let names: Vec<String> = m
+            .schedule
+            .get()
+            .iter()
+            .map(|t| t.title.to_string())
+            .collect();
+        let mut d = Dropdown::new(names).label("task");
+        let cur = m
+            .schedule
+            .get()
+            .iter()
+            .position(|t| t.id == task_sel.get())
+            .unwrap_or(0);
+        d.commit(cur);
+        let mut last_i = cur;
+        Bound::new(d, m).pull(move |w: &mut Dropdown, m| {
+            let i = w.selected();
+            if i != last_i {
+                last_i = i;
+                if let Some(t) = m.schedule.get().get(i) {
+                    ts.set_if_changed(t.id);
+                    m.selected_task.set_if_changed(Some(t.id));
+                }
+            }
+        })
+    };
+
+    // --- primary: plan board + booking grid (secondary ≤40%) -------
+    let primary = Flex::column()
+        .gap(ZONE_GAP)
+        .child_flex(gantt, 3.0)
+        .child_flex(week, 2.0);
+
+    // --- rail: detail-of-`selected_task` -----------------------------
+    let rail_col = Flex::column()
         .gap(ZONE_STACK)
         .child(
-            row()
-                .child_flex(band(BAND_L, gantt), 3.0)
-                .child_flex(band(BAND_L, week), 2.0),
+            GroupBox::new("REBOOK").child(
+                Flex::column()
+                    .gap(ZONE_GAP)
+                    .child(band(BAND_M, calendar))
+                    .child(picker)
+                    .child(progress),
+            ),
         )
         .child(
-            row()
-                .child_flex(band(BAND_M, calendar), 1.0)
-                .child_flex(band(BAND_M, timeline), 1.0),
-        )
-        .child(
-            row()
-                .child_flex(band(BAND_S, picker), 1.0)
-                .child_flex(band(BAND_S, progress), 1.0),
-        )
-        .child(strip().child(summary).child_flex(DummyWidget, 1.0))
+            GroupBox::new("PLAN").child(
+                Flex::column()
+                    .gap(ZONE_GAP)
+                    .child_flex(timeline, 1.0)
+                    .child(summary),
+            ),
+        );
+
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+        .strip(strip().child(task_pick).child_flex(DummyWidget, 1.0))
+        .rail("Task", ScrollView::new(rail_col))
 }
 
 // ---------------------------------------------------------------------------
@@ -2939,7 +3278,12 @@ fn maintenance(m: &PlantModel) -> Flex {
 // Tabs selector (one surface at a time); files + the shift log below.
 // ---------------------------------------------------------------------------
 
-fn documents(m: &PlantModel) -> Flex {
+/// DOCUMENTS — "show me the record for this." MasterLeft: the
+/// chooser lists `m.docs` (files on the record) plus generated
+/// record views; selection drives the artifact on the right.
+/// `selected_doc` names the file selection; record views key off
+/// `selected_asset`/`selected_wo` like before.
+fn documents(m: &PlantModel) -> Page {
     let scroll_pos = Signal::new((0.0f32, 0.2f32));
 
     // Registry as JSON — a live document of the asset store.
@@ -2989,24 +3333,6 @@ fn documents(m: &PlantModel) -> Flex {
             let s = assets_sig(m);
             if s != last {
                 last = s;
-                *w = build(m);
-            }
-        })
-    };
-
-    // Firmware blob — the selected asset's synthesized image; a
-    // serial edit regenerates it.
-    let hex = {
-        let mut last = sel_asset(m).map(|a| a.serial);
-        let build = |m: &PlantModel| {
-            HexView::new()
-                .bytes(fw_blob(sel_asset(m).map(|a| a.serial).unwrap_or("MSFW")))
-                .label("firmware image")
-        };
-        Bound::new(build(m), m).push(move |w: &mut HexView, m| {
-            let serial = sel_asset(m).map(|a| a.serial);
-            if serial != last {
-                last = serial;
                 *w = build(m);
             }
         })
@@ -3390,21 +3716,225 @@ fn documents(m: &PlantModel) -> Flex {
             .label("files"),
     );
 
-    Flex::column()
-        .gap(ZONE_STACK)
-        .child(
-            row()
-                .child_flex(band(BAND_L, json), 1.0)
-                .child_flex(band(BAND_L, hex), 1.0)
-                .child_flex(band(BAND_L, journal), 1.0),
-        )
-        .child(band(BAND_L, viewers))
-        .child(
-            row()
-                .child_flex(band(BAND_M, scroller), 1.0)
-                .child(indicator),
-        )
-        .child(files)
+    // --- artifact selection -----------------------------------------
+    // One index into the Swap: 0..=3 = the selected DocEntry's
+    // kind-mapped viewer; 4.. = generated record views. The chooser
+    // writes it alongside `selected_doc`.
+    let art_sel = Signal::new(0usize);
+
+    // Kind-mapped artifacts — the real DocEntry payload.
+    let doc_markdown = {
+        let build = |m: &PlantModel| {
+            let d = sel_doc(m);
+            let title = d.as_ref().map(|d| d.title).unwrap_or("document");
+            let owner = d
+                .as_ref()
+                .and_then(|d| d.asset)
+                .map(|id| m.asset_name(id).to_string())
+                .unwrap_or_else(|| "site-wide".into());
+            let body = d.as_ref().map(|d| d.body).unwrap_or("");
+            Markdown::new(format!(
+                "# {title}\n\n**Asset:** {owner}\n\n```\n{body}\n```"
+            ))
+            .label("document body")
+        };
+        let mut last = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
+        Bound::new(build(m), m).push(move |w: &mut Markdown, m| {
+            let k = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
+            if k != last {
+                last = k;
+                *w = build(m);
+            }
+        })
+    };
+    let doc_json = {
+        let build = |m: &PlantModel| {
+            let d = sel_doc(m);
+            let title = d.as_ref().map(|d| d.title).unwrap_or("doc");
+            let root = d
+                .and_then(|d| serde_json::from_str::<serde_json::Value>(d.body).ok())
+                .map(|v| json_to_node(title, &v))
+                .unwrap_or_else(|| JsonNode::string("doc", "unparseable"));
+            JsonView::new(root).label("document json")
+        };
+        let mut last = (m.selected_doc.get(), docs_sig(m));
+        Bound::new(build(m), m).push(move |w: &mut JsonView, m| {
+            let k = (m.selected_doc.get(), docs_sig(m));
+            if k != last {
+                last = k;
+                *w = build(m);
+            }
+        })
+    };
+    let doc_hex = {
+        let build = |m: &PlantModel| {
+            // A firmware image is a function of its owning asset —
+            // synthesize it from the asset's serial; other doc kinds
+            // carry their raw payload in `DocEntry::bytes`.
+            let bytes = match sel_doc(m) {
+                Some(d) if d.kind == DocKind::Firmware => fw_blob(
+                    d.asset
+                        .and_then(|id| m.asset(id))
+                        .map(|a| a.serial)
+                        .unwrap_or("MSFW"),
+                ),
+                Some(d) => d.bytes.to_vec(),
+                None => Vec::new(),
+            };
+            HexView::new().bytes(bytes).label("document bytes")
+        };
+        let mut last = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
+        Bound::new(build(m), m).push(move |w: &mut HexView, m| {
+            let k = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
+            if k != last {
+                last = k;
+                *w = build(m);
+            }
+        })
+    };
+    let doc_log = {
+        let fill = |w: &mut LogView, m: &PlantModel| {
+            w.clear();
+            if let Some(d) = sel_doc(m) {
+                for line in String::from_utf8_lossy(d.bytes).lines() {
+                    w.push(LogSeverity::Info, line.to_string());
+                }
+            }
+        };
+        let mut lv = LogView::new().max_lines(200);
+        fill(&mut lv, m);
+        let mut last = (m.selected_doc.get(), docs_sig(m));
+        Bound::new(lv, m).push(move |w: &mut LogView, m| {
+            let k = (m.selected_doc.get(), docs_sig(m));
+            if k != last {
+                last = k;
+                fill(w, m);
+            }
+        })
+    };
+
+    // Generated record views — the asset/WO-derived documents that
+    // used to sit behind a page-level Tabs; now chooser entries.
+    let record = viewers; // Tabs: REVISIONS|MERGE|PLC|PROCEDURE|PORTAL
+    let shift_log_view = row().child_flex(scroller, 1.0).child(indicator);
+
+    let artifact = Swap::new(&art_sel)
+        .view(doc_markdown) // Manual
+        .view(doc_json) // Report
+        .view(doc_hex) // Firmware
+        .view(doc_log) // Log
+        .view(json) // plant registry (JSON)
+        .view(journal) // alarm journal
+        .view(record) // asset-record viewer set
+        .view(shift_log_view); // shift log
+
+    // --- master: the chooser -----------------------------------------
+    // Lists `m.docs` then the generated record views — one chooser,
+    // one artifact.
+    let chooser = {
+        const GEN: &[&str] = &[
+            "record · plant registry",
+            "record · alarm journal",
+            "record · asset revisions",
+            "record · shift log",
+        ];
+        let items_of = |m: &PlantModel| {
+            m.docs
+                .get()
+                .iter()
+                .map(|d| format!("{} · {}", d.kind.label().to_lowercase(), d.title))
+                .chain(GEN.iter().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        };
+        let n_docs = m.docs.get().len();
+        let asel = art_sel.clone();
+        let mut last_docs = docs_sig(m);
+        let mut lv = ListView::new()
+            .items(items_of(m))
+            .selection_mode(SelectionMode::Single)
+            .label("documents");
+        lv.set_selected(0);
+        Bound::new(lv, m)
+            .pull(move |w: &mut ListView, m| {
+                if let Some(i) = w.take_activated().or_else(|| w.selected()) {
+                    if i < n_docs {
+                        let d = &m.docs.get()[i];
+                        m.selected_doc.set_if_changed(Some(d.id));
+                        asel.set_if_changed(match d.kind {
+                            crate::domain::DocKind::Manual => 0,
+                            crate::domain::DocKind::Report => 1,
+                            crate::domain::DocKind::Firmware => 2,
+                            crate::domain::DocKind::Log => 3,
+                        });
+                    } else {
+                        asel.set_if_changed(4 + (i - n_docs));
+                    }
+                }
+            })
+            .push(move |w: &mut ListView, m| {
+                let s = docs_sig(m);
+                if s != last_docs {
+                    last_docs = s;
+                    w.set_items(items_of(m));
+                }
+                if let Some(i) = m
+                    .selected_doc
+                    .get()
+                    .and_then(|id| m.docs.get().iter().position(|d| d.id == id))
+                {
+                    w.set_selected(i);
+                }
+            })
+    };
+
+    let master_col = Flex::column()
+        .gap(ZONE_GAP)
+        .child_flex(chooser, 1.0)
+        .child(band(BAND_M + 40.0, files));
+
+    Page::new(Variant::MasterLeft, fill(artifact), &m.zone_width).rail("Documents", master_col)
+}
+
+/// `serde_json::Value` → `JsonNode` — the DOCUMENTS page's Report
+/// artifacts are seeded as JSON text; this renders them as a tree.
+fn json_to_node(key: &str, v: &serde_json::Value) -> JsonNode {
+    match v {
+        serde_json::Value::Object(map) => JsonNode::object(
+            key,
+            map.iter().map(|(k, v)| (k.clone(), json_to_node(k, v))),
+        ),
+        serde_json::Value::Array(items) => JsonNode::array(
+            key,
+            items
+                .iter()
+                .enumerate()
+                .map(|(i, v)| json_to_node(&i.to_string(), v)),
+        ),
+        serde_json::Value::String(s) => JsonNode::string(key, s.clone()),
+        serde_json::Value::Number(n) => JsonNode::number(key, n.as_f64().unwrap_or(f64::NAN)),
+        serde_json::Value::Bool(b) => JsonNode::boolean(key, *b),
+        serde_json::Value::Null => JsonNode::null(key),
+    }
+}
+
+/// The selected `DocEntry` (DOCUMENTS chooser → `selected_doc`).
+fn sel_doc(m: &PlantModel) -> Option<crate::domain::DocEntry> {
+    m.selected_doc
+        .get()
+        .and_then(|id| m.docs.get().into_iter().find(|d| d.id == id))
+}
+
+/// `docs` store signature — re-seat key for the chooser/artifacts.
+fn docs_sig(m: &PlantModel) -> usize {
+    let docs = m.docs.get();
+    let mut h = 0xcbf29ce484222325usize;
+    for d in &docs {
+        for b in d.title.bytes().chain(d.body.bytes()) {
+            h = (h ^ b as usize).wrapping_mul(0x100000001b3);
+        }
+        h = (h ^ d.id as usize).wrapping_mul(0x100000001b3);
+    }
+    h ^ docs.len()
 }
 
 /// A shift-log entry as a `MessageList` row.
@@ -3576,7 +4106,12 @@ fn bound_switch(model: &PlantModel, label: &'static str, sig: Signal<bool>) -> B
         })
 }
 
-fn diagnostics(m: &PlantModel) -> Flex {
+/// DIAGNOSTICS — "what is the console telling me, and what can I do
+/// about it?" Theater: Terminal is the dominant surface; the system
+/// channel of `shift_log` tails beneath it (secondary ≤35%); the
+/// palette + ack verb + command reference live in the strip; console
+/// settings/about/frame-timing are the rail.
+fn diagnostics(m: &PlantModel) -> Page {
     // The console — echo + interpreter over the model.
     let term = {
         let mut t = Terminal::new()
@@ -3709,23 +4244,70 @@ fn diagnostics(m: &PlantModel) -> Flex {
         }
     });
 
-    Flex::column()
+    // System-channel tail — `shift_log` entries tagged System; the
+    // console's own writes (`log` command) land in Ops, so this tail
+    // stays machine-noise, not conversation.
+    let sys_tail = {
+        let fill = |w: &mut LogView, m: &PlantModel| {
+            w.clear();
+            for e in m
+                .shift_log
+                .get()
+                .iter()
+                .filter(|e| e.channel == crate::domain::LogChannel::System)
+            {
+                w.push(
+                    LogSeverity::Info,
+                    format!("[{}] {}", shift_hhmm(e.minute), e.text),
+                );
+            }
+        };
+        let mut lv = LogView::new().max_lines(200);
+        fill(&mut lv, m);
+        let mut last = m.log_seq.load(std::sync::atomic::Ordering::Relaxed);
+        Bound::new(lv, m).push(move |w: &mut LogView, m| {
+            let k = m.log_seq.load(std::sync::atomic::Ordering::Relaxed);
+            if k != last {
+                last = k;
+                fill(w, m);
+            }
+        })
+    };
+
+    // Primary: terminal dominant, tail bounded at ~35%.
+    let primary = Flex::column()
+        .gap(ZONE_GAP)
+        .child_flex(term, 13.0)
+        .child_flex(sys_tail, 7.0);
+
+    let rail_col = Flex::column()
         .gap(ZONE_STACK)
-        .child(row().child_flex(band(BAND_L, term), 1.0))
-        .child(strip().child_flex(palette, 1.0).child(ack_all).child(help))
-        .child(
-            row()
-                .child_flex(band(BAND_M, settings), 1.0)
-                .child_flex(band(BAND_M, about), 1.0),
-        )
-        .child(band(BAND_S, perf))
+        .child(settings)
+        .child(help)
+        .child(about)
+        .child_flex(perf, 1.0);
+
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+        // The palette is the stretch field; the command reference is a
+        // block-level collapsible (its measure echoes the offered
+        // width), so it lives in the rail, not the strip.
+        .strip(strip().child_flex(palette, 1.0).child(ack_all))
+        .rail("Console", rail_col)
 }
 
 // ---------------------------------------------------------------------------
 // HIERARCHY — relational views of real structure only.
 // ---------------------------------------------------------------------------
 
-fn hierarchy(m: &PlantModel) -> Flex {
+/// HIERARCHY — "how is this plant structured, and where does the
+/// selected thing sit in it?" Master-detail | strip: view swap
+/// (Topology | Crew | Flow) + selected-asset caption | primary:
+/// Swap[graph viewport | org chart | sankey] | selection:
+/// `selected_asset` (+ `selected_alarm` for root-cause) | rail:
+/// ANALYSIS — mind-map decomposition + fishbone of the selected
+/// alarm.
+fn hierarchy(m: &PlantModel) -> Page {
+    let view_sel = Signal::new(0usize);
     // Graph — asset nodes, parent→child edges; hover selects. The
     // Viewport's pan/zoom persists to a view-state signal.
     let vp_state = Signal::new((0.0f32, 0.0f32, 1.0f32));
@@ -3940,8 +4522,14 @@ fn hierarchy(m: &PlantModel) -> Flex {
     // Fishbone — root-cause of the first active alarm: the effect is
     // the alarm, the bones carry factors from its asset.
     let fish = {
-        let mut last = (alarm_sig(m), assets_sig(m));
-        let build = |m: &PlantModel| match m.active_alarms().first() {
+        let mut last = (alarm_sig(m), assets_sig(m), m.selected_alarm.get());
+        let build = |m: &PlantModel| match m
+            .selected_alarm
+            .get()
+            .and_then(|id| m.alarms.get().into_iter().find(|a| a.id == id))
+            .filter(|a| !a.acked)
+            .or_else(|| m.active_alarms().into_iter().next())
+        {
             Some(al) => {
                 let a = m.asset(al.asset);
                 Fishbone::new(format!("#{} {}", al.id, al.message))
@@ -3966,7 +4554,7 @@ fn hierarchy(m: &PlantModel) -> Flex {
                 .label("root cause"),
         };
         Bound::new(build(m), m).push(move |w: &mut Fishbone, m| {
-            let s = (alarm_sig(m), assets_sig(m));
+            let s = (alarm_sig(m), assets_sig(m), m.selected_alarm.get());
             if s != last {
                 last = s;
                 *w = build(m);
@@ -3974,34 +4562,60 @@ fn hierarchy(m: &PlantModel) -> Flex {
         })
     };
 
-    Flex::column()
-        .gap(ZONE_STACK)
-        .child(
-            row()
-                .child_flex(band(BAND_L, viewport), 2.0)
-                .child_flex(band(BAND_L, org), 1.0),
+    // Strip — view swap + the cross-surface selection readout.
+    let view = {
+        let vs = view_sel.clone();
+        Bound::new(
+            Segmented::new()
+                .options(["Topology", "Crew", "Flow", "Decompose"])
+                .selected(0)
+                .label("hierarchy view"),
+            m,
         )
-        .child(
-            row()
-                .child_flex(
-                    band(
-                        BAND_M,
-                        framed(
-                            1.0,
-                            Stack::new()
-                                .alignment(StackAlignment::Center)
-                                .child(sunburst)
-                                .child(Text::new("OEE-weighted").font_size(11.0)),
-                        ),
-                    ),
-                    1.0,
-                )
-                .child_flex(band(BAND_M, sankey), 1.0),
-        )
-        .child(row().child_flex(band(BAND_M, mind), 1.0).child_flex(
-            band(BAND_M, Container::new().padding_uniform(4.0).child(fish)),
+        .pull(move |w: &mut Segmented, _m| {
+            if let Some(i) = w.take_selected() {
+                vs.set_if_changed(i);
+            }
+        })
+    };
+    let caption = Bound::new(Text::new("—").font_size(11.0), m).push(|w: &mut Text, m| {
+        w.set_content(match sel_asset(m) {
+            Some(a) => format!("{} · {}", a.name, a.serial),
+            None => "no asset selected".into(),
+        });
+    });
+
+    // Decompose — OEE-weighted ring + selected-asset mind map, one
+    // analysis surface rather than three peer charts.
+    let decompose = row()
+        .child_flex(
+            Stack::new()
+                .alignment(StackAlignment::Center)
+                .child(sunburst)
+                .child(Text::new("OEE-weighted").font_size(11.0)),
             1.0,
-        ))
+        )
+        .child_flex(mind, 1.0);
+
+    let primary = Swap::new(&view_sel)
+        .view(viewport)
+        .view(org)
+        .view(sankey)
+        .view(decompose);
+
+    let rail_col = Flex::column().gap(ZONE_STACK).child_flex(
+        GroupBox::new("ROOT CAUSE").child(Container::new().padding_uniform(4.0).child(fish)),
+        1.0,
+    );
+
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+        .strip(
+            strip()
+                .child(view)
+                .child(caption)
+                .child_flex(DummyWidget, 1.0),
+        )
+        .rail("Analysis", ScrollView::new(rail_col))
 }
 
 /// Unique asset ids named by `material_flow` — the Sankey's node set.

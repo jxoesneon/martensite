@@ -54,21 +54,25 @@ use martensite::widgets::attendee_list::{Attendee, AttendeeList};
 use martensite::widgets::avatar::Avatar;
 use martensite::widgets::avatar_group::AvatarGroup;
 use martensite::widgets::breakout_rooms::{BreakoutRooms, Room as BreakoutRoom};
+use martensite::widgets::button::Button;
 use martensite::widgets::carousel::Carousel;
 use martensite::widgets::chat_input::ChatInput;
 use martensite::widgets::comment_thread::{Comment, CommentThread};
 use martensite::widgets::coverflow::Coverflow;
+use martensite::widgets::descriptions::Descriptions;
 use martensite::widgets::dropdown::Dropdown;
 use martensite::widgets::emoji_picker::EmojiPicker;
 use martensite::widgets::equalizer::Equalizer;
 use martensite::widgets::filmstrip::Filmstrip;
 use martensite::widgets::flex::Flex;
 use martensite::widgets::fretboard::Fretboard;
+use martensite::widgets::group_box::GroupBox;
 use martensite::widgets::image::Image;
 use martensite::widgets::image_viewer::ImageViewer;
 use martensite::widgets::joystick::Joystick;
 use martensite::widgets::level_bar::LevelBar;
 use martensite::widgets::lightbox::Lightbox;
+use martensite::widgets::list_view::{ListView, SelectionMode};
 use martensite::widgets::media::{MediaView, VideoFit};
 use martensite::widgets::media_controls::MediaControls;
 use martensite::widgets::mention::Mention;
@@ -100,8 +104,11 @@ use martensite::widgets::zoom_controls::{ZoomAction, ZoomControls};
 use martensite::widgets::Thumbnail;
 use parking_lot::Mutex;
 
-use crate::domain::{AssetKind, CrewMember, PlantModel, Presence, Room};
-use crate::zone::{band, framed, row, strip, Bound, BAND_L, BAND_M, BAND_S, ZONE_STACK};
+use crate::domain::{AssetKind, CrewMember, LogChannel, PlantModel, Presence, Room};
+use crate::zone::{
+    band, fill, framed, row, scroll, strip, Bound, Page, Swap, Variant, BAND_L, BAND_M, BAND_S,
+    ZONE_GAP, ZONE_STACK,
+};
 use martensite::core::widget::DummyWidget;
 
 // ---------------------------------------------------------------------------
@@ -262,17 +269,39 @@ fn log_sig(m: &PlantModel) -> u64 {
 /// head moves past `base` a drain evicted rows the widget still
 /// displays (or skipped unrendered entries — a gap). The widget is
 /// append-only, so a drain re-seats it.
+#[cfg(test)]
 fn sync_message_list() -> impl FnMut(&mut MessageList, &PlantModel) + Send + Sync {
+    sync_message_list_ch(None)
+}
+
+/// Channel-filtered variant — `Some(sel)` shows only the channel the
+/// COMMS strip selects; `None` shows everything (the log's raw tail).
+fn sync_message_list_ch(
+    channel: Option<Signal<u8>>,
+) -> impl FnMut(&mut MessageList, &PlantModel) + Send + Sync {
     let mut rendered: Option<(u64, u64)> = None;
+    let mut last_ch = channel.as_ref().map(|c| c.get());
     move |l, m| {
         let log = m.shift_log.get();
-        // Head moved (front-drain evicted rendered rows) or the log
-        // emptied entirely — either way the widget's rows are stale.
-        if rendered.is_some_and(|(b, _)| log.first().map(|f| f.id) != Some(b)) {
+        let ch = channel.as_ref().map(|c| c.get());
+        if ch != last_ch {
+            last_ch = ch;
             *l = MessageList::new().label("SHIFT LOG");
             rendered = None;
         }
-        for e in log.iter() {
+        // Head moved (front-drain evicted rendered rows) or the log
+        // emptied entirely — either way the widget's rows are stale.
+        let chan_of = |e: &crate::domain::LogEntry| e.channel as u8;
+        if rendered.is_some_and(|(b, _)| {
+            log.iter()
+                .find(|e| ch.is_none_or(|c| chan_of(e) == c))
+                .map(|f| f.id)
+                != Some(b)
+        }) {
+            *l = MessageList::new().label("SHIFT LOG");
+            rendered = None;
+        }
+        for e in log.iter().filter(|e| ch.is_none_or(|c| chan_of(e) == c)) {
             if rendered.is_some_and(|(_, last)| e.id <= last) {
                 continue;
             }
@@ -289,18 +318,29 @@ fn sync_message_list() -> impl FnMut(&mut MessageList, &PlantModel) + Send + Syn
     }
 }
 
-/// Same loop, threaded view: system/pinned entries are roots, crew
-/// entries nest underneath (the log's honest reply shape). Same
-/// id-cursor + re-seat-on-drain contract as [`sync_message_list`].
-fn sync_comment_thread() -> impl FnMut(&mut CommentThread, &PlantModel) + Send + Sync {
+/// Channel-filtered threaded view — the COMMS "Threaded" lens shows
+/// the selected channel's entries nested (system roots, crew replies).
+fn sync_comment_thread_ch(
+    channel: Signal<u8>,
+) -> impl FnMut(&mut CommentThread, &PlantModel) + Send + Sync {
     let mut rendered: Option<(u64, u64)> = None;
+    let mut last_ch = channel.get();
     move |t, m| {
         let log = m.shift_log.get();
-        if rendered.is_some_and(|(b, _)| log.first().map(|f| f.id) != Some(b)) {
+        let ch = channel.get();
+        if ch != last_ch {
+            last_ch = ch;
             *t = CommentThread::new().label("THREADED");
             rendered = None;
         }
-        for e in log.iter() {
+        let chan_of = |e: &crate::domain::LogEntry| e.channel as u8;
+        if rendered
+            .is_some_and(|(b, _)| log.iter().find(|e| chan_of(e) == ch).map(|f| f.id) != Some(b))
+        {
+            *t = CommentThread::new().label("THREADED");
+            rendered = None;
+        }
+        for e in log.iter().filter(|e| chan_of(e) == ch) {
             if rendered.is_some_and(|(_, last)| e.id <= last) {
                 continue;
             }
@@ -311,8 +351,6 @@ fn sync_comment_thread() -> impl FnMut(&mut CommentThread, &PlantModel) + Send +
                 e.text.clone(),
             )
             .depth(if e.author == usize::MAX { 0 } else { 1 });
-            // `comment()` consumes — take the label through the
-            // re-seat or it resets to the widget default.
             let label = std::mem::take(&mut t.label);
             *t = std::mem::take(t).comment(c).label(label);
             rendered = Some((rendered.map(|(b, _)| b).unwrap_or(e.id), e.id));
@@ -441,7 +479,7 @@ fn status_color(s: crate::domain::AssetStatus) -> [u8; 4] {
 
 /// Domain-named zone pages for the Media panel — tab labels are
 /// domain names ("SHIFT COMMS"), never widget names.
-pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
+pub fn pages(model: &PlantModel) -> Vec<(&'static str, Page)> {
     // Console-local signals (see module doc): playback rate and the
     // monitor-path EQ trims.
     let rate = Signal::new(1.0f64);
@@ -453,8 +491,6 @@ pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
         ("CAMERAS", cameras_page(model)),
         ("TRANSPORT", transport_page(model, rate)),
         ("ACOUSTIC", acoustic_page(model, eq_trim)),
-        ("TONES", tones_page(model)),
-        ("PHOTOS", photos_page(model)),
     ]
 }
 
@@ -462,7 +498,13 @@ pub fn pages(model: &PlantModel) -> Vec<(&'static str, Flex)> {
 // SHIFT COMMS — the loopback demo: every widget is a view of, or an
 // editor into, `shift_log` (+ `poll_votes`, `crew` presence).
 // ---------------------------------------------------------------------------
-fn comms_page(model: &PlantModel) -> Flex {
+/// COMMS — "what's the crew saying on this channel?" Theater.
+/// Strip: channel selector (Ops | Comms | System → `channel_sel`)
+/// and the feed lens (Feed | Threaded). Primary: the channel's
+/// message surface over a composer row; quick-acks (reactions,
+/// emoji, poll) post to the selected channel; announcements
+/// (pinned entries) are a bounded secondary.
+fn comms_page(model: &PlantModel) -> Page {
     // Remote-crew mentions + a "ping" publish path.
     let mention = Bound::new(
         Mention::new()
@@ -641,51 +683,101 @@ fn comms_page(model: &PlantModel) -> Flex {
             })
     };
 
-    Flex::column()
-        .gap(ZONE_STACK)
-        .child(
-            row()
-                .child_flex(
-                    band(
-                        BAND_L,
-                        Bound::new(MessageList::new().label("SHIFT LOG"), model)
-                            .push(sync_message_list()),
-                    ),
-                    1.0,
-                )
-                .child_flex(
-                    band(
-                        BAND_L,
-                        Bound::new(CommentThread::new().label("THREADED"), model)
-                            .push(sync_comment_thread()),
-                    ),
-                    1.0,
-                ),
+    // Channel selector — the page's named scope; the composer tags
+    // posts with it and the feed filters by it.
+    let channel = {
+        let cs = model.channel_sel.clone();
+        Bound::new(
+            Segmented::new()
+                .options(LogChannel::all().map(|c| c.label()))
+                .selected(model.channel_sel.get() as usize)
+                .label("channel"),
+            model,
         )
+        .pull(move |w: &mut Segmented, m| {
+            if let Some(i) = w.take_selected() {
+                cs.set_if_changed(i as u8);
+                m.channel_sel.set_if_changed(i as u8);
+            }
+        })
+    };
+    let feed_sel = Signal::new(0usize);
+    let feed = {
+        let fs = feed_sel.clone();
+        Bound::new(
+            Segmented::new()
+                .options(["Feed", "Threaded"])
+                .selected(0)
+                .label("feed view"),
+            model,
+        )
+        .pull(move |w: &mut Segmented, _m| {
+            if let Some(i) = w.take_selected() {
+                fs.set_if_changed(i);
+            }
+        })
+    };
+
+    // Channel-filtered surfaces — the MessageList follows
+    // `channel_sel`; the Threaded lens shows the same channel nested.
+    let list = Bound::new(MessageList::new().label("channel feed"), model)
+        .push(sync_message_list_ch(Some(model.channel_sel.clone())));
+    let thread = Bound::new(CommentThread::new().label("threaded"), model)
+        .push(sync_comment_thread_ch(model.channel_sel.clone()));
+    let surface = Swap::new(&feed_sel).view(list).view(thread);
+
+    // Composer — posts to the selected channel.
+    let composer = Bound::new(
+        ChatInput::new()
+            .placeholder("Message the channel…")
+            .attachable(true)
+            .emoji_button(true),
+        model,
+    )
+    .pull({
+        let cs = model.channel_sel.clone();
+        move |c: &mut ChatInput, m| {
+            if let Some(text) = c.take_sent() {
+                if !text.trim().is_empty() {
+                    let ch = match cs.get() {
+                        1 => crate::domain::LogChannel::Comms,
+                        2 => crate::domain::LogChannel::System,
+                        _ => crate::domain::LogChannel::Ops,
+                    };
+                    m.log_ch(0, text, ch, None);
+                }
+            }
+            drain_chat_input(c, m); // attach/emoji seams
+        }
+    });
+
+    let primary = Flex::column()
+        .gap(ZONE_GAP)
+        .child_flex(surface, 1.0)
         .child(
             strip()
-                .child_flex(
-                    Bound::new(
-                        ChatInput::new()
-                            .placeholder("Message #shift-a…")
-                            .attachable(true)
-                            .emoji_button(true),
-                        model,
-                    )
-                    .pull(drain_chat_input),
-                    1.0,
-                )
+                .child_flex(composer, 1.0)
                 .child(mention)
                 .child(typing),
         )
-        .child(
-            strip()
-                .child(reactions)
-                .child(emoji)
-                .child(poll)
-                .child_flex(DummyWidget, 1.0),
-        )
-        .child(row().child_flex(band(BAND_M, announcements), 1.0))
+        .child(strip().child(reactions).child_flex(DummyWidget, 1.0))
+        // Compose tools — the picker is a 276pt panel and the poll a
+        // card; both are band children, never strip children.
+        .child(band(
+            BAND_L,
+            row().gap(ZONE_GAP).child_flex(emoji, 1.0).child(poll),
+        ))
+        .child(band(BAND_S, announcements));
+
+    // Feed + composer + reactions + announcements — an intrinsic stack
+    // that can exceed a short zone; scroll-mounted so the trailing
+    // bands stay reachable instead of crushing the feed to zero.
+    Page::new(Variant::Theater, fill(scroll(primary)), &model.zone_width).strip(
+        strip()
+            .child(channel)
+            .child(feed)
+            .child_flex(DummyWidget, 1.0),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -695,7 +787,11 @@ fn comms_page(model: &PlantModel) -> Flex {
 // roster), BreakoutRooms = occupancy + join, AvatarGroups = per-room
 // presence.
 // ---------------------------------------------------------------------------
-fn rooms_page(model: &PlantModel) -> Flex {
+/// ROOMS — "who's where, and who needs admitting?" Master-detail |
+/// primary: huddle wall + roster + room presence | selection:
+/// `selected_member` (roster row picks) | rail: the member's card +
+/// roster fields.
+fn rooms_page(model: &PlantModel) -> Page {
     let huddle = Bound::new(VideoGrid::new().label("SHIFT HUDDLE"), model)
         .pull(|g, m| {
             // Tile click opens a 1:1 huddle — the console logs it like
@@ -856,7 +952,7 @@ fn rooms_page(model: &PlantModel) -> Flex {
         }
     });
 
-    Flex::column()
+    let primary = Flex::column()
         .gap(ZONE_STACK)
         .child(
             row()
@@ -872,7 +968,36 @@ fn rooms_page(model: &PlantModel) -> Flex {
             row()
                 .child_flex(band(BAND_S, floor), 1.0)
                 .child_flex(band(BAND_S, control), 1.0),
-        )
+        );
+
+    // Rail — `selected_member`: the roster/huddle pick lands here.
+    let member_detail = Bound::new(Descriptions::new(), model).push(|d: &mut Descriptions, m| {
+        *d = match m
+            .selected_member
+            .get()
+            .and_then(|i| m.crew.get().get(i).cloned())
+        {
+            Some(c) => Descriptions::new()
+                .title(c.name)
+                .bordered(true)
+                .item("role", c.role)
+                .item(
+                    "presence",
+                    match c.presence {
+                        Presence::OnShift => "on shift",
+                        Presence::Remote => "remote",
+                        Presence::Break => "on break",
+                        Presence::OffShift => "off shift",
+                    },
+                )
+                .item("room", format!("{:?}", c.room)),
+            None => Descriptions::new()
+                .title("MEMBER")
+                .item("state", "none selected"),
+        };
+    });
+    let rail_col = Flex::column().gap(ZONE_GAP).child(member_detail);
+    Page::new(Variant::MasterDetail, fill(primary), &model.zone_width).rail("Member", rail_col)
 }
 
 // ---------------------------------------------------------------------------
@@ -881,7 +1006,12 @@ fn rooms_page(model: &PlantModel) -> Flex {
 // Slider, ZoomControls); MediaView/Pip show the feeds; Filmstrip
 // stills scrub `media_pos`.
 // ---------------------------------------------------------------------------
-fn cameras_page(model: &PlantModel) -> Flex {
+/// CAMERAS — "what is CAM-n seeing, and where should it point?"
+/// Master-detail | strip: camera selector + feed readout | primary:
+/// the camera wall + stills strip | selection: `camera_sel` | rail:
+/// PTZ cluster (jog/pad/tilt/zoom) steering `jog` + the recordings
+/// archive (`selected_recording`).
+fn cameras_page(model: &PlantModel) -> Page {
     // The main view tracks the wall selection: a real build would bind
     // each camera's own hardware surface, so the mock stands in with a
     // per-camera handle id. `jog.zoom` has no factor on the widget —
@@ -1083,27 +1213,94 @@ fn cameras_page(model: &PlantModel) -> Flex {
         ));
     });
 
-    Flex::column()
+    // Primary — the selected feed (view + PiP) dominant over the
+    // camera wall and the stills strip.
+    let primary = Flex::column()
         .gap(ZONE_STACK)
-        .child(
+        .child_flex(
             row()
-                .child_flex(band(BAND_L, view), 2.0)
-                .child_flex(band(BAND_L, framed(1.5, pip)), 1.0),
+                .child_flex(view, 2.0)
+                .child_flex(framed(1.5, pip), 1.0),
+            3.0,
         )
-        .child(
-            row()
-                .child_flex(band(BAND_M, wall), 1.0)
-                .child_flex(band(BAND_M, stills), 1.0),
-        )
-        .child(
-            strip()
-                .child(stick)
-                .child(pad)
-                .child(tilt)
-                .child(zoom)
-                .child_flex(DummyWidget, 1.0),
-        )
-        .child(strip().child(selector).child_flex(readout, 1.0))
+        .child_flex(row().child_flex(wall, 1.0).child_flex(stills, 1.0), 2.0);
+
+    // Rail — the PTZ cluster steers `camera_sel`'s feed via `jog`;
+    // the recordings archive below selects `selected_recording` for
+    // the TRANSPORT page.
+    let ptz = Flex::column()
+        .gap(ZONE_GAP)
+        .child(stick)
+        .child(pad)
+        .child(tilt)
+        .child(zoom);
+    let recordings = {
+        let build = |m: &PlantModel| {
+            ListView::new()
+                .items(
+                    m.recordings
+                        .get()
+                        .iter()
+                        .map(|r| format!("{} · {}:{:02}", r.title, r.secs / 60, r.secs % 60)),
+                )
+                .selection_mode(SelectionMode::Single)
+                .label("recordings")
+        };
+        let mut last = model.recordings.get().len();
+        Bound::new(build(model), model)
+            .pull(|w: &mut ListView, m| {
+                if let Some(i) = w.take_activated().or_else(|| w.selected()) {
+                    if let Some(r) = m.recordings.get().get(i) {
+                        m.selected_recording.set_if_changed(Some(r.id));
+                    }
+                }
+            })
+            .push(move |w: &mut ListView, m| {
+                let n = m.recordings.get().len();
+                if n != last {
+                    last = n;
+                    *w = build(m);
+                }
+                if let Some(i) = m
+                    .selected_recording
+                    .get()
+                    .and_then(|id| m.recordings.get().iter().position(|r| r.id == id))
+                {
+                    w.set_selected(i);
+                }
+            })
+    };
+    // "Record clip" — files a new archive entry for the selected
+    // camera (the sim's 30s manual clip).
+    let record = Bound::new(Button::new("● Record clip"), model).pull(|w: &mut Button, m| {
+        if w.take_activated() {
+            let cam = m.camera_sel.get();
+            let id = m.add_recording("manual clip", cam, 30);
+            m.selected_recording.set_if_changed(Some(id));
+            m.log_ch(
+                0,
+                format!("recording {id} started on camera {cam}"),
+                LogChannel::System,
+                None,
+            );
+        }
+    });
+    let rail_col = Flex::column()
+        .gap(ZONE_STACK)
+        .child(GroupBox::new("PTZ").child(ptz))
+        .child_flex(
+            GroupBox::new("RECORDINGS").child(
+                Flex::column()
+                    .gap(ZONE_GAP)
+                    .child(record)
+                    .child_flex(recordings, 1.0),
+            ),
+            1.0,
+        );
+
+    Page::new(Variant::MasterDetail, fill(primary), &model.zone_width)
+        .strip(strip().child(selector).child_flex(readout, 1.0))
+        .rail("Camera", rail_col)
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,7 +1309,11 @@ fn cameras_page(model: &PlantModel) -> Flex {
 // of the same recording inventory (all load via `load_recording`);
 // the rate Dropdown feeds the playhead accumulator.
 // ---------------------------------------------------------------------------
-fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Flex {
+/// TRANSPORT — "play this loop, watch it here." MasterLeft: the
+/// playlist is the chooser (writes `camera_sel` via `load_recording`);
+/// the artifact is the transport console — controls + now-playing +
+/// seek/volume/rate over a bounded browser lens (Covers | Reel).
+fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Page {
     let mut last_tick = Instant::now();
     // One shared cell for both mute paths — MediaControls and Volume
     // each stash the pre-mute level here, so un-muting from either
@@ -1367,7 +1568,27 @@ fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Flex {
             }
         });
 
-    Flex::column()
+    // Browser lens — two presentations of the same loop inventory;
+    // both write `camera_sel` through `load_recording`.
+    let lens_sel = Signal::new(0usize);
+    let lens = {
+        let ls = lens_sel.clone();
+        Bound::new(
+            Segmented::new()
+                .options(["Covers", "Reel"])
+                .selected(0)
+                .label("browser"),
+            model,
+        )
+        .pull(move |w: &mut Segmented, _m| {
+            if let Some(i) = w.take_selected() {
+                ls.set_if_changed(i);
+            }
+        })
+    };
+    let browser = Swap::new(&lens_sel).view(coverflow).view(carousel);
+
+    let primary = Flex::column()
         .gap(ZONE_STACK)
         .child(
             strip()
@@ -1375,12 +1596,15 @@ fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Flex {
                 .child_flex(now_playing, 1.0),
         )
         .child(strip().child_flex(seek, 1.0).child(volume).child(rate_menu))
-        .child(
-            row()
-                .child_flex(band(BAND_M, playlist), 1.0)
-                .child_flex(band(BAND_M, coverflow), 1.0),
-        )
-        .child(row().child_flex(band(BAND_M, carousel), 1.0))
+        .child_flex(browser, 1.0);
+
+    Page::new(
+        Variant::MasterLeft,
+        fill(scroll(primary)),
+        &model.zone_width,
+    )
+    .strip(strip().child(lens).child_flex(DummyWidget, 1.0))
+    .rail("Loops", playlist)
 }
 
 // ---------------------------------------------------------------------------
@@ -1389,7 +1613,10 @@ fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Flex {
 // + monitor gain; Equalizer writes those trims; LevelBar/StatusDot/
 // Text carry loudness + line state + dominant frequency.
 // ---------------------------------------------------------------------------
-fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Flex {
+/// ACOUSTIC — "what is the line *saying*?" Wall — spectrum, waveform,
+/// VU, and EQ over the shared `acoustic` model: one coherent
+/// condition-monitoring surface.
+fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Page {
     let eq = eq_trim.clone();
     let spectrum = Bound::new(
         Spectrum::new().peak_hold(true).label("LINE SPECTRUM"),
@@ -1495,7 +1722,7 @@ fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Flex {
         ));
     });
 
-    Flex::column()
+    let primary = Flex::column()
         .gap(ZONE_STACK)
         .child(
             row()
@@ -1508,7 +1735,10 @@ fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Flex {
                 .child_flex(band(BAND_M, equalizer), 2.0)
                 .child(loudness),
         )
-        .child(strip().child(line).child_flex(freq, 1.0))
+        .child(strip().child(line).child_flex(freq, 1.0));
+    // Two meter bands + the status strip — scroll-mounted so a short
+    // zone scrolls instead of crushing the strip.
+    Page::new(Variant::Wall, fill(scroll(primary)), &model.zone_width)
 }
 
 // ---------------------------------------------------------------------------
@@ -1517,7 +1747,9 @@ fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Flex {
 // the note, StepSequencer the pattern, Metronome the tempo,
 // Fretboard/Tuner the readouts.
 // ---------------------------------------------------------------------------
-fn tones_page(model: &PlantModel) -> Flex {
+/// The annunciator tone bench — mounted as SYSTEM's bounded
+/// secondary rail (Telemetry zone), not a standalone page.
+pub(crate) fn tones_bench(model: &PlantModel) -> Flex {
     // PianoKeys index 48 = C4 (MIDI 60) → note = index + 12. Four
     // octaves covers the annunciator's usable range (incl. seed A3).
     let keys = Bound::new(PianoKeys::new().octaves(4).label("TONE NOTE"), model).pull(|k, m| {
@@ -1647,7 +1879,9 @@ fn tones_page(model: &PlantModel) -> Flex {
 // follow `selected_asset`; Lightbox browses cells and publishes its
 // navigation back to `selected_asset`.
 // ---------------------------------------------------------------------------
-fn photos_page(model: &PlantModel) -> Flex {
+/// Per-asset inspection photos — mounted as DETAIL's "PHOTOS"
+/// dossier lens (Process Grid zone), not a standalone page.
+pub(crate) fn inspection_photos(model: &PlantModel) -> Flex {
     let sel = model.selected_asset.get();
     let sel_asset = sel.and_then(|id| model.asset(id));
 
@@ -1770,15 +2004,7 @@ mod tests {
         let names: Vec<&str> = pgs.iter().map(|(n, _)| *n).collect();
         assert_eq!(
             names,
-            [
-                "COMMS",
-                "ROOMS",
-                "CAMERAS",
-                "TRANSPORT",
-                "ACOUSTIC",
-                "TONES",
-                "PHOTOS",
-            ]
+            ["COMMS", "ROOMS", "CAMERAS", "TRANSPORT", "ACOUSTIC",]
         );
     }
 

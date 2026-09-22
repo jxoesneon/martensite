@@ -229,9 +229,20 @@ impl ResizeHandle {
 impl Widget for ResizeHandle {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let thick = cx.pt(THICK_PT);
+        // The sash spans the offered cross axis, but `f32::MAX` is the
+        // unbounded sentinel, not a real offer (e.g. a column inside a
+        // scroll view) — echoing it would poison the parent's layout.
+        // Report a modest intrinsic run instead.
+        let tame = |v: f32| {
+            if v < f32::MAX {
+                v.max(thick)
+            } else {
+                cx.pt(96.0)
+            }
+        };
         match self.orientation {
-            SplitOrientation::Horizontal => Vec2::new(thick, constraints.max_size.y.max(thick)),
-            SplitOrientation::Vertical => Vec2::new(constraints.max_size.x.max(thick), thick),
+            SplitOrientation::Horizontal => Vec2::new(thick, tame(constraints.max_size.y)),
+            SplitOrientation::Vertical => Vec2::new(tame(constraints.max_size.x), thick),
         }
     }
 
