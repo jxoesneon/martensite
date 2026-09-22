@@ -151,7 +151,7 @@ pub fn pages(model: &PlantModel) -> Vec<(&'static str, Page)> {
 
 /// Signal-family group label — the council's chart-grouping grammar.
 fn group_label(text: &'static str) -> Text {
-    Text::new(text).font_size(11.0)
+    Text::new(text).font_size(12.0)
 }
 
 /// `Signal<Vec<f64>>` ring → chart points.

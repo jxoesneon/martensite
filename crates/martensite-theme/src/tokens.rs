@@ -60,6 +60,12 @@ pub enum TokenKey {
     BorderColor,
     /// The divider / separator color.
     DividerColor,
+    /// The raised chrome surface color (toolbars, tab strips, card
+    /// header bands) — a step above [`TokenKey::SurfaceColor`] on the
+    /// tonal ladder. Unlike `DividerColor` (a stroke token), raised
+    /// chrome hosts text and controls, so it is tuned to keep both
+    /// body text at 4.5:1 and `BorderColor` strokes at 3:1.
+    RaisedColor,
     /// The error / danger semantic color.
     ErrorColor,
     /// The warning semantic color.
@@ -410,7 +416,16 @@ pub fn default_light() -> Theme {
     theme.set(
         TokenKey::DividerColor,
         ThemeToken::Color(Oklab {
-            l: 0.90,
+            l: 0.59,
+            a: 0.0,
+            b: 0.0,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::RaisedColor,
+        ThemeToken::Color(Oklab {
+            l: 0.93,
             a: 0.0,
             b: 0.0,
             alpha: 1.0,
@@ -564,7 +579,7 @@ pub fn default_dark() -> Theme {
     theme.set(
         TokenKey::SecondaryColor,
         ThemeToken::Color(Oklab {
-            l: 0.65,
+            l: 0.68,
             a: -0.05,
             b: 0.05,
             alpha: 1.0,
@@ -591,7 +606,7 @@ pub fn default_dark() -> Theme {
     theme.set(
         TokenKey::TextMutedColor,
         ThemeToken::Color(Oklab {
-            l: 0.65,
+            l: 0.74,
             a: 0.0,
             b: 0.0,
             alpha: 1.0,
@@ -609,7 +624,7 @@ pub fn default_dark() -> Theme {
     theme.set(
         TokenKey::BorderColor,
         ThemeToken::Color(Oklab {
-            l: 0.60,
+            l: 0.70,
             a: 0.0,
             b: 0.0,
             alpha: 1.0,
@@ -617,6 +632,15 @@ pub fn default_dark() -> Theme {
     );
     theme.set(
         TokenKey::DividerColor,
+        ThemeToken::Color(Oklab {
+            l: 0.64,
+            a: 0.0,
+            b: 0.0,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::RaisedColor,
         ThemeToken::Color(Oklab {
             l: 0.30,
             a: 0.0,
@@ -627,7 +651,7 @@ pub fn default_dark() -> Theme {
     theme.set(
         TokenKey::ErrorColor,
         ThemeToken::Color(Oklab {
-            l: 0.68,
+            l: 0.70,
             a: 0.18,
             b: 0.12,
             alpha: 1.0,
@@ -921,15 +945,19 @@ mod tests {
         ];
         // Stroke-grade tokens: 3:1 non-text floor. `PrimaryColor` is a
         // *fill* token (selection washes, primary buttons — text sits on
-        // top of it, not rendered as it), as is `DividerColor`.
-        const STROKE_TOKENS: &[TokenKey] = &[TokenKey::BorderColor];
+        // top of it, not rendered as it), as is `RaisedColor`.
+        const STROKE_TOKENS: &[TokenKey] = &[TokenKey::BorderColor, TokenKey::DividerColor];
         for theme in [default_light(), default_dark()] {
             let surface = theme.color(TokenKey::SurfaceColor).unwrap();
             let background = theme.color(TokenKey::BackgroundColor).unwrap();
-            let raised = theme.color(TokenKey::DividerColor).unwrap();
+            let raised = theme.color(TokenKey::RaisedColor).unwrap();
             for key in TEXT_TOKENS {
                 let fg = theme.color(*key).unwrap();
-                for (bg, name) in [(surface, "SurfaceColor"), (background, "BackgroundColor")] {
+                for (bg, name) in [
+                    (surface, "SurfaceColor"),
+                    (background, "BackgroundColor"),
+                    (raised, "RaisedColor"),
+                ] {
                     let ratio = crate::wcag_contrast(fg, bg);
                     assert!(
                         ratio >= 4.5,
@@ -940,14 +968,14 @@ mod tests {
             }
             for key in STROKE_TOKENS {
                 let fg = theme.color(*key).unwrap();
-                // Controls sit on raised surfaces too — the ecosystem's
-                // convention uses `DividerColor` for toolbar/card bands,
+                // Controls sit on raised surfaces too — the chrome
+                // convention uses `RaisedColor` for toolbar/card bands,
                 // and `BackgroundColor` shows through transparent
                 // control interiors (e.g. CheckBox's box).
                 for (bg, name) in [
                     (surface, "SurfaceColor"),
                     (background, "BackgroundColor"),
-                    (raised, "DividerColor"),
+                    (raised, "RaisedColor"),
                 ] {
                     let ratio = crate::wcag_contrast(fg, bg);
                     assert!(
@@ -974,8 +1002,8 @@ mod tests {
             //   and muted marks on raised bands (scrollbar thumb,
             //   hairlines) — non-text floor.
             for (fg_key, bg, name) in [
-                (TokenKey::AccentColor, raised, "DividerColor"),
-                (TokenKey::TextMutedColor, raised, "DividerColor"),
+                (TokenKey::AccentColor, raised, "RaisedColor"),
+                (TokenKey::TextMutedColor, raised, "RaisedColor"),
             ] {
                 let fg = theme.color(fg_key).unwrap();
                 let ratio = crate::wcag_contrast(fg, bg);

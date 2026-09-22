@@ -42,8 +42,8 @@ const PALETTE: [[u8; 4]; 8] = [
 ];
 const LINE_PT: f32 = 2.0;
 const AXIS_PT: f32 = 1.0;
-const TICK_FONT_PT: f32 = 9.0;
-const TICK_STRIP_PT: f32 = 14.0;
+const TICK_FONT_PT: f32 = 12.0;
+const TICK_STRIP_PT: f32 = 16.0;
 const TICK_COUNT: usize = 4;
 const POINT_R_PT: f32 = 2.5;
 /// Series-proximity hit radius (pt).
@@ -361,7 +361,7 @@ impl Widget for LineChart {
                     f64::from(plot.max_x()),
                     f64::from(base_y + AXIS_PT * self.scale),
                 ),
-                cx.color(TokenKey::DividerColor, FALLBACK_AXIS),
+                cx.color(TokenKey::RaisedColor, FALLBACK_AXIS),
             );
             let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
             let font = TICK_FONT_PT * self.scale;

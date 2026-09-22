@@ -30,8 +30,8 @@ use martensite_theme::TokenKey;
 use crate::text_paint::SharedTextPainter;
 
 const PAD_PT: f32 = 12.0;
-const FONT_PT: f32 = 11.0;
-const CAUSE_PT: f32 = 9.5;
+const FONT_PT: f32 = 12.0;
+const CAUSE_PT: f32 = 12.0;
 const RIB_PT: f32 = 90.0;
 
 const FACE: [u8; 4] = [30, 32, 40, 255];
@@ -225,7 +225,10 @@ impl Widget for Fishbone {
         self.ribs.clear();
         let s = cx.scale;
         let n = self.bones.len();
-        let head_w = 90.0 * s;
+        // The head box must never outgrow the widget — on a narrow
+        // allocation a fixed-width head would cover every rib. Cap it
+        // at under half the width so the spine keeps real estate.
+        let head_w = (90.0 * s).min(bounds.width() * 0.45);
         let usable = (bounds.width() - head_w - PAD_PT * 2.0 * s).max(0.0);
         let mid = bounds.min_y() + bounds.height() / 2.0;
         // Tip labels sit `fs` beyond the tip with ink running ~1.25·fs
@@ -276,7 +279,9 @@ impl Widget for Fishbone {
         let s = cx.scale;
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let mid = self.bounds.min_y() + self.bounds.height() / 2.0;
-        let head_w = 90.0 * s;
+        // Same proportional cap as `layout` — the head never outgrows
+        // the widget on a narrow allocation.
+        let head_w = (90.0 * s).min(self.bounds.width() * 0.45);
         let spine_end = self.bounds.max_x() - head_w;
         cx.list.push_fill_rect(
             kurbo::Rect::new(
@@ -312,7 +317,9 @@ impl Widget for Fishbone {
             kurbo::Point::new(hr.x0 + f64::from(8.0 * s), f64::from(mid + 4.0 * s)),
             &self.effect,
             FONT_PT * s,
-            TEXT,
+            // The head box is accent-filled — inverse ink reads on the
+            // chromatic face where body ink does not.
+            cx.color(TokenKey::TextInverseColor, TEXT),
         );
         // Ribs.
         for (i, bone) in self.bones.iter().enumerate() {
@@ -321,7 +328,10 @@ impl Widget for Fishbone {
             // The rib rect already encodes the (possibly height-capped)
             // tip — read it back instead of recomputing.
             let tip_y = if upper { r.min_y() } else { r.max_y() };
-            let tip_x = bx + 30.0 * s; // angled toward the head
+            // Tips angle toward the head but must stop short of the
+            // accent head box — a rib landing on it disappears, and
+            // its tip label would print body ink on the chromatic face.
+            let tip_x = (bx + 30.0 * s).min((spine_end - 8.0 * s).max(bx + 4.0 * s));
             let color = if self.hovered == Some(i) {
                 cx.color(TokenKey::AccentColor, [90, 140, 220, 255])
             } else {
@@ -329,21 +339,50 @@ impl Widget for Fishbone {
             };
             cx.list
                 .push_stroke_path(line_path(bx, mid, tip_x, tip_y), 1.5 * s, color);
-            // Category label at the tip.
+            // Category label at the tip, clipped to this rib's share
+            // of the spine — adjacent tips sit one rib-width apart, so
+            // centered labels truncate rather than collide.
             let fs = FONT_PT * s;
             let tw = painter
                 .and_then(|p| p.measure_text(&bone.category, fs))
                 .unwrap_or(bone.category.len() as f32 * fs * 0.5);
+            // Origin is the ink box's top edge — an upper rib's label
+            // must sit a full line-height above the tip, not a hair,
+            // or its ink lands on the rib's last cause label.
             let tip_origin = kurbo::Point::new(
                 f64::from(tip_x - tw / 2.0),
-                f64::from(tip_y + if upper { -4.0 * s } else { fs }),
+                f64::from(if upper {
+                    tip_y - fs * 1.35
+                } else {
+                    tip_y + 4.0 * s
+                }),
+            );
+            // Half-way to each neighbour's spine foot bounds the label.
+            let left_edge = if i > 0 {
+                (self.ribs[i - 1].0.min_x() + r.min_x()) / 2.0
+            } else {
+                self.bounds.min_x() + PAD_PT * s
+            };
+            // The last rib's label stops short of the accent head box —
+            // reaching it puts body ink on a chromatic backdrop.
+            let right_edge = f64::from(if i + 1 < self.bones.len() {
+                (self.ribs[i + 1].0.min_x() + r.min_x()) / 2.0
+            } else {
+                spine_end - 8.0 * s
+            });
+            let tip_clip = kurbo::Rect::new(
+                f64::from(left_edge.max(self.bounds.min_x())),
+                f64::from(self.bounds.min_y()),
+                right_edge.min(f64::from(self.bounds.max_x())),
+                f64::from(self.bounds.max_y()),
             );
             if crate::text_paint::label_ink_bounds(painter, tip_origin, &bone.category, fs)
                 .is_none_or(|ink| crate::text_paint::visible_ink(cx.list, ink))
             {
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
+                    tip_clip,
                     tip_origin,
                     &bone.category,
                     fs,
@@ -364,18 +403,24 @@ impl Widget for Fishbone {
                     f64::from(cxp + 10.0 * s),
                     f64::from(cyp + CAUSE_PT * s * 0.4),
                 );
-                if crate::text_paint::label_ink_bounds(painter, cause_origin, cause, CAUSE_PT * s)
-                    .is_none_or(|ink| crate::text_paint::visible_ink(cx.list, ink))
-                {
-                    crate::text_paint::paint_label(
-                        painter,
-                        cx.list,
-                        cause_origin,
-                        cause,
-                        CAUSE_PT * s,
-                        color,
-                    );
-                }
+                // Causes are clipped to their rib's horizontal span —
+                // a long cause truncates instead of colliding with the
+                // next rib's label.
+                let cause_clip = kurbo::Rect::new(
+                    f64::from(cxp + 10.0 * s),
+                    f64::from(cyp - CAUSE_PT * s),
+                    f64::from(tip_x.max(cxp + 10.0 * s)),
+                    f64::from(cyp + CAUSE_PT * s * 2.0),
+                );
+                crate::text_paint::paint_label_clipped(
+                    painter,
+                    cx.list,
+                    cause_clip,
+                    cause_origin,
+                    cause,
+                    CAUSE_PT * s,
+                    color,
+                );
             }
         }
     }

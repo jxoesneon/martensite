@@ -2086,12 +2086,19 @@ impl Widget for Table {
         );
         let header_font = cx.pt(HEADER_FONT);
         for (i, col) in self.columns.iter().enumerate() {
+            // Column widths can exceed the viewport — clip each header
+            // cell to the pinned header band so the last column's
+            // title cannot paint past the widget's edge.
             let cell = kurbo::Rect::new(
                 f64::from(edges[i]),
                 f64::from(self.header_rect.min_y()),
                 f64::from(edges[i + 1]),
                 f64::from(self.header_rect.max_y()),
-            );
+            )
+            .intersect(hr);
+            if cell.is_zero_area() {
+                continue;
+            }
             // Sort indicator: a small triangle at the trailing edge.
             let sorted = self.sort_column == Some(i);
             if sorted {

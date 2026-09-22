@@ -385,8 +385,11 @@ impl Widget for OrgChart {
         self.paint_wires(&self.root, &mut idx, cx, wire, thick);
         // Cards.
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        let title_sz = 11.0 * self.scale * self.fit;
-        let sub_sz = 9.0 * self.scale * self.fit;
+        // Card labels never shrink below the 12pt floor — a card too
+        // small to host them honestly clips (or drops the subtitle)
+        // rather than render microtext.
+        let title_sz = (11.0 * self.scale * self.fit).max(12.0 * self.scale);
+        let sub_sz = 12.0 * self.scale;
         let mut i = 0usize;
         self.paint_cards(&self.root, &mut i, cx, painter, title_sz, sub_sz);
         cx.list.pop_clip();
@@ -475,7 +478,9 @@ impl OrgChart {
                 title_sz,
                 cx.color(TokenKey::TextColor, TITLE),
             );
-            if !n.subtitle.is_empty() {
+            if !n.subtitle.is_empty()
+                && r.height() > 6.0 * self.scale + title_sz * 1.4 + sub_sz * 1.3
+            {
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,

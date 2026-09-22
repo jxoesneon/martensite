@@ -764,7 +764,7 @@ impl Widget for Calendar {
             WEEKDAYS_SUN
         };
         let cell_w = b.width() / 7.0;
-        let wd_size = 10.0 * cx.scale;
+        let wd_size = 12.0 * cx.scale;
         for (i, name) in names.iter().enumerate() {
             let clip = kurbo::Rect::new(
                 f64::from(b.min_x() + i as f32 * cell_w),
@@ -825,7 +825,9 @@ impl Widget for Calendar {
             let day_ink = if !self.enabled || !in_range {
                 muted
             } else if picked || endpoint {
-                [255, 255, 255, 255]
+                // Selected cells are accent-filled — inverse ink reads
+                // on the chromatic face where white does not.
+                cx.color(TokenKey::TextInverseColor, [255, 255, 255, 255])
             } else if cell.in_month {
                 ink
             } else {

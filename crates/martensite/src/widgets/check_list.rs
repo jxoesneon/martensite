@@ -429,7 +429,7 @@ impl Widget for CheckList {
         let row_h = ROW_PT * s;
         let pad = PAD_PT * s;
         let box_sz = BOX_PT * s;
-        let size = 11.0 * s;
+        let size = 12.0 * s;
         let mut hits = self.hits.lock();
         hits.clear();
         cx.list.push_clip(krect(self.bounds));

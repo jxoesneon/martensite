@@ -262,9 +262,25 @@ pub struct ScrollView {
     drag_last: Option<Vec2>,
     /// Thumb-drag state: `(vertical?, grab_offset_in_thumb)`.
     thumb_drag: Option<(bool, f32)>,
+    /// Which axis the content measure leaves unbounded — vertical for
+    /// documents, horizontal for strip/toolbar idioms.
+    axis: ScrollAxis,
     /// Display scale from `layout` — bar width, min thumb, scroll step
     /// are logical pt.
     scale: f32,
+}
+
+/// Which axis a [`ScrollView`] measures its content unbounded on —
+/// the scroll direction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+enum ScrollAxis {
+    /// Height is unbounded, width is pinned to the viewport — the
+    /// document idiom.
+    #[default]
+    Vertical,
+    /// Width is unbounded, height is pinned to the viewport — the
+    /// strip/toolbar idiom.
+    Horizontal,
 }
 
 impl ScrollView {
@@ -294,8 +310,29 @@ impl ScrollView {
             content_rect: None,
             drag_last: None,
             thumb_drag: None,
+            axis: ScrollAxis::Vertical,
             scale: 1.0,
         }
+    }
+
+    /// A horizontally-scrolling viewport — the strip/toolbar idiom.
+    /// Content measures with an unbounded width and the viewport's
+    /// height, so an over-wide control row grows a horizontal bar
+    /// instead of crushing trailing children.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{ScrollView, Text};
+    ///
+    /// let v = ScrollView::horizontal(Text::new("a very long toolbar row"));
+    /// assert_eq!(v.scroll_offset(), glam::Vec2::ZERO);
+    /// ```
+    #[must_use]
+    pub fn horizontal(content: impl Widget + 'static) -> Self {
+        let mut v = Self::new(content);
+        v.axis = ScrollAxis::Horizontal;
+        v
     }
 
     /// Sets whether the view is enabled.
@@ -838,7 +875,10 @@ impl Widget for ScrollView {
             cx,
             LayoutConstraints {
                 min_size: Vec2::ZERO,
-                max_size: Vec2::new(bounds.width(), f32::MAX),
+                max_size: match self.axis {
+                    ScrollAxis::Vertical => Vec2::new(bounds.width(), f32::MAX),
+                    ScrollAxis::Horizontal => Vec2::new(f32::MAX, bounds.height()),
+                },
             },
         );
         let desired = Vec2::new(

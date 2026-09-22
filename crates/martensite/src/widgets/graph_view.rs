@@ -289,7 +289,7 @@ impl GraphView {
     /// without this their labels paint past the container edge.
     fn clamp_inside(&mut self, i: usize) {
         let r = self.node_r();
-        let size = 10.0 * self.scale;
+        let size = 12.0 * self.scale;
         let half_w = self.nodes[i].chars().count() as f32 * size * 0.32;
         let inset_x = r.max(half_w);
         let top = r;
@@ -450,7 +450,21 @@ impl Widget for GraphView {
         // Nodes + labels.
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let r = self.node_r();
-        let size = 10.0 * self.scale;
+        let size = 12.0 * self.scale;
+        // Node captions can't reflow — when two nodes sit close their
+        // labels would overprint. First-wins culling keeps the
+        // diagram readable instead of stacking runs.
+        let mut label_boxes: Vec<kurbo::Rect> = Vec::with_capacity(self.positions.len());
+        let node_box = |p: &Vec2| {
+            kurbo::Rect::new(
+                f64::from(p.x - r),
+                f64::from(p.y - r),
+                f64::from(p.x + r),
+                f64::from(p.y + r),
+            )
+        };
+        // Circles first — a caption must never sit *under* a later
+        // node's fill.
         for (i, p) in self.positions.iter().enumerate() {
             let fill = if self.hover == Some(i) || self.drag == Some(i) {
                 NODE_HI
@@ -458,25 +472,34 @@ impl Widget for GraphView {
                 cx.color(TokenKey::AccentColor, NODE)
             };
             cx.list.push_fill_shape(
-                kurbo::Rect::new(
-                    f64::from(p.x - r),
-                    f64::from(p.y - r),
-                    f64::from(p.x + r),
-                    f64::from(p.y + r),
-                ),
+                node_box(p),
                 &martensite_core::shape::Shape::circle(*p, r),
                 fill,
             );
+        }
+        for (i, p) in self.positions.iter().enumerate() {
             let origin = kurbo::Point::new(
                 f64::from(p.x - self.nodes[i].chars().count() as f32 * size * 0.28),
                 f64::from(p.y + r * 1.2),
             );
             // Captions dragged outside the enclosing clip are dead
             // emissions — cull them.
-            let on_clip =
-                crate::text_paint::label_ink_bounds(painter, origin, &self.nodes[i], size)
-                    .is_none_or(|ink| crate::text_paint::visible_ink(cx.list, ink));
-            if on_clip {
+            let ink = crate::text_paint::label_ink_bounds(painter, origin, &self.nodes[i], size);
+            let on_clip = ink.is_none_or(|b| crate::text_paint::visible_ink(cx.list, b));
+            // ...or *on* a node's circle — captions print on the
+            // widget face, and a crowded layout that puts ink on a
+            // chromatic node reads as mud. Skip those labels.
+            let collides = ink.is_some_and(|b| {
+                let hits_box =
+                    |o: &kurbo::Rect| b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0;
+                label_boxes.iter().any(hits_box)
+                    || self
+                        .positions
+                        .iter()
+                        .enumerate()
+                        .any(|(j, q)| j != i && hits_box(&node_box(q)))
+            });
+            if on_clip && !collides {
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,
@@ -485,6 +508,9 @@ impl Widget for GraphView {
                     size,
                     cx.color(TokenKey::TextColor, TEXT),
                 );
+                if let Some(b) = ink {
+                    label_boxes.push(b);
+                }
             }
         }
         cx.list.push_stroke_shape(

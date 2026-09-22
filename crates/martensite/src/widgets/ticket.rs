@@ -27,15 +27,15 @@ use crate::text_paint::SharedTextPainter;
 
 const PAD_PT: f32 = 14.0;
 const TITLE_PT: f32 = 15.0;
-const FIELD_PT: f32 = 10.5;
-const LABEL_PT: f32 = 8.5;
+const FIELD_PT: f32 = 12.0;
+const LABEL_PT: f32 = 12.0;
 const STUB_PT: f32 = 56.0;
 const COLS: usize = 3;
 
 const FACE: [u8; 4] = [245, 246, 250, 255];
 const EDGE: [u8; 4] = [90, 94, 104, 255];
 const INK: [u8; 4] = [30, 32, 40, 255];
-const MUTED_FG: [u8; 4] = [120, 124, 134, 255];
+const MUTED_FG: [u8; 4] = [80, 84, 94, 255];
 
 /// The ticket card — see the module docs.
 ///
@@ -197,7 +197,16 @@ impl Widget for Ticket {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let rows = self.fields.len().div_ceil(COLS) as f32;
-        let h = PAD_PT * 2.0 + TITLE_PT + 6.0 + rows * (LABEL_PT + FIELD_PT + 8.0) + STUB_PT;
+        let caption = if self.caption.is_empty() {
+            0.0
+        } else {
+            LABEL_PT * 1.3 + 2.0
+        };
+        let h = PAD_PT * 2.0
+            + TITLE_PT * 1.3
+            + caption
+            + rows * ((LABEL_PT + FIELD_PT) * 1.3 + 4.0)
+            + STUB_PT;
         Vec2::new(
             (320.0 * s).min(constraints.max_size.x.max(0.0)),
             (h * s).min(constraints.max_size.y.max(0.0)),
@@ -258,54 +267,76 @@ impl Widget for Ticket {
             &martensite_core::shape::Shape::rounded(8.0 * s),
             FACE,
         );
-        // Title + caption.
+        // Title + caption, clipped to the card interior — never into
+        // the stub strip below (or past the card when torn).
         let tfs = TITLE_PT * s;
-        crate::text_paint::paint_label(
+        let face_y1 = if self.torn { b.max_y() } else { stub_y };
+        let card_clip = kurbo::Rect::new(
+            f64::from(b.min_x() + pad),
+            f64::from(b.min_y()),
+            f64::from(b.max_x() - pad),
+            f64::from(face_y1),
+        );
+        // Text runs occupy ~1.15×fs of ink below their origin — every
+        // row advances a full 1.3×fs line box so no ink box bottoms
+        // into the next run.
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
-            kurbo::Point::new(f64::from(b.min_x() + pad), f64::from(b.min_y() + pad + tfs)),
+            card_clip,
+            kurbo::Point::new(f64::from(b.min_x() + pad), f64::from(b.min_y() + pad)),
             &self.title,
             tfs,
             INK,
         );
+        let mut cursor = b.min_y() + pad + TITLE_PT * 1.3 * s;
         if !self.caption.is_empty() {
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kurbo::Point::new(
-                    f64::from(b.min_x() + pad),
-                    f64::from(b.min_y() + pad + tfs + LABEL_PT * s + 4.0 * s),
-                ),
+                card_clip,
+                kurbo::Point::new(f64::from(b.min_x() + pad), f64::from(cursor)),
                 &self.caption,
                 LABEL_PT * s,
                 MUTED_FG,
             );
+            cursor += LABEL_PT * 1.3 * s + 2.0 * s;
         }
         // Field grid.
         let cols = COLS;
         let cw = (b.width() - pad * 2.0) / cols as f32;
-        let mut fy = b.min_y() + pad + (TITLE_PT + 12.0) * s;
+        let mut fy = cursor;
         for (i, (lab, val)) in self.fields.iter().enumerate() {
             let col = i % cols;
             if i > 0 && col == 0 {
-                fy += (LABEL_PT + FIELD_PT + 8.0) * s;
+                fy += (LABEL_PT + FIELD_PT) * 1.3 * s + 4.0 * s;
             }
             let x = b.min_x() + pad + col as f32 * cw;
-            crate::text_paint::paint_label(
+            // Each field is clipped to its column and to the main
+            // face — a long value truncates instead of overprinting
+            // the next column, and a squeezed card cuts rows at the
+            // stub boundary rather than letting them collide with the
+            // barcode strip.
+            let cell = kurbo::Rect::new(
+                f64::from(x),
+                f64::from(fy),
+                f64::from((x + cw).min(b.max_x() - pad)),
+                f64::from(face_y1),
+            );
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kurbo::Point::new(f64::from(x), f64::from(fy + LABEL_PT * s)),
+                cell,
+                kurbo::Point::new(f64::from(x), f64::from(fy)),
                 &lab.to_uppercase(),
                 LABEL_PT * s,
                 MUTED_FG,
             );
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kurbo::Point::new(
-                    f64::from(x),
-                    f64::from(fy + (LABEL_PT + 2.0) * s + FIELD_PT * s),
-                ),
+                cell,
+                kurbo::Point::new(f64::from(x), f64::from(fy + LABEL_PT * 1.3 * s)),
                 val,
                 FIELD_PT * s,
                 INK,
@@ -359,9 +390,15 @@ impl Widget for Ticket {
                 bx += w + 2.0 * s;
                 i += 1;
             }
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                kurbo::Rect::new(
+                    f64::from(self.stub_rect.min_x()),
+                    f64::from(self.stub_rect.min_y()),
+                    f64::from(self.stub_rect.max_x()),
+                    f64::from(self.stub_rect.max_y()),
+                ),
                 kurbo::Point::new(f64::from(b.min_x() + pad), f64::from(stub_y + 12.0 * s)),
                 "STUB",
                 LABEL_PT * s,

@@ -39,7 +39,7 @@ const ICON_FONT_PT: f32 = 18.0;
 /// Title font size, logical points.
 const TITLE_PT: f32 = 13.0;
 /// Subtitle font size, logical points.
-const SUBTITLE_PT: f32 = 11.0;
+const SUBTITLE_PT: f32 = 12.0;
 /// Gap between title block and trailing widget, logical points.
 const TRAIL_GAP_PT: f32 = 12.0;
 /// Group header font size, logical points.

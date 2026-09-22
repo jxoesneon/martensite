@@ -34,7 +34,7 @@ const ART_PT: f32 = 44.0;
 const PAD_PT: f32 = 8.0;
 const GAP_PT: f32 = 10.0;
 const TITLE_PT: f32 = 13.0;
-const SUB_PT: f32 = 10.0;
+const SUB_PT: f32 = 12.0;
 const RAIL_H_PT: f32 = 3.0;
 const RADIUS_PT: f32 = 6.0;
 /// Art (44) + padding + gap + metadata column + elapsed/total readout.
@@ -432,35 +432,40 @@ impl Widget for NowPlaying {
             gsize,
             cx.color(TokenKey::TextInverseColor, TEXT),
         );
-        // Title + artist — album.
+        // Title + artist — album. Text is clipped to the zone right of
+        // the art swatch — a narrow card must truncate, not let the
+        // runs underflow over the swatch or past the card edge.
         let tx = art.max_x() + GAP_PT * s;
-        let cy = card.min_y() + card.height() / 2.0;
+        let text_zone = kurbo::Rect::new(
+            f64::from(tx),
+            f64::from(card.min_y()),
+            f64::from(card.max_x() - PAD_PT * s),
+            f64::from(card.max_y()),
+        );
+        // Two-line block centred in the card — a short card clips the
+        // sub line at the card edge instead of letting the baselines
+        // converge and overprint each other.
+        let block_h = (TITLE_PT + SUB_PT + 6.0) * s;
+        let title_y = card.min_y() + (card.height() - block_h).max(0.0) / 2.0;
+        let sub_y = title_y + (TITLE_PT * 1.35) * s;
         let title = if self.playing {
             format!("▶ {}", self.title)
         } else {
             self.title.clone()
         };
-        crate::text_paint::paint_label(
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
-            kurbo::Point::new(f64::from(tx), f64::from(cy - 4.0 * s)),
+            text_zone,
+            kurbo::Point::new(f64::from(tx), f64::from(title_y)),
             &title,
             TITLE_PT * s,
             cx.color(TokenKey::TextColor, TEXT),
         );
-        let sub = match &self.album {
-            Some(a) => format!("{} — {}", self.artist, a),
-            None => self.artist.clone(),
-        };
-        crate::text_paint::paint_label(
-            painter,
-            cx.list,
-            kurbo::Point::new(f64::from(tx), f64::from(cy + SUB_PT * s)),
-            &sub,
-            SUB_PT * s,
-            cx.color(TokenKey::TextMutedColor, MUTED),
-        );
-        // Times right-aligned.
+        // Times right-aligned — measured first so `sub` can be clipped
+        // short of it. Dropped entirely when the text zone can't fit
+        // it: a right-aligned run pushed left of the zone overprints
+        // the title/sub.
         let times = format!(
             "{} / {}",
             Self::fmt_time(self.position),
@@ -469,17 +474,42 @@ impl Widget for NowPlaying {
         let tw = painter
             .and_then(|p| p.measure_text(&times, SUB_PT * s))
             .unwrap_or(times.len() as f32 * SUB_PT * 0.6 * s);
-        crate::text_paint::paint_label(
+        let times_x = card.max_x() - PAD_PT * s - tw;
+        let times_fits = tx + tw + GAP_PT * s <= card.max_x() - PAD_PT * s;
+        let sub = match &self.album {
+            Some(a) => format!("{} — {}", self.artist, a),
+            None => self.artist.clone(),
+        };
+        let sub_zone = if times_fits {
+            kurbo::Rect::new(
+                text_zone.x0,
+                text_zone.y0,
+                f64::from(times_x - GAP_PT * s),
+                text_zone.y1,
+            )
+        } else {
+            text_zone
+        };
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
-            kurbo::Point::new(
-                f64::from(card.max_x() - PAD_PT * s - tw),
-                f64::from(cy + SUB_PT * s),
-            ),
-            &times,
+            sub_zone,
+            kurbo::Point::new(f64::from(tx), f64::from(sub_y)),
+            &sub,
             SUB_PT * s,
             cx.color(TokenKey::TextMutedColor, MUTED),
         );
+        if times_fits {
+            crate::text_paint::paint_label_clipped(
+                painter,
+                cx.list,
+                text_zone,
+                kurbo::Point::new(f64::from(times_x), f64::from(sub_y)),
+                &times,
+                SUB_PT * s,
+                cx.color(TokenKey::TextMutedColor, MUTED),
+            );
+        }
         // Progress rail along the card's bottom.
         let rail = kurbo::Rect::new(
             f64::from(self.bounds.min_x()),

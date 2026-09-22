@@ -444,8 +444,8 @@ impl Widget for AlarmPanel {
         let s = self.scale;
         let pad = PAD_PT * s;
         let row_h = ROW_PT * s;
-        let msg_sz = 11.5 * s;
-        let src_sz = 9.5 * s;
+        let msg_sz = 12.0 * s;
+        let src_sz = 12.0 * s;
         let edge_on = self.blink < 0.55;
         let mut hits = self.ack_hits.lock();
         hits.clear();
@@ -462,6 +462,9 @@ impl Widget for AlarmPanel {
                 row_h,
             );
             let kr = krect(r);
+            // Text clip stops before the trailing ack affordance —
+            // the message must truncate, not run under the chip.
+            let text_clip = kurbo::Rect::new(kr.x0, kr.y0, kr.x1 - f64::from(50.0 * s), kr.y1);
             let acked = a.state == AlarmState::Acknowledged;
             cx.list.push_fill_shape(
                 kr,
@@ -488,7 +491,7 @@ impl Widget for AlarmPanel {
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kr,
+                text_clip,
                 kurbo::Point::new(f64::from(tx), f64::from(y + 5.0 * s)),
                 &a.message,
                 msg_sz,
@@ -498,7 +501,7 @@ impl Widget for AlarmPanel {
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
-                    kr,
+                    text_clip,
                     kurbo::Point::new(f64::from(tx), f64::from(y + 5.0 * s + msg_sz * 1.5)),
                     &a.source,
                     src_sz,
@@ -527,7 +530,7 @@ impl Widget for AlarmPanel {
                 cx.list.push_fill_shape(
                     krect(chip),
                     &martensite_core::shape::Shape::rounded(4.0 * s),
-                    cx.color(TokenKey::BorderColor, ACK_CHIP),
+                    cx.color(TokenKey::RaisedColor, ACK_CHIP),
                 );
                 crate::text_paint::paint_label(
                     painter,

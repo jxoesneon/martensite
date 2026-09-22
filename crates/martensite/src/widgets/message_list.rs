@@ -357,7 +357,7 @@ impl Widget for MessageList {
         let s = self.scale;
         let pad = PAD_PT * s;
         let text_sz = 12.0 * s;
-        let meta_sz = 9.5 * s;
+        let meta_sz = 12.0 * s;
         let bubble_pad = BUBBLE_PAD_PT * s;
         let max_bubble = self.bounds.width() * MAX_BUBBLE_FRAC;
         let text = cx.color(TokenKey::TextColor, TEXT);
@@ -400,6 +400,13 @@ impl Widget for MessageList {
                 &martensite_core::shape::Shape::rounded(bubble_pad),
                 fill,
             );
+            // Outgoing bubbles are accent-filled — body ink must read
+            // on the chromatic face, so pick the contrast side.
+            let body_ink = crate::text_paint::better_ink(
+                fill,
+                text,
+                cx.color(TokenKey::TextInverseColor, [22, 22, 26, 255]),
+            );
             // Text clips are intersected with the widget bounds: a row
             // straddling the viewport edge emits only the part that can
             // render — the audit flags text a clip would erase anyway.
@@ -411,7 +418,7 @@ impl Widget for MessageList {
                 kurbo::Point::new(f64::from(bx + bubble_pad), f64::from(y + bubble_pad * 0.7)),
                 &m.body,
                 text_sz,
-                text,
+                body_ink,
             );
             // Meta line under the bubble: sender + time.
             let meta = if m.time.is_empty() {

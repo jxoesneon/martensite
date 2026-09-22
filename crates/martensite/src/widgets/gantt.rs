@@ -324,7 +324,7 @@ impl Widget for Gantt {
             d += step;
         }
 
-        let size = 9.0 * cx.scale;
+        let size = 12.0 * cx.scale;
         for (i, task) in self.tasks.iter().enumerate() {
             let y0 = chart.min_y() + i as f32 * row_h;
             let bar_h = (row_h - cx.pt(8.0)).max(2.0);

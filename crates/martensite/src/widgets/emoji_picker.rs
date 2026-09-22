@@ -29,7 +29,7 @@ use crate::text_paint::SharedTextPainter;
 const CELL_PT: f32 = 30.0;
 const HEADER_PT: f32 = 22.0;
 const EMOJI_PT: f32 = 18.0;
-const FONT_PT: f32 = 10.5;
+const FONT_PT: f32 = 12.0;
 const PAD_PT: f32 = 8.0;
 const COLS: usize = 8;
 

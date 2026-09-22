@@ -387,7 +387,7 @@ impl Widget for Breadcrumb {
                 kurbo::Rect::new(
                     f64::from(x),
                     f64::from(y),
-                    f64::from(x + ew),
+                    f64::from((x + ew).min(b.max_x())),
                     f64::from(y + size_px),
                 ),
                 kurbo::Point::new(f64::from(x + pad), f64::from(y)),
@@ -399,7 +399,15 @@ impl Widget for Breadcrumb {
         }
 
         for (vi, &seg) in plan.visible.iter().enumerate() {
-            let w = plan.seg_widths.get(seg).copied().unwrap_or(0.0);
+            // Trailing crumbs truncate to the remaining width rather
+            // than painting past the widget's right edge.
+            let remaining = (b.origin.x + b.size.x - x).max(0.0);
+            let w = plan
+                .seg_widths
+                .get(seg)
+                .copied()
+                .unwrap_or(0.0)
+                .min(remaining);
             let r = Rect::new(x, pill_y, w, pill_h);
             // All but the last visible segment are navigable links.
             let is_current = seg == self.segments.len() - 1;
@@ -437,21 +445,25 @@ impl Widget for Breadcrumb {
             );
             x += w;
             if vi + 1 < plan.visible.len() {
-                crate::text_paint::paint_label_clipped(
-                    painter,
-                    cx.list,
-                    kurbo::Rect::new(
-                        f64::from(x),
-                        f64::from(y),
-                        f64::from(x + sep_w),
-                        f64::from(y + size_px),
-                    ),
-                    kurbo::Point::new(f64::from(x + sep_w / 2.0 - size_px * 0.3), f64::from(y)),
-                    "›",
-                    size_px,
-                    cx.color(TokenKey::TextMutedColor, SEP_INK),
-                );
-                x += sep_w;
+                // No room for the separator glyph → no separator; a
+                // clipped sliver at the edge reads worse than none.
+                if x + sep_w <= b.max_x() {
+                    crate::text_paint::paint_label_clipped(
+                        painter,
+                        cx.list,
+                        kurbo::Rect::new(
+                            f64::from(x),
+                            f64::from(y),
+                            f64::from(x + sep_w),
+                            f64::from(y + size_px),
+                        ),
+                        kurbo::Point::new(f64::from(x + sep_w / 2.0 - size_px * 0.3), f64::from(y)),
+                        "›",
+                        size_px,
+                        cx.color(TokenKey::TextMutedColor, SEP_INK),
+                    );
+                    x += sep_w;
+                }
             }
         }
     }

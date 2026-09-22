@@ -131,10 +131,11 @@ impl Palette {
         Self {
             bg: c(TokenKey::BackgroundColor, [15, 17, 23, 255]),
             surface: c(TokenKey::SurfaceColor, [24, 27, 36, 255]),
-            // `SecondaryColor` is a *foreground* token (l 0.60) — chrome
-            // surfaces ride the tonal ladder: bg 0.20 → surface 0.25 →
-            // raised 0.30 (DividerColor) → border 0.35.
-            raised: c(TokenKey::DividerColor, [46, 48, 53, 255]),
+            // Chrome surfaces ride the tonal ladder: bg 0.20 → surface
+            // 0.25 → raised 0.30 (RaisedColor) → divider 0.64 (stroke).
+            // `DividerColor` is a *stroke* token — too light to host
+            // text — so raised bands resolve `RaisedColor` instead.
+            raised: c(TokenKey::RaisedColor, [46, 48, 53, 255]),
             accent: c(TokenKey::AccentColor, [96, 165, 250, 255]),
             accent2: c(TokenKey::InfoColor, [56, 189, 248, 255]),
             text: c(TokenKey::TextColor, [226, 232, 240, 255]),

@@ -258,7 +258,7 @@ impl Widget for Attachment {
                 f64::from(b.max_y()),
             ),
             1.0,
-            EDGE,
+            cx.color(TokenKey::BorderColor, EDGE),
         );
         // Icon square.
         let pad = PAD_PT * s;

@@ -27,7 +27,7 @@ use crate::text_paint::SharedTextPainter;
 
 const CAP: usize = 120;
 const PAD_PT: f32 = 8.0;
-const TEXT_PT: f32 = 10.0;
+const TEXT_PT: f32 = 12.0;
 const GRAPH_PT: f32 = 28.0;
 const WIDTH_PT: f32 = 140.0;
 /// Frame budget line — 16.7 ms ≈ 60 fps.
@@ -285,16 +285,22 @@ impl Widget for PerfOverlay {
             BAD
         };
         let fs = TEXT_PT * s;
-        crate::text_paint::paint_label(
+        let gy = b.min_y() + pad + fs + 4.0 * s;
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
+            kurbo::Rect::new(
+                f64::from(b.min_x() + pad),
+                f64::from(b.min_y()),
+                f64::from(b.max_x() - pad),
+                f64::from(gy),
+            ),
             kurbo::Point::new(f64::from(b.min_x() + pad), f64::from(b.min_y() + pad + fs)),
             &format!("{fps:.0} fps · {:.1} ms", self.last_ms()),
             fs,
             color,
         );
         // Graph strip.
-        let gy = b.min_y() + pad + fs + 4.0 * s;
         let gh = b.max_y() - pad - gy;
         if gh <= 0.0 {
             return;

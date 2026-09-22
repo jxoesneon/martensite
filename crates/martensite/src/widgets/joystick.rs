@@ -366,6 +366,10 @@ impl Widget for Joystick {
         // Knob.
         let kp = self.knob_pos();
         let kr = KNOB_PT * self.scale;
+        let knob_fill = cx.color(
+            TokenKey::AccentColor,
+            if self.dragging { KNOB_HI } else { KNOB },
+        );
         cx.list.push_fill_shape(
             kurbo::Rect::new(
                 f64::from(kp.x - kr),
@@ -374,21 +378,23 @@ impl Widget for Joystick {
                 f64::from(kp.y + kr),
             ),
             &martensite_core::shape::Shape::circle(kp, kr),
-            cx.color(
-                TokenKey::AccentColor,
-                if self.dragging { KNOB_HI } else { KNOB },
-            ),
+            knob_fill,
         );
+        // Keyline: the knob edge is drawn *inside* the accent face — a
+        // stroke straddling the boundary can't read on both the ring
+        // track and the fill, so it must only contrast the face.
+        let ew = cx.pt(1.0);
+        let ke = f64::from(ew);
         cx.list.push_stroke_shape(
             kurbo::Rect::new(
-                f64::from(kp.x - kr),
-                f64::from(kp.y - kr),
-                f64::from(kp.x + kr),
-                f64::from(kp.y + kr),
+                f64::from(kp.x - kr) + ke,
+                f64::from(kp.y - kr) + ke,
+                f64::from(kp.x + kr) - ke,
+                f64::from(kp.y + kr) - ke,
             ),
-            &martensite_core::shape::Shape::circle(kp, kr),
-            cx.pt(1.0),
-            edge,
+            &martensite_core::shape::Shape::circle(kp, kr - ew),
+            ew,
+            crate::text_paint::better_ink(knob_fill, edge, [20, 20, 24, 255]),
         );
         cx.list.push_stroke_shape(
             krect(self.bounds),

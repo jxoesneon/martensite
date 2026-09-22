@@ -41,7 +41,7 @@ const FIELD_PT: f32 = 24.0;
 /// Caption strip height in logical pt.
 const CAPTION_PT: f32 = 16.0;
 /// Caption font size in logical pt.
-const CAPTION_FONT_PT: f32 = 11.0;
+const CAPTION_FONT_PT: f32 = 12.0;
 /// Caption ink.
 const CAPTION_INK: [u8; 4] = [110, 112, 120, 255];
 /// The magnifier glyph painted muted ahead of the value — the search

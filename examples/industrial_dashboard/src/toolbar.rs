@@ -618,7 +618,7 @@ impl Widget for Toolbar {
 
     fn paint(&self, cx: &mut PaintContext) {
         let b = cx.bounds;
-        let raised = cx.color(TokenKey::DividerColor, [46, 48, 53, 255]);
+        let raised = cx.color(TokenKey::RaisedColor, [46, 48, 53, 255]);
         let hairline = cx.color(TokenKey::TextMutedColor, [148, 163, 184, 255]);
         cx.list.push_fill_rect(
             martensite::render::Rect::new(

@@ -342,7 +342,7 @@ impl Page {
     /// strip is scroll-mounted so an over-wide control set scrolls
     /// horizontally instead of crushing trailing controls to 0pt.
     pub fn strip(mut self, s: impl Widget + 'static) -> Self {
-        self.strip = Some(Box::new(scroll(s)));
+        self.strip = Some(Box::new(martensite::widgets::ScrollView::horizontal(s)));
         self
     }
 

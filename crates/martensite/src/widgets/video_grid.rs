@@ -32,14 +32,15 @@ const GAP_PT: f32 = 8.0;
 const PAD_PT: f32 = 10.0;
 const TILE_MIN_PT: f32 = 120.0;
 const CAPTION_PT: f32 = 20.0;
-const FONT_PT: f32 = 11.0;
+const FONT_PT: f32 = 12.0;
 const INITIAL_PT: f32 = 28.0;
 
 const FACE: [u8; 4] = [30, 32, 40, 255];
 const SPEAKING: [u8; 4] = [90, 200, 120, 255];
-const BADGE: [u8; 4] = [60, 63, 74, 230];
+const BADGE: [u8; 4] = [60, 63, 74, 255];
 const TEXT: [u8; 4] = [235, 237, 240, 255];
-const CAPTION_BG: [u8; 4] = [0, 0, 0, 110];
+const CAPTION_BG: [u8; 4] = [16, 17, 21, 255];
+const MIN_FONT_PT: f32 = 12.0;
 
 /// One participant tile.
 ///
@@ -406,42 +407,67 @@ impl Widget for VideoGrid {
                     cx.color(TokenKey::SuccessColor, SPEAKING),
                 );
             }
-            // Center initial.
+            // Caption band — opaque, rounded on the bottom corners so
+            // it follows the tile silhouette, and dark enough that
+            // body text reads on it regardless of the tile color.
+            let cap = (CAPTION_PT * s * fit)
+                .max(FONT_PT * s * 1.35)
+                .min(r.height() * 0.5)
+                .max(0.0);
+            let cr = kurbo::Rect::new(kr.x0, kr.y1 - f64::from(cap), kr.x1, kr.y1);
+            cx.list.push_fill_shape(
+                cr,
+                &martensite_core::shape::Shape::corners(
+                    martensite_core::shape::CornerRadii::bottom(8.0 * s * fit),
+                    martensite_core::shape::CornerStyle::Round,
+                ),
+                CAPTION_BG,
+            );
+            // Center initial — omitted rather than shrunk below the
+            // readable floor; on tiny tiles the caption carries the id.
             let initial: String = p.name.chars().take(1).collect();
             let fs = INITIAL_PT * s * fit;
-            let iw = painter
-                .and_then(|pt| pt.measure_text(&initial, fs))
-                .unwrap_or(fs * 0.5);
-            let cap = CAPTION_PT * s * fit;
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + (r.width() - iw) / 2.0),
-                    f64::from(r.min_y() + (r.height() - cap) / 2.0),
-                ),
-                &initial,
-                fs,
-                TEXT,
-            );
-            // Caption band.
-            let cr = kurbo::Rect::new(kr.x0, kr.y1 - f64::from(cap), kr.x1, kr.y1);
-            cx.list.push_fill_rect(cr, CAPTION_BG);
+            // Ink runs ~1.15×fs below the centred origin — the region
+            // above the caption band must clear that or the glyph dips
+            // into the band.
+            if fs >= MIN_FONT_PT * s && r.height() - cap > fs * 2.3 {
+                let iw = painter
+                    .and_then(|pt| pt.measure_text(&initial, fs))
+                    .unwrap_or(fs * 0.5);
+                crate::text_paint::paint_label(
+                    painter,
+                    cx.list,
+                    kurbo::Point::new(
+                        f64::from(r.min_x() + (r.width() - iw) / 2.0),
+                        f64::from(r.min_y() + (r.height() - cap) / 2.0),
+                    ),
+                    &initial,
+                    fs,
+                    crate::text_paint::better_ink(
+                        p.color,
+                        TEXT,
+                        cx.color(TokenKey::TextInverseColor, [22, 22, 26, 255]),
+                    ),
+                );
+            }
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
                 cr,
                 kurbo::Point::new(
                     f64::from(r.min_x() + 6.0 * s * fit),
-                    f64::from(r.max_y() - cap * 0.3),
+                    f64::from(r.max_y() - cap * 0.35),
                 ),
                 &p.name,
-                FONT_PT * s * fit,
+                FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),
             );
-            // Muted badge.
+            // Muted badge — opaque chip so the glyph always has a
+            // known backdrop on any tile color.
             if p.muted {
-                let d = 18.0 * s * fit;
+                let d = (18.0 * s * fit)
+                    .clamp(FONT_PT * s * 1.4, r.height() * 0.4)
+                    .max(0.0);
                 let br = kurbo::Rect::new(
                     f64::from(r.max_x() - d - 5.0 * s * fit),
                     f64::from(r.max_y() - cap - d - 5.0 * s * fit),
@@ -450,12 +476,13 @@ impl Widget for VideoGrid {
                 );
                 cx.list
                     .push_fill_shape(br, &martensite_core::shape::Shape::ELLIPSE, BADGE);
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
+                    br,
                     kurbo::Point::new(br.x0 + f64::from(d) * 0.28, br.y0 + f64::from(d) * 0.72),
                     "✕",
-                    FONT_PT * s * fit,
+                    FONT_PT * s,
                     TEXT,
                 );
             }

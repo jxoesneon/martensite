@@ -153,7 +153,7 @@ fn field(label: &'static str, control: impl Widget + 'static) -> FormField {
 
 /// A hint line — static chrome, not a bound widget.
 fn hint(text: &'static str) -> Text {
-    Text::new(text).font_size(11.0)
+    Text::new(text).font_size(12.0)
 }
 
 /// A live text line: `push` rewrites content only on change.
@@ -161,7 +161,7 @@ fn live_text(
     model: &PlantModel,
     f: impl Fn(&PlantModel) -> String + Send + Sync + 'static,
 ) -> Bound<Text> {
-    Bound::new(Text::new(f(model)).font_size(11.0), model).push(move |w, m| {
+    Bound::new(Text::new(f(model)).font_size(12.0), model).push(move |w, m| {
         let s = f(m);
         if w.content() != s {
             w.set_content(s);
@@ -1598,7 +1598,7 @@ fn command_surface(model: &PlantModel) -> Page {
     // action + a command link — same action set, asset-scoped.
     let asset_ctx = Bound::new(
         ContextMenu::new(
-            Text::new("right-click — asset ops").font_size(11.0),
+            Text::new("right-click — asset ops").font_size(12.0),
             vec![
                 MenuItem::action("Inspect asset"),
                 MenuItem::action("Ack asset alarms"),
@@ -1630,7 +1630,7 @@ fn command_surface(model: &PlantModel) -> Page {
             if *g != name {
                 *g = name.clone();
                 *w = ContextMenu::new(
-                    Text::new(format!("right-click — {name} ops")).font_size(11.0),
+                    Text::new(format!("right-click — {name} ops")).font_size(12.0),
                     vec![
                         MenuItem::action("Inspect asset"),
                         MenuItem::action("Ack asset alarms"),

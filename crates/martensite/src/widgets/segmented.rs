@@ -61,7 +61,7 @@ const INK: [u8; 4] = [20, 20, 25, 255];
 /// Label ink on the selected segment.
 const INK_SELECTED: [u8; 4] = [255, 255, 255, 255];
 /// Focus ring colour (translucent accent wash).
-const FOCUS_RING: [u8; 4] = [60, 110, 220, 128];
+const FOCUS_RING: [u8; 4] = [60, 110, 220, 230];
 
 /// One segment inside a [`Segmented`] strip — an internal child
 /// emitted with `Role::RadioButton`.
@@ -225,24 +225,47 @@ impl Widget for Segment {
         );
         let shape = self.fill_shape(b);
         let accent = cx.color(TokenKey::AccentColor, SELECTED);
-        if self.selected {
-            // Inset the selected fill by a hair so the strip's outer
-            // stroke still reads as one continuous outline.
-            let inset = cx.ptf(1.5);
-            let inner = kurbo::Rect::new(
-                rect.x0 + inset,
-                rect.y0 + inset,
-                rect.x1 - inset,
-                rect.y1 - inset,
-            );
+        // Inset one hair inside the segment — the selected fill and
+        // the selected-state focus ring both use it, so the strip's
+        // outer stroke still reads as one continuous outline.
+        let inset = cx.ptf(1.5);
+        let inner = kurbo::Rect::new(
+            rect.x0 + inset,
+            rect.y0 + inset,
+            rect.x1 - inset,
+            rect.y1 - inset,
+        );
+        // A degenerate segment (crushed below ~8pt) can't carry a
+        // pill — the rounded path bulges past its own bounds and the
+        // ring would paint outside the accent face. Skip the chrome;
+        // the strip's border still frames the slot.
+        let room = inner.width() >= cx.ptf(4.0) && inner.height() >= cx.ptf(4.0);
+        if self.selected && room {
             cx.list.push_fill_shape(inner, &shape, accent);
         }
-        if self.focused {
+        if self.focused && room {
             // Translucent accent wash — the same focus ring RadioOption
-            // paints, clipped to this segment's silhouette.
-            let wash = [accent[0], accent[1], accent[2], FOCUS_RING[3]];
+            // paints, clipped to this segment's silhouette. On the
+            // *selected* segment an accent ring vanishes into the
+            // accent face, so the ring moves inside the pill and flips
+            // to the inverse ink — a double-edge focus cue.
+            let (ring_rect, ring) = if self.selected {
+                let inv = cx.color(TokenKey::TextInverseColor, INK_SELECTED);
+                (
+                    kurbo::Rect::new(
+                        inner.x0 + inset,
+                        inner.y0 + inset,
+                        inner.x1 - inset,
+                        inner.y1 - inset,
+                    ),
+                    [inv[0], inv[1], inv[2], FOCUS_RING[3].saturating_mul(2)],
+                )
+            } else {
+                (rect, [accent[0], accent[1], accent[2], FOCUS_RING[3]])
+            };
             cx.list.push_clip_shape(rect, &shape);
-            cx.list.push_stroke_shape(rect, &shape, cx.pt(2.0), wash);
+            cx.list
+                .push_stroke_shape(ring_rect, &shape, cx.pt(2.0), ring);
             cx.list.pop_clip();
         }
 

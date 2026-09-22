@@ -1261,7 +1261,7 @@ fn registry(m: &PlantModel) -> Page {
                 .selection_mode(FlowSelection::Single)
                 .label("cells");
             for a in cell_assets(m) {
-                fb = fb.child(Text::new(a.name).font_size(11.0));
+                fb = fb.child(Text::new(a.name).font_size(12.0));
             }
             fb
         };
@@ -1301,7 +1301,7 @@ fn registry(m: &PlantModel) -> Page {
             let mut nav = NavStack::new(Text::new(anc.first().map(|a| a.name).unwrap_or("plant")))
                 .title(anc.first().map(|a| a.name).unwrap_or("plant"));
             for a in anc.iter().skip(1) {
-                nav.push(Text::new(a.name).font_size(11.0), a.name);
+                nav.push(Text::new(a.name).font_size(12.0), a.name);
             }
             nav
         };
@@ -1326,7 +1326,7 @@ fn registry(m: &PlantModel) -> Page {
                         ))
                         .title(anc.first().map(|a| a.name).unwrap_or("plant"));
                         for a in anc.iter().skip(1) {
-                            nav.push(Text::new(a.name).font_size(11.0), a.name);
+                            nav.push(Text::new(a.name).font_size(12.0), a.name);
                         }
                         nav
                     };
@@ -1884,7 +1884,7 @@ fn detail(m: &PlantModel) -> Page {
     };
 
     // Record summary — live text mounted under static chrome.
-    let summary_text = Bound::new(Text::new("—").font_size(11.0), m).push(|w: &mut Text, m| {
+    let summary_text = Bound::new(Text::new("—").font_size(12.0), m).push(|w: &mut Text, m| {
         w.set_content(match sel_asset(m) {
             Some(a) => format!(
                 "{} · installed {} · OEE {:.0}% · note: {}",
@@ -2002,7 +2002,7 @@ fn work_orders(m: &PlantModel) -> Page {
     let view_sel = Signal::new(0usize);
     let status_filter = Signal::new(0usize); // 0=all, else WoStatus idx+1
 
-    let status = Bound::new(Text::new("—").font_size(11.0), m).push(|w: &mut Text, m| {
+    let status = Bound::new(Text::new("—").font_size(12.0), m).push(|w: &mut Text, m| {
         let wos = m.work_orders.get();
         let n = |s: WoStatus| wos.iter().filter(|w| w.status == s).count();
         w.set_content(format!(
@@ -2470,7 +2470,7 @@ fn work_orders(m: &PlantModel) -> Page {
                 .filter(|w| w.status != WoStatus::Done)
             {
                 d = d
-                    .card(Text::new(format!("{} — {}", w.title, w.status.label())).font_size(11.0));
+                    .card(Text::new(format!("{} — {}", w.title, w.status.label())).font_size(12.0));
             }
             d
         };
@@ -2655,7 +2655,7 @@ fn work_orders(m: &PlantModel) -> Page {
             intake_crew.clone(),
             intake_due.clone(),
         );
-        Bound::new(Text::new("—").font_size(11.0), m).push(move |w: &mut Text, m| {
+        Bound::new(Text::new("—").font_size(12.0), m).push(move |w: &mut Text, m| {
             let (fault, pri) = INTAKE_FAULTS[fs.get().min(INTAKE_FAULTS.len() - 1)];
             w.set_content(format!(
                 "new WO — {} · {fault} ({}) · {} · due {}",
@@ -2832,7 +2832,7 @@ fn work_orders(m: &PlantModel) -> Page {
     // Advance button beside it moves the WO one stage on. (`Card`'s
     // action slot is `Button`-typed, so the bound button mounts as a
     // sibling in the same row.)
-    let sel_text = Bound::new(Text::new("—").font_size(11.0), m).push(|w: &mut Text, m| {
+    let sel_text = Bound::new(Text::new("—").font_size(12.0), m).push(|w: &mut Text, m| {
         w.set_content(match sel_wo(m) {
             Some(w) => format!(
                 "{} · {} · {} · {:.0}% done · {}",
@@ -2920,9 +2920,13 @@ fn work_orders(m: &PlantModel) -> Page {
             m.log(usize::MAX, "WO inspector closed");
         }
     });
+    // Advance sits with the card it acts on — the strip's two
+    // multi-segment controls + status readout leave no honest room for
+    // a verb that belongs to the selection, not the page scope.
     let execution = Flex::column()
         .gap(ZONE_GAP)
         .child(sel_card)
+        .child(advance)
         .child(ticket)
         .child(stepper)
         .child(pips)
@@ -2949,8 +2953,7 @@ fn work_orders(m: &PlantModel) -> Page {
                 .child(status)
                 .child_flex(DummyWidget, 1.0)
                 .child(Separator::vertical())
-                .child(new_wo)
-                .child(advance),
+                .child(new_wo),
         )
         .rail("Work order", ScrollView::new(rail_col))
 }
@@ -3195,7 +3198,7 @@ fn maintenance(m: &PlantModel) -> Page {
         }
     });
 
-    let summary = Bound::new(Text::new("—").font_size(11.0), m).push({
+    let summary = Bound::new(Text::new("—").font_size(12.0), m).push({
         let ts = task_sel.clone();
         move |w: &mut Text, m| {
             let s = m.schedule.get();
@@ -4190,7 +4193,7 @@ fn diagnostics(m: &PlantModel) -> Page {
     });
 
     let help = Disclosure::new("COMMAND REFERENCE")
-        .child(Text::new(CONSOLE_HELP.join("\n")).font_size(11.0));
+        .child(Text::new(CONSOLE_HELP.join("\n")).font_size(12.0));
 
     // Console settings — real HMI flags the rest of the app reads;
     // each row's trailing Switch is two-way bound to its signal.
@@ -4578,7 +4581,7 @@ fn hierarchy(m: &PlantModel) -> Page {
             }
         })
     };
-    let caption = Bound::new(Text::new("—").font_size(11.0), m).push(|w: &mut Text, m| {
+    let caption = Bound::new(Text::new("—").font_size(12.0), m).push(|w: &mut Text, m| {
         w.set_content(match sel_asset(m) {
             Some(a) => format!("{} · {}", a.name, a.serial),
             None => "no asset selected".into(),
@@ -4592,7 +4595,7 @@ fn hierarchy(m: &PlantModel) -> Page {
             Stack::new()
                 .alignment(StackAlignment::Center)
                 .child(sunburst)
-                .child(Text::new("OEE-weighted").font_size(11.0)),
+                .child(Text::new("OEE-weighted").font_size(12.0)),
             1.0,
         )
         .child_flex(mind, 1.0);

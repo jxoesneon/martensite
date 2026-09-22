@@ -65,7 +65,7 @@ const PAD_PT: f32 = 10.0;
 /// Name/value font size in logical points.
 const FONT_PT: f32 = 12.0;
 /// Section header font size in logical points.
-const HEADER_FONT_PT: f32 = 11.0;
+const HEADER_FONT_PT: f32 = 12.0;
 /// Disclosure chevron side in logical points.
 const CHEVRON_PT: f32 = 8.0;
 /// Bool checkbox side in logical points.

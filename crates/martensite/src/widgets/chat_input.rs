@@ -518,7 +518,9 @@ impl Widget for ChatInput {
             st,
             "Send",
             size,
-            cx.color(TokenKey::TextColor, TEXT),
+            // Inverse ink — the send face is a chromatic fill
+            // (accent/secondary), not a neutral surface.
+            cx.color(TokenKey::TextInverseColor, [22, 22, 22, 255]),
         );
     }
 }

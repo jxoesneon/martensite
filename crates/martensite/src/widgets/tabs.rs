@@ -57,7 +57,7 @@ const INK: [u8; 4] = [30, 30, 36, 255];
 /// Selected tab underline.
 const ACCENT: [u8; 4] = [60, 110, 220, 255];
 /// Focus ring colour.
-const FOCUS_RING: [u8; 4] = [60, 110, 220, 128];
+const FOCUS_RING: [u8; 4] = [60, 110, 220, 230];
 /// Tab face hover/selected background.
 const TAB_BG: [u8; 4] = [240, 242, 246, 255];
 

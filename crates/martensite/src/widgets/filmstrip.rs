@@ -334,7 +334,7 @@ impl Widget for Filmstrip {
         let tile = TILE_PT * s;
         let gap = GAP_PT * s;
         let cap_h = CAPTION_PT * s;
-        let cap_sz = 9.5 * s;
+        let cap_sz = 12.0 * s;
         let mut hits = self.hits.lock();
         hits.clear();
         cx.list.push_clip(krect(self.bounds));
@@ -354,26 +354,45 @@ impl Widget for Filmstrip {
             if let Some(img) = &t.image {
                 cx.list.push_image(kr, img.clone());
             } else {
+                // Keyline: the tile edge is drawn *inside* the data
+                // color — a stroke straddling the boundary can't read
+                // on both the strip face and an arbitrary tile, so it
+                // must only contrast the tile itself.
+                let ew = 1.0 * s;
                 cx.list.push_stroke_shape(
-                    kr,
+                    kr.inset(-f64::from(ew)),
                     &martensite_core::shape::Shape::rounded(4.0 * s),
-                    1.0 * s,
-                    cx.color(TokenKey::BorderColor, TILE_BG),
+                    ew,
+                    crate::text_paint::better_ink(
+                        t.color,
+                        cx.color(TokenKey::BorderColor, TILE_BG),
+                        [24, 24, 28, 255],
+                    ),
                 );
             }
             if self.selected == Some(i) {
+                // Selection ring straddles the tile edge — fall back to
+                // a light ring when the accent blends into the tile.
                 cx.list.push_stroke_shape(
                     kr,
                     &martensite_core::shape::Shape::rounded(4.0 * s),
                     2.0 * s,
-                    cx.color(TokenKey::AccentColor, ACCENT),
+                    crate::text_paint::better_ink(
+                        t.color,
+                        cx.color(TokenKey::AccentColor, ACCENT),
+                        [250, 250, 252, 255],
+                    ),
                 );
             }
             if !t.label.is_empty() {
+                // Caption lives in its own band under the tile — clip
+                // to it (and the widget), never to the tile itself.
+                let cap_clip = krect(Rect::new(x, self.bounds.min_y() + pad + tile, tile, cap_h))
+                    .intersect(krect(self.bounds));
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
-                    kr,
+                    cap_clip,
                     kurbo::Point::new(
                         f64::from(x + 2.0 * s),
                         f64::from(self.bounds.min_y() + pad + tile + 3.0 * s),
@@ -383,7 +402,6 @@ impl Widget for Filmstrip {
                     cx.color(TokenKey::TextMutedColor, TEXT),
                 );
             }
-            let _ = cap_h;
         }
         cx.list.pop_clip();
     }

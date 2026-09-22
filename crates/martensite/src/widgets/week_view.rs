@@ -435,7 +435,7 @@ impl Widget for WeekView {
         cx.list.push_clip(krect(self.bounds));
 
         // Day headers.
-        let hdr_sz = 9.5 * s;
+        let hdr_sz = 12.0 * s;
         for d in 0..7 {
             let col = self.day_col(d);
             let name = &self.day_names[d];
@@ -461,8 +461,17 @@ impl Widget for WeekView {
             );
         }
 
-        // Hour lines + labels.
-        let hr_sz = 8.5 * s;
+        // Hour lines + labels. Labels thin out as the grid compresses:
+        // `label_every` is the smallest stride whose slot spacing still
+        // clears the font height — dense zooms label every 2nd/4th…
+        // hour instead of stacking runs on top of each other.
+        let hr_sz = 12.0 * s;
+        let hour_span = (self.hours.1 - self.hours.0).max(0.001);
+        let hour_px = self.day_col(0).height() / hour_span;
+        let label_every = [1, 2, 3, 4, 6, 12, 24]
+            .into_iter()
+            .find(|&n| hour_px * n as f32 >= hr_sz * 1.3)
+            .unwrap_or(24);
         let start = self.hours.0.ceil() as i32;
         let end = self.hours.1.floor() as i32;
         for h in start..=end {
@@ -471,15 +480,17 @@ impl Widget for WeekView {
             line.move_to(pt(Vec2::new(self.bounds.min_x() + HOUR_COL_PT * s, y)));
             line.line_to(pt(Vec2::new(self.bounds.max_x(), y)));
             cx.list.push_stroke_path(line, 0.5 * s, grid);
-            let label = format!("{h:02}:00");
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                pt(Vec2::new(self.bounds.min_x() + 4.0 * s, y - hr_sz * 0.6)),
-                &label,
-                hr_sz,
-                muted,
-            );
+            if h % label_every == 0 {
+                let label = format!("{h:02}:00");
+                crate::text_paint::paint_label(
+                    painter,
+                    cx.list,
+                    pt(Vec2::new(self.bounds.min_x() + 4.0 * s, y - hr_sz * 0.6)),
+                    &label,
+                    hr_sz,
+                    muted,
+                );
+            }
         }
 
         // Day separators.
@@ -545,7 +556,7 @@ impl Widget for WeekView {
             );
             if !e.all_day {
                 let o = pt(Vec2::new(r.min_x() + 4.0 * s, r.min_y() + 2.0 * s));
-                let size = 9.0 * s;
+                let size = 12.0 * s;
                 // The audit probes `ink ∩ clip` — a long title clipped
                 // to a narrow block is judged on the surviving sliver,
                 // and events can bleed past the widget edge where the
@@ -557,9 +568,18 @@ impl Widget for WeekView {
                             &krs[pos + 1..],
                         )
                     });
-                if !covered {
+                // A block too small for a full text line shows the
+                // color bar alone — the calendar idiom for short
+                // events — rather than a clipped sliver of title.
+                let fits = r.height() >= size * 1.3 && r.width() >= size * 1.6;
+                if !covered && fits {
+                    let event_ink = crate::text_paint::better_ink(
+                        e.color,
+                        ink,
+                        cx.color(TokenKey::TextInverseColor, [22, 22, 26, 255]),
+                    );
                     crate::text_paint::paint_label_clipped(
-                        painter, cx.list, kr, o, &e.title, size, ink,
+                        painter, cx.list, kr, o, &e.title, size, event_ink,
                     );
                 }
             }

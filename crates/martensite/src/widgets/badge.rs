@@ -36,7 +36,7 @@ const PILL_PAD: f32 = 6.0;
 /// Bare-dot diameter, logical points.
 const DOT_D: f32 = 8.0;
 /// Count text size, logical points.
-const TEXT_PT: f32 = 11.0;
+const TEXT_PT: f32 = 12.0;
 
 /// A notification badge — a count pill, a `99+`-style capped count, or
 /// a bare dot.

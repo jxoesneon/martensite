@@ -283,8 +283,14 @@ impl Widget for Rating {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cell_rects.clear();
-        let cell = cx.pt(CELL_PT);
         let gap = cx.pt(GAP_PT);
+        // Cells shrink to fit a narrow allotment — a fixed stride
+        // would push trailing stars past the widget's right edge.
+        let cell = cx
+            .pt(CELL_PT)
+            .min((bounds.width() - gap * self.max.saturating_sub(1) as f32) / self.max as f32)
+            .max(0.0);
+        let cell = cell.min(bounds.height());
         for i in 0..self.max {
             self.cell_rects.push(Rect::new(
                 bounds.origin.x + i as f32 * (cell + gap),
@@ -390,9 +396,20 @@ impl Widget for Rating {
     fn paint(&self, cx: &mut PaintContext) {
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let glyph = "★";
-        let size = cx.pt(GLYPH_PT);
+        // Glyph tracks the laid-out cell size, but never drops below
+        // the 12pt readable floor — a squeezed widget clips honestly.
+        let size = self
+            .cell_rects
+            .first()
+            .map(|r| (r.size.x * 0.9).clamp(cx.pt(12.0), cx.pt(GLYPH_PT)))
+            .unwrap_or_else(|| cx.pt(GLYPH_PT));
         let shown = self.preview.unwrap_or(self.value);
         for (i, r) in self.cell_rects.iter().enumerate() {
+            // A cell squeezed to nothing has no room for a glyph —
+            // emit nothing rather than paint clipped-out microtext.
+            if r.size.x < cx.pt(4.0) || r.size.y < cx.pt(4.0) {
+                continue;
+            }
             let fill = (shown - i as f32).clamp(0.0, 1.0);
             let ink = if !self.enabled {
                 STAR_DIM

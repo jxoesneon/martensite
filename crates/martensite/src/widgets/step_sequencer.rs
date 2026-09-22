@@ -33,7 +33,7 @@ use crate::text_paint::SharedTextPainter;
 const CELL_PT: f32 = 20.0;
 const CELL_GAP_PT: f32 = 4.0;
 const LABEL_W_PT: f32 = 64.0;
-const FONT_PT: f32 = 10.0;
+const FONT_PT: f32 = 12.0;
 
 const OFF: [u8; 4] = [36, 38, 44, 255];
 const ON: [u8; 4] = [88, 130, 247, 255];
@@ -499,7 +499,9 @@ impl Widget for StepSequencer {
                     cx.color(TokenKey::SurfaceColor, OFF)
                 };
                 cx.list.push_fill_rect(krect(rect), face);
-                cx.list.push_stroke_rect(krect(rect), 0.5 * s, edge);
+                // Cell edge on a state color — pick whichever reads.
+                let cell_edge = crate::text_paint::better_ink(face, edge, [20, 20, 24, 255]);
+                cx.list.push_stroke_rect(krect(rect), 0.5 * s, cell_edge);
             }
         }
     }

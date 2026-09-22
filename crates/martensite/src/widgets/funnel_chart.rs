@@ -273,7 +273,7 @@ impl Widget for FunnelChart {
             cx.list.push_path(path, color);
 
             // "name — value" to the right of the funnel.
-            let size = 9.5 * cx.scale;
+            let size = 12.0 * cx.scale;
             let text = format!("{name} — {value:.0}");
             crate::text_paint::paint_label_clipped(
                 painter,

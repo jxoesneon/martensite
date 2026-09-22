@@ -420,7 +420,7 @@ impl Widget for XYPad {
         // Edge labels: x under the pad, y rotated at the left — text
         // rotation isn't in the paint API, so y sits top-left.
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        let size = 9.0 * cx.scale;
+        let size = 12.0 * cx.scale;
         let muted = cx.color(TokenKey::TextMutedColor, MUTED);
         let xw = painter
             .and_then(|p| p.measure_text(&self.x_label, size))

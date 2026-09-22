@@ -31,7 +31,7 @@ const HEIGHT_PT: f32 = 40.0;
 const PAD_PT: f32 = 8.0;
 const BTN_PT: f32 = 24.0;
 const VOL_PT: f32 = 56.0;
-const FONT_PT: f32 = 11.0;
+const FONT_PT: f32 = 12.0;
 const SEEK_H_PT: f32 = 4.0;
 
 const SURFACE: [u8; 4] = [32, 32, 36, 240];
@@ -425,16 +425,28 @@ impl Widget for MediaControls {
         // Time labels reserve fixed ~4-char widths.
         let time_w = cx.pt(34.0);
         x += time_w + pad * 0.5;
-        // Trailing: [vol?] [mute?] [fs?] then end-time before that.
+        // Trailing chrome yields when the strip can't fit it — the
+        // volume cluster first, then fullscreen — instead of sliding
+        // left over the elapsed-time label. The seek bar keeps a
+        // workable minimum.
+        let min_seek = cx.pt(24.0);
+        let vol_w = cx.pt(VOL_PT);
+        // Space left for optional chrome after play + both time
+        // labels + a usable seek.
+        let mut spare = (bounds.max_x() - pad) - x - time_w - pad * 0.5 - min_seek;
+        let show_vol = self.show_volume && spare >= vol_w + btn + pad * 1.5;
+        if show_vol {
+            spare -= vol_w + btn + pad * 1.5;
+        }
+        let show_fs = self.show_fullscreen && spare >= btn + pad;
         let mut right = bounds.max_x() - pad;
-        if self.show_fullscreen {
+        if show_fs {
             self.fs_rect = Rect::new(right - btn, cy, btn, btn);
             right -= btn + pad;
         } else {
             self.fs_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
         }
-        if self.show_volume {
-            let vol_w = cx.pt(VOL_PT);
+        if show_vol {
             self.vol_rect = Rect::new(right - vol_w, cy + btn * 0.25, vol_w, btn * 0.5);
             right -= vol_w + pad * 0.5;
             self.mute_rect = Rect::new(right - btn, cy, btn, btn);

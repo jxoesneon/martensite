@@ -2821,8 +2821,10 @@ mod tests {
         let arena = app.arena.as_ref().expect("arena");
         let mut list = PaintList::new();
         arena.build_paint_list(app.root.expect("root"), &mut list);
+        // Audit at the scale the list was painted at — a mismatch
+        // halves every reported font size (13pt reads as "6pt").
         let cfg = PaintAuditConfig {
-            scale_factor: 2.0,
+            scale_factor: app.scale.get(),
             ..Default::default()
         };
         let lints = audit_paint_list(&list, &cfg);

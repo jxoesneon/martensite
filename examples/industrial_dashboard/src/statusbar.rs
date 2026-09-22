@@ -391,7 +391,7 @@ impl Widget for StatusBar {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            cx.color(TokenKey::DividerColor, [46, 48, 53, 255]),
+            cx.color(TokenKey::RaisedColor, [46, 48, 53, 255]),
         );
         // Arena-focus ring around the dropdown face (WCAG 2.4.7 — the
         // audit looks for a painted indicator at the reported focus

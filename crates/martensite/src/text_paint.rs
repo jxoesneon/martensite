@@ -49,6 +49,37 @@ pub fn shared_painter() -> SharedTextPainter {
     SharedTextPainter(Arc::new(Mutex::new(TextPainter::new())))
 }
 
+/// WCAG relative luminance of an sRGB channel.
+fn channel_lum(c: u8) -> f32 {
+    let v = c as f32 / 255.0;
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// WCAG relative luminance of an opaque sRGB color (`[r, g, b, a]`).
+///
+/// Widgets that paint text or edges over arbitrary data colors (tile
+/// grids, charts, calendars) use this to choose readable ink.
+pub(crate) fn relative_luminance(c: [u8; 4]) -> f32 {
+    0.2126 * channel_lum(c[0]) + 0.7152 * channel_lum(c[1]) + 0.0722 * channel_lum(c[2])
+}
+
+/// Whichever of `a`/`b` contrasts better against `bg` (WCAG ratio).
+/// Both candidates are treated as opaque over opaque `bg`.
+pub(crate) fn better_ink(bg: [u8; 4], a: [u8; 4], b: [u8; 4]) -> [u8; 4] {
+    let l_bg = relative_luminance(bg);
+    let ra = (relative_luminance(a).max(l_bg) + 0.05) / (relative_luminance(a).min(l_bg) + 0.05);
+    let rb = (relative_luminance(b).max(l_bg) + 0.05) / (relative_luminance(b).min(l_bg) + 0.05);
+    if ra >= rb {
+        a
+    } else {
+        b
+    }
+}
+
 /// Owns font discovery + shaping for widget text. `FontManager`
 /// creation scans the system font set, so construction defers it until
 /// the first emission (the same lazy pattern `Text` uses).

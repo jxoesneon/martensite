@@ -183,11 +183,19 @@ impl Widget for Switch {
             cx.color(TokenKey::SurfaceColor, [70, 74, 82, 255])
         };
         cx.list.push_fill_shape(track, &pill, track_fill);
+        // Keyline: the track edge is drawn *inside* the fill — a stroke
+        // straddling the boundary can't read on both a dark surface and
+        // a chromatic face, so it must only contrast the fill.
+        let ew = cx.pt(1.0);
         cx.list.push_stroke_shape(
-            track,
+            track.inset(-f64::from(ew)),
             &pill,
-            cx.pt(1.0),
-            cx.color(TokenKey::BorderColor, EDGE),
+            ew,
+            crate::text_paint::better_ink(
+                track_fill,
+                cx.color(TokenKey::BorderColor, EDGE),
+                [20, 20, 24, 255],
+            ),
         );
 
         // Knob: circle inset by 2px, parked right when on.

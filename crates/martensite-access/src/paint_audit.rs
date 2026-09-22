@@ -541,6 +541,59 @@ fn rgba_f32(c: [f32; 4]) -> ColorRgba {
     ColorRgba::new(c[0], c[1], c[2], c[3])
 }
 
+/// Resolves the *modal* backdrop across several probe points — a
+/// stroke that crosses a hairline or band should be judged against
+/// the surface it mostly sits on, not the one element it overlaps.
+fn modal_backdrop(fills: &[FillRec], before: usize, points: &[(f64, f64)]) -> Backdrop {
+    use std::collections::HashMap;
+    let mut counts: HashMap<[u8; 3], (usize, ColorRgba)> = HashMap::new();
+    for &p in points {
+        if let Backdrop::Resolved(c) = resolve_backdrop(fills, before, p) {
+            let key = [
+                (c.r * 255.0) as u8,
+                (c.g * 255.0) as u8,
+                (c.b * 255.0) as u8,
+            ];
+            let e = counts.entry(key).or_insert((0, c));
+            e.0 += 1;
+        }
+    }
+    counts
+        .into_values()
+        .max_by_key(|(n, _)| *n)
+        .map_or(Backdrop::Unknown, |(_, c)| Backdrop::Resolved(c))
+}
+
+/// Probe points spread along a stroke bbox's perimeter — three per
+/// edge. A border is judged against the backdrop it mostly borders;
+/// a single point could land on an element the stroke merely crosses.
+fn edge_probes(bb: Rect) -> [(f64, f64); 12] {
+    let xs = [
+        bb.x0 + bb.width() * 0.2,
+        bb.x0 + bb.width() * 0.5,
+        bb.x0 + bb.width() * 0.8,
+    ];
+    let ys = [
+        bb.y0 + bb.height() * 0.2,
+        bb.y0 + bb.height() * 0.5,
+        bb.y0 + bb.height() * 0.8,
+    ];
+    [
+        (xs[0], bb.y0),
+        (xs[1], bb.y0),
+        (xs[2], bb.y0),
+        (xs[0], bb.y1),
+        (xs[1], bb.y1),
+        (xs[2], bb.y1),
+        (bb.x0, ys[0]),
+        (bb.x0, ys[1]),
+        (bb.x0, ys[2]),
+        (bb.x1, ys[0]),
+        (bb.x1, ys[1]),
+        (bb.x1, ys[2]),
+    ]
+}
+
 /// Point-in-rect for kurbo rects.
 fn contains(rect: &Rect, p: (f64, f64)) -> bool {
     rect.contains(p)
@@ -892,7 +945,10 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 }
                 if config.check_ui_component_contrast {
                     let anchor = ((rect.x0 + rect.x1) * 0.5, rect.y0);
-                    check_stroke(&mut lints, &fills, i, anchor, *color, scope, "rect");
+                    let probes = edge_probes(*rect);
+                    check_stroke(
+                        &mut lints, &fills, i, anchor, &probes, *color, clip, scope, "rect",
+                    );
                 }
             }
             PaintCommand::StrokePath(path, _, color) => {
@@ -902,7 +958,10 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 }
                 if config.check_ui_component_contrast {
                     let anchor = ((bb.x0 + bb.x1) * 0.5, bb.y0);
-                    check_stroke(&mut lints, &fills, i, anchor, *color, scope, "path");
+                    let probes = edge_probes(bb);
+                    check_stroke(
+                        &mut lints, &fills, i, anchor, &probes, *color, clip, scope, "path",
+                    );
                 }
             }
             _ => {}
@@ -995,7 +1054,21 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 widget: sc.and_then(|s| s.id),
             });
         }
-        match resolve_backdrop(&fills, i, probe.anchor) {
+        // Resolve the backdrop at the *visible* text center — a run
+        // clipped inside its container can overflow the widget edge
+        // (truncated segment labels, scrolled inputs), and anchoring
+        // the probe at the raw bounds would sample a neighbouring
+        // widget's fill rather than the surface under the ink.
+        let visible = clip.map_or(probe.bounds, |c| probe.bounds.intersect(c));
+        let anchor = if visible.is_zero_area() {
+            probe.anchor
+        } else {
+            (
+                (visible.x0 + visible.x1) * 0.5,
+                (visible.y0 + visible.y1) * 0.5,
+            )
+        };
+        match resolve_backdrop(&fills, i, anchor) {
             Backdrop::Resolved(bg) => {
                 let size_class = if size_pt >= LARGE_TEXT_PT {
                     TextSize::Large
@@ -1013,8 +1086,23 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                         measured: Some(ratio),
                         required: Some(required),
                         detail: format!(
-                            "text \"{}\" contrast {:.2}:1 below {:.1}:1 ({:?} {:?} @ {:.0}pt){in_scope} {pos}",
-                            probe.excerpt, ratio, required, config.level, size_class, size_pt
+                            "text \"{}\" contrast {:.2}:1 below {:.1}:1 ({:?} {:?} @ {:.0}pt) fg={:?} bg={:?}{in_scope} {pos}",
+                            probe.excerpt,
+                            ratio,
+                            required,
+                            config.level,
+                            size_class,
+                            size_pt,
+                            [
+                                (fg.r * 255.0) as u8,
+                                (fg.g * 255.0) as u8,
+                                (fg.b * 255.0) as u8,
+                            ],
+                            [
+                                (bg.r * 255.0) as u8,
+                                (bg.g * 255.0) as u8,
+                                (bg.b * 255.0) as u8,
+                            ],
                         ),
                         scope: scope_name,
                         widget: sc.and_then(|s| s.id),
@@ -1189,11 +1277,39 @@ pub fn audit_paint_list(list: &PaintList, config: &PaintAuditConfig) -> Vec<Pain
                 if ov_a != ov_b {
                     continue;
                 }
+                // Identical runs re-emitted at (nearly) the same origin
+                // are deliberate double-rendering — faux-bold and
+                // marquee wrap-around — not a collision. Same excerpt,
+                // same color, bounds within a 2px jitter.
+                if pa.excerpt == pb.excerpt
+                    && pa.color == pb.color
+                    && pa.font_px == pb.font_px
+                    && (pa.bounds.x0 - pb.bounds.x0).abs() <= 2.0
+                    && (pa.bounds.y0 - pb.bounds.y0).abs() <= 2.0
+                {
+                    continue;
+                }
                 // Compare the *visible* regions — a run clipped inside its
                 // container can't actually render on top of a neighbour.
                 let va = clip_a.map_or(pa.bounds, |c| pa.bounds.intersect(c));
                 let vb = clip_b.map_or(pb.bounds, |c| pb.bounds.intersect(c));
-                if va.intersect(vb).area() > 1.0 {
+                let inter = va.intersect(vb);
+                if inter.area() > 1.0 {
+                    // Painted layering, not a collision: an opaque fill
+                    // emitted between the two runs covers the shared
+                    // region — e.g. a Badge count pill over its child's
+                    // corner. The earlier run is occluded by a surface,
+                    // not bleeding through the later text.
+                    let mid = ((inter.x0 + inter.x1) * 0.5, (inter.y0 + inter.y1) * 0.5);
+                    let layered = fills.iter().any(|f| {
+                        f.idx > texts[a].idx
+                            && f.idx < texts[b].idx
+                            && f.color.a >= 0.999
+                            && f.covers(mid)
+                    });
+                    if layered {
+                        continue;
+                    }
                     lints.push(PaintLint {
                         kind: PaintLintKind::TextOverlap,
                         severity: LintSeverity::Warning,
@@ -1265,20 +1381,33 @@ fn fully_outside(inner: &Rect, clip: &Rect) -> bool {
 /// `anchor` (a point on the stroke's edge) and requires 3:1 against
 /// the stroke's *composited* color — a translucent stroke is judged by
 /// what it actually looks like, not its nominal paint color.
+#[allow(clippy::too_many_arguments)]
 fn check_stroke(
     lints: &mut Vec<PaintLint>,
     fills: &[FillRec],
     before: usize,
     anchor: (f64, f64),
+    probes: &[(f64, f64)],
     color: [u8; 4],
+    clip: Option<Rect>,
     scope: Option<ScopeRec>,
     shape: &str,
 ) {
     let fg = rgba_u8(color);
-    let Backdrop::Resolved(bg) = resolve_backdrop(fills, before, anchor) else {
+    // Only probe points the stroke can actually render at — a probe
+    // outside the stroke's own clip tests invisible pixels (a tile
+    // half-scrolled out of a strip still has its edge checked where
+    // it paints).
+    let visible: Vec<(f64, f64)> = probes
+        .iter()
+        .copied()
+        .filter(|p| clip.is_none_or(|c| c.contains(*p)))
+        .collect();
+    let Backdrop::Resolved(bg) = modal_backdrop(fills, before, &visible) else {
         return;
     };
-    let ratio = contrast_ratio(fg.composite_over(bg), bg);
+    let fg = fg.composite_over(bg);
+    let ratio = contrast_ratio(fg, bg);
     if ratio < 3.0 {
         lints.push(PaintLint {
             kind: PaintLintKind::NonTextContrast,
@@ -1287,7 +1416,17 @@ fn check_stroke(
             measured: Some(ratio),
             required: Some(3.0),
             detail: format!(
-                "stroked {shape} contrast {ratio:.2}:1 below 3:1 (WCAG 1.4.11 non-text){} @ ({:.0}, {:.0})",
+                "stroked {shape} contrast {ratio:.2}:1 below 3:1 (WCAG 1.4.11 non-text) fg={:?} bg={:?}{} @ ({:.0}, {:.0})",
+                [
+                    (fg.r * 255.0) as u8,
+                    (fg.g * 255.0) as u8,
+                    (fg.b * 255.0) as u8,
+                ],
+                [
+                    (bg.r * 255.0) as u8,
+                    (bg.g * 255.0) as u8,
+                    (bg.b * 255.0) as u8,
+                ],
                 scope.map_or(String::new(), |s| format!(" in {}", s.name)),
                 anchor.0, anchor.1
             ),

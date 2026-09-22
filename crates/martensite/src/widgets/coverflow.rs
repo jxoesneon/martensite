@@ -365,8 +365,14 @@ impl Widget for Coverflow {
             let item = &self.items[*i];
             cx.list.push_fill_rect(*kr, item.color);
             let is_sel = *i == sel;
+            // Keyline: the cover edge is drawn *inside* the data
+            // color — a stroke straddling the boundary can't read on
+            // both the dark face and an arbitrary fill, so it must
+            // only contrast the cover itself.
+            let ew = if is_sel { 1.5 } else { 0.8 } * s;
+            let item_edge = crate::text_paint::better_ink(item.color, edge, [24, 24, 28, 255]);
             cx.list
-                .push_stroke_rect(*kr, if is_sel { 1.5 } else { 0.8 } * s, edge);
+                .push_stroke_rect(kr.inset(-f64::from(ew)), ew, item_edge);
             // Label strip inside each cover's bottom. Nearer covers
             // paint after this one — strip or label they will fully
             // hide is dead output the paint audit flags, so skip it.
@@ -376,7 +382,7 @@ impl Widget for Coverflow {
                 cx.list.push_fill_rect(strip, [0, 0, 0, 120]);
             }
             let o = kurbo::Point::new(kr.x0 + f64::from(6.0 * s), kr.y1 - f64::from(6.0 * s));
-            let size = TITLE_PT * s * (if is_sel { 1.0 } else { 0.8 });
+            let size = (TITLE_PT * s * (if is_sel { 1.0 } else { 0.8 })).max(12.0 * s);
             // The audit probes `ink ∩ clip` — judge the surviving
             // sliver, not the full run.
             let ink_b = crate::text_paint::label_ink_bounds(painter, o, &item.label, size);
@@ -393,6 +399,13 @@ impl Widget for Coverflow {
                 crate::text_paint::fully_occluded(ink.intersect(*kr).intersect(wb), &later)
             });
             if !covered {
+                // The label strip is translucent — the audit resolves
+                // the opaque cover beneath, so ink must read on *it*.
+                let label_ink = crate::text_paint::better_ink(
+                    item.color,
+                    cx.color(TokenKey::TextColor, TEXT),
+                    cx.color(TokenKey::TextInverseColor, [22, 22, 26, 255]),
+                );
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
@@ -400,7 +413,7 @@ impl Widget for Coverflow {
                     o,
                     &item.label,
                     size,
-                    cx.color(TokenKey::TextColor, TEXT),
+                    label_ink,
                 );
             }
         }

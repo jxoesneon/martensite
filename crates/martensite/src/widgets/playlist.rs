@@ -486,7 +486,7 @@ impl Widget for Playlist {
         let row = ROW_PT * s;
         let pad = PAD_PT * s;
         let title_sz = 12.0 * s;
-        let sub_sz = 9.5 * s;
+        let sub_sz = 12.0 * s;
         cx.list.push_clip(krect(self.bounds));
         for (i, t) in self.tracks.iter().enumerate() {
             let y = self.bounds.min_y() + pad + i as f32 * row - self.scroll;
@@ -530,21 +530,34 @@ impl Widget for Playlist {
                     cx.color(TokenKey::AccentColor, NOW),
                 );
             }
-            crate::text_paint::paint_label(
+            // The clock is right-aligned; title/subtitle clip short of
+            // it so long names truncate instead of overprinting.
+            let text_l = x + 14.0 * s;
+            let clock_w = if t.secs > 0 {
+                t.clock().chars().count() as f32 * sub_sz * 0.55 + 8.0 * s
+            } else {
+                0.0
+            };
+            let text_clip = kurbo::Rect::new(
+                f64::from(text_l),
+                f64::from(y),
+                f64::from(self.bounds.max_x() - pad - clock_w),
+                f64::from(y + row),
+            );
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kurbo::Point::new(f64::from(x + 14.0 * s), f64::from(y + 5.0 * s)),
+                text_clip,
+                kurbo::Point::new(f64::from(text_l), f64::from(y + 5.0 * s)),
                 &t.title,
                 title_sz,
                 cx.color(TokenKey::TextColor, TITLE),
             );
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kurbo::Point::new(
-                    f64::from(x + 14.0 * s),
-                    f64::from(y + 5.0 * s + title_sz * 1.3),
-                ),
+                text_clip,
+                kurbo::Point::new(f64::from(text_l), f64::from(y + 5.0 * s + title_sz * 1.3)),
                 &t.subtitle,
                 sub_sz,
                 cx.color(TokenKey::TextMutedColor, SUB),

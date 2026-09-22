@@ -32,7 +32,7 @@ use crate::text_paint::SharedTextPainter;
 const W_PT: f32 = 240.0;
 const H_PT: f32 = 160.0;
 const GAP_PT: f32 = 1.0;
-const FONT_PT: f32 = 10.0;
+const FONT_PT: f32 = 12.0;
 
 const SURFACE: [u8; 4] = [250, 250, 252, 255];
 const LABEL: [u8; 4] = [250, 250, 252, 255];
@@ -403,7 +403,12 @@ impl Widget for Treemap {
                     ),
                     &item.name,
                     size,
-                    LABEL,
+                    // Tile colors are data — pick the readable ink.
+                    crate::text_paint::better_ink(
+                        color,
+                        LABEL,
+                        cx.color(TokenKey::TextInverseColor, [22, 22, 26, 255]),
+                    ),
                 );
             }
         }

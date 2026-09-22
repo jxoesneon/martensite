@@ -35,7 +35,7 @@ const CELL_PT: f32 = 56.0;
 /// Icon glyph size, logical points.
 const ICON_PT: f32 = 20.0;
 /// Label font size, logical points.
-const LABEL_PT: f32 = 11.0;
+const LABEL_PT: f32 = 12.0;
 /// Top inset before the first destination, logical points.
 const TOP_INSET_PT: f32 = 8.0;
 /// Selected pill horizontal inset, logical points.
@@ -380,7 +380,9 @@ impl Widget for NavRail {
                 );
             }
             let ink = if selected {
-                [255, 255, 255, 255]
+                // Selected pill is accent-filled — inverse ink reads
+                // on the chromatic face where white does not.
+                cx.color(TokenKey::TextInverseColor, [255, 255, 255, 255])
             } else if self.enabled {
                 cx.color(TokenKey::TextColor, INK)
             } else {
