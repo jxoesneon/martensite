@@ -253,6 +253,30 @@ These are explicitly documented in code, not hidden:
 - `MartensiteAccessBridge` uses `parking_lot::Mutex` (poison-free).
 - `relative_luminance` sanitizes NaN/inf color channels before clamping.
 
+### Paint audit (v0.18.0)
+
+- `martensite-access::paint_audit` checks text clipping/overlap,
+  widget overflow, occlusion, WCAG 4.5:1 text contrast and 3:1
+  non-text (stroke) contrast, and target size.
+- Dashboard gate:
+  `cargo test -p industrial_dashboard dump_zone_lints -- --nocapture`
+  audits every page at widths 700–2400; it must report zero findings.
+  `dump_widget_tree` regenerates `WIDGET_TREE.txt` (redirect stderr).
+- Always paint and audit at the **same** scale factor — a mismatch
+  halves reported font sizes.
+- Token semantics: `DividerColor`/`BorderColor` are **stroke** tokens
+  (3:1 vs surface). `RaisedColor` is the chrome-band **fill** token
+  (hosts text at 4.5:1) — never fill a text-hosting band with a stroke
+  token.
+- `kurbo::Rect::inset(positive)` **expands** — use negative values to
+  shrink a keyline inside a fill.
+- Keyline idiom: stroke *inside* a chromatic fill with `better_ink` so
+  the edge is judged against the fill, not the backdrop it floats on.
+- `ScrollView::horizontal` is the strip/toolbar idiom (unbounded X
+  measure); `ScrollView::new` is the document idiom (unbounded Y).
+- Glyph ink extends ~1.15×font-size **below** the text origin — line
+  advances must be ≥1.3×fs to avoid overlap.
+
 ## Workflow
 
 ### Santa Method (adversarial review)
