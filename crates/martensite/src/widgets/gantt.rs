@@ -378,7 +378,9 @@ impl Widget for Gantt {
             );
         }
 
-        // Axis labels along the bottom.
+        // Axis labels along the bottom — the last tick's clip is
+        // centred on the chart's right edge, so bound it to the widget.
+        let wb = f(self.bounds);
         let axis_y = chart.max_y() + cx.pt(3.0);
         let mut d = 0.0;
         while d <= self.total_days {
@@ -391,7 +393,8 @@ impl Widget for Gantt {
                     axis_y,
                     cx.pt(24.0),
                     AXIS_PT * cx.scale,
-                )),
+                ))
+                .intersect(wb),
                 kurbo::Point::new(f64::from(day_x(d) - cx.pt(3.0)), f64::from(axis_y)),
                 &s,
                 size,

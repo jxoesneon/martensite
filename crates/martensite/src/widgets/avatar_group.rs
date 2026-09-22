@@ -243,10 +243,11 @@ impl Default for AvatarGroup {
 
 impl Widget for AvatarGroup {
     fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
-        let size = cx.pt(self.size);
         let slots = self.visible_count() + usize::from(self.overflow_count() > 0);
-        let _ = size;
-        Vec2::new(self.width_for(slots), self.size)
+        // Physical px — the fanned member bounds are laid out with
+        // `cx.pt(size)` pitch, so the measured extent must match or
+        // trailing members paint into the next sibling.
+        Vec2::new(cx.pt(self.width_for(slots)), cx.pt(self.size))
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {

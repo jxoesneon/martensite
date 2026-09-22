@@ -400,10 +400,14 @@ impl Widget for MessageList {
                 &martensite_core::shape::Shape::rounded(bubble_pad),
                 fill,
             );
+            // Text clips are intersected with the widget bounds: a row
+            // straddling the viewport edge emits only the part that can
+            // render — the audit flags text a clip would erase anyway.
+            let visible = krect(self.bounds);
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                bubble,
+                bubble.intersect(visible),
                 kurbo::Point::new(f64::from(bx + bubble_pad), f64::from(y + bubble_pad * 0.7)),
                 &m.body,
                 text_sz,
@@ -415,9 +419,17 @@ impl Widget for MessageList {
             } else {
                 format!("{} · {}", m.sender, m.time)
             };
-            crate::text_paint::paint_label(
+            let meta_rect = kurbo::Rect::new(
+                f64::from(bx),
+                f64::from(y + bh),
+                f64::from(bx + bw),
+                f64::from(y + row),
+            )
+            .intersect(visible);
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                meta_rect,
                 kurbo::Point::new(f64::from(bx), f64::from(y + bh + meta_sz * 0.3)),
                 &meta,
                 meta_sz,

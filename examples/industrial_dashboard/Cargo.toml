@@ -69,6 +69,7 @@ wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan",
 accesskit = { workspace = true }
 parking_lot = { workspace = true }
 glam = { workspace = true }
+kurbo = { workspace = true }
 pollster = "1.0"
 tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 

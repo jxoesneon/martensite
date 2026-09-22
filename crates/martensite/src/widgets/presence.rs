@@ -388,16 +388,24 @@ impl Widget for Presence {
             &martensite_core::shape::Shape::ELLIPSE,
             cx.color(self.status.token(), self.status.color()),
         );
-        // Name + status line.
+        // Name + status line — clipped to the widget so a shallow
+        // allocation cuts the sub-line cleanly rather than spilling.
         if self.show_text {
+            let wclip = kurbo::Rect::new(
+                f64::from(self.bounds.min_x()),
+                f64::from(self.bounds.min_y()),
+                f64::from(self.bounds.max_x()),
+                f64::from(self.bounds.max_y()),
+            );
             let tx = self.bounds.min_x() + d + GAP_PT * s;
             let name_o = kurbo::Point::new(
                 f64::from(tx),
                 f64::from(self.bounds.min_y() + d / 2.0 - 4.0 * s),
             );
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                wclip,
                 name_o,
                 &self.name,
                 size,
@@ -411,9 +419,10 @@ impl Widget for Presence {
                 f64::from(tx),
                 f64::from(self.bounds.min_y() + d / 2.0 + SUB_PT * s),
             );
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                wclip,
                 sub_o,
                 &sub,
                 SUB_PT * s,

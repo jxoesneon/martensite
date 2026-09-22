@@ -264,6 +264,20 @@ impl Widget for Badge {
         }
     }
 
+    fn paint_extent(&self) -> Option<Rect> {
+        self.child.as_ref()?;
+        // The bubble straddles the child's top-right corner by design —
+        // the scope bounds must include it or the audit reports the
+        // count as leaking past the container.
+        let (a, b) = (self.child_rect, self.badge_rect);
+        Some(Rect::new(
+            a.min_x().min(b.min_x()),
+            a.min_y().min(b.min_y()),
+            a.max_x().max(b.max_x()) - a.min_x().min(b.min_x()),
+            a.max_y().max(b.max_y()) - a.min_y().min(b.min_y()),
+        ))
+    }
+
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Status);
         if self.is_dot() {
@@ -368,6 +382,36 @@ impl std::fmt::Debug for Badge {
 mod tests {
     use super::*;
     use martensite_core::{HotNode, PaintCommand, PaintList, Theme};
+
+    /// The corner-anchored bubble legitimately overhangs the widget
+    /// bounds — `paint_extent` must declare it so the audit's
+    /// container-overflow check doesn't flag the count.
+    #[test]
+    fn badge_overhang_is_declared_paint_extent() {
+        let mut arena = martensite_core::WidgetArena::new();
+        let mut hot = HotNode::default();
+        hot.flags |= martensite_core::NodeFlags::VISIBLE;
+        let id = arena.insert_with_widget(
+            hot,
+            Box::new(Badge::wrap(crate::widgets::text::Text::new("host")).with_count(7)),
+        );
+        if let Some((hot, cold)) = arena.get_both_mut(id) {
+            hot.bounds = Rect::new(0.0, 0.0, 60.0, 20.0);
+            cold.widget.layout(
+                &mut LayoutContext { hot, scale: 1.0 },
+                Rect::new(0.0, 0.0, 60.0, 20.0),
+            );
+        }
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        // The Badge scope's bounds must reach the bubble's right edge.
+        let scope = list.commands.iter().find_map(|c| match c {
+            PaintCommand::PushScope { name, bounds, .. } if name.contains("Badge") => Some(*bounds),
+            _ => None,
+        });
+        let b = scope.expect("badge scope");
+        assert!(b.x1 > 60.0, "badge scope must include the overhang: {b:?}");
+    }
 
     #[test]
     fn badge_text_caps_at_max() {

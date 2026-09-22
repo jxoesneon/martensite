@@ -392,6 +392,14 @@ impl Widget for Descriptions {
 
     fn paint(&self, cx: &mut PaintContext) {
         let b = cx.bounds;
+        // Rows can exceed a shallow allocation — clip to the widget so
+        // cell text cuts at the edge instead of spilling.
+        cx.list.push_clip(kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        ));
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let ink = cx.color(TokenKey::TextColor, [30, 30, 36, 255]);
         let muted = cx.color(TokenKey::TextMutedColor, [110, 110, 118, 255]);
@@ -480,6 +488,7 @@ impl Widget for Descriptions {
                 ink,
             );
         }
+        cx.list.pop_clip();
     }
 
     fn child_count(&self) -> usize {

@@ -563,13 +563,23 @@ impl Widget for JsonView {
                     HOVER,
                 );
             }
+            // Clip text to the row ∩ widget bounds: a row straddling
+            // the viewport edge emits only the slice that can render.
+            let row_clip = kurbo::Rect::new(
+                f64::from(self.bounds.min_x()),
+                f64::from(y),
+                f64::from(self.bounds.max_x()),
+                f64::from(y + row),
+            )
+            .intersect(krect(self.bounds));
             let mut x = self.bounds.min_x() + pad + *depth as f32 * indent;
             // Disclosure triangle.
             if n.value.is_container() {
                 let tri = if n.expanded { "▾" } else { "▸" };
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
+                    row_clip,
                     kurbo::Point::new(f64::from(x), f64::from(y + row * 0.18)),
                     tri,
                     size,
@@ -580,9 +590,10 @@ impl Widget for JsonView {
             // Key then value.
             let (key, val) = self.row_text(n);
             if !key.is_empty() {
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
+                    row_clip,
                     kurbo::Point::new(f64::from(x), f64::from(y + row * 0.18)),
                     &key,
                     size,
@@ -597,9 +608,10 @@ impl Widget for JsonView {
                 JsonValue::Null => NULL,
                 _ => META,
             };
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                row_clip,
                 kurbo::Point::new(f64::from(x), f64::from(y + row * 0.18)),
                 &val,
                 size,

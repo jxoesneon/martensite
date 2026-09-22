@@ -998,6 +998,33 @@ pub trait Widget: Send + Sync + 'static {
         None
     }
 
+    /// An additional clip rect for internal child `index`, intersected
+    /// with the child's own bounds during the paint walk.
+    ///
+    /// `None` (the default) means no extra clip — the child is clipped
+    /// only by [`Widget::clips_children`]/its own bounds. A widget whose
+    /// children legitimately occupy different regions uses this to keep
+    /// each child's paint inside its region: a [`ScrollView`] clips its
+    /// content to the viewport so scrolled rows cannot render under the
+    /// scrollbar strips the view paints afterwards.
+    ///
+    /// [`ScrollView`]: https://docs.rs/martensite
+    fn child_clip(&self, _index: usize) -> Option<crate::Rect> {
+        None
+    }
+
+    /// The region this widget's paint legitimately covers — `None`
+    /// (the default) means the layout bounds.
+    ///
+    /// Widgets with designed overhang (a badge straddling its child's
+    /// corner, a focus ring drawn outside the face) return the wider
+    /// rect so the paint audit's container-overflow check doesn't flag
+    /// intended output. This is provenance only — it does not clip or
+    /// alter rendering.
+    fn paint_extent(&self) -> Option<crate::Rect> {
+        None
+    }
+
     /// Record this widget's own paint commands into the context's paint
     /// list. Default is a no-op — the widget contributes no chrome.
     ///

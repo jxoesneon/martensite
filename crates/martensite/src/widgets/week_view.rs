@@ -430,6 +430,9 @@ impl Widget for WeekView {
             krect(self.bounds),
             cx.color(TokenKey::BackgroundColor, FACE),
         );
+        // Hour labels at the last line and all-day rows can run past
+        // the bottom edge — clip to the widget so they cut cleanly.
+        cx.list.push_clip(krect(self.bounds));
 
         // Day headers.
         let hdr_sz = 9.5 * s;
@@ -495,10 +498,12 @@ impl Widget for WeekView {
             edge,
         );
 
-        // Events.
+        // Events — rects first so a label can test whether a *later*
+        // overlapping block will cover it entirely (dead paint).
         let mut hits = self.hits.lock();
         hits.clear();
         let mut allday_count = [0usize; 7];
+        let mut placed: Vec<(usize, Rect)> = Vec::with_capacity(self.events.len());
         for (i, e) in self.events.iter().enumerate() {
             if e.day > 6 {
                 continue;
@@ -527,24 +532,39 @@ impl Widget for WeekView {
                 continue;
             }
             hits.push((i, r));
-            let kr = krect(r);
+            placed.push((i, r));
+        }
+        let krs: Vec<kurbo::Rect> = placed.iter().map(|(_, r)| krect(*r)).collect();
+        for (pos, (i, r)) in placed.iter().enumerate() {
+            let e = &self.events[*i];
+            let kr = krs[pos];
             cx.list.push_fill_shape(
                 kr,
                 &martensite_core::shape::Shape::rounded(3.0 * s),
                 e.color,
             );
             if !e.all_day {
-                crate::text_paint::paint_label_clipped(
-                    painter,
-                    cx.list,
-                    kr,
-                    pt(Vec2::new(r.min_x() + 4.0 * s, r.min_y() + 2.0 * s)),
-                    &e.title,
-                    9.0 * s,
-                    ink,
-                );
+                let o = pt(Vec2::new(r.min_x() + 4.0 * s, r.min_y() + 2.0 * s));
+                let size = 9.0 * s;
+                // The audit probes `ink ∩ clip` — a long title clipped
+                // to a narrow block is judged on the surviving sliver,
+                // and events can bleed past the widget edge where the
+                // parent's clip is what survives.
+                let covered = crate::text_paint::label_ink_bounds(painter, o, &e.title, size)
+                    .is_some_and(|tb| {
+                        crate::text_paint::fully_occluded(
+                            tb.intersect(kr).intersect(krect(self.bounds)),
+                            &krs[pos + 1..],
+                        )
+                    });
+                if !covered {
+                    crate::text_paint::paint_label_clipped(
+                        painter, cx.list, kr, o, &e.title, size, ink,
+                    );
+                }
             }
         }
+        cx.list.pop_clip();
     }
 }
 

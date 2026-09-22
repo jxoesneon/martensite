@@ -818,10 +818,7 @@ impl App {
 
         // Header.
         let header_h = HEADER_PT as f64 * sd;
-        list.push_fill_rect(
-            martensite::render::Rect::new(m, m, w - m, m + header_h),
-            pal.raised,
-        );
+        list.push_fill_rect(kurbo::Rect::new(m, m, w - m, m + header_h), pal.raised);
 
         // KPI chips — measured first so the title/subtitle get the real
         // remaining width instead of a fraction guess. At narrow widths
@@ -910,12 +907,7 @@ impl App {
             let chip_w = f64::from(vw.max(lw)) + 20.0 * sd;
             kx -= chip_w;
             list.push_fill_rect(
-                martensite::render::Rect::new(
-                    kx,
-                    m + 8.0 * sd,
-                    kx + chip_w,
-                    m + header_h - 8.0 * sd,
-                ),
+                kurbo::Rect::new(kx, m + 8.0 * sd, kx + chip_w, m + header_h - 8.0 * sd),
                 pal.surface,
             );
             let label_w = text.measure(label, 12.0 * s);
@@ -947,7 +939,7 @@ impl App {
         // would cover the dropdown face and focus ring. The widget
         // fills its own segment with the same token.
         list.push_fill_rect(
-            martensite::render::Rect::new(
+            kurbo::Rect::new(
                 m,
                 sb_y,
                 (w - m - f64::from(STATUSBAR_W * s)).max(m),
@@ -1013,7 +1005,7 @@ impl App {
         // title riding the pointer. Paints last so it sits above all
         // panel chrome.
         if let Some((preview, pos, title)) = drag_preview {
-            let pr = martensite::render::Rect::new(
+            let pr = kurbo::Rect::new(
                 preview.x,
                 preview.y,
                 preview.x + preview.width,
@@ -1028,7 +1020,7 @@ impl App {
             let chip_h = 22.0 * sd;
             let cx = f64::from(pos.x) + 12.0 * sd;
             let cy = f64::from(pos.y) + 10.0 * sd;
-            let chip = martensite::render::Rect::new(cx, cy, cx + chip_w, cy + chip_h);
+            let chip = kurbo::Rect::new(cx, cy, cx + chip_w, cy + chip_h);
             list.push_fill_shape(
                 chip,
                 &Shape::squircle((chip_h * 0.4) as f32),
@@ -1533,7 +1525,7 @@ impl App {
         let size = self.window.as_ref().expect("checked").surface_size();
         let (w, h) = (f64::from(size.width), f64::from(size.height));
         let mut list = PaintList::new();
-        list.push_fill_rect(martensite::render::Rect::new(0.0, 0.0, w, h), self.pal.bg);
+        list.push_fill_rect(kurbo::Rect::new(0.0, 0.0, w, h), self.pal.bg);
         {
             let root = self.root.expect("checked");
             let arena = self.arena.as_ref().expect("checked");
@@ -1541,11 +1533,7 @@ impl App {
         }
         // App chrome sits outside the widget tree — wrap it in a manual
         // provenance scope so audit findings still name a component.
-        list.push_scope(
-            None,
-            "App Chrome",
-            martensite::render::Rect::new(0.0, 0.0, w, h),
-        );
+        list.push_scope(None, "App Chrome", kurbo::Rect::new(0.0, 0.0, w, h));
         self.paint_chrome(&mut list, w, h);
         list.pop_scope();
         // Overlay popups (dropdown menus, context menus, tooltips) are
@@ -1561,7 +1549,7 @@ impl App {
             .current_focus()
             .and_then(|id| self.arena.as_ref().and_then(|a| a.get_hot(id)))
             .map(|h| {
-                martensite::render::Rect::new(
+                kurbo::Rect::new(
                     f64::from(h.bounds.min_x()),
                     f64::from(h.bounds.min_y()),
                     f64::from(h.bounds.max_x()),
@@ -2595,6 +2583,296 @@ mod tests {
         assert!(visited.contains(&app.toolbar.expect("toolbar").to_u64()));
         assert!(visited.contains(&app.statusbar.expect("statusbar").to_u64()));
         assert_eq!(visited.len(), 6);
+    }
+
+    /// Scratch: for every OccludedText lint, identify the covering
+    /// fill — walks the command stream like the audit does and reports
+    /// the later opaque fills covering all five probe samples.
+    fn dump_occluders(list: &PaintList, lints: &[martensite::access::paint_audit::PaintLint]) {
+        use kurbo::Shape;
+        use martensite::access::paint_audit::PaintLintKind;
+        use martensite::core::PaintCommand;
+        // Re-walk: record (idx, clip, scope) for fills and texts.
+        let mut clip_stack: Vec<kurbo::Rect> = Vec::new();
+        let mut scope_stack: Vec<(String, kurbo::Rect)> = Vec::new();
+        #[derive(Debug)]
+        struct Fill {
+            idx: usize,
+            rect: kurbo::Rect,
+            color: [u8; 4],
+            clip: Option<kurbo::Rect>,
+            scope: String,
+        }
+        let mut fills: Vec<Fill> = Vec::new();
+        let mut texts: Vec<(usize, kurbo::Rect, Option<kurbo::Rect>, String)> = Vec::new();
+        for (i, cmd) in list.commands.iter().enumerate() {
+            match cmd {
+                PaintCommand::ClipRect(r) | PaintCommand::ClipRoundedRect(r, _) => {
+                    clip_stack.push(*r)
+                }
+                PaintCommand::ClipPath(p) => {
+                    let mut bb = kurbo::Rect::new(
+                        f64::INFINITY,
+                        f64::INFINITY,
+                        f64::NEG_INFINITY,
+                        f64::NEG_INFINITY,
+                    );
+                    for el in p.elements() {
+                        for pt in match el {
+                            kurbo::PathEl::MoveTo(p) | kurbo::PathEl::LineTo(p) => vec![*p],
+                            kurbo::PathEl::QuadTo(a, b) => vec![*a, *b],
+                            kurbo::PathEl::CurveTo(a, b, c) => vec![*a, *b, *c],
+                            kurbo::PathEl::ClosePath => vec![],
+                        } {
+                            bb = bb.union(kurbo::Rect::new(pt.x, pt.y, pt.x, pt.y));
+                        }
+                    }
+                    clip_stack.push(bb);
+                }
+                PaintCommand::PopClip => {
+                    clip_stack.pop();
+                }
+                PaintCommand::PushScope { name, bounds, .. } => {
+                    scope_stack.push((name.to_string(), *bounds))
+                }
+                PaintCommand::PopScope => {
+                    scope_stack.pop();
+                }
+                _ => {}
+            }
+            let clip = clip_stack.iter().copied().reduce(|a, b| a.intersect(b));
+            let scope = scope_stack
+                .last()
+                .map(|(n, _)| n.clone())
+                .unwrap_or_default();
+            match cmd {
+                PaintCommand::FillRect(r, c) => fills.push(Fill {
+                    idx: i,
+                    rect: *r,
+                    color: *c,
+                    clip,
+                    scope,
+                }),
+                PaintCommand::FillPath(p, c) => fills.push(Fill {
+                    idx: i,
+                    rect: p.bounding_box(),
+                    color: *c,
+                    clip,
+                    scope,
+                }),
+                PaintCommand::DrawText(p, t, sz, _) => {
+                    let w = (*sz as f64) * 0.6 * t.chars().count() as f64;
+                    let b = kurbo::Rect::new(p.x, p.y, p.x + w.max(*sz as f64), p.y + *sz as f64);
+                    texts.push((i, b, clip, scope));
+                }
+                PaintCommand::DrawGlyphRun(run) => {
+                    if run.glyphs.is_empty() {
+                        continue;
+                    }
+                    let x0 = run.glyphs.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
+                    let x1 = run
+                        .glyphs
+                        .iter()
+                        .map(|g| g.x + g.width)
+                        .fold(f32::NEG_INFINITY, f32::max);
+                    let base = run
+                        .glyphs
+                        .iter()
+                        .map(|g| g.y)
+                        .fold(f32::NEG_INFINITY, f32::max);
+                    let b = kurbo::Rect::new(
+                        x0 as f64,
+                        (base - run.font_size * 0.8) as f64,
+                        x1 as f64,
+                        (base + run.font_size * 0.25) as f64,
+                    );
+                    texts.push((i, b, clip, scope));
+                }
+                _ => {}
+            }
+        }
+        for l in lints
+            .iter()
+            .filter(|l| l.kind == PaintLintKind::OccludedText)
+        {
+            // Find the text rec nearest the anchor.
+            let Some(&(ti, tb, tclip, ref tscope)) = texts.iter().min_by_key(|(_, b, _, _)| {
+                let cx = (b.x0 + b.x1) / 2.0 - l.anchor.0;
+                let cy = (b.y0 + b.y1) / 2.0 - l.anchor.1;
+                (cx * cx + cy * cy) as i64
+            }) else {
+                continue;
+            };
+            let vis = tclip.map_or(tb, |c| tb.intersect(c));
+            let (w, h) = (vis.width(), vis.height());
+            let samples = [
+                (vis.x0 + w * 0.5, vis.y0 + h * 0.5),
+                (vis.x0 + w * 0.25, vis.y0 + h * 0.25),
+                (vis.x1 - w * 0.25, vis.y0 + h * 0.25),
+                (vis.x0 + w * 0.25, vis.y1 - h * 0.25),
+                (vis.x1 - w * 0.25, vis.y1 - h * 0.25),
+            ];
+            let covers: Vec<String> = fills
+                .iter()
+                .filter(|f| {
+                    f.idx > ti
+                        && f.color[3] == 255
+                        && samples.iter().all(|&(sx, sy)| {
+                            f.rect.contains(kurbo::Point::new(sx, sy))
+                                && f.clip
+                                    .is_none_or(|c| c.contains(kurbo::Point::new(sx, sy)))
+                        })
+                })
+                .map(|f| format!("fill@{:?} {:?} scope={}", f.rect, f.color, f.scope))
+                .collect();
+            eprintln!(
+                "OCCLUDED @ {:?} scope={} text_vis={:?} covered_by={:?}",
+                l.anchor, tscope, vis, covers
+            );
+        }
+    }
+
+    /// Scratch: dump every audit lint at a given scale/size.
+    #[test]
+    fn dump_all_lints() {
+        use martensite::access::paint_audit::{audit_paint_list, PaintAuditConfig};
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.scale.set(1.0);
+        app.build_arena();
+        app.apply_dock_layout_at(3200, 2100);
+        let arena = app.arena.as_ref().expect("arena");
+        let mut list = PaintList::new();
+        arena.build_paint_list(app.root.expect("root"), &mut list);
+        let cfg = PaintAuditConfig {
+            scale_factor: 2.0,
+            ..Default::default()
+        };
+        let lints = audit_paint_list(&list, &cfg);
+        eprintln!("=== {} lints ===", lints.len());
+        for l in &lints {
+            eprintln!("{:?} {:?}: {}", l.severity, l.kind, l.detail);
+        }
+        dump_occluders(&list, &lints);
+    }
+
+    /// Scratch: mount each zone page in a ScrollView (as ZonePanel
+    /// does), tick bindings, scroll through the content, and audit
+    /// every frame — reproduces the live per-frame paint audit.
+    #[test]
+    fn dump_zone_lints() {
+        use martensite::access::paint_audit::{audit_paint_list, PaintAuditConfig};
+        use martensite::core::{SemanticAction, WidgetEvent};
+        use martensite::widgets::container::Container;
+        use martensite::widgets::scrollview::ScrollView;
+
+        fn tick_all(w: &mut dyn martensite::core::Widget, dt: Duration) {
+            for i in 0..w.child_count() {
+                if let Some(c) = w.child_mut(i) {
+                    tick_all(c, dt);
+                }
+            }
+            let _ = w.tick(dt);
+        }
+
+        let app = App::new(Some(ThemeChoice::Dark), false);
+        type ZonePages = Vec<(&'static str, Flex)>;
+        let mut pages_by_zone: Vec<(&str, f32, f32, ZonePages)> = vec![];
+        for zw in [
+            700.0f32, 900.0, 1100.0, 1324.0, 1500.0, 1828.0, 2100.0, 2400.0,
+        ] {
+            pages_by_zone.push(("grid", zw, 480.0, crate::zones::grid::pages(&app.model)));
+            pages_by_zone.push((
+                "telemetry",
+                zw,
+                480.0,
+                crate::zones::telemetry::pages(&app.model),
+            ));
+            pages_by_zone.push(("editor", zw, 350.0, crate::zones::editor::pages(&app.model)));
+            pages_by_zone.push(("media", zw, 350.0, crate::zones::media::pages(&app.model)));
+        }
+        let cfg = PaintAuditConfig {
+            scale_factor: 2.0,
+            ..Default::default()
+        };
+        let mut seen = std::collections::HashSet::new();
+        let filter = std::env::var("PAGE_FILTER").unwrap_or_default();
+        for (zname, zw, zh, pages) in pages_by_zone {
+            for (label, page) in pages {
+                if !filter.is_empty() && !format!("{zname}/{label}@{zw:.0}").contains(&filter) {
+                    continue;
+                }
+                let view = ScrollView::new(
+                    Container::new()
+                        .padding_uniform(crate::zone::ZONE_PAD)
+                        .child(page),
+                );
+                let mut arena = WidgetArena::new();
+                arena.set_theme(martensite::theme::tokens::default_dark());
+                arena.set_scale_factor(2.0);
+                arena.set_text_painter(martensite::text_paint::shared_painter());
+                let mut hot = HotNode::default();
+                hot.flags |= NodeFlags::VISIBLE;
+                let root = arena.insert_with_widget(hot, Box::new(view));
+                let bounds = Rect::new(0.0, 0.0, zw, zh);
+                if let Some((hot, cold)) = arena.get_both_mut(root) {
+                    hot.bounds = bounds;
+                    cold.widget
+                        .layout(&mut LayoutContext { hot, scale: 2.0 }, bounds);
+                }
+                // Run the binding cycle once so Bound::push populates
+                // the widgets with model data.
+                if let Some(cold) = arena.get_cold_mut(root) {
+                    tick_all(&mut *cold.widget, Duration::from_millis(16));
+                }
+                let content_h = arena
+                    .get_cold(root)
+                    .and_then(|c| c.widget.child_bounds(0))
+                    .map(|b| b.height())
+                    .unwrap_or(0.0);
+                eprintln!("--- {zname}/{label}@{zw:.0}x{zh:.0}: content_h={content_h:.0} ---");
+                let mut y = 0.0f32;
+                loop {
+                    arena.dispatch_event(
+                        root,
+                        &WidgetEvent::SemanticAction(SemanticAction::SetScrollOffset(Vec2::new(
+                            0.0, y,
+                        ))),
+                    );
+                    let mut list = PaintList::new();
+                    arena.build_paint_list(root, &mut list);
+                    if std::env::var("DUMP_SCOPES").is_ok() {
+                        for cmd in &list.commands {
+                            if let martensite::core::PaintCommand::PushScope {
+                                name, bounds, ..
+                            } = cmd
+                            {
+                                eprintln!("  scope {name} {bounds:?}");
+                            }
+                        }
+                    }
+                    let lints = audit_paint_list(&list, &cfg);
+                    if lints.iter().any(|l| {
+                        l.kind == martensite::access::paint_audit::PaintLintKind::OccludedText
+                    }) {
+                        eprintln!("--- occluders {zname}/{label}@{zw:.0} scroll_y={y:.0} ---");
+                        dump_occluders(&list, &lints);
+                    }
+                    for l in lints {
+                        if l.severity != martensite::access::paint_audit::LintSeverity::Warning {
+                            continue;
+                        }
+                        let key = format!("{:?} {}", l.kind, l.detail);
+                        if seen.insert(key) {
+                            eprintln!("{zname}/{label}@{zw:.0}: {:?} {}", l.kind, l.detail);
+                        }
+                    }
+                    if y >= content_h {
+                        break;
+                    }
+                    y += zh * 0.5;
+                }
+            }
+        }
     }
 
     /// Reproduces the windowed paint audit headless: drive the real

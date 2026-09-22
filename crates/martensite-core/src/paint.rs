@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use kurbo::{BezPath, Point, Rect};
+use kurbo::{BezPath, Point, Rect, Shape};
 
 /// A single color stop within a gradient, defined by a normalized position in
 /// `[0.0, 1.0]` and an RGBA color.
@@ -1059,6 +1059,11 @@ impl PathBuilder {
 pub struct PaintList {
     /// The ordered sequence of paint commands to render.
     pub commands: Vec<PaintCommand>,
+    /// Bounding rects of the live clip commands, maintained lazily by
+    /// [`PaintList::active_clip`].
+    clip_stack: Vec<Rect>,
+    /// `commands[..clip_synced]` is already reflected in `clip_stack`.
+    clip_synced: usize,
 }
 
 impl PaintList {
@@ -1075,6 +1080,28 @@ impl PaintList {
     /// ```
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Wraps a pre-built command buffer into a `PaintList`.
+    ///
+    /// The clip mirror replays from the start on the first
+    /// [`PaintList::active_clip`] call, so lists adopted mid-frame
+    /// report the enclosing clips correctly.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintCommand, PaintList};
+    ///
+    /// let list = PaintList::from_commands(vec![PaintCommand::PopClip]);
+    /// assert_eq!(list.len(), 1);
+    /// ```
+    pub fn from_commands(commands: Vec<PaintCommand>) -> Self {
+        Self {
+            commands,
+            clip_stack: Vec::new(),
+            clip_synced: 0,
+        }
     }
 
     /// Removes all commands from the list, leaving it empty but preserving the
@@ -1094,6 +1121,61 @@ impl PaintList {
     /// ```
     pub fn clear(&mut self) {
         self.commands.clear();
+        self.clip_stack.clear();
+        self.clip_synced = 0;
+    }
+
+    /// The intersection of every live clip's bounding rect — `None`
+    /// when no clip is active.
+    ///
+    /// Widgets use this to cull emissions the enclosing clips would
+    /// discard anyway (e.g. cells scrolled below a scrollport):
+    /// emitting them is dead work the paint audit flags. Shaped clips
+    /// contribute their bounding rect, so the result may overestimate
+    /// the true clip — it never underestimates it, which keeps culling
+    /// conservative.
+    ///
+    /// The mirror is replayed incrementally: repeated calls during one
+    /// paint pass cost only the commands appended since the last call.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::PaintList;
+    /// use kurbo::Rect;
+    ///
+    /// let mut list = PaintList::new();
+    /// assert_eq!(list.active_clip(), None);
+    /// list.push_clip(Rect::new(0.0, 0.0, 100.0, 100.0));
+    /// list.push_clip(Rect::new(50.0, 50.0, 100.0, 100.0));
+    /// assert_eq!(list.active_clip(), Some(Rect::new(50.0, 50.0, 100.0, 100.0)));
+    /// list.pop_clip();
+    /// assert_eq!(list.active_clip(), Some(Rect::new(0.0, 0.0, 100.0, 100.0)));
+    /// ```
+    pub fn active_clip(&mut self) -> Option<Rect> {
+        if self.clip_synced > self.commands.len() {
+            // The command buffer shrank (truncate/clear by hand) —
+            // rebuild the mirror.
+            self.clip_stack.clear();
+            self.clip_synced = 0;
+        }
+        for cmd in &self.commands[self.clip_synced..] {
+            match cmd {
+                PaintCommand::ClipRect(r) | PaintCommand::ClipRoundedRect(r, _) => {
+                    self.clip_stack.push(*r)
+                }
+                PaintCommand::ClipPath(p) => self.clip_stack.push(p.bounding_box()),
+                PaintCommand::PopClip => {
+                    self.clip_stack.pop();
+                }
+                _ => {}
+            }
+        }
+        self.clip_synced = self.commands.len();
+        self.clip_stack
+            .iter()
+            .copied()
+            .reduce(|a, b| a.intersect(b))
     }
 
     /// Pushes a [`PaintCommand::FillRect`].
@@ -1829,6 +1911,16 @@ pub trait TextShaper {
     /// caret placement and hit-testing that must agree with painted
     /// glyph advances.
     fn measure_text(&self, _text: &str, _size_px: f32) -> Option<f32> {
+        None
+    }
+
+    /// Approximate ink bounds of `text` painted at `origin`, in device
+    /// pixels — the box [`paint_shaped_text`](Self::paint_shaped_text)
+    /// would mark. Implementations that shape can report real glyph
+    /// extents; `None` means "unknown" and callers must not cull on it.
+    /// Widgets use this to skip emitting runs that cannot intersect a
+    /// clip — a fully clipped label is dead paint work.
+    fn ink_bounds(&self, _origin: Point, _text: &str, _size_px: f32) -> Option<Rect> {
         None
     }
 }

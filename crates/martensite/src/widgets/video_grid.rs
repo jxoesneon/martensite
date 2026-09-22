@@ -118,6 +118,10 @@ pub struct VideoGrid {
     participants: Vec<Participant>,
     selected: Option<usize>,
     tiles: Vec<Rect>,
+    /// Uniform scale applied when the natural grid is taller than the
+    /// allotted bounds — keeps every tile inside the widget instead of
+    /// overflowing into siblings below.
+    fit: f32,
     text_painter: Option<SharedTextPainter>,
     bounds: Rect,
     scale: f32,
@@ -152,6 +156,7 @@ impl VideoGrid {
             participants: Vec::new(),
             selected: None,
             tiles: Vec::new(),
+            fit: 1.0,
             text_painter: None,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
@@ -309,17 +314,33 @@ impl Widget for VideoGrid {
         let s = cx.scale;
         let gap = GAP_PT * s;
         let cols = self.columns();
-        let cell_w = (bounds.width() - PAD_PT * 2.0 * s - (cols - 1) as f32 * gap) / cols as f32;
+        let cell_w =
+            ((bounds.width() - PAD_PT * 2.0 * s - (cols - 1) as f32 * gap) / cols as f32).max(0.0);
         let cell_h = cell_w * 0.75 + CAPTION_PT * s;
+        let rows = self.participants.len().div_ceil(cols).max(1) as f32;
+        let natural_h = PAD_PT * 2.0 * s + rows * cell_h + (rows - 1.0).max(0.0) * gap;
+        // Tiles derive height from width (16:9 + caption), so a tall
+        // roster overflows a short band. Shrink the whole grid —
+        // centered horizontally — rather than letting tiles paint into
+        // the sibling below.
+        self.fit = if natural_h > bounds.height() && natural_h > 0.0 {
+            (bounds.height() / natural_h).max(0.0)
+        } else {
+            1.0
+        };
+        let fit = self.fit;
+        let grid_w = (PAD_PT * 2.0 * s + cols as f32 * cell_w + (cols - 1) as f32 * gap) * fit;
+        let x0 = bounds.min_x() + (bounds.width() - grid_w).max(0.0) / 2.0;
+        let y0 = bounds.min_y() + PAD_PT * s * fit;
         self.tiles.clear();
         for (i, _) in self.participants.iter().enumerate() {
             let row = (i / cols) as f32;
             let col = (i % cols) as f32;
             self.tiles.push(Rect::new(
-                bounds.min_x() + PAD_PT * s + col * (cell_w + gap),
-                bounds.min_y() + PAD_PT * s + row * (cell_h + gap),
-                cell_w,
-                cell_h,
+                x0 + col * (cell_w + gap) * fit,
+                y0 + row * (cell_h + gap) * fit,
+                cell_w * fit,
+                cell_h * fit,
             ));
         }
     }
@@ -346,17 +367,20 @@ impl Widget for VideoGrid {
 
     fn paint(&self, cx: &mut PaintContext) {
         let s = cx.scale;
+        let fit = self.fit;
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        cx.list.push_fill_rect(
-            kurbo::Rect::new(
-                f64::from(self.bounds.min_x()),
-                f64::from(self.bounds.min_y()),
-                f64::from(self.bounds.max_x()),
-                f64::from(self.bounds.max_y()),
-            ),
-            cx.color(TokenKey::BackgroundColor, FACE),
+        let wb = kurbo::Rect::new(
+            f64::from(self.bounds.min_x()),
+            f64::from(self.bounds.min_y()),
+            f64::from(self.bounds.max_x()),
+            f64::from(self.bounds.max_y()),
         );
-        let shape = martensite_core::shape::Shape::rounded(8.0 * s);
+        cx.list
+            .push_fill_rect(wb, cx.color(TokenKey::BackgroundColor, FACE));
+        // Speaking rings bleed 2.5pt past the tile edge — clip the
+        // whole grid to bounds so nothing reaches a sibling's rect.
+        cx.list.push_clip(wb);
+        let shape = martensite_core::shape::Shape::rounded(8.0 * s * fit);
         for (i, p) in self.participants.iter().enumerate() {
             let r = self.tiles[i];
             let kr = kurbo::Rect::new(
@@ -369,7 +393,7 @@ impl Widget for VideoGrid {
             cx.list.push_fill_shape(kr, &shape, p.color);
             // Speaking ring.
             if p.speaking {
-                let w = 2.5 * s;
+                let w = 2.5 * s * fit;
                 cx.list.push_stroke_shape(
                     kurbo::Rect::new(
                         kr.x0 - f64::from(w),
@@ -384,23 +408,23 @@ impl Widget for VideoGrid {
             }
             // Center initial.
             let initial: String = p.name.chars().take(1).collect();
-            let fs = INITIAL_PT * s;
+            let fs = INITIAL_PT * s * fit;
             let iw = painter
                 .and_then(|pt| pt.measure_text(&initial, fs))
                 .unwrap_or(fs * 0.5);
+            let cap = CAPTION_PT * s * fit;
             crate::text_paint::paint_label(
                 painter,
                 cx.list,
                 kurbo::Point::new(
                     f64::from(r.min_x() + (r.width() - iw) / 2.0),
-                    f64::from(r.min_y() + (r.height() - CAPTION_PT * s) / 2.0),
+                    f64::from(r.min_y() + (r.height() - cap) / 2.0),
                 ),
                 &initial,
                 fs,
                 TEXT,
             );
             // Caption band.
-            let cap = CAPTION_PT * s;
             let cr = kurbo::Rect::new(kr.x0, kr.y1 - f64::from(cap), kr.x1, kr.y1);
             cx.list.push_fill_rect(cr, CAPTION_BG);
             crate::text_paint::paint_label_clipped(
@@ -408,21 +432,21 @@ impl Widget for VideoGrid {
                 cx.list,
                 cr,
                 kurbo::Point::new(
-                    f64::from(r.min_x() + 6.0 * s),
+                    f64::from(r.min_x() + 6.0 * s * fit),
                     f64::from(r.max_y() - cap * 0.3),
                 ),
                 &p.name,
-                FONT_PT * s,
+                FONT_PT * s * fit,
                 cx.color(TokenKey::TextColor, TEXT),
             );
             // Muted badge.
             if p.muted {
-                let d = 18.0 * s;
+                let d = 18.0 * s * fit;
                 let br = kurbo::Rect::new(
-                    f64::from(r.max_x() - d - 5.0 * s),
-                    f64::from(r.max_y() - cap - d - 5.0 * s),
-                    f64::from(r.max_x() - 5.0 * s),
-                    f64::from(r.max_y() - cap - 5.0 * s),
+                    f64::from(r.max_x() - d - 5.0 * s * fit),
+                    f64::from(r.max_y() - cap - d - 5.0 * s * fit),
+                    f64::from(r.max_x() - 5.0 * s * fit),
+                    f64::from(r.max_y() - cap - 5.0 * s * fit),
                 );
                 cx.list
                     .push_fill_shape(br, &martensite_core::shape::Shape::ELLIPSE, BADGE);
@@ -431,11 +455,12 @@ impl Widget for VideoGrid {
                     cx.list,
                     kurbo::Point::new(br.x0 + f64::from(d) * 0.28, br.y0 + f64::from(d) * 0.72),
                     "✕",
-                    FONT_PT * s,
+                    FONT_PT * s * fit,
                     TEXT,
                 );
             }
         }
+        cx.list.pop_clip();
     }
 }
 

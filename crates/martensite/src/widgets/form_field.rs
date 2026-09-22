@@ -359,13 +359,16 @@ impl Widget for FormField {
         // Label.
         if !self.label.is_empty() {
             let label_h = cx.pt(LABEL_H);
+            // A shallow allocation gives the label strip less than
+            // LABEL_H — the clip must not extend below the widget.
+            let strip_bottom = (b.min_y() + label_h).min(b.max_y());
             let (clip, origin) = match self.position {
                 LabelPosition::Top => {
                     let clip = kurbo::Rect::new(
                         f64::from(b.min_x()),
                         f64::from(b.min_y()),
                         f64::from(b.max_x()),
-                        f64::from(b.min_y() + label_h),
+                        f64::from(strip_bottom),
                     );
                     (
                         clip,
@@ -378,7 +381,7 @@ impl Widget for FormField {
                         f64::from(b.min_x()),
                         f64::from(b.min_y()),
                         f64::from(b.min_x() + lw),
-                        f64::from(b.min_y() + label_h),
+                        f64::from(strip_bottom),
                     );
                     (
                         clip,

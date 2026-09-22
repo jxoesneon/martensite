@@ -228,15 +228,16 @@ impl Widget for Fishbone {
         let head_w = 90.0 * s;
         let usable = (bounds.width() - head_w - PAD_PT * 2.0 * s).max(0.0);
         let mid = bounds.min_y() + bounds.height() / 2.0;
+        // Tip labels sit `fs` beyond the tip with ink running ~1.25·fs
+        // further — cap the rib reach so a shallow allocation doesn't
+        // push captions past the edge.
+        let rib =
+            (self.rib * s).min((bounds.height() / 2.0 - FONT_PT * s * 2.4 - 4.0 * s).max(4.0 * s));
         for i in 0..n {
             let t = (i + 1) as f32 / (n + 1) as f32;
             let bx = bounds.min_x() + PAD_PT * s + usable * t;
             let upper = i % 2 == 0;
-            let tip_y = if upper {
-                mid - self.rib * s
-            } else {
-                mid + self.rib * s
-            };
+            let tip_y = if upper { mid - rib } else { mid + rib };
             self.ribs.push((
                 Rect::new(bx - 40.0 * s, tip_y.min(mid), 80.0 * s, (tip_y - mid).abs()),
                 upper,
@@ -317,11 +318,9 @@ impl Widget for Fishbone {
         for (i, bone) in self.bones.iter().enumerate() {
             let (r, upper) = self.ribs[i];
             let bx = r.min_x() + r.width() / 2.0;
-            let tip_y = if upper {
-                mid - self.rib * s
-            } else {
-                mid + self.rib * s
-            };
+            // The rib rect already encodes the (possibly height-capped)
+            // tip — read it back instead of recomputing.
+            let tip_y = if upper { r.min_y() } else { r.max_y() };
             let tip_x = bx + 30.0 * s; // angled toward the head
             let color = if self.hovered == Some(i) {
                 cx.color(TokenKey::AccentColor, [90, 140, 220, 255])
@@ -335,17 +334,22 @@ impl Widget for Fishbone {
             let tw = painter
                 .and_then(|p| p.measure_text(&bone.category, fs))
                 .unwrap_or(bone.category.len() as f32 * fs * 0.5);
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                kurbo::Point::new(
-                    f64::from(tip_x - tw / 2.0),
-                    f64::from(tip_y + if upper { -4.0 * s } else { fs }),
-                ),
-                &bone.category,
-                fs,
-                color,
+            let tip_origin = kurbo::Point::new(
+                f64::from(tip_x - tw / 2.0),
+                f64::from(tip_y + if upper { -4.0 * s } else { fs }),
             );
+            if crate::text_paint::label_ink_bounds(painter, tip_origin, &bone.category, fs)
+                .is_none_or(|ink| crate::text_paint::visible_ink(cx.list, ink))
+            {
+                crate::text_paint::paint_label(
+                    painter,
+                    cx.list,
+                    tip_origin,
+                    &bone.category,
+                    fs,
+                    color,
+                );
+            }
             // Cause ticks along the rib.
             for (j, cause) in bone.causes.iter().enumerate() {
                 let t = (j + 1) as f32 / (bone.causes.len() + 1) as f32;
@@ -356,17 +360,22 @@ impl Widget for Fishbone {
                     1.0 * s,
                     color,
                 );
-                crate::text_paint::paint_label(
-                    painter,
-                    cx.list,
-                    kurbo::Point::new(
-                        f64::from(cxp + 10.0 * s),
-                        f64::from(cyp + CAUSE_PT * s * 0.4),
-                    ),
-                    cause,
-                    CAUSE_PT * s,
-                    color,
+                let cause_origin = kurbo::Point::new(
+                    f64::from(cxp + 10.0 * s),
+                    f64::from(cyp + CAUSE_PT * s * 0.4),
                 );
+                if crate::text_paint::label_ink_bounds(painter, cause_origin, cause, CAUSE_PT * s)
+                    .is_none_or(|ink| crate::text_paint::visible_ink(cx.list, ink))
+                {
+                    crate::text_paint::paint_label(
+                        painter,
+                        cx.list,
+                        cause_origin,
+                        cause,
+                        CAUSE_PT * s,
+                        color,
+                    );
+                }
             }
         }
     }

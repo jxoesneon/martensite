@@ -513,11 +513,16 @@ impl Widget for Steps {
                 },
             );
 
-            // Label + description centred under the node.
+            // Label + description centred under the node — clamped
+            // into the widget so end-step captions don't spill past
+            // the row's edges (they slide inward instead of clipping
+            // mid-glyph).
+            let wb = cx.bounds;
             let lw = painter
                 .and_then(|p| p.measure_text(&step.label, label_size))
                 .unwrap_or(label_size * step.label.chars().count() as f32 * 0.55);
-            let lx = r.origin.x + r.size.x / 2.0 - lw / 2.0;
+            let lx = (r.origin.x + r.size.x / 2.0 - lw / 2.0)
+                .clamp(wb.min_x(), (wb.max_x() - lw).max(wb.min_x()));
             let ly = r.max_y() + cx.pt(TEXT_GAP_PT);
             crate::text_paint::paint_label_clipped(
                 painter,
@@ -541,7 +546,8 @@ impl Widget for Steps {
                 let dw = painter
                     .and_then(|p| p.measure_text(desc, desc_size))
                     .unwrap_or(desc_size * desc.chars().count() as f32 * 0.55);
-                let dx = r.origin.x + r.size.x / 2.0 - dw / 2.0;
+                let dx = (r.origin.x + r.size.x / 2.0 - dw / 2.0)
+                    .clamp(wb.min_x(), (wb.max_x() - dw).max(wb.min_x()));
                 let dy = ly + label_size + cx.pt(2.0);
                 crate::text_paint::paint_label_clipped(
                     painter,

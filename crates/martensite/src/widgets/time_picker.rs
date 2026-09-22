@@ -803,11 +803,20 @@ impl Widget for TimePicker {
             } else {
                 ink
             };
-            let approx_w = text.len() as f32 * font_px * 0.55;
-            let tx = r.min_x() + (r.width() - approx_w).max(0.0) / 2.0;
-            crate::text_paint::paint_label(
+            let w = painter
+                .and_then(|p| p.measure_text(text, font_px))
+                .unwrap_or(text.len() as f32 * font_px * 0.55);
+            let tx = r.min_x() + (r.width() - w).max(0.0) / 2.0;
+            let wclip = kurbo::Rect::new(
+                f64::from(b.min_x()),
+                f64::from(b.min_y()),
+                f64::from(b.max_x()),
+                f64::from(b.max_y()),
+            );
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                wclip,
                 kurbo::Point::new(
                     f64::from(tx),
                     f64::from(r.min_y() + (r.height() - font_px) / 2.0),
@@ -819,9 +828,10 @@ impl Widget for TimePicker {
             // ':' separator after hour (and after minute in 12h mode
             // would read oddly — only hour→minute gets one).
             if *i == 0 {
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
+                    wclip,
                     kurbo::Point::new(
                         f64::from(r.max_x() - font_px * 0.2),
                         f64::from(r.min_y() + (r.height() - font_px) / 2.0),

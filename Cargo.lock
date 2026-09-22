@@ -2360,6 +2360,7 @@ version = "0.18.0"
 dependencies = [
  "accesskit",
  "glam",
+ "kurbo",
  "martensite",
  "martensite-accesskit-winit",
  "martensite-assets",

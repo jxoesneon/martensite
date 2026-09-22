@@ -1110,6 +1110,14 @@ impl Widget for ScrollView {
         let _ = cx;
     }
 
+    fn child_clip(&self, index: usize) -> Option<Rect> {
+        // Content (child 0) is clipped to the viewport — without this
+        // it emits into the scrollbar strips, where the bars' opaque
+        // track/thumb fills then cover text (the audit flags it as
+        // invisible output). Bars keep the widget-bounds clip.
+        (index == 0).then_some(self.viewport)
+    }
+
     fn tick(&mut self, dt: std::time::Duration) -> bool {
         // The decaying scroll/rubber-band animation — `update` returns
         // `true` while a repaint is needed.

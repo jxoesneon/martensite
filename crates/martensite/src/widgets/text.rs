@@ -725,12 +725,13 @@ impl Widget for Text {
         // Glyphs are clipped to the widget's allocated rect — an
         // unbreakable run wider than the layout can't spill past the
         // right edge.
-        cx.list.push_clip(kurbo::Rect::new(
+        let clip = kurbo::Rect::new(
             f64::from(cx.bounds.min_x()),
             f64::from(cx.bounds.min_y()),
             f64::from(cx.bounds.max_x()),
             f64::from(cx.bounds.max_y()),
-        ));
+        );
+        cx.list.push_clip(clip);
 
         // Emit one GlyphRun per (line, font) segment — glyph runs must
         // share a single font, so a line that underwent font fallback is
@@ -771,6 +772,9 @@ impl Text {
     /// Pushes a glyph run into the paint list, resolving its font bytes
     /// through the widget's `FontManager`. Runs with no resolvable font
     /// are still emitted — backends fall back to bounding-box rendering.
+    /// Runs whose ink cannot intersect the effective clip (widget
+    /// bounds ∧ enclosing clips) are dropped — dead paint work the
+    /// audit flags.
     fn push_glyph_run(
         &self,
         cx: &mut PaintContext,
@@ -779,6 +783,34 @@ impl Text {
     ) {
         if run.is_empty() {
             return;
+        }
+        // Mirror the audit's probe: ink is `x..x+width` horizontally,
+        // `baseline−0.8·size .. baseline+0.25·size` vertically.
+        let mut ink: Option<kurbo::Rect> = None;
+        for g in &run.glyphs {
+            let r = kurbo::Rect::new(
+                f64::from(g.x),
+                f64::from(g.y - run.font_size * 0.8),
+                f64::from(g.x + g.width),
+                f64::from(g.y + run.font_size * 0.25),
+            );
+            ink = Some(ink.map_or(r, |i: kurbo::Rect| i.union(r)));
+        }
+        if let Some(ink) = ink {
+            let bounds = kurbo::Rect::new(
+                f64::from(cx.bounds.min_x()),
+                f64::from(cx.bounds.min_y()),
+                f64::from(cx.bounds.max_x()),
+                f64::from(cx.bounds.max_y()),
+            );
+            let eff = cx
+                .list
+                .active_clip()
+                .map(|o| o.intersect(bounds))
+                .unwrap_or(bounds);
+            if ink.x1 <= eff.x0 || ink.x0 >= eff.x1 || ink.y1 <= eff.y0 || ink.y0 >= eff.y1 {
+                return;
+            }
         }
         let mut run = run;
         if let Some(manager) = &self.font_manager {

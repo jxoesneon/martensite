@@ -367,12 +367,30 @@ impl Widget for EmojiPicker {
     fn paint(&self, cx: &mut PaintContext) {
         let s = cx.scale;
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        // Section headers.
+        // Cells scrolled outside the enclosing clip emit dead commands
+        // — the picker's natural height routinely exceeds its scrollport.
+        let clip = cx.list.active_clip();
+        let on_clip = |r: Rect| {
+            clip.is_none_or(|c| {
+                c.x1 > f64::from(r.min_x())
+                    && c.x0 < f64::from(r.max_x())
+                    && c.y1 > f64::from(r.min_y())
+                    && c.y0 < f64::from(r.max_y())
+            })
+        };
+        // Section headers — `paint_label_clipped` intersects the row
+        // band with the active clip and culls off-screen headers.
         let mut y = self.bounds.min_y() + PAD_PT * s;
         for (name, emojis) in &self.sections {
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                kurbo::Rect::new(
+                    f64::from(self.bounds.min_x() + PAD_PT * s),
+                    f64::from(y),
+                    f64::from(self.bounds.max_x()),
+                    f64::from(y + HEADER_PT * s),
+                ),
                 kurbo::Point::new(
                     f64::from(self.bounds.min_x() + PAD_PT * s),
                     f64::from(y + HEADER_PT * 0.65 * s),
@@ -388,13 +406,17 @@ impl Widget for EmojiPicker {
         for (_, emojis) in &self.sections {
             for e in emojis {
                 let r = self.cells[idx];
-                if self.hovered == Some(idx) {
-                    let kr = kurbo::Rect::new(
-                        f64::from(r.min_x()),
-                        f64::from(r.min_y()),
-                        f64::from(r.max_x()),
-                        f64::from(r.max_y()),
-                    );
+                idx += 1;
+                if !on_clip(r) {
+                    continue;
+                }
+                let kr = kurbo::Rect::new(
+                    f64::from(r.min_x()),
+                    f64::from(r.min_y()),
+                    f64::from(r.max_x()),
+                    f64::from(r.max_y()),
+                );
+                if self.hovered == Some(idx - 1) {
                     cx.list
                         .push_fill_shape(kr, &martensite_core::shape::Shape::ELLIPSE, HOVER);
                 }
@@ -402,9 +424,10 @@ impl Widget for EmojiPicker {
                 let gw = painter
                     .and_then(|p| p.measure_text(&e.glyph, gsize))
                     .unwrap_or(gsize * 0.6);
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
+                    kr,
                     kurbo::Point::new(
                         f64::from(r.min_x() + (r.width() - gw) / 2.0),
                         f64::from(r.min_y() + r.height() / 2.0),
@@ -413,7 +436,6 @@ impl Widget for EmojiPicker {
                     gsize,
                     cx.color(TokenKey::TextColor, TEXT),
                 );
-                idx += 1;
             }
         }
     }

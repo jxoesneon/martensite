@@ -347,18 +347,22 @@ impl Widget for TaskSwitcher {
                     ring.max(1.0),
                     cx.color(TokenKey::AccentColor, RING),
                 );
-                // Label under the focused tile.
+                // Label under the focused tile — clamped into the
+                // widget so edge tiles' captions slide inward rather
+                // than spilling past the panel.
                 let label = &item.label;
                 let lw = painter
                     .and_then(|p| p.measure_text(label, LABEL_PT * s))
                     .unwrap_or(label.len() as f32 * LABEL_PT * 0.6 * s);
-                crate::text_paint::paint_label(
+                let lx = (tile.min_x() + (tile.width() - lw) / 2.0).clamp(
+                    self.bounds.min_x(),
+                    (self.bounds.max_x() - lw).max(self.bounds.min_x()),
+                );
+                crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
-                    kurbo::Point::new(
-                        f64::from(tile.min_x() + (tile.width() - lw) / 2.0),
-                        f64::from(tile.max_y() + LABEL_PT * s),
-                    ),
+                    krect(self.bounds),
+                    kurbo::Point::new(f64::from(lx), f64::from(tile.max_y() + LABEL_PT * s)),
                     label,
                     LABEL_PT * s,
                     cx.color(TokenKey::TextColor, TEXT),

@@ -238,6 +238,47 @@ impl TextPainter {
         }
         block_bottom
     }
+
+    /// Union ink box of every glyph run [`push`](Self::push) would
+    /// emit for `text` at `origin`, in device pixels — glyph x/width
+    /// horizontally and `baseline − 0.8·size … baseline + 0.25·size`
+    /// vertically, matching what the paint audit probes. `None` when
+    /// nothing would be emitted (empty text, no glyphs).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::TextPainter;
+    /// use kurbo::Point;
+    ///
+    /// let mut p = TextPainter::new();
+    /// assert!(p.ink_bounds(Point::ZERO, "", 14.0, None).is_none());
+    /// ```
+    pub fn ink_bounds(
+        &mut self,
+        origin: Point,
+        text: &str,
+        size: f32,
+        max_width: Option<f32>,
+    ) -> Option<kurbo::Rect> {
+        if text.is_empty() || size <= 0.0 {
+            return None;
+        }
+        let mut box_: Option<kurbo::Rect> = None;
+        for line in shape_text(self.fonts(), text, size, size * 1.25, max_width) {
+            let baseline_y = origin.y as f32 + line.line_y;
+            for g in &line.glyphs {
+                let glyph = kurbo::Rect::new(
+                    f64::from(origin.x as f32 + g.x),
+                    f64::from(baseline_y + g.y - g.font_size * 0.8),
+                    f64::from(origin.x as f32 + g.x + g.w),
+                    f64::from(baseline_y + g.y + g.font_size * 0.25),
+                );
+                box_ = Some(box_.map_or(glyph, |b: kurbo::Rect| b.union(glyph)));
+            }
+        }
+        box_
+    }
 }
 
 impl SharedTextPainter {
@@ -307,6 +348,18 @@ impl martensite_core::paint::TextShaper for SharedTextPainter {
     fn measure_text(&self, text: &str, size_px: f32) -> Option<f32> {
         Some(self.0.lock().measure(text, size_px))
     }
+
+    fn ink_bounds(&self, origin: Point, text: &str, size_px: f32) -> Option<kurbo::Rect> {
+        // `TextPainter::ink_bounds` is `None` when `push` would emit no
+        // glyphs at all — report a degenerate box so callers cull the
+        // emission rather than producing a dead command.
+        Some(
+            self.0
+                .lock()
+                .ink_bounds(origin, text, size_px, None)
+                .unwrap_or(kurbo::Rect::ZERO),
+        )
+    }
 }
 
 /// Resolves the painter a widget should use for this paint pass: its
@@ -343,6 +396,10 @@ pub(crate) fn estimate_label_width(label: &str) -> f32 {
 /// Emits `text` through `painter` when present, else falls back to
 /// [`PaintList::push_text`]'s placeholder boxes. `pub(crate)` — the
 /// facade widgets share this so the opt-in is one line in each `paint`.
+///
+/// Runs whose ink cannot intersect the list's active clip are not
+/// emitted — a fully clipped run is dead paint work, the invisible
+/// output the paint audit flags.
 pub(crate) fn paint_label(
     painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
     list: &mut PaintList,
@@ -351,6 +408,11 @@ pub(crate) fn paint_label(
     size_px: f32,
     color: [u8; 4],
 ) {
+    if let Some(ink) = label_ink_bounds(painter, origin, text, size_px) {
+        if !visible_ink(list, ink) {
+            return;
+        }
+    }
     match painter {
         Some(tp) => {
             tp.paint_shaped_text(list, origin, text, size_px, color);
@@ -364,6 +426,11 @@ pub(crate) fn paint_label(
 /// [`paint_label`] clipped to `clip` — for labels painted inside a
 /// fixed-size container (toast cards, dialog cards, input faces, tab
 /// slots), where an over-long string must not spill past the chrome.
+///
+/// Labels whose estimated ink box cannot intersect `clip` are not
+/// emitted at all: a fully clipped run is dead paint work — the kind
+/// of invisible output the paint audit flags — and the clip/pop pair
+/// would only wrap nothing.
 pub(crate) fn paint_label_clipped(
     painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
     list: &mut PaintList,
@@ -373,6 +440,15 @@ pub(crate) fn paint_label_clipped(
     size_px: f32,
     color: [u8; 4],
 ) {
+    // The pushed clip stacks with whatever is already active, so the
+    // effective clip is `clip ∩ active` — compute it explicitly so the
+    // culling check matches what the backend and audit will see. Rows
+    // scrolled outside a scrollport hit this: their local clip is fine
+    // but the intersected clip is empty and the run is dead paint.
+    let clip = list
+        .active_clip()
+        .map(|o| o.intersect(clip))
+        .unwrap_or(clip);
     // A degenerate or inverted clip provably paints nothing — emitting
     // the clip+text anyway is dead work the paint audit flags as
     // clipped text. Narrow widgets (a face too small for its label)
@@ -380,9 +456,89 @@ pub(crate) fn paint_label_clipped(
     if clip.x1 <= clip.x0 || clip.y1 <= clip.y0 {
         return;
     }
+    if let Some(ink) = label_ink_bounds(painter, origin, text, size_px) {
+        if ink.x1 <= clip.x0 || ink.x0 >= clip.x1 || ink.y1 <= clip.y0 || ink.y0 >= clip.y1 {
+            return;
+        }
+    }
     list.push_clip(clip);
     paint_label(painter, list, origin, text, size_px, color);
     list.pop_clip();
+}
+
+/// `true` when `ink` can intersect the list's active clip — widgets
+/// that emit unclipped labels (node captions, annotations) use it to
+/// cull runs the enclosing clips would discard anyway. `true` when no
+/// clip is active, so callers outside clips are unaffected.
+pub(crate) fn visible_ink(list: &mut PaintList, ink: kurbo::Rect) -> bool {
+    match list.active_clip() {
+        Some(c) => ink.x1 > c.x0 && ink.x0 < c.x1 && ink.y1 > c.y0 && ink.y0 < c.y1,
+        None => true,
+    }
+}
+
+/// `true` when `occluders` provably covers `rect` — used by layered
+/// widgets (cover flow, week view) to skip labels that opaque sibling
+/// fills painted *later* in the command stream will hide entirely.
+/// Emitting such a label is dead work the paint audit reports as
+/// invisible output.
+///
+/// Uses the audit's five-point probe (center + four interior quarter
+/// points), point-wise against the occluder union — exact for the
+/// single-occluder and same-axis slice cases that produce these
+/// overlaps; conservative elsewhere (a missed union returns `false`,
+/// i.e. "emit", which can only leave a stale report, never hide
+/// visible text).
+pub(crate) fn fully_occluded(rect: kurbo::Rect, occluders: &[kurbo::Rect]) -> bool {
+    if rect.x1 <= rect.x0 || rect.y1 <= rect.y0 {
+        return true;
+    }
+    if occluders.is_empty() {
+        return false;
+    }
+    let (w, h) = (rect.width(), rect.height());
+    let samples = [
+        (rect.x0 + w * 0.5, rect.y0 + h * 0.5),
+        (rect.x0 + w * 0.25, rect.y0 + h * 0.25),
+        (rect.x1 - w * 0.25, rect.y0 + h * 0.25),
+        (rect.x0 + w * 0.25, rect.y1 - h * 0.25),
+        (rect.x1 - w * 0.25, rect.y1 - h * 0.25),
+    ];
+    samples.iter().all(|&(sx, sy)| {
+        let p = kurbo::Point::new(sx, sy);
+        occluders.iter().any(|o| o.contains(p))
+    })
+}
+
+/// Estimated ink box of `text` at `origin` — the shaped painter's real
+/// glyph extents when it can report them, else the `0.6·size` per-char
+/// block the `DrawText` fallback emits. `None` means "cannot estimate"
+/// (a painter that reports no bounds); callers must not cull on it.
+pub(crate) fn label_ink_bounds(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    origin: Point,
+    text: &str,
+    size_px: f32,
+) -> Option<kurbo::Rect> {
+    if text.is_empty() || size_px <= 0.0 {
+        return Some(kurbo::Rect::ZERO);
+    }
+    match painter {
+        Some(tp) => tp.ink_bounds(origin, text, size_px),
+        None => {
+            // Mirrors `PaintList::push_text`'s box model and the
+            // paint audit's `probe_text`: `0.6·size` per char, one
+            // `size` tall starting at the origin.
+            let w =
+                (f64::from(size_px) * 0.6 * text.chars().count() as f64).max(f64::from(size_px));
+            Some(kurbo::Rect::new(
+                origin.x,
+                origin.y,
+                origin.x + w,
+                origin.y + f64::from(size_px),
+            ))
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1369,7 +1369,11 @@ fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Flex {
 
     Flex::column()
         .gap(ZONE_STACK)
-        .child(strip().child_flex(controls, 2.0).child(now_playing))
+        .child(
+            strip()
+                .child_flex(controls, 2.0)
+                .child_flex(now_playing, 1.0),
+        )
         .child(strip().child_flex(seek, 1.0).child(volume).child(rate_menu))
         .child(
             row()

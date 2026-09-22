@@ -345,48 +345,83 @@ impl Widget for Coverflow {
         );
         let edge = cx.color(TokenKey::DividerColor, EDGE);
         // Paint far-to-near so the selected cover fronts the rest.
-        for (i, r) in self.rects.iter().rev() {
+        let order: Vec<(usize, kurbo::Rect)> = self
+            .rects
+            .iter()
+            .rev()
+            .map(|(i, r)| {
+                (
+                    *i,
+                    kurbo::Rect::new(
+                        f64::from(r.min_x()),
+                        f64::from(r.min_y()),
+                        f64::from(r.max_x()),
+                        f64::from(r.max_y()),
+                    ),
+                )
+            })
+            .collect();
+        for (pos, (i, kr)) in order.iter().enumerate() {
             let item = &self.items[*i];
-            let kr = kurbo::Rect::new(
-                f64::from(r.min_x()),
-                f64::from(r.min_y()),
-                f64::from(r.max_x()),
-                f64::from(r.max_y()),
-            );
-            cx.list.push_fill_rect(kr, item.color);
+            cx.list.push_fill_rect(*kr, item.color);
             let is_sel = *i == sel;
             cx.list
-                .push_stroke_rect(kr, if is_sel { 1.5 } else { 0.8 } * s, edge);
-            // Label strip inside each cover's bottom.
+                .push_stroke_rect(*kr, if is_sel { 1.5 } else { 0.8 } * s, edge);
+            // Label strip inside each cover's bottom. Nearer covers
+            // paint after this one — strip or label they will fully
+            // hide is dead output the paint audit flags, so skip it.
             let strip = kurbo::Rect::new(kr.x0, kr.y1 - f64::from(18.0 * s), kr.x1, kr.y1);
-            cx.list.push_fill_rect(strip, [0, 0, 0, 120]);
+            let later: Vec<kurbo::Rect> = order[pos + 1..].iter().map(|(_, r)| *r).collect();
+            if !crate::text_paint::fully_occluded(strip, &later) {
+                cx.list.push_fill_rect(strip, [0, 0, 0, 120]);
+            }
             let o = kurbo::Point::new(kr.x0 + f64::from(6.0 * s), kr.y1 - f64::from(6.0 * s));
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                kr,
-                o,
-                &item.label,
-                TITLE_PT * s * (if is_sel { 1.0 } else { 0.8 }),
-                cx.color(TokenKey::TextColor, TEXT),
+            let size = TITLE_PT * s * (if is_sel { 1.0 } else { 0.8 });
+            // The audit probes `ink ∩ clip` — judge the surviving
+            // sliver, not the full run.
+            let ink_b = crate::text_paint::label_ink_bounds(painter, o, &item.label, size);
+            // Visible sliver = ink ∩ cover ∩ widget bounds — covers can
+            // bleed past the widget edge, where the parent's clip is
+            // what actually survives.
+            let wb = kurbo::Rect::new(
+                f64::from(self.bounds.min_x()),
+                f64::from(self.bounds.min_y()),
+                f64::from(self.bounds.max_x()),
+                f64::from(self.bounds.max_y()),
             );
+            let covered = ink_b.is_some_and(|ink| {
+                crate::text_paint::fully_occluded(ink.intersect(*kr).intersect(wb), &later)
+            });
+            if !covered {
+                crate::text_paint::paint_label_clipped(
+                    painter,
+                    cx.list,
+                    *kr,
+                    o,
+                    &item.label,
+                    size,
+                    cx.color(TokenKey::TextColor, TEXT),
+                );
+            }
         }
-        // Focused title under the arc.
+        // Focused title under the arc — raised so the ink box
+        // (baseline − 0.8·size … + 0.25·size) stays inside the widget.
         if self.show_title {
             if let Some(item) = self.items.get(sel) {
+                let size = TITLE_PT * s;
                 let w = painter
-                    .and_then(|p| p.measure_text(&item.label, TITLE_PT * s))
-                    .unwrap_or(item.label.len() as f32 * TITLE_PT * 0.6 * s);
+                    .and_then(|p| p.measure_text(&item.label, size))
+                    .unwrap_or(item.label.len() as f32 * size * 0.6);
                 let o = kurbo::Point::new(
                     f64::from(self.bounds.min_x() + self.bounds.width() / 2.0 - w / 2.0),
-                    f64::from(self.bounds.max_y() - 6.0 * s),
+                    f64::from(self.bounds.max_y() - size * 1.2 - 4.0 * s),
                 );
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,
                     o,
                     &item.label,
-                    TITLE_PT * s,
+                    size,
                     cx.color(TokenKey::TextMutedColor, MUTED),
                 );
             }

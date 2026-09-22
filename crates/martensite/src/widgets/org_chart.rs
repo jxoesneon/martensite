@@ -113,6 +113,10 @@ pub struct OrgChart {
     hovered: Option<usize>,
     bounds: Rect,
     scale: f32,
+    /// Fit factor applied by `layout` when the natural tree width
+    /// exceeds the allocation — cards, gaps, wires, and label sizes
+    /// all scale by it so the chart stays coherent.
+    fit: f32,
     text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
@@ -143,6 +147,7 @@ impl OrgChart {
             hovered: None,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            fit: 1.0,
             text_painter: None,
         }
     }
@@ -294,10 +299,18 @@ impl Widget for OrgChart {
         self.scale = cx.scale;
         self.rects.clear();
         let s = cx.scale;
-        let card_w = CARD_W_PT * s;
-        let card_h = CARD_H_PT * s;
-        let gap_x = GAP_X_PT * s;
-        let gap_y = GAP_Y_PT * s;
+        // Fit the natural tree width into the allocation: shrink cards
+        // and gaps proportionally, but never below half size — below
+        // that labels are illegible anyway and honest clipping is
+        // better than unreadably small cards.
+        let natural_w = units(&self.root) * (CARD_W_PT + GAP_X_PT) - GAP_X_PT;
+        let avail = bounds.width() / s - 16.0;
+        let fit = (avail / natural_w).clamp(0.5, 1.0);
+        self.fit = fit;
+        let card_w = CARD_W_PT * s * fit;
+        let card_h = CARD_H_PT * s * fit;
+        let gap_x = GAP_X_PT * s * fit;
+        let gap_y = GAP_Y_PT * s * fit;
         let unit_w = card_w + gap_x;
         let total = units(&self.root) * unit_w - gap_x;
         let x0 = bounds.min_x() + (bounds.width() - total).max(0.0) / 2.0;
@@ -361,17 +374,22 @@ impl Widget for OrgChart {
             &martensite_core::shape::Shape::RECT,
             cx.color(TokenKey::SurfaceColor, FACE),
         );
+        // Cards/wires can extend past the widget when the tree is wider
+        // than the fit floor allows — clip everything to the widget so
+        // nothing emits (or leaks) outside it.
+        cx.list.push_clip(krect(self.bounds));
         // Elbow connectors: parent bottom → mid → child top.
         let wire = cx.color(TokenKey::BorderColor, WIRE);
-        let thick = self.scale.max(0.75);
+        let thick = (self.scale * self.fit).max(0.75);
         let mut idx = 0usize;
         self.paint_wires(&self.root, &mut idx, cx, wire, thick);
         // Cards.
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        let title_sz = 11.0 * self.scale;
-        let sub_sz = 9.0 * self.scale;
+        let title_sz = 11.0 * self.scale * self.fit;
+        let sub_sz = 9.0 * self.scale * self.fit;
         let mut i = 0usize;
         self.paint_cards(&self.root, &mut i, cx, painter, title_sz, sub_sz);
+        cx.list.pop_clip();
     }
 }
 
@@ -394,7 +412,7 @@ impl OrgChart {
         };
         let px = (pr.min_x() + pr.max_x()) / 2.0;
         let py = pr.max_y();
-        let mid = py + (GAP_Y_PT * self.scale) / 2.0;
+        let mid = py + (GAP_Y_PT * self.scale * self.fit) / 2.0;
         for c in &n.children {
             let child_idx = *idx;
             if let Some(cr) = self.rects.get(child_idx) {

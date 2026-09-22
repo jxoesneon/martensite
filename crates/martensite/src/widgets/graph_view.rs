@@ -278,7 +278,32 @@ impl GraphView {
                 }
             }
         }
+        for i in 0..n {
+            self.clamp_inside(i);
+        }
         moved
+    }
+
+    /// Keeps node `i` — and the caption painted `r*1.2` below it —
+    /// inside the widget bounds. Springs and drags can push nodes out;
+    /// without this their labels paint past the container edge.
+    fn clamp_inside(&mut self, i: usize) {
+        let r = self.node_r();
+        let size = 10.0 * self.scale;
+        let half_w = self.nodes[i].chars().count() as f32 * size * 0.32;
+        let inset_x = r.max(half_w);
+        let top = r;
+        let bottom = r * 1.2 + size * 1.3;
+        let b = self.bounds;
+        // Pre-layout or too-small bounds: nothing meaningful to clamp to.
+        if b.width() < inset_x * 2.0 || b.height() < top + bottom {
+            return;
+        }
+        let p = self.positions[i];
+        self.positions[i] = Vec2::new(
+            p.x.clamp(b.min_x() + inset_x, b.max_x() - inset_x),
+            p.y.clamp(b.min_y() + top, b.max_y() - bottom),
+        );
     }
 
     /// Node radius in pixels.
@@ -324,6 +349,9 @@ impl Widget for GraphView {
                 let a = i as f32 / n as f32 * TAU - TAU / 4.0;
                 self.positions[i] = c + Vec2::new(a.cos(), a.sin()) * r;
             }
+            // Resizes leave stale coordinates — a node seeded for a
+            // taller allotment keeps it until the next relax tick.
+            self.clamp_inside(i);
         }
     }
 
@@ -354,6 +382,7 @@ impl Widget for GraphView {
             WidgetEvent::PointerMoved { position } => {
                 if let Some(i) = self.drag {
                     self.positions[i] = *position;
+                    self.clamp_inside(i);
                     self.moved = Some(i);
                     return EventResponse::RequestRepaint;
                 }
@@ -438,17 +467,25 @@ impl Widget for GraphView {
                 &martensite_core::shape::Shape::circle(*p, r),
                 fill,
             );
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                kurbo::Point::new(
-                    f64::from(p.x - self.nodes[i].chars().count() as f32 * size * 0.28),
-                    f64::from(p.y + r * 1.2),
-                ),
-                &self.nodes[i],
-                size,
-                cx.color(TokenKey::TextColor, TEXT),
+            let origin = kurbo::Point::new(
+                f64::from(p.x - self.nodes[i].chars().count() as f32 * size * 0.28),
+                f64::from(p.y + r * 1.2),
             );
+            // Captions dragged outside the enclosing clip are dead
+            // emissions — cull them.
+            let on_clip =
+                crate::text_paint::label_ink_bounds(painter, origin, &self.nodes[i], size)
+                    .is_none_or(|ink| crate::text_paint::visible_ink(cx.list, ink));
+            if on_clip {
+                crate::text_paint::paint_label(
+                    painter,
+                    cx.list,
+                    origin,
+                    &self.nodes[i],
+                    size,
+                    cx.color(TokenKey::TextColor, TEXT),
+                );
+            }
         }
         cx.list.push_stroke_shape(
             krect(self.bounds),

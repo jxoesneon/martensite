@@ -37,6 +37,8 @@ const TITLE_PT: f32 = 13.0;
 const SUB_PT: f32 = 10.0;
 const RAIL_H_PT: f32 = 3.0;
 const RADIUS_PT: f32 = 6.0;
+/// Art (44) + padding + gap + metadata column + elapsed/total readout.
+const NATURAL_W_PT: f32 = 280.0;
 
 const FACE: [u8; 4] = [36, 38, 44, 255];
 const ART: [u8; 4] = [58, 60, 68, 255];
@@ -334,7 +336,11 @@ impl NowPlaying {
 impl Widget for NowPlaying {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = (ART_PT + PAD_PT * 2.0 + RAIL_H_PT + 4.0) * cx.scale;
-        Vec2::new(constraints.max_size.x.max(200.0 * cx.scale), h)
+        // Natural content width: art + metadata column + elapsed/total.
+        // Echoing `max_size` back made a non-flex slot claim the whole
+        // row, so the card painted over its siblings.
+        let w = cx.pt(NATURAL_W_PT).min(constraints.max_size.x.max(0.0));
+        Vec2::new(w, h)
     }
 
     fn min_render(&self) -> RenderMinimum {

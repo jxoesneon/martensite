@@ -423,11 +423,20 @@ impl Widget for ReactionBar {
             } else {
                 cx.color(TokenKey::TextColor, TEXT)
             };
+            // Origin is the block top — centre the ink box in the chip.
             let origin = kurbo::Point::new(
                 f64::from(rect.min_x() + CHIP_PAD_PT * s),
-                f64::from(rect.min_y() + rect.height() / 2.0),
+                f64::from(rect.min_y() + (rect.height() - size * 1.25) / 2.0),
             );
-            crate::text_paint::paint_label(painter, cx.list, origin, &label, size, color);
+            crate::text_paint::paint_label_clipped(
+                painter,
+                cx.list,
+                krect(rect),
+                origin,
+                &label,
+                size,
+                color,
+            );
         }
         if self.addable && self.add_rect.width() > 0.0 {
             let edge = cx.color(TokenKey::DividerColor, EDGE);
@@ -435,11 +444,12 @@ impl Widget for ReactionBar {
                 .push_stroke_shape(krect(self.add_rect), &shape, 1.0 * s, edge);
             let origin = kurbo::Point::new(
                 f64::from(self.add_rect.min_x() + self.add_rect.width() / 2.0 - size * 0.35),
-                f64::from(self.add_rect.min_y() + self.add_rect.height() / 2.0),
+                f64::from(self.add_rect.min_y() + (self.add_rect.height() - size * 1.25) / 2.0),
             );
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                krect(self.add_rect),
                 origin,
                 "+",
                 size,

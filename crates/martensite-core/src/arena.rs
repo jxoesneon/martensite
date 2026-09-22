@@ -1786,10 +1786,13 @@ impl WidgetArena {
         // the audit attributes findings to the innermost scope. The
         // instance-level `ColdNode::debug_name` wins over the widget
         // type's `debug_name` — apps naming nodes get their name.
+        // `paint_extent` widens the provenance bounds for widgets with
+        // designed overhang (badge-on-corner) so the audit doesn't flag
+        // intended output as a container leak.
         list.push_scope(
             Some(id),
             cold.debug_name.unwrap_or_else(|| cold.widget.debug_name()),
-            rect_to_kurbo(hot.bounds),
+            rect_to_kurbo(cold.widget.paint_extent().unwrap_or(hot.bounds)),
         );
 
         // `Fallback` replaces the whole subtree with the widget's
@@ -1978,7 +1981,11 @@ pub(crate) fn paint_widget_recursive(
     // Scope with no arena handle — callers of this entry point (overlay
     // content) have no `WidgetId` to report. Internal children recurse
     // through this same function and get their own scopes.
-    list.push_scope(None, widget.debug_name(), rect_to_kurbo(bounds));
+    list.push_scope(
+        None,
+        widget.debug_name(),
+        rect_to_kurbo(widget.paint_extent().unwrap_or(bounds)),
+    );
     paint_widget_body(widget, bounds, list, theme, scale, text_painter, visible);
     list.pop_scope();
 }
@@ -2023,10 +2030,23 @@ fn paint_widget_body(
         let (Some(child), Some(child_bounds)) = (widget.child(i), widget.child_bounds(i)) else {
             continue;
         };
+        // A per-child clip (e.g. a ScrollView's content vs its
+        // scrollbar strips) narrows both the virtualization test and
+        // the emitted commands.
+        let extra_clip = widget
+            .child_clip(i)
+            .map(|c| rect_intersection(child_bounds, c));
+        let child_visible = match extra_clip {
+            Some(c) => narrow_visible(child_visible, c),
+            None => child_visible,
+        };
         // Virtualization: a child fully outside the visible region
         // emits only backend-clipped dead commands — skip it.
         if !paints_in(child_bounds, child_visible) {
             continue;
+        }
+        if let Some(c) = extra_clip {
+            cx.list.push_clip(rect_to_kurbo(c));
         }
         paint_underflowed_child(
             child,
@@ -2037,6 +2057,9 @@ fn paint_widget_body(
             text_painter,
             child_visible,
         );
+        if extra_clip.is_some() {
+            cx.list.pop_clip();
+        }
     }
     if clip {
         cx.list.pop_clip();

@@ -414,6 +414,14 @@ impl Widget for Timeline {
 
     fn paint(&self, cx: &mut PaintContext) {
         let b = cx.bounds;
+        // Rows can run past the allocated height — clip to bounds so
+        // text never paints outside the widget.
+        cx.list.push_clip(kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        ));
         let rail_x = b.min_x() + cx.pt(RAIL_PT);
         let text_x = rail_x + cx.pt(TEXT_GAP_PT);
         let text_right = b.max_x() - cx.pt(2.0);
@@ -461,15 +469,16 @@ impl Widget for Timeline {
             cx.list
                 .push_fill_shape(dot_rect, &Shape::ELLIPSE, self.dot_color(cx, it.dot));
             // Label + subtitle, clipped to the text column.
+            let row_clip = kurbo::Rect::new(
+                f64::from(text_x),
+                f64::from(y),
+                f64::from(text_right),
+                f64::from(y + item_h),
+            );
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kurbo::Rect::new(
-                    f64::from(text_x),
-                    f64::from(y),
-                    f64::from(text_right),
-                    f64::from(y + item_h),
-                ),
+                row_clip,
                 kurbo::Point::new(f64::from(text_x), f64::from(y + cx.pt(1.0))),
                 &it.label,
                 font_px,
@@ -479,12 +488,7 @@ impl Widget for Timeline {
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
-                    kurbo::Rect::new(
-                        f64::from(text_x),
-                        f64::from(y),
-                        f64::from(text_right),
-                        f64::from(y + item_h),
-                    ),
+                    row_clip,
                     kurbo::Point::new(
                         f64::from(text_x),
                         f64::from(y + cx.pt(1.0) + font_px + cx.pt(2.0)),
@@ -521,21 +525,23 @@ impl Widget for Timeline {
             let accent = self.dot_color(cx, TimelineDot::Accent);
             cx.list
                 .push_stroke_shape(ring, &Shape::ELLIPSE, cx.pt(STEM_PT), accent);
+            let tail_clip = kurbo::Rect::new(
+                f64::from(text_x),
+                f64::from(y),
+                f64::from(text_right),
+                f64::from(y + cx.pt(PENDING_PT)),
+            );
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kurbo::Rect::new(
-                    f64::from(text_x),
-                    f64::from(y),
-                    f64::from(text_right),
-                    f64::from(y + cx.pt(PENDING_PT)),
-                ),
+                tail_clip,
                 kurbo::Point::new(f64::from(text_x), f64::from(y + cx.pt(1.0))),
                 text,
                 font_px,
                 muted,
             );
         }
+        cx.list.pop_clip();
     }
 }
 

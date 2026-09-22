@@ -378,6 +378,12 @@ impl Widget for CommentThread {
                 f64::from(r.max_y()),
             )
         };
+        // Rows stack from `bounds.min_y` and can extend past the
+        // widget's bottom edge; clip to the widget so partially
+        // visible rows paint only their visible slice and fully
+        // offscreen rows emit nothing.
+        let visible = krect(self.bounds);
+        cx.list.push_clip(visible);
         for (i, c) in self.comments.iter().enumerate() {
             let row = self.rows[i];
             if self.focused == Some(i) {
@@ -409,14 +415,16 @@ impl Widget for CommentThread {
                 &martensite_core::shape::Shape::ELLIPSE,
                 c.avatar_color.unwrap_or(AVATAR),
             );
+            let row_clip = krect(row).intersect(visible);
             let initial: String = c.author.chars().take(1).collect();
             let isize_ = HEADER_PT * 0.8 * s;
             let iw = painter
                 .and_then(|p| p.measure_text(&initial, isize_))
                 .unwrap_or(isize_ * 0.5);
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                ar.intersect(visible),
                 kurbo::Point::new(
                     f64::from(row.min_x() + (av - iw) / 2.0),
                     f64::from(row.min_y() + av / 2.0),
@@ -427,18 +435,20 @@ impl Widget for CommentThread {
             );
             // Header: author + time.
             let tx = row.min_x() + av + ROW_PAD_PT * s;
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                row_clip,
                 kurbo::Point::new(f64::from(tx), f64::from(row.min_y() + HEADER_PT * s)),
                 &format!("{} · {}", c.author, c.time),
                 HEADER_PT * s,
                 cx.color(TokenKey::TextMutedColor, MUTED),
             );
             // Body.
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                row_clip,
                 kurbo::Point::new(
                     f64::from(tx),
                     f64::from(row.min_y() + av + LINE_PT * 0.8 * s),
@@ -450,9 +460,10 @@ impl Widget for CommentThread {
             // Reply affordance.
             if self.show_reply {
                 let rr = self.reply_rects[i];
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
+                    krect(rr).intersect(visible),
                     kurbo::Point::new(f64::from(rr.min_x()), f64::from(rr.max_y())),
                     "Reply",
                     REPLY_PT * s,
@@ -460,6 +471,7 @@ impl Widget for CommentThread {
                 );
             }
         }
+        cx.list.pop_clip();
     }
 }
 

@@ -347,6 +347,14 @@ impl<W: Widget> Widget for Bound<W> {
         self.widget.clips_children()
     }
 
+    fn child_clip(&self, index: usize) -> Option<Rect> {
+        self.widget.child_clip(index)
+    }
+
+    fn paint_extent(&self) -> Option<Rect> {
+        self.widget.paint_extent()
+    }
+
     // The wrapper must be transparent: every hook the wrapped widget
     // overrides has to reach it, or `Bound` silently degrades shaped
     // hit-testing, child clipping, and the a11y/timemachine trees.

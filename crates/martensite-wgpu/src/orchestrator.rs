@@ -688,9 +688,9 @@ impl RenderOrchestrator {
                     .into_iter()
                     .map(|seg| match seg {
                         martensite_render::PaintSegment::Commands(cmds) => {
-                            PendingSegment::Commands(martensite_render::PaintList {
-                                commands: cmds.to_vec(),
-                            })
+                            PendingSegment::Commands(martensite_render::PaintList::from_commands(
+                                cmds.to_vec(),
+                            ))
                         }
                         martensite_render::PaintSegment::External {
                             surface_id,

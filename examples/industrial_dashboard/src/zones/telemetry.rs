@@ -2099,28 +2099,33 @@ fn crew(m: &PlantModel) -> Flex {
         )
         .child(
             strip()
-                .child(Bound::new(AvatarGroup::new().label("ON SHIFT"), m).push({
-                    // Mounted empty — first tick seats the roster.
-                    let mut last = None;
-                    move |g: &mut AvatarGroup, m| {
-                        let sig = crew_sig(m);
-                        if Some(sig) != last {
-                            let mut ng =
-                                AvatarGroup::new().max_count(4).size(32.0).label("ON SHIFT");
-                            for c in m.crew.get().iter().filter(|c| {
-                                matches!(
-                                    c.presence,
-                                    crate::domain::Presence::OnShift
-                                        | crate::domain::Presence::Remote
-                                )
-                            }) {
-                                ng = ng.member(Avatar::new(c.name).size(32.0));
-                            }
-                            *g = ng;
-                            last = Some(sig);
+                .child({
+                    // Seeded at build — mounting empty measures 0-wide
+                    // and the seated members would paint into the
+                    // sibling Presence cards until the next relayout.
+                    let build = |m: &PlantModel| {
+                        let mut g = AvatarGroup::new().max_count(4).size(32.0).label("ON SHIFT");
+                        for c in m.crew.get().iter().filter(|c| {
+                            matches!(
+                                c.presence,
+                                crate::domain::Presence::OnShift | crate::domain::Presence::Remote
+                            )
+                        }) {
+                            g = g.member(Avatar::new(c.name).size(32.0));
                         }
-                    }
-                }))
+                        g
+                    };
+                    Bound::new(build(m), m).push({
+                        let mut last = crew_sig(m);
+                        move |g: &mut AvatarGroup, m| {
+                            let sig = crew_sig(m);
+                            if sig != last {
+                                *g = build(m);
+                                last = sig;
+                            }
+                        }
+                    })
+                })
                 .child({
                     let lead = m.crew.get().first().cloned();
                     Bound::new(

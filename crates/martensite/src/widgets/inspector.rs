@@ -442,15 +442,19 @@ impl Widget for Inspector {
     fn paint(&self, cx: &mut PaintContext) {
         let s = cx.scale;
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        cx.list.push_fill_rect(
-            kurbo::Rect::new(
-                f64::from(self.bounds.min_x()),
-                f64::from(self.bounds.min_y()),
-                f64::from(self.bounds.max_x()),
-                f64::from(self.bounds.max_y()),
-            ),
-            cx.color(TokenKey::BackgroundColor, FACE),
+        let kbounds = kurbo::Rect::new(
+            f64::from(self.bounds.min_x()),
+            f64::from(self.bounds.min_y()),
+            f64::from(self.bounds.max_x()),
+            f64::from(self.bounds.max_y()),
         );
+        cx.list
+            .push_fill_rect(kbounds, cx.color(TokenKey::BackgroundColor, FACE));
+        // Section content can exceed `bounds` (the widget is measured
+        // shorter than its sections); clip to the widget so rows below
+        // the edge don't emit text that sibling panels then cover or
+        // the audit flags as escaping the container.
+        cx.list.push_clip(kbounds);
         let shape = martensite_core::shape::Shape::rounded(4.0 * s);
         for (si, sec) in self.sections.iter().enumerate() {
             // `head_rects` is a layout-side cache — a widget painted
@@ -466,10 +470,12 @@ impl Widget for Inspector {
                 f64::from(hr.max_y()),
             );
             cx.list.push_fill_shape(khr, &shape, HEAD_BG);
+            let head_clip = khr.intersect(kbounds);
             // Disclosure triangle.
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                head_clip,
                 kurbo::Point::new(
                     f64::from(hr.min_x() + 6.0 * s),
                     f64::from(hr.min_y() + hr.height() * 0.72),
@@ -481,7 +487,7 @@ impl Widget for Inspector {
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                khr,
+                head_clip,
                 kurbo::Point::new(
                     f64::from(hr.min_x() + 18.0 * s),
                     f64::from(hr.min_y() + hr.height() * 0.72),
@@ -510,9 +516,20 @@ impl Widget for Inspector {
             {
                 cx.list.push_fill_shape(kr, &shape, ROW_HOVER);
             }
-            crate::text_paint::paint_label(
+            // The label column ends where the value column begins so
+            // the two runs can never overlap.
+            let row_clip = kr.intersect(kbounds);
+            let value_x = r.min_x() + r.width() * 0.45;
+            let label_clip = kurbo::Rect::new(
+                row_clip.x0,
+                row_clip.y0,
+                row_clip.x1.min(f64::from(value_x - 4.0 * s)),
+                row_clip.y1,
+            );
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                label_clip,
                 kurbo::Point::new(
                     f64::from(r.min_x() + 18.0 * s),
                     f64::from(r.min_y() + r.height() * 0.72),
@@ -524,16 +541,19 @@ impl Widget for Inspector {
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kr,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + r.width() * 0.45),
-                    f64::from(r.min_y() + r.height() * 0.72),
+                kurbo::Rect::new(
+                    row_clip.x0.max(f64::from(value_x)),
+                    row_clip.y0,
+                    row_clip.x1,
+                    row_clip.y1,
                 ),
+                kurbo::Point::new(f64::from(value_x), f64::from(r.min_y() + r.height() * 0.72)),
                 &row.value,
                 FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),
             );
         }
+        cx.list.pop_clip();
     }
 }
 
