@@ -2719,8 +2719,7 @@ mod tests {
                         && f.color[3] == 255
                         && samples.iter().all(|&(sx, sy)| {
                             f.rect.contains(kurbo::Point::new(sx, sy))
-                                && f.clip
-                                    .is_none_or(|c| c.contains(kurbo::Point::new(sx, sy)))
+                                && f.clip.is_none_or(|c| c.contains(kurbo::Point::new(sx, sy)))
                         })
                 })
                 .map(|f| format!("fill@{:?} {:?} scope={}", f.rect, f.color, f.scope))
@@ -2954,5 +2953,28 @@ mod tests {
                 .any(|(_, n)| n.value().is_some_and(|v| !v.is_empty())),
             "editor publishes no value"
         );
+    }
+
+    /// Prints the full widget tree — arena nodes and widget-internal
+    /// children — with layout bounds, for structural review:
+    /// `cargo test -p industrial_dashboard dump_widget_tree -- --nocapture`.
+    #[test]
+    fn dump_widget_tree() {
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.build_arena();
+        app.apply_dock_layout_at(1680, 980);
+        fn tick_deep(w: &mut dyn martensite::core::Widget, dt: Duration) {
+            for i in 0..w.child_count() {
+                if let Some(c) = w.child_mut(i) {
+                    tick_deep(c, dt);
+                }
+            }
+            let _ = w.tick(dt);
+        }
+        let arena = app.arena.as_mut().expect("arena");
+        if let Some(cold) = arena.get_cold_mut(app.root.expect("root")) {
+            tick_deep(&mut *cold.widget, Duration::from_millis(16));
+        }
+        eprintln!("{}", arena.debug_tree());
     }
 }

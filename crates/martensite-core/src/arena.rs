@@ -1425,6 +1425,137 @@ impl WidgetArena {
         }
     }
 
+    /// Renders the widget hierarchy as an indented tree for debugging —
+    /// one `Name [x,y w×h]` line per node, recursing through both arena
+    /// children and widget-internal children (the `child`/`child_bounds`
+    /// protocol), so composite widgets show their real contents rather
+    /// than a single opaque node. Instance `debug_name`s win over type
+    /// names, matching the paint-audit scope labels.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags |= NodeFlags::VISIBLE;
+    /// let root = arena.insert_with_widget(hot, Box::new(DummyWidget));
+    /// let tree = arena.debug_tree();
+    /// assert!(tree.contains("DummyWidget"));
+    /// ```
+    pub fn debug_tree(&self) -> String {
+        let mut out = String::new();
+        let mut prefixes: Vec<bool> = Vec::new();
+        // Roots: live nodes with no parent and no previous sibling,
+        // in slot order (which is insertion order until slots recycle).
+        for i in 0..self.hot_nodes.len() {
+            let hot = &self.hot_nodes[i];
+            if hot.parent.is_some() || hot.prev_sibling.is_some() {
+                continue;
+            }
+            let slot_idx = self.dense_to_slot[i];
+            let slot = self.slots[slot_idx as usize];
+            let id = WidgetId::from_parts(slot_idx, slot.generation);
+            let more_roots = self
+                .hot_nodes
+                .iter()
+                .enumerate()
+                .skip(i + 1)
+                .any(|(_, h)| h.parent.is_none() && h.prev_sibling.is_none());
+            self.fmt_arena_node(id, more_roots, &mut prefixes, &mut out);
+        }
+        out
+    }
+
+    /// Formats one arena node and its whole subtree into `out`.
+    /// `prefixes` tracks, per ancestor level, whether a `│` continuation
+    /// is needed; `has_next_root`/`next_sibling` decide `├──` vs `└──`.
+    fn fmt_arena_node(
+        &self,
+        id: WidgetId,
+        more_siblings: bool,
+        prefixes: &mut Vec<bool>,
+        out: &mut String,
+    ) {
+        let (Some(hot), Some(cold)) = (self.get_hot(id), self.get_cold(id)) else {
+            return;
+        };
+        for &cont in prefixes.iter() {
+            out.push_str(if cont { "│   " } else { "    " });
+        }
+        out.push_str(if more_siblings {
+            "├── "
+        } else {
+            "└── "
+        });
+        let name = cold.debug_name.unwrap_or_else(|| cold.widget.debug_name());
+        let b = hot.bounds;
+        let _ = std::fmt::Write::write_fmt(
+            out,
+            format_args!(
+                "{name} [{:.0},{:.0} {:.0}×{:.0}]",
+                b.origin.x, b.origin.y, b.size.x, b.size.y
+            ),
+        );
+        if !hot.flags.contains(crate::node::NodeFlags::VISIBLE) {
+            out.push_str(" (hidden)");
+        }
+        out.push('\n');
+        // Arena children, then widget-internal children — the same
+        // document order the paint walk uses.
+        let kids: Vec<WidgetId> = self.children(id).collect();
+        let kid_count = kids.len();
+        let inner_count = cold.widget.child_count();
+        prefixes.push(more_siblings);
+        for (i, kid) in kids.iter().enumerate() {
+            self.fmt_arena_node(*kid, i + 1 < kid_count || inner_count > 0, prefixes, out);
+        }
+        for i in 0..inner_count {
+            self.fmt_internal_node(&*cold.widget, i, i + 1 < inner_count, prefixes, out);
+        }
+        prefixes.pop();
+    }
+
+    /// Formats one widget-internal child subtree into `out`.
+    fn fmt_internal_node(
+        &self,
+        parent: &dyn crate::widget::Widget,
+        index: usize,
+        more_siblings: bool,
+        prefixes: &mut Vec<bool>,
+        out: &mut String,
+    ) {
+        let Some(child) = parent.child(index) else {
+            return;
+        };
+        for &cont in prefixes.iter() {
+            out.push_str(if cont { "│   " } else { "    " });
+        }
+        out.push_str(if more_siblings {
+            "├── "
+        } else {
+            "└── "
+        });
+        out.push_str(child.debug_name());
+        if let Some(b) = parent.child_bounds(index) {
+            let _ = std::fmt::Write::write_fmt(
+                out,
+                format_args!(
+                    " [{:.0},{:.0} {:.0}×{:.0}]",
+                    b.origin.x, b.origin.y, b.size.x, b.size.y
+                ),
+            );
+        }
+        out.push('\n');
+        let n = child.child_count();
+        prefixes.push(more_siblings);
+        for i in 0..n {
+            self.fmt_internal_node(child, i, i + 1 < n, prefixes, out);
+        }
+        prefixes.pop();
+    }
+
     /// Returns a breadth-first iterator visiting all trees in the arena level-by-level.
     ///
     /// # Examples
