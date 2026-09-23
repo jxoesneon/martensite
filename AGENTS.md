@@ -277,6 +277,21 @@ These are explicitly documented in code, not hidden:
 - Glyph ink extends ~1.15×font-size **below** the text origin — line
   advances must be ≥1.3×fs to avoid overlap.
 
+### Live-window verification (ultramac MCP)
+
+- `MARTENSITE_CPU=1` forces the TinySkia surface path — use it when the
+  GPU (Vello→composite→`wgpu::Surface`) path presents black.
+- `gpu_readback_real_frame` (`#[ignore]`d) renders the real dashboard
+  paint list through the offscreen composite and counts non-black
+  pixels — isolates scene/composite health from surface presentation.
+- **Coordinates**: `screenshot` images are ~1.037× the screen's logical
+  points — clicking image pixels drifts ~10px low near the bottom.
+  Prefer `click_in_window` (window-relative logical points) or divide
+  image coords by ~1.037 before `mouseClick`.
+- `MenuStack::take_activated` closes the stack — owners drain it in
+  `tick`, which runs before `sync`, so the drain itself is the
+  dismissal signal (commit 1557192).
+
 ## Workflow
 
 ### Santa Method (adversarial review)
