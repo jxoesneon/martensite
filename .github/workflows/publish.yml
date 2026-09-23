@@ -141,6 +141,7 @@ jobs:
             martensite-pdf-platform
             martensite-pdf
             martensite-blessed
+            martensite-design-lint
             martensite
           )
           for crate in "${CRATES[@]}"; do
@@ -321,6 +322,7 @@ jobs:
             martensite-pdf-platform
             martensite-pdf
             martensite-blessed
+            martensite-design-lint
             martensite
           )
 

@@ -115,6 +115,7 @@ Each DDR specifies a crate's internal algorithms, data structures, and invariant
 - [android-packaging.md](android-packaging.md) — Android APK packaging, GameActivity, NDK setup
 - [ERROR_HANDLING.md](ERROR_HANDLING.md) — Error types, panic policy, recovery
 - [SECURITY.md](SECURITY.md) — Threat model, supply chain, unsafe policy
+- [design-standards/](design-standards/README.md) — Design-lint rule docs: evidence, thresholds, and legitimate exceptions per rule and standard
 
 ---
 

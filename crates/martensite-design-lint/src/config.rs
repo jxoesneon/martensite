@@ -51,6 +51,14 @@ use crate::standard::Standard;
 /// let a = PathAllow::new("App/Media/**", &["all"]);
 /// assert!(a.matches_path("App/Media/TabStrip/Button"));
 /// assert!(!a.matches_path("App/Grid/Button"));
+///
+/// // `**` also matches zero segments — the allow covers the
+/// // declaring node itself, not just its descendants.
+/// assert!(a.matches_path("App/Media"));
+/// // `*` never crosses `/`.
+/// let b = PathAllow::new("App/*Zone", &["all"]);
+/// assert!(b.matches_path("App/MediaZone"));
+/// assert!(!b.matches_path("App/Media/Zone"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct PathAllow {
@@ -265,7 +273,7 @@ impl LintConfig {
     /// disabled_standards = ["perception"]   # subtract from the set
     ///
     /// [rules.choice-count]
-    /// severity = "warn"                     # off|info|warn|error
+    /// severity = "warn"                     # off|info|warn|error|forbid
     /// max = 7
     ///
     /// [classify]

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **martensite-design-lint** — standards-backed design linting over
+  `PaintList` `PushScope` provenance: replays the paint stream into a
+  `LintScene` (widget tree, geometry, text sizes, colors) and
+  evaluates 14 evidence-backed rules across 7 selectable standard
+  bundles (WCAG 2.2, ISA-101, ISA-18.2, Hick/Fitts, Tufte/Few/Gestalt,
+  perception metrics, consistency). Every finding cites its standard
+  and links `docs/design-standards/rules/<id>.md`. Fully
+  developer-controllable: `design-lint.toml` for standard sets,
+  per-rule severity (`off|info|warn|error|forbid`) and thresholds,
+  `[classify]` overrides, `[[allow]]` path globs, and inline
+  `@lint:`/`@level:` `debug_name` markers; suppressed findings are
+  reported with provenance and stale allows self-report. Facade:
+  `martensite::design_lint`. Dashboard harness:
+  `cargo test -p industrial_dashboard dump_design_lints`.
 - **Ambient theme resolution** — `PaintContext::theme` carries the
   arena's `martensite_theme::Theme` to every widget; `WidgetArena::
   {theme, set_theme}` owns it, and `PaintContext::color(TokenKey,

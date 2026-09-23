@@ -15,7 +15,6 @@ readme = "README.md"
 [dependencies]
 martensite-core = { workspace = true }
 kurbo = { workspace = true }
-serde = { workspace = true }
 toml = { version = "0.9", features = ["parse"] }
 
 [lints]

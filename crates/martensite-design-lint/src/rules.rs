@@ -1334,4 +1334,40 @@ mod rules_tests {
         let report = lint(&scene, &cfg);
         assert!(findings_for(&report, "progressive-disclosure").is_empty());
     }
+
+    // ---------- whitespace ----------
+
+    /// `App` > `Panel` > `n` siblings with `gap` px between them.
+    fn siblings_scene(n: usize, gap: f64) -> LintScene {
+        let mut list = PaintList::new();
+        list.push_scope(None, "App", Rect::new(0.0, 0.0, 800.0, 600.0));
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 100.0));
+        for i in 0..n {
+            let x = i as f64 * (50.0 + gap);
+            list.push_scope(None, "Label", Rect::new(x, 10.0, x + 50.0, 40.0));
+            list.pop_scope();
+        }
+        list.pop_scope();
+        list.pop_scope();
+        LintScene::from_paint_list(&list)
+    }
+
+    #[test]
+    fn whitespace_flags_cramped_siblings() {
+        // 2px gaps at scale 1.0 — below the 4pt grouping threshold.
+        let mut scene = siblings_scene(4, 2.0);
+        scene.scale_factor = 1.0;
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "whitespace");
+        assert_eq!(hits.len(), 1, "expected one finding, got {hits:?}");
+        assert!(hits[0].path.ends_with("Panel"));
+    }
+
+    #[test]
+    fn whitespace_quiet_with_breathing_room() {
+        let mut scene = siblings_scene(4, 24.0);
+        scene.scale_factor = 1.0;
+        let report = lint(&scene, &LintConfig::new());
+        assert!(findings_for(&report, "whitespace").is_empty());
+    }
 }

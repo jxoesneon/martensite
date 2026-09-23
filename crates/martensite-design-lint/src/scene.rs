@@ -41,8 +41,7 @@ pub enum NodeKind {
     /// the `nav-depth` rule measures.
     Navigation,
     /// A control the user can act on — buttons, fields, pickers,
-    /// sliders. Feeds `choice-count`, `target-size`, and
-    /// `interactive-density`.
+    /// sliders. Feeds `choice-count`, `target-size`, and `density`.
     Interactive,
     /// Passive information — labels, charts, text, images.
     Content,
@@ -217,7 +216,7 @@ impl LintNode {
 
     /// Interactive descendants not nested inside another interactive
     /// descendant — the "decision surface" population `choice-count`
-    /// and `interactive-density` measure.
+    /// and `density` measure.
     pub fn interactive_leaves(&self) -> Vec<&LintNode> {
         fn collect<'a>(n: &'a LintNode, inside: bool, out: &mut Vec<&'a LintNode>) {
             let interactive = n.kind == NodeKind::Interactive;
