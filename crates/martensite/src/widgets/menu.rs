@@ -1676,11 +1676,21 @@ impl MenuStack {
     }
 
     /// Drains a pending activation path (closing the stack).
+    ///
+    /// Owners typically drain this in `tick`, before `sync` runs — so
+    /// handing out the path must itself close the stack; waiting for
+    /// `sync` to observe `has_activated` would miss activations the
+    /// owner already consumed, leaving the menu open forever.
     pub(crate) fn take_activated(&mut self) -> Option<MenuPath> {
-        self.shared
+        let path = self
+            .shared
             .lock()
             .expect("menu state poisoned")
-            .take_activated()
+            .take_activated();
+        if path.is_some() {
+            self.open = false;
+        }
+        path
     }
 
     /// Forwards a key to the deepest open menu level — the fallback
@@ -1970,6 +1980,24 @@ mod tests {
         shared.lock().unwrap().activate(0, 1);
         stack.sync(&mut o);
         assert_eq!(stack.take_activated(), Some(vec![1]));
+        assert_eq!(o.len(), 0);
+    }
+
+    #[test]
+    fn stack_drained_activation_closes() {
+        // Owners drain `take_activated` in `tick`, which runs before
+        // `sync` — the drain itself must close the stack, or the menu
+        // stays open forever.
+        let shared = state();
+        let mut stack = MenuStack::new(Arc::clone(&shared), None);
+        let mut o = overlay();
+        stack.open_at(OverlayAnchor::Pointer(Vec2::new(50.0, 50.0)), false);
+        stack.sync(&mut o);
+        o.layout_pass();
+        shared.lock().unwrap().activate(0, 1);
+        assert_eq!(stack.take_activated(), Some(vec![1]));
+        stack.sync(&mut o);
+        assert!(!stack.is_open());
         assert_eq!(o.len(), 0);
     }
 
