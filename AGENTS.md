@@ -196,7 +196,11 @@ These are explicitly documented in code, not hidden:
     `accesskit_winit` 0.34.0 patched for winit 0.31.0-beta.3. Temporary;
     remove once upstream supports winit 0.31.
   - `martensite-vello` — vendored copy of `netrender-vello` 0.10 (a
-    byte-compatible republish of Vello 0.10 built against wgpu 30).
+    republish of Vello 0.10 built against wgpu 30), with local fixes:
+    coverage-driven bump buffers scale with target tile/bin count
+    (upstream's fixed estimates silently overflow on dense HiDPI
+    scenes → `bump.failed` → empty frame), and the async path always
+    reads back `BumpAllocators` + polls the device for diagnostics.
     Upstream uses `unsafe` for trusted shader module creation; exempt
     with `#![allow(missing_docs)]` and `#![allow(clippy::all)]`.
   - `martensite-shell` — platform FFI for system backdrops (DWM on
@@ -284,6 +288,24 @@ These are explicitly documented in code, not hidden:
 - `gpu_readback_real_frame` (`#[ignore]`d) renders the real dashboard
   paint list through the offscreen composite and counts non-black
   pixels — isolates scene/composite health from surface presentation.
+- Black-frame bisect recipe: `MARTENSITE_CPU` (surface+present OK?) →
+  hardcode the frame clear color (present+clear OK?) → hardcode the
+  composite fragment to a solid color (draw/geometry/blend OK?) →
+  sample-raw (segment texture empty?) → `vello_bump_stats` (which Vello
+  buffer overflowed?). Each step halves the pipeline.
+- wgpu validation errors go through the **`log`** crate, not `tracing`
+  — an app that only installs `tracing_subscriber` sees nothing. The
+  dashboard installs `device.on_uncaptured_error` → stderr; tests can
+  `tracing_subscriber::fmt::try_init()` (its `tracing-log` feature
+  captures `log` records).
+- Vello 0.10's `render_to_texture` is **non-robust**: fixed bump
+  buffers, and overflow sets `bump.failed` then silently early-outs —
+  empty frame, `Ok(())`, no error. `bump.blend` (per-tile blend-stack
+  spill) scales with clip layers × coverage; the dashboard's clip-heavy
+  scene exhausted the 1<<20 default at ~2600×1500+. `martensite-vello`
+  now scales coverage-driven buffers by tile/bin count; check
+  `RenderOrchestrator::vello_bump_stats` if a frame ever goes empty
+  again.
 - **Coordinates**: `screenshot` images are ~1.037× the screen's logical
   points — clicking image pixels drifts ~10px low near the bottom.
   Prefer `click_in_window` (window-relative logical points) or divide

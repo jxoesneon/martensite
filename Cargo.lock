@@ -3221,6 +3221,7 @@ dependencies = [
  "martensite-core",
  "martensite-vello",
  "peniko",
+ "pollster",
  "raw-window-handle",
  "softbuffer",
  "swash",

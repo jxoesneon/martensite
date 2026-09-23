@@ -145,12 +145,23 @@ wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan",
 # NOTE: official `vello` 0.10 depends on wgpu 29, which is incompatible with the
 # workspace's wgpu 30 (the two major versions cannot coexist as a single type).
 # `martensite-vello` is a vendored copy of `netrender-vello` 0.10 — itself a
-# byte-compatible republish of vello 0.10 built against wgpu 30; its library
+# republish of vello 0.10 built against wgpu 30; its library
 # name is `vello`, so all `use vello::…` imports are unchanged. Vendoring the
-# identical source in-tree removes the single-maintainer republish from the
+# source in-tree removes the single-maintainer republish from the
 # registry dependency graph. This unifies the GPU compute renderer on the same
 # wgpu version as the rest of the workspace, allowing `vello::Renderer` to
 # consume the `wgpu::Device`/`wgpu::Queue` owned by `GpuContext`.
+#
+# Local divergences from upstream vello 0.10:
+# - `render.rs::render_encoding_coarse` scales the coverage-driven bump
+#   buffers (blend_spill/ptcl/tiles/seg_counts/segments/bin_data) with the
+#   target's tile/bin count. Upstream's fixed estimates silently overflow on
+#   dense scenes at HiDPI sizes — `bump.failed` sets STAGE_COARSE and the
+#   frame renders empty (the black-window bug).
+# - `lib.rs::render_to_texture_async_internal` always downloads the bump
+#   buffer (robust) and polls the device so `map_async` resolves under
+#   `block_on` — this is what `VelloRenderer::render_to_texture_bump_stats`
+#   uses for diagnostics.
 vello = { package = "martensite-vello", version = "0.10.0-martensite.1", path = "crates/martensite-vello", default-features = false }
 taffy = { version = "=0.14.0", default-features = false, features = ["flexbox", "grid", "block_layout", "taffy_tree"] }
 cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.1", path = "crates/martensite-cosmic-text", default-features = false, features = ["std", "swash"] }

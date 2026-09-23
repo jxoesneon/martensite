@@ -758,10 +758,13 @@ impl Renderer {
     ) -> Result<RenderResult> {
         let mut render = Render::new();
         let encoding = scene.encoding();
-        // TODO: turn this on; the download feature interacts with CPU dispatch.
-        // Currently this is always enabled when the `debug_layers` setting is enabled as the bump
-        // counts are used for debug visualiation.
-        let robust = cfg!(feature = "debug_layers");
+        // Martensite: always download the bump buffer on this
+        // (diagnostic-oriented) path so callers can inspect
+        // `BumpAllocators::failed` — overflow of the fixed-size dynamic
+        // buffers otherwise produces an empty frame with no error.
+        // The sync `render_to_texture` stays on the non-robust fast
+        // path (no readback).
+        let robust = true;
         let recording = render.render_encoding_coarse(
             encoding,
             &mut self.resolver,
@@ -789,6 +792,9 @@ impl Renderer {
             let buf_slice = bump_buf.slice(..);
             let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
             buf_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+            // Pump the device: `map_async` callbacks only fire when the
+            // device is polled, and callers using `block_on` never poll.
+            let _ = device.poll(wgpu::PollType::wait_indefinitely());
             receiver.receive().await.expect("channel was closed")?;
             let mapped = buf_slice.get_mapped_range().unwrap();
             bump = Some(bytemuck::pod_read_unaligned(&mapped));

@@ -211,7 +211,7 @@ impl Render {
         for image in images.images {
             recording.write_image(image_atlas, image.1, image.2, image.0.clone());
         }
-        let cpu_config =
+        let mut cpu_config =
             RenderConfig::new(&layout, params.width, params.height, &params.base_color);
         // HACK: The coarse workgroup counts is the number of active bins.
         if (cpu_config.workgroup_counts.coarse.0
@@ -225,6 +225,52 @@ impl Render {
                 params.width,
                 params.height
             );
+        }
+        {
+            // Martensite: scale the coverage-driven bump buffers with the
+            // target's tile/bin count. Upstream's fixed estimates ("hand
+            // picked to accommodate the vello test scenes as well as
+            // paris-30k") under-allocate on dense scenes at large / HiDPI
+            // sizes — e.g. `blend_spill` (1<<20 u32s) is exhausted by
+            // clip-heavy content around ~2600x1500, which sets
+            // `bump.failed` (STAGE_COARSE) and makes every later stage
+            // early-out, silently producing an empty frame. Per-tile
+            // budgets carry several times the headroom measured on dense
+            // dashboard content (~76 u32/tile of blend spill); the
+            // upstream constants remain as floors so small renders are
+            // unchanged. Buffers come from the engine's pool, so the
+            // larger allocations persist across frames rather than
+            // reallocating per dispatch.
+            use vello_encoding::BufferSize;
+            let n_tiles = u64::from(cpu_config.gpu.width_in_tiles.max(0) as u32)
+                * u64::from(cpu_config.gpu.height_in_tiles.max(0) as u32);
+            let n_bins = u64::from(cpu_config.workgroup_counts.coarse.0)
+                * u64::from(cpu_config.workgroup_counts.coarse.1);
+            let by_tiles = |per_tile: u64, floor: u32| {
+                n_tiles
+                    .saturating_mul(per_tile)
+                    .clamp(u64::from(floor), u64::from(u32::MAX)) as u32
+            };
+            let bs = &mut cpu_config.buffer_sizes;
+            bs.blend_spill = BufferSize::new(by_tiles(512, 1 << 20));
+            bs.ptcl = BufferSize::new(by_tiles(256, 1 << 23));
+            bs.tiles = BufferSize::new(by_tiles(64, 1 << 21));
+            bs.seg_counts = BufferSize::new(by_tiles(64, 1 << 21));
+            bs.segments = BufferSize::new(by_tiles(64, 1 << 21));
+            bs.bin_data = BufferSize::new(
+                n_bins
+                    .saturating_mul(2048)
+                    .clamp(u64::from(1u32 << 18), u64::from(u32::MAX)) as u32,
+            );
+            // Keep the GPU-visible limits in sync with the buffers.
+            let gpu = &mut cpu_config.gpu;
+            gpu.blend_size = bs.blend_spill.len();
+            gpu.ptcl_size = bs.ptcl.len();
+            gpu.tiles_size = bs.tiles.len();
+            gpu.seg_counts_size = bs.seg_counts.len();
+            gpu.segments_size = bs.segments.len();
+            gpu.binning_size = bs.bin_data.len().saturating_sub(layout.bin_data_start);
+            gpu.lines_size = bs.lines.len();
         }
         let buffer_sizes = &cpu_config.buffer_sizes;
         let wg_counts = &cpu_config.workgroup_counts;

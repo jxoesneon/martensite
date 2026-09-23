@@ -367,6 +367,68 @@ impl VelloRenderer {
         }
     }
 
+    /// Diagnostic: renders the scene through the async path and
+    /// returns the bump-allocator counters (`failed` bitmask + final
+    /// needed size per dynamic buffer). When a dispatch silently
+    /// produces an empty image, a nonzero `failed` bitmask identifies
+    /// which stage exhausted its buffer.
+    #[cfg(feature = "vello")]
+    #[doc(hidden)]
+    pub fn render_to_texture_bump_stats(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> Option<String> {
+        if self.gpu_renderer.is_none() {
+            match VelloGpuRenderer::new(
+                device,
+                RendererOptions {
+                    use_cpu: false,
+                    antialiasing_support: AaSupport::all(),
+                    num_init_threads: None,
+                    pipeline_cache: None,
+                },
+            ) {
+                Ok(renderer) => self.gpu_renderer = Some(renderer),
+                Err(err) => return Some(format!("renderer creation failed: {err}")),
+            }
+        }
+        let renderer = self.gpu_renderer.as_mut()?;
+        let params = RenderParams {
+            base_color: Color::TRANSPARENT,
+            width,
+            height,
+            antialiasing_method: AaConfig::Area,
+        };
+        #[allow(deprecated)]
+        let result = pollster::block_on(renderer.render_to_texture_async(
+            device,
+            queue,
+            &self.scene,
+            target,
+            &params,
+            vello::low_level::DebugLayers::none(),
+        ));
+        match result {
+            Ok(Some(bump)) => Some(format!(
+                "failed={:#b} binning={} ptcl={} tile={} seg_counts={} segments={} blend={} lines={}",
+                bump.failed,
+                bump.binning,
+                bump.ptcl,
+                bump.tile,
+                bump.seg_counts,
+                bump.segments,
+                bump.blend,
+                bump.lines,
+            )),
+            Ok(None) => Some("bump download unavailable".to_string()),
+            Err(err) => Some(format!("render error: {err}")),
+        }
+    }
+
     /// Translates a single paint command into Vello scene draw calls.
     ///
     /// This implements the full `PaintCommand` → `Scene` mapping:

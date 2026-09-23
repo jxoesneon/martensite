@@ -1933,6 +1933,12 @@ impl ApplicationHandler for App {
             .expect("create surface");
         let gpu = pollster::block_on(GpuContext::for_surface(&instance, &raw_surface))
             .expect("request surface-compatible GPU context");
+        // wgpu reports validation errors through `log`, which this app
+        // never initializes — without this callback a broken GPU frame
+        // is invisible (the black-window investigation ran blind).
+        gpu.device.on_uncaptured_error(std::sync::Arc::new(|err| {
+            eprintln!("wgpu uncaptured error: {err}");
+        }));
 
         let size = window.surface_size();
         let mut surface = SurfaceWrapper::new(raw_surface);
@@ -1946,7 +1952,6 @@ impl ApplicationHandler for App {
                 BackdropMode::Opaque,
             )
             .expect("configure surface");
-
         // MARTENSITE_CPU=1 forces the TinySkia→write_texture path,
         // bypassing Vello + the segment composite — used to bisect
         // presentation failures.
@@ -3066,19 +3071,21 @@ mod tests {
     /// Renders the real dashboard paint list through the *surface*
     /// composite path (`vello_direct=false`, `Bgra8UnormSrgb` target —
     /// the same segment-texture + `WgpuHost` composite the live window
-    /// uses) and asserts the frame is non-black. Regression coverage
-    /// for a compositor-level presentation failure that
-    /// `render_to_buffer`'s direct-`Rgba8Unorm` path cannot see.
-    /// GPU-dependent: `cargo test -p industrial_dashboard
-    /// gpu_readback_real_frame -- --ignored`.
+    /// uses) and asserts the frame is non-black. The target is sized
+    /// past Vello 0.10's fixed bump-buffer capacity (its `blend_spill`
+    /// exhausted around ~2600x1500 on this scene, producing an empty
+    /// frame — the black-window bug), so this is regression coverage
+    /// for both the compositor and the scaled bump allocation in the
+    /// vendored renderer. GPU-dependent: `cargo test -p
+    /// industrial_dashboard gpu_readback_real_frame -- --ignored`.
     #[test]
     #[ignore = "requires a GPU adapter"]
     fn gpu_readback_real_frame() {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.build_arena();
-        app.apply_dock_layout_at(1680, 980);
-        let w = 1680.0f64;
-        let h = 980.0f64;
+        app.apply_dock_layout_at(3024, 1694);
+        let w = 3024.0f64;
+        let h = 1694.0f64;
         let mut list = PaintList::new();
         list.push_fill_rect(kurbo::Rect::new(0.0, 0.0, w, h), app.pal.bg);
         app.arena
@@ -3088,7 +3095,6 @@ mod tests {
         list.push_scope(None, "App Chrome", kurbo::Rect::new(0.0, 0.0, w, h));
         app.paint_chrome(&mut list, w, h);
         list.pop_scope();
-        eprintln!("paint list: {} commands", list.commands.len());
 
         let ctx = match GpuContext::new() {
             Ok(c) => c,
@@ -3102,7 +3108,6 @@ mod tests {
                 .expect("orchestrator");
         let recovery = RecoveryMachine::new();
         orchestrator.render(&list, &recovery);
-        eprintln!("render mode: {:?}", orchestrator.mode());
         let pixels = orchestrator
             .render_to_buffer_via_composite(&ctx.device, &ctx.queue, w as u32, h as u32)
             .expect("readback");
@@ -3113,7 +3118,7 @@ mod tests {
             .iter()
             .filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0)
             .count();
-        eprintln!("pixels: {nonzero}/{total} non-black");
-        assert!(nonzero > 0, "GPU readback is entirely black");
+        eprintln!("composite {w}x{h}: {nonzero}/{total} non-black");
+        assert!(nonzero > 0, "GPU composite readback is entirely black");
     }
 }

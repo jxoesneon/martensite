@@ -1169,6 +1169,23 @@ impl RenderOrchestrator {
         self.readback_texture(device, queue, &target, width, height)
     }
 
+    /// Diagnostic: renders the current scene into `target` via Vello's
+    /// async path and returns the bump-allocator counters — a nonzero
+    /// `failed` bitmask names the stage whose buffer overflowed.
+    #[doc(hidden)]
+    #[cfg(feature = "vello")]
+    pub fn vello_bump_stats(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> Option<String> {
+        self.vello
+            .render_to_texture_bump_stats(device, queue, target, width, height)
+    }
+
     /// Texture → tightly-packed RGBA8 staging readback shared by
     /// [`render_to_buffer`](Self::render_to_buffer) and
     /// [`render_to_buffer_via_composite`](Self::render_to_buffer_via_composite).
