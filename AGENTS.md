@@ -281,6 +281,28 @@ These are explicitly documented in code, not hidden:
 - Glyph ink extends ~1.15×font-size **below** the text origin — line
   advances must be ≥1.3×fs to avoid overlap.
 
+### Design lint (martensite-design-lint)
+
+- Replays a `PaintList`'s `PushScope`/`PopScope` provenance into a
+  `LintScene` (widget tree + geometry + text sizes + colors), then
+  evaluates standards-backed rules — WCAG 2.2, ISA-101, ISA-18.2 alarm
+  analogs, Hick/Fitts, Tufte/Few, perception research. Facade:
+  `martensite::design_lint`.
+- Findings cite their standard and link
+  `docs/design-standards/rules/<rule-id>.md`.
+- All standards are default-on. `design-lint.toml` (project config)
+  sets `standards`, `[rules.<id>]` severity/params, `[classify]`, and
+  `[[allow]]` path globs (`*` = within a segment, `**` = any depth).
+- Inline control: `debug_name` suffix `@lint:rule-id|all|standard:<key>`
+  suppresses that subtree; `@level:1..4` declares an ISA-101 level.
+- Suppressed findings land in `LintReport::suppressed` — reported, not
+  dropped; allows matching nothing go to `unused_allows`; `Severity::
+  Forbid` cannot be suppressed by either mechanism.
+- Dashboard harness:
+  `cargo test -p industrial_dashboard dump_design_lints -- --nocapture`;
+  `PAGE_FILTER=<substr>` narrows pages (same convention as
+  `dump_zone_lints`).
+
 ### Live-window verification (ultramac MCP)
 
 - `MARTENSITE_CPU=1` forces the TinySkia surface path — use it when the

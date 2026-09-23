@@ -2964,6 +2964,209 @@ mod tests {
         }
     }
 
+    /// Scratch: run the `martensite-design-lint` catalog over the same
+    /// surfaces `dump_zone_lints` paints — each zone page in a
+    /// `ScrollView` across widths, plus one full-app dock pass — with
+    /// `design-lint.toml` supplying the scale factor, name
+    /// reclassification, and path allows. Findings dedupe on
+    /// (rule, message); `PAGE_FILTER` narrows the zone loop and
+    /// `DUMP_SCOPES` echoes the scope tree. Run:
+    /// `cargo test -p industrial_dashboard dump_design_lints -- --nocapture`.
+    #[test]
+    fn dump_design_lints() {
+        use martensite::core::{SemanticAction, WidgetEvent};
+        use martensite::widgets::container::Container;
+        use martensite::widgets::scrollview::ScrollView;
+        use martensite_design_lint::{lint_paint_list, LintConfig};
+        use std::collections::{BTreeSet, HashSet};
+
+        fn tick_all(w: &mut dyn martensite::core::Widget, dt: Duration) {
+            for i in 0..w.child_count() {
+                if let Some(c) = w.child_mut(i) {
+                    tick_all(c, dt);
+                }
+            }
+            let _ = w.tick(dt);
+        }
+
+        let cfg = LintConfig::from_toml(include_str!("../design-lint.toml"))
+            .expect("design-lint.toml parses");
+
+        // (rule, message) dedupe — the same finding at twenty scroll
+        // offsets and eight widths is one finding.
+        let mut seen: HashSet<(&'static str, String)> = HashSet::new();
+        let mut suppressed_seen: HashSet<(&'static str, String)> = HashSet::new();
+        let mut unused_allows: BTreeSet<String> = BTreeSet::new();
+        // Allows that suppressed at least once across ALL frames —
+        // `unused_allows` is per-frame, so an allow only counts as
+        // stale when it never fired anywhere.
+        let mut used_allows: HashSet<String> = HashSet::new();
+
+        fn audit_frame(
+            tag: &str,
+            list: &PaintList,
+            cfg: &LintConfig,
+            seen: &mut HashSet<(&'static str, String)>,
+            suppressed: &mut HashSet<(&'static str, String)>,
+            unused: &mut BTreeSet<String>,
+            used: &mut HashSet<String>,
+        ) {
+            let report = lint_paint_list(list, cfg);
+            for f in &report.findings {
+                if seen.insert((f.rule, f.message.clone())) {
+                    eprintln!(
+                        "{tag}: [{}] {} {}: {}",
+                        f.severity, f.rule, f.path, f.message
+                    );
+                    if !f.doc.is_empty() {
+                        eprintln!("    see: {}", f.doc);
+                    }
+                }
+            }
+            for f in &report.suppressed {
+                suppressed.insert((f.rule, f.message.clone()));
+                if let Some(by) = &f.suppressed_by {
+                    used.insert(by.clone());
+                }
+            }
+            unused.extend(report.unused_allows.iter().cloned());
+        }
+
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
+        type ZonePages = Vec<(&'static str, crate::zone::Page)>;
+        let mut pages_by_zone: Vec<(&str, f32, f32, ZonePages)> = vec![];
+        for zw in [
+            700.0f32, 900.0, 1100.0, 1324.0, 1500.0, 1828.0, 2100.0, 2400.0,
+        ] {
+            pages_by_zone.push(("grid", zw, 480.0, crate::zones::grid::pages(&app.model)));
+            pages_by_zone.push((
+                "telemetry",
+                zw,
+                480.0,
+                crate::zones::telemetry::pages(&app.model),
+            ));
+            pages_by_zone.push(("editor", zw, 350.0, crate::zones::editor::pages(&app.model)));
+            pages_by_zone.push(("media", zw, 350.0, crate::zones::media::pages(&app.model)));
+        }
+        let filter = std::env::var("PAGE_FILTER").unwrap_or_default();
+        for (zname, zw, zh, pages) in pages_by_zone {
+            for (label, page) in pages {
+                let tag = format!("{zname}/{label}@{zw:.0}");
+                if !filter.is_empty() && !tag.contains(&filter) {
+                    continue;
+                }
+                let view = ScrollView::new(
+                    Container::new()
+                        .padding_uniform(crate::zone::ZONE_PAD)
+                        .child(page),
+                );
+                let mut arena = WidgetArena::new();
+                arena.set_theme(martensite::theme::tokens::default_dark());
+                arena.set_scale_factor(2.0);
+                arena.set_text_painter(martensite::text_paint::shared_painter());
+                let mut hot = HotNode::default();
+                hot.flags |= NodeFlags::VISIBLE;
+                let root = arena.insert_with_widget(hot, Box::new(view));
+                let bounds = Rect::new(0.0, 0.0, zw, zh);
+                if let Some((hot, cold)) = arena.get_both_mut(root) {
+                    hot.bounds = bounds;
+                    cold.widget
+                        .layout(&mut LayoutContext { hot, scale: 2.0 }, bounds);
+                }
+                // Run the binding cycle once so Bound::push populates
+                // the widgets with model data.
+                if let Some(cold) = arena.get_cold_mut(root) {
+                    tick_all(&mut *cold.widget, Duration::from_millis(16));
+                }
+                let content_h = arena
+                    .get_cold(root)
+                    .and_then(|c| c.widget.child_bounds(0))
+                    .map(|b| b.height())
+                    .unwrap_or(0.0);
+                let mut y = 0.0f32;
+                loop {
+                    arena.dispatch_event(
+                        root,
+                        &WidgetEvent::SemanticAction(SemanticAction::SetScrollOffset(Vec2::new(
+                            0.0, y,
+                        ))),
+                    );
+                    let mut list = PaintList::new();
+                    arena.build_paint_list(root, &mut list);
+                    if std::env::var("DUMP_SCOPES").is_ok() {
+                        for cmd in &list.commands {
+                            if let martensite::core::PaintCommand::PushScope {
+                                name, bounds, ..
+                            } = cmd
+                            {
+                                eprintln!("  scope {name} {bounds:?}");
+                            }
+                        }
+                    }
+                    audit_frame(
+                        &tag,
+                        &list,
+                        &cfg,
+                        &mut seen,
+                        &mut suppressed_seen,
+                        &mut unused_allows,
+                        &mut used_allows,
+                    );
+                    if y >= content_h {
+                        break;
+                    }
+                    y += zh * 0.5;
+                }
+            }
+        }
+
+        // Full-app pass — the real dock tree at a laptop-class surface,
+        // painted at the same 2.0 scale the config declares (a
+        // paint/audit scale mismatch halves every reported pt size).
+        app.scale.set(2.0);
+        app.build_arena();
+        app.apply_dock_layout_at(1600, 1000);
+        {
+            let root = app.root.expect("root");
+            let arena = app.arena.as_mut().expect("arena");
+            if let Some(cold) = arena.get_cold_mut(root) {
+                tick_all(&mut *cold.widget, Duration::from_millis(16));
+            }
+            let mut list = PaintList::new();
+            arena.build_paint_list(root, &mut list);
+            audit_frame(
+                "app@1600x1000",
+                &list,
+                &cfg,
+                &mut seen,
+                &mut suppressed_seen,
+                &mut unused_allows,
+                &mut used_allows,
+            );
+        }
+
+        // An allow is only stale when it never suppressed a finding in
+        // ANY frame — `unused_allows` is per-frame, so subtract the
+        // cross-frame used set (suppressed_by carries the same
+        // `allow "path" [specs]` description).
+        let stale: Vec<_> = unused_allows
+            .iter()
+            .filter(|a| !used_allows.contains(*a))
+            .collect();
+        eprintln!(
+            "=== design-lint summary: {} unique findings, {} unique suppressed, {} stale allows ===",
+            seen.len(),
+            suppressed_seen.len(),
+            stale.len()
+        );
+        for (rule, message) in &suppressed_seen {
+            eprintln!("  suppressed: {rule}: {message}");
+        }
+        for a in &stale {
+            eprintln!("  unused allow: {a}");
+        }
+    }
+
     /// Reproduces the windowed paint audit headless: drive the real
     /// dock layout at a fixed surface size, build the paint list,
     /// and audit — no widget may emit text fully outside its clip

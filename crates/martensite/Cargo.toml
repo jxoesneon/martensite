@@ -38,6 +38,7 @@ martensite-macros = { workspace = true }
 martensite-blessed = { workspace = true }
 martensite-shell = { workspace = true }
 martensite-devtools = { workspace = true }
+martensite-design-lint = { workspace = true }
 # Optional: OS-native font fallback providers (DirectWrite, CoreText, Fontconfig).
 martensite-font-fallback = { workspace = true, optional = true }
 accesskit = { workspace = true }

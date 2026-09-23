@@ -1,0 +1,22 @@
+[package]
+name = "martensite-design-lint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Design-standard linting for Martensite UIs — WCAG, ISA-101, cognitive-load, and information-design rules evaluated over paint-tree scope geometry."
+readme = "README.md"
+
+[dependencies]
+martensite-core = { workspace = true }
+kurbo = { workspace = true }
+serde = { workspace = true }
+toml = { version = "0.9", features = ["parse"] }
+
+[lints]
+workspace = true

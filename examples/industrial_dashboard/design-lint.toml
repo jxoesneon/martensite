@@ -1,0 +1,45 @@
+# industrial_dashboard — martensite-design-lint project config.
+#
+# Consumed by `dump_design_lints` in src/app.rs via `include_str!`.
+# The harness paints every frame at scale 2.0 (both the zone-page
+# ScrollView mounts and the full-app dock pass), so pt-denominated
+# thresholds (WCAG 24pt targets, font sizes) divide device px by this.
+scale_factor = 2.0
+
+# Standards citations resolve against this docs root when a report is
+# rendered with links. `cargo test` runs with the example dir as CWD —
+# the path is relative to it; the engine prints the absolute path when
+# the file exists so terminal output linkifies.
+docs_base = "../../docs/design-standards"
+
+# --- Scope-name reclassification -----------------------------------
+# The builtin heuristics cover generic widget names; the dashboard's
+# own structural mounts (src/zone.rs, src/zones/mod.rs) would
+# otherwise fall to `Unknown` → Content. They are layout shells, not
+# content.
+[classify]
+"Band" = "container"          # fixed-height surface mount (zone.rs)
+"Fill" = "container"          # stretch mount for primary surfaces (zone.rs)
+"Swap" = "container"          # exclusive view swapper driven by a strip Segmented (zone.rs)
+"Page" = "container"          # zone page grammar: strip | primary | rail (zone.rs)
+"Zone Panel" = "container"    # op-view + zone-tabs shell (zones/mod.rs)
+"ShellOverlays" = "container" # overlay host (overlays.rs)
+
+# --- Path allows ---------------------------------------------------
+# Kept deliberately minimal: findings are the redesign backlog, not
+# noise to silence. Each entry names the subtree and rule it
+# suppresses and carries a justification.
+
+# StackLight lamp segments are color-channel devices by design — the
+# ISA-101 alarm channel in its intended use. Pairing each lamp with a
+# text label inside its scope would defeat the at-a-glance idiom
+# (the alarm row around it already carries the text).
+[[allow]]
+path = "**/StackLight"
+rules = ["color-only-info"]
+
+# LedMatrix is the same idiom — a wall of status LEDs whose meaning
+# IS the color pattern; the SYSTEM page demos it deliberately.
+[[allow]]
+path = "**/LedMatrix"
+rules = ["color-only-info"]

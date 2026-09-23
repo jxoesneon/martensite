@@ -49,6 +49,7 @@ members = [
     "crates/martensite-text-reference",
     "crates/martensite-render-test",
     "crates/martensite-media-test",
+    "crates/martensite-design-lint",
     "crates/martensite-engine-bridge",
     "tools/cargo-martensite",
     "examples/engine_embed",
@@ -93,6 +94,7 @@ martensite-render = { version = "0.18.0", path = "crates/martensite-render" }
 martensite-text = { version = "0.18.0", path = "crates/martensite-text" }
 martensite-access = { version = "0.18.0", path = "crates/martensite-access" }
 martensite-access-platform = { version = "0.18.0", path = "crates/martensite-access-platform" }
+martensite-design-lint = { version = "0.18.0", path = "crates/martensite-design-lint" }
 martensite-window = { version = "0.18.0", path = "crates/martensite-window" }
 martensite-focus = { version = "0.18.0", path = "crates/martensite-focus" }
 martensite-clipboard = { version = "0.18.0", path = "crates/martensite-clipboard" }

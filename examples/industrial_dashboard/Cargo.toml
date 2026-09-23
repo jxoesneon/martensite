@@ -62,6 +62,10 @@ martensite-notify = { workspace = true, features = ["platform"] }
 martensite-dialog = { workspace = true, features = ["platform"] }
 martensite-share = { workspace = true, features = ["platform"] }
 martensite-print = { workspace = true, features = ["platform"] }
+# Design-standard linting for the paint-tree harness — `dump_design_
+# lints` replays `PushScope` provenance into `lint_paint_list` with
+# the project config in `design-lint.toml`.
+martensite-design-lint = { workspace = true }
 # winit/wgpu feature pins mirror examples/viewport_showcase — the vendored
 # accesskit_winit fork and the wgpu engine both build against these.
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }

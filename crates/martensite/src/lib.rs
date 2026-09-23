@@ -45,6 +45,7 @@
 //! - [`blessed`] — Curated tier-1 widgets (`DataTable`, `DockTree`, `Chart`, `CodeEditor`)
 //! - [`shell`] — System backdrops, snap layouts, CSD, and system tray
 //! - [`devtools`] — Tracing spans, GPU timestamps, and the in-app diagnostic HUD
+//! - [`design_lint`] — Standards-backed design linting over paint scope geometry
 //! - [`app`] — Application builder and software fallback configuration
 //! - Testing utilities are available via the `martensite-test` dev-dependency.
 #![forbid(unsafe_code)]
@@ -78,6 +79,7 @@ pub use martensite_access as access;
 pub use martensite_blessed as blessed;
 pub use martensite_clipboard as clipboard;
 pub use martensite_core as core;
+pub use martensite_design_lint as design_lint;
 pub use martensite_devtools as devtools;
 pub use martensite_dnd as dnd;
 pub use martensite_focus as focus;

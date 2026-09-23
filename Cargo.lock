@@ -2365,6 +2365,7 @@ dependencies = [
  "martensite-accesskit-winit",
  "martensite-assets",
  "martensite-clipboard-platform",
+ "martensite-design-lint",
  "martensite-dialog",
  "martensite-l10n",
  "martensite-motion",
@@ -2818,6 +2819,7 @@ dependencies = [
  "martensite-blessed",
  "martensite-clipboard",
  "martensite-core",
+ "martensite-design-lint",
  "martensite-devtools",
  "martensite-dnd",
  "martensite-engine-bridge",
@@ -2988,6 +2990,16 @@ dependencies = [
  "unicode-linebreak",
  "unicode-script",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "martensite-design-lint"
+version = "0.18.0"
+dependencies = [
+ "kurbo",
+ "martensite-core",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
