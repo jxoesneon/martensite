@@ -42,11 +42,11 @@ use std::time::Duration;
 use crate::domain::PlantModel;
 
 /// Spacing between elements inside a zone (logical pt).
-pub const ZONE_GAP: f32 = 8.0;
+pub const ZONE_GAP: f32 = 10.0;
 /// Spacing between rows in a page column (logical pt).
-pub const ZONE_STACK: f32 = 12.0;
+pub const ZONE_STACK: f32 = 14.0;
 /// Padding between a zone's chrome and its content (logical pt).
-pub const ZONE_PAD: f32 = 12.0;
+pub const ZONE_PAD: f32 = 14.0;
 /// Band height: sparklines, strips, progress, pickers (logical pt).
 pub const BAND_S: f32 = 120.0;
 /// Band height: charts, gauges, calendars, lists (logical pt).

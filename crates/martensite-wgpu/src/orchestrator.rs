@@ -1074,8 +1074,6 @@ impl RenderOrchestrator {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, OrchestratorError> {
-        use std::sync::mpsc;
-
         if width == 0 || height == 0 {
             return Err(OrchestratorError::GpuReadbackFailed(
                 "zero-sized offscreen target".to_string(),
@@ -1120,9 +1118,71 @@ impl RenderOrchestrator {
             },
         );
 
-        // 3. Staging buffer: MAP_READ | COPY_DST. `bytes_per_row` must be a
-        //    multiple of wgpu's COPY_BYTES_PER_ROW_ALIGNMENT (256), so the
-        //    buffer is padded per row; the padding is stripped on readback.
+        self.readback_texture(device, queue, &target, width, height)
+    }
+
+    /// Like [`render_to_buffer`](Self::render_to_buffer) but dispatches
+    /// through the *surface* composite path — `vello_direct=false`, a
+    /// `Bgra8UnormSrgb` render target, segment textures + WgpuHost
+    /// composite — so a black-window regression in the compositor is
+    /// testable without a window.
+    #[doc(hidden)]
+    #[cfg(feature = "vello")]
+    pub fn render_to_buffer_via_composite(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, OrchestratorError> {
+        if width == 0 || height == 0 {
+            return Err(OrchestratorError::GpuReadbackFailed(
+                "zero-sized offscreen target".to_string(),
+            ));
+        }
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("martensite-composite-parity-target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        self.dispatch_pending(
+            device,
+            queue,
+            DispatchTarget {
+                view: &view,
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                width,
+                height,
+                vello_direct: false,
+            },
+        );
+        self.readback_texture(device, queue, &target, width, height)
+    }
+
+    /// Texture → tightly-packed RGBA8 staging readback shared by
+    /// [`render_to_buffer`](Self::render_to_buffer) and
+    /// [`render_to_buffer_via_composite`](Self::render_to_buffer_via_composite).
+    /// `target` must be `COPY_SRC`.
+    #[cfg(feature = "vello")]
+    fn readback_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, OrchestratorError> {
+        use std::sync::mpsc;
         const ALIGNMENT: u32 = 256;
         let bytes_per_pixel = 4u32;
         let unpadded_bytes_per_row = width
@@ -1144,7 +1204,7 @@ impl RenderOrchestrator {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &target,
+                texture: target,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,

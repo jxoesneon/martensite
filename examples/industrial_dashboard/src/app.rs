@@ -73,7 +73,7 @@ use crate::toolbar::{Toolbar, THEME_OPTIONS, TOOLBAR_H};
 const HEADER_PT: f32 = 52.0;
 pub(crate) const STATUS_PT: f32 = 30.0;
 const MARGIN_PT: f32 = 12.0;
-const GAP_PT: f32 = 10.0;
+const GAP_PT: f32 = 12.0;
 
 /// Min interval between full a11y tree emissions. `build_update` emits
 /// the entire tree — thousands of nodes — so running it per frame at
@@ -1947,10 +1947,14 @@ impl ApplicationHandler for App {
             )
             .expect("configure surface");
 
+        // MARTENSITE_CPU=1 forces the TinySkia→write_texture path,
+        // bypassing Vello + the segment composite — used to bisect
+        // presentation failures.
+        let prefer_cpu = std::env::var("MARTENSITE_CPU").is_ok();
         let mut orchestrator = RenderOrchestrator::new(
             size.width.max(1),
             size.height.max(1),
-            OrchestratorConfig::new(true, false),
+            OrchestratorConfig::new(true, prefer_cpu),
         )
         .expect("orchestrator");
         let notify_window = Arc::clone(&window);
@@ -3057,5 +3061,59 @@ mod tests {
             tick_deep(&mut *cold.widget, Duration::from_millis(16));
         }
         eprintln!("{}", arena.debug_tree());
+    }
+
+    /// Renders the real dashboard paint list through the *surface*
+    /// composite path (`vello_direct=false`, `Bgra8UnormSrgb` target —
+    /// the same segment-texture + `WgpuHost` composite the live window
+    /// uses) and asserts the frame is non-black. Regression coverage
+    /// for a compositor-level presentation failure that
+    /// `render_to_buffer`'s direct-`Rgba8Unorm` path cannot see.
+    /// GPU-dependent: `cargo test -p industrial_dashboard
+    /// gpu_readback_real_frame -- --ignored`.
+    #[test]
+    #[ignore = "requires a GPU adapter"]
+    fn gpu_readback_real_frame() {
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.build_arena();
+        app.apply_dock_layout_at(1680, 980);
+        let w = 1680.0f64;
+        let h = 980.0f64;
+        let mut list = PaintList::new();
+        list.push_fill_rect(kurbo::Rect::new(0.0, 0.0, w, h), app.pal.bg);
+        app.arena
+            .as_ref()
+            .expect("arena")
+            .build_paint_list(app.root.expect("root"), &mut list);
+        list.push_scope(None, "App Chrome", kurbo::Rect::new(0.0, 0.0, w, h));
+        app.paint_chrome(&mut list, w, h);
+        list.pop_scope();
+        eprintln!("paint list: {} commands", list.commands.len());
+
+        let ctx = match GpuContext::new() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("no GPU context: {e} — skipping");
+                return;
+            }
+        };
+        let mut orchestrator =
+            RenderOrchestrator::new(w as u32, h as u32, OrchestratorConfig::new(true, false))
+                .expect("orchestrator");
+        let recovery = RecoveryMachine::new();
+        orchestrator.render(&list, &recovery);
+        eprintln!("render mode: {:?}", orchestrator.mode());
+        let pixels = orchestrator
+            .render_to_buffer_via_composite(&ctx.device, &ctx.queue, w as u32, h as u32)
+            .expect("readback");
+        let total = pixels.len() / 4;
+        let nonzero = pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0)
+            .count();
+        eprintln!("pixels: {nonzero}/{total} non-black");
+        assert!(nonzero > 0, "GPU readback is entirely black");
     }
 }

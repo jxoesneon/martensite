@@ -27,6 +27,8 @@ use martensite::core::{
 use martensite::prelude::Signal;
 use martensite::render::BezPath;
 use martensite::theme::TokenKey;
+use martensite::widgets::menu::MenuItem;
+use martensite::widgets::menu_button::MenuButton;
 use martensite::widgets::{Button, CheckBox, Dropdown, Separator, Slider, Switch, TextInput};
 
 /// Strip height in logical pt.
@@ -43,13 +45,17 @@ const SEP: usize = 4;
 const ALERTS: usize = 5;
 const COMMANDS: usize = 6;
 const BELL: usize = 7;
-const ABOUT: usize = 8;
-const INSPECTOR: usize = 9;
-const CONSOLE: usize = 10;
-const SHARE: usize = 11;
-const PRINT: usize = 12;
-const FILTER: usize = 13;
-const N: usize = 14;
+const SHELL: usize = 8;
+const FILTER: usize = 9;
+const N: usize = 10;
+
+/// Shell-menu rows — the index in the `MenuButton` item list that maps
+/// to each request signal.
+const SHELL_ABOUT: usize = 0;
+const SHELL_INSPECTOR: usize = 1;
+const SHELL_CONSOLE: usize = 2;
+const SHELL_SHARE: usize = 3;
+const SHELL_PRINT: usize = 4;
 
 /// Outcome signals shared between the toolbar and the app — clones
 /// share the same cells, so both sides observe state without
@@ -104,20 +110,9 @@ pub struct Toolbar {
     /// Press armed inside the pause button — the Button facade keeps no
     /// pressed state, so the parent tracks the press/release pair.
     pause_armed: bool,
-    /// Same armed-press tracking for the About/Inspector buttons —
-    /// release inside the rect fires the request.
-    about_armed: bool,
-    /// See `about_armed`.
-    inspector_armed: bool,
-    /// See `about_armed` — release inside fires the console request.
-    console_armed: bool,
-    /// See `about_armed` — release inside fires the share request.
-    share_armed: bool,
-    /// See `about_armed` — release inside fires the print request.
-    print_armed: bool,
-    /// See `about_armed` — release inside fires the commands request.
+    /// See `pause_armed` — release inside fires the commands request.
     commands_armed: bool,
-    /// See `about_armed` — release inside fires the bell request.
+    /// See `pause_armed` — release inside fires the bell request.
     bell_armed: bool,
     /// Child currently holding a pointer press. While set, positional
     /// events forward to it regardless of hit position — captured
@@ -132,11 +127,11 @@ pub struct Toolbar {
     alerts: Switch,
     commands: Button,
     bell: Button,
-    about: Button,
-    inspector: Button,
-    console: Button,
-    share: Button,
-    print: Button,
+    /// The shell-layer verbs (dialog, drawer, window, OS services)
+    /// folded into one menu — they're window chrome, not ops
+    /// controls, so they don't compete with Pause/filter for strip
+    /// width.
+    shell: MenuButton,
     filter: TextInput,
     rects: [Rect; N],
     /// Telemetry pause — Space in the Telemetry panel writes the same
@@ -205,11 +200,6 @@ impl Toolbar {
             focused: false,
             key_target: None,
             pause_armed: false,
-            about_armed: false,
-            inspector_armed: false,
-            console_armed: false,
-            share_armed: false,
-            print_armed: false,
             commands_armed: false,
             bell_armed: false,
             press_target: None,
@@ -228,11 +218,18 @@ impl Toolbar {
             alerts: Switch::new("alerts").on(alerts_on.get()),
             commands: Button::new("⌘ Commands").tooltip("command palette — Editor ▸ CHROME"),
             bell: Button::new("Alerts").tooltip("announcements — Media ▸ COMMS"),
-            about: Button::new("About…").tooltip("modal dialog — scrim + input block"),
-            inspector: Button::new("Inspector").tooltip("edge drawer — scrim-tap dismisses"),
-            console: Button::new("Console").tooltip("secondary OS window — real surface"),
-            share: Button::new("Share").tooltip("share the telemetry report — OS share service"),
-            print: Button::new("Print").tooltip("print the telemetry report — OS spooler"),
+            // The five shell verbs as one menu — order maps to the
+            // `SHELL_*` row indices drained in `tick`.
+            shell: MenuButton::new(
+                "Shell",
+                vec![
+                    MenuItem::action("About…"),
+                    MenuItem::action("Inspector"),
+                    MenuItem::action("Console"),
+                    MenuItem::action("Share"),
+                    MenuItem::action("Print"),
+                ],
+            ),
             filter: TextInput::new("filter grid")
                 .placeholder("filter pid/mem/status…")
                 .value(filter_text.get()),
@@ -304,11 +301,7 @@ impl Toolbar {
             ALERTS => Some(&mut self.alerts),
             COMMANDS => Some(&mut self.commands),
             BELL => Some(&mut self.bell),
-            ABOUT => Some(&mut self.about),
-            INSPECTOR => Some(&mut self.inspector),
-            CONSOLE => Some(&mut self.console),
-            SHARE => Some(&mut self.share),
-            PRINT => Some(&mut self.print),
+            SHELL => Some(&mut self.shell),
             FILTER => Some(&mut self.filter),
             _ => None,
         }
@@ -324,11 +317,7 @@ impl Toolbar {
             ALERTS => Some(&self.alerts),
             COMMANDS => Some(&self.commands),
             BELL => Some(&self.bell),
-            ABOUT => Some(&self.about),
-            INSPECTOR => Some(&self.inspector),
-            CONSOLE => Some(&self.console),
-            SHARE => Some(&self.share),
-            PRINT => Some(&self.print),
+            SHELL => Some(&self.shell),
             FILTER => Some(&self.filter),
             _ => None,
         }
@@ -378,10 +367,10 @@ impl Widget for Toolbar {
         let mut x = bounds.origin.x + pad;
         let right = bounds.max_x() - pad;
 
-        // Fixed slots for the thirteen controls; the filter input takes the
+        // Fixed slots for the nine controls; the filter input takes the
         // remainder (clamped — collapses to nothing under real pressure).
         // Rect is (x, y, width, height) — not min/max corners.
-        let slots: [(usize, f32); 13] = [
+        let slots: [(usize, f32); 9] = [
             (PAUSE, 84.0 * s),
             (GLOW, 76.0 * s),
             (TICK, 180.0 * s),
@@ -390,11 +379,7 @@ impl Widget for Toolbar {
             (ALERTS, 104.0 * s),
             (COMMANDS, 112.0 * s),
             (BELL, 66.0 * s),
-            (ABOUT, 74.0 * s),
-            (INSPECTOR, 88.0 * s),
-            (CONSOLE, 84.0 * s),
-            (SHARE, 64.0 * s),
-            (PRINT, 60.0 * s),
+            (SHELL, 84.0 * s),
         ];
         // A slot renders only when it fits fully — a partially-shown
         // control emits text past its own bounds (the paint audit's
@@ -465,11 +450,6 @@ impl Widget for Toolbar {
                     self.key_target = Some(i);
                     self.press_target = Some(i);
                     self.pause_armed = i == PAUSE;
-                    self.about_armed = i == ABOUT;
-                    self.inspector_armed = i == INSPECTOR;
-                    self.console_armed = i == CONSOLE;
-                    self.share_armed = i == SHARE;
-                    self.print_armed = i == PRINT;
                     self.commands_armed = i == COMMANDS;
                     self.bell_armed = i == BELL;
                     let focus_ev = if i == FILTER {
@@ -521,36 +501,6 @@ impl Widget for Toolbar {
                 }
                 // Stateless buttons — an armed press + release inside
                 // fires the overlay request once.
-                if i == ABOUT && self.about_armed && released {
-                    if self.rects[ABOUT].contains(pos) {
-                        self.about_req.set(true);
-                    }
-                    self.about_armed = false;
-                }
-                if i == INSPECTOR && self.inspector_armed && released {
-                    if self.rects[INSPECTOR].contains(pos) {
-                        self.inspector_req.set(true);
-                    }
-                    self.inspector_armed = false;
-                }
-                if i == CONSOLE && self.console_armed && released {
-                    if self.rects[CONSOLE].contains(pos) {
-                        self.console_req.set(true);
-                    }
-                    self.console_armed = false;
-                }
-                if i == SHARE && self.share_armed && released {
-                    if self.rects[SHARE].contains(pos) {
-                        self.share_req.set(true);
-                    }
-                    self.share_armed = false;
-                }
-                if i == PRINT && self.print_armed && released {
-                    if self.rects[PRINT].contains(pos) {
-                        self.print_req.set(true);
-                    }
-                    self.print_armed = false;
-                }
                 if i == COMMANDS && self.commands_armed && released {
                     if self.rects[COMMANDS].contains(pos) {
                         self.commands_req.set(true);
@@ -580,12 +530,27 @@ impl Widget for Toolbar {
             self.pause.label = want.to_string();
             dirty = true;
         }
+        // Shell menu activations land via the overlay layer (shared
+        // menu state), not the toolbar's event path — drain here.
+        if let Some(path) = self.shell.take_activated() {
+            match path.first() {
+                Some(&SHELL_ABOUT) => self.about_req.set(true),
+                Some(&SHELL_INSPECTOR) => self.inspector_req.set(true),
+                Some(&SHELL_CONSOLE) => self.console_req.set(true),
+                Some(&SHELL_SHARE) => self.share_req.set(true),
+                Some(&SHELL_PRINT) => self.print_req.set(true),
+                _ => {}
+            }
+            dirty = true;
+        }
         dirty
     }
 
     fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
-        // The dropdown owns a popup — let it reconcile against the layer.
+        // The dropdown and the shell menu own popups — let both
+        // reconcile against the layer.
         self.theme.sync_overlay(overlay);
+        self.shell.sync_overlay(overlay);
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {

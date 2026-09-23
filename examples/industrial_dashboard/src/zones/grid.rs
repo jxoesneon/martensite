@@ -1397,6 +1397,10 @@ fn registry(m: &PlantModel) -> Page {
             GroupBox::new("SELECTION").child(
                 Flex::column()
                     .gap(ZONE_GAP)
+                    // Jump-to-asset lookup — it fills the card below,
+                    // so it opens the group rather than competing with
+                    // the strip's re-scoping controls.
+                    .child(tree_sel)
                     .child(sel_card)
                     .child(crumb)
                     .child_flex(band(BAND_M, nav), 1.0)
@@ -1450,7 +1454,6 @@ fn registry(m: &PlantModel) -> Page {
                 .child(site)
                 .child(kind)
                 .child(view)
-                .child(tree_sel)
                 .child_flex(DummyWidget, 1.0),
         )
         .rail("Asset", rail_col)
