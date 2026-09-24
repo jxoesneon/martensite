@@ -52,6 +52,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # The matrix generator shells out to `cargo metadata` — install the
+      # pinned toolchain (rust-toolchain.toml pulls rust-src + targets,
+      # which the bare runner rustup fails to fetch on demand).
+      - uses: dtolnay/rust-toolchain@stable
       - name: Check version surfaces
         run: bash scripts/check-version-consistency.sh
       # Publish-order + publishable-set gate on every PR: a dependency
@@ -130,7 +134,7 @@ jobs:
         run: >-
           cargo nextest run --workspace
           --partition hash:${{ matrix.shard }}/6
-          ${{ matrix.features == 'all-features' && '--all-features' || '' }}
+          ${{ matrix.features == 'all-features' && '--all-features' || '--bins --lib --tests' }}
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
 
@@ -191,7 +195,7 @@ jobs:
       - name: Compare test counts
         run: |
           libtest=$(cargo test --workspace --bins --lib --tests -- --list 2>/dev/null | grep -c ': test$')
-          nextest=$(cargo nextest list --workspace --message-format json | jq '.["test-count"]')
+          nextest=$(cargo nextest list --workspace --bins --lib --tests --message-format json | jq '.["test-count"]')
           echo "libtest: $libtest   nextest: $nextest"
           test "$libtest" = "$nextest"
 
@@ -545,6 +549,7 @@ jobs:
       semver: ${{ steps.emit.outputs.semver }}
     steps:
       - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
       - id: emit
         run: |
           crates=$(python3 scripts/workspace-matrix.py semver-checks | jq -R -s -c 'split("\n")[:-1]')

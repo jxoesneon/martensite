@@ -69,6 +69,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+      # cargo metadata needs the pinned toolchain — the bare runner
+      # rustup fails fetching rust-toolchain.toml's components on demand.
+      - uses: dtolnay/rust-toolchain@stable
       - run: python3 scripts/workspace-matrix.py publish-order | python3 scripts/workspace-matrix.py check
 
   # ──────────────────────────────────────────────────────────
