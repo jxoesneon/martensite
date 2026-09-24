@@ -112,16 +112,16 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - name: Install Mesa + Pango/Cairo (build + link deps)
+      # FFmpeg/libva are needed on BOTH legs: the industrial_dashboard
+      # workspace member enables martensite's decoder-* features directly,
+      # so even the default graph compiles cros-libva/ffmpeg on Linux.
+      - name: Install Mesa + Pango/Cairo + FFmpeg/libva
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1 \
-            libcairo2-dev libpango1.0-dev libglib2.0-dev pkg-config
-      - name: Install FFmpeg/libva (all-features decoder backends)
-        if: matrix.features == 'all-features'
-        run: |
-          sudo apt-get install -y libva-dev libavcodec-dev libavutil-dev \
-            libswscale-dev libavfilter-dev libavdevice-dev libavformat-dev
+            libcairo2-dev libpango1.0-dev libglib2.0-dev pkg-config \
+            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavfilter-dev libavdevice-dev libavformat-dev
       # Default leg keeps the historical --bins --lib --tests filter
       # (benches/examples carry decoder-heavy deps); the all-features leg
       # builds every test target, matching the old unfiltered cargo run.
