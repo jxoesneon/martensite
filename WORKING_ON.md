@@ -148,6 +148,39 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   publish + ≥2-week soak, `cargo-semver-checks` clean vs last `0.x`,
   then the stable tag. Spec (single source of truth for v1.0.0
   scope): `docs/milestones/v1.0.0-production-release.md`.
+- **Developer Experience Initiative (proposed — version pending)** —
+  close the DX gap found by `docs/research/DEVELOPER_EXPERIENCE_AUDIT.md`:
+  in-app widget inspector, `cargo-martensite` CLI expansion
+  (`new`/`init`/`lint`/`inspect`/`doctor`/`check`), agent-native
+  scaffolding, runtime lint bridge, live tweaks, event debugging,
+  dev-mode error surface, onboarding depth. Eight workstreams, specs
+  in `docs/dx/`, ADRs 0036–0038. Version slot pending council
+  (v0.19.0 if Distribution descopes, else v0.20.0).
+  Spec: `docs/milestones/vNEXT-developer-experience.md`.
+  - **W1 Inspector** — select mode, lazy tree, layout chain, a11y
+    tree, lint/events panels; in-app per ADR-0036.
+    Spec: `docs/dx/INSPECTOR.md`.
+  - **W2 CLI** — `new`, `init`, `lint`, `inspect`, `doctor`, `check`;
+    version-handshook dev channel per ADR-0038.
+    Spec: `docs/dx/CLI.md`.
+  - **W3 Scaffolding** — 3 templates + generated `AGENTS.md`/
+    `llms.txt`/`design-lint.toml`; `scaffold_smoke` CI.
+    Spec: `docs/dx/SCAFFOLDING.md`.
+  - **W4 Dev lint** — `LintBridge` live-lints frames; inspector panel,
+    HUD badge, CLI attach, `--scene` dump.
+    Spec: `docs/dx/DEV_LINT.md`.
+  - **W5 Live tweaks** — `TweakRegistry` + inspector editors + source
+    write-back; survives reload by name (ADR-0037 contract).
+    Spec: `docs/dx/LIVE_TWEAKS.md`.
+  - **W6 Event debugging** — `EventRecord` ledger over production
+    dispatch; `MARTENSITE_DEBUG_EVENTS`, inspector panel.
+    Spec: `docs/dx/EVENT_DEBUGGING.md`.
+  - **W7 Error surface** — overflow tape, diagnostics overlay,
+    structured dev-mode panic with crash bundle.
+    Spec: `docs/dx/ERROR_SURFACE.md`.
+  - **W8 Onboarding** — `examples/widget_catalog` (lint-clean,
+    alias-searchable), 12-recipe cookbook, migration guides, drift
+    guards. Spec: `docs/dx/ONBOARDING.md`.
 
 
 ## v0.15.0 — Engine Showcase (RELEASED)

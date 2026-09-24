@@ -70,6 +70,14 @@ Each ADR records a binding architectural decision in MADR 3.0.0 format.
 - [ADR-0031](adr/ADR-0031-benchmark-baseline-policy.md) — Benchmark Baseline Policy
 - [ADR-0032](adr/ADR-0032-documentation-completeness.md) — Documentation Completeness
 
+### Milestone & DX Decisions (ADR 0033–0038)
+- [ADR-0033](adr/ADR-0033-host-mode-external-surface-embedding.md) — Host-Mode External Surface Embedding
+- [ADR-0034](adr/ADR-0034-bevy-rendercreation-manual.md) — Bevy Host-Mode Device Injection via `RenderCreation::Manual`
+- [ADR-0035](adr/ADR-0035-godot-readback-honesty.md) — Godot Readback Honesty — Two Tiers, No Zero-Copy Claim
+- [ADR-0036](adr/ADR-0036-in-app-inspector.md) — In-App Inspector — DevTools Ships Inside the App Process
+- [ADR-0037](adr/ADR-0037-hot-reload-contract.md) — Hot-Reload Contract — cdylib Swap Only, No Code Patching
+- [ADR-0038](adr/ADR-0038-dev-channel.md) — Dev Channel — Narrow, Read-Only, Version-Handshook IPC
+
 ---
 
 ## DDRs — Detailed Design Records {#ddrs}
@@ -116,6 +124,8 @@ Each DDR specifies a crate's internal algorithms, data structures, and invariant
 - [ERROR_HANDLING.md](ERROR_HANDLING.md) — Error types, panic policy, recovery
 - [SECURITY.md](SECURITY.md) — Threat model, supply chain, unsafe policy
 - [design-standards/](design-standards/README.md) — Design-lint rule docs: evidence, thresholds, and legitimate exceptions per rule and standard
+- [research/DEVELOPER_EXPERIENCE_AUDIT.md](research/DEVELOPER_EXPERIENCE_AUDIT.md) — Competitive DX audit + competitor-mistake harvest (constraints D1–D8)
+- [dx/](dx/README.md) — Developer Experience initiative specs: inspector, CLI, scaffolding, dev-lint, live tweaks, event debugging, error surface, onboarding
 
 ---
 

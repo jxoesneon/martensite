@@ -28,6 +28,9 @@ graph TD
     M18 --> M19["v0.19.0: Distribution<br/>(WiX/DMG/Flatpak, Ed25519 Updates, Prebuilt CLI)"]
     M19 --> M20["v1.0.0-rc.N: Release Candidate<br/>(Full Gated Publish, Two-Week Soak, SemVer Gate)"]
     M20 --> M21["v1.0.0: Production Stability<br/>(API Freeze, Crates.io GA)"]
+
+    M18 -.->|proposed, slot pending| DX["DX Initiative<br/>(Inspector, CLI, Scaffolding, Dev Lint)"]
+    DX -.-> M20
 ```
 
 ---
@@ -55,6 +58,7 @@ graph TD
 | **v0.17.0** | [v0.17.0-platform-expansion.md](v0.17.0-platform-expansion.md) | `martensite` widgets, `martensite-wgpu`, `martensite-window`, `martensite-access`, `martensite-devtools` | Slider/radio/dropdown/scrollview/tabs/tooltip with ARIA APG contracts, overlay layer, wasm32 + iOS + Android targets, hybrid command-ledger time-travel debugger | Six widgets pass APG + AccessKit conformance; wasm render via WebGPU; iOS/Android example apps; deterministic journal+snapshot replay |
 | **v0.18.0** | [v0.18.0-production-hardening.md](v0.18.0-production-hardening.md) | Workspace-wide, `martensite-vello`, `examples/industrial_dashboard`, `benches/bench_suite` | API surface audit + `cargo-semver-checks`, verification-honesty pass, residual hardening, dogfooding + egui/iced baselines | SemVer gate active; every env-gated leg run or formally descoped; zero `todo!()` in shipping code |
 | **v0.19.0** | [v0.19.0-distribution.md](v0.19.0-distribution.md) | `cargo-martensite`, release workflows | WiX/DMG/Flatpak installers, Ed25519 signed updates, prebuilt CLI binaries (tentatively scoped; descopable by ADR) | Installers built in CI on tag; signed-update manifest verified end-to-end |
+| **DX Initiative** *(proposed — slot pending)* | [vNEXT-developer-experience.md](vNEXT-developer-experience.md) | `martensite-devtools`, `tools/cargo-martensite`, `martensite-host`, `examples/widget_catalog` | In-app widget inspector, CLI expansion (`new`/`lint`/`doctor`/`inspect`), agent-native scaffolding, runtime lint bridge, live tweaks, event ledger, dev-mode error surface | 10-min first-run funnel in CI; release binary has zero dev symbols; select-mode ≡ production hit-test |
 | **v1.0.0-rc.N** | [v1.0.0-production-release.md](v1.0.0-production-release.md) §3 | Complete Workspace | Release-candidate line: full gated publish + ≥2-week soak; no API changes between rc.1 and stable | RC publishes through `publish.yml` with zero gate failures; `cargo-semver-checks` clean vs last `0.x` |
 | **v1.0.0** | [v1.0.0-production-release.md](v1.0.0-production-release.md) | Complete Workspace (32+ crates) | Public API freeze, 100% docs.rs coverage, security audit sign-off | Zero compiler warnings; cargo audit/vet/deny clean; Crates.io release |
 
