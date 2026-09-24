@@ -9,8 +9,12 @@ All code within the Martensite project is subject to the following testing domai
 
 *   **Unit Tests (`#[test]`)**:
     *   **Location**: Inline within per-crate `src/` modules.
-    *   **Tooling**: Vanilla `cargo test`.
-    *   **CI Trigger**: Runs on every PR and commit via `cargo test --workspace`.
+    *   **Tooling**: `cargo-nextest` in CI (hash-partitioned across a
+        runner matrix; per-test process isolation); `cargo test` remains
+        the local default and is fully supported.
+    *   **CI Trigger**: Runs on every PR and commit via the `test-suite`
+        matrix job — 6 hash-shards × {default, all-features}. Test-count
+        parity with libtest is asserted by the `test-parity` job.
 *   **Integration Tests (`tests/`)**:
     *   **Location**: Top-level `tests/` directory within crates.
     *   **Tooling**: `cargo test --test <name>`.

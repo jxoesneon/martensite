@@ -35,55 +35,16 @@ scripts/check-version-consistency.sh   # verify every surface
 
 ## 4. Topologically Sorted Publication Sequence
 
-Due to the strict workspace constraints and inter-crate dependencies, the publishable crates must be published in the exact bottom-up leaf-first topological order encoded in `.github/workflows/publish.yml`. `examples` and `benches` are excluded from crates.io.
+Due to the strict workspace constraints and inter-crate dependencies, the publishable crates must be published in bottom-up leaf-first topological order. **The order is not maintained by hand** — `scripts/workspace-matrix.py publish-order` derives it from `cargo metadata` at publish time (Kahn's algorithm, name-sorted tie-break, covering every path-dependency edge including optional and versioned dev-deps). The same script verifies the emitted order (`... | python3 scripts/workspace-matrix.py check`), and that check runs in the `version-consistency` CI job on every PR and again in `publish.yml`'s `validate` job before any upload.
 
-1. `martensite-reactive`
-2. `martensite-macros`
-3. `martensite-theme`
-4. `martensite-core`
-5. `martensite-host`
-6. `martensite-layout`
-7. `martensite-vello`
-8. `martensite-render`
-9. `martensite-media-platform`
-10. `martensite-media`
-11. `martensite-engine-bridge`
-12. `martensite-accesskit-winit`
-13. `martensite-access`
-14. `martensite-wgpu`
-15. `martensite-cosmic-text`
-16. `martensite-text`
-17. `martensite-font-fallback`
-18. `martensite-access-platform`
-19. `martensite-shell`
-20. `martensite-window`
-21. `martensite-focus`
-22. `martensite-clipboard-platform`
-23. `martensite-clipboard`
-24. `martensite-dnd`
-25. `martensite-test`
-26. `martensite-motion`
-27. `martensite-history`
-28. `martensite-l10n`
-29. `martensite-assets`
-30. `martensite-devtools`
-31. `martensite-plugin`
-32. `martensite-persist`
-33. `martensite-dialog-platform`
-34. `martensite-dialog`
-35. `martensite-notify-platform`
-36. `martensite-notify`
-37. `martensite-print-platform`
-38. `martensite-print`
-39. `martensite-share-platform`
-40. `martensite-share`
-41. `martensite-webview`
-42. `martensite-webview-platform`
-43. `martensite-pdf-platform`
-44. `martensite-pdf`
-45. `martensite-blessed`
-46. `martensite-design-lint`
-47. `martensite`
+The publishable set itself is predicate-gated: every crate cargo would publish must be named `martensite-*` (workspace convention) or carry `package.metadata.ci.publishable = true`, so a forgotten `publish = false` on a non-conventional name fails validation rather than shipping irreversibly. `examples` and `benches` are excluded from crates.io.
+
+To inspect the current order:
+
+```sh
+python3 scripts/workspace-matrix.py publish-order
+```
+
 *(Not published: `crates/martensite-bevy`, `crates/martensite-godot`,
 `crates/martensite-media-test`, `crates/martensite-render-test`,
 `crates/martensite-text-reference`, `tools/cargo-martensite`, all of

@@ -93,11 +93,41 @@ fail on every run.
 
 **Fix**: Use only `--test` for benchmark exit-gate verification.
 
-### 6. CI must run on tags
+### 6. CI must run on tags — via publish.yml, not a tag trigger
 
-The CI workflow triggers on `push` to `main`, on PRs, AND on tag pushes
-(`v*.*.*`). This ensures tags get CI coverage before the publish
-workflow runs.
+`ci.yml` does NOT trigger on tag pushes directly: `publish.yml` invokes
+the same pipeline through `workflow_call`, and a direct tag trigger
+would run the entire suite twice per release. Tag CI coverage comes
+from the publish workflow's `ci` job.
+
+### 7. Crate enumerations are generated, never hand-listed
+
+The publish order, the publishable set, the semver-checks matrix, and
+doctest shards all derive from `cargo metadata` via
+`scripts/workspace-matrix.py`. There is no hand-maintained crate list
+anywhere — a previous hand-list silently skipped newly added crates and
+shipped an inverted publish order that aborted a release mid-upload.
+
+- Adding a publishable crate requires **no** list edits.
+- A publishable crate must be named `martensite-*` or carry
+  `package.metadata.ci.publishable = true`; `version-consistency` CI
+  enforces the predicate and the generated order on every PR.
+- `release-binaries`/`verify-release-assets` must never run when
+  `github-release` was skipped on a tag push — softprops upserts to a
+  bare auto-created release otherwise.
+
+### 8. Tests run under cargo-nextest in CI
+
+CI's `test-suite` job runs `cargo nextest run --partition hash:m/6`
+across 12 matrix shards (6 × {default, all-features}); doctests run in
+a separate 4-shard job (nextest never runs doctests). Per-test process
+isolation is mostly safer, but tests sharing an OS-level singleton —
+the real system clipboard in `martensite-clipboard-platform` — are
+serialized via the `system-clipboard` test-group in
+`.config/nextest.toml`. Add any new OS-singleton test there. The
+`test-parity` job asserts nextest sees the same test count as libtest;
+`--ignored`/`--nocapture` libtest flags need `--run-ignored`/
+`--no-capture` equivalents under nextest.
 
 ## Verification Checklist (run before every release)
 
@@ -109,11 +139,13 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-# 3. Tests (both feature sets)
+# 3. Tests (both feature sets — cargo test locally; CI uses nextest)
 cargo test --workspace --bins --lib --tests
 cargo test --workspace --all-features
+# nextest equivalent (what CI runs, per shard):
+#   cargo nextest run --workspace [--all-features]
 
-# 4. Doctests
+# 4. Doctests (CI shards these across 4 jobs via workspace-matrix.py)
 cargo test --doc --workspace --all-features
 
 # 5. Docs build

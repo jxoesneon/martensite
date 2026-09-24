@@ -1,0 +1,15 @@
+# cargo-nextest configuration.
+#
+# Nextest runs each test in its own process. Most suites get *safer*
+# under that isolation (env mutation, static caches, temp dirs), but
+# tests that share an OS-level singleton — the real system clipboard —
+# previously serialized via an in-process `clipboard_lock()` mutex that
+# cannot span processes. The serial test-group restores the same
+# guarantee across nextest's process boundary.
+
+[test-groups]
+system-clipboard = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(martensite-clipboard-platform)'
+test-group = 'system-clipboard'

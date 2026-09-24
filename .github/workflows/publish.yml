@@ -60,13 +60,16 @@ jobs:
             echo "CHANGELOG.md has no section for v$VERSION"
             exit 1
           fi
-      # The CRATES publish lists must be topologically ordered — an
-      # inversion aborts mid-publish and leaves a partial release.
-      - name: Verify publish order is topological
+      # The publish order is GENERATED from cargo metadata — there is no
+      # hand-maintained list anywhere. The check re-derives the graph and
+      # verifies the emitted order is topological, the publishable set is
+      # complete, and every publishable crate satisfies the predicate
+      # (martensite-* name or explicit package.metadata.ci.publishable).
+      - name: Verify generated publish order
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-      - run: python3 scripts/check-publish-order.py
+      - run: python3 scripts/workspace-matrix.py publish-order | python3 scripts/workspace-matrix.py check
 
   # ──────────────────────────────────────────────────────────
   # CI — reuse the same pipeline that runs on every push/PR/tag
@@ -96,61 +99,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Dry-run packaging
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+      # Unconditional on tag pushes too — packaging errors must surface
+      # before any real publish, not only on manual dry runs. Uses
+      # --no-verify because workspace path dependencies are not yet on
+      # crates.io; build validation is done by the CI gate jobs above.
+      - name: Packaging check (all crates)
         run: |
-          # Verify every publishable crate packages cleanly before any real publish.
-          # Uses --no-verify because workspace path dependencies are not yet on crates.io.
-          # Build validation is done by the CI gate jobs above.
-          CRATES=(
-            martensite-reactive
-            martensite-macros
-            martensite-theme
-            martensite-core
-            martensite-host
-            martensite-layout
-            martensite-vello
-            martensite-render
-            martensite-media-platform
-            martensite-media
-            martensite-engine-bridge
-            martensite-cosmic-text
-            martensite-text
-            martensite-font-fallback
-            martensite-access-platform
-            martensite-accesskit-winit
-            martensite-access
-            martensite-wgpu
-            martensite-shell
-            martensite-window
-            martensite-focus
-            martensite-clipboard-platform
-            martensite-clipboard
-            martensite-dnd
-            martensite-test
-            martensite-motion
-            martensite-history
-            martensite-l10n
-            martensite-assets
-            martensite-devtools
-            martensite-plugin
-            martensite-persist
-            martensite-dialog-platform
-            martensite-dialog
-            martensite-notify-platform
-            martensite-notify
-            martensite-print-platform
-            martensite-print
-            martensite-share-platform
-            martensite-share
-            martensite-webview
-            martensite-webview-platform
-            martensite-pdf-platform
-            martensite-pdf
-            martensite-blessed
-            martensite-design-lint
-            martensite
-          )
+          mapfile -t CRATES < <(python3 scripts/workspace-matrix.py publish-order)
           for crate in "${CRATES[@]}"; do
             echo "Packaging $crate..."
             cargo package -p "$crate" --allow-dirty --no-verify
@@ -260,83 +215,14 @@ jobs:
           WORKSPACE_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/^version *= *"\(.*\)".*/\1/')
           echo "[$(date -u +%H:%M:%S)] Workspace version: ${WORKSPACE_VERSION}"
 
-          # Crates in topological dependency order.
-          # martensite-vello must come before martensite-render.
-          # martensite-cosmic-text must come before martensite-text.
-          # martensite-theme must come before martensite-core (ambient
-          # `PaintContext::theme`) and martensite-wgpu.
-          # martensite-media-platform must come before martensite-wgpu.
-          # martensite-clipboard-platform must come before martensite-clipboard.
-          # martensite-font-fallback must come before martensite.
-          # martensite-shell must come before martensite-window.
-          # martensite-blessed must come before martensite (the
-          # `martensite::blessed` facade re-export makes martensite
-          # depend on martensite-blessed).
-          # martensite-accesskit-winit and martensite-access must come
-          # before martensite-wgpu (the paint-compliance audit hook makes
-          # wgpu depend on access, and access depends on accesskit-winit).
-          # martensite-accesskit-winit additionally depends on
-          # martensite-access-platform (the whitelisted-unsafe mobile
-          # bridge), and martensite-access depends on martensite-text —
-          # so cosmic-text → text → font-fallback → access-platform →
-          # accesskit-winit → access must precede wgpu.
-          # Each service `-platform` crate precedes its abstraction crate
-          # (dialog/notify/print/share/pdf: the abstraction's `platform`
-          # feature depends on it) — except webview, where the direction
-          # is reversed: martensite-webview-platform depends on
-          # martensite-webview (its wire types), so webview ships first.
-          # All must precede martensite, which depends on
-          # martensite-webview, martensite-webview-platform, and
-          # martensite-pdf (+pdf-platform via the `platform` feature).
-          CRATES=(
-            martensite-reactive
-            martensite-macros
-            martensite-theme
-            martensite-core
-            martensite-host
-            martensite-layout
-            martensite-vello
-            martensite-render
-            martensite-media-platform
-            martensite-media
-            martensite-engine-bridge
-            martensite-cosmic-text
-            martensite-text
-            martensite-font-fallback
-            martensite-access-platform
-            martensite-accesskit-winit
-            martensite-access
-            martensite-wgpu
-            martensite-shell
-            martensite-window
-            martensite-focus
-            martensite-clipboard-platform
-            martensite-clipboard
-            martensite-dnd
-            martensite-test
-            martensite-motion
-            martensite-history
-            martensite-l10n
-            martensite-assets
-            martensite-devtools
-            martensite-plugin
-            martensite-persist
-            martensite-dialog-platform
-            martensite-dialog
-            martensite-notify-platform
-            martensite-notify
-            martensite-print-platform
-            martensite-print
-            martensite-share-platform
-            martensite-share
-            martensite-webview
-            martensite-webview-platform
-            martensite-pdf-platform
-            martensite-pdf
-            martensite-blessed
-            martensite-design-lint
-            martensite
-          )
+          # Crates in topological dependency order — GENERATED from
+          # cargo metadata by scripts/workspace-matrix.py (Kahn's,
+          # name-sorted tie-break). The generator covers every path-dep
+          # edge including optional and versioned dev-deps, so new crates
+          # need no list edits; the validate job re-verifies the emitted
+          # order before this job ever runs.
+          mapfile -t CRATES < <(python3 scripts/workspace-matrix.py publish-order)
+          echo "[$(date -u +%H:%M:%S)] Publish order (${#CRATES[@]} crates): ${CRATES[*]}"
 
           published=0
           for crate in "${CRATES[@]}"; do
@@ -504,14 +390,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: [github-release]
     # Binaries are uploaded to the release created by the github-release
-    # job, so this normally only runs on real tag pushes once the release
-    # exists. Repair mode (binaries_tag input) skips the publish chain and
-    # attaches archives to an already-existing release.
+    # job, so a tag push requires that job to SUCCEED — a skipped release
+    # must never trigger softprops' upsert, which would attach archives
+    # to a bare auto-created release with no notes. Repair mode
+    # (binaries_tag input) intentionally skips github-release and
+    # attaches to an already-existing release.
     if: >-
       ${{ always() &&
-          (startsWith(github.ref, 'refs/tags/v') || inputs.binaries_tag != '') &&
-          needs.github-release.result != 'failure' &&
-          needs.github-release.result != 'cancelled' }}
+          ((startsWith(github.ref, 'refs/tags/v') && needs.github-release.result == 'success') ||
+           (inputs.binaries_tag != '' && needs.github-release.result != 'failure' && needs.github-release.result != 'cancelled')) }}
     continue-on-error: ${{ matrix.experimental || false }}
     permissions:
       contents: write
@@ -626,13 +513,12 @@ jobs:
     needs: [github-release, release-binaries]
     # always(): run even when a matrix leg failed so the missing assets
     # are reported explicitly instead of the pipeline going silently red.
-    # In repair mode github-release is skipped — the release must already
-    # exist — so only tag pushes require its result.
+    # Same gating as release-binaries: a tag push requires the release to
+    # have been created successfully; repair mode tolerates the skip.
     if: >-
       ${{ always() &&
-          (startsWith(github.ref, 'refs/tags/v') || inputs.binaries_tag != '') &&
-          needs.github-release.result != 'failure' &&
-          needs.github-release.result != 'cancelled' }}
+          ((startsWith(github.ref, 'refs/tags/v') && needs.github-release.result == 'success') ||
+           (inputs.binaries_tag != '' && needs.github-release.result != 'failure' && needs.github-release.result != 'cancelled')) }}
     permissions:
       contents: read
     steps:
