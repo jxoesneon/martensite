@@ -913,6 +913,10 @@ criteria = "safe-to-deploy"
 version = "0.13.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.lazy_static]]
+version = "1.5.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.leb128]]
 version = "0.2.7"
 criteria = "safe-to-deploy"
@@ -975,6 +979,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.mach2]]
 version = "0.6.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.matchers]]
+version = "0.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.maybe-owned]]
@@ -1055,6 +1063,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.notify-types]]
 version = "2.1.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.nu-ansi-term]]
+version = "0.50.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.num-conv]]
@@ -1541,6 +1553,10 @@ criteria = "safe-to-deploy"
 version = "0.10.9"
 criteria = "safe-to-deploy"
 
+[[exemptions.sharded-slab]]
+version = "0.1.7"
+criteria = "safe-to-deploy"
+
 [[exemptions.signal-hook-registry]]
 version = "1.4.8"
 criteria = "safe-to-deploy"
@@ -1673,6 +1689,10 @@ criteria = "safe-to-deploy"
 version = "2.0.20"
 criteria = "safe-to-deploy"
 
+[[exemptions.thread_local]]
+version = "1.1.10"
+criteria = "safe-to-deploy"
+
 [[exemptions.time]]
 version = "0.3.55"
 criteria = "safe-to-deploy"
@@ -1753,6 +1773,14 @@ criteria = "safe-to-deploy"
 version = "0.1.36"
 criteria = "safe-to-deploy"
 
+[[exemptions.tracing-log]]
+version = "0.2.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.tracing-subscriber]]
+version = "0.3.23"
+criteria = "safe-to-deploy"
+
 [[exemptions.type-map]]
 version = "0.5.1"
 criteria = "safe-to-deploy"
@@ -1787,6 +1815,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.uuid]]
 version = "1.26.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.valuable]]
+version = "0.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.vello_encoding]]

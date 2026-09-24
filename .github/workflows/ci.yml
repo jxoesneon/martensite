@@ -350,6 +350,17 @@ jobs:
         run: cargo check --manifest-path ${{ matrix.manifest }}
       - name: Clippy ${{ matrix.manifest }}
         run: cargo clippy --manifest-path ${{ matrix.manifest }} --all-targets -- -D warnings
+      # viewport_showcase links a test binary — bevy/winit on Linux needs
+      # X11/XCB/wayland/alsa/udev dev packages present on the runner.
+      # The rlib-only manifests don't link, so they skip this step.
+      - name: Install Linux link deps (viewport_showcase)
+        if: matrix.manifest == 'examples/viewport_showcase/Cargo.toml'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev \
+            libxi-dev libxinerama-dev libxcb1-dev libxcb-render0-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev \
+            libasound2-dev libudev-dev libwayland-dev
       # martensite-godot is a cdylib; its unit tests run through the rlib.
       - name: Test ${{ matrix.manifest }}
         run: cargo test --manifest-path ${{ matrix.manifest }}

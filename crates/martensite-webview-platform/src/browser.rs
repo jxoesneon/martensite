@@ -21,6 +21,7 @@
 
 use martensite_webview::{WebViewCommand, WebViewEvent, WebViewHost, WebViewState};
 use std::collections::VecDeque;
+#[cfg(any(unix, target_os = "windows"))]
 use std::process::Command;
 
 /// A system-browser [`WebViewHost`] — see the module docs.
