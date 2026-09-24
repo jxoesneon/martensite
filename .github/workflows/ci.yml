@@ -223,6 +223,14 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: nextest-${{ matrix.features }}
+      - name: Fetch dependency sources
+        # vello_shaders reads its own shader/import dir at runtime via a
+        # CARGO_MANIFEST_DIR path baked in at archive-build time. Fresh
+        # runners have an empty ~/.cargo/registry/src, so fetch (no
+        # compile) to extract dependency sources before running.
+        run: cargo fetch --locked
+        env:
+          RUSTUP_TOOLCHAIN: stable
       - name: Run Tests (${{ matrix.features }})
         run: >-
           cargo nextest run
@@ -333,14 +341,30 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - name: Install Mesa Lavapipe (Software Vulkan)
+      - name: Install runtime deps (Mesa Lavapipe + media libs)
+        # The default archive's media-linked binaries (e.g. martensite-wgpu
+        # via media-platform) are built where libva/ffmpeg exist; running
+        # them here without the shared libraries fails at --list with
+        # exit 127. Same package list as test-suite.
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1 \
+            libcairo2 libpango-1.0-0 libglib2.0-0 \
+            libva2 libavcodec60 libavutil58 libswscale7 libavfilter9 \
+            libavdevice60 libavformat60 || sudo apt-get install -y \
+            libvulkan1 mesa-vulkan-drivers libegl1 libcairo2 \
+            libpango-1.0-0 libglib2.0-0 libva2 libavcodec61 libavutil59 \
+            libswscale8 libavfilter10 libavdevice61 libavformat61
       - name: Download test archive
         uses: actions/download-artifact@v8
         with:
           name: nextest-default
+      - name: Fetch dependency sources
+        # vello_shaders reads its own shader/import dir at runtime via a
+        # CARGO_MANIFEST_DIR path baked in at archive-build time. Fresh
+        # runners have an empty ~/.cargo/registry/src, so fetch (no
+        # compile) to extract dependency sources before running.
+        run: cargo fetch --locked
       - name: Run ignored tests (wgpu + window)
         run: >-
           cargo nextest run --archive-file nextest-default.tar.zst
