@@ -30,6 +30,7 @@ on non-conventional names without encoding a per-crate roster.
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -38,11 +39,18 @@ WORKFLOW = ".github/workflows/publish.yml"
 
 
 def workspace_packages():
-    meta = json.loads(
-        subprocess.check_output(
-            ["cargo", "metadata", "--format-version", "1", "--no-deps"]
-        )
-    )
+    cmd = ["cargo", "metadata", "--format-version", "1", "--no-deps"]
+    try:
+        out = subprocess.check_output(cmd)
+    except subprocess.CalledProcessError:
+        # The rust-toolchain.toml shim can fail fetching components the
+        # bare toolchain lacks (rust-src) — rustup's on-demand download
+        # races its own .partial rename on CI runners. Retrying with
+        # RUSTUP_TOOLCHAIN bypasses the toml shim; `cargo metadata`
+        # needs none of those components.
+        env = dict(os.environ, RUSTUP_TOOLCHAIN="stable")
+        out = subprocess.check_output(cmd, env=env)
+    meta = json.loads(out)
     return {
         p["name"]: p
         for p in meta["packages"]
