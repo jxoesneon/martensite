@@ -51,6 +51,19 @@ pub enum Standard {
     /// repeated-pattern regularity. The "design system conformance"
     /// layer every mature lint ecosystem converges on.
     Consistency,
+    /// NUREG-0700 — the NRC's Human-System Interface Design Review
+    /// Guidelines for nuclear control rooms. The most quantified HSI
+    /// standard in print: packing density ≤50% (≤25% for
+    /// alphanumeric-dominant displays), minimized for critical
+    /// information, and split/multi-page guidance when a display
+    /// cannot be refined to fit.
+    Nureg0700,
+    /// FAA HFDS / FAA-CT-96-1 — Human Factors Design Standard and
+    /// Design Guide for acquisition. Quantified screen economics:
+    /// text-display character:blank ratio ≤60%, and the simultaneity
+    /// norm — only information essential *at a given time* should be
+    /// presented; related data belongs on one integrated display.
+    FaaHfds,
 }
 
 impl Standard {
@@ -63,6 +76,8 @@ impl Standard {
         Standard::InfoDesign,
         Standard::Perception,
         Standard::Consistency,
+        Standard::Nureg0700,
+        Standard::FaaHfds,
     ];
 
     /// The lowercase key used in config files and `standard:` allow
@@ -76,6 +91,8 @@ impl Standard {
             Standard::InfoDesign => "info-design",
             Standard::Perception => "perception",
             Standard::Consistency => "consistency",
+            Standard::Nureg0700 => "nureg-0700",
+            Standard::FaaHfds => "faa-hfds",
         }
     }
 
@@ -90,6 +107,8 @@ impl Standard {
             "info-design" | "tufte" | "few" | "infodesign" => Some(Standard::InfoDesign),
             "perception" | "aesthetics" | "clutter" => Some(Standard::Perception),
             "consistency" | "tokens" => Some(Standard::Consistency),
+            "nureg-0700" | "nureg-700" | "nureg0700" | "nureg" => Some(Standard::Nureg0700),
+            "faa-hfds" | "hfds" | "faa" | "faa-ct-96-1" => Some(Standard::FaaHfds),
             _ => None,
         }
     }
@@ -105,6 +124,8 @@ impl Standard {
             Standard::InfoDesign => "Tufte/Few/Gestalt/Nielsen information design",
             Standard::Perception => "Miniukovich/Rosenholtz perceptual metrics",
             Standard::Consistency => "design-system token & type discipline",
+            Standard::Nureg0700 => "NUREG-0700 HSI review guidelines (nuclear)",
+            Standard::FaaHfds => "FAA HFDS/CT-96-1 display design economics",
         }
     }
 }
@@ -112,5 +133,42 @@ impl Standard {
 impl fmt::Display for Standard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.config_key())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_keys_round_trip() {
+        for s in Standard::ALL {
+            assert_eq!(
+                Standard::from_key(s.config_key()),
+                Some(*s),
+                "config_key {} did not round-trip",
+                s.config_key()
+            );
+        }
+    }
+
+    #[test]
+    fn aliases_resolve() {
+        assert_eq!(Standard::from_key("NUREG"), Some(Standard::Nureg0700));
+        assert_eq!(Standard::from_key("nureg-700"), Some(Standard::Nureg0700));
+        assert_eq!(Standard::from_key("hfds"), Some(Standard::FaaHfds));
+        assert_eq!(Standard::from_key("faa-ct-96-1"), Some(Standard::FaaHfds));
+        assert_eq!(Standard::from_key("nonsense"), None);
+    }
+
+    #[test]
+    fn all_is_unique_and_described() {
+        let mut seen = std::collections::HashSet::new();
+        for s in Standard::ALL {
+            assert!(seen.insert(s), "duplicate standard in ALL: {s}");
+            assert!(!s.describe().is_empty());
+            assert!(!s.config_key().is_empty());
+        }
+        assert_eq!(Standard::ALL.len(), 9);
     }
 }

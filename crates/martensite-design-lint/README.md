@@ -12,6 +12,8 @@ colors), then evaluates evidence-backed rules:
 - **Information design** — Tufte data-ink, Few dashboards, Gestalt grouping
 - **Perception research** — Miniukovich alignment metrics, Rosenholtz clutter
 - **Consistency** — type scale, token discipline
+- **NUREG-0700** — nuclear HSI review: packing-density caps, critical-info sparsity
+- **FAA HFDS / CT-96-1** — character:blank ratio, essential-info simultaneity
 
 Every finding cites the standard behind it — the report teaches, not
 just flags.

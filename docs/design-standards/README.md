@@ -22,18 +22,20 @@ Every finding carries:
 
 ## The evidence base
 
-Rules cite real bodies of guidance, grouped into seven selectable
+Rules cite real bodies of guidance, grouped into nine selectable
 standards:
 
 | Key           | Standard                                             | Rules enforcing it |
 | ------------- | ---------------------------------------------------- | ------------------ |
 | `wcag` | [WCAG 2.2 accessibility floors](standards/wcag.md) | [color-only-info](rules/color-only-info.md), [icon-only-control](rules/icon-only-control.md), [nontext-contrast](rules/nontext-contrast.md), [overflow-clip](rules/overflow-clip.md), [reading-order](rules/reading-order.md), [target-size](rules/target-size.md), [target-spacing](rules/target-spacing.md), [text-contrast](rules/text-contrast.md), [text-min-size](rules/text-min-size.md), [text-truncation](rules/text-truncation.md) |
-| `isa-101` | [ANSI/ISA-101 High-Performance HMI](standards/isa-101.md) | [alert-saturation](rules/alert-saturation.md), [color-budget](rules/color-budget.md), [color-only-info](rules/color-only-info.md), [kpi-context](rules/kpi-context.md), [level-purity](rules/level-purity.md), [level-skip](rules/level-skip.md), [nav-depth](rules/nav-depth.md), [progressive-disclosure](rules/progressive-disclosure.md), [reserved-hue](rules/reserved-hue.md), [saturated-area-cap](rules/saturated-area-cap.md) |
+| `isa-101` | [ANSI/ISA-101 High-Performance HMI](standards/isa-101.md) | [alert-saturation](rules/alert-saturation.md), [color-budget](rules/color-budget.md), [color-only-info](rules/color-only-info.md), [kpi-context](rules/kpi-context.md), [level-purity](rules/level-purity.md), [level-skip](rules/level-skip.md), [nav-depth](rules/nav-depth.md), [progressive-disclosure](rules/progressive-disclosure.md), [reserved-hue](rules/reserved-hue.md), [saturated-area-cap](rules/saturated-area-cap.md), [simultaneous-channels](rules/simultaneous-channels.md) |
 | `isa-18-2` | [ANSI/ISA-18.2 alarm management](standards/isa-18-2.md) | [alert-saturation](rules/alert-saturation.md), [flood-cap](rules/flood-cap.md), [priority-mix](rules/priority-mix.md) |
 | `hci-laws` | [Hick, Miller/Cowan, Fitts](standards/hci-laws.md) | [choice-count](rules/choice-count.md), [danger-adjacency](rules/danger-adjacency.md), [density](rules/density.md), [menu-breadth](rules/menu-breadth.md), [menu-depth](rules/menu-depth.md), [modal-depth](rules/modal-depth.md), [tab-count](rules/tab-count.md) |
 | `info-design` | [Tufte, Few, Gestalt, Nielsen](standards/info-design.md) | [aspect-extreme](rules/aspect-extreme.md), [balance](rules/balance.md), [baseline-drift](rules/baseline-drift.md), [choice-count](rules/choice-count.md), [chrome-ratio](rules/chrome-ratio.md), [danger-adjacency](rules/danger-adjacency.md), [duplicate-action](rules/duplicate-action.md), [edge-touch](rules/edge-touch.md), [empty-surface](rules/empty-surface.md), [grid-drift](rules/grid-drift.md), [heading-rhythm](rules/heading-rhythm.md), [icon-only-control](rules/icon-only-control.md), [kpi-context](rules/kpi-context.md), [line-length](rules/line-length.md), [min-surface](rules/min-surface.md), [modal-depth](rules/modal-depth.md), [nav-depth](rules/nav-depth.md), [paint-complexity](rules/paint-complexity.md), [progressive-disclosure](rules/progressive-disclosure.md), [reading-order](rules/reading-order.md), [redundant-border](rules/redundant-border.md), [regularity](rules/regularity.md), [scroll-competition](rules/scroll-competition.md), [sibling-variance](rules/sibling-variance.md), [spacing-token](rules/spacing-token.md), [symmetry](rules/symmetry.md), [whitespace](rules/whitespace.md) |
 | `perception` | [Miniukovich, Rosenholtz clutter metrics](standards/perception.md) | [alignment](rules/alignment.md), [aspect-extreme](rules/aspect-extreme.md), [balance](rules/balance.md), [baseline-drift](rules/baseline-drift.md), [density](rules/density.md), [edge-density](rules/edge-density.md), [empty-surface](rules/empty-surface.md), [grid-drift](rules/grid-drift.md), [heading-rhythm](rules/heading-rhythm.md), [paint-complexity](rules/paint-complexity.md), [redundant-border](rules/redundant-border.md), [regularity](rules/regularity.md), [scroll-competition](rules/scroll-competition.md), [symmetry](rules/symmetry.md), [whitespace](rules/whitespace.md) |
 | `consistency` | [Design-system & type discipline](standards/consistency.md) | [alignment](rules/alignment.md), [color-budget](rules/color-budget.md), [duplicate-action](rules/duplicate-action.md), [edge-touch](rules/edge-touch.md), [menu-breadth](rules/menu-breadth.md), [menu-depth](rules/menu-depth.md), [min-surface](rules/min-surface.md), [overflow-clip](rules/overflow-clip.md), [sibling-variance](rules/sibling-variance.md), [spacing-token](rules/spacing-token.md), [tab-count](rules/tab-count.md), [text-min-size](rules/text-min-size.md), [text-truncation](rules/text-truncation.md), [token-drift](rules/token-drift.md), [type-scale](rules/type-scale.md) |
+| `nureg-0700` | [NUREG-0700 nuclear HSI review](standards/nureg-0700.md) | [level-purity](rules/level-purity.md), [packing-density](rules/packing-density.md) |
+| `faa-hfds` | [FAA HFDS / CT-96-1 display economics](standards/faa-hfds.md) | [simultaneous-channels](rules/simultaneous-channels.md), [text-density](rules/text-density.md) |
 
 A rule is active when **at least one** of its cited standards is
 enabled.
@@ -72,6 +74,7 @@ enabled.
 | [nav-depth](rules/nav-depth.md) | warn | deterministic | stacked navigation/orientation layers per surface |
 | [nontext-contrast](rules/nontext-contrast.md) | warn | deterministic | adjacent component boundaries below 3:1 |
 | [overflow-clip](rules/overflow-clip.md) | warn | deterministic | paint geometry escaping its scope bounds |
+| [packing-density](rules/packing-density.md) | warn | heuristic | element footprint share vs. NUREG-0700's 50%/25% caps |
 | [paint-complexity](rules/paint-complexity.md) | info | heuristic | paint-op density past the clutter ceiling |
 | [priority-mix](rules/priority-mix.md) | info | heuristic | alarm priority distribution off the 80/15/5 norm |
 | [progressive-disclosure](rules/progressive-disclosure.md) | info | heuristic | overloaded surfaces with no disclosure affordance |
@@ -82,12 +85,14 @@ enabled.
 | [saturated-area-cap](rules/saturated-area-cap.md) | warn | heuristic | saturated color covering too much of the display |
 | [scroll-competition](rules/scroll-competition.md) | info | heuristic | competing scroll regions in one surface |
 | [sibling-variance](rules/sibling-variance.md) | info | heuristic | same-name siblings with divergent geometry |
+| [simultaneous-channels](rules/simultaneous-channels.md) | warn | heuristic | concurrent live data displays past the attention budget |
 | [spacing-token](rules/spacing-token.md) | info | heuristic | sibling gaps off the spacing grid |
 | [symmetry](rules/symmetry.md) | info | heuristic | left/right painted-mass asymmetry per surface |
 | [tab-count](rules/tab-count.md) | warn | deterministic | tab strip past the scanning budget |
 | [target-size](rules/target-size.md) | warn | deterministic | interactive elements below the minimum target size |
 | [target-spacing](rules/target-spacing.md) | info | heuristic | interactive targets packed below the spacing floor |
 | [text-contrast](rules/text-contrast.md) | warn | deterministic | text painted below the WCAG contrast minimum |
+| [text-density](rules/text-density.md) | warn | heuristic | character-cell coverage past the FAA 60% cap |
 | [text-min-size](rules/text-min-size.md) | info | heuristic | text below the readability floor |
 | [text-truncation](rules/text-truncation.md) | info | heuristic | text runs extending beyond their scope |
 | [token-drift](rules/token-drift.md) | info | heuristic | painted colors matching no declared palette token |
@@ -120,7 +125,7 @@ report.
   these standards run.
 - `disabled_standards = ["perception"]` — subtract from the full set.
 
-Omit both and all seven standards are enabled.
+Omit both and all nine standards are enabled.
 
 ### Per-rule configuration
 
@@ -225,9 +230,9 @@ scale_factor = 2.0
 # Where finding doc links point. A repo-relative path or a URL.
 docs_base = "docs/design-standards"
 
-# Cherry-pick standards — omit for all seven. This industrial product
+# Cherry-pick standards — omit for all nine. This industrial product
 # wants the HMI and accessibility canon but not perception metrics.
-standards = ["wcag", "isa-101", "isa-18-2", "hci-laws", "info-design", "consistency"]
+standards = ["wcag", "isa-101", "isa-18-2", "hci-laws", "info-design", "consistency", "nureg-0700", "faa-hfds"]
 # Alternatively, subtract from the full set:
 # disabled_standards = ["perception"]
 

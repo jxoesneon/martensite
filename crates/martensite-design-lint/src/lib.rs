@@ -5,8 +5,9 @@
 //! [`LintScene`] — a normalized widget tree with geometry, text sizes,
 //! and colors — then evaluates a catalog of evidence-backed rules:
 //! WCAG floors, ISA-101 High-Performance HMI, ISA-18.2 alarm analogs,
-//! Hick/Fitts cognitive-cost laws, Tufte/Few information design, and
-//! perceptual-clutter research.
+//! Hick/Fitts cognitive-cost laws, Tufte/Few information design,
+//! perceptual-clutter research, NUREG-0700 packing-density caps, and
+//! FAA HFDS screen-density/simultaneity economics.
 //!
 //! ## Control model
 //!

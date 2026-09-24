@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Design-lint standards
+
+- **Two new lint standards** — `nureg-0700` (NRC Human-System Interface
+  Design Review Guidelines; the most quantified HSI standard in print)
+  and `faa-hfds` (FAA Human Factors Design Standard / FAA-CT-96-1).
+  The catalog is now nine selectable standards.
+- **`packing-density` rule** — element-footprint union share of a
+  display scope vs. NUREG-0700's caps: 50% general, 25% for
+  alphanumeric-dominant displays, 35% inside `@level:1`
+  critical-information lineages. Union (not sum) of leaf bounds, so
+  background fills and overlap don't inflate the measure; outermost
+  offender reported.
+- **`text-density` rule** — character-cell coverage of
+  alphanumeric-dominant scopes vs. FAA §8.1.1.3's 60%
+  character-to-blank cap; estimated advance × em per run.
+- **`simultaneous-channels` rule** — count of distinct live data
+  displays concurrently visible per surface (topmost display scopes
+  only; a chart's internals aren't channels) vs. a working-memory
+  budget, citing FAA §8.1.1.2's "essential at a given time" norm and
+  ISA-101's display hierarchy.
+- **`level-purity`** now also cites `nureg-0700` (density minimized
+  for critical-information displays) alongside ISA-101.
+- Standards docs at `docs/design-standards/standards/{nureg-0700,
+  faa-hfds}.md` and rule docs under `docs/design-standards/rules/`.
+
 ### Changed — CI Hardening & Dependency Health
 
 - **Zero-vulnerability policy enforced** — `.cargo/audit.toml` and

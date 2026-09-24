@@ -524,13 +524,22 @@ impl LintScene {
                     if let Some(acc) = current!() {
                         push_unique_f32(&mut acc.node.font_sizes, run.font_size);
                         push_unique(&mut acc.node.colors, run.color);
-                        if let (Some(first), Some(last)) = (run.glyphs.first(), run.glyphs.last()) {
+                        if let Some(first) = run.glyphs.first() {
+                            // Min/max glyph extent — RTL runs advance in
+                            // -x, so first→last order isn't the visual span.
+                            // Origin is the leftmost edge so downstream
+                            // rules (text-truncation, cell coverage) can
+                            // treat origin + width as the right edge.
+                            let (lo, hi) =
+                                run.glyphs.iter().fold((f32::MAX, f32::MIN), |(lo, hi), g| {
+                                    (lo.min(g.x), hi.max(g.x + g.width))
+                                });
                             acc.node.texts.push(TextStat {
-                                origin: Point::new(f64::from(first.x), f64::from(first.y)),
+                                origin: Point::new(f64::from(lo), f64::from(first.y)),
                                 size: run.font_size,
                                 color: run.color,
                                 text: String::new(),
-                                width: Some(f64::from(last.x + last.width) - f64::from(first.x)),
+                                width: Some(f64::from(hi - lo).max(0.0)),
                             });
                         }
                     }

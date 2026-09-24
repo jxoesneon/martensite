@@ -47,6 +47,241 @@ pub(crate) fn interactive_leaves<'a>(node: &'a LintNode, cfg: &LintConfig) -> Ve
     out
 }
 
+/// Union of rect areas clipped to `clip` — the "used area" share
+/// NUREG-0700's packing density measures. X-slab sweep: at each
+/// interval between consecutive x-edges, every rect covering the
+/// slab's midpoint spans the whole slab (slab boundaries are rect
+/// edges), so merging their y-intervals gives the covered column.
+/// O(n²) worst case — trivial at scene sizes (~100 leaves).
+pub(crate) fn union_area(rects: impl IntoIterator<Item = kurbo::Rect>, clip: kurbo::Rect) -> f64 {
+    let rects: Vec<kurbo::Rect> = rects
+        .into_iter()
+        .map(|r| r.intersect(clip))
+        .filter(|r| r.width() > 0.0 && r.height() > 0.0)
+        .collect();
+    if rects.is_empty() {
+        return 0.0;
+    }
+    let mut xs: Vec<f64> = rects.iter().flat_map(|r| [r.x0, r.x1]).collect();
+    xs.sort_by(f64::total_cmp);
+    xs.dedup();
+    let mut area = 0.0;
+    for slab in xs.windows(2) {
+        let (x0, x1) = (slab[0], slab[1]);
+        let mut covered = 0.0;
+        let mut open: Option<(f64, f64)> = None;
+        // Slab boundaries are exactly the rect edges, so a rect spans
+        // the slab iff it covers both endpoints.
+        let mut ys: Vec<(f64, f64)> = rects
+            .iter()
+            .filter(|r| r.x0 <= x0 && r.x1 >= x1)
+            .map(|r| (r.y0, r.y1))
+            .collect();
+        ys.sort_by(|a, b| f64::total_cmp(&a.0, &b.0));
+        for (y0, y1) in ys {
+            match open {
+                Some((cy0, cy1)) if y0 <= cy1 => open = Some((cy0, cy1.max(y1))),
+                Some((cy0, cy1)) => {
+                    covered += cy1 - cy0;
+                    open = Some((y0, y1));
+                }
+                None => open = Some((y0, y1)),
+            }
+        }
+        if let Some((y0, y1)) = open {
+            covered += y1 - y0;
+        }
+        area += covered * (x1 - x0);
+    }
+    area
+}
+
+/// Estimated character-cell area of a node's text runs — advance
+/// width × em box per run. `width` carries real advances when the
+/// paint list recorded them; otherwise ~0.5em/char.
+pub(crate) fn text_cell_area(node: &LintNode) -> f64 {
+    node.texts
+        .iter()
+        .map(|t| {
+            let w = t
+                .width
+                .unwrap_or_else(|| f64::from(t.size) * 0.5 * t.text.chars().count() as f64);
+            w * f64::from(t.size)
+        })
+        .sum()
+}
+
+/// Estimated character count of a text run — the real string for
+/// `DrawText` stats, or advance-width inference (~0.5em per char) for
+/// `DrawGlyphRun` stats whose text isn't recorded. A one-glyph icon
+/// run estimates ~2 chars, below the alphanumeric threshold.
+fn estimated_chars(t: &crate::scene::TextStat) -> usize {
+    if !t.text.is_empty() {
+        return t.text.chars().count();
+    }
+    match t.width {
+        Some(w) if w > 0.0 => (w / (f64::from(t.size).max(1.0) * 0.5)).round() as usize,
+        _ => 0,
+    }
+}
+
+/// True when any single run on the node looks like real text — ≥3
+/// estimated characters in *one* run. Per-run, not summed: a leaf of
+/// three icon glyphs is a control cluster, not an alphanumeric
+/// element.
+fn has_text_run(node: &LintNode) -> bool {
+    node.texts.iter().any(|t| estimated_chars(t) >= 3)
+}
+
+/// Fraction of leaf-bounds area belonging to *alphanumeric elements*
+/// — the "largely alphanumeric" test NUREG-0700 and FAA HFDS use to
+/// select the stricter density cap. A leaf counts when its text cells
+/// cover ≥5% of its own bounds *and* it carries ≥3 estimated
+/// characters: a Chart with a caption is a display element, an icon
+/// button is a control element, and a Label full of log lines is an
+/// alphanumeric element. Leaf bounds are clipped to the surface, the
+/// same convention `union_area` uses for the density numerator.
+pub(crate) fn text_leaf_share(node: &LintNode) -> f64 {
+    let mut text_area = 0.0;
+    let mut total = 0.0;
+    for d in node.walk().skip(1) {
+        if !d.children.is_empty() {
+            continue;
+        }
+        let a = {
+            let c = d.bounds.intersect(node.bounds);
+            (c.width() * c.height()).max(0.0)
+        };
+        total += a;
+        if a > 0.0 && has_text_run(d) && text_cell_area(d) >= 0.05 * a {
+            text_area += a;
+        }
+    }
+    if total <= 0.0 {
+        0.0
+    } else {
+        text_area / total
+    }
+}
+
+/// Word segments of a widget name — PascalCase/camelCase humps,
+/// snake/kebab separators, and acronym tails (`LEDMatrix` →
+/// `["led", "matrix"]`) all become boundaries.
+fn name_segments(name: &str) -> Vec<String> {
+    let chars: Vec<char> = name.chars().collect();
+    let mut segs = Vec::new();
+    let mut cur = String::new();
+    for (i, ch) in chars.iter().enumerate() {
+        if !ch.is_alphanumeric() {
+            if !cur.is_empty() {
+                segs.push(std::mem::take(&mut cur));
+            }
+            continue;
+        }
+        let prev = chars.get(i.wrapping_sub(1)).copied();
+        let boundary = !cur.is_empty()
+            && prev.is_some_and(|p| {
+                // alpha↔digit transitions always split ("Chart2D" →
+                // ["chart","2","d"], "ISO8601Chart" → ["iso","8601","chart"])
+                (p.is_alphabetic() && ch.is_ascii_digit())
+                    || (p.is_ascii_digit() && ch.is_alphabetic())
+                    || (ch.is_uppercase()
+                        && (p.is_lowercase()
+                            || (p.is_uppercase()
+                                && chars.get(i + 1).is_some_and(|n| n.is_lowercase()))))
+            });
+        if boundary {
+            segs.push(std::mem::take(&mut cur));
+        }
+        cur.push(ch.to_ascii_lowercase());
+    }
+    if !cur.is_empty() {
+        segs.push(cur);
+    }
+    segs
+}
+
+/// Name-table test for live data displays — the monitoring
+/// "channels" `simultaneous-channels` counts. Name-based rather than
+/// kind-based: a `Label` is Content too, but it isn't a channel.
+/// Matching is word-segment exact — `Dialog` contains `dial` and
+/// `Paragraph` contains `graph`, but neither is a channel.
+pub(crate) fn is_data_display(name: &str) -> bool {
+    let short = name.rsplit("::").next().unwrap_or(name);
+    let (short, _) = short.split_once('@').unwrap_or((short, ""));
+    let segs = name_segments(short.trim());
+    const SEGMENT_DISPLAYS: &[&str] = &[
+        "chart",
+        "graph",
+        "plot",
+        "sparkline",
+        "gauge",
+        "dial",
+        "meter",
+        "indicator",
+        "progress",
+        "table",
+        "led",
+        "ticker",
+        "media",
+        "map",
+        "kpi",
+        "gantt",
+        "treemap",
+        "timeline",
+        "fishbone",
+        "terminal",
+        "heatmap",
+        "histogram",
+        "diagram",
+        "canvas",
+        "spectrum",
+        "waterfall",
+        "marquee",
+    ];
+    // Compounds that don't reduce to a single segment keyword —
+    // `StackLight`, `SplitFlap`, `MapView`, `DataGrid`, `LedMatrix`.
+    const COMPOUND_DISPLAYS: &[&str] = &[
+        "stacklight",
+        "splitflap",
+        "mapview",
+        "minimap",
+        "datatable",
+        "datagrid",
+        "ledmatrix",
+        "videogrid",
+        "mindmap",
+        "flowgraph",
+        "nodegraph",
+    ];
+    if segs.iter().any(|s| SEGMENT_DISPLAYS.contains(&s.as_str())) {
+        return true;
+    }
+    // Compound names match at segment boundaries, so a prefixed
+    // `MyStackLight`/`ZoneDataGrid` still counts.
+    (0..segs.len()).any(|i| COMPOUND_DISPLAYS.contains(&segs[i..].concat().as_str()))
+}
+
+/// Topmost data-display descendants — a Chart's internal parts don't
+/// each count as a channel; the chart is one display.
+pub(crate) fn data_display_leaves(node: &LintNode) -> Vec<&LintNode> {
+    fn collect<'a>(n: &'a LintNode, inside: bool, out: &mut Vec<&'a LintNode>) {
+        let display = is_data_display(&n.name);
+        if display && !inside {
+            out.push(n);
+            return;
+        }
+        for c in &n.children {
+            collect(c, inside || display, out);
+        }
+    }
+    let mut out = Vec::new();
+    for c in &node.children {
+        collect(c, false, &mut out);
+    }
+    out
+}
+
 /// Every built-in rule, in stable report order.
 pub fn all_rules() -> Vec<&'static dyn LintRule> {
     let mut rules: Vec<&'static dyn LintRule> = vec![
@@ -1580,5 +1815,126 @@ mod rules_tests {
         scene.scale_factor = 1.0;
         let report = lint(&scene, &LintConfig::new());
         assert!(findings_for(&report, "whitespace").is_empty());
+    }
+
+    // ---------- union_area ----------
+
+    #[test]
+    fn union_area_disjoint_rects_sum() {
+        let clip = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let a = union_area(
+            [
+                Rect::new(0.0, 0.0, 40.0, 40.0),
+                Rect::new(60.0, 60.0, 100.0, 100.0),
+            ],
+            clip,
+        );
+        assert_eq!(a, 1600.0 + 1600.0);
+    }
+
+    #[test]
+    fn union_area_overlap_counts_once() {
+        let clip = Rect::new(0.0, 0.0, 100.0, 100.0);
+        // Two 50×50 rects overlapping in a 10×50 band → 2500+2500-500.
+        let a = union_area(
+            [
+                Rect::new(0.0, 0.0, 50.0, 50.0),
+                Rect::new(40.0, 0.0, 90.0, 50.0),
+            ],
+            clip,
+        );
+        assert_eq!(a, 4500.0);
+    }
+
+    #[test]
+    fn union_area_touching_rects_do_not_merge() {
+        let clip = Rect::new(0.0, 0.0, 100.0, 100.0);
+        // Shared edge at x=50 — union is still the simple sum.
+        let a = union_area(
+            [
+                Rect::new(0.0, 0.0, 50.0, 50.0),
+                Rect::new(50.0, 0.0, 100.0, 50.0),
+            ],
+            clip,
+        );
+        assert_eq!(a, 5000.0);
+    }
+
+    #[test]
+    fn union_area_clips_and_drops_outside() {
+        let clip = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let a = union_area(
+            [
+                Rect::new(50.0, 50.0, 150.0, 150.0),   // half outside → 2500
+                Rect::new(200.0, 200.0, 300.0, 300.0), // fully outside → 0
+            ],
+            clip,
+        );
+        assert_eq!(a, 2500.0);
+    }
+
+    #[test]
+    fn union_area_empty_and_degenerate() {
+        let clip = Rect::new(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(union_area([], clip), 0.0);
+        assert_eq!(union_area([Rect::new(10.0, 10.0, 10.0, 50.0)], clip), 0.0);
+    }
+
+    // ---------- is_data_display ----------
+
+    #[test]
+    fn data_display_segment_matching_kills_collisions() {
+        for name in [
+            "Chart",
+            "TrendChart",
+            "Gauge",
+            "RadialGauge",
+            "Sparkline",
+            "DataTable",
+            "Table",
+            "StackLight",
+            "LedMatrix",
+            "LEDMatrix",
+            "SplitFlap",
+            "MapView",
+            "MiniMap",
+            "Gantt",
+            "Treemap",
+            "Timeline",
+            "Fishbone",
+            "Terminal",
+            "Heatmap",
+            "ParameterChart",
+            // digit boundaries + prefixed compounds
+            "Chart2D",
+            "Gauge3",
+            "MyStackLight",
+            "ZoneDataGrid",
+        ] {
+            assert!(is_data_display(name), "{name} should be a display");
+        }
+        for name in [
+            "Dialog",
+            "AlertDialog",
+            "Paragraph",
+            "Photograph",
+            "Timetable",
+            "Roundtable",
+            "Sticker",
+            "ImmediateMode",
+            "Thermometer",
+            "Flowchart",
+            "Label",
+            "Button",
+            "Panel",
+        ] {
+            assert!(!is_data_display(name), "{name} is not a display");
+        }
+    }
+
+    #[test]
+    fn data_display_strips_markers_and_paths() {
+        assert!(is_data_display("widgets::TrendChart@level:2"));
+        assert!(!is_data_display("widgets::Dialog@modal"));
     }
 }
