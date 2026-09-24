@@ -3,17 +3,19 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.19.0 publish completing manually (2026-09-24) —
-the automated pipeline green-lit all 62 CI gates but its publish leg
-aborted on a hand-maintained order inversion; crates are being resumed
-in corrected order with crates.io rate-limit pacing (~9 first-time
-crates remain). Release notes set on the v0.19.0 GitHub Release.
-Hardening landed in `f1897a3`: publish order + semver matrix + doctest
-shards are now GENERATED from cargo metadata (no hand lists), the
-packaging gate is unconditional, release-asset jobs can't fire after a
-skipped release, and CI tests run as a 12-shard cargo-nextest matrix
-with sharded doctests + a test-count parity gate — council-approved
-(5-member deliberation) to cut release wall-clock ~5h → ~2h.
+Last updated: v0.19.0 RELEASED (2026-09-24) — all 47 crates verified
+at 0.19.0 on crates.io (published manually in generated topo order
+after the automated pipeline's hand-maintained list aborted mid-run;
+the GitHub Release carries CHANGELOG notes + all 14 platform binaries).
+Release hardening landed on main (`f1897a3`→`ffb52cf`): publish order,
+semver matrix, and doctest shards are now GENERATED from cargo
+metadata (scripts/workspace-matrix.py — no hand lists; the stale
+semver matrix had silently skipped accesskit-winit + design-lint);
+packaging check runs unconditionally; release-asset jobs can't fire
+after a skipped github-release; tests run as build-once →
+nextest-archive → 12 hash-partitioned shards + 4-shard doctests +
+permanent count-parity gate; tag pushes no longer double-run CI.
+Next release should complete in ~2h vs ~5h.
 
 ## Active Milestone Plan (v0.18.0 → v0.19.0 → v1.0.0-rc → v1.0.0)
 
