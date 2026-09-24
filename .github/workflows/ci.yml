@@ -115,7 +115,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
       - name: Install Pango/Cairo + FFmpeg/libva (text-reference + decoder backends)
-        if: matrix.features == 'all-features'
         run: |
           sudo apt-get install -y libcairo2-dev libpango1.0-dev \
             libglib2.0-dev pkg-config \
@@ -154,11 +153,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "doctests"
-      - name: Install mold + Pango/Cairo
+      - name: Install mold + Pango/Cairo + FFmpeg/libva (--all-features)
         run: |
           sudo apt-get update
           sudo apt-get install -y mold libcairo2-dev libpango1.0-dev \
-            libglib2.0-dev pkg-config
+            libglib2.0-dev pkg-config \
+            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavfilter-dev libavdevice-dev \
+            libavformat-dev
       - name: Run Doc Tests
         run: |
           mapfile -t PKGS < <(python3 scripts/workspace-matrix.py doctest-group "${{ matrix.shard }}" 4)
@@ -178,11 +180,14 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - name: Install Pango/Cairo (build scripts)
+      - name: Install Mesa + Pango/Cairo + FFmpeg/libva (workspace compiles)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
-            libglib2.0-dev pkg-config
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1 \
+            libcairo2-dev libpango1.0-dev libglib2.0-dev pkg-config \
+            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavfilter-dev libavdevice-dev \
+            libavformat-dev
       - name: Compare test counts
         run: |
           libtest=$(cargo test --workspace --bins --lib --tests -- --list 2>/dev/null | grep -c ': test$')

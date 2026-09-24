@@ -3,15 +3,17 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.19.0 tagged and pushed (`e037d7b`, 2026-09-24) —
-the gated publish pipeline is running on GitHub: all CI gates, then
-sequential crates.io publish of ~47 crates (~14 first-time: persist,
-dialog(+platform), notify(+platform), print(+platform),
-share(+platform), webview(+platform), pdf(+platform),
-design-lint), then an auto-generated GitHub Release from CHANGELOG.
-Local gates all green before tag: fmt, clippy both feature sets,
-doc build, audit, deny, bench, 99 test suites. v0.18.0 shipped
-2026-09-16 (33 crates).
+Last updated: v0.19.0 publish completing manually (2026-09-24) —
+the automated pipeline green-lit all 62 CI gates but its publish leg
+aborted on a hand-maintained order inversion; crates are being resumed
+in corrected order with crates.io rate-limit pacing (~9 first-time
+crates remain). Release notes set on the v0.19.0 GitHub Release.
+Hardening landed in `f1897a3`: publish order + semver matrix + doctest
+shards are now GENERATED from cargo metadata (no hand lists), the
+packaging gate is unconditional, release-asset jobs can't fire after a
+skipped release, and CI tests run as a 12-shard cargo-nextest matrix
+with sharded doctests + a test-count parity gate — council-approved
+(5-member deliberation) to cut release wall-clock ~5h → ~2h.
 
 ## Active Milestone Plan (v0.18.0 → v0.19.0 → v1.0.0-rc → v1.0.0)
 
