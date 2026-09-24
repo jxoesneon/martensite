@@ -116,18 +116,21 @@ shipped an inverted publish order that aborted a release mid-upload.
   `github-release` was skipped on a tag push — softprops upserts to a
   bare auto-created release otherwise.
 
-### 8. Tests run under cargo-nextest in CI
+### 8. Tests run under cargo-nextest in CI — built once, sharded
 
-CI's `test-suite` job runs `cargo nextest run --partition hash:m/6`
-across 12 matrix shards (6 × {default, all-features}); doctests run in
-a separate 4-shard job (nextest never runs doctests). Per-test process
-isolation is mostly safer, but tests sharing an OS-level singleton —
-the real system clipboard in `martensite-clipboard-platform` — are
-serialized via the `system-clipboard` test-group in
-`.config/nextest.toml`. Add any new OS-singleton test there. The
-`test-parity` job asserts nextest sees the same test count as libtest;
-`--ignored`/`--nocapture` libtest flags need `--run-ignored`/
-`--no-capture` equivalents under nextest.
+CI compiles test binaries ONCE per feature leg (`build-tests` job →
+`cargo nextest archive` → workflow artifact), then 12 `test-suite`
+shards (6 hash-partitions × {default, all-features}) download the
+archive and run only their slice — no per-shard compile. The parity
+assertion (libtest `-- --list` count == archived test count) lives in
+the build job where compilation already happened. Doctests run in a
+separate 4-shard `doc-tests` job (nextest never runs doctests; mold
+links them faster). Per-test process isolation is mostly safer, but
+tests sharing an OS-level singleton — the real system clipboard in
+`martensite-clipboard-platform` — are serialized via the
+`system-clipboard` test-group in `.config/nextest.toml`. Add any new
+OS-singleton test there. `--ignored`/`--nocapture` libtest flags need
+`--run-ignored`/`--no-capture` equivalents under nextest.
 
 ## Verification Checklist (run before every release)
 

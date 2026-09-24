@@ -87,15 +87,75 @@ jobs:
       - name: Run cargo-vet
         run: cargo vet --locked
 
-  # Tests run under cargo-nextest, hash-partitioned across a matrix of
-  # shards — each shard is an independent runner. Per-test process
-  # isolation makes most suites safer; tests that share an OS singleton
-  # (the real system clipboard) are serialized via the `system-clipboard`
-  # test-group in .config/nextest.toml. The test-parity job below
-  # guards against silently dropping tests in the migration.
+  # Build-once / run-many: one job per feature leg compiles all test
+  # binaries into a cargo-nextest archive (~100-400MB .tar.zst); the
+  # shard jobs download the archive and run only their hash partition —
+  # no per-shard compile at all (the per-shard compile floor was the
+  # release-time bottleneck). The parity assertion is folded into the
+  # build job: the workspace is already compiled there, so comparing
+  # libtest's `-- --list` count to the archived test count is free and
+  # permanently guards against silently dropping tests.
+  build-tests:
+    name: Build Test Archive (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [default, all-features]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "tests-${{ matrix.features }}"
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Install Mesa + Pango/Cairo (build + link deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1 \
+            libcairo2-dev libpango1.0-dev libglib2.0-dev pkg-config
+      - name: Install FFmpeg/libva (all-features decoder backends)
+        if: matrix.features == 'all-features'
+        run: |
+          sudo apt-get install -y libva-dev libavcodec-dev libavutil-dev \
+            libswscale-dev libavfilter-dev libavdevice-dev libavformat-dev
+      # Default leg keeps the historical --bins --lib --tests filter
+      # (benches/examples carry decoder-heavy deps); the all-features leg
+      # builds every test target, matching the old unfiltered cargo run.
+      - name: Build + archive tests
+        run: >-
+          cargo nextest archive --workspace
+          ${{ matrix.features == 'all-features' && '--all-features' || '--bins --lib --tests' }}
+          --archive-file "nextest-${{ matrix.features }}.tar.zst"
+      - name: Test-count parity (libtest vs nextest archive)
+        run: |
+          FLAGS="--bins --lib --tests"; [ "${{ matrix.features }}" = "all-features" ] && FLAGS="--all-features"
+          libtest=$(cargo test --workspace $FLAGS -- --list 2>/dev/null | grep -c ': test$')
+          nextest=$(cargo nextest list --archive-file "nextest-${{ matrix.features }}.tar.zst" --message-format json | jq '.["test-count"]')
+          echo "libtest: $libtest   nextest(archive): $nextest"
+          test "$libtest" = "$nextest"
+      - name: Upload test archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-${{ matrix.features }}
+          path: nextest-${{ matrix.features }}.tar.zst
+          retention-days: 1
+
+  # Per AGENTS.md, both feature sets must be tested. Feature-gated code
+  # paths that need real hardware stay safe under --all-features: GPU
+  # tests are #[ignore]d, wgpu tests use the noop device (test-noop),
+  # shell backends are all(target_os, feature)-gated, and clipboard
+  # falls back to a stub when no native backend is available.
+  # Tests that share an OS singleton (the real system clipboard) are
+  # serialized via the `system-clipboard` test-group in
+  # .config/nextest.toml.
   test-suite:
     name: Test Suite (${{ matrix.features }} · ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
+    needs: build-tests
     strategy:
       # A failing shard must not cancel the others — all results matter.
       fail-fast: false
@@ -103,38 +163,32 @@ jobs:
         features: [default, all-features]
         shard: ["1", "2", "3", "4", "5", "6"]
     steps:
+      # Source checkout is required: test fixtures, snapshots, and
+      # .config/nextest.toml all live in the repo.
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # One warm cache per feature leg feeds all six shards; shards
-          # share compile artifacts instead of building in serial legs.
-          shared-key: "tests-${{ matrix.features }}"
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - name: Install Mesa Lavapipe (Software Vulkan)
+      - name: Install runtime deps (Mesa Lavapipe + media libs)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
-      - name: Install Pango/Cairo + FFmpeg/libva (text-reference + decoder backends)
-        run: |
-          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
-            libglib2.0-dev pkg-config \
-            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
-            libavfilter-dev libavdevice-dev \
-            libavformat-dev
-      # Per AGENTS.md, both feature sets must be tested. Feature-gated code
-      # paths that need real hardware stay safe under --all-features: GPU
-      # tests are #[ignore]d, wgpu tests use the noop device (test-noop),
-      # shell backends are all(target_os, feature)-gated, and clipboard
-      # falls back to a stub when no native backend is available.
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1 \
+            libcairo2 libpango-1.0-0 libglib2.0-0 \
+            libva2 libavcodec60 libavutil58 libswscale7 libavfilter9 \
+            libavdevice60 libavformat60 || sudo apt-get install -y \
+            libvulkan1 mesa-vulkan-drivers libegl1 libcairo2 \
+            libpango-1.0-0 libglib2.0-0 libva2 libavcodec61 libavutil59 \
+            libswscale8 libavfilter10 libavdevice61 libavformat61
+      - name: Download test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: nextest-${{ matrix.features }}
       - name: Run Tests (${{ matrix.features }})
         run: >-
-          cargo nextest run --workspace
+          cargo nextest run
+          --archive-file "nextest-${{ matrix.features }}.tar.zst"
           --partition hash:${{ matrix.shard }}/6
-          ${{ matrix.features == 'all-features' && '--all-features' || '--bins --lib --tests' }}
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
 
@@ -169,35 +223,6 @@ jobs:
         run: |
           mapfile -t PKGS < <(python3 scripts/workspace-matrix.py doctest-group "${{ matrix.shard }}" 4)
           cargo test --doc --all-features $(printf -- '-p %s ' "${PKGS[@]}")
-
-  # Permanent guard: the nextest run must see exactly the same test count
-  # as libtest's `--list`. A test silently dropped by a filter, partition,
-  # or target-selection bug fails this job on every PR.
-  test-parity:
-    name: Test-Count Parity (libtest vs nextest)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-      - name: Install Mesa + Pango/Cairo + FFmpeg/libva (workspace compiles)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1 \
-            libcairo2-dev libpango1.0-dev libglib2.0-dev pkg-config \
-            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
-            libavfilter-dev libavdevice-dev \
-            libavformat-dev
-      - name: Compare test counts
-        run: |
-          libtest=$(cargo test --workspace --bins --lib --tests -- --list 2>/dev/null | grep -c ': test$')
-          nextest=$(cargo nextest list --workspace --bins --lib --tests --message-format json | jq '.["test-count"]')
-          echo "libtest: $libtest   nextest: $nextest"
-          test "$libtest" = "$nextest"
 
   # Ignored GPU/hardware tests stay on libtest — `-- --ignored` is a
   # libtest flag; under nextest the equivalent is --run-ignored, but
