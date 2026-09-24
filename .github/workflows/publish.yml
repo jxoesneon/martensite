@@ -60,6 +60,13 @@ jobs:
             echo "CHANGELOG.md has no section for v$VERSION"
             exit 1
           fi
+      # The CRATES publish lists must be topologically ordered — an
+      # inversion aborts mid-publish and leaves a partial release.
+      - name: Verify publish order is topological
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python3 scripts/check-publish-order.py
 
   # ──────────────────────────────────────────────────────────
   # CI — reuse the same pipeline that runs on every push/PR/tag
@@ -107,13 +114,13 @@ jobs:
             martensite-media-platform
             martensite-media
             martensite-engine-bridge
-            martensite-accesskit-winit
-            martensite-access
-            martensite-wgpu
             martensite-cosmic-text
             martensite-text
             martensite-font-fallback
             martensite-access-platform
+            martensite-accesskit-winit
+            martensite-access
+            martensite-wgpu
             martensite-shell
             martensite-window
             martensite-focus
@@ -268,6 +275,11 @@ jobs:
           # martensite-accesskit-winit and martensite-access must come
           # before martensite-wgpu (the paint-compliance audit hook makes
           # wgpu depend on access, and access depends on accesskit-winit).
+          # martensite-accesskit-winit additionally depends on
+          # martensite-access-platform (the whitelisted-unsafe mobile
+          # bridge), and martensite-access depends on martensite-text —
+          # so cosmic-text → text → font-fallback → access-platform →
+          # accesskit-winit → access must precede wgpu.
           # Each service `-platform` crate precedes its abstraction crate
           # (dialog/notify/print/share/pdf: the abstraction's `platform`
           # feature depends on it) — except webview, where the direction
@@ -288,13 +300,13 @@ jobs:
             martensite-media-platform
             martensite-media
             martensite-engine-bridge
-            martensite-accesskit-winit
-            martensite-access
-            martensite-wgpu
             martensite-cosmic-text
             martensite-text
             martensite-font-fallback
             martensite-access-platform
+            martensite-accesskit-winit
+            martensite-access
+            martensite-wgpu
             martensite-shell
             martensite-window
             martensite-focus
