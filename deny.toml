@@ -1,16 +1,21 @@
 [graph]
 all-features = true
 
+# Zero-vulnerability policy: every advisory category applies to ALL
+# dependencies (direct + transitive), and CI runs `cargo deny -D
+# warnings check` so even warning-severity hits fail the build. The
+# ignore list is expected to stay EMPTY — a new entry requires a
+# documented mitigation plan (upgrade, maintained substitute, or
+# vendoring).
+# History: bincode/derivative/yaml-rust were dropped by removing the
+# unused `vi` feature from vendored martensite-cosmic-text;
+# proc-macro-error and the glib unsoundness by upgrading
+# martensite-text-reference to the gtk-rs 0.22 stack.
 [advisories]
-ignore = [
-    "RUSTSEC-2025-0141", # bincode unmaintained (transitive via cosmic-text/syntect)
-    "RUSTSEC-2024-0388", # derivative unmaintained (transitive via cosmic-text/syntect)
-    "RUSTSEC-2024-0320", # yaml-rust unmaintained (transitive via cosmic-text/syntect)
-    # proc-macro-error is unmaintained but is a transitive dependency of
-    # glib-macros 0.18 (gtk-rs-core 0.18), used by the Pango/Cairo reference
-    # renderer. No safe upgrade is available within the gtk-rs 0.18 series.
-    "RUSTSEC-2024-0370",
-]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = []
 
 [licenses]
 allow = [

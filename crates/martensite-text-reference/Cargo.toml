@@ -6,9 +6,9 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-cairo-rs = { version = "0.18", features = ["png"] }
-pango = "0.18"
-pangocairo = "0.18"
+cairo-rs = { version = "0.22", features = ["png"] }
+pango = "0.22"
+pangocairo = "0.22"
 martensite-test = { path = "../martensite-test" }
 
 [dev-dependencies]

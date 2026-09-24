@@ -32,12 +32,19 @@ The crate retains the library name `cosmic_text` to preserve drop-in API compati
 | :--- | :--- | :--- |
 | `default` | Standard feature set including `std`, `fontconfig` (on Linux), and system fonts. | Yes |
 | `std` | Enables standard library features. | Yes |
-| `shape-run-cache` | Enables zero-frame jitter caching of shaped text runs. | Yes |
+| `shape-run-cache` | Enables zero-frame jitter caching of shaped text runs. | No |
 | `fontconfig` | Enables font discovery via Fontconfig on Unix platforms. | Yes |
 | `no_std` | Compiles for embedded or `no_std` environments without OS font discovery. | No |
 | `peniko` | Integrates color types from Peniko/Vello. | No |
-| `vi` | Enables modal vi-style cursor navigation keys. | No |
 | `wasm-web` | WebAssembly support for browser canvas/DOM environments. | No |
+
+> **Divergence note (`martensite.2`)**: upstream's `vi` feature
+> (`edit::vi`/`edit::syntect`, pulling `modit` + `syntect` +
+> `cosmic_undo_2`) was amputated — its transitive tail (`bincode`,
+> `yaml-rust`, `derivative`) carries unmaintained advisories the
+> project's zero-vulnerability policy forbids. Nothing in the workspace
+> enabled it. Restoration should use a minimal syntect feature set or a
+> maintained alternative (tree-sitter). See `docs/VENDORED_FORKS.md`.
 
 ---
 
@@ -47,7 +54,7 @@ Add `martensite-cosmic-text` as `cosmic_text` in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cosmic_text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.1" }
+cosmic_text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.2" }
 ```
 
 ```rust

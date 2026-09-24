@@ -117,7 +117,7 @@ martensite-test = { version = "0.19.0", path = "crates/martensite-test" }
 martensite-blessed = { version = "0.19.0", path = "crates/martensite-blessed" }
 martensite-plugin = { version = "0.19.0", path = "crates/martensite-plugin" }
 cargo-martensite = { version = "0.19.0", path = "tools/cargo-martensite" }
-martensite-cosmic-text = { version = "0.19.0-martensite.1", path = "crates/martensite-cosmic-text" }
+martensite-cosmic-text = { version = "0.19.0-martensite.2", path = "crates/martensite-cosmic-text" }
 martensite-font-fallback = { version = "0.19.0", path = "crates/martensite-font-fallback" }
 martensite-clipboard-platform = { version = "0.19.0", path = "crates/martensite-clipboard-platform" }
 martensite-dialog-platform = { version = "0.19.0", path = "crates/martensite-dialog-platform" }
@@ -166,7 +166,7 @@ wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan",
 #   uses for diagnostics.
 vello = { package = "martensite-vello", version = "0.10.0-martensite.1", path = "crates/martensite-vello", default-features = false }
 taffy = { version = "=0.14.0", default-features = false, features = ["flexbox", "grid", "block_layout", "taffy_tree"] }
-cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.1", path = "crates/martensite-cosmic-text", default-features = false, features = ["std", "swash"] }
+cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.2", path = "crates/martensite-cosmic-text", default-features = false, features = ["std", "swash"] }
 fontdb = { version = "0.24", default-features = false }
 accesskit = { version = "0.25" }
 accesskit_winit = { package = "martensite-accesskit-winit", version = "0.19.0", path = "crates/martensite-accesskit-winit" }

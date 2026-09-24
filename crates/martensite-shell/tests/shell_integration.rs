@@ -4,10 +4,10 @@
 //! real platform environment:
 //!
 //! - **StatusNotifierItem D-Bus registration** (`status_notifier`):
-//!   Requires a running D-Bus session bus with a registered
-//!   `org.kde.StatusNotifierWatcher` service. Gated behind
-//!   `#[ignore]` so CI can opt in via `--ignored` when the environment
-//!   is available.
+//!   Requires a D-Bus session bus; when no real
+//!   `org.kde.StatusNotifierWatcher` is present the tests serve a
+//!   minimal in-process stub so the registration round-trip genuinely
+//!   executes. Only a missing session bus skips them.
 //! - **FractionalScaleTracker event emission** (`wayland`):
 //!   Pure-logic test that does not require a real Wayland compositor;
 //!   verifies the event queue receives `FractionalScaleChanged`
@@ -53,8 +53,8 @@ fn fractional_scale_tracker_rejects_invalid_and_emits_fallback() {
     let queue = ShellEventQueue::new();
     let mut tracker = FractionalScaleTracker::with_event_queue(queue.clone());
 
-    // NaN is rejected; scale falls back to 1.0 and an event is emitted
-    // because 1.0 != the previous NaN-clamped value.
+    // NaN is rejected; scale falls back to 1.0 (already current, so no
+    // event is emitted below).
     tracker.update(f64::NAN);
     assert_eq!(tracker.current().scale(), 1.0);
 
@@ -73,8 +73,6 @@ fn fractional_scale_tracker_rejects_invalid_and_emits_fallback() {
 
 #[test]
 fn fractional_scale_tracker_physical_buffer_size() {
-    use martensite_shell::platform_impl::wayland::FractionalScaleTracker;
-
     let mut tracker = FractionalScaleTracker::new();
     tracker.update(1.5);
 
@@ -95,16 +93,84 @@ fn fractional_scale_tracker_no_queue_does_not_panic() {
 }
 
 // ---------------------------------------------------------------------------
-// StatusNotifierItem — D-Bus registration (requires real D-Bus session)
+// StatusNotifierItem — D-Bus registration
+//
+// These tests exercise the real registration path end-to-end: when no
+// `org.kde.StatusNotifierWatcher` owns the name on the session bus, a
+// minimal stub watcher is served in-process so `register()`'s D-Bus
+// round-trip genuinely executes. Only the absence of a session bus at
+// all (no dbus-daemon) skips the test, with a printed reason.
 // ---------------------------------------------------------------------------
 
+/// Minimal `org.kde.StatusNotifierWatcher` server: accepts
+/// `RegisterStatusNotifierItem` calls so `StatusNotifierItem::register`
+/// completes a real D-Bus method round-trip.
+struct StubWatcher;
+
+#[zbus::interface(name = "org.kde.StatusNotifierWatcher")]
+impl StubWatcher {
+    fn register_status_notifier_item(&self, _service: String) {}
+
+    #[zbus(property)]
+    fn is_status_notifier_host_registered(&self) -> bool {
+        true
+    }
+
+    #[zbus(property)]
+    fn protocol_version(&self) -> i32 {
+        0
+    }
+
+    #[zbus(property)]
+    fn registered_status_notifier_items(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// Ensures something answers `RegisterStatusNotifierItem` on the session
+/// bus for the whole test process. When no real watcher owns the name,
+/// an in-process stub is served once and kept for the process's
+/// lifetime, so parallel tests can never outlive the watcher they
+/// registered against. `Err(reason)` means no session bus exists at all.
+fn ensure_sni_watcher() -> Result<(), String> {
+    static WATCHER: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    WATCHER.get_or_init(serve_stub_watcher).clone()
+}
+
+fn serve_stub_watcher() -> Result<(), String> {
+    let conn = zbus::blocking::Connection::session()
+        .map_err(|e| format!("skipping: no D-Bus session bus ({e})"))?;
+    // Export the object before owning the name so nothing can call into
+    // an empty object tree.
+    conn.object_server()
+        .at("/StatusNotifierWatcher", StubWatcher)
+        .map_err(|e| format!("failed to serve stub watcher: {e}"))?;
+    match conn.request_name("org.kde.StatusNotifierWatcher") {
+        // We own the watcher name. `conn` is deliberately leaked: the
+        // stub must outlive every test in this process. zbus's internal
+        // executor thread dispatches incoming method calls on its own —
+        // no manual pump is needed.
+        Ok(()) => {
+            std::mem::forget(conn);
+            Ok(())
+        }
+        // A real StatusNotifierWatcher (e.g. a KDE session) already owns
+        // the name — register against it directly.
+        Err(zbus::Error::NameTaken) => Ok(()),
+        Err(e) => Err(format!("failed to request watcher name: {e}")),
+    }
+}
+
 #[test]
-#[ignore = "requires a running D-Bus session bus with org.kde.StatusNotifierWatcher"]
 fn status_notifier_item_registers_on_dbus() {
+    if let Err(reason) = ensure_sni_watcher() {
+        eprintln!("{reason}");
+        return;
+    }
+
     let mut item = StatusNotifierItem::new("martensite-test", "Martensite Test");
     assert!(!item.is_registered());
 
-    // This will fail if no D-Bus session bus is running.
     item.register().expect("D-Bus registration should succeed");
 
     assert!(item.is_registered());
@@ -115,10 +181,14 @@ fn status_notifier_item_registers_on_dbus() {
 }
 
 #[test]
-#[ignore = "requires a running D-Bus session bus with org.kde.StatusNotifierWatcher"]
 fn status_notifier_item_activate_callback_fires() {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    if let Err(reason) = ensure_sni_watcher() {
+        eprintln!("{reason}");
+        return;
+    }
 
     let activated = Arc::new(AtomicBool::new(false));
     let activated_clone = activated.clone();

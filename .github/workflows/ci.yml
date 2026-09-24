@@ -56,20 +56,44 @@ jobs:
       # pinned toolchain (rust-toolchain.toml pulls rust-src + targets,
       # which the bare runner rustup fails to fetch on demand).
       - uses: dtolnay/rust-toolchain@stable
+      # These steps only run `cargo metadata`-class reads — bypass the
+      # rust-toolchain.toml shim (which would try to fetch rust-src +
+      # 9 target stds on demand, and that fetch has raced in CI).
       - name: Check version surfaces
         run: bash scripts/check-version-consistency.sh
+        env:
+          RUSTUP_TOOLCHAIN: stable
       # Publish-order + publishable-set gate on every PR: a dependency
       # edge that would invert the release order fails here, long before
       # the tag exists. Same script the publish workflow consumes.
       - name: Verify publish order & publishable predicate
         run: python3 scripts/workspace-matrix.py publish-order | python3 scripts/workspace-matrix.py check
+        env:
+          RUSTUP_TOOLCHAIN: stable
 
   purity-and-bans:
     name: Supply-Chain Gate (cargo-deny)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: EmbarkStudios/cargo-deny-action@v2.1.1
+      # Run directly instead of the containerized action: the action's
+      # image carries an old musl toolchain, and rust-toolchain.toml then
+      # forces a wasteful download of every listed target's std
+      # (aarch64/x86_64-apple, wasm32) on a Linux runner.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      # cargo-deny needs no rust-src/targets — bypass the toml shim so it
+      # cannot trigger rustup's racing on-demand component fetch.
+      # Zero-vulnerability policy: the advisories check denies warnings
+      # (unmaintained/unsound/notice all fail); bans/licenses keep their
+      # existing warn-level tolerance for multiple-version findings.
+      - run: |
+          cargo deny check advisories -D warnings
+          cargo deny check bans licenses sources
+        env:
+          RUSTUP_TOOLCHAIN: stable
 
   cargo-vet:
     name: Supply-Chain Vet (cargo-vet)
@@ -86,6 +110,10 @@ jobs:
           tool: cargo-vet@0.10.2
       - name: Run cargo-vet
         run: cargo vet --locked
+        env:
+          # vet shells out to `cargo metadata` — bypass the toml shim so
+          # it cannot trigger rustup's racing rust-src/target fetches.
+          RUSTUP_TOOLCHAIN: stable
 
   # Build-once / run-many: one job per feature leg compiles all test
   # binaries into a cargo-nextest archive (~100-400MB .tar.zst); the
@@ -122,23 +150,26 @@ jobs:
             libcairo2-dev libpango1.0-dev libglib2.0-dev pkg-config \
             libva-dev libavcodec-dev libavutil-dev libswscale-dev \
             libavfilter-dev libavdevice-dev libavformat-dev
-      # Default leg keeps the historical --bins --lib --tests filter
-      # (benches/examples carry decoder-heavy deps); the all-features leg
-      # builds every test target, matching the old unfiltered cargo run.
+      # Both legs filter to --bins --lib --tests: benches/examples carry
+      # decoder-heavy deps and (on modern cargo) unfiltered `cargo test
+      # --list` would also enumerate doctests, which nextest never runs —
+      # that mismatch is what the parity check exists to catch, not hide.
       - name: Build + archive tests
         run: >-
           cargo nextest archive --workspace
-          ${{ matrix.features == 'all-features' && '--all-features' || '--bins --lib --tests' }}
+          --bins --lib --tests
+          ${{ matrix.features == 'all-features' && '--all-features' || '' }}
           --archive-file "nextest-${{ matrix.features }}.tar.zst"
       - name: Test-count parity (libtest vs nextest archive)
         run: |
-          FLAGS="--bins --lib --tests"; [ "${{ matrix.features }}" = "all-features" ] && FLAGS="--all-features"
+          FLAGS="--bins --lib --tests"
+          if [ "${{ matrix.features }}" = "all-features" ]; then FLAGS="$FLAGS --all-features"; fi
           libtest=$(cargo test --workspace $FLAGS -- --list 2>/dev/null | grep -c ': test$')
           nextest=$(cargo nextest list --archive-file "nextest-${{ matrix.features }}.tar.zst" --message-format json | jq '.["test-count"]')
           echo "libtest: $libtest   nextest(archive): $nextest"
           test "$libtest" = "$nextest"
       - name: Upload test archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nextest-${{ matrix.features }}
           path: nextest-${{ matrix.features }}.tar.zst
@@ -156,6 +187,12 @@ jobs:
     name: Test Suite (${{ matrix.features }} · ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
     needs: build-tests
+    # `needs:` on a matrix job waits for BOTH legs — without this, one leg's
+    # failure would silently skip all 12 shards (zero test coverage reported
+    # green-ish). Run regardless; the artifact download below fails loudly
+    # for whichever leg did not produce an archive, while the healthy leg's
+    # shards still execute and report real results.
+    if: ${{ !cancelled() }}
     strategy:
       # A failing shard must not cancel the others — all results matter.
       fail-fast: false
@@ -181,7 +218,9 @@ jobs:
             libpango-1.0-0 libglib2.0-0 libva2 libavcodec61 libavutil59 \
             libswscale8 libavfilter10 libavdevice61 libavformat61
       - name: Download test archive
-        uses: actions/download-artifact@v4
+        # Fails loudly when this leg's build job did not produce the
+        # archive — that failure is the honest signal for a broken leg.
+        uses: actions/download-artifact@v8
         with:
           name: nextest-${{ matrix.features }}
       - name: Run Tests (${{ matrix.features }})
@@ -191,6 +230,10 @@ jobs:
           --partition hash:${{ matrix.shard }}/6
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
+          # No compilation happens here — bypass the rust-toolchain.toml
+          # shim so `cargo nextest` cannot trigger the racy on-demand
+          # rust-src/target fetch. nextest only executes the archive.
+          RUSTUP_TOOLCHAIN: stable
 
   # Nextest never runs doctests — they stay on `cargo test --doc`, sharded
   # by package group so the per-doc compile/link work parallelizes.
@@ -211,6 +254,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "doctests"
+          # 4 doc shards share one key — only shard 1 may save it,
+          # otherwise N jobs race the cache reservation (warns + lost work).
+          save-if: ${{ matrix.shard == '1' }}
       - name: Install mold + Pango/Cairo + FFmpeg/libva (--all-features)
         run: |
           sudo apt-get update
@@ -221,44 +267,94 @@ jobs:
             libavformat-dev
       - name: Run Doc Tests
         run: |
-          mapfile -t PKGS < <(python3 scripts/workspace-matrix.py doctest-group "${{ matrix.shard }}" 4)
+          mapfile -t PKGS < <(RUSTUP_TOOLCHAIN=stable python3 scripts/workspace-matrix.py doctest-group "${{ matrix.shard }}" 4)
+          test ${#PKGS[@]} -gt 0
           cargo test --doc --all-features $(printf -- '-p %s ' "${PKGS[@]}")
 
-  # Ignored GPU/hardware tests stay on libtest — `-- --ignored` is a
-  # libtest flag; under nextest the equivalent is --run-ignored, but
-  # these serial hardware probes gain nothing from per-process
-  # parallelism and libtest is already installed here.
-  ignored-tests:
-    name: Ignored GPU / Hardware Tests
+  # The `martensite` facade alone carries ~4000 doctests (~60min in a
+  # single rustdoc run) — crate-granular sharding cannot split it, so it
+  # is sharded at file granularity: each shard filters doctests by the
+  # `src/...` path embedded in their test names. Eight shards ≈ 8–10min.
+  doc-tests-facade:
+    name: Doc Tests (martensite facade · ${{ matrix.shard }}/8)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1", "2", "3", "4", "5", "6", "7", "8"]
+    env:
+      RUSTFLAGS: "-D warnings -C link-arg=-fuse-ld=mold"
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install Mesa Lavapipe (Software Vulkan)
+        with:
+          # Separate key from the crate-shard job: each matrix then has
+          # exactly one saver (shard 1) and one meaningful warm cache —
+          # facade shards restore facade artifacts, crate shards theirs.
+          shared-key: "doctests-facade"
+          # 8 facade shards share this key — only shard 1 may save it,
+          # otherwise N jobs race the cache reservation (warns + lost work).
+          save-if: ${{ matrix.shard == '1' }}
+      - name: Install mold + Pango/Cairo + FFmpeg/libva (--all-features)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
-      - name: Install Pango/Cairo + FFmpeg/libva (text-reference + decoder backends)
-        run: |
-          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
+          sudo apt-get install -y mold libcairo2-dev libpango1.0-dev \
             libglib2.0-dev pkg-config \
             libva-dev libavcodec-dev libavutil-dev libswscale-dev \
             libavfilter-dev libavdevice-dev \
             libavformat-dev
-      - name: Install Wayland dev headers (for wayland-sys build script)
+      - name: Run facade Doc Tests
         run: |
-          sudo apt-get install -y libwayland-dev
-      - name: Run ignored tests
+          mapfile -t FILES < <(RUSTUP_TOOLCHAIN=stable python3 scripts/workspace-matrix.py facade-doctest-group "${{ matrix.shard }}" 8)
+          # An empty group means the generator failed — fail loudly
+          # rather than silently running the whole 4000-test suite here.
+          test ${#FILES[@]} -gt 0
+          cargo test --doc --all-features -p martensite -- "${FILES[@]}"
+
+  # Ignored GPU/hardware tests run from the prebuilt nextest archive
+  # (`--run-ignored ignored-only`) instead of recompiling — the ignored
+  # tests are already inside the default-features archive.
+  ignored-tests:
+    name: Ignored GPU / Hardware Tests
+    runs-on: ubuntu-latest
+    needs: build-tests
+    # Same rationale as test-suite: run even if one archive leg failed;
+    # the download fails loudly when the default archive is absent.
+    if: ${{ !cancelled() }}
+    # No compilation happens here — bypass the rust-toolchain.toml shim
+    # so `cargo nextest` cannot trigger the racy on-demand rust-src/
+    # target fetch. nextest only executes the archive.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Install Mesa Lavapipe (Software Vulkan)
         run: |
-          cargo test -p martensite-wgpu --lib -- --ignored
-          cargo test -p martensite-window --lib -- --ignored
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1
+      - name: Download test archive
+        uses: actions/download-artifact@v8
+        with:
+          name: nextest-default
+      - name: Run ignored tests (wgpu + window)
+        run: >-
+          cargo nextest run --archive-file nextest-default.tar.zst
+          --run-ignored ignored-only
+          -E 'package(martensite-wgpu) or package(martensite-window)'
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
       - name: GPU/CPU parity (Lavapipe)
         env:
           WGPU_ADAPTER_NAME: "llvmpipe"
-        run: cargo test -p martensite-render-test --test parity -- --ignored
+        run: >-
+          cargo nextest run --archive-file nextest-default.tar.zst
+          --run-ignored ignored-only
+          -E 'binary_id(martensite-render-test::parity)'
 
   audit:
     name: Security Audit
@@ -266,12 +362,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - name: Generate Cargo.lock
-        run: cargo generate-lockfile
+      - name: Install cargo-audit (prebuilt)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Zero-vulnerability policy: --deny warnings makes unmaintained,
+      # unsound, and yanked advisories hard failures — the ignore lists in
+      # .cargo/audit.toml are expected to stay EMPTY; a new entry requires
+      # a documented mitigation plan, not silence.
+      # Audit the COMMITTED lockfile — `generate-lockfile` would audit a
+      # fresh resolve and silently mask lockfile drift (the version-
+      # consistency job owns drift detection).
       - name: Run cargo-audit
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
+        run: cargo audit --deny warnings
+        env:
+          RUSTUP_TOOLCHAIN: stable
 
   docs:
     name: Documentation Build
@@ -366,19 +471,21 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install D-Bus and Weston
+      - name: Install D-Bus
         run: |
           sudo apt-get update
-          sudo apt-get install -y dbus dbus-x11 weston \
+          # dbus-x11 provides dbus-launch; no compositor is needed —
+          # the SNI tests serve the watcher stub in-process.
+          sudo apt-get install -y dbus dbus-x11 \
             pkg-config libdbus-1-dev
-      - name: Run shell integration tests (non-ignored)
-        run: cargo test -p martensite-shell --features wayland-backend --test shell_integration
-      - name: Run shell integration tests (D-Bus ignored)
+      # The SNI tests serve an in-process StatusNotifierWatcher stub over
+      # the dbus-launch'd session bus, so registration genuinely executes
+      # — no `continue-on-error`; a failure here is a real failure.
+      - name: Run shell integration tests
         run: |
           eval "$(dbus-launch --sh-syntax)"
           export DBUS_SESSION_BUS_ADDRESS
-          cargo test -p martensite-shell --features wayland-backend --test shell_integration -- --ignored
-        continue-on-error: true
+          cargo test -p martensite-shell --features wayland-backend --test shell_integration
 
   shell-windows-integration:
     name: Shell Integration (Windows DWM + Snap)
@@ -532,16 +639,16 @@ jobs:
   # pipeline:
   #
   #   1. Scope: all non-vendored publishable crates with a library target
-  #      (42 — martensite-macros is proc-macro-only and excluded). The
-  #      three vendored
-  #      forks (martensite-vello, martensite-cosmic-text,
+  #      (43 — martensite-macros is proc-macro-only and excluded). The
+  #      three vendored forks (martensite-vello, martensite-cosmic-text,
   #      martensite-accesskit-winit) are excluded because their surface
-  #      tracks upstream and is re-synced rather than frozen — the
-  #      accesskit-winit exclusion is on that vendored rationale alone
-  #      (it uses `version.workspace = true`). Only vello
-  #      (0.10.0-martensite.1) and cosmic-text (0.19.0-martensite.1)
+  #      tracks upstream and is re-synced rather than frozen — enforced
+  #      via `package.metadata.ci.vendored = true` in each manifest
+  #      (accesskit-winit needs it explicitly since it uses
+  #      `version.workspace = true`). Only vello
+  #      (0.10.0-martensite.1) and cosmic-text (0.19.0-martensite.2)
   #      carry `-martensite.N` prerelease versions off the workspace
-  #      bump cadence. Checking all 42 non-vendored publishable crates against
+  #      bump cadence. Checking all 43 non-vendored publishable crates against
   #      crates.io baselines is feasible only because each matrix leg
   #      is an independent parallel job; a serial `--workspace` run
   #      would not fit in the pipeline.
@@ -579,6 +686,9 @@ jobs:
         run: |
           crates=$(python3 scripts/workspace-matrix.py semver-checks | jq -R -s -c 'split("\n")[:-1]')
           echo "semver={\"crate\":$crates}" >> "$GITHUB_OUTPUT"
+        env:
+          # `cargo metadata`-class read only — bypass the toml shim.
+          RUSTUP_TOOLCHAIN: stable
 
   semver-checks:
     name: Semver Checks (${{ matrix.crate }})

@@ -75,7 +75,7 @@ jobs:
           MARTENSITE_FUZZ_RESULTS_DIR: "/tmp/fuzz-results"
       - name: Upload fuzz results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-smoke-results
           path: /tmp/fuzz-results/
@@ -118,7 +118,7 @@ jobs:
           MARTENSITE_FUZZ_RESULTS_DIR: "/tmp/fuzz-results"
       - name: Upload fuzz campaign results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-soak-results-${{ github.run_id }}
           path: /tmp/fuzz-results/

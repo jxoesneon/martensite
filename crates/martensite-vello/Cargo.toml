@@ -69,3 +69,8 @@ wgpu-profiler = { version = "0.28.0", optional = true }
 thiserror = { version = "2.0.18", default-features = false }
 # TODO: Add feature for built-in bitmap emoji support?
 png = "0.18.1"
+
+# Vendored upstream fork — excluded from the semver-checks matrix
+# (scripts/workspace-matrix.py) since its API cadence follows upstream.
+[package.metadata.ci]
+vendored = true

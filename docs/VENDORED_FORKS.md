@@ -17,8 +17,8 @@ accepted outcome; silent drift is not.
 | Crate | Upstream | Vendored version | Why it exists | Exit criterion |
 |---|---|---|---|---|
 | `martensite-vello` | `netrender-vello` 0.10.0 (byte-compatible republish of Vello 0.10) | `0.10.0-martensite.1` | Official `vello` 0.10 pins `wgpu` 29, incompatible with the workspace's wgpu 30 as a single type; vendoring also removes a single-maintainer republish from the supply chain | Upstream `vello` releases a build against the workspace's wgpu major, or a maintained republish does |
-| `martensite-cosmic-text` | `cosmic-text` | `0.19.0-martensite.1` | Updated `fontdb` dependency (0.24) ahead of upstream | Upstream `cosmic-text` release with `fontdb` 0.24 |
-| `martensite-accesskit-winit` | `accesskit_winit` 0.34.0 | `0.17.0` | Patched for winit 0.31.0-beta.3 (`&dyn ActiveEventLoop` / `&dyn Window` trait-object signatures) | **Temporary.** Remove once upstream `accesskit_winit` supports winit 0.31 stable |
+| `martensite-cosmic-text` | `cosmic-text` | `0.19.0-martensite.2` | Updated `fontdb` dependency (0.24) ahead of upstream; **`vi` feature amputated** (see below) | Upstream `cosmic-text` release with `fontdb` 0.24 |
+| `martensite-accesskit-winit` | `accesskit_winit` 0.34.0 | `0.19.0` (workspace) | Patched for winit 0.31.0-beta.3 (`&dyn ActiveEventLoop` / `&dyn Window` trait-object signatures) | **Temporary.** Remove once upstream `accesskit_winit` supports winit 0.31 stable |
 
 ## Patch discipline
 
@@ -49,6 +49,25 @@ accepted outcome; silent drift is not.
    vendored crate directory and must not be removed.
 5. **Local patches are documented in the crate README** (why the fork
    exists, what was changed relative to upstream).
+
+## `martensite-cosmic-text`: `vi` feature amputation
+
+Upstream's `vi` feature bundles `modit` (vim keybindings), `syntect`
+(syntax highlighting), and `cosmic_undo_2` (undo tree). Nothing in the
+workspace enables it, but optional dependencies are still recorded in
+`Cargo.lock` — and its transitive tail (`bincode` 1.x, `yaml-rust`,
+`derivative`, `plist`, and the C-linked `onig` regex engine) carried
+three unmaintained advisories (RUSTSEC-2025-0141, RUSTSEC-2024-0320,
+RUSTSEC-2024-0388). Under the zero-vulnerability policy the feature was
+removed outright: the `vi` feature block, the three optional dependency
+entries, `edit/vi.rs`, `edit/syntect.rs`, and their `mod.rs` gates.
+
+**Restoration path.** If a code-editor widget later needs syntax
+highlighting or modal editing, restore by design rather than by revert:
+a minimal syntect (`default-features = false` + `parsing` +
+`regex-fancy`) drops every flagged transitive dep, or a maintained
+highlighter (e.g. tree-sitter) replaces it. Recorded as a deliberate,
+reversible divergence — not a loss of capability.
 
 ## Re-sync cadence
 

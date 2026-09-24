@@ -2920,7 +2920,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "martensite"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "accesskit 0.25.0",
  "glam 0.33.7",
@@ -2930,6 +2930,7 @@ dependencies = [
  "martensite-blessed",
  "martensite-clipboard",
  "martensite-core",
+ "martensite-design-lint",
  "martensite-devtools",
  "martensite-dnd",
  "martensite-engine-bridge",
@@ -2940,20 +2941,24 @@ dependencies = [
  "martensite-macros",
  "martensite-media",
  "martensite-motion",
+ "martensite-pdf",
  "martensite-reactive",
  "martensite-render",
  "martensite-shell",
  "martensite-text",
  "martensite-theme",
+ "martensite-webview",
+ "martensite-webview-platform",
  "martensite-wgpu",
  "martensite-window",
  "parking_lot",
  "taffy",
+ "unicode-segmentation",
 ]
 
 [[package]]
 name = "martensite-access"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "accesskit 0.25.0",
  "glam 0.33.7",
@@ -2973,7 +2978,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-access-platform"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "accesskit 0.25.0",
  "accesskit_android",
@@ -2983,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-accesskit-winit"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "accesskit 0.25.0",
  "accesskit_macos",
@@ -2996,7 +3001,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-assets"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "martensite-core",
  "naga 30.0.1",
@@ -3007,7 +3012,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-bevy"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "bevy",
  "martensite-engine-bridge",
@@ -3017,7 +3022,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-blessed"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "martensite-core",
  "martensite-render",
@@ -3028,9 +3033,10 @@ dependencies = [
 
 [[package]]
 name = "martensite-clipboard"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "js-sys",
+ "martensite-clipboard-platform",
  "martensite-core",
  "tracing",
  "wasm-bindgen",
@@ -3039,8 +3045,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "martensite-clipboard-platform"
+version = "0.19.0"
+dependencies = [
+ "windows 0.61.3",
+]
+
+[[package]]
 name = "martensite-core"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "accesskit 0.25.0",
  "bitflags",
@@ -3056,7 +3069,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-cosmic-text"
-version = "0.19.0-martensite.1"
+version = "0.19.0-martensite.2"
 dependencies = [
  "bitflags",
  "fontdb",
@@ -3077,8 +3090,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "martensite-design-lint"
+version = "0.19.0"
+dependencies = [
+ "kurbo",
+ "martensite-core",
+ "toml",
+]
+
+[[package]]
 name = "martensite-devtools"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "martensite-core",
  "tracing",
@@ -3086,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-dnd"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "bitflags",
  "glam 0.33.7",
@@ -3100,7 +3122,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-engine-bridge"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "martensite-core",
  "parking_lot",
@@ -3109,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-focus"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "glam 0.33.7",
  "martensite-core",
@@ -3118,7 +3140,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-godot"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "godot",
  "martensite-core",
@@ -3128,7 +3150,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-history"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "martensite-core",
  "martensite-reactive",
@@ -3138,7 +3160,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-l10n"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "fluent-bundle",
  "fluent-langneg 0.14.2",
@@ -3149,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-layout"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "glam 0.33.7",
  "martensite-core",
@@ -3158,11 +3180,11 @@ dependencies = [
 
 [[package]]
 name = "martensite-macros"
-version = "0.18.0"
+version = "0.19.0"
 
 [[package]]
 name = "martensite-media"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.7",
@@ -3173,7 +3195,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-media-platform"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "drm 0.12.0",
  "objc2 0.6.4",
@@ -3186,14 +3208,25 @@ dependencies = [
 
 [[package]]
 name = "martensite-motion"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "glam 0.33.7",
 ]
 
 [[package]]
+name = "martensite-pdf"
+version = "0.19.0"
+dependencies = [
+ "martensite-pdf-platform",
+]
+
+[[package]]
+name = "martensite-pdf-platform"
+version = "0.19.0"
+
+[[package]]
 name = "martensite-reactive"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "parking_lot",
  "slotmap",
@@ -3203,12 +3236,13 @@ dependencies = [
 
 [[package]]
 name = "martensite-render"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "kurbo",
  "martensite-core",
  "martensite-vello",
  "peniko",
+ "pollster",
  "raw-window-handle",
  "softbuffer",
  "swash",
@@ -3219,14 +3253,14 @@ dependencies = [
 
 [[package]]
 name = "martensite-shell"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "martensite-theme",
 ]
 
 [[package]]
 name = "martensite-text"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "fontdb",
  "glam 0.33.7",
@@ -3249,7 +3283,7 @@ dependencies = [
 
 [[package]]
 name = "martensite-theme"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "bytemuck",
 ]
@@ -3272,8 +3306,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "martensite-webview"
+version = "0.19.0"
+
+[[package]]
+name = "martensite-webview-platform"
+version = "0.19.0"
+dependencies = [
+ "martensite-webview",
+]
+
+[[package]]
 name = "martensite-wgpu"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.7",
@@ -3293,11 +3338,12 @@ dependencies = [
 
 [[package]]
 name = "martensite-window"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "bitflags",
  "glam 0.33.7",
  "js-sys",
+ "kurbo",
  "martensite-core",
  "martensite-shell",
  "slotmap",
@@ -4549,6 +4595,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4983,6 +5038,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "toml"
+version = "0.9.12+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime 0.7.5+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.7.5+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "1.1.1+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4998,9 +5077,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
 dependencies = [
  "indexmap",
- "toml_datetime",
+ "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
- "winnow",
+ "winnow 1.0.4",
 ]
 
 [[package]]
@@ -5009,8 +5088,14 @@ version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
 dependencies = [
- "winnow",
+ "winnow 1.0.4",
 ]
+
+[[package]]
+name = "toml_writer"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "tracing"
@@ -5302,7 +5387,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "viewport_showcase"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "martensite",
  "martensite-bevy",
@@ -6408,6 +6493,12 @@ dependencies = [
 
 [[package]]
 name = "winnow"
+version = "0.7.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+
+[[package]]
+name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
@@ -6549,7 +6640,7 @@ dependencies = [
  "uds_windows",
  "uuid",
  "windows-sys 0.61.2",
- "winnow",
+ "winnow 1.0.4",
  "zbus_macros",
  "zbus_names",
  "zvariant",
@@ -6601,7 +6692,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8bf88b4a3ff53e883001e0e0115b297a9d53c31b9c1edd2bfdd853e3428624e"
 dependencies = [
  "serde",
- "winnow",
+ "winnow 1.0.4",
  "zvariant",
 ]
 
@@ -6612,7 +6703,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1586c021a01ca0a9216dcd874e546382e156a5cbab5fab6cb5f10087e22682a"
 dependencies = [
  "serde",
- "winnow",
+ "winnow 1.0.4",
  "zbus_names",
  "zvariant",
 ]
@@ -6722,7 +6813,7 @@ dependencies = [
  "endi",
  "enumflags2",
  "serde",
- "winnow",
+ "winnow 1.0.4",
  "zcheapstr",
  "zvariant_derive",
  "zvariant_utils",
@@ -6751,5 +6842,5 @@ dependencies = [
  "quote",
  "serde",
  "syn 3.0.5",
- "winnow",
+ "winnow 1.0.4",
 ]

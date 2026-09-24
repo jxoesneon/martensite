@@ -124,13 +124,24 @@ shards (6 hash-partitions × {default, all-features}) download the
 archive and run only their slice — no per-shard compile. The parity
 assertion (libtest `-- --list` count == archived test count) lives in
 the build job where compilation already happened. Doctests run in a
-separate 4-shard `doc-tests` job (nextest never runs doctests; mold
-links them faster). Per-test process isolation is mostly safer, but
-tests sharing an OS-level singleton — the real system clipboard in
-`martensite-clipboard-platform` — are serialized via the
-`system-clipboard` test-group in `.config/nextest.toml`. Add any new
-OS-singleton test there. `--ignored`/`--nocapture` libtest flags need
-`--run-ignored`/`--no-capture` equivalents under nextest.
+separate 4-shard `doc-tests` job plus an 8-shard `doc-tests-facade` job
+(the `martensite` facade alone carries ~4000 doctests — one crate was a
+61-minute critical path — so it is split at file granularity via
+`facade-doctest-group`; nextest never runs doctests; mold links them
+faster). `test-suite` and `ignored-tests` use `if: ${{ !cancelled() }}`
+so one failed archive leg cannot silently skip an entire test surface —
+the missing artifact fails that leg's shards loudly while the healthy
+leg still runs. Ignored GPU/hardware tests run from the default archive
+via `--run-ignored ignored-only` (no second compile). Per-test process
+isolation is mostly safer, but tests sharing an OS-level singleton —
+the real system clipboard in `martensite-clipboard-platform` — are
+serialized via the `system-clipboard` test-group in
+`.config/nextest.toml`. Add any new OS-singleton test there.
+`--ignored`/`--nocapture` libtest flags need `--run-ignored`/
+`--no-capture` equivalents under nextest. Tests that need an OS service
+that may be absent must serve a stub in-process (see
+`status_notifier_item_*` in martensite-shell) or probe-and-skip with a
+printed reason — never `continue-on-error`.
 
 ## Verification Checklist (run before every release)
 
@@ -148,15 +159,19 @@ cargo test --workspace --all-features
 # nextest equivalent (what CI runs, per shard):
 #   cargo nextest run --workspace [--all-features]
 
-# 4. Doctests (CI shards these across 4 jobs via workspace-matrix.py)
+# 4. Doctests (CI shards: 4 crate groups + 8 facade file-groups via
+#    workspace-matrix.py)
 cargo test --doc --workspace --all-features
 
 # 5. Docs build
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 
-# 6. Security
-cargo audit
-cargo deny check
+# 6. Security — ZERO-VULNERABILITY policy (matches CI)
+cargo audit --deny warnings
+cargo deny check advisories -D warnings
+cargo deny check bans licenses sources
+#    Advisory ignore lists stay EMPTY: an unmaintained/unsound dep must
+#    be upgraded, substituted with a maintained crate, or vendored in.
 
 # 7. Benchmarks (test mode)
 cargo bench -p bench_suite --bench bench_suite -- --test

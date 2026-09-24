@@ -1,11 +1,14 @@
-# cargo-audit configuration — mirrors deny.toml advisory ignores.
-# These are unmaintained transitive dependencies via cosmic-text/syntect
-# that cannot be upgraded until upstream releases a fix.
+# cargo-audit configuration — zero-vulnerability policy.
+#
+# CI runs `cargo audit --deny warnings`: vulnerabilities AND warnings
+# (unmaintained, unsound, yanked) fail the build. This ignore list is
+# expected to stay EMPTY — a new entry requires a documented mitigation
+# plan (upgrade path, maintained substitute, or vendoring), not silence.
+#
+# History: previous ignores (bincode, derivative, yaml-rust, fxhash,
+# proc-macro-error) were all eliminated by removing the unused `vi`
+# feature from vendored martensite-cosmic-text and upgrading the
+# text-reference gtk-rs stack to 0.22. See docs/VENDORED_FORKS.md.
 
 [advisories]
-ignore = [
-    "RUSTSEC-2025-0141", # bincode unmaintained (transitive via cosmic-text/syntect)
-    "RUSTSEC-2024-0388", # derivative unmaintained (transitive via cosmic-text/syntect)
-    "RUSTSEC-2024-0320", # yaml-rust unmaintained (transitive via cosmic-text/syntect)
-    "RUSTSEC-2025-0057", # fxhash unmaintained (transitive via wasmtime)
-]
+ignore = []

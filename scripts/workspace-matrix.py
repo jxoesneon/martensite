@@ -17,7 +17,14 @@ Subcommands (run from the repository root):
                     versioned vendored forks)
     doctest-group <i> <n>
                     workspace members with a lib target assigned to
-                    doctest shard i of n (deterministic, name-sorted mod)
+                    doctest shard i of n (deterministic, name-sorted mod).
+                    Excludes the `martensite` facade — its ~4000 doctests
+                    are sharded at file granularity instead.
+    facade-doctest-group <i> <n>
+                    doctest file filters for the `martensite` facade,
+                    shard i of n (deterministic, path-sorted mod). Each
+                    emitted token is a `src/...` substring that matches
+                    exactly one source file's doctest names.
     check           verify a CRATES list on stdin is topological +
                     complete + predicate-clean
     check-workflow  verify every CRATES=(...) array in publish.yml
@@ -40,16 +47,28 @@ WORKFLOW = ".github/workflows/publish.yml"
 
 def workspace_packages():
     cmd = ["cargo", "metadata", "--format-version", "1", "--no-deps"]
-    try:
-        out = subprocess.check_output(cmd)
-    except subprocess.CalledProcessError:
-        # The rust-toolchain.toml shim can fail fetching components the
-        # bare toolchain lacks (rust-src) — rustup's on-demand download
-        # races its own .partial rename on CI runners. Retrying with
-        # RUSTUP_TOOLCHAIN bypasses the toml shim; `cargo metadata`
-        # needs none of those components.
-        env = dict(os.environ, RUSTUP_TOOLCHAIN="stable")
-        out = subprocess.check_output(cmd, env=env)
+    # `cargo metadata` needs none of rust-toolchain.toml's components or
+    # targets — but the rustup shim fetches them on first invocation, and
+    # its on-demand download can race its own .partial rename on runners.
+    # On CI (where dtolnay installs plain `stable`) bypass the shim
+    # entirely; locally use the pinned toolchain, falling back to the
+    # bypass if the shim fetch fails.
+    orders = (
+        [{"RUSTUP_TOOLCHAIN": "stable"}, {}]
+        if os.environ.get("CI")
+        else [{}, {"RUSTUP_TOOLCHAIN": "stable"}]
+    )
+    out = None
+    for extra in orders:
+        try:
+            out = subprocess.check_output(
+                cmd, env=dict(os.environ, **extra)
+            )
+            break
+        except subprocess.CalledProcessError:
+            continue
+    if out is None:
+        raise SystemExit("cargo metadata failed under both toolchains")
     meta = json.loads(out)
     return {
         p["name"]: p
@@ -71,7 +90,7 @@ def predicate_clean(name, pkg) -> bool:
     if name.startswith("martensite"):
         return True
     return bool(
-        pkg.get("metadata", {}).get("ci", {}).get("publishable") is True
+        (pkg.get("metadata") or {}).get("ci", {}).get("publishable") is True
     )
 
 
@@ -179,21 +198,59 @@ def main() -> int:
         for n in sorted(publishable_set(ws)):
             pkg = ws[n]
             kinds = {k for t in pkg["targets"] for k in t["kind"]}
-            if "lib" not in kinds or pkg["version"] != ws_version:
+            # Vendored forks carry upstream code — semver gates belong to
+            # upstream's release cadence, not ours (marked via
+            # package.metadata.ci.vendored; independently-versioned
+            # forks are also excluded by the ws_version check).
+            if (
+                "lib" not in kinds
+                or pkg["version"] != ws_version
+                or (pkg.get("metadata") or {}).get("ci", {}).get("vendored")
+            ):
                 continue
             print(n)
         return 0
 
     if cmd == "doctest-group":
         i, n = int(sys.argv[2]), int(sys.argv[3])
+        # `lib` OR `proc-macro` targets can carry doctests — martensite-
+        # macros documents its macros with real ``` blocks, and rustdoc
+        # compiles proc-macro doctests downstream of the crate.
         libs = sorted(
             name
             for name, pkg in ws.items()
-            if any("lib" in t["kind"] for t in pkg["targets"])
+            if name != "martensite"
+            and any(
+                any(k in ("lib", "proc-macro") for k in t["kind"])
+                for t in pkg["targets"]
+            )
         )
         for idx, name in enumerate(libs):
             if idx % n == i - 1:
                 print(name)
+        return 0
+
+    if cmd == "facade-doctest-group":
+        i, n = int(sys.argv[2]), int(sys.argv[3])
+        src = os.path.join(
+            os.path.dirname(ws["martensite"]["manifest_path"]), "src"
+        )
+        files = sorted(
+            os.path.relpath(os.path.join(root, f), os.path.dirname(src))
+            for root, _, names in os.walk(src)
+            for f in names
+            if f.endswith(".rs")
+        )
+        for idx, rel in enumerate(files):
+            if idx % n == i - 1:
+                # Filters are substring-matched against doctest names
+                # (`crates/martensite/src/x.rs - item::path (line N)`),
+                # and the `.rs` suffix already prevents prefix collisions
+                # (`button.rs` cannot match `button_group.rs`). Do NOT
+                # add whitespace to these filters: rustdoc/libtest split
+                # test-args on spaces, so `x.rs - ` becomes two filters
+                # and the lone `-` matches every doctest name.
+                print(rel)
         return 0
 
     if cmd == "check":

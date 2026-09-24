@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — CI Hardening & Dependency Health
+
+- **Zero-vulnerability policy enforced** — `.cargo/audit.toml` and
+  `deny.toml` advisory ignore lists are now empty; CI runs `cargo audit
+  --deny warnings` and `cargo deny check advisories -D warnings`, so
+  unmaintained/unsound/yanked advisories are hard failures rather than
+  documented exceptions. The former ignores were eliminated at the
+  source: `martensite-text-reference` moved to the gtk-rs **0.22** stack
+  (removing the `glib 0.18` unsoundness and `proc-macro-error`), and the
+  vendored `martensite-cosmic-text` fork's unused `vi` feature
+  (`modit` + `syntect` + `cosmic_undo_2`) was amputated, dropping
+  `bincode`, `yaml-rust`, `derivative`, `onig`, and `plist` from the
+  lockfile. The fork is bumped to `0.19.0-martensite.2`; the divergence
+  is documented in `docs/VENDORED_FORKS.md` and the crate README.
+- **CI correctness** — the all-features test archive parity check now
+  appends `--all-features` to `--bins --lib --tests` instead of
+  replacing them (libtest previously counted benches/examples the
+  archive never contained). `test-suite` and `ignored-tests` use
+  `if: ${{ !cancelled() }}` so one failed archive leg cannot silently
+  skip the whole test surface; the missing artifact fails that leg's
+  shards loudly. Ignored GPU/hardware tests now consume the prebuilt
+  default-features archive (`--run-ignored ignored-only`) instead of
+  recompiling.
+- **Doctest sharding** — the `martensite` facade's ~4,000 doctests (a
+  61-minute single rustdoc invocation) are split across 8 file-granular
+  shards via `workspace-matrix.py facade-doctest-group`; remaining
+  crates keep 4 package-granular shards, now including `proc-macro`
+  crates (`martensite-macros` doctests were previously uncovered).
+- **D-Bus tests made honest** — the two `status_notifier_item` tests no
+  longer hide behind `continue-on-error`: when no real
+  `org.kde.StatusNotifierWatcher` exists, a minimal in-process zbus stub
+  serves the interface for the whole test process, so the registration
+  round-trip genuinely executes; only a missing session bus skips them.
+- **Toolchain/cache hygiene** — metadata-only steps bypass the
+  `rust-toolchain.toml` shim via `RUSTUP_TOOLCHAIN=stable` (kills the
+  racy on-demand `rust-src`/target fetch); doc-test shards share cache
+  keys with a single saving shard (`save-if`) instead of racing
+  reservations; `actions/upload-artifact` → v7 and
+  `actions/download-artifact` → v8; cargo-deny/audit run from prebuilt
+  binaries instead of the containerized action or source builds.
+
 ## [0.19.0] - 2026-09-23
 
 ### Added — v0.19.0: Widget Breadth & Developer Experience

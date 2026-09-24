@@ -139,12 +139,12 @@ fn render_cjk_reference(
         // layout, so the layout uses vertical mode from the start.
         // Using `layout.context()` after creation does not reliably
         // propagate gravity changes on all platforms.
-        let context = pangocairo::create_context(&cr);
+        let context = pangocairo::functions::create_context(&cr);
         context.set_base_gravity(Gravity::East);
         context.set_gravity_hint(GravityHint::Strong);
         pango::Layout::new(&context)
     } else {
-        pangocairo::create_layout(&cr)
+        pangocairo::functions::create_layout(&cr)
     };
 
     let mut font_desc = FontDescription::new();
@@ -160,7 +160,7 @@ fn render_cjk_reference(
     // Draw at the origin; Pango handles vertical-rl column progression
     // internally via the context gravity.
     cr.move_to(0.0, 0.0);
-    pangocairo::show_layout(&cr, &layout);
+    pangocairo::functions::show_layout(&cr, &layout);
 
     let stride = surface.stride() as usize;
 

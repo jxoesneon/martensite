@@ -55,7 +55,7 @@ not current-version state:
 - `stubs/martensite/Cargo.toml`, `stubs/martensite-ui/Cargo.toml` — pinned
   `0.0.1` crates.io name reservations; intentionally never bumped.
 - `martensite-vello` (`0.10.0-martensite.1`), `martensite-cosmic-text`
-  (`0.19.0-martensite.1`), `martensite-text-reference` (`0.11.0`,
+  (`0.19.0-martensite.2`), `martensite-text-reference` (`0.11.0`,
   `publish = false`) — independent pins that track upstream/base versions,
   not the workspace. The scripts sync *references* to them but never set
   them to the workspace version.

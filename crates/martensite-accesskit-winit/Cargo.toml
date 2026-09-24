@@ -62,3 +62,8 @@ features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"]
 [target.'cfg(target_os = "ios")'.dev-dependencies.softbuffer]
 version = "0.4.8"
 default-features = false
+
+# Vendored upstream fork — excluded from the semver-checks matrix
+# (scripts/workspace-matrix.py) since its API cadence follows upstream.
+[package.metadata.ci]
+vendored = true

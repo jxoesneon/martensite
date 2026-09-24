@@ -13,8 +13,13 @@ All code within the Martensite project is subject to the following testing domai
         runner matrix; per-test process isolation); `cargo test` remains
         the local default and is fully supported.
     *   **CI Trigger**: Runs on every PR and commit via the `test-suite`
-        matrix job — 6 hash-shards × {default, all-features}. Test-count
-        parity with libtest is asserted by the `test-parity` job.
+        matrix job — 6 hash-shards × {default, all-features} consuming a
+        build-once `nextest archive` artifact per leg (`build-tests`).
+        Test-count parity with libtest is asserted inside the build job.
+        Doctests run separately: 4 crate-granular shards + 8
+        file-granular shards for the `martensite` facade
+        (`facade-doctest-group`). Ignored hardware/GPU tests consume the
+        default archive via `--run-ignored ignored-only`.
 *   **Integration Tests (`tests/`)**:
     *   **Location**: Top-level `tests/` directory within crates.
     *   **Tooling**: `cargo test --test <name>`.
@@ -98,7 +103,11 @@ The following immutable requirements must be fulfilled before the `v1.0.0` relea
 *   [ ] Golden frame suite: 100% pass rate on all 3 platforms
 *   [ ] Zero `unsafe` blocks without `SAFETY` comment
 *   [ ] docs.rs: 100% public API documented
-*   [ ] `cargo deny`: 0 violations
+*   [ ] `cargo deny`: 0 violations — **zero-vulnerability policy**:
+    `cargo audit --deny warnings` and `cargo deny check advisories -D
+    warnings` both pass with empty ignore lists; unmaintained or unsound
+    transitive deps are upgraded, substituted, or vendored — never
+    ignored without a documented mitigation plan
 *   [ ] `cargo semver-checks`: 0 breaking changes since last minor
 *   [ ] AccessKit: WCAG 2.1 AA compliance verified
 *   [ ] Fuzzing: 24h campaign with 0 crashes
