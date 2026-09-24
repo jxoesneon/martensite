@@ -3,12 +3,15 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.17.0 released — tagged `v0.17.0` at `480c33d`,
-31 crates published to crates.io at 0.17.0 (including first-time
-`martensite-access-platform`; `martensite-vello` and
-`martensite-cosmic-text` correctly skipped at their pinned versions),
-GitHub Release created with changelog notes. All gates green: full CI
-pipeline on the tag, then gated publish.
+Last updated: v0.19.0 release proceedings — version bumped to 0.19.0,
+CHANGELOG section cut (Widget Breadth & Developer Experience: ~250
+facade widgets, 7 native service crate families — persist, dialog,
+notify, print, share, webview, pdf — `martensite-design-lint` with 51
+rules + autofix + CLI, contextual dashboard, DX spec suite), all local
+gates green (fmt, clippy both feature sets, doc build, audit, deny,
+bench, workspace tests). v0.18.0 shipped 2026-09-16 (33 crates).
+Remaining: tag `v0.19.0` and push — the gated publish workflow
+validates, gates, and publishes ~47 crates (~14 first-time).
 
 ## Active Milestone Plan (v0.18.0 → v0.19.0 → v1.0.0-rc → v1.0.0)
 
@@ -133,17 +136,21 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   `industrial_dashboard` workstation demo + egui/iced benchmark
   baselines; four tutorials; reproducible builds; migration-guide
   refresh. Spec: `docs/milestones/v0.18.0-production-hardening.md`.
-  **Status: PENDING COUNCIL SIGNOFF** — all six workstreams merged to
-  main (api-freeze, hardening, dogfood, docs-honesty, binaries, and the
-  W6 dogfood-API-friction fixes). Council review found and fixed one
-  release blocker: the `martensite::blessed` facade alias added a
-  `martensite → martensite-blessed` dependency edge, so the publish
-  order in `publish.yml`/`RELEASE_PROCESS.md` now ships blessed first.
-- **v0.19.0 Distribution** — prebuilt `cargo-martensite` binaries,
-  WiX/DMG/Flatpak installers, Ed25519 signed updates, build
-  attestations. Tentatively scoped; may be descoped to post-1.0 by
-  ADR without blocking the RC.
-  Spec: `docs/milestones/v0.19.0-distribution.md`.
+  **Status: RELEASED** — tagged `v0.18.0` at `5e39e30` (2026-09-16),
+  33 crates published to crates.io + GitHub Release. Post-tag work
+  landed on main and ships as v0.19.0 (see below).
+- **v0.19.0 Widget Breadth & Developer Experience** — ~250 facade
+  widgets; 7 native service crate families (persist, dialog, notify,
+  print, share, webview, pdf + platform backends); `martensite-design-
+  lint` (51 rules, autofix, CLI); contextual dashboard REV-3; DX spec
+  suite. CHANGELOG section cut; all local gates green.
+  **Status: RELEASE PENDING** — version bumped to 0.19.0; awaiting tag
+  `v0.19.0` + push for the gated publish workflow.
+- **Distribution (deferred — v0.20.0 or post-1.0)** — prebuilt
+  `cargo-martensite` binaries, WiX/DMG/Flatpak installers, Ed25519
+  signed updates, build attestations. The v0.19.0 slot was taken by
+  Widget Breadth & DX; distribution defers per its own tentative-scope
+  clause. Spec: `docs/milestones/v0.19.0-distribution.md`.
 - **v1.0.0-rc.N → v1.0.0** — release-candidate line: full gated
   publish + ≥2-week soak, `cargo-semver-checks` clean vs last `0.x`,
   then the stable tag. Spec (single source of truth for v1.0.0
@@ -154,8 +161,9 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   (`new`/`init`/`lint`/`inspect`/`doctor`/`check`), agent-native
   scaffolding, runtime lint bridge, live tweaks, event debugging,
   dev-mode error surface, onboarding depth. Eight workstreams, specs
-  in `docs/dx/`, ADRs 0036–0038. Version slot pending council
-  (v0.19.0 if Distribution descopes, else v0.20.0).
+  in `docs/dx/`, ADRs 0036–0038. Version slot pending council —
+  v0.19.0 is now Widget Breadth & DX, so the candidates are v0.20.0
+  (shared with or after Distribution) or post-1.0.
   Spec: `docs/milestones/vNEXT-developer-experience.md`.
   - **W1 Inspector** — select mode, lazy tree, layout chain, a11y
     tree, lint/events panels; in-app per ADR-0036.

@@ -39,12 +39,12 @@ Due to the strict workspace constraints and inter-crate dependencies, the publis
 
 1. `martensite-reactive`
 2. `martensite-macros`
-3. `martensite-core`
-4. `martensite-host`
-5. `martensite-layout`
-6. `martensite-vello`
-7. `martensite-render`
-8. `martensite-theme`
+3. `martensite-theme`
+4. `martensite-core`
+5. `martensite-host`
+6. `martensite-layout`
+7. `martensite-vello`
+8. `martensite-render`
 9. `martensite-media-platform`
 10. `martensite-media`
 11. `martensite-engine-bridge`
@@ -68,8 +68,22 @@ Due to the strict workspace constraints and inter-crate dependencies, the publis
 29. `martensite-assets`
 30. `martensite-devtools`
 31. `martensite-plugin`
-32. `martensite-blessed`
-33. `martensite`
+32. `martensite-persist`
+33. `martensite-dialog-platform`
+34. `martensite-dialog`
+35. `martensite-notify-platform`
+36. `martensite-notify`
+37. `martensite-print-platform`
+38. `martensite-print`
+39. `martensite-share-platform`
+40. `martensite-share`
+41. `martensite-webview`
+42. `martensite-webview-platform`
+43. `martensite-pdf-platform`
+44. `martensite-pdf`
+45. `martensite-blessed`
+46. `martensite-design-lint`
+47. `martensite`
 *(Not published: `crates/martensite-bevy`, `crates/martensite-godot`,
 `crates/martensite-media-test`, `crates/martensite-render-test`,
 `crates/martensite-text-reference`, `tools/cargo-martensite`, all of

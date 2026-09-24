@@ -1,7 +1,7 @@
 //! Functional zones — the contextual-dashboard composition per the
 //! Design Council verdict (docket `20260921`): every panel is an
 //! operational surface where each mounted widget is bound to the
-//! [`PlantModel`] through [`Bound`], organised into domain-named
+//! [`PlantModel`] through [`Bound`](crate::zone::Bound), organised into domain-named
 //! `Tabs` pages — one visible surface at a time, no exhibit walls.
 //!
 //! Each `zones/<panel>.rs` module returns its pages as

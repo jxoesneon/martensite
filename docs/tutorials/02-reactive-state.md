@@ -13,7 +13,7 @@ The three primitives:
 | `Memo<T>` | Cached derived value, lazily re-evaluated | `Memo::new(f)` / `create_memo(f)` |
 | `Effect` | Side-effect re-run when dependencies change | `Effect::new(f)` / `create_effect(f)` |
 
-All examples below compile against `martensite-reactive = "0.18.0"`.
+All examples below compile against `martensite-reactive = "0.19.0"`.
 
 ## 1. Signals
 

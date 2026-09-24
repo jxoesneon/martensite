@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.19.0] - 2026-09-23
+
+### Added — v0.19.0: Widget Breadth & Developer Experience
 
 - **martensite-design-lint** — standards-backed design linting over
   `PaintList` `PushScope` provenance: replays the paint stream into a

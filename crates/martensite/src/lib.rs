@@ -11,7 +11,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! martensite = "0.18.0"
+//! martensite = "0.19.0"
 //! ```
 //!
 //! # Examples

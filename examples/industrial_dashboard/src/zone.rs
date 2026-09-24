@@ -200,7 +200,7 @@ pub fn scroll(w: impl Widget + 'static) -> martensite::widgets::ScrollView {
 /// The page-grammar's workhorse — primary surfaces mount through
 /// `fill` so a bounded `Tabs` panel distributes real space by
 /// `child_flex` weight instead of fixed band heights. Inside an
-/// unbounded scroller it reports [`FILL_FALLBACK`] (never `f32::MAX`,
+/// unbounded scroller it reports `FILL_FALLBACK` (never `f32::MAX`,
 /// so it can sit in a bounded or unbounded context safely — but per
 /// the grammar it must not be mounted inside a `ScrollView`; the
 /// surface scrolls internally when it needs to).

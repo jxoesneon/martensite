@@ -370,7 +370,7 @@ impl RenderOrchestrator {
     }
 
     /// Enables the advisory paint-compliance audit with the given
-    /// configuration. The audit runs every [`AUDIT_INTERVAL`]-th
+    /// configuration. The audit runs every 30th
     /// [`render`](Self::render) call — the text-overlap pass is
     /// quadratic, so a per-frame audit would consume the frame
     /// budget — and reports each unique finding once via `tracing`.

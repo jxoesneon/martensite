@@ -1,10 +1,10 @@
 # Milestone Specification: Developer Experience Initiative
 
-**Status:** Draft — **version assignment pending council.** Candidate
-slots: the `v0.19.0` number if Distribution descopes to post-1.0 per
-its own spec's escape clause, or a `v0.20.0` between `v0.19.0` and
-`v1.0.0-rc`. This doc defines the workstreams; it does not presume the
-version.
+**Status:** Draft — **version assignment pending council.** The
+`v0.19.0` slot shipped as Widget Breadth & Developer Experience
+(2026-09-23), so candidates are `v0.20.0` (shared with or after
+Distribution) or post-1.0. This doc defines the workstreams; it does
+not presume the version.
 
 ## 1. Executive Summary & Objectives
 

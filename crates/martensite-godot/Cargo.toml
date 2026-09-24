@@ -1,6 +1,6 @@
 [package]
 name = "martensite-godot"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2024"
 rust-version = "1.94.0"
 license = "MIT OR Apache-2.0"
@@ -39,7 +39,7 @@ test-noop = ["wgpu/noop", "martensite-engine-bridge/test-noop"]
 
 [dependencies]
 godot = "0.5.5"
-martensite-engine-bridge = { path = "../martensite-engine-bridge", version = "0.18.0" }
-martensite-core = { path = "../martensite-core", version = "0.18.0" }
+martensite-engine-bridge = { path = "../martensite-engine-bridge", version = "0.19.0" }
+martensite-core = { path = "../martensite-core", version = "0.19.0" }
 wgpu = "30"
 

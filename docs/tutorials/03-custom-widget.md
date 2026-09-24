@@ -9,7 +9,7 @@ Dependencies for a crate defining widgets (versions matching v0.17.0):
 
 ```toml
 [dependencies]
-martensite-core = "0.18.0"
+martensite-core = "0.19.0"
 glam = "0.33"
 kurbo = "0.13"
 accesskit = "0.25"
