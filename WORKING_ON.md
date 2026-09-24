@@ -3,15 +3,15 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.19.0 release proceedings — version bumped to 0.19.0,
-CHANGELOG section cut (Widget Breadth & Developer Experience: ~250
-facade widgets, 7 native service crate families — persist, dialog,
-notify, print, share, webview, pdf — `martensite-design-lint` with 51
-rules + autofix + CLI, contextual dashboard, DX spec suite), all local
-gates green (fmt, clippy both feature sets, doc build, audit, deny,
-bench, workspace tests). v0.18.0 shipped 2026-09-16 (33 crates).
-Remaining: tag `v0.19.0` and push — the gated publish workflow
-validates, gates, and publishes ~47 crates (~14 first-time).
+Last updated: v0.19.0 tagged and pushed (`e037d7b`, 2026-09-24) —
+the gated publish pipeline is running on GitHub: all CI gates, then
+sequential crates.io publish of ~47 crates (~14 first-time: persist,
+dialog(+platform), notify(+platform), print(+platform),
+share(+platform), webview(+platform), pdf(+platform),
+design-lint), then an auto-generated GitHub Release from CHANGELOG.
+Local gates all green before tag: fmt, clippy both feature sets,
+doc build, audit, deny, bench, 99 test suites. v0.18.0 shipped
+2026-09-16 (33 crates).
 
 ## Active Milestone Plan (v0.18.0 → v0.19.0 → v1.0.0-rc → v1.0.0)
 
@@ -144,8 +144,8 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   print, share, webview, pdf + platform backends); `martensite-design-
   lint` (51 rules, autofix, CLI); contextual dashboard REV-3; DX spec
   suite. CHANGELOG section cut; all local gates green.
-  **Status: RELEASE PENDING** — version bumped to 0.19.0; awaiting tag
-  `v0.19.0` + push for the gated publish workflow.
+  **Status: PUBLISHING** — tagged `v0.19.0` at `e037d7b` (2026-09-24),
+  gated publish pipeline running on GitHub.
 - **Distribution (deferred — v0.20.0 or post-1.0)** — prebuilt
   `cargo-martensite` binaries, WiX/DMG/Flatpak installers, Ed25519
   signed updates, build attestations. The v0.19.0 slot was taken by
