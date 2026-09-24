@@ -12,6 +12,7 @@ use std::fmt::Write as _;
 
 use kurbo::Rect;
 
+use crate::fix::{FixSafety, LintFix};
 use crate::rule::Confidence;
 use crate::severity::Severity;
 use crate::standard::Standard;
@@ -61,6 +62,9 @@ pub struct Finding {
     /// For findings in [`LintReport::suppressed`]: which allow
     /// suppressed them (path glob or inline marker location).
     pub suppressed_by: Option<String>,
+    /// Optional autofix — applied by [`crate::autofix`]. `Safe` fixes
+    /// run without `--force`; `Risky` ones wait for it.
+    pub fix: Option<LintFix>,
 }
 
 impl Finding {
@@ -79,12 +83,19 @@ impl Finding {
             message: message.into(),
             doc: String::new(),
             suppressed_by: None,
+            fix: None,
         }
     }
 
     /// Builder — set bounds.
     pub(crate) fn at(mut self, bounds: Rect) -> Self {
         self.bounds = Some(bounds);
+        self
+    }
+
+    /// Builder — attach an autofix.
+    pub(crate) fn with_fix(mut self, fix: LintFix) -> Self {
+        self.fix = Some(fix);
         self
     }
 
@@ -125,6 +136,11 @@ pub struct LintReport {
     /// Allow specifiers (path allows and inline `@lint:` markers)
     /// that suppressed nothing — stale ignores to clean up.
     pub unused_allows: Vec<String>,
+    /// Allow specifiers that suppressed at least one finding —
+    /// same descriptor grammar as `unused_allows`. Multi-frame
+    /// harnesses use it to reconcile allows that fire on one frame
+    /// but not another (a frame-local `unused` ≠ stale).
+    pub used_allows: Vec<String>,
 }
 
 impl LintReport {
@@ -180,6 +196,13 @@ impl LintReport {
             let _ = writeln!(out, "    {prefix}: {} [{}]", f.citation, standards);
             if !f.doc.is_empty() {
                 let _ = writeln!(out, "    see: {}", f.doc);
+            }
+            if let Some(fix) = &f.fix {
+                let tag = match fix.safety {
+                    FixSafety::Safe => "fix:",
+                    FixSafety::Risky => "fix (needs --force):",
+                };
+                let _ = writeln!(out, "    {tag} {}", fix.summary);
             }
             if f.severity != f.intrinsic {
                 let _ = writeln!(

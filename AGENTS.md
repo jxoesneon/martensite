@@ -294,14 +294,38 @@ These are explicitly documented in code, not hidden:
   sets `standards`, `[rules.<id>]` severity/params, `[classify]`, and
   `[[allow]]` path globs (`*` = within a segment, `**` = any depth).
 - Inline control: `debug_name` suffix `@lint:rule-id|all|standard:<key>`
-  suppresses that subtree; `@level:1..4` declares an ISA-101 level.
+  suppresses that subtree; `@level:1..4` declares an ISA-101 level;
+  semantic markers (`@alarm`, `@priority:N`, `@kpi`, `@destructive`)
+  feed domain rules and are node-local (rules needing ancestor context
+  use `scene.by_path()`/`marker_in_lineage`).
 - Suppressed findings land in `LintReport::suppressed` — reported, not
   dropped; allows matching nothing go to `unused_allows`; `Severity::
   Forbid` cannot be suppressed by either mechanism.
+- Autofix: findings may carry `LintFix` (`Safe` ops = spacing/alignment
+  nudges; `Risky` = recolors/font/bounds — gated on `--force`).
+  `autofix(&mut scene, cfg, &FixOptions)` loops lint→fix→re-lint until
+  convergence; `recursive:false` = one pass, `max_depth` caps passes.
+  Fixes mutate the `LintScene` model — a convergence proof/preview,
+  not source rewriting.
+- Rule modules: `rules/mod.rs` (original 14 + shared helpers:
+  `surface_nodes`, `kind_of`, `interactive_leaves`, `sibling_gaps`,
+  `background_at`, `contrast_ratio`, `desaturate`, `is_alarm_red`,
+  `marker_in_lineage`) plus `rules/{wcag,hmi,gestalt,consistency_ext,
+  frame}.rs` — each exports `pub(crate) fn rules()`.
 - Dashboard harness:
   `cargo test -p industrial_dashboard dump_design_lints -- --nocapture`;
   `PAGE_FILTER=<substr>` narrows pages (same convention as
-  `dump_zone_lints`).
+  `dump_zone_lints`). CLI:
+  `cargo run -p industrial_dashboard --bin design_lint -- [--fix]
+  [--force] [--no-recursive] [--max-recursiveness N] [--filter STR]
+  [--list-rules]` — exits 1 on Warn+ findings (Info never gates; CI-
+  usable). The sweep machinery is shared in `lint_sweep.rs`.
+- Fix-op semantics worth knowing: path-anchored ops hit ALL same-path
+  siblings (`nodes_mut`); `SetGap`/`SnapGapsToGrid`/`AlignSiblings`
+  only move band-adjacent children (off-row/grid children untouched —
+  a global-extreme align collapses grids); recolors keep a color that
+  other fills/texts still use; `autofix` fingerprints the scene each
+  pass and stops on a repeated state (oscillating fixes).
 
 ### Live-window verification (ultramac MCP)
 

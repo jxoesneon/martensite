@@ -9,9 +9,9 @@
 //! required and the same scene works for live frames, headless tests,
 //! and golden fixtures.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
-use kurbo::{Rect, Shape};
+use kurbo::{Point, Rect, Shape};
 use martensite_core::{PaintCommand, PaintList};
 
 /// What a node is *for*, inferred from its `debug_name`'s final
@@ -101,19 +101,28 @@ impl NodeKind {
             "stepper",
             "spinbox",
             "rating",
-            "link",
             "menuitem",
             "segmented",
             "cascader",
             "treeselect",
             "listbox",
-            "select",
             "input",
             "menu",
-            "tab",
         ];
-        if INTERACTIVE.iter().any(|s| has(s)) {
+        if INTERACTIVE.iter().any(|s| has(s))
+            // Collision-prone substrings need exclusions:
+            // `Table`/`Tabular` aren't tabs, `Blink` isn't a link,
+            // `Unselected` isn't a select.
+            || (has("tab") && !has("table") && !has("tabular"))
+            || (has("link") && !has("blink"))
+            || (has("select") && !has("unselect"))
+        {
             return NodeKind::Interactive;
+        }
+        // `ScrollView` is a container — check before the Content
+        // "view" substring catches it.
+        if has("scroll") {
+            return NodeKind::Container;
         }
         if has("text")
             || has("label")
@@ -135,7 +144,6 @@ impl NodeKind {
         if has("flex")
             || has("container")
             || has("panel")
-            || has("scroll")
             || has("stack")
             || has("grid")
             || has("column")
@@ -152,6 +160,40 @@ impl NodeKind {
         }
         NodeKind::Unknown
     }
+}
+
+/// One text run painted in a scope — the payload for contrast,
+/// truncation, baseline, and duplicate-label rules.
+///
+/// `text` is populated for `DrawText` commands only; `DrawGlyphRun`
+/// carries shaped glyph clusters, not recoverable text, so runs from
+/// glyph commands arrive with an empty `text` but real positions.
+#[derive(Debug, Clone)]
+pub struct TextStat {
+    /// Baseline origin in device px.
+    pub origin: Point,
+    /// Font size in device px.
+    pub size: f32,
+    /// Painted color.
+    pub color: [u8; 4],
+    /// The string painted (empty for glyph-run-sourced stats).
+    pub text: String,
+    /// Advance width in device px — from glyph positions when known.
+    pub width: Option<f64>,
+}
+
+/// A fill painted in a scope — the payload for contrast measurement,
+/// adjacency checks, and recolor fixes.
+#[derive(Debug, Clone)]
+pub struct FillStat {
+    /// The fill's rect (bounding box for path fills) in device px.
+    pub rect: Rect,
+    /// Painted color.
+    pub color: [u8; 4],
+    /// The active clip rect when the fill was painted, if any — a
+    /// fill deliberately oversized under a clip (progress fills,
+    /// clipped decoration) is intentional, not overflow.
+    pub clip: Option<Rect>,
 }
 
 /// One node of a [`LintScene`] — a widget scope with its own-scope
@@ -184,10 +226,21 @@ pub struct LintNode {
     /// marker. `None` = undeclared — hierarchy rules treat undeclared
     /// surfaces as reviewable, not violations.
     pub display_level: Option<u8>,
+    /// Semantic markers declared via `@name`/`@name:value` name
+    /// suffixes — `@alarm`, `@priority:2`, `@kpi`, `@destructive`,
+    /// plus any project-defined markers rules may consume. Unlike
+    /// `allows`, markers are *node-local*: an `@alarm` badge does not
+    /// mark its siblings. Rules needing ancestor context walk the
+    /// path themselves via [`LintScene::by_path`].
+    pub markers: Vec<String>,
     /// Font sizes painted *in this scope* (device px), deduplicated.
     pub font_sizes: Vec<f32>,
     /// Distinct fill/stroke/text colors painted *in this scope*.
     pub colors: Vec<[u8; 4]>,
+    /// Text runs painted *in this scope*, in paint order.
+    pub texts: Vec<TextStat>,
+    /// Fills painted *in this scope*, in paint order.
+    pub fills: Vec<FillStat>,
     /// Approximate painted coverage of this scope — sum of fill-rect
     /// areas clipped to `bounds`, capped at the bounds area. Text and
     /// strokes contribute nothing; fills dominate coverage in
@@ -207,6 +260,38 @@ impl LintNode {
     /// appears in this node's inline allow list.
     pub fn allows(&self, spec: &str) -> bool {
         self.allows.iter().any(|a| a == spec || a == "all")
+    }
+
+    /// True when the node declares semantic marker `m` (`@alarm`,
+    /// `@kpi`, ...). Node-local — see [`LintNode::markers`].
+    pub fn has_marker(&self, m: &str) -> bool {
+        self.markers.iter().any(|s| s == m)
+    }
+
+    /// The value of a `@key:value` marker (`marker_value("priority")`
+    /// on `"X@priority:2"` → `Some("2")`), or `Some("")` for a bare
+    /// `@key`.
+    pub fn marker_value(&self, key: &str) -> Option<&str> {
+        self.markers.iter().find_map(|s| {
+            s.strip_prefix(&format!("{key}:"))
+                .or(if s == key { Some("") } else { None })
+        })
+    }
+
+    /// Shift this node's bounds and every positioned stat by `d` —
+    /// the shared mechanic for spacing/alignment autofix ops.
+    pub fn translate(&mut self, d: kurbo::Vec2) {
+        self.bounds = self.bounds + d;
+        for f in &mut self.fills {
+            f.rect = f.rect + d;
+            f.clip = f.clip.map(|c| c + d);
+        }
+        for t in &mut self.texts {
+            t.origin += d;
+        }
+        for c in &mut self.children {
+            c.translate(d);
+        }
     }
 
     /// Area of `bounds` in square device pixels.
@@ -342,7 +427,7 @@ impl LintScene {
         for cmd in &list.commands {
             match cmd {
                 PaintCommand::PushScope { id, name, bounds } => {
-                    let (display, own_allows, display_level) = parse_markers(name);
+                    let (display, own_allows, display_level, markers) = parse_markers(name);
                     let short = display.rsplit("::").next().unwrap_or(display).to_string();
                     let (path, allows) = match stack.last() {
                         Some(parent) => {
@@ -369,8 +454,11 @@ impl LintScene {
                             allows,
                             own_allows,
                             display_level,
+                            markers,
                             font_sizes: Vec::new(),
                             colors: Vec::new(),
+                            texts: Vec::new(),
+                            fills: Vec::new(),
                             painted_area: 0.0,
                             children: Vec::new(),
                         },
@@ -391,16 +479,27 @@ impl LintScene {
                 }
                 PaintCommand::FillRect(r, c) => {
                     if let Some(acc) = current!() {
-                        acc.node.painted_area +=
-                            visible_fill_area(*r, acc.node.bounds, &clip_rect(&clip));
+                        let clip_r = clip_rect(&clip);
+                        acc.node.painted_area += visible_fill_area(*r, acc.node.bounds, &clip_r);
                         push_unique(&mut acc.node.colors, *c);
+                        acc.node.fills.push(FillStat {
+                            rect: *r,
+                            color: *c,
+                            clip: clip_r,
+                        });
                     }
                 }
                 PaintCommand::FillPath(p, c) => {
                     if let Some(acc) = current!() {
-                        acc.node.painted_area +=
-                            visible_fill_area(p.bounding_box(), acc.node.bounds, &clip_rect(&clip));
+                        let rect = p.bounding_box();
+                        let clip_r = clip_rect(&clip);
+                        acc.node.painted_area += visible_fill_area(rect, acc.node.bounds, &clip_r);
                         push_unique(&mut acc.node.colors, *c);
+                        acc.node.fills.push(FillStat {
+                            rect,
+                            color: *c,
+                            clip: clip_r,
+                        });
                     }
                 }
                 PaintCommand::StrokeRect(_, _, c) | PaintCommand::StrokePath(_, _, c) => {
@@ -408,16 +507,32 @@ impl LintScene {
                         push_unique(&mut acc.node.colors, *c);
                     }
                 }
-                PaintCommand::DrawText(_, _t, size, c) => {
+                PaintCommand::DrawText(pt, t, size, c) => {
                     if let Some(acc) = current!() {
                         push_unique_f32(&mut acc.node.font_sizes, *size);
                         push_unique(&mut acc.node.colors, *c);
+                        acc.node.texts.push(TextStat {
+                            origin: *pt,
+                            size: *size,
+                            color: *c,
+                            text: t.clone(),
+                            width: None,
+                        });
                     }
                 }
                 PaintCommand::DrawGlyphRun(run) => {
                     if let Some(acc) = current!() {
                         push_unique_f32(&mut acc.node.font_sizes, run.font_size);
                         push_unique(&mut acc.node.colors, run.color);
+                        if let (Some(first), Some(last)) = (run.glyphs.first(), run.glyphs.last()) {
+                            acc.node.texts.push(TextStat {
+                                origin: Point::new(f64::from(first.x), f64::from(first.y)),
+                                size: run.font_size,
+                                color: run.color,
+                                text: String::new(),
+                                width: Some(f64::from(last.x + last.width) - f64::from(first.x)),
+                            });
+                        }
                     }
                 }
                 _ => {}
@@ -455,24 +570,74 @@ impl LintScene {
     pub fn walk(&self) -> impl Iterator<Item = &LintNode> {
         self.roots.iter().flat_map(|r| r.walk())
     }
+
+    /// Path → node lookup for rules that need ancestor context
+    /// (inherited semantic markers, lineage checks).
+    pub fn by_path(&self) -> HashMap<&str, &LintNode> {
+        // First wins — same-name siblings share a path; keep the map
+        // consistent with `node`/`node_mut`'s first-match behavior.
+        let mut map = HashMap::new();
+        for n in self.walk() {
+            map.entry(n.path.as_str()).or_insert(n);
+        }
+        map
+    }
+
+    /// The node at `path`, if present.
+    pub fn node(&self, path: &str) -> Option<&LintNode> {
+        self.walk().find(|n| n.path == path)
+    }
+
+    /// Mutable node lookup — the autofix seam.
+    pub fn node_mut(&mut self, path: &str) -> Option<&mut LintNode> {
+        fn find<'a>(n: &'a mut LintNode, path: &str) -> Option<&'a mut LintNode> {
+            if n.path == path {
+                return Some(n);
+            }
+            for c in &mut n.children {
+                if let Some(hit) = find(c, path) {
+                    return Some(hit);
+                }
+            }
+            None
+        }
+        self.roots.iter_mut().find_map(|r| find(r, path))
+    }
+
+    /// Every node matching `path` — same-name siblings share a path,
+    /// so a fix anchored by path may legitimately hit several nodes.
+    /// Fix ops are condition-gated (`from` color, minimum bounds),
+    /// so applying to all matches only mutates actual offenders.
+    pub(crate) fn nodes_mut(&mut self, path: &str) -> Vec<&mut LintNode> {
+        fn find<'a>(n: &'a mut LintNode, path: &str, out: &mut Vec<&'a mut LintNode>) {
+            if n.path == path {
+                out.push(n);
+                return;
+            }
+            for c in &mut n.children {
+                find(c, path, out);
+            }
+        }
+        let mut out = Vec::new();
+        for r in &mut self.roots {
+            find(r, path, &mut out);
+        }
+        out
+    }
 }
 
-/// Parse `Name@lint:...` and `Name@level:N` marker suffixes from a
-/// scope name. A name may carry several markers
-/// (`"Panel@level:2@lint:color-budget"`); each `@`-section is parsed
-/// independently. Returns the cleaned display name, the allow
-/// specifiers, and the declared display level.
-fn parse_markers(name: &str) -> (&str, Vec<String>, Option<u8>) {
+/// Parse `Name@lint:...`, `Name@level:N`, and semantic
+/// `Name@marker`/`Name@marker:value` suffixes from a scope name. A
+/// name may carry several markers
+/// (`"Panel@level:2@lint:color-budget@alarm"`); each `@`-section is
+/// parsed independently. Returns the cleaned display name, the allow
+/// specifiers, the declared display level, and the semantic markers.
+fn parse_markers(name: &str) -> (&str, Vec<String>, Option<u8>, Vec<String>) {
     let mut allows = Vec::new();
     let mut level = None;
-    // Find the first marker (whichever comes first); everything
-    // before it is the display name.
-    let marker_at = [name.find("@lint:"), name.find("@level:")]
-        .into_iter()
-        .flatten()
-        .min();
-    let Some(mi) = marker_at else {
-        return (name, allows, level);
+    let mut markers = Vec::new();
+    let Some(mi) = name.find('@') else {
+        return (name, allows, level, markers);
     };
     let display = &name[..mi];
     for section in name[mi..].split('@').filter(|s| !s.is_empty()) {
@@ -484,9 +649,17 @@ fn parse_markers(name: &str) -> (&str, Vec<String>, Option<u8>) {
             );
         } else if let Some(l) = section.strip_prefix("level:") {
             level = l.trim().parse::<u8>().ok().filter(|l| (1..=4).contains(l));
+        } else {
+            // Semantic marker — stored verbatim (lowercased) for rules
+            // to interpret: `alarm`, `priority:2`, `kpi`,
+            // `destructive`, or project-defined keys.
+            let m = section.trim().to_ascii_lowercase();
+            if !m.is_empty() && !markers.contains(&m) {
+                markers.push(m);
+            }
         }
     }
-    (display, allows, level)
+    (display, allows, level, markers)
 }
 
 fn push_unique(v: &mut Vec<[u8; 4]>, c: [u8; 4]) {
@@ -508,5 +681,72 @@ fn visible_fill_area(fill: Rect, scope: Rect, clip: &Option<Rect>) -> f64 {
     if let Some(c) = clip {
         vis = vis.intersect(*c);
     }
-    (vis.width() * vis.height()).max(0.0)
+    // Clamp per-dimension — disjoint rects produce negative width AND
+    // height, whose product is positive phantom area.
+    vis.width().max(0.0) * vis.height().max(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use martensite_core::{PaintCommand, PaintList};
+
+    #[test]
+    fn disjoint_fill_contributes_no_phantom_area() {
+        // A fill fully outside its scope produces a disjoint
+        // intersection — negative width AND height, whose product is
+        // positive. It must contribute zero, not phantom coverage.
+        let mut list = PaintList::new();
+        list.push_scope(None, "App", Rect::new(0.0, 0.0, 100.0, 100.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(500.0, 500.0, 600.0, 600.0),
+            [255, 0, 0, 255],
+        ));
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let app = scene.node("App").unwrap();
+        assert_eq!(app.painted_area, 0.0, "disjoint fill counted as area");
+    }
+
+    #[test]
+    fn clipped_fill_records_its_clip() {
+        let mut list = PaintList::new();
+        list.push_scope(None, "App", Rect::new(0.0, 0.0, 100.0, 100.0));
+        list.commands
+            .push(PaintCommand::ClipRect(Rect::new(0.0, 0.0, 50.0, 50.0)));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 0.0, 200.0, 200.0),
+            [0, 255, 0, 255],
+        ));
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let app = scene.node("App").unwrap();
+        assert_eq!(
+            app.fills[0].clip,
+            Some(Rect::new(0.0, 0.0, 50.0, 50.0)),
+            "active clip was not captured on the fill"
+        );
+    }
+
+    #[test]
+    fn collision_prone_names_classify_correctly() {
+        // Regression: substring matching classified Table→tab,
+        // Blink→link, Unselected→select, ScrollView→content.
+        for (name, want) in [
+            ("ScrollView", NodeKind::Container),
+            ("Table", NodeKind::Unknown),
+            ("TabularGrid", NodeKind::Container),
+            ("Blink", NodeKind::Unknown),
+            ("UnselectedChip", NodeKind::Unknown),
+            ("Tab", NodeKind::Interactive),
+            ("Link", NodeKind::Interactive),
+            ("Select", NodeKind::Interactive),
+        ] {
+            assert_eq!(
+                NodeKind::from_widget_name(name),
+                want,
+                "{name} misclassified"
+            );
+        }
+    }
 }

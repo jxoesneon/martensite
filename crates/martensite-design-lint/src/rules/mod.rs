@@ -1,5 +1,5 @@
-//! The built-in rule set — Tier 1: everything computable from the
-//! scope tree alone.
+//! The built-in rule set — everything computable from the scope
+//! tree, plus the `frame` module's optional rendered-pixel pass.
 //!
 //! Threshold defaults are evidence-backed where a standard gives one
 //! (WCAG 24pt, Hick ~7 choices) and conservative where the research
@@ -7,7 +7,14 @@
 //! thresholds are tunable via [`LintConfig::with_rule_param`] — the
 //! defaults encode the standard, not the app.
 
+mod consistency_ext;
+mod frame;
+mod gestalt;
+mod hmi;
+mod wcag;
+
 use crate::config::LintConfig;
+use crate::fix::{AlignEdge, FixOp, FixSafety, LintFix};
 use crate::report::Finding;
 use crate::rule::{param, Confidence, LintRule};
 use crate::scene::{LintNode, LintScene, NodeKind};
@@ -16,13 +23,13 @@ use crate::standard::Standard;
 
 /// A node's effective kind — config `classify` overrides beat the
 /// name heuristic.
-fn kind_of(n: &LintNode, cfg: &LintConfig) -> NodeKind {
+pub(crate) fn kind_of(n: &LintNode, cfg: &LintConfig) -> NodeKind {
     cfg.classified(&n.name).unwrap_or(n.kind)
 }
 
 /// Interactive leaves honoring `classify` overrides — controls not
 /// nested inside another control.
-fn interactive_leaves<'a>(node: &'a LintNode, cfg: &LintConfig) -> Vec<&'a LintNode> {
+pub(crate) fn interactive_leaves<'a>(node: &'a LintNode, cfg: &LintConfig) -> Vec<&'a LintNode> {
     fn collect<'a>(n: &'a LintNode, inside: bool, cfg: &LintConfig, out: &mut Vec<&'a LintNode>) {
         let interactive = kind_of(n, cfg) == NodeKind::Interactive;
         if interactive && !inside {
@@ -42,7 +49,7 @@ fn interactive_leaves<'a>(node: &'a LintNode, cfg: &LintConfig) -> Vec<&'a LintN
 
 /// Every built-in rule, in stable report order.
 pub fn all_rules() -> Vec<&'static dyn LintRule> {
-    vec![
+    let mut rules: Vec<&'static dyn LintRule> = vec![
         &NavDepth,
         &ChoiceCount,
         &ChromeRatio,
@@ -57,13 +64,23 @@ pub fn all_rules() -> Vec<&'static dyn LintRule> {
         &EdgeDensity,
         &ColorOnlyInfo,
         &ProgressiveDisclosure,
-    ]
+    ];
+    rules.extend(wcag::rules());
+    rules.extend(hmi::rules());
+    rules.extend(gestalt::rules());
+    rules.extend(consistency_ext::rules());
+    rules.extend(frame::rules());
+    rules
 }
 
 /// Surfaces are evaluated per subtree; tiny subtrees are noise.
 /// `min_surface_pt` gates area-sensitive rules — below it a node is a
 /// control cluster, not a surface.
-fn surface_nodes<'a>(scene: &'a LintScene, cfg: &LintConfig, rule: &str) -> Vec<&'a LintNode> {
+pub(crate) fn surface_nodes<'a>(
+    scene: &'a LintScene,
+    cfg: &LintConfig,
+    rule: &str,
+) -> Vec<&'a LintNode> {
     let min_area_pt = param(cfg, rule, "min_surface_pt", 20_000.0);
     let min_px = min_area_pt * f64::from(scene.scale_factor).powi(2);
     scene
@@ -305,6 +322,12 @@ impl LintRule for Alignment {
             // Scattered = aligned in neither axis. A column has few
             // lefts; a row has few tops; a grid has few of both.
             if lefts > max_edges && tops > max_edges {
+                // Fix to the axis that's *closer* to already-aligned.
+                let (edge, label) = if lefts <= tops {
+                    (AlignEdge::Left, "left edges")
+                } else {
+                    (AlignEdge::Top, "top edges")
+                };
                 out.push(
                     Finding::new(
                         "alignment",
@@ -315,7 +338,15 @@ impl LintRule for Alignment {
                             children.len()
                         ),
                     )
-                    .at(n.bounds),
+                    .at(n.bounds)
+                    .with_fix(LintFix::new(
+                        format!("align the children's {label}"),
+                        FixSafety::Safe,
+                        FixOp::AlignSiblings {
+                            parent: n.path.clone(),
+                            edge,
+                        },
+                    )),
                 );
             }
         }
@@ -372,7 +403,16 @@ impl LintRule for TargetSize {
                             min_pt
                         ),
                     )
-                    .at(n.bounds),
+                    .at(n.bounds)
+                    .with_fix(LintFix::new(
+                        format!("grow the target to ≥{min_pt:.0}pt"),
+                        FixSafety::Risky,
+                        FixOp::GrowBounds {
+                            path: n.path.clone(),
+                            min_w: min_px,
+                            min_h: min_px,
+                        },
+                    )),
                 );
             }
         }
@@ -524,6 +564,22 @@ impl LintRule for ColorBudget {
                 }
             }
             if hues.len() > max {
+                // Fix: desaturate the offending fills toward their own
+                // luminance — the ISA-101 "gray canvas" correction.
+                // One op per (node, saturated fill color); Risky
+                // because recoloring is a design decision.
+                let mut ops = Vec::new();
+                for d in n.walk() {
+                    for f in &d.fills {
+                        if saturated_hue_bucket(f.color, min_sat).is_some() {
+                            ops.push(FixOp::RecolorFill {
+                                path: d.path.clone(),
+                                from: f.color,
+                                to: desaturate(f.color, 0.2),
+                            });
+                        }
+                    }
+                }
                 out.push(
                     Finding::new(
                         "color-budget",
@@ -534,7 +590,12 @@ impl LintRule for ColorBudget {
                             hues.len()
                         ),
                     )
-                    .at(n.bounds),
+                    .at(n.bounds)
+                    .with_fix(LintFix {
+                        summary: format!("desaturate {} non-alarm fill(s) toward gray", ops.len()),
+                        safety: FixSafety::Risky,
+                        ops,
+                    }),
                 );
             }
         }
@@ -695,7 +756,19 @@ impl LintRule for Whitespace {
                             min_gap / f64::from(scene.scale_factor)
                         ),
                     )
-                    .at(n.bounds),
+                    .at(n.bounds)
+                    .with_fix(LintFix::new(
+                        format!(
+                            "open sibling gaps to ≥{:.0}px ({:.0}pt)",
+                            min_gap,
+                            min_gap / f64::from(scene.scale_factor)
+                        ),
+                        FixSafety::Safe,
+                        FixOp::SetGap {
+                            parent: n.path.clone(),
+                            gap: min_gap,
+                        },
+                    )),
                 );
             }
         }
@@ -1063,7 +1136,7 @@ impl LintRule for ProgressiveDisclosure {
 /// Hue bucket (30° steps) for a saturated, opaque, mid-lightness
 /// color — the "attention colors". Grays, near-blacks, near-whites,
 /// and translucent colors return `None`.
-fn saturated_hue_bucket(c: [u8; 4], min_sat: f64) -> Option<u32> {
+pub(crate) fn saturated_hue_bucket(c: [u8; 4], min_sat: f64) -> Option<u32> {
     if c[3] < 200 {
         return None;
     }
@@ -1099,7 +1172,7 @@ fn saturated_hue_bucket(c: [u8; 4], min_sat: f64) -> Option<u32> {
 
 /// Alarm-red heuristic: saturated red/orange-magenta with mid-to-high
 /// lightness — the ISA-101 alarm channel.
-fn is_alarm_red(c: [u8; 4]) -> bool {
+pub(crate) fn is_alarm_red(c: [u8; 4]) -> bool {
     let Some(h) = saturated_hue_bucket(c, 0.5) else {
         return false;
     };
@@ -1109,13 +1182,151 @@ fn is_alarm_red(c: [u8; 4]) -> bool {
 
 /// HSV saturation in `0.0..=1.0` — chroma (max−min channel) over the
 /// max channel. Black (max 0) reads as unsaturated.
-fn rgb_saturation(c: [u8; 4]) -> f64 {
+pub(crate) fn rgb_saturation(c: [u8; 4]) -> f64 {
     let (r, g, b) = (f64::from(c[0]), f64::from(c[1]), f64::from(c[2]));
     let max = r.max(g).max(b);
     if max <= 0.0 {
         return 0.0;
     }
     (max - r.min(g).min(b)) / max
+}
+
+/// sRGB channel → linear-light (WCAG contrast math).
+pub(crate) fn linear_channel(v: u8) -> f64 {
+    let s = f64::from(v) / 255.0;
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// WCAG relative luminance in `0.0..=1.0`.
+pub(crate) fn luminance(c: [u8; 4]) -> f64 {
+    0.2126 * linear_channel(c[0]) + 0.7152 * linear_channel(c[1]) + 0.0722 * linear_channel(c[2])
+}
+
+/// WCAG contrast ratio in `1.0..=21.0`.
+pub(crate) fn contrast_ratio(a: [u8; 4], b: [u8; 4]) -> f64 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// Desaturate toward the color's own luminance — the ISA-101 "gray is
+/// the canvas" correction. `keep` in `0..=1` blends toward gray
+/// (`0` = full gray).
+pub(crate) fn desaturate(c: [u8; 4], keep: f64) -> [u8; 4] {
+    let l = luminance(c);
+    // Back to sRGB from linear luminance.
+    let srgb = if l <= 0.003_130_8 {
+        12.92 * l
+    } else {
+        1.055 * l.powf(1.0 / 2.4) - 0.055
+    };
+    let gray = (srgb.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let blend = |ch: u8| {
+        (f64::from(gray) + (f64::from(ch) - f64::from(gray)) * keep)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    [blend(c[0]), blend(c[1]), blend(c[2]), c[3]]
+}
+
+/// The dominant background behind a point — the smallest opaque fill
+/// containing `pt`, searching `node`'s subtree first (innermost paint
+/// wins) then ancestors via lineage — text painted in a child scope
+/// sits on a fill owned by its parent.
+pub(crate) fn background_at(
+    scene: &LintScene,
+    node: &LintNode,
+    pt: kurbo::Point,
+) -> Option<[u8; 4]> {
+    let containing = |n: &LintNode| {
+        n.fills
+            .iter()
+            .filter(|f| f.rect.contains(pt) && f.color[3] > 200)
+            .min_by(|a, b| {
+                (a.rect.width() * a.rect.height())
+                    .partial_cmp(&(b.rect.width() * b.rect.height()))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|f| f.color)
+    };
+    if let Some(c) = node.walk().find_map(containing) {
+        return Some(c);
+    }
+    let by_path = scene.by_path();
+    let mut path = node.path.as_str();
+    while let Some(i) = path.rfind('/') {
+        path = &path[..i];
+        if let Some(a) = by_path.get(path) {
+            if let Some(c) = containing(a) {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+/// Shared sibling-gap measurement — adjacent-pair gaps along the
+/// dominant axis, honoring y/x-band overlap like `whitespace`.
+/// Returns (gaps px, dominant axis is horizontal).
+pub(crate) fn sibling_gaps(node: &LintNode) -> (Vec<f64>, bool) {
+    let children: Vec<&LintNode> = node.children.iter().filter(|c| c.area() > 1.0).collect();
+    let mut gaps = Vec::new();
+    let mut by_x = children.clone();
+    by_x.sort_by(|a, b| {
+        a.bounds
+            .x0
+            .partial_cmp(&b.bounds.x0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for pair in by_x.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let overlap = a.bounds.y1.min(b.bounds.y1) - a.bounds.y0.max(b.bounds.y0);
+        let shorter = (a.bounds.y1 - a.bounds.y0).min(b.bounds.y1 - b.bounds.y0);
+        if overlap > 0.5 * shorter {
+            gaps.push(b.bounds.x0 - a.bounds.x1);
+        }
+    }
+    let x_gaps = gaps.len();
+    let mut by_y = children;
+    by_y.sort_by(|a, b| {
+        a.bounds
+            .y0
+            .partial_cmp(&b.bounds.y0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for pair in by_y.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let overlap = a.bounds.x1.min(b.bounds.x1) - a.bounds.x0.max(b.bounds.x0);
+        let shorter = (a.bounds.x1 - a.bounds.x0).min(b.bounds.x1 - b.bounds.x0);
+        if overlap > 0.5 * shorter {
+            gaps.push(b.bounds.y0 - a.bounds.y1);
+        }
+    }
+    let horizontal = x_gaps >= gaps.len() - x_gaps;
+    (gaps, horizontal)
+}
+
+/// True when `node` or any ancestor carries semantic marker `m` —
+/// context rules (an alarm-red fill inside an `@alarm` panel is
+/// legitimate).
+pub(crate) fn marker_in_lineage(scene: &LintScene, node: &LintNode, m: &str) -> bool {
+    let by_path = scene.by_path();
+    let mut path = node.path.as_str();
+    loop {
+        let Some(n) = by_path.get(path) else {
+            return false;
+        };
+        if n.has_marker(m) {
+            return true;
+        }
+        match path.rfind('/') {
+            Some(i) => path = &path[..i],
+            None => return false,
+        }
+    }
 }
 
 #[cfg(test)]

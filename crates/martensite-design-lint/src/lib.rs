@@ -39,6 +39,7 @@
 //! ```
 
 mod config;
+mod fix;
 mod report;
 mod rule;
 mod rules;
@@ -47,10 +48,13 @@ mod severity;
 mod standard;
 
 pub use config::{LintConfig, LintConfigError, PathAllow, RuleSetting};
+pub use fix::{
+    autofix, AlignEdge, AppliedFix, FixIteration, FixOp, FixOptions, FixReport, FixSafety, LintFix,
+};
 pub use report::{Finding, LintReport};
 pub use rule::{Confidence, LintRule};
 pub use rules::all_rules;
-pub use scene::{LintNode, LintScene, NodeKind};
+pub use scene::{FillStat, LintNode, LintScene, NodeKind, TextStat};
 pub use severity::Severity;
 pub use standard::Standard;
 
@@ -164,10 +168,14 @@ fn run(scene: &LintScene, config: &LintConfig, rules: &[&'static dyn LintRule]) 
             }
 
             if let Some(decl_path) = inline_allow(&finding, *rule, &by_path) {
-                for spec in allow_specs(&finding, *rule, &by_path) {
-                    used_inline.insert((decl_path.clone(), spec));
+                let specs = allow_specs(&finding, *rule, &by_path);
+                for spec in &specs {
+                    used_inline.insert((decl_path.clone(), spec.clone()));
                 }
-                finding.suppressed_by = Some(format!("@lint on {decl_path}"));
+                // Same descriptor grammar as `unused_allows` — the
+                // two read as a ledger.
+                finding.suppressed_by =
+                    Some(format!("inline @lint:{} on {}", specs.join(","), decl_path));
                 report.suppressed.push(finding);
                 continue;
             }
@@ -183,21 +191,24 @@ fn run(scene: &LintScene, config: &LintConfig, rules: &[&'static dyn LintRule]) 
         }
     }
 
-    // Expect-style stale bookkeeping: allows that suppressed nothing
-    // are reported so suppressions self-clean instead of rotting.
+    // Expect-style bookkeeping: which allows suppressed something
+    // (`used_allows`) and which rotted (`unused_allows`) — the ledger
+    // consumers like multi-frame harnesses reconcile across runs.
     for (i, a) in config.allows.iter().enumerate() {
-        if !used_config_allows.contains(&i) {
-            report
-                .unused_allows
-                .push(format!("allow {:?} [{}]", a.path, a.specs.join(", ")));
+        let desc = format!("allow {:?} [{}]", a.path, a.specs.join(", "));
+        if used_config_allows.contains(&i) {
+            report.used_allows.push(desc);
+        } else {
+            report.unused_allows.push(desc);
         }
     }
     for node in scene.walk() {
         for spec in &node.own_allows {
-            if !used_inline.contains(&(node.path.clone(), spec.clone())) {
-                report
-                    .unused_allows
-                    .push(format!("inline @lint:{spec} on {}", node.path));
+            let desc = format!("inline @lint:{spec} on {}", node.path);
+            if used_inline.contains(&(node.path.clone(), spec.clone())) {
+                report.used_allows.push(desc);
+            } else {
+                report.unused_allows.push(desc);
             }
         }
     }

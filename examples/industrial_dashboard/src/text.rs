@@ -28,6 +28,12 @@ pub struct TextPainter {
     fonts: FontManager,
 }
 
+impl Default for TextPainter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TextPainter {
     pub fn new() -> Self {
         Self {

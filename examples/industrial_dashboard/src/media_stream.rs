@@ -50,6 +50,11 @@ impl ClipStream {
         self.packets.len()
     }
 
+    /// Whether the clip carries no access units.
+    pub fn is_empty(&self) -> bool {
+        self.packets.is_empty()
+    }
+
     /// Builds the packet for `index` with the given presentation time.
     pub fn packet(&self, index: usize, pts_nanos: u64) -> EncodedPacket {
         let pkt = EncodedPacket::new(self.packets[index].clone(), pts_nanos, FRAME_NS);

@@ -11,18 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **martensite-design-lint** — standards-backed design linting over
   `PaintList` `PushScope` provenance: replays the paint stream into a
-  `LintScene` (widget tree, geometry, text sizes, colors) and
-  evaluates 14 evidence-backed rules across 7 selectable standard
+  `LintScene` (widget tree, geometry, text runs, fills, colors) and
+  evaluates 51 evidence-backed rules across 7 selectable standard
   bundles (WCAG 2.2, ISA-101, ISA-18.2, Hick/Fitts, Tufte/Few/Gestalt,
   perception metrics, consistency). Every finding cites its standard
   and links `docs/design-standards/rules/<id>.md`. Fully
   developer-controllable: `design-lint.toml` for standard sets,
   per-rule severity (`off|info|warn|error|forbid`) and thresholds,
   `[classify]` overrides, `[[allow]]` path globs, and inline
-  `@lint:`/`@level:` `debug_name` markers; suppressed findings are
-  reported with provenance and stale allows self-report. Facade:
-  `martensite::design_lint`. Dashboard harness:
-  `cargo test -p industrial_dashboard dump_design_lints`.
+  `@lint:`/`@level:`/`@alarm`/`@priority:`/`@kpi`/`@destructive`
+  `debug_name` markers; suppressed findings are reported with
+  provenance and stale allows self-report. **Autofix**: findings carry
+  `LintFix` ops (`Safe` spacing/alignment applied immediately; `Risky`
+  recolor/font/bounds gated on `--force`) — `autofix` loops
+  lint→fix→re-lint until convergence with `recursive`/`max_depth`
+  controls. Facade: `martensite::design_lint`. Dashboard harness:
+  `cargo test -p industrial_dashboard dump_design_lints`, plus the
+  `design-lint` CLI bin (`--fix`, `--force`, `--no-recursive`,
+  `--max-recursiveness`, `--list-rules`) exiting nonzero on Warn+
+  findings (Info never gates CI). Autofix hardening: fixes apply to
+  all same-path siblings, spacing/alignment ops respect band
+  adjacency (off-row/grid children untouched), recolor keeps
+  still-used colors, scene-state signatures stop oscillating fix
+  loops, and risky-gated runs report honestly instead of claiming
+  convergence.
 - **Ambient theme resolution** — `PaintContext::theme` carries the
   arena's `martensite_theme::Theme` to every widget; `WidgetArena::
   {theme, set_theme}` owns it, and `PaintContext::color(TokenKey,
