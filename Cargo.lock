@@ -691,8 +691,13 @@ dependencies = [
 name = "cargo-martensite"
 version = "0.19.0"
 dependencies = [
+ "fontdb",
+ "martensite-design-lint",
  "martensite-host",
+ "pollster",
  "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "wgpu",
 ]
 
 [[package]]
@@ -2940,14 +2945,20 @@ dependencies = [
 name = "martensite-devtools"
 version = "0.19.0"
 dependencies = [
+ "accesskit",
+ "bitflags",
  "glam",
  "kurbo",
  "martensite-core",
+ "martensite-design-lint",
  "martensite-history",
+ "martensite-macros",
  "martensite-reactive",
  "martensite-render",
  "martensite-test",
  "parking_lot",
+ "serde",
+ "serde_json",
  "tracing",
 ]
 
