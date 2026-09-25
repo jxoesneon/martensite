@@ -5202,6 +5202,199 @@ mod tests {
         );
     }
 
+    /// Paint-list survey: walk every grid page's frames across the
+    /// sweep widths and report *mid-glyph horizontal clips* — a glyph
+    /// or text run whose ink starts inside its active clip rect but
+    /// lands past the clip's left/right edge. That is the hard-clip
+    /// defect class: content cut at a boundary with no way to reach
+    /// it. Text clipped fully away (scroll virtualization) is not
+    /// reported; runs cut by a `ScrollView`'s viewport clip are the
+    /// sanctioned scroll affordance and print separately so the
+    /// hard-clip list stays readable.
+    #[test]
+    fn probe_mid_glyph_clips() {
+        use martensite::core::paint::PaintCommand;
+        use martensite::core::{LayoutContext, PaintList};
+        use martensite::prelude::*;
+        use martensite::widgets::container::Container;
+        use martensite::widgets::scrollview::ScrollView;
+
+        fn tick_all(w: &mut dyn martensite::core::Widget, dt: Duration) {
+            let _ = w.tick(dt);
+            for i in 0..w.child_count() {
+                if w.child_bounds(i).is_none() {
+                    continue;
+                }
+                if let Some(c) = w.child_mut(i) {
+                    tick_all(c, dt);
+                }
+            }
+        }
+
+        // Flag one ink span `[x0,x1]` against the active clip stack;
+        // a span beginning inside the effective clip but landing past
+        // its left/right edge is a mid-glyph cut.
+        fn note_hit(
+            clips: &[(kurbo::Rect, String)],
+            scopes: &[String],
+            zw: f32,
+            x0: f64,
+            x1: f64,
+            what: &str,
+            hits: &mut std::collections::BTreeMap<String, usize>,
+        ) {
+            let mut eff = kurbo::Rect::new(0.0, 0.0, zw as f64, 480.0);
+            for (r, _) in clips {
+                eff = eff.intersect(*r);
+            }
+            let (side, edge) = if x0 < eff.max_x() - 1.0 && x1 > eff.max_x() + 1.0 {
+                ("R", eff.max_x())
+            } else if x1 > eff.min_x() + 1.0 && x0 < eff.min_x() - 1.0 {
+                ("L", eff.min_x())
+            } else {
+                return;
+            };
+            let owner = clips
+                .iter()
+                .rev()
+                .find(|(r, _)| {
+                    (side == "R" && (r.max_x() - eff.max_x()).abs() < 0.5)
+                        || (side == "L" && (r.min_x() - eff.min_x()).abs() < 0.5)
+                })
+                .map(|(_, n)| n.clone())
+                .unwrap_or_else(|| "<frame>".into());
+            let key = format!(
+                "{side} cut @x{edge:.0} clip_owner={owner} scope={} | {what}",
+                scopes.last().map(String::as_str).unwrap_or("?")
+            );
+            *hits.entry(key).or_insert(0) += 1;
+        }
+
+        let _font_guard = crate::frames::install_test_fonts();
+        let shaper = crate::frames::FixtureTextShaper::new();
+        let m = seeded();
+        m.warm_demo_state();
+
+        for zw in [700.0f32, 1200.0, 1600.0] {
+            m.zone_width[0].set(zw / 2.0);
+            for (label, page) in pages(&m) {
+                let view = ScrollView::new(
+                    Container::new()
+                        .padding_uniform(crate::zone::ZONE_PAD)
+                        .child(page),
+                );
+                let mut arena = WidgetArena::new();
+                arena.set_theme(martensite::theme::tokens::default_dark());
+                arena.set_scale_factor(2.0);
+                arena.set_text_painter(shaper.clone());
+                let mut hot = HotNode::default();
+                hot.flags |= NodeFlags::VISIBLE;
+                let root = arena.insert_with_widget(hot, Box::new(view));
+                let bounds = Rect::new(0.0, 0.0, zw, 480.0);
+                if let Some((hot, cold)) = arena.get_both_mut(root) {
+                    hot.bounds = bounds;
+                    cold.widget
+                        .layout(&mut LayoutContext { hot, scale: 2.0 }, bounds);
+                }
+                if let Some(cold) = arena.get_cold_mut(root) {
+                    tick_all(&mut *cold.widget, Duration::from_millis(16));
+                }
+                let content_h = arena
+                    .get_cold(root)
+                    .and_then(|c| c.widget.child_bounds(0))
+                    .map(|b| b.height())
+                    .unwrap_or(0.0);
+                let mut y = 0.0f32;
+                let mut hits: std::collections::BTreeMap<String, usize> =
+                    std::collections::BTreeMap::new();
+                loop {
+                    arena.dispatch_event(
+                        root,
+                        &WidgetEvent::SemanticAction(SemanticAction::SetScrollOffset(
+                            glam::Vec2::new(0.0, y),
+                        )),
+                    );
+                    let mut list = PaintList::new();
+                    arena.build_paint_list(root, &mut list);
+                    // Walk the paint list tracking the scope path and
+                    // the clip stack; flag runs cut mid-glyph on the
+                    // clip's left/right edge.
+                    let mut scopes: Vec<String> = Vec::new();
+                    let mut clips: Vec<(kurbo::Rect, String)> = Vec::new();
+                    for cmd in &list.commands {
+                        match cmd {
+                            PaintCommand::PushScope { name, .. } => {
+                                scopes.push(name.to_string())
+                            }
+                            PaintCommand::PopScope => {
+                                scopes.pop();
+                            }
+                            PaintCommand::ClipRect(r) => {
+                                clips.push((*r, scopes.last().cloned().unwrap_or_default()));
+                            }
+                            PaintCommand::ClipRoundedRect(r, _) => {
+                                clips.push((*r, scopes.last().cloned().unwrap_or_default()));
+                            }
+                            PaintCommand::ClipPath(_) => clips.push((
+                                kurbo::Rect::new(0.0, 0.0, zw as f64, 480.0),
+                                scopes.last().cloned().unwrap_or_default(),
+                            )),
+                            PaintCommand::PopClip => {
+                                clips.pop();
+                            }
+                            PaintCommand::DrawText(p, s, size, _) => {
+                                if s.trim().is_empty() {
+                                    continue;
+                                }
+                                let w = martensite::core::paint::TextShaper::measure_text(
+                                    &shaper,
+                                    s,
+                                    *size,
+                                )
+                                .unwrap_or(0.0);
+                                note_hit(
+                                    &clips,
+                                    &scopes,
+                                    zw,
+                                    p.x,
+                                    p.x + w as f64,
+                                    &format!("\"{s}\""),
+                                    &mut hits,
+                                );
+                            }
+                            PaintCommand::DrawGlyphRun(run) => {
+                                for (gi, g) in run.glyphs.iter().enumerate() {
+                                    note_hit(
+                                        &clips,
+                                        &scopes,
+                                        zw,
+                                        g.x as f64,
+                                        (g.x + g.width) as f64,
+                                        &format!(
+                                            "run[{gi}/{}] fs={:.0}",
+                                            run.glyphs.len(),
+                                            run.font_size
+                                        ),
+                                        &mut hits,
+                                    );
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if y >= content_h {
+                        break;
+                    }
+                    y += 240.0;
+                }
+                eprintln!("=== grid/{label}@{zw:.0} ===");
+                for (k, n) in &hits {
+                    eprintln!("  x{n} {k}");
+                }
+            }
+        }
+    }
+
     /// The console interpreter acks and logs for real.
     #[test]
     fn console_drives_the_model() {

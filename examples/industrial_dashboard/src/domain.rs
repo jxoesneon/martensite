@@ -884,6 +884,56 @@ impl PlantModel {
         a.dominant_hz = 118.0 + 40.0 * (phase * 0.5).sin() * drive;
         self.acoustic.set(a);
     }
+
+    /// Drive the sim to a representative OPERATING state for headless
+    /// consumers — screenshot/lint sweeps (`lint_sweep::run`,
+    /// `dump_zone_lints`, `dump_widget_tree`, the paint-audit tests)
+    /// never run the app's frame loop, so the stores the loop feeds
+    /// (`push_history` at 4 Hz, `tick_acoustic` every frame,
+    /// `tick_minute` per second — see `App::redraw`) would otherwise
+    /// sit at seed state and every chart/spectrum/gauge would paint
+    /// the flat seed line. One call replays a full [`HISTORY_LEN`]
+    /// window: cpu/mem advance through [`telemetry_waveform`] at the
+    /// panel's [`TELEMETRY_PHASE_STEP`] cadence, each sample is pushed
+    /// into the rings, the acoustic model ticks at the same phase,
+    /// and the shift clock ticks once per four samples (the live
+    /// 1 sim-minute-per-second ÷ 4 Hz cadence). Deterministic — no
+    /// rand, no wall clock — and idempotent (phase restarts from 0),
+    /// so golden frame dumps stay stable.
+    pub fn warm_demo_state(&self) {
+        let mut phase = 0.0f64;
+        for i in 0..HISTORY_LEN {
+            phase += TELEMETRY_PHASE_STEP;
+            let (cpu, mem) = telemetry_waveform(phase);
+            self.cpu.set(cpu);
+            self.mem.set(mem);
+            self.push_history();
+            self.tick_acoustic(phase);
+            if i % 4 == 3 {
+                self.tick_minute();
+            }
+        }
+    }
+}
+
+/// Per-sample phase advance of the telemetry oscillator — shared by
+/// `TelemetryPanel::tick` (the live driver) and
+/// [`PlantModel::warm_demo_state`] (the headless replay) so sweep
+/// frames show a curve with the live app's sampling density.
+pub(crate) const TELEMETRY_PHASE_STEP: f64 = 0.11;
+
+/// The plant's cpu/mem waveform — smooth primary oscillation + a
+/// harmonic + deterministic jitter, clamped to operating range.
+/// Shared by `TelemetryPanel::tick` and
+/// [`PlantModel::warm_demo_state`]; duplicating the constants here
+/// and in the panel was the alternative, but a single definition
+/// keeps the frame dump from drifting off the live curve — the
+/// model owns the sim's math, the panel is only its sampler.
+pub(crate) fn telemetry_waveform(t: f64) -> (f64, f64) {
+    let cpu = (0.52 + 0.22 * t.sin() + 0.09 * (t * 2.7).sin() + 0.03 * (t * 13.0).cos())
+        .clamp(0.02, 0.98);
+    let mem = (0.61 + 0.14 * (t * 0.43 + 1.7).sin() + 0.02 * (t * 7.0).cos()).clamp(0.05, 0.97);
+    (cpu, mem)
 }
 
 // ---------------------------------------------------------------------------

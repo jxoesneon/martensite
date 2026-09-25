@@ -1511,12 +1511,12 @@ impl Widget for TelemetryPanel {
             return true;
         }
         self.elapsed = Duration::ZERO;
-        self.phase += 0.11;
-        let t = self.phase;
-        // Smooth primary oscillation + a harmonic + deterministic jitter.
-        let cpu = (0.52 + 0.22 * t.sin() + 0.09 * (t * 2.7).sin() + 0.03 * (t * 13.0).cos())
-            .clamp(0.02, 0.98);
-        let mem = (0.61 + 0.14 * (t * 0.43 + 1.7).sin() + 0.02 * (t * 7.0).cos()).clamp(0.05, 0.97);
+        self.phase += crate::domain::TELEMETRY_PHASE_STEP;
+        // Smooth primary oscillation + a harmonic + deterministic
+        // jitter — the formula lives on the domain model so
+        // `PlantModel::warm_demo_state` replays the same curve into
+        // the history rings for headless frame dumps.
+        let (cpu, mem) = crate::domain::telemetry_waveform(self.phase);
         self.cpu.set(cpu);
         self.mem.set(mem);
         self.history.push_back((cpu, mem));

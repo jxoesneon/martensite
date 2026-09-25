@@ -2848,6 +2848,7 @@ mod tests {
     fn dump_all_lints() {
         use martensite::access::paint_audit::{audit_paint_list, PaintAuditConfig};
         let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.model.warm_demo_state();
         app.scale.set(1.0);
         app.build_arena();
         app.apply_dock_layout_at(3200, 2100);
@@ -2899,6 +2900,10 @@ mod tests {
         // fixture, so the audit can't drift with the host's font set.
         let _font_guard = crate::frames::install_test_fonts();
         let app = App::new(Some(ThemeChoice::Dark), false);
+        // Same as `lint_sweep::run` — the audit must see the plant's
+        // operating state, not the flat seed state the frame loop
+        // never gets to advance here.
+        app.model.warm_demo_state();
         type ZonePages = Vec<(&'static str, crate::zone::Page)>;
         let mut pages_by_zone: Vec<(&str, usize, f32, f32, ZonePages)> = vec![];
         for zw in [
@@ -3105,6 +3110,7 @@ mod tests {
     fn no_text_paints_outside_active_clip() {
         use martensite::access::paint_audit::{audit_paint_list, PaintAuditConfig, PaintLintKind};
         let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.model.warm_demo_state();
         app.build_arena();
         eprintln!("arena built");
         app.apply_dock_layout_at(1600, 1000);
@@ -3187,6 +3193,9 @@ mod tests {
         // fixture keeps the tree identical across host font sets.
         let _font_guard = crate::frames::install_test_fonts();
         let mut app = App::new(Some(ThemeChoice::Dark), false);
+        // Warm the sim so the dumped tree carries operating-state
+        // data (history rings, acoustic bands) like a live session.
+        app.model.warm_demo_state();
         app.build_arena();
         app.apply_dock_layout_at(1680, 980);
         // Parent-first + bounds-gated, mirroring
@@ -3223,6 +3232,7 @@ mod tests {
     #[ignore = "requires a GPU adapter"]
     fn gpu_readback_real_frame() {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.model.warm_demo_state();
         app.build_arena();
         app.apply_dock_layout_at(3024, 1694);
         let w = 3024.0f64;

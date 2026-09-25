@@ -234,6 +234,11 @@ pub fn run(cfg: &LintConfig, opts: &SweepOptions) -> SweepReport {
     let fixture = Some(crate::frames::FixtureTextShaper::new());
 
     let mut app = App::new(Some(ThemeChoice::Dark), false);
+    // The sweep never runs the frame loop that feeds the sim
+    // (`push_history`, `tick_acoustic`, `tick_minute`) — warm the
+    // model to its operating state before pages bind to it or every
+    // chart/spectrum/gauge paints the flat seed line.
+    app.model.warm_demo_state();
     type ZonePages = Vec<(&'static str, crate::zone::Page)>;
     let mut pages_by_zone: Vec<(&str, usize, f32, f32, ZonePages)> = vec![];
     for zw in &opts.widths {
