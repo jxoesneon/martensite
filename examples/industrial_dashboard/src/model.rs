@@ -92,14 +92,27 @@ pub fn build_dock_tree(widget_ids: &[u64; 4]) -> DockTree {
 /// `default_dark()` theme tokens (Oklab → sRGB8) so the demo is a live
 /// consumer of the theming pipeline rather than a bag of literals.
 /// Semantic aliases keep call-sites readable.
+///
+/// The surface ladder runs `inset < bg < surface < raised < overlay`
+/// (dark; light inverts so elevation still reads lighter). `series`
+/// carries the muted categorical ramp for charts — hues kept clear of
+/// `ok`/`warn`/`error` so alarms stay unambiguous on the neutral canvas.
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
     /// Window background.
     pub bg: [u8; 4],
     /// Panel surface.
     pub surface: [u8; 4],
+    /// Inset well surface (terminal, editor, and log wells) — a stop
+    /// *below* `bg` on the tonal ladder (`TokenKey::InsetColor`).
+    pub inset: [u8; 4],
     /// Raised chrome (title bars, header strip).
     pub raised: [u8; 4],
+    /// Transient overlay surface (popovers, menus, flyouts) — a stop
+    /// *above* `raised` (`TokenKey::OverlayColor`). Fill token hosting
+    /// text/muted at 4.5:1; in the dark theme the brightest semantic
+    /// inks must sit on an `inset` band instead.
+    pub overlay: [u8; 4],
     /// Primary accent (focus rings, sort indicators, primary data).
     pub accent: [u8; 4],
     /// Secondary data series.
@@ -111,8 +124,21 @@ pub struct Palette {
     /// Panel borders and hairlines (must hold 3:1 vs backdrop — the
     /// paint audit checks stroked borders under WCAG 1.4.11).
     pub border: [u8; 4],
-    /// Selection fill.
+    /// Selection fill — resolves `TokenKey::PrimaryColor`, used as the
+    /// *selection tint* source (see `selection_tint`).
     pub selected: [u8; 4],
+    /// Primary fill — resolves the same `TokenKey::PrimaryColor` token
+    /// as `selected`, but reads it as a *filled-verb surface* (primary
+    /// buttons, one-dominant-verb emphasis). The distinction is
+    /// semantic, not tonal: `primary` paints the verb face itself
+    /// (inverse text on top), `selected` feeds translucent selection
+    /// washes over `surface`.
+    pub primary: [u8; 4],
+    /// Categorical series ramp resolved from `TokenKey::SeriesColor1..6`
+    /// — muted Oklab hues (chroma ≤ 0.12), luminance-staggered, kept
+    /// ≥ 20° from the ok/warn/error hues. Index order is ramp order;
+    /// `series[5]` is the low-chroma de-emphasis slot.
+    pub series: [[u8; 4]; 6],
     /// Error/alert.
     pub error: [u8; 4],
     /// Warning.
@@ -131,17 +157,34 @@ impl Palette {
         Self {
             bg: c(TokenKey::BackgroundColor, [15, 17, 23, 255]),
             surface: c(TokenKey::SurfaceColor, [24, 27, 36, 255]),
+            // The fallback ladder shares one blue-slate trajectory
+            // (inset → overlay): the old neutral [46,48,53] raised
+            // literal drifted off the bg/surface hue family.
+            inset: c(TokenKey::InsetColor, [10, 12, 17, 255]),
             // Chrome surfaces ride the tonal ladder: bg 0.20 → surface
-            // 0.25 → raised 0.30 (RaisedColor) → divider 0.64 (stroke).
-            // `DividerColor` is a *stroke* token — too light to host
-            // text — so raised bands resolve `RaisedColor` instead.
-            raised: c(TokenKey::RaisedColor, [46, 48, 53, 255]),
+            // 0.25 → raised 0.30 (RaisedColor) → overlay 0.34 → divider
+            // 0.64 (stroke). `DividerColor` is a *stroke* token — too
+            // light to host text — so raised bands resolve `RaisedColor`
+            // instead.
+            raised: c(TokenKey::RaisedColor, [38, 42, 56, 255]),
+            overlay: c(TokenKey::OverlayColor, [56, 62, 78, 255]),
             accent: c(TokenKey::AccentColor, [96, 165, 250, 255]),
             accent2: c(TokenKey::InfoColor, [56, 189, 248, 255]),
             text: c(TokenKey::TextColor, [226, 232, 240, 255]),
             text_muted: c(TokenKey::TextMutedColor, [148, 163, 184, 255]),
             border: c(TokenKey::BorderColor, [71, 85, 105, 255]),
             selected: c(TokenKey::PrimaryColor, [37, 99, 235, 255]),
+            primary: c(TokenKey::PrimaryColor, [37, 99, 235, 255]),
+            // Fallbacks mirror the dark theme's resolved ramp
+            // (blue-violet/cyan/violet/khaki/teal/slate).
+            series: [
+                c(TokenKey::SeriesColor1, [146, 185, 248, 255]),
+                c(TokenKey::SeriesColor2, [49, 164, 175, 255]),
+                c(TokenKey::SeriesColor3, [170, 160, 230, 255]),
+                c(TokenKey::SeriesColor4, [210, 189, 112, 255]),
+                c(TokenKey::SeriesColor5, [65, 152, 131, 255]),
+                c(TokenKey::SeriesColor6, [135, 161, 189, 255]),
+            ],
             error: c(TokenKey::ErrorColor, [248, 113, 113, 255]),
             warn: c(TokenKey::WarningColor, [251, 191, 36, 255]),
             ok: c(TokenKey::SuccessColor, [74, 222, 128, 255]),

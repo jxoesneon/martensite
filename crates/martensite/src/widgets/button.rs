@@ -34,6 +34,12 @@ const EDGE: [u8; 4] = [140, 145, 155, 255];
 const INK_ENABLED: [u8; 4] = [20, 20, 25, 255];
 /// Label ink colour when disabled.
 const INK_DISABLED: [u8; 4] = [160, 160, 165, 255];
+/// Filled primary-variant face — the `TokenKey::PrimaryColor`
+/// fallback (a blue-600 grade fill).
+const PRIMARY_FACE: [u8; 4] = [37, 99, 235, 255];
+/// Inverse ink on the primary fill — the `TokenKey::TextInverseColor`
+/// fallback.
+const INK_INVERSE: [u8; 4] = [255, 255, 255, 255];
 /// Corner radius of the button face.
 const CORNER_RADIUS: f64 = 4.0;
 /// Horizontal padding between the border and the label.
@@ -74,6 +80,11 @@ pub struct Button {
     pub label: String,
     /// Whether the button is enabled (not disabled/inert).
     pub enabled: bool,
+    /// Whether the button paints the filled primary variant — a
+    /// `TokenKey::PrimaryColor` face with inverse text, for the one
+    /// dominant verb on a surface. `false` (default) keeps the
+    /// neutral outlined appearance.
+    pub primary: bool,
     /// Optional tooltip text.
     pub tooltip: Option<String>,
     /// Cached bounds from the last layout pass.
@@ -111,6 +122,7 @@ impl Button {
         Self {
             label: label.into(),
             enabled: true,
+            primary: false,
             tooltip: None,
             cached_bounds: Rect::default(),
             held: false,
@@ -134,6 +146,28 @@ impl Button {
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    /// Selects the filled primary variant (`true`) or the default
+    /// neutral outlined appearance (`false`). The primary variant
+    /// resolves `TokenKey::PrimaryColor` for its face and
+    /// `TokenKey::TextInverseColor` for its label — the "one dominant
+    /// verb per page" idiom. A disabled primary button keeps the
+    /// muted disabled presentation either way.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// let btn = Button::new("Acknowledge").primary(true);
+    /// assert!(btn.primary);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn primary(mut self, primary: bool) -> Self {
+        self.primary = primary;
         self
     }
 
@@ -341,14 +375,25 @@ impl Widget for Button {
             f64::from(b.max_y()),
         );
         let (face, ink) = if self.enabled {
-            let face = cx.color(TokenKey::SurfaceColor, FACE_ENABLED);
+            // The primary variant fills with the theme's primary
+            // token and inverse ink; the default keeps the neutral
+            // surface face.
+            let face = if self.primary {
+                cx.color(TokenKey::PrimaryColor, PRIMARY_FACE)
+            } else {
+                cx.color(TokenKey::SurfaceColor, FACE_ENABLED)
+            };
             (
                 if self.is_pressed() {
                     shade(face, 0.9)
                 } else {
                     face
                 },
-                cx.color(TokenKey::TextColor, INK_ENABLED),
+                if self.primary {
+                    cx.color(TokenKey::TextInverseColor, INK_INVERSE)
+                } else {
+                    cx.color(TokenKey::TextColor, INK_ENABLED)
+                },
             )
         } else {
             (
@@ -359,8 +404,14 @@ impl Widget for Button {
 
         let rounded = kurbo::RoundedRect::from_rect(rect, cx.ptf(CORNER_RADIUS)).into_path(0.1);
         cx.list.push_path(rounded.clone(), face);
-        cx.list
-            .push_stroke_path(rounded, cx.pt(1.0), cx.color(TokenKey::BorderColor, EDGE));
+        // A filled primary face carries its own edge — stroking it
+        // with the border token would read as a second outline.
+        let edge = if self.primary && self.enabled {
+            face
+        } else {
+            cx.color(TokenKey::BorderColor, EDGE)
+        };
+        cx.list.push_stroke_path(rounded, cx.pt(1.0), edge);
 
         // The label is left-aligned inside the face and vertically
         // centred — `DrawText` positions by the text run's top edge, so
@@ -480,6 +531,32 @@ mod tests {
         let cloned = btn.clone();
         assert_eq!(btn.label, cloned.label);
         assert_eq!(btn.tooltip, cloned.tooltip);
+    }
+
+    #[test]
+    fn button_primary_paints_filled_face() {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let paint_face = |b: &Button| {
+            let mut list = PaintList::new();
+            let theme = Theme::new("test");
+            let mut cx = PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            };
+            b.paint(&mut cx);
+            cx.list.commands.iter().find_map(|c| match c {
+                PaintCommand::FillPath(_, color) => Some(*color),
+                _ => None,
+            })
+        };
+        assert_eq!(paint_face(&Button::new("OK")), Some(FACE_ENABLED));
+        assert_eq!(
+            paint_face(&Button::new("OK").primary(true)),
+            Some(PRIMARY_FACE)
+        );
     }
 
     #[test]

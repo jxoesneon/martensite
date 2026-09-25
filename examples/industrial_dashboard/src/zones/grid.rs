@@ -6,9 +6,14 @@
 //!
 //! Pages (domain-named, never widget-named):
 //!
-//! - **ASSET REGISTRY** — the plant hierarchy (Site→Line→Cell) through
-//!   five selector surfaces sharing `selected_asset`, plus the
-//!   filtered/paged register table.
+//! - **REGISTRY** — the filtered/paged register table (the persistent
+//!   primary surface) + the selection rail (card, breadcrumb, nav
+//!   stack) — detail-of-`selected_asset` only.
+//! - **LOCATE** — "how do I reach this asset fast?" — the locator
+//!   surfaces that used to crowd REGISTRY: site▸line▸cell Cascader,
+//!   jump-to-asset TreeSelect, site NavRail, cell/line launchers
+//!   (AppGrid/FlowBox/Dock). All write `selected_asset`; the page's
+//!   verb jumps the selection to DETAIL.
 //! - **ASSET DETAIL** — the selected asset's record: editable property
 //!   grid, live inspector, identity codes, operator note, alarms.
 //! - **WORK ORDERS** — the WO pipeline: kanban moves, register table,
@@ -51,7 +56,7 @@ use martensite::widgets::accordion::Accordion;
 use martensite::widgets::anchor::{Anchor, AnchorItem};
 use martensite::widgets::app_grid::{AppEntry, AppGrid};
 use martensite::widgets::attachment::Attachment;
-use martensite::widgets::badge::Badge;
+use martensite::widgets::badge::{Badge, BadgeSeverity, BadgeSpec};
 use martensite::widgets::barcode::Barcode;
 use martensite::widgets::breadcrumb::Breadcrumb;
 use martensite::widgets::button::Button;
@@ -147,6 +152,7 @@ use crate::zone::{
     band, fill, framed, row, strip, Bound, Page, Swap, Variant, BAND_M, ZONE_GAP, ZONE_STACK,
 };
 use martensite::core::widget::DummyWidget;
+use martensite::core::Widget;
 
 /// Sim "today" — the schedule's day-0 (docket date, deterministic).
 const BASE_DAY: Date = Date {
@@ -181,11 +187,51 @@ const PRIORITY_COLORS: [[u8; 4]; 4] = [
     [230, 70, 60, 255],   // Critical
 ];
 
+/// Zone page indices — `page_request` targets, `tab_badge` dispatch
+/// keys, and `take_page_sub` consumers. Keep in sync with `pages()`
+/// order (zone 0 = this panel).
+pub(crate) mod page {
+    /// The register — primary landing page.
+    pub const REGISTRY: u8 = 0;
+    /// Locator surfaces (flattened out of REGISTRY, C1).
+    pub const LOCATE: u8 = 1;
+    /// Asset record/dossier.
+    pub const DETAIL: u8 = 2;
+    /// WO pipeline.
+    pub const WORK_ORDERS: u8 = 3;
+    /// Two-week plan. (No deep-link consumer yet — kept so the index
+    /// table stays complete.)
+    #[allow(dead_code)]
+    pub const MAINTENANCE: u8 = 4;
+    /// Plant record documents.
+    pub const DOCUMENTS: u8 = 5;
+    /// Operator console.
+    pub const DIAGNOSTICS: u8 = 6;
+    /// Relational views.
+    pub const HIERARCHY: u8 = 7;
+    /// Page count — the zone tab strip's upper bound.
+    pub const COUNT: u8 = 8;
+}
+
 /// Domain-named zone pages for the Process Grid panel — tab labels
 /// are domain names ("WORK ORDERS"), never widget names.
+///
+/// C1: REGISTRY was flattened — its six simultaneous `selected_asset`
+/// locator channels (Cascader/TreeSelect/TreeView/NavRail/NavStack/
+/// launchers) split across REGISTRY (persistent register + selection
+/// rail) and LOCATE (the locator surfaces, one Swap view at a time).
+/// Grid page set — eight domain pages. The ≈7-page guideline is a
+/// chunking heuristic; this is a deliberate exception, documented per
+/// the grammar's "document or fold" rule: every page is a distinct
+/// operator task (register, locate, inspect, work, maintain, read,
+/// diagnose, navigate), collapsing any pair would fuse unrelated
+/// tasks into one label — worse for findability than one extra tab.
+/// The `choice-count` linter finding on the full-app frame is the
+/// accepted cost; each page's interior still honours the budget.
 pub fn pages(model: &PlantModel) -> Vec<(&'static str, Page)> {
     vec![
         ("REGISTRY", registry(model)),
+        ("LOCATE", locate(model)),
         ("DETAIL", detail(model)),
         ("WORK ORDERS", work_orders(model)),
         ("MAINTENANCE", maintenance(model)),
@@ -193,6 +239,93 @@ pub fn pages(model: &PlantModel) -> Vec<(&'static str, Page)> {
         ("DIAGNOSTICS", diagnostics(model)),
         ("HIERARCHY", hierarchy(model)),
     ]
+}
+
+// ---------------------------------------------------------------------------
+// C2-lite — tab annunciation
+// ---------------------------------------------------------------------------
+//
+// Every zone tab concealing an alarm-bearing channel carries a
+// `BadgeSpec` (count = active unacked alarms it surfaces, worst
+// severity). The badge resolves from `PlantModel::alarms` — an
+// always-mounted signal — and is applied by `ZonePanel::new`/`tick`
+// (zones/mod.rs), which ticks whether or not any given page is
+// visible. A badge must never be sourced from a hidden page's
+// `Bound::push` — suspended pages don't tick.
+
+/// Model→chrome sync for `Swap`-driving `Segmented` selectors. The
+/// pull drains deep-link subs and user picks into `sig`; this pushes
+/// the resolved index back onto the widget so its highlight, the
+/// `Swap`'s active view, and the model signal can never disagree —
+/// without it a deep link switches the Swap while the selector still
+/// shows the stale index.
+///
+/// Two hazards handled here: `want` is clamped to the option count —
+/// `Swap` clamps a past-range signal to its last view but
+/// `set_selected` ignores out-of-range indexes, which would leave
+/// highlight and view diverged forever — and the `changed` flag
+/// `set_selected` re-arms on a real change is drained immediately,
+/// because a parked echo survives hide/show cycles and would drain
+/// AFTER `take_page_sub` on a later pull, silently clobbering a
+/// fresh deep-link sub with the stale index.
+fn sync_segmented(w: &mut Segmented, sig: &Signal<usize>) {
+    let want = sig.get().min(w.option_count().saturating_sub(1));
+    if w.selected_index() != want {
+        w.set_selected(want);
+    }
+    let _ = w.take_selected();
+}
+
+/// `(count, worst severity)` of the active unacked alarms in
+/// `scope` (`None` = plant-wide). Shared by [`tab_badge`] and the
+/// other zones' annunciation (telemetry's ALARMS board, zones/mod.rs).
+pub(crate) fn alarm_badge(m: &PlantModel, scope: Option<u32>) -> Option<BadgeSpec> {
+    let mut n = 0u32;
+    let mut worst = AlarmSeverity::Info;
+    for a in m.alarms.get().iter().filter(|a| a.active && !a.acked) {
+        if scope.is_some_and(|id| a.asset != id) {
+            continue;
+        }
+        n += 1;
+        worst = worst.max(a.severity);
+    }
+    (n > 0).then(|| {
+        BadgeSpec::count(n).severity(match worst {
+            AlarmSeverity::Info => BadgeSeverity::Info,
+            AlarmSeverity::Warning => BadgeSeverity::Warning,
+            AlarmSeverity::Critical => BadgeSeverity::Error,
+        })
+    })
+}
+
+/// The badge a grid tab conceals, if its page surfaces alarm-bearing
+/// channels:
+///
+/// - DETAIL — the selected asset's alarm list + its ack verb.
+/// - DOCUMENTS — the alarm journal artifact.
+/// - DIAGNOSTICS — the console's `alarms`/`ack` channel + ack verb.
+/// - HIERARCHY — the alarm root-cause board.
+///
+/// REGISTRY/LOCATE show asset *status* (condition), not the alarm
+/// channel — status-only surfaces don't annunciate.
+pub(crate) fn tab_badge(m: &PlantModel, tab: u8) -> Option<BadgeSpec> {
+    match tab {
+        // No selection → the asset-scoped channel conceals nothing.
+        page::DETAIL => m
+            .selected_asset
+            .get()
+            .and_then(|id| alarm_badge(m, Some(id))),
+        page::DOCUMENTS | page::DIAGNOSTICS | page::HIERARCHY => alarm_badge(m, None),
+        _ => None,
+    }
+}
+
+/// C2-lite default page — the first tab concealing active unacked
+/// alarms, else REGISTRY (the zone's primary page).
+pub(crate) fn default_tab(m: &PlantModel) -> usize {
+    (0..page::COUNT)
+        .find(|&i| tab_badge(m, i).is_some())
+        .unwrap_or(page::REGISTRY) as usize
 }
 
 // ---------------------------------------------------------------------------
@@ -725,72 +858,6 @@ fn registry(m: &PlantModel) -> Page {
             })
     };
 
-    let cascade = {
-        let mut last_sig = assets_sig(m);
-        Bound::new(
-            Cascader::new()
-                .options(cascader_opts(m, None))
-                .placeholder("site ▸ line ▸ cell")
-                .label("asset path"),
-            m,
-        )
-        .pull(|w: &mut Cascader, m| {
-            if let Some(path) = w.take_selected() {
-                if let Some(id) = path.last().and_then(|v| v.parse::<u32>().ok()) {
-                    m.selected_asset.set_if_changed(Some(id));
-                }
-            }
-        })
-        .push(move |w: &mut Cascader, m| {
-            // Options are construct-time — re-seat on asset edits.
-            let s = assets_sig(m);
-            if s != last_sig {
-                last_sig = s;
-                *w = Cascader::new()
-                    .options(cascader_opts(m, None))
-                    .placeholder("site ▸ line ▸ cell")
-                    .label("asset path");
-            }
-        })
-    };
-
-    let tree_sel = {
-        let mut last = m.selected_asset.get();
-        let mut last_sig = assets_sig(m);
-        Bound::new(
-            TreeSelect::new()
-                .tree(asset_tree(m, None))
-                .placeholder("jump to asset…")
-                .label("asset"),
-            m,
-        )
-        .pull(|w: &mut TreeSelect, m| {
-            if let Some(name) = w.take_selected() {
-                if let Some(a) = m.assets.get().iter().find(|a| a.name == name) {
-                    m.selected_asset.set_if_changed(Some(a.id));
-                }
-            }
-        })
-        .push(move |w: &mut TreeSelect, m| {
-            let s = assets_sig(m);
-            if s != last_sig && !w.is_open() {
-                last_sig = s;
-                *w = TreeSelect::new()
-                    .tree(asset_tree(m, None))
-                    .placeholder("jump to asset…")
-                    .label("asset");
-                last = m.selected_asset.get();
-                w.set_selected(last.map(|id| m.asset_name(id).to_string()));
-                return;
-            }
-            let sel = m.selected_asset.get();
-            if sel != last && !w.is_open() {
-                last = sel;
-                w.set_selected(sel.map(|id| m.asset_name(id).to_string()));
-            }
-        })
-    };
-
     // --- view strip ------------------------------------------------------
     let kind = {
         let sig = kind_sel.clone();
@@ -886,49 +953,6 @@ fn registry(m: &PlantModel) -> Page {
             })
     };
 
-    // NavRail — the two sites as destinations.
-    let site_ids: Vec<u32> = m
-        .assets
-        .get()
-        .iter()
-        .filter(|a| a.kind == AssetKind::Site)
-        .map(|a| a.id)
-        .collect();
-    let rail = {
-        let ids = site_ids.clone();
-        let ids2 = site_ids.clone();
-        let mut last_sig = assets_sig(m);
-        let build = |m: &PlantModel| {
-            let mut r = NavRail::new();
-            for a in m.assets.get().iter().filter(|a| a.kind == AssetKind::Site) {
-                r = r.destination("▦", a.name);
-            }
-            r
-        };
-        Bound::new(build(m), m)
-            .pull(move |w: &mut NavRail, m| {
-                if let Some(i) = w.take_activated() {
-                    if let Some(id) = ids.get(i) {
-                        m.selected_asset.set_if_changed(Some(*id));
-                    }
-                }
-            })
-            .push(move |w: &mut NavRail, m| {
-                let s = assets_sig(m);
-                if s != last_sig {
-                    last_sig = s;
-                    *w = build(m);
-                }
-                let sel = m
-                    .selected_asset
-                    .get()
-                    .and_then(|id| ids2.iter().position(|s| *s == id));
-                if w.selected_index() != sel {
-                    w.set_selected(sel);
-                }
-            })
-    };
-
     let badge = {
         let mut last = m.assets.get().len();
         Bound::new(
@@ -946,20 +970,30 @@ fn registry(m: &PlantModel) -> Page {
 
     // Primary view selector — the Swap's index signal. Lives in the
     // strip: it re-scopes the primary surface, which is what strips
-    // are for.
+    // are for. It also drains this zone's deep-link sub-target: the
+    // pull only runs while the page is visible, so a `request_page`
+    // lands on the requested inner view on the first tick after
+    // activation (C6).
     let view = {
         let sig = view_sel.clone();
         Bound::new(
             Segmented::new()
-                .options(["Register", "List", "Launch", "Browse"])
+                .options(["Register", "List"])
                 .selected(0)
                 .label("register view"),
             m,
         )
-        .pull(move |w: &mut Segmented, _m| {
+        .pull(move |w: &mut Segmented, m| {
             if let Some(i) = w.take_selected() {
                 sig.set_if_changed(i);
             }
+            // The deep-link sub drains last — programmatic nav wins
+            // a same-tick race with a user pick (the request-wins
+            // policy documented on `ZonePanel::tick`).
+            if let Some(sub) = m.take_page_sub(0, page::REGISTRY) {
+                sig.set_if_changed(sub as usize);
+            }
+            sync_segmented(w, &sig);
         })
     };
 
@@ -1105,7 +1139,7 @@ fn registry(m: &PlantModel) -> Page {
         )
     };
 
-    // --- secondary launchers ---------------------------------------------
+    // --- secondary presentation: the register as a plain list ------
     let list = {
         let ks = kind_sel.clone();
         let ks2 = kind_sel.clone();
@@ -1163,134 +1197,6 @@ fn registry(m: &PlantModel) -> Page {
             m.log(usize::MAX, "operator refreshed the asset registry");
         }
     });
-
-    let apps = {
-        let ids: Vec<u32> = cell_assets(m).iter().map(|a| a.id).collect();
-        let mut g = AppGrid::new().page_size(4, 2).label("cell stations");
-        for a in cell_assets(m) {
-            g = g.app(AppEntry::new(a.name, status_color(a.status)));
-        }
-        let mut sig = assets_sig(m);
-        Bound::new(g, m)
-            .pull(move |w: &mut AppGrid, m| {
-                if let Some(i) = w.take_activated() {
-                    if let Some(id) = ids.get(i) {
-                        m.selected_asset.set_if_changed(Some(*id));
-                    }
-                }
-            })
-            .push(move |w: &mut AppGrid, m| {
-                let s = assets_sig(m);
-                if s != sig {
-                    sig = s;
-                    let mut g = AppGrid::new().page_size(4, 2).label("cell stations");
-                    for a in m
-                        .assets
-                        .get()
-                        .into_iter()
-                        .filter(|a| a.kind == AssetKind::Cell)
-                    {
-                        g = g.app(AppEntry::new(a.name, status_color(a.status)));
-                    }
-                    *w = g;
-                }
-            })
-    };
-
-    let dock = {
-        let lines: Vec<Asset> = m
-            .assets
-            .get()
-            .into_iter()
-            .filter(|a| a.kind == AssetKind::Line)
-            .collect();
-        let ids: Vec<u32> = lines.iter().map(|a| a.id).collect();
-        let build = |m: &PlantModel| {
-            let mut d = Dock::new().label("lines");
-            for a in m
-                .assets
-                .get()
-                .into_iter()
-                .filter(|a| a.kind == AssetKind::Line)
-            {
-                d = d.item(
-                    DockItem::new(a.name, status_color(a.status))
-                        .running(a.status == AssetStatus::Running),
-                );
-            }
-            d
-        };
-        let mut sig = assets_sig(m);
-        Bound::new(build(m), m)
-            .pull(move |w: &mut Dock, m| {
-                if let Some(i) = w.take_launched() {
-                    if let Some(id) = ids.get(i) {
-                        m.selected_asset.set_if_changed(Some(*id));
-                    }
-                }
-            })
-            .push(move |w: &mut Dock, m| {
-                let s = assets_sig(m);
-                if s != sig {
-                    sig = s;
-                    *w = {
-                        let mut d = Dock::new().label("lines");
-                        for a in m
-                            .assets
-                            .get()
-                            .into_iter()
-                            .filter(|a| a.kind == AssetKind::Line)
-                        {
-                            d = d.item(
-                                DockItem::new(a.name, status_color(a.status))
-                                    .running(a.status == AssetStatus::Running),
-                            );
-                        }
-                        d
-                    };
-                }
-            })
-    };
-
-    let flow = {
-        let ids: Vec<u32> = cell_assets(m).iter().map(|a| a.id).collect();
-        let ids2 = ids.clone();
-        let build = |m: &PlantModel| {
-            let mut fb = FlowBox::new()
-                .gap(6.0)
-                .selection_mode(FlowSelection::Single)
-                .label("cells");
-            for a in cell_assets(m) {
-                fb = fb.child(Text::new(a.name).font_size(12.0));
-            }
-            fb
-        };
-        let mut last_sig = assets_sig(m);
-        Bound::new(build(m), m)
-            .pull(move |w: &mut FlowBox, m| {
-                if let Some(i) = w.take_selected() {
-                    if let Some(id) = ids.get(i) {
-                        m.selected_asset.set_if_changed(Some(*id));
-                    }
-                }
-            })
-            .push(move |w: &mut FlowBox, m| {
-                let s = assets_sig(m);
-                if s != last_sig {
-                    last_sig = s;
-                    *w = build(m);
-                }
-                if let Some(i) = m
-                    .selected_asset
-                    .get()
-                    .and_then(|id| ids2.iter().position(|v| *v == id))
-                {
-                    if w.selected_index() != Some(i) {
-                        w.select(i);
-                    }
-                }
-            })
-    };
 
     // NavStack — root is the selected asset's site; pushes mirror the
     // ancestry chain. Navigating back re-selects the ancestor.
@@ -1359,8 +1265,9 @@ fn registry(m: &PlantModel) -> Page {
     };
 
     // --- rail: detail-of-`selected_asset` -----------------------------
-    // Section 1 — SELECTION: the asset card + ancestry path + the
-    // "open in DETAIL" nav verb (a real cross-page request).
+    // SELECTION: the asset card + ancestry path + nav stack. The
+    // locator surfaces (jump-to-asset TreeSelect, site NavRail) moved
+    // to LOCATE — the rail keeps only detail-of-selection (C1).
     let sel_card = {
         let build = |m: &PlantModel| match sel_asset(m) {
             Some(a) => Descriptions::new()
@@ -1386,25 +1293,25 @@ fn registry(m: &PlantModel) -> Page {
             }
         })
     };
-    let open_detail = Bound::new(Button::new("Open detail →"), m).pull(|w: &mut Button, m| {
-        if w.take_activated() {
-            m.request_page(0, 1); // Process Grid → DETAIL
-        }
-    });
+    // C4 — the dominant verb. A register exists to open records:
+    // "Open detail" leads the strip (first position) and paints
+    // primary so the eye lands on the page's next step. (A real
+    // cross-page request — `page_request[0] = DETAIL`.)
+    let open_detail =
+        Bound::new(Button::new("Open detail →").primary(true), m).pull(|w: &mut Button, m| {
+            if w.take_activated() {
+                m.request_page(0, page::DETAIL);
+            }
+        });
     let rail_col = Flex::column()
         .gap(ZONE_STACK)
         .child(
             GroupBox::new("SELECTION").child(
                 Flex::column()
                     .gap(ZONE_GAP)
-                    // Jump-to-asset lookup — it fills the card below,
-                    // so it opens the group rather than competing with
-                    // the strip's re-scoping controls.
-                    .child(tree_sel)
                     .child(sel_card)
                     .child(crumb)
-                    .child_flex(band(BAND_M, nav), 1.0)
-                    .child(open_detail),
+                    .child_flex(band(BAND_M, nav), 1.0),
             ),
         )
         .child(
@@ -1412,19 +1319,18 @@ fn registry(m: &PlantModel) -> Page {
                 Flex::column()
                     .gap(ZONE_GAP)
                     .child(summary)
-                    .child(strip().child(badge).child_flex(DummyWidget, 1.0))
-                    .child(rail),
+                    .child(strip().child(badge).child_flex(DummyWidget, 1.0)),
             ),
         );
 
-    // --- primary: one surface, three presentations of one dataset ---
+    // --- primary: the register, two presentations of one dataset ---
     // The standalone sash is a *vertical* bar for a horizontal split —
     // it belongs in a row, at the split's right edge (also the
     // keyboard-focusable splitter: SplitView's embedded sash is not
     // reachable by keyboard). Stacked in a column it would measure
     // (thick, full-height) and starve the weighted split.
     let register = Flex::column()
-        .gap(6.0)
+        .gap(ZONE_GAP)
         .child_flex(
             Flex::row()
                 .gap(ZONE_GAP)
@@ -1435,21 +1341,81 @@ fn registry(m: &PlantModel) -> Page {
         // Pager foots the register — a strip child, it would eat the
         // scope controls' width.
         .child(strip().child_flex(DummyWidget, 1.0).child(pager));
-    let launchers = row()
-        .child_flex(fill(apps), 1.0)
-        .child_flex(fill(flow), 1.0)
-        .child(dock);
-    // The Cascader is a Miller-columns browser — a primary-surface
-    // lens ("Browse"), not a strip field.
-    let primary = Swap::new(&view_sel)
-        .view(register)
-        .view(refresh)
-        .view(launchers)
-        .view(cascade);
+    // C1: the Launch/Browse surfaces moved to the LOCATE page — the
+    // register keeps one surface at a time via the Swap idiom (never
+    // nested Tabs).
+    let swap = Swap::new(&view_sel).view(register).view(refresh);
 
-    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+    // C3 — persistent scope readout: one quiet caption line (muted
+    // ~12pt, not a chrome band) naming site · kind · filter · count,
+    // mounted above the Swap so it survives view switches. A
+    // filtered-empty register names the active filter and how to
+    // clear it.
+    let scope = {
+        let ks = kind_sel.clone();
+        let mut last = String::new();
+        Bound::new(Text::new("—").font_size(12.0).color(muted_ink()), m).push(
+            move |w: &mut Text, m| {
+                let site = {
+                    let s = m.site_filter.get();
+                    if s.is_empty() {
+                        "all sites".to_string()
+                    } else {
+                        s
+                    }
+                };
+                let kind = ["all kinds", "sites", "lines", "cells"][ks.get().min(3)];
+                let f = m.filter_text.get();
+                let n = registry_filtered(m, ks.get()).len();
+                let s = if n == 0 {
+                    // Filtered-empty: name every active filter and the
+                    // clearing action for each.
+                    let mut parts = vec![format!("0 assets in scope — {site} · {kind}")];
+                    if !f.is_empty() {
+                        parts.push(format!(
+                            "filter \"{f}\" is active — clear the search field to reset"
+                        ));
+                    }
+                    if ks.get() != 0 {
+                        parts.push(format!(
+                            "kind filter \"{kind}\" is active — pick \"All\" to reset"
+                        ));
+                    }
+                    parts.join("; ")
+                } else {
+                    format!(
+                        "{site} · {kind} · {} · {n} assets",
+                        if f.is_empty() {
+                            "no filter".to_string()
+                        } else {
+                            format!("filter \"{f}\"")
+                        }
+                    )
+                };
+                if s != last {
+                    last = s.clone();
+                    w.set_content(s);
+                }
+            },
+        )
+    };
+    let primary = Flex::column()
+        .gap(ZONE_GAP)
+        .child(scope)
+        .child_flex(swap, 1.0);
+
+    // C7 breakpoint contract — `Page` reads `zone_width`: ≥560pt
+    // (`RAIL_STACK_W`) the "Asset" rail sits beside the register;
+    // <560pt it stacks below the primary; <380pt (`RAIL_DISCLOSE_W`)
+    // it collapses into a user-toggleable Disclosure whose header is
+    // the rail's "Asset" caption — quiet rails inside forced-open
+    // disclosures (the ≥380pt case) keep their captions via the
+    // GroupBox titles.
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width[0])
         .strip(
             strip()
+                .child(open_detail)
+                .child(Separator::vertical())
                 .child(search)
                 .child(site)
                 .child(kind)
@@ -1501,6 +1467,337 @@ fn registry_list_items(m: &PlantModel, ids: &[u32]) -> Vec<String> {
         .collect()
 }
 
+/// Quiet-caption ink — `TextMutedColor` resolved once at page
+/// construction (pages are construct-once; both shipped themes use
+/// the muted slate so a fixed resolve is stable).
+fn muted_ink() -> martensite::theme::Oklab {
+    martensite::theme::tokens::default_dark()
+        .color(martensite::theme::TokenKey::TextMutedColor)
+        .unwrap_or(martensite::theme::Oklab {
+            l: 0.66,
+            a: 0.0,
+            b: -0.01,
+            alpha: 1.0,
+        })
+}
+
+// ---------------------------------------------------------------------------
+// LOCATE — "how do I reach this asset fast?" Every locator surface that
+// used to crowd REGISTRY lives here: the site▸line▸cell Cascader, the
+// jump-to-asset TreeSelect, the site NavRail, and the cell/line
+// launchers (AppGrid/FlowBox/Dock). All write `selected_asset`; the
+// page's verb jumps the selection to DETAIL (C1/C4).
+// ---------------------------------------------------------------------------
+
+fn locate(m: &PlantModel) -> Page {
+    // In-page presentation swap — Path (columns browser) | Stations
+    // (cell launchers) | Lines (line dock + site rail). The
+    // established Swap+Segmented idiom: one locator surface at a
+    // time, never nested Tabs.
+    let view_sel = Signal::new(0usize);
+
+    // --- selector chrome (moved from REGISTRY, unchanged) ----------
+    let cascade = {
+        let mut last_sig = assets_sig(m);
+        Bound::new(
+            Cascader::new()
+                .options(cascader_opts(m, None))
+                .placeholder("site ▸ line ▸ cell")
+                .label("asset path"),
+            m,
+        )
+        .pull(|w: &mut Cascader, m| {
+            if let Some(path) = w.take_selected() {
+                if let Some(id) = path.last().and_then(|v| v.parse::<u32>().ok()) {
+                    m.selected_asset.set_if_changed(Some(id));
+                }
+            }
+        })
+        .push(move |w: &mut Cascader, m| {
+            // Options are construct-time — re-seat on asset edits.
+            let s = assets_sig(m);
+            if s != last_sig {
+                last_sig = s;
+                *w = Cascader::new()
+                    .options(cascader_opts(m, None))
+                    .placeholder("site ▸ line ▸ cell")
+                    .label("asset path");
+            }
+        })
+    };
+
+    let tree_sel = {
+        let mut last = m.selected_asset.get();
+        let mut last_sig = assets_sig(m);
+        Bound::new(
+            TreeSelect::new()
+                .tree(asset_tree(m, None))
+                .placeholder("jump to asset…")
+                .label("asset"),
+            m,
+        )
+        .pull(|w: &mut TreeSelect, m| {
+            if let Some(name) = w.take_selected() {
+                if let Some(a) = m.assets.get().iter().find(|a| a.name == name) {
+                    m.selected_asset.set_if_changed(Some(a.id));
+                }
+            }
+        })
+        .push(move |w: &mut TreeSelect, m| {
+            let s = assets_sig(m);
+            if s != last_sig && !w.is_open() {
+                last_sig = s;
+                *w = TreeSelect::new()
+                    .tree(asset_tree(m, None))
+                    .placeholder("jump to asset…")
+                    .label("asset");
+                last = m.selected_asset.get();
+                w.set_selected(last.map(|id| m.asset_name(id).to_string()));
+                return;
+            }
+            let sel = m.selected_asset.get();
+            if sel != last && !w.is_open() {
+                last = sel;
+                w.set_selected(sel.map(|id| m.asset_name(id).to_string()));
+            }
+        })
+    };
+
+    // NavRail — the two sites as destinations.
+    let site_ids: Vec<u32> = m
+        .assets
+        .get()
+        .iter()
+        .filter(|a| a.kind == AssetKind::Site)
+        .map(|a| a.id)
+        .collect();
+    let rail = {
+        let ids = site_ids.clone();
+        let ids2 = site_ids.clone();
+        let mut last_sig = assets_sig(m);
+        let build = |m: &PlantModel| {
+            let mut r = NavRail::new();
+            for a in m.assets.get().iter().filter(|a| a.kind == AssetKind::Site) {
+                r = r.destination("▦", a.name);
+            }
+            r
+        };
+        Bound::new(build(m), m)
+            .pull(move |w: &mut NavRail, m| {
+                if let Some(i) = w.take_activated() {
+                    if let Some(id) = ids.get(i) {
+                        m.selected_asset.set_if_changed(Some(*id));
+                    }
+                }
+            })
+            .push(move |w: &mut NavRail, m| {
+                let s = assets_sig(m);
+                if s != last_sig {
+                    last_sig = s;
+                    *w = build(m);
+                }
+                let sel = m
+                    .selected_asset
+                    .get()
+                    .and_then(|id| ids2.iter().position(|s| *s == id));
+                if w.selected_index() != sel {
+                    w.set_selected(sel);
+                }
+            })
+    };
+
+    // Cell stations — icon grid; the status lamp chip is the
+    // redundant (non-color) status channel (D1).
+    let apps = {
+        let ids: Vec<u32> = cell_assets(m).iter().map(|a| a.id).collect();
+        let build = |m: &PlantModel| {
+            let mut g = AppGrid::new().page_size(4, 2).label("cell stations");
+            for a in cell_assets(m) {
+                g = g.app(
+                    AppEntry::new(a.name, status_color(a.status)).status(status_lamp(a.status)),
+                );
+            }
+            g
+        };
+        let mut sig = assets_sig(m);
+        Bound::new(build(m), m)
+            .pull(move |w: &mut AppGrid, m| {
+                if let Some(i) = w.take_activated() {
+                    if let Some(id) = ids.get(i) {
+                        m.selected_asset.set_if_changed(Some(*id));
+                    }
+                }
+            })
+            .push(move |w: &mut AppGrid, m| {
+                let s = assets_sig(m);
+                if s != sig {
+                    sig = s;
+                    *w = build(m);
+                }
+            })
+    };
+
+    let flow = {
+        let ids: Vec<u32> = cell_assets(m).iter().map(|a| a.id).collect();
+        let ids2 = ids.clone();
+        let build = |m: &PlantModel| {
+            let mut fb = FlowBox::new()
+                .gap(ZONE_GAP)
+                .selection_mode(FlowSelection::Single)
+                .label("cells");
+            for a in cell_assets(m) {
+                fb = fb.child(Text::new(a.name).font_size(12.0));
+            }
+            fb
+        };
+        let mut last_sig = assets_sig(m);
+        Bound::new(build(m), m)
+            .pull(move |w: &mut FlowBox, m| {
+                if let Some(i) = w.take_selected() {
+                    if let Some(id) = ids.get(i) {
+                        m.selected_asset.set_if_changed(Some(*id));
+                    }
+                }
+            })
+            .push(move |w: &mut FlowBox, m| {
+                let s = assets_sig(m);
+                if s != last_sig {
+                    last_sig = s;
+                    *w = build(m);
+                }
+                if let Some(i) = m
+                    .selected_asset
+                    .get()
+                    .and_then(|id| ids2.iter().position(|v| *v == id))
+                {
+                    if w.selected_index() != Some(i) {
+                        w.select(i);
+                    }
+                }
+            })
+    };
+
+    // Line dock — magnification launcher; status chip rides the icon
+    // (D1 — the icon tint alone was color-only).
+    let dock = {
+        let ids: Vec<u32> = m
+            .assets
+            .get()
+            .into_iter()
+            .filter(|a| a.kind == AssetKind::Line)
+            .map(|a| a.id)
+            .collect();
+        let build = |m: &PlantModel| {
+            let mut d = Dock::new().label("lines");
+            for a in m
+                .assets
+                .get()
+                .into_iter()
+                .filter(|a| a.kind == AssetKind::Line)
+            {
+                d = d.item(
+                    DockItem::new(a.name, status_color(a.status))
+                        .status(status_lamp(a.status))
+                        .running(a.status == AssetStatus::Running),
+                );
+            }
+            d
+        };
+        let mut sig = assets_sig(m);
+        Bound::new(build(m), m)
+            .pull(move |w: &mut Dock, m| {
+                if let Some(i) = w.take_launched() {
+                    if let Some(id) = ids.get(i) {
+                        m.selected_asset.set_if_changed(Some(*id));
+                    }
+                }
+            })
+            .push(move |w: &mut Dock, m| {
+                let s = assets_sig(m);
+                if s != sig {
+                    sig = s;
+                    *w = build(m);
+                }
+            })
+    };
+
+    // Locator view selector — the Swap's index; also drains this
+    // zone's deep-link sub for LOCATE (C6).
+    let view = {
+        let sig = view_sel.clone();
+        Bound::new(
+            Segmented::new()
+                .options(["Path", "Stations", "Lines"])
+                .selected(0)
+                .label("locator view"),
+            m,
+        )
+        .pull(move |w: &mut Segmented, m| {
+            if let Some(i) = w.take_selected() {
+                sig.set_if_changed(i);
+            }
+            // The deep-link sub drains last — programmatic nav wins
+            // a same-tick race with a user pick (the request-wins
+            // policy documented on `ZonePanel::tick`).
+            if let Some(sub) = m.take_page_sub(0, page::LOCATE) {
+                sig.set_if_changed(sub as usize);
+            }
+            sync_segmented(w, &sig);
+        })
+    };
+
+    // C4 — the dominant verb: once the asset is located, open its
+    // record. First strip position, painted primary.
+    let open_detail =
+        Bound::new(Button::new("Open detail →").primary(true), m).pull(|w: &mut Button, m| {
+            if w.take_activated() {
+                m.request_page(0, page::DETAIL);
+            }
+        });
+
+    // A found-asset readout — quiet caption mirroring the selection
+    // so the page still reads as detail-of-selection without a rail.
+    let found =
+        Bound::new(Text::new("—").font_size(12.0).color(muted_ink()), m).push(|w: &mut Text, m| {
+            w.set_content(match sel_asset(m) {
+                Some(a) => format!(
+                    "found: {} · {} · {}",
+                    a.name,
+                    kind_name(a.kind),
+                    a.status.label()
+                ),
+                None => "locate an asset — path, station, or line".to_string(),
+            });
+        });
+
+    let stations = row()
+        .child_flex(fill(apps), 1.0)
+        .child_flex(fill(flow), 1.0);
+    // The site rail fills the view; the line dock rides under it at
+    // its intrinsic strip height.
+    let lines = Flex::column()
+        .gap(ZONE_GAP)
+        .child_flex(fill(rail), 1.0)
+        .child(dock);
+    let primary = Swap::new(&view_sel)
+        .view(cascade)
+        .view(stations)
+        .view(lines);
+
+    // C7 breakpoint contract — Theater variant: no rail, so the
+    // 560/380pt rules don't apply; the strip scrolls horizontally
+    // when narrow (Page mounts it in a horizontal ScrollView).
+    Page::new(Variant::Theater, fill(primary), &m.zone_width[0]).strip(
+        strip()
+            .child(open_detail)
+            .child(Separator::vertical())
+            .child(tree_sel)
+            .child(view)
+            .child(found)
+            .child_flex(DummyWidget, 1.0),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // ASSET DETAIL — the selected asset's record: editable properties,
 // live inspector, identity codes, notes, alarms.
@@ -1512,24 +1809,26 @@ fn registry_list_items(m: &PlantModel, ids: &[u32]) -> Vec<String> {
 /// selection: `selected_asset` | rail: condition + notes sections.
 fn detail(m: &PlantModel) -> Page {
     // Header — back clears the selection (a real deselect write);
-    // the action is a bound button that acks every alarm on the
-    // selected asset.
+    // the action is the page's dominant verb (C4): a primary-painted
+    // bound button that acks every alarm on the selected asset.
     let header = Bound::new(
         PageHeader::new("Asset detail")
             .back(true)
             .subtitle("registry record")
             .action(
-                Bound::new(Button::new("Ack asset alarms"), m).pull(|w: &mut Button, m| {
-                    if w.take_activated() {
-                        if let Some(id) = m.selected_asset.get() {
-                            for a in m.active_alarms() {
-                                if a.asset == id {
-                                    m.ack_alarm(a.id);
+                Bound::new(Button::new("Ack asset alarms").primary(true), m).pull(
+                    |w: &mut Button, m| {
+                        if w.take_activated() {
+                            if let Some(id) = m.selected_asset.get() {
+                                for a in m.active_alarms() {
+                                    if a.asset == id {
+                                        m.ack_alarm(a.id);
+                                    }
                                 }
                             }
                         }
-                    }
-                }),
+                    },
+                ),
             ),
         m,
     )
@@ -1539,7 +1838,24 @@ fn detail(m: &PlantModel) -> Page {
         }
     });
 
-    let headline = Bound::new(Text::new("—").font_size(16.0), m).push(|w: &mut Text, m| {
+    // C6 — the dead end's next step: with no asset selected every
+    // surface on this page is inert, so the strip carries a verb that
+    // sends the operator back to the register (a real page_request).
+    let open_registry = Bound::new(Button::new("← Open REGISTRY"), m).pull(|w: &mut Button, m| {
+        if w.take_activated() {
+            m.request_page(0, page::REGISTRY);
+        }
+    });
+
+    // Record headline — Title tier (15pt semibold), same voice as the
+    // panel title bands; never an off-scale size.
+    let headline = Bound::new(
+        Text::new("—")
+            .font_size(15.0)
+            .font_weight(crate::text::TITLE_WEIGHT),
+        m,
+    )
+    .push(|w: &mut Text, m| {
         let s = match sel_asset(m) {
             Some(a) => format!("{}  ·  {}  ·  {}", a.name, kind_name(a.kind), a.serial),
             None => "no asset selected".to_string(),
@@ -1901,6 +2217,8 @@ fn detail(m: &PlantModel) -> Page {
     });
 
     // Dossier view selector — Record | Inspector | Identity swap.
+    // Drains this page's deep-link sub (C6): e.g. a document's
+    // "asset detail" verb lands here on the Inspector lens.
     let dossier_sel = Signal::new(0usize);
     let dossier = {
         let sig = dossier_sel.clone();
@@ -1911,10 +2229,17 @@ fn detail(m: &PlantModel) -> Page {
                 .label("dossier view"),
             m,
         )
-        .pull(move |w: &mut Segmented, _m| {
+        .pull(move |w: &mut Segmented, m| {
             if let Some(i) = w.take_selected() {
                 sig.set_if_changed(i);
             }
+            // The deep-link sub drains last — programmatic nav wins
+            // a same-tick race with a user pick (the request-wins
+            // policy documented on `ZonePanel::tick`).
+            if let Some(sub) = m.take_page_sub(0, page::DETAIL) {
+                sig.set_if_changed(sub as usize);
+            }
+            sync_segmented(w, &sig);
         })
     };
 
@@ -1969,12 +2294,20 @@ fn detail(m: &PlantModel) -> Page {
             1.0,
         );
 
-    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+    // C7 breakpoint contract — ≥560pt (`RAIL_STACK_W`) the "Asset"
+    // rail (condition lamp + alarms + note/siblings) sits beside the
+    // dossier; <560pt it stacks below; <380pt (`RAIL_DISCLOSE_W`) it
+    // collapses into a Disclosure whose header is the "Asset"
+    // caption — the forced-open rail's quiet sections keep their
+    // GroupBox/ExpanderRow/Accordion captions.
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width[0])
         .strip(
-            Flex::column()
-                .gap(ZONE_GAP)
-                .child(header)
-                .child(strip().child(dossier).child_flex(DummyWidget, 1.0)),
+            Flex::column().gap(ZONE_GAP).child(header).child(
+                strip()
+                    .child(dossier)
+                    .child_flex(DummyWidget, 1.0)
+                    .child(open_registry),
+            ),
         )
         .rail("Asset", rail_col)
 }
@@ -2015,9 +2348,11 @@ fn work_orders(m: &PlantModel) -> Page {
             n(WoStatus::Review)
         ));
     });
+    // C4 — the page's dominant verb, painted primary and mounted in
+    // the strip's first position.
     let new_wo = {
         let vs = view_sel.clone();
-        Bound::new(Button::new("New WO"), m).pull(move |w: &mut Button, _m| {
+        Bound::new(Button::new("New WO").primary(true), m).pull(move |w: &mut Button, _m| {
             if w.take_activated() {
                 // The verb opens the intake surface — the wizard
                 // consumes the operator's choices into `create_wo`.
@@ -2034,10 +2369,19 @@ fn work_orders(m: &PlantModel) -> Page {
                 .label("pipeline view"),
             m,
         )
-        .pull(move |w: &mut Segmented, _m| {
+        .pull(move |w: &mut Segmented, m| {
+            // Deep links (C6): a `request_page_deep` to WORK ORDERS
+            // lands on the named pipeline view.
             if let Some(i) = w.take_selected() {
                 sig.set_if_changed(i);
             }
+            // The deep-link sub drains last — programmatic nav wins
+            // a same-tick race with a user pick (the request-wins
+            // policy documented on `ZonePanel::tick`).
+            if let Some(sub) = m.take_page_sub(0, page::WORK_ORDERS) {
+                sig.set_if_changed(sub as usize);
+            }
+            sync_segmented(w, &sig);
         })
     };
     let filter = {
@@ -2948,15 +3292,21 @@ fn work_orders(m: &PlantModel) -> Page {
         .child_flex(GroupBox::new("EXECUTION").child(execution), 3.0)
         .child_flex(GroupBox::new("DISCUSSION").child(discussion), 2.0);
 
-    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+    // C7 breakpoint contract — ≥560pt (`RAIL_STACK_W`) the "Work
+    // order" rail (execution + discussion) sits beside the pipeline;
+    // <560pt it stacks below; <380pt (`RAIL_DISCLOSE_W`) it collapses
+    // into a Disclosure whose header is the "Work order" caption —
+    // the forced-open rail keeps its EXECUTION/DISCUSSION captions.
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width[0])
+        // C4 — the dominant verb leads the strip.
         .strip(
             strip()
+                .child(new_wo)
+                .child(Separator::vertical())
                 .child(filter)
                 .child(view)
                 .child(status)
-                .child_flex(DummyWidget, 1.0)
-                .child(Separator::vertical())
-                .child(new_wo),
+                .child_flex(DummyWidget, 1.0),
         )
         .rail("Work order", ScrollView::new(rail_col))
 }
@@ -3274,7 +3624,12 @@ fn maintenance(m: &PlantModel) -> Page {
             ),
         );
 
-    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+    // C7 breakpoint contract — ≥560pt (`RAIL_STACK_W`) the "Task"
+    // rail (rebook pickers + plan milestones) sits beside the plan;
+    // <560pt it stacks below; <380pt (`RAIL_DISCLOSE_W`) it collapses
+    // into a Disclosure keeping the "Task" caption — the forced-open
+    // rail keeps its REBOOK/PLAN GroupBox captions.
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width[0])
         .strip(strip().child(task_pick).child_flex(DummyWidget, 1.0))
         .rail("Task", ScrollView::new(rail_col))
 }
@@ -3725,8 +4080,15 @@ fn documents(m: &PlantModel) -> Page {
     // --- artifact selection -----------------------------------------
     // One index into the Swap: 0..=3 = the selected DocEntry's
     // kind-mapped viewer; 4.. = generated record views. The chooser
-    // writes it alongside `selected_doc`.
+    // rows write it alongside `selected_doc`.
     let art_sel = Signal::new(0usize);
+    // C5 — expansion state lives in a page-scoped signal, NOT the
+    // Disclosure widgets: `Bound` re-seats construct-once children on
+    // signature changes and a widget-local `open` would reset with
+    // the rebuild. The signal survives re-seats; each row's push
+    // mirrors it back. Keys: doc ids for `m.docs` rows,
+    // `u32::MAX - i` for the generated record views.
+    let doc_open = Signal::new(Vec::<u32>::new());
 
     // Kind-mapped artifacts — the real DocEntry payload.
     let doc_markdown = {
@@ -3833,72 +4195,173 @@ fn documents(m: &PlantModel) -> Page {
         .view(journal) // alarm journal
         .view(record) // asset-record viewer set
         .view(shift_log_view); // shift log
+                               // Deep-link drain (C6) on the always-mounted primary: a
+                               // `request_page_deep` to DOCUMENTS lands on the named artifact
+                               // view. This must NOT live inside the chooser rail — at
+                               // <RAIL_DISCLOSE_W the rail's Disclosure starts closed, a closed
+                               // Disclosure reports no children, and unticked Bounds never pull,
+                               // so the sub would sit pending until the user re-opened the rail.
+    let artifact = {
+        let asel = art_sel.clone();
+        Bound::new(artifact, m).pull(move |_w: &mut Swap, m| {
+            if let Some(sub) = m.take_page_sub(0, page::DOCUMENTS) {
+                asel.set_if_changed(sub as usize);
+            }
+        })
+    };
 
     // --- master: the chooser -----------------------------------------
-    // Lists `m.docs` then the generated record views — one chooser,
-    // one artifact.
+    // C5 — expandable rows, one per `m.docs` entry plus the four
+    // generated record views. A collapsed row keeps the summary
+    // fields readable — kind · title · owning asset — and the
+    // Disclosure chevron is the explicit expand affordance; the open
+    // body shows a preview plus the row's next-step verbs (Open ▸
+    // selects the artifact; Asset ▸ deep-links to the owning asset's
+    // DETAIL page — a real `request_page_deep`).
     let chooser = {
-        const GEN: &[&str] = &[
-            "record · plant registry",
-            "record · alarm journal",
-            "record · asset revisions",
-            "record · shift log",
+        let mut col = Flex::column().gap(ZONE_GAP);
+        for d in m.docs.get() {
+            let id = d.id;
+            let art = match d.kind {
+                DocKind::Manual => 0,
+                DocKind::Report => 1,
+                DocKind::Firmware => 2,
+                DocKind::Log => 3,
+            };
+            let owner = d.asset.map(|id| m.asset_name(id)).unwrap_or("site-wide");
+            let title = format!("{} · {} · {owner}", d.kind.label().to_lowercase(), d.title);
+            let preview: String = {
+                let first = d
+                    .body
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("—");
+                first.chars().take(140).collect()
+            };
+            let asel = art_sel.clone();
+            let open = Bound::new(Button::new("Open ▸"), m).pull(move |w: &mut Button, m| {
+                if w.take_activated() {
+                    m.selected_doc.set_if_changed(Some(id));
+                    asel.set_if_changed(art);
+                }
+            });
+            let mut verbs = strip().child(open);
+            if let Some(aid) = d.asset {
+                verbs = verbs.child(Bound::new(Button::new("Asset ▸"), m).pull(
+                    move |w: &mut Button, m| {
+                        if w.take_activated() {
+                            m.selected_asset.set_if_changed(Some(aid));
+                            // Land on the Inspector dossier — it
+                            // surfaces the asset's active alarms.
+                            m.request_page_deep(0, page::DETAIL, 1);
+                        }
+                    },
+                ));
+            }
+            let body = Flex::column()
+                .gap(ZONE_GAP)
+                .child(Text::new(preview).font_size(12.0))
+                .child(verbs.child_flex(DummyWidget, 1.0));
+            col = col.child(doc_row(m, &doc_open, id, title, body));
+        }
+        // Generated record views — keyed `u32::MAX - i` in `doc_open`.
+        const GEN: &[(&str, &str)] = &[
+            (
+                "record · plant registry",
+                "the live asset store as JSON — site ▸ line ▸ cell",
+            ),
+            (
+                "record · alarm journal",
+                "severity-mapped alarm history for the shift",
+            ),
+            (
+                "record · asset revisions",
+                "revisions, merge review, PLC script, WO procedure, MES portal",
+            ),
+            (
+                "record · shift log",
+                "the operator's running narrative of the shift",
+            ),
         ];
-        let items_of = |m: &PlantModel| {
-            m.docs
-                .get()
-                .iter()
-                .map(|d| format!("{} · {}", d.kind.label().to_lowercase(), d.title))
-                .chain(GEN.iter().map(|s| s.to_string()))
-                .collect::<Vec<_>>()
-        };
-        let n_docs = m.docs.get().len();
-        let asel = art_sel.clone();
-        let mut last_docs = docs_sig(m);
-        let mut lv = ListView::new()
-            .items(items_of(m))
-            .selection_mode(SelectionMode::Single)
-            .label("documents");
-        lv.set_selected(0);
-        Bound::new(lv, m)
-            .pull(move |w: &mut ListView, m| {
-                if let Some(i) = w.take_activated().or_else(|| w.selected()) {
-                    if i < n_docs {
-                        let d = &m.docs.get()[i];
-                        m.selected_doc.set_if_changed(Some(d.id));
-                        asel.set_if_changed(match d.kind {
-                            crate::domain::DocKind::Manual => 0,
-                            crate::domain::DocKind::Report => 1,
-                            crate::domain::DocKind::Firmware => 2,
-                            crate::domain::DocKind::Log => 3,
-                        });
-                    } else {
-                        asel.set_if_changed(4 + (i - n_docs));
-                    }
+        for (i, (title, desc)) in GEN.iter().enumerate() {
+            let asel = art_sel.clone();
+            let open = Bound::new(Button::new("Open ▸"), m).pull(move |w: &mut Button, _m| {
+                if w.take_activated() {
+                    asel.set_if_changed(4 + i);
                 }
-            })
-            .push(move |w: &mut ListView, m| {
-                let s = docs_sig(m);
-                if s != last_docs {
-                    last_docs = s;
-                    w.set_items(items_of(m));
-                }
-                if let Some(i) = m
-                    .selected_doc
-                    .get()
-                    .and_then(|id| m.docs.get().iter().position(|d| d.id == id))
-                {
-                    w.set_selected(i);
-                }
-            })
+            });
+            let body = Flex::column()
+                .gap(ZONE_GAP)
+                .child(Text::new(*desc).font_size(12.0))
+                .child(strip().child(open).child_flex(DummyWidget, 1.0));
+            col = col.child(doc_row(
+                m,
+                &doc_open,
+                u32::MAX - i as u32,
+                format!("{title} · generated"),
+                body,
+            ));
+        }
+        col
     };
+
+    // Quiet caption — the page's scope readout. The deep-link drain
+    // lives on `artifact` (the always-mounted primary), not here —
+    // this caption sits inside the collapsible rail.
+    let scope =
+        Bound::new(Text::new("—").font_size(12.0).color(muted_ink()), m).push(|w: &mut Text, m| {
+            w.set_content(format!("{} documents · 4 records", m.docs.get().len()));
+        });
 
     let master_col = Flex::column()
         .gap(ZONE_GAP)
+        .child(scope)
         .child_flex(chooser, 1.0)
         .child(band(BAND_M + 40.0, files));
 
-    Page::new(Variant::MasterLeft, fill(artifact), &m.zone_width).rail("Documents", master_col)
+    // C7 breakpoint contract — MasterLeft: ≥560pt (`RAIL_STACK_W`)
+    // the "Documents" chooser sits left of the artifact; <560pt it
+    // stacks *above* the artifact it selects; <380pt
+    // (`RAIL_DISCLOSE_W`) it collapses into a Disclosure whose header
+    // keeps the "Documents" caption.
+    Page::new(Variant::MasterLeft, fill(artifact), &m.zone_width[0]).rail("Documents", master_col)
+}
+
+/// A DOCUMENTS chooser row (C5) — the `Disclosure` header is the
+/// expand affordance (chevron + kind · title · owner); `doc_open`
+/// holds expansion state so `Bound` re-seats never collapse an open
+/// row. Pull syncs widget → signal, push mirrors signal → widget.
+fn doc_row(
+    m: &PlantModel,
+    doc_open: &Signal<Vec<u32>>,
+    key: u32,
+    title: String,
+    body: impl Widget + 'static,
+) -> Bound<Disclosure> {
+    let up = doc_open.clone();
+    let down = doc_open.clone();
+    let mut row = Disclosure::new(title).child(body);
+    row.set_open(doc_open.get().contains(&key));
+    Bound::new(row, m)
+        .pull(move |w: &mut Disclosure, _m| {
+            let cur = w.open;
+            if cur != up.get().contains(&key) {
+                up.update(|v| {
+                    if cur {
+                        v.push(key);
+                    } else {
+                        v.retain(|x| *x != key);
+                    }
+                });
+            }
+        })
+        .push(move |w: &mut Disclosure, _m| {
+            let want = down.get().contains(&key);
+            if w.open != want {
+                w.set_open(want);
+            }
+        })
 }
 
 /// `serde_json::Value` → `JsonNode` — the DOCUMENTS page's Report
@@ -4187,13 +4650,16 @@ fn diagnostics(m: &PlantModel) -> Page {
             })
     };
 
-    let ack_all = Bound::new(Button::new("Ack all alarms"), m).pull(|w: &mut Button, m| {
-        if w.take_activated() {
-            for a in m.active_alarms() {
-                m.ack_alarm(a.id);
+    // C4 — the page's dominant verb: ack every active alarm. Painted
+    // primary and mounted in the strip's first position.
+    let ack_all =
+        Bound::new(Button::new("Ack all alarms").primary(true), m).pull(|w: &mut Button, m| {
+            if w.take_activated() {
+                for a in m.active_alarms() {
+                    m.ack_alarm(a.id);
+                }
             }
-        }
-    });
+        });
 
     let help = Disclosure::new("COMMAND REFERENCE")
         .child(Text::new(CONSOLE_HELP.join("\n")).font_size(12.0));
@@ -4293,11 +4759,15 @@ fn diagnostics(m: &PlantModel) -> Page {
         .child(about)
         .child_flex(perf, 1.0);
 
-    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+    // C7 breakpoint contract — ≥560pt (`RAIL_STACK_W`) the "Console"
+    // rail sits beside the terminal; <560pt it stacks below; <380pt
+    // (`RAIL_DISCLOSE_W`) it collapses into a Disclosure keeping the
+    // "Console" caption.
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width[0])
         // The palette is the stretch field; the command reference is a
         // block-level collapsible (its measure echoes the offered
         // width), so it lives in the rail, not the strip.
-        .strip(strip().child_flex(palette, 1.0).child(ack_all))
+        .strip(strip().child(ack_all).child_flex(palette, 1.0))
         .rail("Console", rail_col)
 }
 
@@ -4569,6 +5039,7 @@ fn hierarchy(m: &PlantModel) -> Page {
     };
 
     // Strip — view swap + the cross-surface selection readout.
+    // Drains this page's deep-link sub (C6).
     let view = {
         let vs = view_sel.clone();
         Bound::new(
@@ -4578,12 +5049,26 @@ fn hierarchy(m: &PlantModel) -> Page {
                 .label("hierarchy view"),
             m,
         )
-        .pull(move |w: &mut Segmented, _m| {
+        .pull(move |w: &mut Segmented, m| {
             if let Some(i) = w.take_selected() {
                 vs.set_if_changed(i);
             }
+            // The deep-link sub drains last — programmatic nav wins
+            // a same-tick race with a user pick (the request-wins
+            // policy documented on `ZonePanel::tick`).
+            if let Some(sub) = m.take_page_sub(0, page::HIERARCHY) {
+                vs.set_if_changed(sub as usize);
+            }
+            sync_segmented(w, &vs);
         })
     };
+    // C6 — "no asset selected" dead end: the readout's next step is
+    // the register, one `page_request` away.
+    let open_registry = Bound::new(Button::new("← REGISTRY"), m).pull(|w: &mut Button, m| {
+        if w.take_activated() {
+            m.request_page(0, page::REGISTRY);
+        }
+    });
     let caption = Bound::new(Text::new("—").font_size(12.0), m).push(|w: &mut Text, m| {
         w.set_content(match sel_asset(m) {
             Some(a) => format!("{} · {}", a.name, a.serial),
@@ -4614,12 +5099,17 @@ fn hierarchy(m: &PlantModel) -> Page {
         1.0,
     );
 
-    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width)
+    // C7 breakpoint contract — ≥560pt (`RAIL_STACK_W`) the "Analysis"
+    // rail (root-cause fishbone) sits beside the view; <560pt it
+    // stacks below; <380pt (`RAIL_DISCLOSE_W`) it collapses into a
+    // Disclosure keeping the "Analysis" caption.
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width[0])
         .strip(
             strip()
                 .child(view)
                 .child(caption)
-                .child_flex(DummyWidget, 1.0),
+                .child_flex(DummyWidget, 1.0)
+                .child(open_registry),
         )
         .rail("Analysis", ScrollView::new(rail_col))
 }

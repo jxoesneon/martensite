@@ -401,8 +401,11 @@ impl Widget for PieChart {
         let t = cx.pt(RING_PT);
         for (i, s) in self.slices.iter().enumerate() {
             let path = self.wedge(i);
-            let base = s.color.unwrap_or(PALETTE[i % PALETTE.len()]);
-            let mut color = cx.color(TokenKey::AccentColor, base);
+            // Same resolution as `LineChart`: explicit slice color,
+            // then the `SeriesColor1..6` ramp, then PALETTE — never
+            // `AccentColor` (that would flatten all slices to one hue).
+            let mut color =
+                crate::widgets::series_color(cx, i, s.color, PALETTE[i % PALETTE.len()]);
             if self.hovered == Some(i) {
                 // Lighten toward white for the hover cue.
                 for c in color.iter_mut().take(3) {

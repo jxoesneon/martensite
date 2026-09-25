@@ -367,7 +367,7 @@ impl Widget for LogView {
         cx.list.push_fill_shape(
             f(self.bounds),
             &shape,
-            cx.color(TokenKey::SurfaceColor, SURFACE),
+            cx.color(TokenKey::InsetColor, SURFACE),
         );
         cx.list.push_stroke_shape(
             f(self.bounds),

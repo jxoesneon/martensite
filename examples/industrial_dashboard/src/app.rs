@@ -23,7 +23,8 @@ use martensite::blessed::{
 };
 use martensite::core::shape::Shape;
 use martensite::core::{
-    ColdNode, HotNode, LayoutContext, NodeFlags, Rect, WidgetArena, WidgetEvent, WidgetId,
+    ColdNode, HotNode, LayoutContext, NodeFlags, Rect, TextStyle, WidgetArena, WidgetEvent,
+    WidgetId,
 };
 use martensite::focus::{FocusManager, TabNavigation};
 use martensite::motion::{AnimationDriver, AnimationId};
@@ -66,14 +67,23 @@ use crate::panels::{
 };
 use crate::statusbar::{build_l10n, StatusBar, LOCALE_CODES, STATUSBAR_W};
 use crate::subwindow::SubWindow;
-use crate::text::TextPainter;
+use crate::text::{TextPainter, TITLE_WEIGHT};
 use crate::toolbar::{Toolbar, THEME_OPTIONS, TOOLBAR_H};
 
 /// Header strip height (logical pt × scale), status bar likewise.
-const HEADER_PT: f32 = 52.0;
+/// The header is sized for the B1 type scale: a 24 pt display-tier
+/// KPI numeral under a caption label needs ~64 pt, not the old 52.
+const HEADER_PT: f32 = 64.0;
 pub(crate) const STATUS_PT: f32 = 30.0;
 const MARGIN_PT: f32 = 12.0;
 const GAP_PT: f32 = 12.0;
+
+/// Title-tier chrome style (spec B1): semibold + 0.03 em tracking —
+/// the header wordmark's declared style. `TITLE_WEIGHT` is the
+/// dashboard's shared semibold constant (`FontWeight::SEMIBOLD`).
+const TITLE_STYLE: TextStyle = TextStyle::REGULAR.weight(TITLE_WEIGHT).letter_spacing(0.03);
+/// Display-tier numeral style (spec B1): 24 pt semibold — KPI chips.
+const DISPLAY_STYLE: TextStyle = TextStyle::REGULAR.weight(TITLE_WEIGHT);
 
 /// Min interval between full a11y tree emissions. `build_update` emits
 /// the entire tree — thousands of nodes — so running it per frame at
@@ -901,7 +911,7 @@ impl App {
                 .iter()
                 .map(|(label, value, _)| {
                     f64::from(
-                        text.measure(value, 14.0 * s)
+                        text.measure_styled(value, 24.0 * s, DISPLAY_STYLE)
                             .max(text.measure(label, 12.0 * s)),
                     ) + 20.0 * sd
                         + 8.0 * sd
@@ -918,26 +928,34 @@ impl App {
             .iter()
             .map(|(label, value, _)| {
                 f64::from(
-                    text.measure(value, 14.0 * s)
+                    text.measure_styled(value, 24.0 * s, DISPLAY_STYLE)
                         .max(text.measure(label, 12.0 * s)),
                 ) + 20.0 * sd
                     + 8.0 * sd
             })
             .sum();
         let text_w = ((w - m - 16.0 * sd - chips_w) - (m + 16.0 * sd) - 8.0 * sd).max(1.0);
-        let title = text.fit(
+        // Title-tier wordmark (spec B1 role→tier): 15 pt semibold with
+        // the tier's +0.03 em tracking — `fit_styled`/`push_styled` must
+        // shape with the same style or the ellipsis cut is measured
+        // against the wrong widths.
+        let title = text.fit_styled(
             "MARTENSITE — INDUSTRIAL WORKSTATION",
-            14.0 * s,
+            15.0 * s,
             text_w as f32,
+            TITLE_STYLE,
         );
-        text.push(
+        text.push_styled(
             list,
-            Point::new(m + 16.0 * sd, m + 9.0 * sd),
+            Point::new(m + 16.0 * sd, m + 13.0 * sd),
             &title,
-            14.0 * s,
+            15.0 * s,
             pal.text,
             None,
+            TITLE_STYLE,
         );
+        // Subtitle is secondary metadata — caption tier on the muted
+        // token (spec B1: `text_muted` carries units/axis/secondary).
         let subtitle = text.fit(
             "windowed dogfood — dock · grid · telemetry · editor · media",
             12.0 * s,
@@ -945,16 +963,19 @@ impl App {
         );
         text.push(
             list,
-            Point::new(m + 16.0 * sd, m + 28.0 * sd),
+            Point::new(m + 16.0 * sd, m + 36.0 * sd),
             &subtitle,
             12.0 * s,
-            Palette::alpha(pal.text, 200),
+            pal.text_muted,
             None,
         );
 
+        // KPI chips — caption-tier label (12 pt muted) stacked over a
+        // display-tier numeral (24 pt semibold, spec B1). The header
+        // grew to 64 pt so the pair keeps its 8 pt chip inset.
         let mut kx = w - m - 16.0 * sd;
         for (label, value, color) in kpis.iter().rev() {
-            let vw = text.measure(value, 14.0 * s);
+            let vw = text.measure_styled(value, 24.0 * s, DISPLAY_STYLE);
             let lw = text.measure(label, 12.0 * s);
             let chip_w = f64::from(vw.max(lw)) + 20.0 * sd;
             kx -= chip_w;
@@ -965,20 +986,21 @@ impl App {
             let label_w = text.measure(label, 12.0 * s);
             text.push(
                 list,
-                Point::new(kx + (chip_w - f64::from(label_w)) / 2.0, m + 11.0 * sd),
+                Point::new(kx + (chip_w - f64::from(label_w)) / 2.0, m + 10.0 * sd),
                 label,
                 12.0 * s,
                 pal.text_muted,
                 None,
             );
-            let value_w = text.measure(value, 14.0 * s);
-            text.push(
+            let value_w = text.measure_styled(value, 24.0 * s, DISPLAY_STYLE);
+            text.push_styled(
                 list,
-                Point::new(kx + (chip_w - f64::from(value_w)) / 2.0, m + 26.0 * sd),
+                Point::new(kx + (chip_w - f64::from(value_w)) / 2.0, m + 27.0 * sd),
                 value,
-                14.0 * s,
+                24.0 * s,
                 *color,
                 None,
+                DISPLAY_STYLE,
             );
             kx -= 8.0 * sd;
         }
@@ -1023,13 +1045,15 @@ impl App {
         let hints_w = (w - 2.0 * m - 24.0 * sd - reserve).max(1.0);
         // fit, not wrap — a wrapped second line would overflow the
         // bar's fixed height and collide with nothing to clip it.
+        // Caption-tier hints on the muted token — key hints, the focus
+        // readout, and frame timing are secondary metadata (spec B1).
         let hints = text.fit(&hints, 12.0 * s, hints_w as f32);
         text.push(
             list,
             Point::new(m + 12.0 * sd, sb_y + 6.0 * sd),
             &hints,
             12.0 * s,
-            Palette::alpha(pal.text, 200),
+            pal.text_muted,
             None,
         );
         #[cfg(feature = "devtools")]
@@ -2854,30 +2878,50 @@ mod tests {
         use martensite::widgets::container::Container;
         use martensite::widgets::scrollview::ScrollView;
 
+        // Parent-first + bounds-gated, mirroring
+        // `WidgetArena::tick_recursive` — production ticks
+        // `ZonePanel` before its pages, which is what lets the
+        // panel-level stale-sub clear run before page drains.
         fn tick_all(w: &mut dyn martensite::core::Widget, dt: Duration) {
+            let _ = w.tick(dt);
             for i in 0..w.child_count() {
+                if w.child_bounds(i).is_none() {
+                    continue;
+                }
                 if let Some(c) = w.child_mut(i) {
                     tick_all(c, dt);
                 }
             }
-            let _ = w.tick(dt);
         }
 
         let app = App::new(Some(ThemeChoice::Dark), false);
         type ZonePages = Vec<(&'static str, crate::zone::Page)>;
-        let mut pages_by_zone: Vec<(&str, f32, f32, ZonePages)> = vec![];
+        let mut pages_by_zone: Vec<(&str, usize, f32, f32, ZonePages)> = vec![];
         for zw in [
             700.0f32, 900.0, 1100.0, 1324.0, 1500.0, 1828.0, 2100.0, 2400.0,
         ] {
-            pages_by_zone.push(("grid", zw, 480.0, crate::zones::grid::pages(&app.model)));
+            pages_by_zone.push(("grid", 0, zw, 480.0, crate::zones::grid::pages(&app.model)));
             pages_by_zone.push((
                 "telemetry",
+                1,
                 zw,
                 480.0,
                 crate::zones::telemetry::pages(&app.model),
             ));
-            pages_by_zone.push(("editor", zw, 350.0, crate::zones::editor::pages(&app.model)));
-            pages_by_zone.push(("media", zw, 350.0, crate::zones::media::pages(&app.model)));
+            pages_by_zone.push((
+                "editor",
+                2,
+                zw,
+                350.0,
+                crate::zones::editor::pages(&app.model),
+            ));
+            pages_by_zone.push((
+                "media",
+                3,
+                zw,
+                350.0,
+                crate::zones::media::pages(&app.model),
+            ));
         }
         let cfg = PaintAuditConfig {
             scale_factor: 2.0,
@@ -2885,7 +2929,12 @@ mod tests {
         };
         let mut seen = std::collections::HashSet::new();
         let filter = std::env::var("PAGE_FILTER").unwrap_or_default();
-        for (zname, zw, zh, pages) in pages_by_zone {
+        for (zname, zindex, zw, zh, pages) in pages_by_zone {
+            // Same contract as `lint_sweep::run` — no ZonePanel ever
+            // publishes here, so seed the zone's width slot or the
+            // pages audit at the 960 default and the stacked/disclosure
+            // breakpoints go unexercised (pt = px / 2.0 scale).
+            app.model.zone_width[zindex].set(zw / 2.0);
             for (label, page) in pages {
                 if !filter.is_empty() && !format!("{zname}/{label}@{zw:.0}").contains(&filter) {
                     continue;
@@ -2898,7 +2947,9 @@ mod tests {
                 let mut arena = WidgetArena::new();
                 arena.set_theme(martensite::theme::tokens::default_dark());
                 arena.set_scale_factor(2.0);
-                arena.set_text_painter(martensite::text_paint::shared_painter());
+                // Fixture painter, not shared_painter — the audit must
+                // not drift with the host's installed font set.
+                arena.set_text_painter(crate::frames::FixtureTextShaper::new());
                 let mut hot = HotNode::default();
                 hot.flags |= NodeFlags::VISIBLE;
                 let root = arena.insert_with_widget(hot, Box::new(view));
@@ -2974,6 +3025,14 @@ mod tests {
     /// shared with the `design-lint` CLI bin in `crate::lint_sweep`.
     /// Run:
     /// `cargo test -p industrial_dashboard dump_design_lints -- --nocapture`.
+    ///
+    /// Gating: the warn-and-above set is asserted against the
+    /// checked-in `LINT_GATING_BASELINE.txt` — new warnings fail, and
+    /// fixed-but-still-listed entries fail as stale, so the baseline
+    /// can only shrink through a regenerate. `LINT_BASELINE=rewrite`
+    /// rewrites the file. Stale `[[allow]]` entries (suppressing
+    /// nothing in any frame) also fail. Skipped under `PAGE_FILTER`
+    /// since a partial sweep can't compare against the full set.
     #[test]
     fn dump_design_lints() {
         use martensite_design_lint::LintConfig;
@@ -2987,6 +3046,51 @@ mod tests {
         };
         let report = crate::lint_sweep::run(&cfg, &opts);
         eprint!("{}", report.log);
+        // Both asserts gate on a full sweep — a filtered run only
+        // exercises a slice, so an allow for a filtered-out subtree
+        // would read as stale spuriously and the baseline compare
+        // would fail on the missing pages' findings.
+        if opts.page_filter.is_empty() {
+            assert!(
+                report.stale_allows.is_empty(),
+                "stale path allows in design-lint.toml: {:?} — remove them",
+                report.stale_allows
+            );
+            let baseline = std::path::Path::new("LINT_GATING_BASELINE.txt");
+            if std::env::var("LINT_BASELINE").as_deref() == Ok("rewrite") {
+                let body = report.gating_details.join("\n");
+                // No trailing newline on an empty set — `"\n"` would
+                // read back as one empty line and fail as a stale
+                // entry the moment the backlog fully clears.
+                let body = if body.is_empty() { body } else { body + "\n" };
+                std::fs::write(baseline, body).expect("write LINT_GATING_BASELINE.txt");
+            }
+            let want: Vec<String> = std::fs::read_to_string(baseline)
+                .expect("LINT_GATING_BASELINE.txt missing — run with LINT_BASELINE=rewrite")
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect();
+            let new: Vec<String> = report
+                .gating_details
+                .iter()
+                .filter(|g| !want.contains(g))
+                .cloned()
+                .collect();
+            let stale: Vec<String> = want
+                .iter()
+                .filter(|g| !report.gating_details.contains(g))
+                .cloned()
+                .collect();
+            assert!(
+                new.is_empty() && stale.is_empty(),
+                "gating findings drifted from LINT_GATING_BASELINE.txt\n\
+                 NEW (fail — fix or justify + regenerate):\n  {}\n\
+                 STALE (fixed — regenerate to shrink):\n  {}",
+                new.join("\n  "),
+                stale.join("\n  "),
+            );
+        }
     }
 
     /// Reproduces the windowed paint audit headless: drive the real
@@ -3078,13 +3182,18 @@ mod tests {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.build_arena();
         app.apply_dock_layout_at(1680, 980);
+        // Parent-first + bounds-gated, mirroring
+        // `WidgetArena::tick_recursive` (see `tick_all` above).
         fn tick_deep(w: &mut dyn martensite::core::Widget, dt: Duration) {
+            let _ = w.tick(dt);
             for i in 0..w.child_count() {
+                if w.child_bounds(i).is_none() {
+                    continue;
+                }
                 if let Some(c) = w.child_mut(i) {
                     tick_deep(c, dt);
                 }
             }
-            let _ = w.tick(dt);
         }
         let arena = app.arena.as_mut().expect("arena");
         if let Some(cold) = arena.get_cold_mut(app.root.expect("root")) {

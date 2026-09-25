@@ -45,6 +45,7 @@ use parking_lot::Mutex;
 use crate::model::Palette;
 use crate::panels::{krect, panel_border, TITLE_H};
 use crate::text::TextPainter;
+use crate::zone::{ZONE_GAP, ZONE_SECTION};
 
 mod charts;
 mod chrome;
@@ -105,17 +106,29 @@ impl ShowcasePanel {
 
 /// Builds the showcase column: each section's cards under a header,
 /// in one vertically scrolling `Flex`.
+///
+/// Section rhythm (spec B7 + the layout grammar): `ZONE_SECTION`
+/// separates sections — each a quiet `group_label` caption paired
+/// with its card field at the 4 pt label gap, so the pair reads as
+/// one unit. `ZONE_GAP` spaces cards inside the field; the grammar
+/// tokens are the only spacing values a page may use.
 fn showcase_column(sections: Vec<(&'static str, Vec<Entry>)>) -> Flex {
-    let mut col = Flex::column().gap(10.0);
+    let mut col = Flex::column().gap(ZONE_SECTION);
     for (title, entries) in sections {
-        col = col.child(Text::new(title).font_size(13.0));
-        let mut fb = FlowBox::new().gap(8.0);
+        let mut fb = FlowBox::new().gap(ZONE_GAP);
         for (name, widget) in entries {
             fb = fb.child(card(name, widget));
         }
-        col = col.child(fb);
+        col = col.child(Flex::column().gap(4.0).child(group_label(title)).child(fb));
     }
     col
+}
+
+/// Quiet-tier section caption (spec B6/B1 role→tier): a 12 pt
+/// caption label heading a card field — the in-page quiet idiom,
+/// no raised chrome. Matches the zones' `group_label` convention.
+fn group_label(text: &'static str) -> Text {
+    Text::new(text).font_size(12.0)
 }
 
 /// Process Grid showcase — data browsers and the navigation controls
@@ -258,7 +271,9 @@ impl Widget for ShowcasePanel {
         cx.list.push_fill_rect(b, pal.surface);
         cx.list.push_stroke_rect(b, 1.0, pal.border);
         let msg = "SHOWCASE — enlarge to restore";
-        let size = 11.0 * s;
+        // Sole-content placeholders stay ≥12pt — micro text under the
+        // Caption floor fails legibility for the only thing shown.
+        let size = 12.0 * s;
         let tw = f64::from(text.measure(msg, size));
         let x = (b.x0 + (b.width() - tw) * 0.5).max(b.x0 + 2.0);
         let y = b.y0 + (b.height() - f64::from(size)) * 0.5;

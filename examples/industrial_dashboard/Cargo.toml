@@ -66,6 +66,18 @@ martensite-print = { workspace = true, features = ["platform"] }
 # lints` replays `PushScope` provenance into `lint_paint_list` with
 # the project config in `design-lint.toml`.
 martensite-design-lint = { workspace = true }
+# Headless frame rasterization for the `dump_frames` sweep option —
+# `TinySkiaBackend` turns each swept `PaintList` into a PNG-able
+# pixel buffer and `diff::perceptual_diff` powers `--check` golden
+# comparisons. Used by the `design_lint` bin, so a regular dep.
+martensite-render = { workspace = true }
+# PNG encode/decode for `dump_frames`. Pinned exactly to match the
+# vendored-vello lockfile entry (already cargo-vet exempt); tiny-skia's
+# disabled `png-format` feature stays OFF per spec A1.
+png = "=0.18.1"
+# `fontdb::Database` is needed to build the bundled-font-only
+# `FontSystem` behind the deterministic text fixture (spec A2).
+fontdb = { workspace = true }
 # winit/wgpu feature pins mirror examples/viewport_showcase — the vendored
 # accesskit_winit fork and the wgpu engine both build against these.
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }

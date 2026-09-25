@@ -352,7 +352,12 @@ impl Widget for PopoverSurface {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        // Subtle offset shadow beneath the elevated surface.
+        // Elevation (spec B4): a `BlurredRect` drop shadow beneath the
+        // face plus a 1px `BorderColor` keyline around it. The blurred
+        // rect is a *solid-color* shape blur — a drop shadow, not a
+        // live backdrop sample — so it is inherently static while the
+        // bubble is open and needs no frozen-backdrop caching (nothing
+        // beneath the overlay ever feeds the blur).
         cx.list.push_blurred_rect(
             [b.min_x(), b.min_y() + cx.pt(2.0), b.width(), b.height()],
             cx.pt(8.0),
@@ -363,11 +368,18 @@ impl Widget for PopoverSurface {
         let surface = cx.color(TokenKey::SurfaceColor, SURFACE);
         let edge = cx.color(TokenKey::BorderColor, EDGE);
         cx.list.push_fill_shape(face, &shape, surface);
+        // 1px `BorderColor` keyline — the WCAG 1.4.11 non-text edge: a
+        // shadow alone is not a boundary. `BorderColor` is a stroke
+        // token held at ≥3:1 against every surface fill — including the
+        // page backdrop the bubble floats on — by the theme token
+        // tests, and the per-frame paint audit re-checks it at paint
+        // scale.
         cx.list.push_stroke_shape(face, &shape, cx.pt(1.0), edge);
         // Arrow tail on the anchor-facing edge — resolved from the
         // placed rect vs the anchor rect so it follows the BoundsEdge
         // flip automatically. Fill covers the border segment where it
-        // attaches; the slants re-stroke the outline.
+        // attaches; the slants re-stroke the outline, keeping the
+        // 1.4.11 keyline continuous around the whole silhouette.
         let anchor_rect = self.shared.lock().expect("popover state poisoned").anchor;
         let anchor = kurbo::Rect::new(
             f64::from(anchor_rect.min_x()),
@@ -965,7 +977,7 @@ impl std::fmt::Debug for Popover {
 mod tests {
     use super::*;
     use crate::widgets::Text;
-    use martensite_core::{HotNode, PointerButton};
+    use martensite_core::{HotNode, PaintCommand, PaintList, PointerButton, Theme};
 
     fn laid_out(p: &mut Popover, bounds: Rect) {
         let mut hot = HotNode::default();
@@ -1191,5 +1203,46 @@ mod tests {
         surface.accessibility(&mut node);
         assert_eq!(node.role(), accesskit::Role::Dialog);
         assert_eq!(node.label(), Some("Title"));
+    }
+
+    #[test]
+    fn surface_paints_shadow_then_border_keyline() {
+        // Spec B4: an elevated overlay pairs its `BlurredRect` drop
+        // shadow with a 1px `BorderColor` keyline — the shadow alone
+        // is not a WCAG 1.4.11 edge — and the tail keeps the keyline
+        // continuous around the silhouette.
+        let surface = PopoverSurface {
+            title: String::new(),
+            content: None,
+            shared: Arc::new(Mutex::new(PopoverShared::default())),
+            reclaim: Arc::new(Mutex::new(None)),
+            flow: AnchorEdge::Bottom,
+            bounds: Rect::new(80.0, 130.0, 120.0, 60.0),
+            content_rect: Rect::default(),
+            painted_shape: Mutex::new(Shape::RECT),
+            text_painter: None,
+        };
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        surface.paint(&mut PaintContext {
+            list: &mut list,
+            bounds: Rect::new(80.0, 130.0, 120.0, 60.0),
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        });
+        // Shadow first, then face fill + face keyline, then tail fill
+        // + tail slant strokes (rounded faces emit paths, not rects).
+        assert!(matches!(list.commands[0], PaintCommand::BlurredRect { .. }));
+        assert!(matches!(list.commands[1], PaintCommand::FillPath(..)));
+        assert!(matches!(
+            list.commands[2],
+            PaintCommand::StrokePath(_, 1.0, EDGE)
+        ));
+        assert!(matches!(list.commands[3], PaintCommand::FillPath(..)));
+        assert!(matches!(
+            list.commands[4],
+            PaintCommand::StrokePath(_, 1.0, EDGE)
+        ));
     }
 }

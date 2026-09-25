@@ -37,6 +37,22 @@ pub enum ThemeToken {
 /// `TokenKey` is the stable, hashable identity of a token. It is `Copy` so it
 /// can be passed around freely, and `Eq + Hash` so it can be used as a
 /// [`HashMap`] key.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_theme::tokens::default_dark;
+/// use martensite_theme::TokenKey;
+///
+/// let theme = default_dark();
+/// // Semantic type tiers (micro → display) resolve as font sizes.
+/// assert_eq!(theme.dimension(TokenKey::FontSizeBody), Some(13.0));
+/// // The extended surface ladder and categorical series ramp resolve
+/// // as colors.
+/// assert!(theme.color(TokenKey::InsetColor).is_some());
+/// assert!(theme.color(TokenKey::OverlayColor).is_some());
+/// assert!(theme.color(TokenKey::SeriesColor1).is_some());
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TokenKey {
@@ -115,6 +131,68 @@ pub enum TokenKey {
     /// The dimming layer painted under modal overlays (dialogs,
     /// modal drawers) — translucent dark in every theme.
     ScrimColor,
+
+    // --- Surface ladder extensions (dashboard spec B3) -------------------
+    // The shipped ladder is achromatic blue-slate (`a = b = 0`): these
+    // stops extend the same hue/chroma trajectory rather than drifting.
+    /// The inset well surface color — a stop *below*
+    /// [`TokenKey::BackgroundColor`] on the tonal ladder, used for
+    /// recessed terminal, editor, and log wells. It is a fill token that
+    /// hosts the full text and semantic ink set at the 4.5:1 floor.
+    InsetColor,
+    /// The overlay surface color — a stop *above* [`TokenKey::RaisedColor`]
+    /// at the top of the tonal ladder, used for transient surfaces
+    /// (popovers, menus, flyouts). It is a fill token that hosts text at
+    /// the 4.5:1 floor. Note that in the dark theme the ladder tops out
+    /// just above the contrast ceiling for the brightest semantic inks,
+    /// so `ErrorColor`-grade ink on dark overlays should sit on an
+    /// [`TokenKey::InsetColor`] band or be deepened — the guarantee covers
+    /// `TextColor`/`TextMutedColor` (and every ink in the light theme).
+    OverlayColor,
+
+    // --- Categorical series ramp (dashboard spec B5) ---------------------
+    // Six muted data-ink colors: Oklab chroma ≤ 0.12, the first three
+    // hues cool/analogous to the accent family, exactly one warm
+    // contrast hue, luminance-staggered, and every hue kept ≥ 20° from
+    // the ok/warn/error semantic hues so alarms still detonate on a
+    // grayscale-neutral canvas. Modeled as individual keys (not a
+    // `ThemeToken::Colors` list) so `ThemeDiff` blends them like any
+    // other color token with no special-casing.
+    /// Series ramp color 1 — blue-violet (Oklab hue ≈ 260°), the
+    /// primary data ink, analogous to the accent family.
+    SeriesColor1,
+    /// Series ramp color 2 — cyan (Oklab hue ≈ 205°).
+    SeriesColor2,
+    /// Series ramp color 3 — violet (Oklab hue ≈ 290°), the third
+    /// cool/accent-analogous stop.
+    SeriesColor3,
+    /// Series ramp color 4 — warm khaki (Oklab hue ≈ 95°), the single
+    /// warm contrast hue, ≥ 40° from warning (≈ 52°).
+    SeriesColor4,
+    /// Series ramp color 5 — teal (Oklab hue ≈ 175°), ≥ 25° from the
+    /// success green (≈ 146°).
+    SeriesColor5,
+    /// Series ramp color 6 — low-chroma slate (Oklab hue ≈ 250°,
+    /// chroma ≈ 0.05), the de-emphasis/context series slot.
+    SeriesColor6,
+
+    // --- Semantic type tiers (dashboard spec B1) -------------------------
+    /// The micro font size (11 px) — only non-essential duplicated
+    /// metadata at ≥ 4.5:1 (prefer 7:1). Never alarm or status text,
+    /// never muted-on-inset; uppercase + tracking allowed at this tier
+    /// only (≤ 3-word labels).
+    FontSizeMicro,
+    /// The caption font size (12 px) — metadata, axis labels, quiet
+    /// captions, badges, and zone micro-labels.
+    FontSizeCaption,
+    /// The body font size (13 px) — content and table rows.
+    FontSizeBody,
+    /// The title font size (15 px) — primary/standard chrome titles
+    /// (semibold, tracking +0.02–0.04 em).
+    FontSizeTitle,
+    /// The display font size (24 px) — KPI numerals (units sit beneath
+    /// at caption tier).
+    FontSizeDisplay,
 }
 
 /// A collection of design tokens describing a complete theme.
@@ -479,6 +557,86 @@ pub fn default_light() -> Theme {
             alpha: 0.4,
         }),
     );
+    // Surface ladder extensions (spec B3) — achromatic stops extending
+    // the ramp's hue/chroma trajectory. In the light theme elevation
+    // reads lighter, so the ladder runs
+    // inset 0.92 < raised 0.93 < bg 0.96 < surface 0.98 < overlay 1.0.
+    theme.set(
+        TokenKey::InsetColor,
+        ThemeToken::Color(Oklab {
+            l: 0.92,
+            a: 0.0,
+            b: 0.0,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::OverlayColor,
+        ThemeToken::Color(Oklab {
+            l: 1.0,
+            a: 0.0,
+            b: 0.0,
+            alpha: 1.0,
+        }),
+    );
+    // Categorical series ramp (spec B5) — same hues as the dark ramp,
+    // lightness dropped so every stop holds ≥ ~4:1 against the light
+    // surface. Chroma on cyan/teal is gamut-limited below the 0.10
+    // ceiling; all other stops sit at 0.10 or under.
+    theme.set(
+        TokenKey::SeriesColor1,
+        ThemeToken::Color(Oklab {
+            l: 0.55,
+            a: -0.0174,
+            b: -0.0985,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::SeriesColor2,
+        ThemeToken::Color(Oklab {
+            l: 0.48,
+            a: -0.0680,
+            b: -0.0317,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::SeriesColor3,
+        ThemeToken::Color(Oklab {
+            l: 0.52,
+            a: 0.0342,
+            b: -0.0940,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::SeriesColor4,
+        ThemeToken::Color(Oklab {
+            l: 0.55,
+            a: -0.0087,
+            b: 0.0996,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::SeriesColor5,
+        ThemeToken::Color(Oklab {
+            l: 0.45,
+            a: -0.0797,
+            b: 0.0070,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::SeriesColor6,
+        ThemeToken::Color(Oklab {
+            l: 0.50,
+            a: -0.0171,
+            b: -0.0470,
+            alpha: 1.0,
+        }),
+    );
 
     // --- Dimensions -------------------------------------------------------
     theme.set(TokenKey::Spacing, ThemeToken::Dimension(16.0));
@@ -492,6 +650,13 @@ pub fn default_light() -> Theme {
     theme.set(TokenKey::FontSizeSmall, ThemeToken::FontSize(12.0));
     theme.set(TokenKey::FontSizeMedium, ThemeToken::FontSize(16.0));
     theme.set(TokenKey::FontSizeLarge, ThemeToken::FontSize(24.0));
+    // Semantic type tiers (spec B1): micro 11 / caption 12 / body 13 /
+    // title 15 / display 24.
+    theme.set(TokenKey::FontSizeMicro, ThemeToken::FontSize(11.0));
+    theme.set(TokenKey::FontSizeCaption, ThemeToken::FontSize(12.0));
+    theme.set(TokenKey::FontSizeBody, ThemeToken::FontSize(13.0));
+    theme.set(TokenKey::FontSizeTitle, ThemeToken::FontSize(15.0));
+    theme.set(TokenKey::FontSizeDisplay, ThemeToken::FontSize(24.0));
 
     // --- Motion -----------------------------------------------------------
     theme.set(TokenKey::AnimationDuration, ThemeToken::Duration(150.0));
@@ -695,6 +860,89 @@ pub fn default_dark() -> Theme {
             alpha: 0.4,
         }),
     );
+    // Surface ladder extensions (spec B3) — achromatic stops extending
+    // the ramp's hue/chroma trajectory:
+    // inset 0.16 < bg 0.20 < surface 0.25 < raised 0.30 < overlay 0.34.
+    // The overlay stop is kept close to raised: anything lighter drops
+    // `TextMutedColor` under the 4.5:1 fill-token floor.
+    theme.set(
+        TokenKey::InsetColor,
+        ThemeToken::Color(Oklab {
+            l: 0.16,
+            a: 0.0,
+            b: 0.0,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::OverlayColor,
+        ThemeToken::Color(Oklab {
+            l: 0.34,
+            a: 0.0,
+            b: 0.0,
+            alpha: 1.0,
+        }),
+    );
+    // Categorical series ramp (spec B5) — muted Oklab hues, chroma ≤
+    // 0.10, luminance-staggered (0.80 ↔ 0.62) so adjacent-index series
+    // stay separable at stroke width 2. Hues: blue-violet 260° / cyan
+    // 205° / violet 290° (analogous to the accent family) / warm khaki
+    // 95° (the single warm contrast, 43° from warning) / teal 175° (29°
+    // from success) / low-chroma slate 250° for de-emphasized series.
+    theme.set(
+        TokenKey::SeriesColor1,
+        ThemeToken::Color(Oklab {
+            l: 0.78,
+            a: -0.0174,
+            b: -0.0985,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::SeriesColor2,
+        ThemeToken::Color(Oklab {
+            l: 0.66,
+            a: -0.0906,
+            b: -0.0423,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::SeriesColor3,
+        ThemeToken::Color(Oklab {
+            l: 0.74,
+            a: 0.0342,
+            b: -0.0940,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::SeriesColor4,
+        ThemeToken::Color(Oklab {
+            l: 0.80,
+            a: -0.0087,
+            b: 0.0996,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::SeriesColor5,
+        ThemeToken::Color(Oklab {
+            l: 0.62,
+            a: -0.0897,
+            b: 0.0078,
+            alpha: 1.0,
+        }),
+    );
+    theme.set(
+        TokenKey::SeriesColor6,
+        ThemeToken::Color(Oklab {
+            l: 0.70,
+            a: -0.0171,
+            b: -0.0470,
+            alpha: 1.0,
+        }),
+    );
 
     // --- Dimensions -------------------------------------------------------
     theme.set(TokenKey::Spacing, ThemeToken::Dimension(16.0));
@@ -708,6 +956,13 @@ pub fn default_dark() -> Theme {
     theme.set(TokenKey::FontSizeSmall, ThemeToken::FontSize(12.0));
     theme.set(TokenKey::FontSizeMedium, ThemeToken::FontSize(16.0));
     theme.set(TokenKey::FontSizeLarge, ThemeToken::FontSize(24.0));
+    // Semantic type tiers (spec B1): micro 11 / caption 12 / body 13 /
+    // title 15 / display 24 — identical in both themes.
+    theme.set(TokenKey::FontSizeMicro, ThemeToken::FontSize(11.0));
+    theme.set(TokenKey::FontSizeCaption, ThemeToken::FontSize(12.0));
+    theme.set(TokenKey::FontSizeBody, ThemeToken::FontSize(13.0));
+    theme.set(TokenKey::FontSizeTitle, ThemeToken::FontSize(15.0));
+    theme.set(TokenKey::FontSizeDisplay, ThemeToken::FontSize(24.0));
 
     // --- Motion -----------------------------------------------------------
     theme.set(TokenKey::AnimationDuration, ThemeToken::Duration(150.0));
@@ -951,12 +1206,19 @@ mod tests {
             let surface = theme.color(TokenKey::SurfaceColor).unwrap();
             let background = theme.color(TokenKey::BackgroundColor).unwrap();
             let raised = theme.color(TokenKey::RaisedColor).unwrap();
+            // `InsetColor` wells are fill tokens hosting the full ink
+            // set — same audit as surface/bg/raised. `OverlayColor` is
+            // audited separately (see `overlay_fill_hosts_text`):
+            // in the dark theme it cannot hold the brightest semantic
+            // inks at 4.5:1 while staying above `RaisedColor`.
+            let inset = theme.color(TokenKey::InsetColor).unwrap();
             for key in TEXT_TOKENS {
                 let fg = theme.color(*key).unwrap();
                 for (bg, name) in [
                     (surface, "SurfaceColor"),
                     (background, "BackgroundColor"),
                     (raised, "RaisedColor"),
+                    (inset, "InsetColor"),
                 ] {
                     let ratio = crate::wcag_contrast(fg, bg);
                     assert!(
@@ -971,11 +1233,14 @@ mod tests {
                 // Controls sit on raised surfaces too — the chrome
                 // convention uses `RaisedColor` for toolbar/card bands,
                 // and `BackgroundColor` shows through transparent
-                // control interiors (e.g. CheckBox's box).
+                // control interiors (e.g. CheckBox's box). Inset wells
+                // and overlays can also host stroked controls.
                 for (bg, name) in [
                     (surface, "SurfaceColor"),
                     (background, "BackgroundColor"),
                     (raised, "RaisedColor"),
+                    (inset, "InsetColor"),
+                    (theme.color(TokenKey::OverlayColor).unwrap(), "OverlayColor"),
                 ] {
                     let ratio = crate::wcag_contrast(fg, bg);
                     assert!(
@@ -1010,6 +1275,172 @@ mod tests {
                 assert!(
                     ratio >= 3.0,
                     "{} {fg_key:?} is {ratio:.2}:1 on {name} (need 3.0)",
+                    theme.name,
+                );
+            }
+        }
+    }
+
+    /// `OverlayColor` is a fill token hosting text. In the dark theme
+    /// the ladder tops out just above the contrast ceiling for the
+    /// brightest semantic inks — any fill lighter than `RaisedColor`
+    /// drops `ErrorColor` under 4.5:1 — so the cross-theme guarantee
+    /// covers `TextColor`/`TextMutedColor`; the light theme holds every
+    /// semantic ink at 4.5:1.
+    #[test]
+    fn overlay_fill_hosts_text() {
+        const TEXT_TOKENS: &[TokenKey] = &[
+            TokenKey::TextColor,
+            TokenKey::TextMutedColor,
+            TokenKey::SecondaryColor,
+            TokenKey::AccentColor,
+            TokenKey::ErrorColor,
+            TokenKey::WarningColor,
+            TokenKey::SuccessColor,
+            TokenKey::InfoColor,
+        ];
+        for theme in [default_light(), default_dark()] {
+            let overlay = theme.color(TokenKey::OverlayColor).unwrap();
+            for key in [TokenKey::TextColor, TokenKey::TextMutedColor] {
+                let fg = theme.color(key).unwrap();
+                let ratio = crate::wcag_contrast(fg, overlay);
+                assert!(
+                    ratio >= 4.5,
+                    "{} {key:?} is {ratio:.2}:1 on OverlayColor (need 4.5)",
+                    theme.name,
+                );
+            }
+        }
+        let light = default_light();
+        let overlay = light.color(TokenKey::OverlayColor).unwrap();
+        for key in TEXT_TOKENS {
+            let fg = light.color(*key).unwrap();
+            let ratio = crate::wcag_contrast(fg, overlay);
+            assert!(
+                ratio >= 4.5,
+                "Light {key:?} is {ratio:.2}:1 on OverlayColor (need 4.5)",
+            );
+        }
+    }
+
+    /// The ladder extensions extend the existing achromatic ramp in the
+    /// documented directions: `InsetColor` below `BackgroundColor`,
+    /// `OverlayColor` above `RaisedColor`.
+    #[test]
+    fn ladder_extensions_keep_order_and_hue() {
+        for theme in [default_light(), default_dark()] {
+            let bg = theme.color(TokenKey::BackgroundColor).unwrap();
+            let raised = theme.color(TokenKey::RaisedColor).unwrap();
+            let inset = theme.color(TokenKey::InsetColor).unwrap();
+            let overlay = theme.color(TokenKey::OverlayColor).unwrap();
+            assert!(
+                inset.l < bg.l,
+                "{} InsetColor (l {:.2}) must sit below BackgroundColor (l {:.2})",
+                theme.name,
+                inset.l,
+                bg.l,
+            );
+            assert!(
+                overlay.l > raised.l,
+                "{} OverlayColor (l {:.2}) must sit above RaisedColor (l {:.2})",
+                theme.name,
+                overlay.l,
+                raised.l,
+            );
+            // Same hue/chroma trajectory as the rest of the ramp.
+            for (color, name) in [(inset, "InsetColor"), (overlay, "OverlayColor")] {
+                assert!(
+                    color.a.abs() < 1e-6 && color.b.abs() < 1e-6,
+                    "{} {name} drifted off the achromatic ladder",
+                    theme.name,
+                );
+            }
+        }
+    }
+
+    /// The semantic type tiers (spec B1) are `FontSize` tokens present
+    /// in both shipped themes at the published sizes.
+    #[test]
+    fn default_themes_define_semantic_type_tiers() {
+        const TIERS: &[(TokenKey, f32)] = &[
+            (TokenKey::FontSizeMicro, 11.0),
+            (TokenKey::FontSizeCaption, 12.0),
+            (TokenKey::FontSizeBody, 13.0),
+            (TokenKey::FontSizeTitle, 15.0),
+            (TokenKey::FontSizeDisplay, 24.0),
+        ];
+        for theme in [default_light(), default_dark()] {
+            for (key, expected) in TIERS {
+                match theme.get(*key) {
+                    Some(ThemeToken::FontSize(v)) => assert!(
+                        approx_eq(*v, *expected),
+                        "{} {key:?} is {v}, expected {expected}",
+                        theme.name,
+                    ),
+                    other => panic!("{} {key:?} is {other:?}, expected FontSize", theme.name),
+                }
+            }
+        }
+    }
+
+    /// The series ramp (spec B5) stays muted (chroma ≤ 0.12), inside the
+    /// sRGB gamut, luminance-staggered across adjacent stops, and keeps
+    /// every hue ≥ 20° from the ok/warn/error semantic hues so alarms
+    /// remain unambiguous on the neutral canvas.
+    #[test]
+    fn series_ramp_is_muted_staggered_and_semantic_safe() {
+        use crate::Oklch;
+        const SERIES: &[TokenKey] = &[
+            TokenKey::SeriesColor1,
+            TokenKey::SeriesColor2,
+            TokenKey::SeriesColor3,
+            TokenKey::SeriesColor4,
+            TokenKey::SeriesColor5,
+            TokenKey::SeriesColor6,
+        ];
+        for theme in [default_light(), default_dark()] {
+            let banned: Vec<f32> = [
+                TokenKey::ErrorColor,
+                TokenKey::WarningColor,
+                TokenKey::SuccessColor,
+            ]
+            .iter()
+            .map(|k| Oklch::from_oklab(&theme.color(*k).unwrap()).h.to_degrees())
+            .collect();
+            let mut lightness = Vec::with_capacity(SERIES.len());
+            for key in SERIES {
+                let color = theme.color(*key).unwrap();
+                let lch = Oklch::from_oklab(&color);
+                assert!(
+                    lch.c <= 0.12 + 1e-6,
+                    "{} {key:?} chroma {:.3} exceeds 0.12",
+                    theme.name,
+                    lch.c,
+                );
+                let hue = lch.h.to_degrees();
+                for banned_hue in &banned {
+                    let delta = (hue - banned_hue).abs();
+                    let delta = delta.min(360.0 - delta);
+                    assert!(
+                        delta >= 20.0,
+                        "{} {key:?} hue {hue:.0}° is {delta:.0}° from a semantic hue",
+                        theme.name,
+                    );
+                }
+                let (r, g, b) = color.to_linear_srgb();
+                for channel in [r, g, b] {
+                    assert!(
+                        (-1e-4..=1.0001).contains(&channel),
+                        "{} {key:?} is out of sRGB gamut ({r:.3}, {g:.3}, {b:.3})",
+                        theme.name,
+                    );
+                }
+                lightness.push(lch.l);
+            }
+            for pair in lightness.windows(2) {
+                assert!(
+                    (pair[0] - pair[1]).abs() >= 0.03,
+                    "{} adjacent series lightness {pair:?} is not staggered",
                     theme.name,
                 );
             }

@@ -473,6 +473,21 @@ fn status_color(s: crate::domain::AssetStatus) -> [u8; 4] {
     }
 }
 
+/// `AssetStatus` → status-lamp chip for the inspection thumbnails
+/// (spec D1): the tile keeps its status tint and the chip adds the
+/// redundant mark channel — status is never carried by hue alone.
+/// `Maintenance` maps to `Off` (neutral): a maintained cell is
+/// deliberately out of reporting, not a fault.
+fn thumb_status(s: crate::domain::AssetStatus) -> Status {
+    use crate::domain::AssetStatus::*;
+    match s {
+        Running => Status::Ok,
+        Degraded => Status::Warning,
+        Down => Status::Error,
+        Maintenance => Status::Off,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The pages.
 // ---------------------------------------------------------------------------
@@ -772,7 +787,12 @@ fn comms_page(model: &PlantModel) -> Page {
     // Feed + composer + reactions + announcements — an intrinsic stack
     // that can exceed a short zone; scroll-mounted so the trailing
     // bands stay reachable instead of crushing the feed to zero.
-    Page::new(Variant::Theater, fill(scroll(primary)), &model.zone_width).strip(
+    Page::new(
+        Variant::Theater,
+        fill(scroll(primary)),
+        &model.zone_width[3],
+    )
+    .strip(
         strip()
             .child(channel)
             .child(feed)
@@ -997,7 +1017,7 @@ fn rooms_page(model: &PlantModel) -> Page {
         };
     });
     let rail_col = Flex::column().gap(ZONE_GAP).child(member_detail);
-    Page::new(Variant::MasterDetail, fill(primary), &model.zone_width).rail("Member", rail_col)
+    Page::new(Variant::MasterDetail, fill(primary), &model.zone_width[3]).rail("Member", rail_col)
 }
 
 // ---------------------------------------------------------------------------
@@ -1298,7 +1318,7 @@ fn cameras_page(model: &PlantModel) -> Page {
             1.0,
         );
 
-    Page::new(Variant::MasterDetail, fill(primary), &model.zone_width)
+    Page::new(Variant::MasterDetail, fill(primary), &model.zone_width[3])
         .strip(strip().child(selector).child_flex(readout, 1.0))
         .rail("Camera", rail_col)
 }
@@ -1601,7 +1621,7 @@ fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Page {
     Page::new(
         Variant::MasterLeft,
         fill(scroll(primary)),
-        &model.zone_width,
+        &model.zone_width[3],
     )
     .strip(strip().child(lens).child_flex(DummyWidget, 1.0))
     .rail("Loops", playlist)
@@ -1738,7 +1758,7 @@ fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Page {
         .child(strip().child(line).child_flex(freq, 1.0));
     // Two meter bands + the status strip — scroll-mounted so a short
     // zone scrolls instead of crushing the strip.
-    Page::new(Variant::Wall, fill(scroll(primary)), &model.zone_width)
+    Page::new(Variant::Wall, fill(scroll(primary)), &model.zone_width[3])
 }
 
 // ---------------------------------------------------------------------------
@@ -1933,7 +1953,9 @@ pub(crate) fn inspection_photos(model: &PlantModel) -> Flex {
     let build_lightbox = |m: &PlantModel| {
         let mut lb = Lightbox::new().label("CELL STILLS");
         for a in cells(m) {
-            lb = lb.item(Thumbnail::new(a.name, status_color(a.status)));
+            lb = lb.item(
+                Thumbnail::new(a.name, status_color(a.status)).status(thumb_status(a.status)),
+            );
         }
         lb
     };

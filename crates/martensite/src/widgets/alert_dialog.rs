@@ -545,7 +545,13 @@ impl Widget for AlertDialog {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        // Subtle offset shadow beneath the elevated card.
+        // Elevation (spec B4): a `BlurredRect` drop shadow beneath the
+        // card plus a 1px `BorderColor` keyline around it. The blurred
+        // rect is a *solid-color* shape blur — a drop shadow, not a
+        // live backdrop sample — so it is inherently static while the
+        // alert is open and needs no frozen-backdrop caching (nothing
+        // beneath the overlay ever feeds the blur). The modal scrim is
+        // a plain translucent fill in `OverlayLayer`, not a blur.
         cx.list.push_blurred_rect(
             [b.min_x(), b.min_y() + cx.pt(3.0), b.width(), b.height()],
             cx.pt(12.0),
@@ -554,6 +560,12 @@ impl Widget for AlertDialog {
         let shape = Shape::rounded(cx.dim(TokenKey::BorderRadiusLarge, 12.0));
         cx.list
             .push_fill_shape(rect, &shape, cx.color(TokenKey::SurfaceColor, RAISED));
+        // 1px `BorderColor` keyline — the WCAG 1.4.11 non-text edge: a
+        // shadow alone is not a boundary. `BorderColor` is a stroke
+        // token held at ≥3:1 against every surface fill — including the
+        // scrim-dimmed backdrop the card floats on — by the theme token
+        // tests, and the per-frame paint audit re-checks it at paint
+        // scale.
         cx.list.push_stroke_shape(
             rect,
             &shape,
@@ -711,7 +723,7 @@ impl std::fmt::Debug for AlertDialog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use martensite_core::{EventContext, HotNode};
+    use martensite_core::{EventContext, HotNode, PaintCommand, PaintList, Theme};
 
     fn alert() -> AlertDialog {
         AlertDialog::new()
@@ -869,5 +881,31 @@ mod tests {
         let d = AlertDialog::new();
         assert_eq!(d.severity, AlertSeverity::Info);
         assert!(!d.destructive);
+    }
+
+    #[test]
+    fn card_paints_shadow_then_border_keyline() {
+        // Spec B4: an elevated overlay pairs its `BlurredRect` drop
+        // shadow with a 1px `BorderColor` keyline — the shadow alone
+        // is not a WCAG 1.4.11 edge.
+        let mut d = alert();
+        laid_out(&mut d);
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        d.paint(&mut PaintContext {
+            list: &mut list,
+            bounds: d.cached_bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        });
+        // Shadow first, then the card fill + its keyline (a rounded
+        // face emits paths, not rects), before the icon and text.
+        assert!(matches!(list.commands[0], PaintCommand::BlurredRect { .. }));
+        assert!(matches!(list.commands[1], PaintCommand::FillPath(..)));
+        assert!(matches!(
+            list.commands[2],
+            PaintCommand::StrokePath(_, 1.0, [110, 115, 125, 255])
+        ));
     }
 }

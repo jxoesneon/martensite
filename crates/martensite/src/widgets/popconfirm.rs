@@ -221,7 +221,12 @@ impl Widget for PopconfirmSurface {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        // Subtle offset shadow beneath the elevated surface.
+        // Elevation (spec B4): a `BlurredRect` drop shadow beneath the
+        // face plus a 1px `BorderColor` keyline around it. The blurred
+        // rect is a *solid-color* shape blur — a drop shadow, not a
+        // live backdrop sample — so it is inherently static while the
+        // bubble is open and needs no frozen-backdrop caching (nothing
+        // beneath the overlay ever feeds the blur).
         cx.list.push_blurred_rect(
             [b.min_x(), b.min_y() + cx.pt(2.0), b.width(), b.height()],
             cx.pt(6.0),
@@ -232,6 +237,12 @@ impl Widget for PopconfirmSurface {
         let surface = cx.color(TokenKey::SurfaceColor, SURFACE);
         let edge = cx.color(TokenKey::BorderColor, EDGE);
         cx.list.push_fill_shape(face, &shape, surface);
+        // 1px `BorderColor` keyline — the WCAG 1.4.11 non-text edge: a
+        // shadow alone is not a boundary. `BorderColor` is a stroke
+        // token held at ≥3:1 against every surface fill — including the
+        // page backdrop the bubble floats on — by the theme token
+        // tests, and the per-frame paint audit re-checks it at paint
+        // scale.
         cx.list.push_stroke_shape(face, &shape, cx.pt(1.0), edge);
         // Arrow tail on the anchor-facing edge (the shared helper).
         let anchor_rect = self
@@ -823,7 +834,7 @@ impl std::fmt::Debug for Popconfirm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use martensite_core::HotNode;
+    use martensite_core::{HotNode, PaintCommand, PaintList, Theme};
 
     fn laid_out(c: &mut Popconfirm, bounds: Rect) {
         let mut hot = HotNode::default();
@@ -997,5 +1008,46 @@ mod tests {
         surface.accessibility(&mut node);
         assert_eq!(node.role(), accesskit::Role::Dialog);
         assert_eq!(node.label(), Some("Sure?"));
+    }
+
+    #[test]
+    fn surface_paints_shadow_then_border_keyline() {
+        // Spec B4: an elevated overlay pairs its `BlurredRect` drop
+        // shadow with a 1px `BorderColor` keyline — the shadow alone
+        // is not a WCAG 1.4.11 edge — and the tail keeps the keyline
+        // continuous around the silhouette.
+        let surface = PopconfirmSurface {
+            question: "Sure?".to_string(),
+            confirm_label: "OK".to_string(),
+            cancel_label: "Cancel".to_string(),
+            shared: Arc::new(Mutex::new(PopconfirmShared::default())),
+            flow: AnchorEdge::Bottom,
+            bounds: Rect::new(80.0, 130.0, 140.0, 80.0),
+            button_rects: [Rect::default(); 2],
+            painted_shape: Mutex::new(Shape::RECT),
+            text_painter: None,
+        };
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        surface.paint(&mut PaintContext {
+            list: &mut list,
+            bounds: Rect::new(80.0, 130.0, 140.0, 80.0),
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        });
+        // Shadow first, then face fill + face keyline, then tail fill
+        // + tail slant strokes (rounded faces emit paths, not rects).
+        assert!(matches!(list.commands[0], PaintCommand::BlurredRect { .. }));
+        assert!(matches!(list.commands[1], PaintCommand::FillPath(..)));
+        assert!(matches!(
+            list.commands[2],
+            PaintCommand::StrokePath(_, 1.0, EDGE)
+        ));
+        assert!(matches!(list.commands[3], PaintCommand::FillPath(..)));
+        assert!(matches!(
+            list.commands[4],
+            PaintCommand::StrokePath(_, 1.0, EDGE)
+        ));
     }
 }

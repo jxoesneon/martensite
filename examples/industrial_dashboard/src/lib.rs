@@ -23,6 +23,7 @@
 
 pub mod app;
 pub mod domain;
+pub mod frames;
 pub mod headless;
 pub mod lint_sweep;
 pub mod media_stream;

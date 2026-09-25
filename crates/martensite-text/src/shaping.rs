@@ -11,7 +11,7 @@ use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::bidi::{BidiDirection, BidiMirrorMap, BidiResolved};
-use crate::cache::{CachedShape, ShapeCacheKey};
+use crate::cache::{CachedShape, ShapeCacheKey, StyleBits};
 use crate::cascade::{
     classify_script, FallbackDecisionCache, FallbackKey, FontFallbackProvider,
     InstalledFontFallbackResolver, ScriptTag,
@@ -204,11 +204,34 @@ impl ShapingOptions {
         resolver.resolve_for_text(text, Self::family_display_name(&attrs.family))
     }
 
+    /// Builds a [`StyleBits`] from the weight/style/tracking axis of
+    /// `attrs` — folded into [`ShapeCacheKey`] so styled shapings never
+    /// collide with regular-weight entries for the same text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::shaping::ShapingOptions;
+    /// use cosmic_text::{Attrs, Weight};
+    ///
+    /// let attrs = Attrs::new().weight(Weight::BOLD);
+    /// let bits = ShapingOptions::style_bits(&attrs);
+    /// assert_eq!(bits.weight, 700);
+    /// ```
+    pub fn style_bits(attrs: &Attrs) -> StyleBits {
+        StyleBits::new(
+            attrs.weight.0,
+            !matches!(attrs.style, cosmic_text::Style::Normal),
+            attrs.letter_spacing_opt.map(|l| l.0),
+        )
+    }
+
     /// Builds a [`ShapeCacheKey`] for `text` under these options.
     ///
-    /// The key incorporates the base BiDi direction, writing mode, and a
-    /// hash of the resolved fallback chain so that shaped results are
-    /// never conflated across typographic configurations.
+    /// The key incorporates the base BiDi direction, writing mode, a
+    /// hash of the resolved fallback chain, and the weight/style axis of
+    /// `attrs` so that shaped results are never conflated across
+    /// typographic configurations.
     ///
     /// # Examples
     ///
@@ -257,6 +280,7 @@ impl ShapingOptions {
             self.writing_mode,
             &families,
         )
+        .with_style_bits(Self::style_bits(attrs))
     }
 }
 
@@ -1015,9 +1039,59 @@ pub fn shape_text(
     line_height: f32,
     max_width: Option<f32>,
 ) -> Vec<ShapedLine> {
+    shape_text_with_attrs(
+        manager,
+        text,
+        &Attrs::new(),
+        font_size,
+        line_height,
+        max_width,
+    )
+}
+
+/// Convenience function to shape text with explicit attributes and
+/// extract lines using a [`FontManager`].
+///
+/// This is the weight/style-carrying sibling of [`shape_text`]:
+/// `attrs` flows straight through to cosmic-text, so callers can set
+/// [`Attrs::weight`], [`Attrs::style`], and
+/// [`Attrs::letter_spacing`] (plus family) and get the styled shaping —
+/// semibold titles, true italics, tracked caps — without changing the
+/// regular-text path.
+///
+/// # Keyed attribute contract
+///
+/// The shared shape cache keys on **weight, slant, letter spacing,
+/// family, size, and line height only** (see [`ShapingOptions::style_bits`]).
+/// `Attrs` fields outside that axis — `stretch`, `font_features`,
+/// `metrics_opt` — ARE applied to shaping but are NOT part of the
+/// cache key: shaping the same `(font, size, text)` with two different
+/// `stretch` values would alias one cache entry. Keep variants of
+/// those fields behind distinct families or bypass the shared cache.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::{Attrs, FontManager, Weight};
+/// use martensite_text::shaping::shape_text_with_attrs;
+///
+/// let mut manager = FontManager::new();
+/// let bold = Attrs::new().weight(Weight::BOLD);
+/// let lines = shape_text_with_attrs(&mut manager, "Title", &bold, 16.0, 20.0, None);
+/// // Lines are shaped; glyph coverage depends on installed fonts.
+/// let _ = lines;
+/// ```
+pub fn shape_text_with_attrs(
+    manager: &mut FontManager,
+    text: &str,
+    attrs: &Attrs,
+    font_size: f32,
+    line_height: f32,
+    max_width: Option<f32>,
+) -> Vec<ShapedLine> {
     let mut shaper = Shaper::new_empty(Metrics::new(font_size, line_height));
     shaper.set_size(max_width, None);
-    shaper.set_text(text, &Attrs::new());
+    shaper.set_text(text, attrs);
     shaper.shape(manager.system_mut());
     shaper.lines()
 }
@@ -1219,5 +1293,77 @@ mod tests {
                 "bounded width should have >= lines than unbounded"
             );
         }
+    }
+
+    #[test]
+    fn shape_text_with_attrs_matches_regular_path() {
+        let mut manager = FontManager::new();
+        let plain = shape_text(&mut manager, "Hello World", 16.0, 20.0, None);
+        let styled =
+            shape_text_with_attrs(&mut manager, "Hello World", &Attrs::new(), 16.0, 20.0, None);
+        // Default attrs must produce the same shaping as `shape_text`.
+        assert_eq!(plain.len(), styled.len());
+        for (a, b) in plain.iter().zip(styled.iter()) {
+            assert_eq!(a.text, b.text);
+            assert_eq!(a.glyphs.len(), b.glyphs.len());
+            assert!((a.line_w - b.line_w).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn shape_text_with_attrs_accepts_weight_and_tracking() {
+        let mut manager = FontManager::new();
+        let attrs = Attrs::new()
+            .weight(cosmic_text::Weight::BOLD)
+            .style(cosmic_text::Style::Italic)
+            .letter_spacing(0.05);
+        // Must not panic regardless of installed fonts.
+        let _ = shape_text_with_attrs(&mut manager, "Title", &attrs, 16.0, 20.0, None);
+    }
+
+    #[test]
+    fn shaping_options_style_bits_reads_attrs() {
+        let regular = ShapingOptions::style_bits(&Attrs::new());
+        assert_eq!(regular, StyleBits::regular());
+
+        let bold = ShapingOptions::style_bits(&Attrs::new().weight(cosmic_text::Weight::BOLD));
+        assert_eq!(bold.weight, 700);
+        assert!(!bold.italic);
+
+        let italic = ShapingOptions::style_bits(&Attrs::new().style(cosmic_text::Style::Italic));
+        assert!(italic.italic);
+        assert_eq!(italic.weight, 400);
+
+        let tracked = ShapingOptions::style_bits(&Attrs::new().letter_spacing(0.02));
+        assert_eq!(tracked.letter_spacing(), Some(0.02));
+    }
+
+    #[test]
+    fn shaping_options_cache_key_separates_weight() {
+        let manager = FontManager::with_fonts(std::iter::empty());
+        let opts = ShapingOptions::default();
+        let regular = opts.cache_key(
+            manager.system(),
+            FontId::dummy(),
+            16.0,
+            "Hello",
+            None,
+            "sans-serif",
+            20.0,
+            &Attrs::new(),
+        );
+        let bold = opts.cache_key(
+            manager.system(),
+            FontId::dummy(),
+            16.0,
+            "Hello",
+            None,
+            "sans-serif",
+            20.0,
+            &Attrs::new().weight(cosmic_text::Weight::SEMIBOLD),
+        );
+        assert_ne!(regular, bold, "weight must participate in the key");
+        assert_eq!(regular.style_bits.weight, 400);
+        assert_eq!(bold.style_bits.weight, 600);
     }
 }

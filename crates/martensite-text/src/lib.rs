@@ -47,13 +47,13 @@ pub mod web;
 pub use bidi::{BidiDirection, BidiMirrorMap, BidiParagraph, BidiResolved, BidiRun};
 pub use cache::{
     CachedShape, DirectionBits, FallbackHash, FontSizeBits, LineHeightBits, MaxWidthBits,
-    ShapeCacheKey, TextHash, TextShapeCache, WritingModeBits, DEFAULT_MEMORY_BUDGET,
+    ShapeCacheKey, StyleBits, TextHash, TextShapeCache, WritingModeBits, DEFAULT_MEMORY_BUDGET,
 };
 pub use cascade::{
     classify_script, FallbackDecisionCache, FallbackKey, FontFallbackCache, FontFallbackChain,
     FontFallbackProvider, InstalledFontFallbackResolver, PlatformCascadeResolver, ScriptTag,
 };
-pub use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
+pub use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, Weight};
 pub use font::{FontFaceInfo, FontId, FontManager, FontSource, FontStyle};
 pub use grapheme::{
     grapheme_at, grapheme_boundary_before, grapheme_byte_offset, grapheme_clusters, grapheme_count,
@@ -62,8 +62,8 @@ pub use grapheme::{
 pub use ime::{ImePositioner, ScrollKinematics, Viewport};
 pub use line_break::{BreakOpportunity, LineBreaker};
 pub use shaping::{
-    measure_text, measure_text_with_attrs, shape_text, ShapedGlyph, ShapedLine, Shaper,
-    ShapingOptions, TextMetrics,
+    measure_text, measure_text_with_attrs, shape_text, shape_text_with_attrs, ShapedGlyph,
+    ShapedLine, Shaper, ShapingOptions, TextMetrics,
 };
 pub use vertical::{
     apply_vertical_features, classify_vertical_orientation, collect_vertical_runs,

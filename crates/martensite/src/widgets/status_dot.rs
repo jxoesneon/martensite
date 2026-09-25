@@ -59,7 +59,9 @@ pub enum Status {
 }
 
 impl Status {
-    fn label(self) -> &'static str {
+    /// Human-readable status word — used in accessible names so the
+    /// chip's meaning reaches assistive tech, not just the paint list.
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Off => "off",
             Self::Info => "info",
@@ -68,6 +70,118 @@ impl Status {
             Self::Error => "error",
         }
     }
+
+    /// The theme token this status resolves through.
+    pub(crate) fn token(self) -> TokenKey {
+        match self {
+            Self::Off => TokenKey::TextMutedColor,
+            Self::Info => TokenKey::AccentColor,
+            Self::Ok => TokenKey::SuccessColor,
+            Self::Warning => TokenKey::WarningColor,
+            Self::Error => TokenKey::ErrorColor,
+        }
+    }
+
+    /// sRGBA fallback when the theme carries no token.
+    pub(crate) fn fallback(self) -> [u8; 4] {
+        match self {
+            Self::Off => OFF,
+            Self::Info => INFO,
+            Self::Ok => OK,
+            Self::Warning => WARN,
+            Self::Error => ERR,
+        }
+    }
+}
+
+/// Paints the per-status mark centered at `center` — the redundant
+/// non-color channel for status lamps (WCAG 1.4.1 / ISA-101: status
+/// is never conveyed by hue alone). `r` is the mark's radius in
+/// device px; `ink` is the mark color (inverse ink on the lamp fill).
+///
+/// Marks: `Ok` check, `Warning` exclamation, `Error` cross, `Info`
+/// i-stem, `Off` dash.
+pub(crate) fn paint_status_glyph(
+    list: &mut martensite_core::PaintList,
+    center: Vec2,
+    r: f32,
+    status: Status,
+    ink: [u8; 4],
+) {
+    let (x, y) = (f64::from(center.x), f64::from(center.y));
+    let r = f64::from(r);
+    let mut path = kurbo::BezPath::new();
+    match status {
+        Status::Ok => {
+            // Check mark.
+            path.move_to((x - r * 0.52, y + r * 0.05));
+            path.line_to((x - r * 0.12, y + r * 0.42));
+            path.line_to((x + r * 0.55, y - r * 0.38));
+        }
+        Status::Warning => {
+            // Exclamation stem; the dot is filled below.
+            path.move_to((x, y - r * 0.5));
+            path.line_to((x, y + r * 0.12));
+        }
+        Status::Error => {
+            // Cross.
+            path.move_to((x - r * 0.38, y - r * 0.38));
+            path.line_to((x + r * 0.38, y + r * 0.38));
+            path.move_to((x + r * 0.38, y - r * 0.38));
+            path.line_to((x - r * 0.38, y + r * 0.38));
+        }
+        Status::Info => {
+            // i-stem; the dot is filled above.
+            path.move_to((x, y - r * 0.02));
+            path.line_to((x, y + r * 0.5));
+        }
+        Status::Off => {
+            // Horizontal dash — the "muted/no signal" mark.
+            path.move_to((x - r * 0.42, y));
+            path.line_to((x + r * 0.42, y));
+        }
+    }
+    list.push_stroke_path(path, (r * 0.34).max(1.0) as f32, ink);
+    let dot_dy = match status {
+        Status::Warning => Some(y + r * 0.44),
+        Status::Info => Some(y - r * 0.4),
+        _ => None,
+    };
+    if let Some(dy) = dot_dy {
+        let dr = r * 0.18;
+        list.push_fill_shape(
+            kurbo::Rect::new(x - dr, dy - dr, x + dr, dy + dr),
+            &martensite_core::shape::Shape::circle(Vec2::new(x as f32, dy as f32), dr as f32),
+            ink,
+        );
+    }
+}
+
+/// Paints a small status lamp chip — the status-colored disc plus the
+/// per-status glyph — centered at `center` with device-px radius `r`.
+/// Shared by the icon widgets (`AppGrid`, `Dock`, `Filmstrip`) whose
+/// tiles carry a status, so a bare icon swatch is never the only
+/// status channel.
+pub(crate) fn paint_status_chip(cx: &mut PaintContext<'_>, center: Vec2, r: f32, status: Status) {
+    let color = cx.color(status.token(), status.fallback());
+    let kr = kurbo::Rect::new(
+        f64::from(center.x - r),
+        f64::from(center.y - r),
+        f64::from(center.x + r),
+        f64::from(center.y + r),
+    );
+    let shape = martensite_core::shape::Shape::circle(center, r);
+    cx.list.push_fill_shape(kr, &shape, color);
+    // Surface-colored hairline separates the chip from the icon it
+    // straddles — the same edge the `Badge` overlay paints.
+    cx.list.push_stroke_shape(
+        kr,
+        &shape,
+        cx.pt(1.0),
+        cx.color(TokenKey::SurfaceColor, [245, 245, 246, 255]),
+    );
+    let ink = cx.color(TokenKey::TextInverseColor, [255, 255, 255, 255]);
+    paint_status_glyph(cx.list, center, r * 0.62, status, ink);
 }
 
 /// A status lamp — see the module docs.
@@ -85,6 +199,11 @@ pub struct StatusDot {
     pub enabled: bool,
     /// Halo ring for active-attention states.
     pub pulse: bool,
+    /// Whether the per-status glyph mark (check/`!`/`×`/`i`/`–`)
+    /// paints inside the dot — the redundant non-color channel
+    /// pairing required so status is never conveyed by hue alone.
+    /// Defaults to `true`.
+    pub glyph: bool,
     status: Status,
     bounds: Rect,
     scale: f32,
@@ -105,6 +224,7 @@ impl StatusDot {
             text: text.into(),
             enabled: true,
             pulse: false,
+            glyph: true,
             status: Status::Off,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
@@ -135,6 +255,23 @@ impl StatusDot {
     /// ```
     pub fn pulse(mut self, pulse: bool) -> Self {
         self.pulse = pulse;
+        self
+    }
+
+    /// Enables or suppresses the per-status glyph mark inside the
+    /// dot. The mark is the lamp's non-color status channel (a check
+    /// for `Ok`, `!` for `Warning`, `×` for `Error`, `i` for `Info`,
+    /// `–` for `Off`) — leave it on unless an adjacent label already
+    /// spells the status out.
+    ///
+    /// ```
+    /// use martensite::widgets::status_dot::StatusDot;
+    ///
+    /// let d = StatusDot::new("L").glyph(false);
+    /// assert!(!d.glyph);
+    /// ```
+    pub fn glyph(mut self, glyph: bool) -> Self {
+        self.glyph = glyph;
         self
     }
 
@@ -202,13 +339,7 @@ impl StatusDot {
 
     /// Base color for the status.
     fn base_color(&self) -> [u8; 4] {
-        match self.status {
-            Status::Off => OFF,
-            Status::Info => INFO,
-            Status::Ok => OK,
-            Status::Warning => WARN,
-            Status::Error => ERR,
-        }
+        self.status.fallback()
     }
 }
 
@@ -252,16 +383,7 @@ impl Widget for StatusDot {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        let color = cx.color(
-            match self.status {
-                Status::Off => TokenKey::TextMutedColor,
-                Status::Info => TokenKey::AccentColor,
-                Status::Ok => TokenKey::SuccessColor,
-                Status::Warning => TokenKey::WarningColor,
-                Status::Error => TokenKey::ErrorColor,
-            },
-            self.base_color(),
-        );
+        let color = cx.color(self.status.token(), self.base_color());
         let color = if self.enabled {
             color
         } else {
@@ -297,6 +419,12 @@ impl Widget for StatusDot {
             &martensite_core::shape::Shape::circle(center, r),
             color,
         );
+        if self.glyph {
+            // The redundant non-color channel: a per-status mark in
+            // inverse ink inside the disc.
+            let ink = cx.color(TokenKey::TextInverseColor, [255, 255, 255, 255]);
+            paint_status_glyph(cx.list, center, r * 0.62, self.status, ink);
+        }
 
         if !self.text.is_empty() {
             let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
@@ -381,5 +509,38 @@ mod tests {
     fn colors_map() {
         assert_eq!(StatusDot::new("x").status(Status::Ok).base_color(), OK);
         assert_eq!(StatusDot::new("x").status(Status::Off).base_color(), OFF);
+    }
+
+    #[test]
+    fn glyph_paints_status_mark() {
+        use martensite_core::PaintList;
+        let theme = martensite_theme::Theme::new("test");
+        let paint = |d: &StatusDot| {
+            let mut list = PaintList::new();
+            let mut cx = PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 18.0, 18.0),
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            };
+            d.paint(&mut cx);
+            cx.list.commands.len()
+        };
+        let mut on = StatusDot::new("").status(Status::Ok);
+        let mut off = StatusDot::new("").status(Status::Ok).glyph(false);
+        let mut hot = HotNode::default();
+        let bounds = Rect::new(0.0, 0.0, 18.0, 18.0);
+        for d in [&mut on, &mut off] {
+            d.layout(
+                &mut LayoutContext {
+                    hot: &mut hot,
+                    scale: 1.0,
+                },
+                bounds,
+            );
+        }
+        // The glyph mark adds the check stroke on top of the disc fill.
+        assert!(paint(&on) > paint(&off));
     }
 }

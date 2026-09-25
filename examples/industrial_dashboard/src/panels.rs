@@ -90,6 +90,10 @@ use crate::text::{SpanColor, TextPainter};
 /// and every hit-zone/layout computation that subtracts it (including
 /// the app's title-bar drag-to-dock hit test).
 pub(crate) const TITLE_H: f32 = 28.0;
+/// Quiet-chrome head height in logical pt — top padding + caption
+/// line + breathing room before content. The quiet analogue of
+/// [`TITLE_H`] for panels mounted without a raised title band.
+pub(crate) const QUIET_HEAD: f32 = 30.0;
 /// Grid column-header band height in logical pt.
 const GRID_HEADER_H: f32 = 26.0;
 /// Editor tab-strip row height in logical pt — a second header row
@@ -109,13 +113,126 @@ pub(crate) fn krect(x: f64, y: f64, w: f64, h: f64) -> martensite::render::Rect 
     martensite::render::Rect::new(x, y, x + w, y + h)
 }
 
-/// Paints the shared panel chrome — surface and title bar — and
-/// returns the inner content rect (panel-local, still in window
-/// coordinates). `right` is drawn muted at the title bar's trailing
-/// edge (row counts, state badges). The hairline/focus ring is NOT
-/// emitted here: it must come last via [`panel_border`], after all
-/// panel content, or full-width content bands (header rows, selection
-/// stripes, scrollbars) paint over the outline's edge segments.
+/// Panel-chrome rank (spec B6). "Hero" was retired — the name
+/// collided with the removed `HeroHeader` precedent.
+///
+/// The tiers apply to **dock-level panels** — surfaces mounted in the
+/// docking tree. In-page surfaces inside zones use the quiet chrome
+/// idiom instead (`group_label` caption + band + well/fill fill); the
+/// layout-grammar doc keeps the two chrome levels distinct.
+///
+/// # Examples
+///
+/// ```
+/// use industrial_dashboard::panels::ChromeTier;
+///
+/// // `Standard` is the shipped dock-panel chrome; `Primary`/`Quiet`
+/// // mount as the zone rework consumes them.
+/// assert_eq!(ChromeTier::default(), ChromeTier::Standard);
+/// assert_ne!(ChromeTier::Primary, ChromeTier::Quiet);
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChromeTier {
+    /// The page's primary-task surface (monitoring counts — it is not
+    /// verb-restricted). Title-tier type (15pt, [`ChromeWeight::Semibold`]
+    /// intent), an optional ISA-101 `level_badge` chip in the title
+    /// bar, and a subtly shifted title-band tint. **No accent
+    /// keyline** — accent stays reserved for focus/interaction. The
+    /// title names the task, never the zone tab.
+    Primary,
+    /// The shipped dock-panel chrome: 6px rounded surface + raised
+    /// `TITLE_H` band + 12pt title + hairline.
+    #[default]
+    Standard,
+    /// Minimal chrome: no raised title band — the panel hairline plus
+    /// a small muted caption at top-left inside the padding. The
+    /// caption must be mirrored into the panel's accessible name (see
+    /// the `panel_chrome` return contract). **Never on verb- or
+    /// alarm-bearing surfaces** — a quiet panel identifies a surface;
+    /// it does not invite action and must not mute alarm context.
+    Quiet,
+}
+
+/// Declared title weight for `panel_chrome`. Shaping is weight-blind
+/// until the ambient weight API lands (spec B2), so every tier renders
+/// regular today — the parameter keeps call sites honest about intent
+/// so the later wave is plumbing, not a signature change.
+///
+/// # Examples
+///
+/// ```
+/// use industrial_dashboard::panels::ChromeWeight;
+///
+/// // The declared primary weight; shaping falls back to regular until
+/// // the ambient weight API lands.
+/// assert_eq!(ChromeWeight::default(), ChromeWeight::Regular);
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChromeWeight {
+    /// Body-weight title — current rendering for every tier.
+    #[default]
+    Regular,
+    /// Semibold — the primary tier's declared weight (spec B1/B6).
+    Semibold,
+}
+
+/// What `panel_chrome` painted: the inner content rect plus the
+/// label the panel must mirror into its accessibility node.
+///
+/// # Examples
+///
+/// ```
+/// use industrial_dashboard::panels::ChromeMount;
+/// use martensite::render::Rect;
+///
+/// let mount = ChromeMount {
+///     content: Rect::new(0.0, 30.0, 300.0, 200.0),
+///     accessible_name: "PRESSURE TRENDS".to_string(),
+/// };
+/// assert_eq!(mount.accessible_name, "PRESSURE TRENDS");
+/// ```
+pub struct ChromeMount {
+    /// Inner content rect in window coordinates — panel content
+    /// starts here (below the title band + hairline, or below the
+    /// quiet caption head).
+    pub content: martensite::render::Rect,
+    /// The caption/title as painted (post-ellipsis; the level badge is
+    /// appended for [`ChromeTier::Primary`]). **Contract**: callers
+    /// MUST set this as the panel's accessible name — for
+    /// [`ChromeTier::Quiet`] the small caption is the panel's only
+    /// identification, and paint-only text is invisible to assistive
+    /// technology.
+    pub accessible_name: String,
+}
+
+/// Alpha-blends `a` toward `b` by `t` (0..=1) per channel — the
+/// primary title band's tonal shift derives from existing palette
+/// tokens instead of minting a new color.
+fn blend(a: [u8; 4], b: [u8; 4], t: f32) -> [u8; 4] {
+    let m = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    [m(a[0], b[0]), m(a[1], b[1]), m(a[2], b[2]), m(a[3], b[3])]
+}
+
+/// Paints the shared panel chrome — surface and title furniture — and
+/// returns a [`ChromeMount`] (inner content rect + painted label).
+/// `right` is drawn at the title band's trailing edge (row counts,
+/// state badges). The hairline/focus ring is NOT emitted here: it must
+/// come last via [`panel_border`], after all panel content, or
+/// full-width content bands (header rows, selection stripes,
+/// scrollbars) paint over the outline's edge segments.
+///
+/// `tier` selects the chrome rank (see [`ChromeTier`]):
+///
+/// - `Standard`/`Primary` paint the raised [`TITLE_H`] band —
+///   `Primary` at title-tier size (15pt) with the `level_badge` chip
+///   (ISA-101 level tags like "L2") and a band tint shifted a step up
+///   the tonal ladder.
+/// - `Quiet` paints no raised band: a 12pt muted caption sits inside
+///   the top padding and content begins [`QUIET_HEAD`] pt down.
+///
+/// `title_weight` declares the intended weight (primary resolves to
+/// [`ChromeWeight::Semibold`]); shaping falls back to regular until
+/// the ambient weight API lands.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn panel_chrome(
     painter: &mut TextPainter,
@@ -125,11 +242,24 @@ pub(crate) fn panel_chrome(
     right: &str,
     pal: &Palette,
     scale: f32,
-) -> martensite::render::Rect {
+    tier: ChromeTier,
+    level_badge: Option<&str>,
+    title_weight: ChromeWeight,
+) -> ChromeMount {
     let b = to_paint(bounds);
     let s = f64::from(scale);
     let corner = Shape::rounded((6.0 * s) as f32);
     list.push_fill_shape(b, &corner, pal.surface);
+    // B2 fallback: shaping is weight-blind today. The declared weight
+    // (Semibold for primary, `title_weight` otherwise) is carried so
+    // the weight wave is plumbing, not a signature change.
+    let _declared_weight = match tier {
+        ChromeTier::Primary => ChromeWeight::Semibold,
+        _ => title_weight,
+    };
+    if tier == ChromeTier::Quiet {
+        return quiet_chrome(painter, list, b, title, right, pal, scale);
+    }
     let title_h = f64::from(TITLE_H) * s;
     // The title bar rounds only its top corners so it meets the panel
     // silhouette flush; its radius shrinks by the 1px border inset.
@@ -137,28 +267,75 @@ pub(crate) fn panel_chrome(
         CornerRadii::top(((6.0 * s - 1.0).max(0.0)) as f32),
         CornerStyle::Round,
     );
+    // Primary's band shifts one step up the tonal ladder (toward the
+    // border token) — a subtle elevation cue, not a new color.
+    let band_fill = match tier {
+        ChromeTier::Primary => blend(pal.raised, pal.border, 0.22),
+        _ => pal.raised,
+    };
     list.push_fill_shape(
         krect(b.x0, b.y0, b.width(), title_h),
         &title_shape,
-        pal.raised,
+        band_fill,
     );
+    let title_fs = match tier {
+        ChromeTier::Primary => 15.0,
+        _ => 12.0,
+    } * scale;
+    let title_y = match tier {
+        ChromeTier::Primary => 5.0,
+        _ => 6.0,
+    } * s;
+    // The level badge only exists on primary chrome; its chip width is
+    // reserved out of the title slot so the ellipsized title can never
+    // collide with it.
+    let badge = match (tier, level_badge) {
+        (ChromeTier::Primary, Some(badge)) if !badge.is_empty() => Some(badge),
+        _ => None,
+    };
+    let badge_slot = badge.map_or(0.0, |badge| {
+        f64::from(painter.measure(badge, 11.0 * scale)) + 20.0 * s
+    });
     // Below ~120pt the right label is dropped — two ellipsized strings
     // butted together read worse than one clean title.
     let show_right = !right.is_empty() && b.width() >= 120.0 * s;
-    let title_slot = if show_right {
+    let title_slot = (if show_right {
         b.width() * 0.52
     } else {
         b.width() - 24.0 * s
-    };
-    let title_fit = painter.fit(title, 12.0 * scale, title_slot.max(1.0) as f32);
+    }) - badge_slot;
+    let title_fit = painter.fit(title, title_fs, title_slot.max(1.0) as f32);
+    let title_x = b.x0 + 12.0 * s;
     painter.push(
         list,
-        Point::new(b.x0 + 12.0 * s, b.y0 + 6.0 * s),
+        Point::new(title_x, b.y0 + title_y),
         &title_fit,
-        12.0 * scale,
+        title_fs,
         pal.text,
         None,
     );
+    if let Some(badge) = badge {
+        // ISA-101 level chip — a recessed (surface-fill) lozenge with a
+        // hairline edge, caption-tier muted text.
+        let title_w = f64::from(painter.measure(&title_fit, title_fs));
+        let text_w = f64::from(painter.measure(badge, 11.0 * scale));
+        let bw = text_w + 12.0 * s;
+        let bh = 16.0 * s;
+        let bx = title_x + title_w + 8.0 * s;
+        let by = b.y0 + (title_h - bh) / 2.0;
+        let chip = krect(bx, by, bw, bh);
+        let chip_shape = Shape::rounded((3.0 * s) as f32);
+        list.push_fill_shape(chip, &chip_shape, pal.surface);
+        list.push_stroke_shape(chip, &chip_shape, 1.0, pal.hairline());
+        painter.push(
+            list,
+            Point::new(bx + 6.0 * s, by + 2.0 * s),
+            badge,
+            11.0 * scale,
+            pal.text_muted,
+            None,
+        );
+    }
     if show_right {
         let right_fit = painter.fit(right, 12.0 * scale, (b.width() * 0.42).max(1.0) as f32);
         let w = painter.measure(&right_fit, 12.0 * scale);
@@ -172,12 +349,76 @@ pub(crate) fn panel_chrome(
         );
     }
     list.push_fill_rect(krect(b.x0, b.y0 + title_h, b.width(), 1.0), pal.border);
-    krect(
-        b.x0,
-        b.y0 + title_h + 1.0,
-        b.width(),
-        (b.height() - title_h - 1.0).max(0.0),
-    )
+    // The a11y name composes from the UN-truncated title — `title_fit`
+    // may be ellipsized for paint, and AT must announce the full name.
+    let accessible_name = match badge {
+        Some(badge) => format!("{title} · {badge}"),
+        None => title.to_string(),
+    };
+    ChromeMount {
+        content: krect(
+            b.x0,
+            b.y0 + title_h + 1.0,
+            b.width(),
+            (b.height() - title_h - 1.0).max(0.0),
+        ),
+        accessible_name,
+    }
+}
+
+/// The quiet chrome path: no raised title band — a 12pt muted caption
+/// inside the top padding, content below [`QUIET_HEAD`], and the panel
+/// hairline (emitted by [`panel_border`]) as the only frame. `b` is
+/// the panel rect already in paint coordinates.
+fn quiet_chrome(
+    painter: &mut TextPainter,
+    list: &mut PaintList,
+    b: martensite::render::Rect,
+    title: &str,
+    right: &str,
+    pal: &Palette,
+    scale: f32,
+) -> ChromeMount {
+    let s = f64::from(scale);
+    let cap_fs = 12.0 * scale;
+    let show_right = !right.is_empty() && b.width() >= 120.0 * s;
+    let cap_slot = if show_right {
+        b.width() * 0.66
+    } else {
+        b.width() - 24.0 * s
+    };
+    let cap_fit = painter.fit(title, cap_fs, cap_slot.max(1.0) as f32);
+    painter.push(
+        list,
+        Point::new(b.x0 + 12.0 * s, b.y0 + 9.0 * s),
+        &cap_fit,
+        cap_fs,
+        pal.text_muted,
+        None,
+    );
+    if show_right {
+        let right_fit = painter.fit(right, cap_fs, (b.width() * 0.30).max(1.0) as f32);
+        let w = painter.measure(&right_fit, cap_fs);
+        painter.push(
+            list,
+            Point::new(b.x1 - 12.0 * s - f64::from(w), b.y0 + 10.0 * s),
+            &right_fit,
+            cap_fs,
+            pal.text_muted,
+            None,
+        );
+    }
+    ChromeMount {
+        content: krect(
+            b.x0,
+            b.y0 + f64::from(QUIET_HEAD) * s,
+            b.width(),
+            (b.height() - f64::from(QUIET_HEAD) * s).max(0.0),
+        ),
+        // Un-truncated, matching `panel_chrome` — AT announces the
+        // full caption even when the painted text ellipsizes.
+        accessible_name: title.to_string(),
+    }
 }
 
 /// Paints the panel outline — accent focus ring when focused, hairline
@@ -185,6 +426,10 @@ pub(crate) fn panel_chrome(
 /// END of a panel's `paint`, after every content band: headers, rows,
 /// and scrollbars all span the full inner width and would otherwise
 /// cover the outline's left/right/bottom segments.
+///
+/// The outline is [`ChromeTier`]-agnostic: every rank shares the 6px
+/// rounded silhouette, and accent stays reserved for the focus ring —
+/// primary chrome deliberately takes no accent keyline (spec B6).
 pub(crate) fn panel_border(
     list: &mut PaintList,
     bounds: Rect,
@@ -271,6 +516,12 @@ pub struct GridPanel {
     resizing: Option<(usize, f32)>,
     /// The shipped column widths — the double-click reset target.
     default_widths: Vec<f32>,
+    /// The `ChromeMount::accessible_name` the chrome last painted
+    /// (title + `L1` badge) — stashed during `paint` so `accessibility`
+    /// can expose the same name AT users see sighted users get. Empty
+    /// until the first paint; the a11y label falls back to the
+    /// un-truncated title + badge then.
+    chrome_name: Mutex<String>,
 }
 
 impl GridPanel {
@@ -322,6 +573,7 @@ impl GridPanel {
             band: RubberBandScroller::new(0.0, 0.0),
             resizing: None,
             default_widths,
+            chrome_name: Mutex::new(String::new()),
         }
     }
 
@@ -590,7 +842,9 @@ impl Widget for GridPanel {
         cx.list.push_fill_rect(b, pal.surface);
         cx.list.push_stroke_rect(b, 1.0, pal.border);
         let msg = "PROCESS GRID — enlarge to restore";
-        let size = 11.0 * s;
+        // Sole-content placeholders stay ≥12pt — micro text under the
+        // Caption floor fails legibility for the only thing shown.
+        let size = 12.0 * s;
         let tw = f64::from(text.measure(msg, size));
         let x = (b.x0 + (b.width() - tw) * 0.5).max(b.x0 + 2.0);
         let y = b.y0 + (b.height() - f64::from(size)) * 0.5;
@@ -855,8 +1109,19 @@ impl Widget for GridPanel {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Table);
+        // The painted chrome name ("PROCESS GRID · L1") is part of the
+        // label — the badge is painted information AT must not lose.
+        // Falls back to the un-truncated composition before first paint.
+        let name = {
+            let painted = self.chrome_name.lock();
+            if painted.is_empty() {
+                "PROCESS GRID · L1".to_string()
+            } else {
+                painted.clone()
+            }
+        };
         node.set_label(format!(
-            "Process Grid — {} of 1,000,000 rows, {} selected",
+            "{name} — {} of 1,000,000 rows, {} selected",
             self.table.display_row_count(),
             self.table.selection().selected_count()
         ));
@@ -883,7 +1148,12 @@ impl Widget for GridPanel {
                 ""
             }
         );
-        let inner = panel_chrome(
+        // Primary chrome (spec B6): the grid is the workstation's
+        // primary-task surface — it hosts the operator's register,
+        // holds initial focus (app.rs), and sits at the dock root.
+        // "L1" = the ISA-101 overview level a fleet-wide monitoring
+        // register occupies; no accent keyline (accent stays = focus).
+        let mount = panel_chrome(
             &mut text,
             cx.list,
             self.bounds,
@@ -891,7 +1161,13 @@ impl Widget for GridPanel {
             &right,
             pal,
             s,
+            ChromeTier::Primary,
+            Some("L1"),
+            ChromeWeight::Semibold,
         );
+        // Keep the painted name (title + "L1" badge) reachable by AT.
+        *self.chrome_name.lock() = mount.accessible_name.clone();
+        let inner = mount.content;
         let sd = f64::from(s);
 
         // Column header row.
@@ -1351,7 +1627,19 @@ impl Widget for TelemetryPanel {
                 self.mem.get() * 100.0
             )
         };
-        let inner = panel_chrome(&mut text, cx.list, self.bounds, "TELEMETRY", &right, pal, s);
+        let inner = panel_chrome(
+            &mut text,
+            cx.list,
+            self.bounds,
+            "TELEMETRY",
+            &right,
+            pal,
+            s,
+            ChromeTier::Standard,
+            None,
+            ChromeWeight::Regular,
+        )
+        .content;
         let sd = f64::from(s);
         let pad = 14.0 * sd;
         let label_w = 34.0 * sd;
@@ -1493,11 +1781,13 @@ impl Widget for TelemetryPanel {
             path.line_to((plot.x0 + last.x, plot.y0 + base_y));
             path.line_to((plot.x0 + first.x, plot.y0 + base_y));
             path.close_path();
-            cx.list.push_path(path, Palette::alpha(pal.accent, 56));
+            // Series ink comes from the categorical ramp (spec B5) —
+            // accent stays reserved for focus/interaction, not data.
+            cx.list.push_path(path, Palette::alpha(pal.series[0], 56));
         }
 
         // Series → projected polylines.
-        for (series_idx, color) in [(0usize, pal.accent), (1usize, pal.accent2)] {
+        for (series_idx, color) in [(0usize, pal.series[0]), (1usize, pal.series[1])] {
             let pts = &chart.lines()[series_idx].points;
             if pts.len() < 2 {
                 continue;
@@ -1548,7 +1838,7 @@ impl Widget for TelemetryPanel {
         // Legend.
         let legend_y = plot.y1 + 8.0 * sd;
         let mut lx = plot.x0;
-        for (label, color) in [("cpu_load", pal.accent), ("mem_pressure", pal.accent2)] {
+        for (label, color) in [("cpu_load", pal.series[0]), ("mem_pressure", pal.series[1])] {
             cx.list
                 .push_fill_rect(krect(lx, legend_y + 4.0 * sd, 12.0 * sd, 3.0 * sd), color);
             let w = text.measure(label, 12.0 * s);
@@ -2323,7 +2613,19 @@ impl Widget for EditorPanel {
             format!("{} lines", tab.editor.lines().len())
         };
         let title = format!("EDITOR · {}", tab.name);
-        let inner = panel_chrome(&mut text, cx.list, self.bounds, &title, &right, pal, s);
+        let inner = panel_chrome(
+            &mut text,
+            cx.list,
+            self.bounds,
+            &title,
+            &right,
+            pal,
+            s,
+            ChromeTier::Standard,
+            None,
+            ChromeWeight::Regular,
+        )
+        .content;
         let sd = f64::from(s);
         let pad = 8.0 * sd;
         let gutter_w = f64::from(self.gutter_w());
@@ -2358,11 +2660,12 @@ impl Widget for EditorPanel {
             let label = self.chip_label(i);
             if i == self.active {
                 // Active tab rounds its top edge — it visually meets the
-                // raised strip at the bottom.
+                // inset editing well at the bottom, so it shares the
+                // well fill rather than the panel `surface`.
                 cx.list.push_fill_shape(
                     krect(chip_x, strip_top, chip_w, strip_h),
                     &Shape::corners(CornerRadii::top((4.0 * sd) as f32), CornerStyle::Round),
-                    pal.surface,
+                    pal.inset,
                 );
                 cx.list.push_fill_rect(
                     krect(
@@ -2412,6 +2715,20 @@ impl Widget for EditorPanel {
         );
 
         let content_top = strip_top + strip_h + 1.0 + pad;
+        // Inset well (spec B3): the editing surface sits a step *below*
+        // the panel surface on the tonal ladder — the "inside the
+        // machine" read for a code editor. The gutter's translucent
+        // raised band then lands on top of the well, so it still reads
+        // as a lane within it rather than floating on `surface`.
+        cx.list.push_fill_rect(
+            krect(
+                inner.x0,
+                content_top - pad,
+                inner.width(),
+                inner.y1 - content_top + pad,
+            ),
+            pal.inset,
+        );
         cx.list.push_fill_rect(
             krect(
                 inner.x0,
@@ -2697,7 +3014,19 @@ impl Widget for MediaPanel {
         } else {
             String::new()
         };
-        let inner = panel_chrome(&mut text, cx.list, self.bounds, "MEDIA", &right, pal, s);
+        let inner = panel_chrome(
+            &mut text,
+            cx.list,
+            self.bounds,
+            "MEDIA",
+            &right,
+            pal,
+            s,
+            ChromeTier::Standard,
+            None,
+            ChromeWeight::Regular,
+        )
+        .content;
         // Delegate to the real widget for the letterboxed backdrop.
         self.view.paint(&mut PaintContext {
             list: cx.list,

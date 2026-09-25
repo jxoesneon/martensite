@@ -310,12 +310,32 @@ impl Widget for LineChart {
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Image);
         node.set_label("Line chart");
+        // Per-series summary — latest/min/max — so the trend is
+        // legible without the pixels (D2: a chart's accessible
+        // description must carry the data, not just the series names).
         node.set_description(
             self.series
                 .iter()
-                .map(|s| s.name.as_str())
+                .map(|s| {
+                    if s.points.is_empty() {
+                        return format!("{}: no data", s.name);
+                    }
+                    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+                    for &p in &s.points {
+                        lo = lo.min(p);
+                        hi = hi.max(p);
+                    }
+                    format!(
+                        "{}: latest {:.2}, min {:.2}, max {:.2} ({} points)",
+                        s.name,
+                        s.points[s.points.len() - 1],
+                        lo,
+                        hi,
+                        s.points.len()
+                    )
+                })
                 .collect::<Vec<_>>()
-                .join(", "),
+                .join("; "),
         );
         if !self.enabled {
             node.set_disabled();
@@ -391,8 +411,12 @@ impl Widget for LineChart {
             if n == 0 {
                 continue;
             }
-            let mut color = s.color.unwrap_or(PALETTE[si % PALETTE.len()]);
-            color = cx.color(TokenKey::AccentColor, color);
+            // Explicit series color wins; else the theme's categorical
+            // ramp (`SeriesColor1..6`); PALETTE is the no-theme fallback.
+            // Resolving through AccentColor here would flatten every
+            // series to the interaction ink and make `s.color` dead.
+            let mut color =
+                crate::widgets::series_color(cx, si, s.color, PALETTE[si % PALETTE.len()]);
             let dim = self.hovered.is_some() && self.hovered != Some(si);
             if dim {
                 color[3] /= 3;
@@ -517,6 +541,23 @@ mod tests {
         });
         assert_eq!(c.take_hovered(), Some(1));
         assert_eq!(c.take_hovered(), None);
+    }
+
+    #[test]
+    fn a11y_description_carries_values() {
+        let c = LineChart::new().series(LineSeries::new("In", [1.0, 3.0, 2.0]));
+        let mut node = AccessKitNode::new(accesskit::Role::Unknown);
+        c.accessibility(&mut node);
+        let desc = node.description().unwrap_or_default();
+        assert!(desc.contains("In"), "{desc}");
+        assert!(desc.contains("latest 2.00"), "{desc}");
+        assert!(desc.contains("min 1.00"), "{desc}");
+        assert!(desc.contains("max 3.00"), "{desc}");
+        // An empty series reports "no data" rather than ±inf.
+        let c = LineChart::new().series(LineSeries::new("E", []));
+        let mut node = AccessKitNode::new(accesskit::Role::Unknown);
+        c.accessibility(&mut node);
+        assert_eq!(node.description(), Some("E: no data"));
     }
 
     #[test]

@@ -42,6 +42,7 @@ use martensite_core::widget::{
 };
 use martensite_core::{NodeFlags, Rect, TokenKey};
 
+use crate::widgets::badge::BadgeSpec;
 use crate::widgets::FlexDirection;
 
 /// Strip height in logical points.
@@ -96,6 +97,10 @@ pub struct Segment {
     activation_pending: bool,
     /// A `SemanticAction::Focus` parked for the owning group.
     focus_pending: bool,
+    /// Optional badge annotation painted beside the label and folded
+    /// into the accessible name — set via
+    /// [`Segmented::option_with_badge`]/[`Segmented::set_option_badge`].
+    badge: Option<BadgeSpec>,
     /// Shared shaped-text painter from the owning `Segmented`.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
@@ -128,6 +133,7 @@ impl Segment {
             enabled: true,
             activation_pending: false,
             focus_pending: false,
+            badge: None,
             text_painter: None,
         }
     }
@@ -159,7 +165,9 @@ impl Widget for Segment {
         // `martensite-text` pipeline; this is the same coarse
         // per-grapheme estimate `RadioOption` uses.
         let w = cx
-            .pt(2.0 * TEXT_PAD_X + 8.0 * self.label.chars().count() as f32)
+            .pt(2.0 * TEXT_PAD_X
+                + 8.0 * self.label.chars().count() as f32
+                + self.badge.as_ref().map_or(0.0, |b| b.width_pt() + 6.0))
             .max(cx.pt(SEG_MIN_W));
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
@@ -171,7 +179,12 @@ impl Widget for Segment {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::RadioButton);
-        node.set_label(self.label.as_str());
+        // A badge annunciates state — it belongs in the accessible
+        // name, not just the paint list.
+        node.set_label(match &self.badge {
+            Some(badge) => format!("{}, {}", self.label, badge.text),
+            None => self.label.clone(),
+        });
         node.set_toggled(accesskit::Toggled::from(self.selected));
         node.set_position_in_set(self.pos_in_set);
         node.set_size_of_set(self.set_size);
@@ -271,8 +284,18 @@ impl Widget for Segment {
 
         // Centre the label in the segment, clipped to its interior —
         // a long label can't spill into the neighbouring segment.
+        // A badge pill sits at the segment's trailing edge; the label
+        // clips ahead of it.
         let font_px = cx.pt(14.0);
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+        let pill = self.badge.as_ref().map(|spec| {
+            let pw = f64::from(cx.pt(spec.width_pt()));
+            let ph = f64::from(cx.pt(BadgeSpec::height_pt()));
+            let x1 = f64::from(b.max_x() - cx.pt(4.0));
+            let y0 = f64::from(b.min_y()) + (f64::from(b.height()) - ph) / 2.0;
+            kurbo::Rect::new(x1 - pw, y0, x1, y0 + ph)
+        });
+        let label_right = pill.map_or_else(|| b.max_x() - cx.pt(4.0), |p| p.x0 as f32 - cx.pt(2.0));
         let text_w = painter
             .and_then(|p| p.measure_text(&self.label, font_px))
             .unwrap_or_else(|| 8.0 * self.label.chars().count() as f32 * cx.scale);
@@ -288,7 +311,7 @@ impl Widget for Segment {
             kurbo::Rect::new(
                 f64::from(b.min_x() + cx.pt(4.0)),
                 f64::from(b.min_y()),
-                f64::from(b.max_x() - cx.pt(4.0)),
+                f64::from(label_right),
                 f64::from(b.max_y()),
             ),
             kurbo::Point::new(
@@ -299,6 +322,9 @@ impl Widget for Segment {
             font_px,
             ink,
         );
+        if let (Some(spec), Some(pill)) = (&self.badge, pill) {
+            crate::widgets::badge::paint_spec_pill(spec, painter, cx, pill);
+        }
     }
 }
 
@@ -405,6 +431,67 @@ impl Segmented {
         self.segments.extend(labels.into_iter().map(Segment::new));
         self.sync_options();
         self
+    }
+
+    /// Appends one option carrying a badge annotation — a
+    /// [`BadgeSpec`](crate::widgets::badge::BadgeSpec) painted as a
+    /// small pill beside the label and folded into the segment's
+    /// accessible name (`"{label}, {badge}"`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::BadgeSpec;
+    /// use martensite::widgets::Segmented;
+    ///
+    /// let seg = Segmented::new().option_with_badge("Alerts", BadgeSpec::count(2));
+    /// assert_eq!(seg.option_badge(0).unwrap().text, "2");
+    /// ```
+    #[must_use]
+    pub fn option_with_badge(mut self, label: impl Into<String>, badge: BadgeSpec) -> Self {
+        let mut segment = Segment::new(label);
+        segment.badge = Some(badge);
+        self.segments.push(segment);
+        self.sync_options();
+        self
+    }
+
+    /// Sets (`Some`) or clears (`None`) the badge on the option at
+    /// `index` — the live-update path for annunciation counts.
+    /// Out-of-range indices are ignored.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::BadgeSpec;
+    /// use martensite::widgets::Segmented;
+    ///
+    /// let mut seg = Segmented::new().options(vec!["A", "B"]);
+    /// seg.set_option_badge(1, Some(BadgeSpec::count(5)));
+    /// assert_eq!(seg.option_badge(1).unwrap().text, "5");
+    /// seg.set_option_badge(1, None);
+    /// assert!(seg.option_badge(1).is_none());
+    /// ```
+    pub fn set_option_badge(&mut self, index: usize, badge: Option<BadgeSpec>) {
+        if let Some(segment) = self.segments.get_mut(index) {
+            segment.badge = badge;
+        }
+    }
+
+    /// The badge on the option at `index`, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::BadgeSpec;
+    /// use martensite::widgets::Segmented;
+    ///
+    /// let seg = Segmented::new().option_with_badge("A", BadgeSpec::new("!"));
+    /// assert_eq!(seg.option_badge(0).unwrap().text, "!");
+    /// ```
+    #[inline]
+    pub fn option_badge(&self, index: usize) -> Option<&BadgeSpec> {
+        self.segments.get(index).and_then(|s| s.badge.as_ref())
     }
 
     /// Sets the group's accessible label.
@@ -1077,6 +1164,20 @@ mod tests {
         assert_eq!(node.role(), accesskit::Role::RadioGroup);
         assert_eq!(node.label(), Some("View"));
         assert_eq!(node.orientation(), Some(accesskit::Orientation::Vertical));
+    }
+
+    #[test]
+    fn segment_badge_in_accessible_name() {
+        use crate::widgets::badge::BadgeSpec;
+        let mut seg = Segmented::new().option_with_badge("Alerts", BadgeSpec::count(2));
+        let mut n = AccessKitNode::new(accesskit::Role::Unknown);
+        seg.child(0).unwrap().accessibility(&mut n);
+        assert_eq!(n.label(), Some("Alerts, 2"));
+        // Clearing restores the bare label.
+        seg.set_option_badge(0, None);
+        let mut n = AccessKitNode::new(accesskit::Role::Unknown);
+        seg.child(0).unwrap().accessibility(&mut n);
+        assert_eq!(n.label(), Some("Alerts"));
     }
 
     #[test]

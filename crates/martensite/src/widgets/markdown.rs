@@ -18,14 +18,13 @@
 //!
 //! ## Rendering limitations (documented, not hidden)
 //!
-//! The [`crate::text_paint`] `TextShaper` seam carries only
-//! `(text, size, color)` — no font-weight, slant, or family axis — so
-//! styles degrade honestly:
+//! The [`crate::text_paint`] `TextShaper` seam's styled channel
+//! (`paint_shaped_text_styled`) carries weight, slant, and tracking, so
+//! `**bold**`, headings, and `*italic*` shape with real font faces when
+//! a shaping painter resolves. Painters that don't override the styled
+//! channel degrade to regular weight; the painterless `DrawText`
+//! fallback remains unstyled either way.
 //!
-//! - **bold** (and headings) are *faux-bold*: the run is emitted twice
-//!   with a small x offset.
-//! - *italic* runs render in the normal face with ink blended toward
-//!   the muted text color — there is no true slant.
 //! - `code` runs sit on a rounded surface-fill chip; fenced blocks on
 //!   a surface-fill panel. The face is the default family, not a real
 //!   monospace.
@@ -53,7 +52,9 @@ use martensite_core::{
 use martensite_theme::TokenKey;
 use parking_lot::Mutex;
 
-use crate::text_paint::{paint_label_clipped, resolve_painter, SharedTextPainter};
+use martensite_core::paint::{FontWeight, TextStyle};
+
+use crate::text_paint::{paint_label_clipped_styled, resolve_painter, SharedTextPainter};
 
 /// Default body text size, logical points.
 const BASE_PT: f32 = 14.0;
@@ -114,9 +115,22 @@ enum Block {
     Rule,
 }
 
+/// The style axis a run's [`Flags`] request — `**bold**` shapes at
+/// [`FontWeight::BOLD`], `*italic*` at the italic slant.
+fn flags_style(flags: Flags) -> TextStyle {
+    let mut style = TextStyle::REGULAR;
+    if flags.bold {
+        style = style.weight(FontWeight::BOLD);
+    }
+    if flags.italic {
+        style = style.italic();
+    }
+    style
+}
+
 /// Fallback advance estimate — `0.5 · size` per char, matching the
 /// convention used by `Cascader`/`Breadcrumb` for painterless passes.
-fn heuristic(text: &str, size: f32) -> f32 {
+fn heuristic(text: &str, size: f32, _style: TextStyle) -> f32 {
     size * text.chars().count() as f32 * HEURISTIC_W
 }
 
@@ -510,10 +524,10 @@ fn wrap_runs(
     width: f32,
     y: f32,
     bold_all: bool,
-    measure: &dyn Fn(&str, f32) -> f32,
+    measure: &dyn Fn(&str, f32, TextStyle) -> f32,
 ) -> f32 {
     let line_h = size * LINE_HEIGHT;
-    let space_w = measure(" ", size).max(size * 0.2);
+    let space_w = measure(" ", size, TextStyle::REGULAR).max(size * 0.2);
     // Tokenize into styled words, tracking whether whitespace preceded
     // each one so `**bold**end` reassembles without a gap.
     let mut lines: Vec<Vec<WItem>> = vec![Vec::new()];
@@ -551,7 +565,7 @@ fn wrap_runs(
                 i += c.len_utf8();
             }
             let word = &text[wstart..i];
-            let ww = measure(word, eff);
+            let ww = measure(word, eff, flags_style(flags));
             let cur = lines.last_mut().expect("lines is never empty");
             let need = ww
                 + if cur.is_empty() || !pending_space {
@@ -901,7 +915,7 @@ impl Markdown {
         bounds: Rect,
         scale: f32,
         measured: bool,
-        measure: &dyn Fn(&str, f32) -> f32,
+        measure: &dyn Fn(&str, f32, TextStyle) -> f32,
     ) -> Plan {
         let mut plan = Plan {
             origin: bounds.origin,
@@ -986,7 +1000,7 @@ impl Markdown {
                             "•".to_string()
                         };
                         let line_start = y;
-                        let mw = measure(&marker, base).max(indent * 0.5);
+                        let mw = measure(&marker, base, TextStyle::REGULAR).max(indent * 0.5);
                         plan.runs.push(Placed {
                             rect: Rect::new(x0, y, mw, base * LINE_HEIGHT),
                             text: marker,
@@ -1044,12 +1058,6 @@ impl std::fmt::Debug for Markdown {
     }
 }
 
-/// Alpha-blend `a` toward `b` by `t` (0 = a, 1 = b).
-fn mix(a: [u8; 4], b: [u8; 4], t: f32) -> [u8; 4] {
-    let lerp = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t) as u8;
-    [lerp(a[0], b[0]), lerp(a[1], b[1]), lerp(a[2], b[2]), a[3]]
-}
-
 impl Widget for Markdown {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let w = if constraints.max_size.x.is_finite() {
@@ -1093,8 +1101,9 @@ impl Widget for Markdown {
         };
         if stale {
             let plan = match painter {
-                Some(p) => self.build_plan(b, cx.scale, true, &|t, s| {
-                    p.measure_text(t, s).unwrap_or_else(|| heuristic(t, s))
+                Some(p) => self.build_plan(b, cx.scale, true, &|t, s, st| {
+                    p.measure_text_styled(t, s, st)
+                        .unwrap_or_else(|| heuristic(t, s, st))
                 }),
                 None => self.build_plan(b, cx.scale, false, &heuristic),
             };
@@ -1144,32 +1153,22 @@ impl Widget for Markdown {
             }
         }
         for run in &plan.runs {
-            let ink = if run.link.is_some() {
-                accent
-            } else if run.flags.italic {
-                // Documented fallback — the TextShaper seam has no slant
-                // axis, so italics render as a muted-leaning ink.
-                mix(fg, muted, 0.45)
-            } else {
-                fg
-            };
+            let ink = if run.link.is_some() { accent } else { fg };
             let origin =
                 kurbo::Point::new(f64::from(run.rect.min_x()), f64::from(run.rect.min_y()));
-            paint_label_clipped(painter, cx.list, clip, origin, &run.text, run.size, ink);
-            if run.flags.bold {
-                // Faux bold — no weight axis in the seam, so the run is
-                // double-struck with a small offset.
-                let dx = (run.size * 0.035).max(0.4);
-                paint_label_clipped(
-                    painter,
-                    cx.list,
-                    clip,
-                    kurbo::Point::new(origin.x + f64::from(dx), origin.y),
-                    &run.text,
-                    run.size,
-                    ink,
-                );
-            }
+            // Real weight/slant via the styled channel — the painterless
+            // `DrawText` fallback stays unstyled, and painters that don't
+            // override the styled channel degrade to regular weight.
+            paint_label_clipped_styled(
+                painter,
+                cx.list,
+                clip,
+                origin,
+                &run.text,
+                run.size,
+                ink,
+                flags_style(run.flags),
+            );
             if run.flags.strike {
                 let hair = cx.pt(0.8).max(1.0);
                 cx.list.push_fill_rect(

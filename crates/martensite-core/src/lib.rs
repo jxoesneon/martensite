@@ -48,8 +48,8 @@ pub use martensite_theme::{Theme, ThemeToken, TokenKey};
 pub use node::{ColdNode, HotNode, InlineTextCache, NodeFlags, Rect};
 pub use overlay::{OverlayAnchor, OverlayEntry, OverlayLayer};
 pub use paint::{
-    FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops, ImageData, PaintCommand,
-    PaintList, PaintSegment, PathBuilder,
+    FontResource, FontWeight, GlyphInstance, GlyphRun, GradientStop, GradientStops, ImageData,
+    PaintCommand, PaintList, PaintSegment, PathBuilder, TextStyle,
 };
 #[cfg(feature = "devtools-timemachine")]
 pub use snapshot::{ArenaRestoreError, ArenaState, TimemachineState};

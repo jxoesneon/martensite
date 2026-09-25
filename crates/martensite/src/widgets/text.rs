@@ -20,10 +20,12 @@ use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite_access::CaretTracker;
 use martensite_core::widget::{LayoutConstraints, LayoutContext, PaintContext, Widget};
-use martensite_core::{FontResource, GlyphInstance, GlyphRun, InlineTextCache, Rect};
+use martensite_core::{
+    FontResource, FontWeight, GlyphInstance, GlyphRun, InlineTextCache, Rect, TextStyle,
+};
 use martensite_text::{
     Attrs, BidiDirection, CachedShape, Family, FontManager, Metrics, Shaper, ShapingOptions,
-    TextMetrics, TextShapeCache,
+    StyleBits, TextMetrics, TextShapeCache,
 };
 
 /// A text widget that displays a string with specified font properties.
@@ -62,6 +64,14 @@ pub struct Text {
     pub line_height: Option<f32>,
     /// Font family name.
     pub family: String,
+    /// Font weight on the OpenType 1–1000 scale
+    /// ([`FontWeight::NORMAL`] by default).
+    pub font_weight: FontWeight,
+    /// Whether the text renders with an italic slant.
+    pub italic: bool,
+    /// Letter spacing (tracking) in EM units; `None` leaves the font's
+    /// default spacing.
+    pub letter_spacing: Option<f32>,
     /// Optional text color (Oklab).
     pub color: Option<martensite_theme::Oklab>,
     /// Whether the text direction is RTL.
@@ -118,6 +128,9 @@ impl Text {
             font_size: 16.0,
             line_height: None,
             family: String::new(),
+            font_weight: FontWeight::NORMAL,
+            italic: false,
+            letter_spacing: None,
             color: None,
             rtl: false,
             inline_cache: InlineTextCache::new(),
@@ -171,7 +184,8 @@ impl Text {
     /// Invalidates all cached measurements.
     ///
     /// Call this after directly mutating `content`, `font_size`,
-    /// `family`, `line_height`, or `rtl` fields. This clears the
+    /// `family`, `line_height`, `rtl`, `font_weight`, `italic`, or
+    /// `letter_spacing` fields. This clears the
     /// inline cache, the Tier 2 shape cache, and resets the cached
     /// metrics and bounds so that stale pre-mutation values are not
     /// returned by [`Self::cached_metrics`] or [`Self::cached_bounds`].
@@ -255,6 +269,80 @@ impl Text {
         self.family = family.into();
         self.inline_cache.clear();
         self
+    }
+
+    /// Sets the font weight on the OpenType 1–1000 scale —
+    /// [`FontWeight::MEDIUM`]/[`FontWeight::SEMIBOLD`]/[`FontWeight::BOLD`]
+    /// for the dashboard's semibold-title tier.
+    ///
+    /// Clears the inline cache since the measurement inputs have changed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    /// use martensite_core::FontWeight;
+    ///
+    /// let t = Text::new("Title").font_weight(FontWeight::SEMIBOLD);
+    /// assert_eq!(t.font_weight, FontWeight::SEMIBOLD);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn font_weight(mut self, weight: FontWeight) -> Self {
+        self.font_weight = weight;
+        self.inline_cache.clear();
+        self
+    }
+
+    /// Requests an italic slant for the text.
+    ///
+    /// Clears the inline cache since the measurement inputs have changed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("Emphasis").italic();
+    /// assert!(t.italic);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn italic(mut self) -> Self {
+        self.italic = true;
+        self.inline_cache.clear();
+        self
+    }
+
+    /// Sets letter spacing (tracking) in EM units — `0.02` widens each
+    /// advance by 2% of the em, the B1 title-tier tracking range.
+    ///
+    /// Clears the inline cache since the measurement inputs have changed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Text;
+    ///
+    /// let t = Text::new("ALARMS").letter_spacing(0.03);
+    /// assert_eq!(t.letter_spacing, Some(0.03));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn letter_spacing(mut self, em: f32) -> Self {
+        self.letter_spacing = Some(em);
+        self.inline_cache.clear();
+        self
+    }
+
+    /// The [`TextStyle`] this widget shapes with — the same axis the
+    /// emitted [`GlyphRun`]s carry as metadata.
+    fn text_style(&self) -> TextStyle {
+        TextStyle {
+            weight: self.font_weight,
+            italic: self.italic,
+            letter_spacing: self.letter_spacing,
+        }
     }
 
     /// Sets the text color.
@@ -541,8 +629,19 @@ impl Text {
             None
         };
 
-        // Build attrs from widget properties
-        let mut attrs = Attrs::new();
+        // Build attrs from widget properties — the weight/slant/tracking
+        // axis flows straight through to cosmic-text.
+        let style = self.text_style();
+        let mut attrs = Attrs::new()
+            .weight(martensite_text::Weight(style.weight.0))
+            .style(if style.italic {
+                martensite_text::Style::Italic
+            } else {
+                martensite_text::Style::Normal
+            });
+        if let Some(em) = style.letter_spacing {
+            attrs = attrs.letter_spacing(em);
+        }
         if !family.is_empty() {
             attrs.family = Family::Name(&family);
         }
@@ -580,6 +679,11 @@ impl Text {
                 &family,
                 line_height,
             )
+            .with_style_bits(StyleBits::new(
+                style.weight.0,
+                style.italic,
+                style.letter_spacing,
+            ))
         };
 
         if let Some(cached) = self.shape_cache.get(&cache_key) {
@@ -736,16 +840,17 @@ impl Widget for Text {
         // Emit one GlyphRun per (line, font) segment — glyph runs must
         // share a single font, so a line that underwent font fallback is
         // split wherever `font_id` changes.
+        let style = self.text_style();
         for line in &shape.lines {
             let baseline_y = origin.y + line.line_y;
-            let mut run = GlyphRun::new(self.font_size * cx.scale, color);
+            let mut run = GlyphRun::new(self.font_size * cx.scale, color).with_style(style);
             let mut run_font: Option<martensite_text::FontId> = None;
 
             for g in &line.glyphs {
                 if let Some(prev) = run_font {
                     if prev != g.font_id {
                         self.push_glyph_run(cx, run, prev);
-                        run = GlyphRun::new(g.font_size, color);
+                        run = GlyphRun::new(g.font_size, color).with_style(style);
                     }
                 }
                 run.font_size = g.font_size;
@@ -840,6 +945,9 @@ impl Clone for Text {
             font_size: self.font_size,
             line_height: self.line_height,
             family: self.family.clone(),
+            font_weight: self.font_weight,
+            italic: self.italic,
+            letter_spacing: self.letter_spacing,
             color: self.color,
             rtl: self.rtl,
             inline_cache: InlineTextCache::new(),

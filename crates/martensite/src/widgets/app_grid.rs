@@ -54,6 +54,10 @@ pub struct AppEntry {
     pub name: String,
     /// Icon swatch color (stands in for the icon image).
     pub color: [u8; 4],
+    /// Optional status lamp painted as a glyph-marked chip on the
+    /// icon's top-right corner — pair the state with a mark, never
+    /// with the swatch color alone.
+    pub status: Option<crate::widgets::status_dot::Status>,
 }
 
 impl AppEntry {
@@ -68,7 +72,24 @@ impl AppEntry {
         Self {
             name: name.into(),
             color,
+            status: None,
         }
+    }
+
+    /// Attaches a status lamp chip to the tile — the redundant
+    /// color+mark channel for callers that used to encode status in
+    /// the swatch color alone.
+    ///
+    /// ```
+    /// use martensite::widgets::app_grid::AppEntry;
+    /// use martensite::widgets::status_dot::Status;
+    ///
+    /// let e = AppEntry::new("Pump A", [1; 4]).status(Status::Warning);
+    /// assert_eq!(e.status, Some(Status::Warning));
+    /// ```
+    pub fn status(mut self, status: crate::widgets::status_dot::Status) -> Self {
+        self.status = Some(status);
+        self
     }
 }
 
@@ -326,6 +347,16 @@ impl Widget for AppGrid {
             self.page_count(),
             self.apps.len()
         ));
+        // Per-item status chips are paint-only — fold them into the
+        // description so AT hears the same state the chip marks.
+        let statuses = self
+            .apps
+            .iter()
+            .filter_map(|a| a.status.map(|s| format!("{} {}", a.name, s.label())))
+            .collect::<Vec<_>>();
+        if !statuses.is_empty() {
+            node.set_description(statuses.join(", "));
+        }
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -412,6 +443,16 @@ impl Widget for AppGrid {
                 cx.list.push_fill_shape(hr, &shape, HOVER);
             }
             cx.list.push_fill_shape(kr, &shape, app.color);
+            // Status chip straddling the icon's top-right corner —
+            // glyph-marked so the state is never color-only.
+            if let Some(status) = app.status {
+                crate::widgets::status_dot::paint_status_chip(
+                    cx,
+                    Vec2::new(icon.max_x(), icon.min_y()),
+                    7.0 * s,
+                    status,
+                );
+            }
             // Caption.
             let fs = FONT_PT * s;
             let tw = painter

@@ -28,18 +28,6 @@ docs_base = "../../docs/design-standards"
 # --- Path allows ---------------------------------------------------
 # Kept deliberately minimal: findings are the redesign backlog, not
 # noise to silence. Each entry names the subtree and rule it
-# suppresses and carries a justification.
-
-# StackLight lamp segments are color-channel devices by design — the
-# ISA-101 alarm channel in its intended use. Pairing each lamp with a
-# text label inside its scope would defeat the at-a-glance idiom
-# (the alarm row around it already carries the text).
-[[allow]]
-path = "**/StackLight"
-rules = ["color-only-info"]
-
-# LedMatrix is the same idiom — a wall of status LEDs whose meaning
-# IS the color pattern; the SYSTEM page demos it deliberately.
-[[allow]]
-path = "**/LedMatrix"
-rules = ["color-only-info"]
+# suppresses and carries a justification. An allow that suppresses
+# nothing in ANY frame is stale — `dump_design_lints` fails on stale
+# allows, so keep this section pruned to live suppressions only.

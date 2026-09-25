@@ -173,6 +173,9 @@ pub struct ShapeCacheKey {
     pub writing_mode: WritingModeBits,
     /// Hash of the resolved fallback chain.
     pub fallback_hash: FallbackHash,
+    /// Weight/slant/tracking axis — regular text must never hit
+    /// semibold-shaped entries and vice versa.
+    pub style_bits: StyleBits,
 }
 
 /// Quantized max width for cache keying.
@@ -306,6 +309,108 @@ impl WritingModeBits {
     }
 }
 
+/// Quantized weight/style axis for cache keying.
+///
+/// Packing the OpenType weight, slant, and letter spacing into the key
+/// keeps differently-styled shapings from colliding — a semibold-shaped
+/// entry must never satisfy a regular-weight lookup for the same text.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::cache::StyleBits;
+///
+/// let regular = StyleBits::regular();
+/// let bold = StyleBits::new(700, false, None);
+/// assert_ne!(regular, bold);
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StyleBits {
+    /// OpenType font weight (1–1000); 400 = regular.
+    pub weight: u16,
+    /// Whether an italic/oblique slant was requested.
+    pub italic: bool,
+    /// Letter spacing (tracking, EM) as raw `f32` bits; `0` = font default.
+    pub letter_spacing_bits: u32,
+}
+
+impl StyleBits {
+    /// The default regular style (weight 400, upright, no tracking).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cache::StyleBits;
+    ///
+    /// assert_eq!(StyleBits::regular(), StyleBits::default());
+    /// ```
+    #[inline]
+    pub const fn regular() -> Self {
+        Self {
+            weight: 400,
+            italic: false,
+            letter_spacing_bits: 0,
+        }
+    }
+
+    /// Creates a `StyleBits` from a weight, slant flag, and optional
+    /// letter spacing in EM units.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cache::StyleBits;
+    ///
+    /// let s = StyleBits::new(600, true, Some(0.02));
+    /// assert_eq!(s.weight, 600);
+    /// assert!(s.italic);
+    /// ```
+    #[inline]
+    pub fn new(weight: u16, italic: bool, letter_spacing: Option<f32>) -> Self {
+        Self {
+            weight,
+            italic,
+            letter_spacing_bits: letter_spacing.map_or(0, |em| {
+                if em.is_finite() {
+                    em.to_bits()
+                } else {
+                    // Non-finite tracking gets a dedicated sentinel —
+                    // keying it as 0 would poison the regular entry
+                    // with a shape whose advances absorbed NaN.
+                    u32::MAX
+                }
+            }),
+        }
+    }
+
+    /// Returns the letter spacing in EM units (`None` when the font
+    /// default applies).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cache::StyleBits;
+    ///
+    /// assert_eq!(StyleBits::regular().letter_spacing(), None);
+    /// assert_eq!(StyleBits::new(400, false, Some(0.5)).letter_spacing(), Some(0.5));
+    /// ```
+    #[inline]
+    pub fn letter_spacing(self) -> Option<f32> {
+        if self.letter_spacing_bits == 0 {
+            None
+        } else {
+            Some(f32::from_bits(self.letter_spacing_bits))
+        }
+    }
+}
+
+impl Default for StyleBits {
+    #[inline]
+    fn default() -> Self {
+        Self::regular()
+    }
+}
+
 /// Hash of a resolved fallback chain, used in cache keys.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct FallbackHash(pub u64);
@@ -431,7 +536,31 @@ impl ShapeCacheKey {
             direction: DirectionBits::from_direction(direction),
             writing_mode: WritingModeBits::from_mode(writing_mode),
             fallback_hash: FallbackHash::from_families(fallback_families.iter().copied()),
+            style_bits: StyleBits::regular(),
         }
+    }
+
+    /// Returns a copy of this key with the weight/style axis set.
+    ///
+    /// `with_options` produces a regular-style key; callers shaping
+    /// with explicit [`Attrs`](crate::Attrs) set the real axis here so
+    /// regular text never hits a semibold-shaped entry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::cache::{ShapeCacheKey, StyleBits};
+    /// use martensite_text::font::FontId;
+    ///
+    /// let key = ShapeCacheKey::new(FontId::dummy(), 16.0, "hi")
+    ///     .with_style_bits(StyleBits::new(600, false, None));
+    /// assert_eq!(key.style_bits.weight, 600);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_style_bits(mut self, style_bits: StyleBits) -> Self {
+        self.style_bits = style_bits;
+        self
     }
 }
 
@@ -900,6 +1029,35 @@ mod tests {
             &["Noto Sans"],
         );
         assert_ne!(key_no_fallback, key_with_fallback);
+    }
+
+    #[test]
+    fn shape_cache_key_separates_weight() {
+        let base = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        assert_eq!(base.style_bits, StyleBits::regular());
+
+        let semibold = base.with_style_bits(StyleBits::new(600, false, None));
+        let bold = base.with_style_bits(StyleBits::new(700, false, None));
+        assert_ne!(base, semibold);
+        assert_ne!(semibold, bold);
+
+        // A regular lookup must miss a semibold entry and vice versa.
+        let mut cache = TextShapeCache::new(1024 * 1024);
+        cache.insert(semibold, make_cached_shape(100.0, 20.0, 1));
+        assert!(cache.get(&base).is_none());
+        assert!(cache.get(&semibold).is_some());
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn shape_cache_key_separates_style_and_tracking() {
+        let base = ShapeCacheKey::new(FontId(dummy_font_id()), 16.0, "Hello");
+        let italic = base.with_style_bits(StyleBits::new(400, true, None));
+        let tracked = base.with_style_bits(StyleBits::new(400, false, Some(0.03)));
+        assert_ne!(base, italic);
+        assert_ne!(base, tracked);
+        assert_ne!(italic, tracked);
+        assert_eq!(tracked.style_bits.letter_spacing(), Some(0.03));
     }
 
     #[test]

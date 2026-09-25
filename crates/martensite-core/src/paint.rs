@@ -370,6 +370,187 @@ impl GlyphInstance {
     }
 }
 
+/// Font weight on the OpenType/CSS 1–1000 scale.
+///
+/// `martensite-core` cannot depend on a font database (the dependency
+/// direction is text → core), so this is the narrow weight carrier the
+/// [`TextShaper`] seam and [`GlyphRun`] metadata use. It mirrors
+/// `fontdb::Weight`'s `u16` representation — shaping layers convert
+/// with `fontdb::Weight(w.0)`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::paint::FontWeight;
+///
+/// assert_eq!(FontWeight::NORMAL, FontWeight(400));
+/// assert!(FontWeight::BOLD.is_bold());
+/// assert!(!FontWeight::SEMIBOLD.is_bold());
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FontWeight(pub u16);
+
+impl FontWeight {
+    /// Thin weight (100).
+    pub const THIN: Self = Self(100);
+    /// Extra-light weight (200).
+    pub const EXTRA_LIGHT: Self = Self(200);
+    /// Light weight (300).
+    pub const LIGHT: Self = Self(300);
+    /// Normal/regular weight (400) — the default.
+    pub const NORMAL: Self = Self(400);
+    /// Regular weight (400) — alias for [`Self::NORMAL`].
+    pub const REGULAR: Self = Self::NORMAL;
+    /// Medium weight (500).
+    pub const MEDIUM: Self = Self(500);
+    /// Semibold weight (600).
+    pub const SEMIBOLD: Self = Self(600);
+    /// Bold weight (700) — the WCAG "bold" threshold.
+    pub const BOLD: Self = Self(700);
+    /// Extra-bold weight (800).
+    pub const EXTRA_BOLD: Self = Self(800);
+    /// Black weight (900).
+    pub const BLACK: Self = Self(900);
+
+    /// Returns `true` when this weight counts as "bold" for the
+    /// WCAG 2.2 large-text classification (≥14pt bold passes at 3:1).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::paint::FontWeight;
+    ///
+    /// assert!(FontWeight::BOLD.is_bold());
+    /// assert!(!FontWeight::NORMAL.is_bold());
+    /// ```
+    #[inline]
+    pub const fn is_bold(self) -> bool {
+        self.0 >= Self::BOLD.0
+    }
+}
+
+impl Default for FontWeight {
+    #[inline]
+    fn default() -> Self {
+        Self::NORMAL
+    }
+}
+
+/// The style axis a shaped-text emission carries: weight, slant, and
+/// letter spacing (tracking).
+///
+/// `TextStyle` is the opt-in channel on the [`TextShaper`] seam —
+/// callers that only pass `(text, size, color)` get
+/// [`TextStyle::REGULAR`]; widgets and dashboard code that need
+/// semibold titles, real italics, or tracked caps pass a `TextStyle`
+/// through `paint_shaped_text_styled` and friends.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::paint::{FontWeight, TextStyle};
+///
+/// let title = TextStyle::default()
+///     .weight(FontWeight::SEMIBOLD)
+///     .letter_spacing(0.03);
+/// assert_eq!(title.weight, FontWeight::SEMIBOLD);
+/// assert!(!title.italic);
+/// assert!(TextStyle::REGULAR.is_regular());
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct TextStyle {
+    /// OpenType font weight (1–1000); [`FontWeight::NORMAL`] by default.
+    pub weight: FontWeight,
+    /// Whether an italic/oblique slant is requested.
+    pub italic: bool,
+    /// Letter spacing (tracking) in EM units; `None` leaves the font's
+    /// default spacing.
+    pub letter_spacing: Option<f32>,
+}
+
+impl TextStyle {
+    /// The default style: regular weight, upright, default tracking.
+    pub const REGULAR: Self = Self {
+        weight: FontWeight::NORMAL,
+        italic: false,
+        letter_spacing: None,
+    };
+
+    /// Sets the font weight.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::paint::{FontWeight, TextStyle};
+    ///
+    /// let s = TextStyle::default().weight(FontWeight::BOLD);
+    /// assert_eq!(s.weight, FontWeight::BOLD);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn weight(mut self, weight: FontWeight) -> Self {
+        self.weight = weight;
+        self
+    }
+
+    /// Requests an italic slant.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::paint::TextStyle;
+    ///
+    /// let s = TextStyle::default().italic();
+    /// assert!(s.italic);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn italic(mut self) -> Self {
+        self.italic = true;
+        self
+    }
+
+    /// Sets letter spacing (tracking) in EM units.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::paint::TextStyle;
+    ///
+    /// let s = TextStyle::default().letter_spacing(0.02);
+    /// assert_eq!(s.letter_spacing, Some(0.02));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn letter_spacing(mut self, em: f32) -> Self {
+        self.letter_spacing = Some(em);
+        self
+    }
+
+    /// Returns `true` when this is the default regular style — callers
+    /// can take the cheaper unstyled shaping path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::paint::{FontWeight, TextStyle};
+    ///
+    /// assert!(TextStyle::REGULAR.is_regular());
+    /// assert!(!TextStyle::default().weight(FontWeight::BOLD).is_regular());
+    /// ```
+    #[inline]
+    pub fn is_regular(&self) -> bool {
+        *self == Self::REGULAR
+    }
+}
+
+impl Default for TextStyle {
+    #[inline]
+    fn default() -> Self {
+        Self::REGULAR
+    }
+}
+
 /// A run of glyphs sharing a font, size, and color.
 ///
 /// All glyph positions are pre-resolved so the backend can blit them without
@@ -405,6 +586,14 @@ pub struct GlyphRun {
     /// glyph outlines; when absent, they fall back to bounding-box
     /// rectangles.
     pub font: Option<FontResource>,
+    /// The style axis the run was shaped with (weight, slant, tracking).
+    ///
+    /// Pure metadata — backends rasterize from `font`, which already
+    /// encodes the resolved face — but paint-level audits need it:
+    /// WCAG 2.2 large text is ≥18pt *or* ≥14pt bold, and that second
+    /// branch is unreachable without a weight on the run. Defaults to
+    /// [`TextStyle::REGULAR`].
+    pub style: TextStyle,
 }
 
 impl GlyphRun {
@@ -426,6 +615,7 @@ impl GlyphRun {
             color,
             glyphs: Vec::new(),
             font: None,
+            style: TextStyle::REGULAR,
         }
     }
 
@@ -461,6 +651,39 @@ impl GlyphRun {
     /// ```
     pub fn set_font(&mut self, font: FontResource) {
         self.font = Some(font);
+    }
+
+    /// Attaches the shaping [`TextStyle`] to this run so paint-level
+    /// audits can see the weight axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::paint::{FontWeight, GlyphRun, TextStyle};
+    ///
+    /// let run = GlyphRun::new(16.0, [0, 0, 0, 255])
+    ///     .with_style(TextStyle::default().weight(FontWeight::BOLD));
+    /// assert!(run.style.weight.is_bold());
+    /// ```
+    #[must_use]
+    pub fn with_style(mut self, style: TextStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Sets the shaping [`TextStyle`] on this run in place.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::paint::{FontWeight, GlyphRun, TextStyle};
+    ///
+    /// let mut run = GlyphRun::new(16.0, [0, 0, 0, 255]);
+    /// run.set_style(TextStyle::default().weight(FontWeight::SEMIBOLD));
+    /// assert_eq!(run.style.weight, FontWeight::SEMIBOLD);
+    /// ```
+    pub fn set_style(&mut self, style: TextStyle) {
+        self.style = style;
     }
 
     /// Appends a single glyph instance.
@@ -1904,6 +2127,26 @@ pub trait TextShaper {
         color: [u8; 4],
     );
 
+    /// [`paint_shaped_text`](Self::paint_shaped_text) with an explicit
+    /// style axis — font weight, italic slant, and letter spacing.
+    ///
+    /// The default implementation ignores `style` and defers to
+    /// [`paint_shaped_text`](Self::paint_shaped_text), so existing
+    /// implementors keep working unchanged; painters backed by a real
+    /// shaping engine override it to honor weight/slant/tracking.
+    fn paint_shaped_text_styled(
+        &self,
+        list: &mut PaintList,
+        origin: Point,
+        text: &str,
+        size_px: f32,
+        color: [u8; 4],
+        style: TextStyle,
+    ) {
+        let _ = style;
+        self.paint_shaped_text(list, origin, text, size_px, color);
+    }
+
     /// Advance width of `text` at `size_px` in device pixels, measured
     /// through the same shaping pipeline as
     /// [`paint_shaped_text`](Self::paint_shaped_text). Implementations
@@ -1914,6 +2157,17 @@ pub trait TextShaper {
         None
     }
 
+    /// [`measure_text`](Self::measure_text) with an explicit style
+    /// axis — a semibold run is wider than the same text at regular
+    /// weight, so styled callers should measure through this channel.
+    ///
+    /// The default implementation ignores `style` and defers to
+    /// [`measure_text`](Self::measure_text).
+    fn measure_text_styled(&self, text: &str, size_px: f32, style: TextStyle) -> Option<f32> {
+        let _ = style;
+        self.measure_text(text, size_px)
+    }
+
     /// Approximate ink bounds of `text` painted at `origin`, in device
     /// pixels — the box [`paint_shaped_text`](Self::paint_shaped_text)
     /// would mark. Implementations that shape can report real glyph
@@ -1922,6 +2176,21 @@ pub trait TextShaper {
     /// clip — a fully clipped label is dead paint work.
     fn ink_bounds(&self, _origin: Point, _text: &str, _size_px: f32) -> Option<Rect> {
         None
+    }
+
+    /// [`ink_bounds`](Self::ink_bounds) with an explicit style axis.
+    ///
+    /// The default implementation ignores `style` and defers to
+    /// [`ink_bounds`](Self::ink_bounds).
+    fn ink_bounds_styled(
+        &self,
+        origin: Point,
+        text: &str,
+        size_px: f32,
+        style: TextStyle,
+    ) -> Option<Rect> {
+        let _ = style;
+        self.ink_bounds(origin, text, size_px)
     }
 }
 

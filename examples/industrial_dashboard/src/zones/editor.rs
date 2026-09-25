@@ -799,7 +799,7 @@ fn work_order_form(model: &PlantModel) -> Page {
         // A form column taller than a short zone — scroll-mounted so
         // the footer buttons never crush to zero.
         crate::zone::fill(crate::zone::scroll(primary)),
-        &model.zone_width,
+        &model.zone_width[2],
     )
     .rail("Work order", wo_rail(model))
 }
@@ -1034,7 +1034,7 @@ fn scheduling(model: &PlantModel) -> Page {
         // Form column — scroll-mounted so a short zone scrolls rather
         // than crushing the trailing rows.
         crate::zone::fill(crate::zone::scroll(primary)),
-        &model.zone_width,
+        &model.zone_width[2],
     )
     .rail("Work order", wo_rail(model))
 }
@@ -1369,7 +1369,7 @@ fn appearance(model: &PlantModel) -> Page {
     Page::new(
         Variant::MasterLeft,
         crate::zone::fill(primary),
-        &model.zone_width,
+        &model.zone_width[2],
     )
     .rail("Section", nav)
 }
@@ -1816,7 +1816,7 @@ fn command_surface(model: &PlantModel) -> Page {
     Page::new(
         Variant::MasterDetail,
         crate::zone::fill(primary),
-        &model.zone_width,
+        &model.zone_width[2],
     )
     .strip(strip().child(chrome_view).child_flex(DummyWidget, 1.0))
     .rail("Commands", registry)
@@ -2014,7 +2014,7 @@ fn console_lock(model: &PlantModel) -> Page {
     Page::new(
         Variant::Centered,
         crate::zone::fill(crate::zone::scroll(primary)),
-        &model.zone_width,
+        &model.zone_width[2],
     )
 }
 
@@ -2183,7 +2183,7 @@ fn annotation(model: &PlantModel) -> Page {
     Page::new(
         Variant::Centered,
         crate::zone::fill(primary),
-        &model.zone_width,
+        &model.zone_width[2],
     )
 }
 
@@ -2483,11 +2483,15 @@ fn wo_rail(model: &PlantModel) -> Flex {
 
 /// `work_orders` store signature for rail re-seats.
 fn wo_sig(m: &PlantModel) -> u64 {
+    // FNV-1a 64-bit — the offset basis and prime are the standard hash
+    // constants, not colors.
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
     let wos = m.work_orders.get();
-    let mut h = 0xcbf29ce484222325u64;
+    let mut h = FNV_OFFSET;
     for w in &wos {
-        h = (h ^ w.id as u64).wrapping_mul(0x100000001b3);
-        h = (h ^ w.status as u64).wrapping_mul(0x100000001b3);
+        h = (h ^ w.id as u64).wrapping_mul(FNV_PRIME);
+        h = (h ^ w.status as u64).wrapping_mul(FNV_PRIME);
     }
     h ^ wos.len() as u64
 }

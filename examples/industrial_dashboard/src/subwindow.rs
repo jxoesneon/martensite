@@ -113,7 +113,14 @@ impl SubWindow {
         let painter = martensite::text_paint::shared_painter();
         let content = Container::new().padding_uniform(16.0).child(
             Flex::column().gap(10.0).children([
-                Box::new(Text::new("Console — secondary OS window")) as Box<dyn martensite::core::Widget>,
+                // Title-tier heading (spec B1): 15 pt semibold — the
+                // console window's one heading gets the same tier as
+                // the shell's title chrome.
+                Box::new(
+                    Text::new("Console — secondary OS window")
+                        .font_size(15.0)
+                        .font_weight(martensite::core::FontWeight::SEMIBOLD),
+                ) as Box<dyn martensite::core::Widget>,
                 Box::new(
                     Banner::new(Severity::Info, "Same arena, separate surface")
                         .with_text_painter(painter.clone()),

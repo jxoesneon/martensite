@@ -162,14 +162,20 @@ impl Widget for Disclosure {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
-        // Header toggles on release and on Space/Enter.
+        // Header toggles on release and on Space/Enter — the
+        // activation keys of the APG disclosure pattern; other keys
+        // fall through (previously any KeyPressed toggled).
         let header_hit = matches!(
             cx.event,
             WidgetEvent::PointerReleased {
                 position,
                 button: PointerButton::Primary,
             } if self.header_rect.contains(*position)
-        ) || matches!(cx.event, WidgetEvent::KeyPressed { .. });
+        ) || matches!(
+            cx.event,
+            WidgetEvent::KeyPressed { key, repeat, .. }
+                if matches!(key.as_str(), "Enter" | "Space" | " ") && !repeat
+        );
         if header_hit {
             self.open = !self.open;
             // Size changed — repaint dirties the node and the next
@@ -306,6 +312,34 @@ mod tests {
         assert_eq!(d.event(&mut ecx), EventResponse::RequestRepaint);
         assert!(d.open);
         assert_eq!(d.child_count(), 1);
+    }
+
+    fn key_event(d: &mut Disclosure, k: &str) -> EventResponse {
+        let ev = WidgetEvent::KeyPressed {
+            key: k.to_string(),
+            repeat: false,
+        };
+        d.event(&mut EventContext {
+            event: &ev,
+            bounds: d.cached_bounds,
+            scale: 1.0,
+        })
+    }
+
+    #[test]
+    fn disclosure_key_toggle_restricted_to_activation_keys() {
+        let mut d = Disclosure::new("More").child(crate::widgets::text::Text::new("x"));
+        // Any non-activation key is ignored — the header used to
+        // toggle on every KeyPressed.
+        assert_eq!(key_event(&mut d, "a"), EventResponse::Ignored);
+        assert!(!d.open);
+        assert_eq!(key_event(&mut d, "ArrowDown"), EventResponse::Ignored);
+        assert!(!d.open);
+        for k in ["Enter", " ", "Space"] {
+            assert_eq!(key_event(&mut d, k), EventResponse::RequestRepaint);
+            assert!(d.open);
+            d.set_open(false);
+        }
     }
 
     #[test]

@@ -27,8 +27,10 @@ use martensite_theme::TokenKey;
 
 const GAP_PT: f32 = 2.0;
 const RADIUS_PT: f32 = 2.0;
+/// Zero-cell fallback when the theme carries no `InsetColor`.
 const TRACK: [u8; 4] = [235, 237, 240, 255];
-const RAMP_LO: [u8; 4] = [155, 233, 168, 255]; // GitHub green ramp
+/// Hot-end fallback when the theme carries no `SeriesColor1` — the
+/// historical GitHub-green deep end.
 const RAMP_HI: [u8; 4] = [33, 110, 57, 255];
 
 /// An intensity grid — see the module docs.
@@ -174,15 +176,21 @@ impl HeatMap {
         None
     }
 
-    /// Ramp color for an intensity (`0..=max`).
-    fn ramp(&self, value: f32, max: f32) -> [u8; 4] {
-        if value <= 0.0 {
-            return TRACK;
+    /// Sequential ramp for one cell: `track` at/below zero, then a
+    /// `lo`→`hi` lerp for positive values. Endpoints are resolved by
+    /// the caller so the ramp tracks the theme's categorical ink.
+    fn ramp(&self, value: f32, max: f32, track: [u8; 4], lo: [u8; 4], hi: [u8; 4]) -> [u8; 4] {
+        // NaN/±inf cells read as "no data" — the inset well — matching
+        // the a11y path which skips non-finite cells; without the
+        // finite check NaN survived `<= 0.0` and `as u8` cast it to
+        // opaque black.
+        if !value.is_finite() || value <= 0.0 || max <= 0.0 {
+            return track;
         }
         let t = (value / max).clamp(0.0, 1.0);
         let mut c = [0u8; 4];
         for i in 0..3 {
-            c[i] = (RAMP_LO[i] as f32 + (RAMP_HI[i] as f32 - RAMP_LO[i] as f32) * t) as u8;
+            c[i] = (lo[i] as f32 + (hi[i] as f32 - lo[i] as f32) * t) as u8;
         }
         c[3] = 255;
         c
@@ -212,6 +220,39 @@ impl Widget for HeatMap {
         node.set_role(accesskit::Role::Image);
         node.set_label("Heat map");
         node.set_value(format!("{} by {}", self.rows, self.cols));
+        // A real value summary — dimensions, occupancy, min/max/mean —
+        // so the grid's data is legible without the pixels (D2).
+        let (mut lo, mut hi, mut sum, mut n, mut nonzero) =
+            (f32::MAX, f32::MIN, 0.0f32, 0usize, 0usize);
+        for &v in &self.cells {
+            // Non-finite = "no data", matching the ramp's track fill —
+            // an inf cell would otherwise poison max/mean (max=inf
+            // flattens every finite cell to `lo`).
+            if !v.is_finite() {
+                continue;
+            }
+            lo = lo.min(v);
+            hi = hi.max(v);
+            sum += v;
+            n += 1;
+            if v != 0.0 {
+                nonzero += 1;
+            }
+        }
+        node.set_description(if n == 0 {
+            format!("{} by {} grid, no data", self.rows, self.cols)
+        } else {
+            format!(
+                "{} by {} grid, {} of {} cells non-zero, min {:.2}, max {:.2}, mean {:.2}",
+                self.rows,
+                self.cols,
+                nonzero,
+                self.cells.len(),
+                lo,
+                hi,
+                sum / n as f32,
+            )
+        });
         if !self.enabled {
             node.set_disabled();
         }
@@ -246,10 +287,26 @@ impl Widget for HeatMap {
         let max = self.max_value();
         let radius = cx.pt(RADIUS_PT);
         let shape = martensite_core::shape::Shape::rounded(radius);
+        // Resolve the ramp once per paint: the zero state reads as the
+        // inset well, the hot end is the theme's primary series ink.
+        // (Resolving each cell through `AccentColor` — as this used to —
+        // flattened the whole ramp to a single flat accent fill.)
+        let track = cx.color(TokenKey::InsetColor, TRACK);
+        let hi = crate::widgets::series_color(cx, 0, None, RAMP_HI);
+        // Low floor: 35% toward the hot hue so near-zero cells stay
+        // legible against `track` instead of fading into it.
+        let lo = {
+            let mut c = [0u8; 4];
+            for i in 0..3 {
+                c[i] = (track[i] as f32 * 0.65 + hi[i] as f32 * 0.35) as u8;
+            }
+            c[3] = 255;
+            c
+        };
         for row in 0..self.rows {
             for col in 0..self.cols {
                 let r = self.cell_rect(row, col);
-                let mut color = cx.color(TokenKey::AccentColor, self.ramp(self.get(row, col), max));
+                let mut color = self.ramp(self.get(row, col), max, track, lo, hi);
                 if self.hovered == Some((row, col)) {
                     // Darken slightly for the hover cue.
                     for c in color.iter_mut().take(3) {
@@ -314,9 +371,10 @@ mod tests {
     #[test]
     fn ramp_scales_to_max() {
         let hm = HeatMap::new(1, 2).set(0, 0, 10.0).set(0, 1, 5.0);
-        assert_eq!(hm.ramp(0.0, 10.0), TRACK);
-        let hi = hm.ramp(10.0, 10.0);
-        assert_eq!(hi[1], RAMP_HI[1]); // max → deep end
+        let (track, lo, hi) = (TRACK, [155, 233, 168, 255], RAMP_HI);
+        assert_eq!(hm.ramp(0.0, 10.0, track, lo, hi), track);
+        let hot = hm.ramp(10.0, 10.0, track, lo, hi);
+        assert_eq!(hot[1], hi[1]); // max → deep end
     }
 
     #[test]
@@ -340,6 +398,19 @@ mod tests {
         });
         assert_eq!(hm.take_hovered(), Some((1, 1, 7.0)));
         assert_eq!(hm.take_hovered(), None);
+    }
+
+    #[test]
+    fn a11y_description_summarizes_values() {
+        let hm = HeatMap::new(2, 2).set(0, 0, 2.0).set(1, 1, 6.0);
+        let mut node = AccessKitNode::new(accesskit::Role::Unknown);
+        hm.accessibility(&mut node);
+        let desc = node.description().unwrap_or_default();
+        assert!(desc.contains("2 by 2"), "{desc}");
+        assert!(desc.contains("2 of 4"), "{desc}");
+        assert!(desc.contains("min 0.00"), "{desc}");
+        assert!(desc.contains("max 6.00"), "{desc}");
+        assert!(desc.contains("mean 2.00"), "{desc}");
     }
 
     #[test]

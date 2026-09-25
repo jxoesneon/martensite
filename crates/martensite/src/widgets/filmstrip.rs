@@ -55,6 +55,10 @@ pub struct Thumbnail {
     pub color: [u8; 4],
     /// Optional decoded image.
     pub image: Option<ImageData>,
+    /// Optional status lamp painted as a glyph-marked chip on the
+    /// tile's top-right corner — pair the state with a mark, never
+    /// with the tile color alone.
+    pub status: Option<crate::widgets::status_dot::Status>,
 }
 
 impl Thumbnail {
@@ -70,6 +74,7 @@ impl Thumbnail {
             label: label.into(),
             color,
             image: None,
+            status: None,
         }
     }
 
@@ -84,6 +89,22 @@ impl Thumbnail {
     /// ```
     pub fn image(mut self, image: ImageData) -> Self {
         self.image = Some(image);
+        self
+    }
+
+    /// Attaches a status lamp chip to the tile — the redundant
+    /// color+mark channel for callers that used to encode status in
+    /// the tile color alone.
+    ///
+    /// ```
+    /// use martensite::widgets::filmstrip::Thumbnail;
+    /// use martensite::widgets::status_dot::Status;
+    ///
+    /// let t = Thumbnail::new("x", [0, 0, 0, 255]).status(Status::Ok);
+    /// assert_eq!(t.status, Some(Status::Ok));
+    /// ```
+    pub fn status(mut self, status: crate::widgets::status_dot::Status) -> Self {
+        self.status = Some(status);
         self
     }
 }
@@ -266,6 +287,16 @@ impl Widget for Filmstrip {
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::List);
         node.set_label(format!("{} — {} thumbnails", self.label, self.thumbs.len()));
+        // Status chips are paint-only — fold per-tile state into the
+        // description so AT parity doesn't depend on pixels.
+        let statuses = self
+            .thumbs
+            .iter()
+            .filter_map(|t| t.status.map(|s| format!("{} {}", t.label, s.label())))
+            .collect::<Vec<_>>();
+        if !statuses.is_empty() {
+            node.set_description(statuses.join(", "));
+        }
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -368,6 +399,16 @@ impl Widget for Filmstrip {
                         cx.color(TokenKey::BorderColor, TILE_BG),
                         [24, 24, 28, 255],
                     ),
+                );
+            }
+            // Status chip straddling the tile's top-right corner —
+            // glyph-marked so the state is never color-only.
+            if let Some(status) = t.status {
+                crate::widgets::status_dot::paint_status_chip(
+                    cx,
+                    Vec2::new(r.max_x(), r.min_y()),
+                    7.0 * s,
+                    status,
                 );
             }
             if self.selected == Some(i) {

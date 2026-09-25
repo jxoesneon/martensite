@@ -107,6 +107,7 @@ use crate::domain::{
     Alarm as DomAlarm, AlarmSeverity, Asset, AssetKind, AssetStatus, CrewMember, MaintTask,
     PlantModel, WoStatus, HISTORY_LEN,
 };
+use crate::model::Palette;
 use crate::zone::{
     band, framed, row, strip, Bound, Page, Swap, Variant, BAND_L, BAND_M, BAND_S, ZONE_GAP,
     ZONE_STACK,
@@ -119,15 +120,12 @@ const SHIFT_START_HOUR: u32 = 6;
 const SHIFT_LEN_MIN: u32 = 480;
 /// Response budget for the oldest unacked alarm (minutes).
 const ALARM_SLA_MIN: u32 = 60;
-/// Crew swimlane colors — index-aligned with `PlantModel::crew`.
-const CREW_COLORS: [[u8; 4]; 6] = [
-    [96, 165, 250, 255],
-    [92, 200, 120, 255],
-    [250, 190, 60, 255],
-    [230, 120, 180, 255],
-    [140, 140, 220, 255],
-    [110, 190, 190, 255],
-];
+/// Crew swimlane colors — index-aligned with `PlantModel::crew`. The
+/// categorical ramp (spec B5): muted Oklab hues held clear of the
+/// ok/warn/error bands so crew identity never reads as an alarm state.
+fn crew_colors() -> [[u8; 4]; 6] {
+    Palette::dark().series
+}
 /// Alarm severity tints (Info / Warning / Critical).
 const SEV_COLORS: [[u8; 4]; 3] = [[96, 165, 250, 255], [250, 190, 60, 255], [230, 70, 60, 255]];
 
@@ -725,8 +723,12 @@ fn trends(m: &PlantModel) -> Page {
     );
     let g2 = GroupBox::new("DERIVED — SAME SIGNALS, OTHER SHAPES").child(g2);
     let primary = Swap::new(&view_sel).view(g0).view(g1).view(g2);
-    Page::new(Variant::Theater, crate::zone::fill(primary), &m.zone_width)
-        .strip(strip().child(view).child_flex(DummyWidget, 1.0))
+    Page::new(
+        Variant::Theater,
+        crate::zone::fill(primary),
+        &m.zone_width[1],
+    )
+    .strip(strip().child(view).child_flex(DummyWidget, 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -864,6 +866,10 @@ fn instruments(m: &PlantModel) -> Page {
                         1.0,
                         Bound::new(ActivityRing::new().label("load goals"), m).push({
                             // cpu + mem live signals plus the OEE rollup.
+                            // Ring ink = the categorical ramp (B5): CPU/MEM
+                            // cool series, OEE the single warm contrast
+                            // slot — never a hand-rolled accent clone.
+                            let series = Palette::dark().series;
                             let mut last = None;
                             move |a: &mut ActivityRing, m| {
                                 let sig =
@@ -871,9 +877,9 @@ fn instruments(m: &PlantModel) -> Page {
                                 if Some(sig) != last {
                                     *a = ActivityRing::new()
                                         .label("load goals")
-                                        .ring("CPU", m.cpu.get() as f32, [96, 165, 250, 255])
-                                        .ring("MEM", m.mem.get() as f32, [110, 180, 130, 255])
-                                        .ring("OEE", m.plant_oee() as f32, [250, 190, 60, 255]);
+                                        .ring("CPU", m.cpu.get() as f32, series[0])
+                                        .ring("MEM", m.mem.get() as f32, series[1])
+                                        .ring("OEE", m.plant_oee() as f32, series[3]);
                                     last = Some(sig);
                                 }
                             }
@@ -1021,8 +1027,12 @@ fn instruments(m: &PlantModel) -> Page {
     );
     let g3 = GroupBox::new("KPI — HEADLINES").child(g3);
     let primary = Swap::new(&view_sel).view(g0).view(g1).view(g2).view(g3);
-    Page::new(Variant::Theater, crate::zone::fill(primary), &m.zone_width)
-        .strip(strip().child(view).child_flex(DummyWidget, 1.0))
+    Page::new(
+        Variant::Theater,
+        crate::zone::fill(primary),
+        &m.zone_width[1],
+    )
+    .strip(strip().child(view).child_flex(DummyWidget, 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -1424,7 +1434,7 @@ fn alarm_board(m: &PlantModel) -> Page {
         // The board is a stack of intrinsic bands — scroll-mounted so a
         // short zone scrolls instead of crushing the trailing band.
         crate::zone::fill(crate::zone::scroll(primary)),
-        &m.zone_width,
+        &m.zone_width[1],
     )
     .rail("Alarm", rail_col)
 }
@@ -1444,10 +1454,11 @@ fn alarm_slices(m: &PlantModel) -> Vec<PieSlice> {
 
 fn treemap_of(m: &PlantModel) -> Treemap {
     let mut t = Treemap::new();
+    let colors = crew_colors();
     for (i, c) in cells(m).iter().enumerate() {
         t = t.item(
             TreemapItem::new(c.name, (c.oee * 100.0).max(1.0) as f32)
-                .color(CREW_COLORS[i % CREW_COLORS.len()]),
+                .color(colors[i % colors.len()]),
         );
     }
     t
@@ -1876,8 +1887,12 @@ fn distributions(m: &PlantModel) -> Page {
         );
     let g2 = GroupBox::new("OEE — SHAPE OF THE FLEET").child(g2);
     let primary = Swap::new(&view_sel).view(g0).view(g1).view(g2);
-    Page::new(Variant::Theater, crate::zone::fill(primary), &m.zone_width)
-        .strip(strip().child(view).child_flex(DummyWidget, 1.0))
+    Page::new(
+        Variant::Theater,
+        crate::zone::fill(primary),
+        &m.zone_width[1],
+    )
+    .strip(strip().child(view).child_flex(DummyWidget, 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -1888,12 +1903,12 @@ fn distributions(m: &PlantModel) -> Page {
 /// maps back to the schedule entry.
 fn week_events(m: &PlantModel) -> Vec<(WeekEvent, usize)> {
     let mut v = Vec::new();
+    let colors = crew_colors();
     for (ti, t) in m.schedule.get().iter().enumerate() {
         let end = (t.start_day + t.days).min(7);
         for d in t.start_day..end {
             v.push((
-                WeekEvent::all_day(t.title, usize::from(d))
-                    .color(CREW_COLORS[t.crew % CREW_COLORS.len()]),
+                WeekEvent::all_day(t.title, usize::from(d)).color(colors[t.crew % colors.len()]),
                 ti,
             ));
         }
@@ -2208,7 +2223,7 @@ fn schedule(m: &PlantModel) -> Page {
         // Three intrinsic bands (gantt / week+timeline / meters) —
         // scroll-mounted so a short zone scrolls rather than crushing.
         crate::zone::fill(crate::zone::scroll(primary)),
-        &m.zone_width,
+        &m.zone_width[1],
     )
     .rail("Task", rail_col)
 }
@@ -2536,7 +2551,7 @@ fn crew(m: &PlantModel) -> Page {
         // Roster strip + clock bands — scroll-mounted so a short zone
         // scrolls rather than crushing the trailing rows.
         crate::zone::fill(crate::zone::scroll(primary)),
-        &m.zone_width,
+        &m.zone_width[1],
     )
     .rail("Member", rail_col)
 }
@@ -2711,7 +2726,7 @@ fn system(m: &PlantModel) -> Page {
     Page::new(
         Variant::MasterDetail,
         crate::zone::fill(primary),
-        &m.zone_width,
+        &m.zone_width[1],
     )
     .rail("Tones", crate::zones::media::tones_bench(m))
 }

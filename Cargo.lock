@@ -2301,6 +2301,7 @@ name = "industrial_dashboard"
 version = "0.19.0"
 dependencies = [
  "accesskit",
+ "fontdb",
  "glam",
  "kurbo",
  "martensite",
@@ -2314,9 +2315,11 @@ dependencies = [
  "martensite-notify",
  "martensite-persist",
  "martensite-print",
+ "martensite-render",
  "martensite-share",
  "martensite-wgpu",
  "parking_lot",
+ "png",
  "pollster",
  "serde_json",
  "tracing-subscriber",

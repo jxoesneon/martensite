@@ -283,7 +283,9 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
         ),
         (
             "Text",
-            Box::new(Text::new("PACKAGING LINE A — RUNNING").font_size(14.0)),
+            // Body tier (13 pt) — a status line is content text, not a
+            // title; the demo rides the semantic scale (spec B1).
+            Box::new(Text::new("PACKAGING LINE A — RUNNING").font_size(13.0)),
         ),
         (
             "Thermometer",

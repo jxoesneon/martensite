@@ -322,7 +322,7 @@ impl Widget for CodeView {
         cx.list.push_fill_shape(
             f(self.bounds),
             &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
-            cx.color(TokenKey::SurfaceColor, FACE),
+            cx.color(TokenKey::InsetColor, FACE),
         );
         let gutter_w = self.gutter_w();
         let line_h = self.line_h();

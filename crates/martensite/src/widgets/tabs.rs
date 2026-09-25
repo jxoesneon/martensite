@@ -50,6 +50,8 @@ use martensite_core::widget::{
 };
 use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
 
+use crate::widgets::badge::BadgeSpec;
+
 /// Tab strip height in logical pixels.
 const STRIP_H: f32 = 32.0;
 /// Tab label ink.
@@ -65,10 +67,13 @@ const TAB_BG: [u8; 4] = [240, 242, 246, 255];
 const CLOSE_W: f32 = 18.0;
 
 /// Case-aware label width estimate (logical pt): the shared 14 pt
-/// per-char estimate plus 24 pt of horizontal padding and `CLOSE_W`
-/// when the tab is closable.
-fn label_width(label: &str, closable: bool) -> f32 {
-    24.0 + crate::text_paint::estimate_label_width(label) + if closable { CLOSE_W } else { 0.0 }
+/// per-char estimate plus 24 pt of horizontal padding, `CLOSE_W` when
+/// the tab is closable, and the badge pill plus its gap when one is
+/// attached.
+fn label_width(label: &str, closable: bool, badge: Option<&BadgeSpec>) -> f32 {
+    24.0 + crate::text_paint::estimate_label_width(label)
+        + if closable { CLOSE_W } else { 0.0 }
+        + badge.map_or(0.0, |b| b.width_pt() + 6.0)
 }
 
 /// Remaps an index after `remove(from)` + `insert(to)` so tracked
@@ -126,6 +131,10 @@ pub struct TabItem {
     /// Whether the trailing `×` affordance is shown (mirrored from
     /// the owning `Tabs::closable`).
     closable: bool,
+    /// Optional badge annotation painted beside the label and folded
+    /// into the accessible name — set via
+    /// [`Tabs::tab_with_badge`]/[`Tabs::set_tab_badge`].
+    badge: Option<BadgeSpec>,
     /// Shared shaped-text painter from the owning `Tabs`.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
@@ -142,6 +151,7 @@ impl TabItem {
             activation_pending: false,
             focus_pending: false,
             closable: false,
+            badge: None,
             text_painter: None,
         }
     }
@@ -152,7 +162,7 @@ impl Widget for TabItem {
         // Approximate label width — real shaping lives in the
         // `martensite-text` pipeline. Case-aware: uppercase/digits run
         // wider than mixed case at the tab font size.
-        let w = cx.pt(label_width(&self.label, self.closable));
+        let w = cx.pt(label_width(&self.label, self.closable, self.badge.as_ref()));
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
             cx.pt(STRIP_H).min(constraints.max_size.y.max(0.0)),
@@ -163,7 +173,12 @@ impl Widget for TabItem {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Tab);
-        node.set_label(self.label.as_str());
+        // A badge annunciates hidden-channel state — it belongs in
+        // the accessible name, not just the paint list.
+        node.set_label(match &self.badge {
+            Some(badge) => format!("{}, {}", self.label, badge.text),
+            None => self.label.clone(),
+        });
         node.set_selected(self.selected);
         node.set_position_in_set(self.pos_in_set);
         node.set_size_of_set(self.set_size);
@@ -233,6 +248,19 @@ impl Widget for TabItem {
         let font_px = cx.pt(14.0);
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let close_w = if self.closable { cx.pt(CLOSE_W) } else { 0.0 };
+        // A badge pill occupies the trailing edge (before the close
+        // affordance); the label clips ahead of it.
+        let pill = self.badge.as_ref().map(|spec| {
+            let pw = f64::from(cx.pt(spec.width_pt()));
+            let ph = f64::from(cx.pt(BadgeSpec::height_pt()));
+            let x1 = f64::from(b.max_x() - cx.pt(8.0) - close_w);
+            let y0 = f64::from(b.min_y()) + (f64::from(b.height()) - ph) / 2.0;
+            kurbo::Rect::new(x1 - pw, y0, x1, y0 + ph)
+        });
+        let label_right = pill.map_or_else(
+            || b.max_x() - cx.pt(8.0) - close_w,
+            |p| p.x0 as f32 - cx.pt(4.0),
+        );
         // Clip the label to the tab slot — a long title can't spill
         // into the neighbouring tab or under the close affordance.
         let text_x = b.min_x() + cx.pt(12.0);
@@ -242,7 +270,7 @@ impl Widget for TabItem {
             kurbo::Rect::new(
                 f64::from(text_x),
                 f64::from(b.min_y()),
-                f64::from(b.max_x() - cx.pt(8.0) - close_w),
+                f64::from(label_right),
                 f64::from(b.max_y()),
             ),
             kurbo::Point::new(
@@ -272,6 +300,9 @@ impl Widget for TabItem {
                 glyph_px,
                 cx.color(TokenKey::TextMutedColor, INK),
             );
+        }
+        if let (Some(spec), Some(pill)) = (&self.badge, pill) {
+            crate::widgets::badge::paint_spec_pill(spec, painter, cx, pill);
         }
     }
 }
@@ -308,7 +339,7 @@ impl TabStrip {
     /// Associated (no `&self`) so it stays callable while `self.tabs`
     /// is mutably borrowed in `layout`.
     fn natural_width(tab: &TabItem, scale: f32) -> f32 {
-        label_width(&tab.label, tab.closable) * scale
+        label_width(&tab.label, tab.closable, tab.badge.as_ref()) * scale
     }
 
     /// Clamps `scroll_x` into `0..=overflow` using the stored
@@ -664,6 +695,82 @@ impl Tabs {
         });
         self.sync_children();
         self
+    }
+
+    /// Appends a tab carrying a badge annotation — a
+    /// [`BadgeSpec`](crate::widgets::badge::BadgeSpec) painted as a
+    /// small pill beside the label and folded into the tab's
+    /// accessible name (`"{label}, {badge}"`). For the C2-lite
+    /// count+severity annunciation prefer
+    /// [`BadgeSpec::count`](crate::widgets::badge::BadgeSpec::count)
+    /// plus [`BadgeSpec::severity`](crate::widgets::badge::BadgeSpec::severity).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::BadgeSpec;
+    /// use martensite::widgets::{Tabs, Text};
+    ///
+    /// let tabs = Tabs::new().tab_with_badge("Alarms", Text::new("panel"), BadgeSpec::count(3));
+    /// assert_eq!(tabs.tab_badge(0).unwrap().text, "3");
+    /// ```
+    #[must_use]
+    pub fn tab_with_badge(
+        mut self,
+        label: impl Into<String>,
+        panel: impl Widget + 'static,
+        badge: BadgeSpec,
+    ) -> Self {
+        let mut item = TabItem::new(label);
+        item.badge = Some(badge);
+        self.strip.tabs.push(item);
+        self.panels.panels.push(TabPanelChild {
+            content: Box::new(panel),
+            shown: self.panels.panels.is_empty(),
+            bounds: None,
+        });
+        self.sync_children();
+        self
+    }
+
+    /// Sets (`Some`) or clears (`None`) the badge on the tab at
+    /// `index` — the live-update path for annunciation counts sourced
+    /// from an always-mounted model rather than the tab's own panel.
+    /// Out-of-range indices are ignored.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::BadgeSpec;
+    /// use martensite::widgets::Tabs;
+    ///
+    /// let mut tabs = Tabs::with_labels(["A", "B"]);
+    /// tabs.set_tab_badge(1, Some(BadgeSpec::count(7)));
+    /// assert_eq!(tabs.tab_badge(1).unwrap().text, "7");
+    /// tabs.set_tab_badge(1, None);
+    /// assert!(tabs.tab_badge(1).is_none());
+    /// ```
+    pub fn set_tab_badge(&mut self, index: usize, badge: Option<BadgeSpec>) {
+        if let Some(tab) = self.strip.tabs.get_mut(index) {
+            tab.badge = badge;
+        }
+    }
+
+    /// The badge on the tab at `index`, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::BadgeSpec;
+    /// use martensite::widgets::Tabs;
+    ///
+    /// let mut tabs = Tabs::with_labels(["A"]);
+    /// tabs.set_tab_badge(0, Some(BadgeSpec::new("new")));
+    /// assert_eq!(tabs.tab_badge(0).unwrap().text, "new");
+    /// ```
+    #[inline]
+    pub fn tab_badge(&self, index: usize) -> Option<&BadgeSpec> {
+        self.strip.tabs.get(index).and_then(|t| t.badge.as_ref())
     }
 
     /// Sets the accessible label.
@@ -1444,6 +1551,34 @@ mod tests {
             .accessibility(&mut panel_node);
         assert_eq!(panel_node.role(), accesskit::Role::TabPanel);
         assert!(panel_node.is_hidden());
+    }
+
+    #[test]
+    fn tab_badge_in_accessible_name() {
+        use crate::widgets::badge::BadgeSpec;
+        let mut t = Tabs::with_labels(["Alarms", "B"]);
+        t.set_tab_badge(0, Some(BadgeSpec::count(3)));
+        let mut n = AccessKitNode::new(accesskit::Role::Unknown);
+        t.strip.child(0).unwrap().accessibility(&mut n);
+        assert_eq!(n.label(), Some("Alarms, 3"));
+        // Clearing restores the bare label.
+        t.set_tab_badge(0, None);
+        let mut n = AccessKitNode::new(accesskit::Role::Unknown);
+        t.strip.child(0).unwrap().accessibility(&mut n);
+        assert_eq!(n.label(), Some("Alarms"));
+    }
+
+    #[test]
+    fn tab_with_badge_widens_natural_width() {
+        use crate::widgets::badge::BadgeSpec;
+        let plain = Tabs::with_labels(["Alarms"]);
+        let badged = Tabs::new().tab_with_badge(
+            "Alarms",
+            crate::widgets::text::Text::new(""),
+            BadgeSpec::count(12),
+        );
+        let w = |t: &Tabs| TabStrip::natural_width(&t.strip.tabs[0], 1.0);
+        assert!(w(&badged) > w(&plain));
     }
 
     #[test]

@@ -264,6 +264,11 @@ pub(crate) fn is_data_display(name: &str) -> bool {
 
 /// Topmost data-display descendants — a Chart's internal parts don't
 /// each count as a channel; the chart is one display.
+///
+/// `inside` starts from the anchor's own display-ness: when the scope
+/// under test IS a display (e.g. a `Table` node), its rows and headers
+/// are internals, not channels — without this a `TableRowChild`/`TableHeaderChild`
+/// name segment matches `table` and one widget self-reports as N displays.
 pub(crate) fn data_display_leaves(node: &LintNode) -> Vec<&LintNode> {
     fn collect<'a>(n: &'a LintNode, inside: bool, out: &mut Vec<&'a LintNode>) {
         let display = is_data_display(&n.name);
@@ -276,8 +281,9 @@ pub(crate) fn data_display_leaves(node: &LintNode) -> Vec<&LintNode> {
         }
     }
     let mut out = Vec::new();
+    let inside = is_data_display(&node.name);
     for c in &node.children {
-        collect(c, false, &mut out);
+        collect(c, inside, &mut out);
     }
     out
 }

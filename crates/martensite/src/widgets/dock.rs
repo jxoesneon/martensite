@@ -57,6 +57,10 @@ pub struct DockItem {
     pub running: bool,
     /// Optional decoded icon image.
     pub image: Option<ImageData>,
+    /// Optional status lamp painted as a glyph-marked chip on the
+    /// icon's top-right corner — pair the state with a mark, never
+    /// with the tile color alone.
+    pub status: Option<crate::widgets::status_dot::Status>,
 }
 
 impl DockItem {
@@ -73,6 +77,7 @@ impl DockItem {
             color,
             running: false,
             image: None,
+            status: None,
         }
     }
 
@@ -99,6 +104,22 @@ impl DockItem {
     /// ```
     pub fn image(mut self, image: ImageData) -> Self {
         self.image = Some(image);
+        self
+    }
+
+    /// Attaches a status lamp chip to the icon — the redundant
+    /// color+mark channel for callers that used to encode status in
+    /// the tile color alone.
+    ///
+    /// ```
+    /// use martensite::widgets::dock::DockItem;
+    /// use martensite::widgets::status_dot::Status;
+    ///
+    /// let i = DockItem::new("x", [0, 0, 0, 255]).status(Status::Error);
+    /// assert_eq!(i.status, Some(Status::Error));
+    /// ```
+    pub fn status(mut self, status: crate::widgets::status_dot::Status) -> Self {
+        self.status = Some(status);
         self
     }
 }
@@ -326,6 +347,16 @@ impl Widget for Dock {
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Toolbar);
         node.set_label(format!("{} — {} items", self.label, self.items.len()));
+        // Status chips are paint-only — fold per-item state into the
+        // description so AT parity doesn't depend on pixels.
+        let statuses = self
+            .items
+            .iter()
+            .filter_map(|i| i.status.map(|s| format!("{} {}", i.label, s.label())))
+            .collect::<Vec<_>>();
+        if !statuses.is_empty() {
+            node.set_description(statuses.join(", "));
+        }
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -446,6 +477,16 @@ impl Widget for Dock {
                     krect(Rect::new(cxm - d / 2.0, bottom + d * 0.8, d, d)),
                     &martensite_core::shape::Shape::ELLIPSE,
                     cx.color(TokenKey::TextColor, DOT),
+                );
+            }
+            // Status chip straddling the icon's top-right corner —
+            // glyph-marked so the state is never color-only.
+            if let Some(status) = item.status {
+                crate::widgets::status_dot::paint_status_chip(
+                    cx,
+                    Vec2::new(r.max_x(), r.min_y()),
+                    6.0 * s,
+                    status,
                 );
             }
         }

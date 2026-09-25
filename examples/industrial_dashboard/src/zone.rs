@@ -9,8 +9,8 @@
 //! - [`row()`] mounts banded surfaces top-aligned; [`strip()`] mounts
 //!   rows of intrinsic controls center-aligned. All bands in one row
 //!   share a single band height.
-//! - [`ZONE_GAP`]/[`ZONE_PAD`]/[`ZONE_STACK`] are the only spacing
-//!   tokens inside zones — no ad-hoc gutters.
+//! - [`ZONE_GAP`]/[`ZONE_PAD`]/[`ZONE_STACK`]/[`ZONE_SECTION`] are the
+//!   only spacing tokens inside zones — no ad-hoc gutters.
 //! - One visible surface per zone: alternate views live behind
 //!   selector chrome (`Tabs`, `Segmented`, `Dropdown` for >8
 //!   destinations) — never a scroll wall of every option.
@@ -45,6 +45,13 @@ use crate::domain::PlantModel;
 pub const ZONE_GAP: f32 = 10.0;
 /// Spacing between rows in a page column (logical pt).
 pub const ZONE_STACK: f32 = 14.0;
+/// Spacing between page sections (logical pt) — a section is a
+/// `group_label`-headed cluster of rows answering one sub-question.
+/// Use only between sections at the page-column level: never inside a
+/// band, never between a `group_label` and its row, never as a
+/// substitute for `ZONE_STACK` within a section. Spec B7 pins the
+/// 16–18 candidate range at 18 pending the 700px PNG check.
+pub const ZONE_SECTION: f32 = 18.0;
 /// Padding between a zone's chrome and its content (logical pt).
 pub const ZONE_PAD: f32 = 14.0;
 /// Band height: sparklines, strips, progress, pickers (logical pt).
@@ -1183,7 +1190,7 @@ mod tests {
         let mut page = Page::new(
             Variant::MasterDetail,
             fill(Swap::new(&sel).view(view)),
-            &m.zone_width,
+            &m.zone_width[0],
         )
         .strip(strip().child(Button::new("s")))
         .rail("R", rail_col);

@@ -25,8 +25,13 @@ use glam::Vec2;
 use martensite_core::shape::Shape;
 use martensite_core::widget::{LayoutConstraints, LayoutContext, PaintContext, Widget};
 use martensite_core::{Rect, TokenKey};
+use martensite_theme::Oklab;
 
 const ERROR: [u8; 4] = [220, 50, 47, 255];
+const WARN: [u8; 4] = [220, 160, 40, 255];
+const OK: [u8; 4] = [46, 160, 90, 255];
+const INFO: [u8; 4] = [60, 120, 220, 255];
+const ACCENT: [u8; 4] = [60, 110, 220, 255];
 const INVERSE_INK: [u8; 4] = [255, 255, 255, 255];
 const SURFACE: [u8; 4] = [30, 30, 34, 255];
 /// Pill height for the count form, logical points.
@@ -37,6 +42,208 @@ const PILL_PAD: f32 = 6.0;
 const DOT_D: f32 = 8.0;
 /// Count text size, logical points.
 const TEXT_PT: f32 = 12.0;
+/// Pill height for the inline annotation form ([`BadgeSpec`]) used by
+/// tabs and segments — a step smaller than the standalone pill.
+const SPEC_PILL_H: f32 = 15.0;
+/// Text size inside a [`BadgeSpec`] pill, logical points.
+const SPEC_TEXT_PT: f32 = 10.0;
+
+/// Severity tone for a [`Badge`] or [`BadgeSpec`] fill — maps onto the
+/// theme's semantic color tokens at paint time so severity colors
+/// track the active theme.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::badge::BadgeSeverity;
+///
+/// assert_eq!(BadgeSeverity::default(), BadgeSeverity::Error);
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BadgeSeverity {
+    /// Brand/accent — `TokenKey::AccentColor`.
+    Accent,
+    /// Informational — `TokenKey::InfoColor`.
+    Info,
+    /// Nominal — `TokenKey::SuccessColor`.
+    Ok,
+    /// Degraded — `TokenKey::WarningColor`.
+    Warning,
+    /// Fault / urgent — `TokenKey::ErrorColor` (the default, matching
+    /// the historical red badge).
+    #[default]
+    Error,
+}
+
+impl BadgeSeverity {
+    /// The theme token this severity resolves through.
+    fn token(self) -> TokenKey {
+        match self {
+            Self::Accent => TokenKey::AccentColor,
+            Self::Info => TokenKey::InfoColor,
+            Self::Ok => TokenKey::SuccessColor,
+            Self::Warning => TokenKey::WarningColor,
+            Self::Error => TokenKey::ErrorColor,
+        }
+    }
+
+    /// sRGBA fallback when the theme carries no token.
+    fn fallback(self) -> [u8; 4] {
+        match self {
+            Self::Accent => ACCENT,
+            Self::Info => INFO,
+            Self::Ok => OK,
+            Self::Warning => WARN,
+            Self::Error => ERROR,
+        }
+    }
+}
+
+/// A lightweight badge annotation — text plus a severity or explicit
+/// fill — attachable to tabs ([`Tabs::tab_with_badge`]) and segments
+/// ([`Segmented::option_with_badge`]).
+///
+/// The host paints it as a small pill beside the label and folds the
+/// text into its accessible name (`"Alarms, 3"`).
+///
+/// [`Tabs::tab_with_badge`]: crate::widgets::Tabs::tab_with_badge
+/// [`Segmented::option_with_badge`]: crate::widgets::Segmented::option_with_badge
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::badge::{BadgeSeverity, BadgeSpec};
+///
+/// let b = BadgeSpec::count(3).severity(BadgeSeverity::Warning);
+/// assert_eq!(b.text, "3");
+/// assert_eq!(b.severity, BadgeSeverity::Warning);
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub struct BadgeSpec {
+    /// Badge text — usually a count (`"3"`, `"99+"`).
+    pub text: String,
+    /// Severity fill, used when [`color`](BadgeSpec::color) is `None`.
+    pub severity: BadgeSeverity,
+    /// Explicit fill color; overrides `severity` when `Some`.
+    pub color: Option<Oklab>,
+}
+
+impl BadgeSpec {
+    /// An annotation with arbitrary text in the default
+    /// ([`BadgeSeverity::Error`]) tone.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::BadgeSpec;
+    ///
+    /// assert_eq!(BadgeSpec::new("new").text, "new");
+    /// ```
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            severity: BadgeSeverity::default(),
+            color: None,
+        }
+    }
+
+    /// An annotation showing a count — the C2-lite annunciation
+    /// (count + worst severity on a tab concealing live channels).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::BadgeSpec;
+    ///
+    /// assert_eq!(BadgeSpec::count(12).text, "12");
+    /// ```
+    pub fn count(count: u32) -> Self {
+        Self::new(count.to_string())
+    }
+
+    /// Sets the severity fill.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::{BadgeSeverity, BadgeSpec};
+    ///
+    /// let b = BadgeSpec::new("!").severity(BadgeSeverity::Ok);
+    /// assert_eq!(b.severity, BadgeSeverity::Ok);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn severity(mut self, severity: BadgeSeverity) -> Self {
+        self.severity = severity;
+        self
+    }
+
+    /// Sets an explicit fill color, overriding `severity`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::BadgeSpec;
+    /// use martensite_theme::Oklab;
+    ///
+    /// let b = BadgeSpec::new("x").color(Oklab::BLACK);
+    /// assert_eq!(b.color, Some(Oklab::BLACK));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn color(mut self, color: Oklab) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// Resolves the pill fill for this paint pass.
+    pub(crate) fn fill(&self, cx: &PaintContext<'_>) -> [u8; 4] {
+        self.color.map_or_else(
+            || cx.color(self.severity.token(), self.severity.fallback()),
+            |c| c.to_srgba8(),
+        )
+    }
+
+    /// Estimated pill width in logical points — the same coarse
+    /// per-char estimate the standalone pill measures with.
+    pub(crate) fn width_pt(&self) -> f32 {
+        let chars = self.text.chars().count() as f32;
+        (chars * SPEC_TEXT_PT * 0.65 + PILL_PAD * 2.0).max(SPEC_PILL_H)
+    }
+
+    /// Pill height in logical points for the inline annotation form.
+    pub(crate) fn height_pt() -> f32 {
+        SPEC_PILL_H
+    }
+}
+
+/// Paints `spec` as a pill inside `pill` (device px) — the shared
+/// inline-badge rendering for `TabItem` and `Segment` annotations.
+/// `fill` is resolved by the caller (theme + scale come from `cx`).
+pub(crate) fn paint_spec_pill(
+    spec: &BadgeSpec,
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    cx: &mut PaintContext<'_>,
+    pill: kurbo::Rect,
+) {
+    cx.list.push_fill_shape(pill, &Shape::PILL, spec.fill(cx));
+    let size_px = cx.pt(SPEC_TEXT_PT);
+    let w = painter
+        .and_then(|p| p.measure_text(&spec.text, size_px))
+        .unwrap_or_else(|| spec.text.chars().count() as f32 * size_px * 0.65);
+    crate::text_paint::paint_label_clipped(
+        painter,
+        cx.list,
+        pill,
+        kurbo::Point::new(
+            pill.x0 + (pill.width() - f64::from(w)).max(0.0) * 0.5,
+            pill.y0 + (pill.height() - f64::from(size_px)) * 0.5,
+        ),
+        &spec.text,
+        size_px,
+        cx.color(TokenKey::TextInverseColor, INVERSE_INK),
+    );
+}
 
 /// A notification badge — a count pill, a `99+`-style capped count, or
 /// a bare dot.
@@ -65,8 +272,13 @@ pub struct Badge {
     pub max: u32,
     /// Force the bare-dot presentation regardless of `count`.
     pub dot: bool,
+    /// Severity fill (default [`BadgeSeverity::Error`] — the
+    /// historical red); overridden by [`color`](Badge::color).
+    pub severity: BadgeSeverity,
     /// Wrapped child the badge anchors to (`Badge::wrap`).
     child: Option<Box<dyn Widget>>,
+    /// Explicit fill color, overriding `severity` when `Some`.
+    color_override: Option<Oklab>,
     /// Child bounds from the last layout (wrap form only).
     child_rect: Rect,
     /// Badge rect from the last layout — the anchor point for `wrap`,
@@ -93,7 +305,9 @@ impl Badge {
             count,
             max: 99,
             dot: false,
+            severity: BadgeSeverity::default(),
             child: None,
+            color_override: None,
             child_rect: Rect::default(),
             badge_rect: Rect::default(),
             text_painter: None,
@@ -172,6 +386,61 @@ impl Badge {
     pub fn dot(mut self, dot: bool) -> Self {
         self.dot = dot;
         self
+    }
+
+    /// Sets the severity fill — ok/warn/error/accent/info tones that
+    /// resolve through the theme's semantic color tokens. The default
+    /// is [`BadgeSeverity::Error`], the historical red.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{Badge, BadgeSeverity};
+    ///
+    /// let b = Badge::new(2).severity(BadgeSeverity::Warning);
+    /// assert_eq!(b.severity, BadgeSeverity::Warning);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn severity(mut self, severity: BadgeSeverity) -> Self {
+        self.severity = severity;
+        self
+    }
+
+    /// Sets an explicit fill color, overriding `severity`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Badge;
+    /// use martensite_theme::Oklab;
+    ///
+    /// let b = Badge::new(2).color(Oklab::BLACK);
+    /// assert_eq!(b.fill_color(), [0, 0, 0, 255]);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn color(mut self, color: Oklab) -> Self {
+        self.color_override = Some(color);
+        self
+    }
+
+    /// The fill color this badge paints when no theme resolves —
+    /// `color` when set, else the `severity` fallback.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{Badge, BadgeSeverity};
+    ///
+    /// assert_ne!(
+    ///     Badge::new(1).severity(BadgeSeverity::Ok).fill_color(),
+    ///     Badge::new(1).fill_color(),
+    /// );
+    /// ```
+    pub fn fill_color(&self) -> [u8; 4] {
+        self.color_override
+            .map_or_else(|| self.severity.fallback(), |c| c.to_srgba8())
     }
 
     /// Shares a [`crate::text_paint::TextPainter`] for real glyph runs
@@ -298,7 +567,10 @@ impl Widget for Badge {
             f64::from(r.max_x()),
             f64::from(r.max_y()),
         );
-        let bg = cx.color(TokenKey::ErrorColor, ERROR);
+        let bg = self.color_override.map_or_else(
+            || cx.color(self.severity.token(), self.severity.fallback()),
+            |c| c.to_srgba8(),
+        );
         if self.is_dot() {
             cx.list.push_fill_shape(rect, &Shape::ELLIPSE, bg);
             cx.list.push_stroke_shape(
@@ -534,6 +806,54 @@ mod tests {
         let r = b.badge_rect;
         assert!((r.origin.x + r.size.x * 0.5 - bounds.max_x()).abs() < 0.01);
         assert!((r.origin.y + r.size.y * 0.5 - bounds.min_y()).abs() < 0.01);
+    }
+
+    #[test]
+    fn badge_severity_and_color_override() {
+        // Default stays the historical error red.
+        assert_eq!(Badge::new(1).fill_color(), ERROR);
+        // Severity picks a different fallback tone.
+        assert_eq!(Badge::new(1).severity(BadgeSeverity::Ok).fill_color(), OK);
+        // An explicit color wins over severity.
+        let b = Badge::new(1)
+            .severity(BadgeSeverity::Ok)
+            .color(Oklab::BLACK);
+        assert_eq!(b.fill_color(), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn badge_severity_paints_token_fill() {
+        // A theme ErrorColor token resolves through `severity`.
+        let mut theme = Theme::new("test");
+        theme.set(
+            TokenKey::WarningColor,
+            martensite_theme::ThemeToken::Color(Oklab::WHITE),
+        );
+        let mut b = Badge::new(0).severity(BadgeSeverity::Warning);
+        {
+            let mut hot = HotNode::default();
+            let mut lcx = LayoutContext {
+                hot: &mut hot,
+                scale: 1.0,
+            };
+            b.layout(&mut lcx, Rect::new(10.0, 10.0, DOT_D, DOT_D));
+        }
+        let mut list = PaintList::new();
+        {
+            let mut cx = PaintContext {
+                list: &mut list,
+                bounds: Rect::new(10.0, 10.0, DOT_D, DOT_D),
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            };
+            b.paint(&mut cx);
+        }
+        let fill = list.commands.iter().find_map(|c| match c {
+            PaintCommand::FillPath(_, color) => Some(*color),
+            _ => None,
+        });
+        assert_eq!(fill, Some([255, 255, 255, 255]));
     }
 
     #[test]

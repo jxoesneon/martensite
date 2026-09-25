@@ -3987,7 +3987,7 @@ pub use attendee_list::{Attendee, AttendeeList};
 pub use auto_complete::{AutoComplete, FilterMode};
 pub use avatar::Avatar;
 pub use avatar_group::AvatarGroup;
-pub use badge::Badge;
+pub use badge::{Badge, BadgeSeverity, BadgeSpec};
 pub use banner::{Banner, Severity};
 pub use bar_chart::BarChart;
 pub use barcode::Barcode;
@@ -4246,3 +4246,37 @@ pub use word_cloud::WordCloud;
 pub use world_clock::{WorldClock, ZoneEntry};
 pub use xy_pad::XYPad;
 pub use zoom_controls::{ZoomAction, ZoomControls};
+
+// ---------------------------------------------------------------------------
+// Cross-widget paint helpers (crate-internal)
+// ---------------------------------------------------------------------------
+
+/// Categorical data-ink tokens in ramp order — `SeriesColor1..6` from
+/// `martensite-theme`. Cycled by `index` when a widget paints more
+/// series than the ramp carries.
+pub(crate) const SERIES_TOKENS: [martensite_core::TokenKey; 6] = [
+    martensite_core::TokenKey::SeriesColor1,
+    martensite_core::TokenKey::SeriesColor2,
+    martensite_core::TokenKey::SeriesColor3,
+    martensite_core::TokenKey::SeriesColor4,
+    martensite_core::TokenKey::SeriesColor5,
+    martensite_core::TokenKey::SeriesColor6,
+];
+
+/// Resolves a data-series ink for series `index`: an explicit
+/// per-element `color` always wins, then the indexed
+/// [`SERIES_TOKENS`] entry, then `fallback` when the theme carries no
+/// series tokens.
+///
+/// Never resolve series ink through `TokenKey::AccentColor`: accent is
+/// the interaction/focus ink, themes always define it, and
+/// `cx.color(AccentColor, …)` silently overrides the caller's explicit
+/// `.color()` — flattening every series to one hue.
+pub(crate) fn series_color(
+    cx: &martensite_core::widget::PaintContext<'_>,
+    index: usize,
+    explicit: Option<[u8; 4]>,
+    fallback: [u8; 4],
+) -> [u8; 4] {
+    explicit.unwrap_or_else(|| cx.color(SERIES_TOKENS[index % SERIES_TOKENS.len()], fallback))
+}

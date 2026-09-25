@@ -21,8 +21,24 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use kurbo::Point;
-use martensite_core::paint::{FontResource, GlyphInstance, GlyphRun, PaintList};
-use martensite_text::{shape_text, FontManager};
+use martensite_core::paint::{FontResource, GlyphInstance, GlyphRun, PaintList, TextStyle};
+use martensite_text::{shape_text, shape_text_with_attrs, Attrs, FontManager, Style, Weight};
+
+/// Builds cosmic-text [`Attrs`] for a [`TextStyle`] — the single place
+/// the core weight/slant/tracking axis maps onto `fontdb` values.
+fn attrs_for(style: TextStyle) -> Attrs<'static> {
+    let mut attrs = Attrs::new()
+        .weight(Weight(style.weight.0))
+        .style(if style.italic {
+            Style::Italic
+        } else {
+            Style::Normal
+        });
+    if let Some(em) = style.letter_spacing {
+        attrs = attrs.letter_spacing(em);
+    }
+    attrs
+}
 
 /// A shared, lockable [`TextPainter`].
 ///
@@ -124,8 +140,34 @@ impl TextPainter {
     /// assert!(w >= 0.0);
     /// ```
     pub fn measure(&mut self, text: &str, size: f32) -> f32 {
+        self.measure_styled(text, size, TextStyle::REGULAR)
+    }
+
+    /// [`measure`](Self::measure) with an explicit style axis — a
+    /// semibold string is wider than the same string at regular weight,
+    /// so styled callers must measure through this channel for caret
+    /// placement and right-aligned columns to agree with painted output.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::TextPainter;
+    /// use martensite_core::paint::{FontWeight, TextStyle};
+    ///
+    /// let mut p = TextPainter::new();
+    /// let w = p.measure_styled("hi", 14.0, TextStyle::default().weight(FontWeight::BOLD));
+    /// assert!(w >= 0.0);
+    /// ```
+    pub fn measure_styled(&mut self, text: &str, size: f32, style: TextStyle) -> f32 {
         let mut end = 0.0f32;
-        for line in shape_text(self.fonts(), text, size, size * 1.25, None) {
+        for line in shape_text_with_attrs(
+            self.fonts(),
+            text,
+            &attrs_for(style),
+            size,
+            size * 1.25,
+            None,
+        ) {
             for g in &line.glyphs {
                 end = end.max(g.x + g.w);
             }
@@ -230,15 +272,57 @@ impl TextPainter {
         color: [u8; 4],
         max_width: Option<f32>,
     ) -> f64 {
+        self.push_styled(
+            list,
+            origin,
+            text,
+            size,
+            color,
+            max_width,
+            TextStyle::REGULAR,
+        )
+    }
+
+    /// [`push`](Self::push) with an explicit style axis — semibold
+    /// titles, true italics, tracked caps. The style is carried on each
+    /// emitted [`GlyphRun`] as metadata so paint-level audits can see
+    /// the weight axis (WCAG large text is ≥18pt *or* ≥14pt bold).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::TextPainter;
+    /// use kurbo::Point;
+    /// use martensite_core::PaintList;
+    /// use martensite_core::paint::{FontWeight, TextStyle};
+    ///
+    /// let mut p = TextPainter::new();
+    /// let mut list = PaintList::new();
+    /// let title = TextStyle::default().weight(FontWeight::SEMIBOLD);
+    /// p.push_styled(&mut list, Point::new(10.0, 10.0), "ALARMS", 15.0, [255; 4], None, title);
+    /// ```
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_styled(
+        &mut self,
+        list: &mut PaintList,
+        origin: Point,
+        text: &str,
+        size: f32,
+        color: [u8; 4],
+        max_width: Option<f32>,
+        style: TextStyle,
+    ) -> f64 {
         if text.is_empty() || size <= 0.0 {
             return origin.y;
         }
         let mut block_bottom = origin.y;
         let fonts = self.fonts();
-        for line in shape_text(fonts, text, size, size * 1.25, max_width) {
+        for line in
+            shape_text_with_attrs(fonts, text, &attrs_for(style), size, size * 1.25, max_width)
+        {
             block_bottom = origin.y + f64::from(line.line_y + size * 1.25);
             let baseline_y = origin.y as f32 + line.line_y;
-            let mut run = GlyphRun::new(size, color);
+            let mut run = GlyphRun::new(size, color).with_style(style);
             let mut run_font = None;
             for g in &line.glyphs {
                 if let Some(prev) = run_font {
@@ -247,7 +331,7 @@ impl TextPainter {
                             run.set_font(FontResource::new(data, index));
                         }
                         list.push_glyph_run(run);
-                        run = GlyphRun::new(g.font_size, color);
+                        run = GlyphRun::new(g.font_size, color).with_style(style);
                     }
                 }
                 run.font_size = g.font_size;
@@ -292,11 +376,47 @@ impl TextPainter {
         size: f32,
         max_width: Option<f32>,
     ) -> Option<kurbo::Rect> {
+        self.ink_bounds_styled(origin, text, size, max_width, TextStyle::REGULAR)
+    }
+
+    /// [`ink_bounds`](Self::ink_bounds) with an explicit style axis —
+    /// the ink box a styled [`push_styled`](Self::push_styled) emission
+    /// would mark.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::TextPainter;
+    /// use kurbo::Point;
+    /// use martensite_core::paint::{FontWeight, TextStyle};
+    ///
+    /// let mut p = TextPainter::new();
+    /// let b = p.ink_bounds_styled(
+    ///     Point::ZERO, "", 14.0, None,
+    ///     TextStyle::default().weight(FontWeight::BOLD),
+    /// );
+    /// assert!(b.is_none());
+    /// ```
+    pub fn ink_bounds_styled(
+        &mut self,
+        origin: Point,
+        text: &str,
+        size: f32,
+        max_width: Option<f32>,
+        style: TextStyle,
+    ) -> Option<kurbo::Rect> {
         if text.is_empty() || size <= 0.0 {
             return None;
         }
         let mut box_: Option<kurbo::Rect> = None;
-        for line in shape_text(self.fonts(), text, size, size * 1.25, max_width) {
+        for line in shape_text_with_attrs(
+            self.fonts(),
+            text,
+            &attrs_for(style),
+            size,
+            size * 1.25,
+            max_width,
+        ) {
             let baseline_y = origin.y as f32 + line.line_y;
             for g in &line.glyphs {
                 let glyph = kurbo::Rect::new(
@@ -376,8 +496,26 @@ impl martensite_core::paint::TextShaper for SharedTextPainter {
         self.0.lock().push(list, origin, text, size_px, color, None);
     }
 
+    fn paint_shaped_text_styled(
+        &self,
+        list: &mut PaintList,
+        origin: Point,
+        text: &str,
+        size_px: f32,
+        color: [u8; 4],
+        style: TextStyle,
+    ) {
+        self.0
+            .lock()
+            .push_styled(list, origin, text, size_px, color, None, style);
+    }
+
     fn measure_text(&self, text: &str, size_px: f32) -> Option<f32> {
         Some(self.0.lock().measure(text, size_px))
+    }
+
+    fn measure_text_styled(&self, text: &str, size_px: f32, style: TextStyle) -> Option<f32> {
+        Some(self.0.lock().measure_styled(text, size_px, style))
     }
 
     fn ink_bounds(&self, origin: Point, text: &str, size_px: f32) -> Option<kurbo::Rect> {
@@ -388,6 +526,21 @@ impl martensite_core::paint::TextShaper for SharedTextPainter {
             self.0
                 .lock()
                 .ink_bounds(origin, text, size_px, None)
+                .unwrap_or(kurbo::Rect::ZERO),
+        )
+    }
+
+    fn ink_bounds_styled(
+        &self,
+        origin: Point,
+        text: &str,
+        size_px: f32,
+        style: TextStyle,
+    ) -> Option<kurbo::Rect> {
+        Some(
+            self.0
+                .lock()
+                .ink_bounds_styled(origin, text, size_px, None, style)
                 .unwrap_or(kurbo::Rect::ZERO),
         )
     }
@@ -439,14 +592,37 @@ pub(crate) fn paint_label(
     size_px: f32,
     color: [u8; 4],
 ) {
-    if let Some(ink) = label_ink_bounds(painter, origin, text, size_px) {
+    paint_label_styled(
+        painter,
+        list,
+        origin,
+        text,
+        size_px,
+        color,
+        TextStyle::REGULAR,
+    );
+}
+
+/// [`paint_label`] with an explicit style axis — semibold titles, true
+/// italics, tracked caps. Painters that don't override the styled
+/// channel degrade to regular weight, same as before.
+pub(crate) fn paint_label_styled(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    list: &mut PaintList,
+    origin: Point,
+    text: &str,
+    size_px: f32,
+    color: [u8; 4],
+    style: TextStyle,
+) {
+    if let Some(ink) = label_ink_bounds_styled(painter, origin, text, size_px, style) {
         if !visible_ink(list, ink) {
             return;
         }
     }
     match painter {
         Some(tp) => {
-            tp.paint_shaped_text(list, origin, text, size_px, color);
+            tp.paint_shaped_text_styled(list, origin, text, size_px, color, style);
         }
         None => {
             list.push_text(origin, text.to_string(), size_px, color);
@@ -471,6 +647,31 @@ pub(crate) fn paint_label_clipped(
     size_px: f32,
     color: [u8; 4],
 ) {
+    paint_label_clipped_styled(
+        painter,
+        list,
+        clip,
+        origin,
+        text,
+        size_px,
+        color,
+        TextStyle::REGULAR,
+    );
+}
+
+/// [`paint_label_clipped`] with an explicit style axis — see
+/// [`paint_label_styled`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_label_clipped_styled(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    list: &mut PaintList,
+    clip: kurbo::Rect,
+    origin: Point,
+    text: &str,
+    size_px: f32,
+    color: [u8; 4],
+    style: TextStyle,
+) {
     // The pushed clip stacks with whatever is already active, so the
     // effective clip is `clip ∩ active` — compute it explicitly so the
     // culling check matches what the backend and audit will see. Rows
@@ -487,13 +688,13 @@ pub(crate) fn paint_label_clipped(
     if clip.x1 <= clip.x0 || clip.y1 <= clip.y0 {
         return;
     }
-    if let Some(ink) = label_ink_bounds(painter, origin, text, size_px) {
+    if let Some(ink) = label_ink_bounds_styled(painter, origin, text, size_px, style) {
         if ink.x1 <= clip.x0 || ink.x0 >= clip.x1 || ink.y1 <= clip.y0 || ink.y0 >= clip.y1 {
             return;
         }
     }
     list.push_clip(clip);
-    paint_label(painter, list, origin, text, size_px, color);
+    paint_label_styled(painter, list, origin, text, size_px, color, style);
     list.pop_clip();
 }
 
@@ -551,11 +752,22 @@ pub(crate) fn label_ink_bounds(
     text: &str,
     size_px: f32,
 ) -> Option<kurbo::Rect> {
+    label_ink_bounds_styled(painter, origin, text, size_px, TextStyle::REGULAR)
+}
+
+/// [`label_ink_bounds`] with an explicit style axis.
+pub(crate) fn label_ink_bounds_styled(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    origin: Point,
+    text: &str,
+    size_px: f32,
+    style: TextStyle,
+) -> Option<kurbo::Rect> {
     if text.is_empty() || size_px <= 0.0 {
         return Some(kurbo::Rect::ZERO);
     }
     match painter {
-        Some(tp) => tp.ink_bounds(origin, text, size_px),
+        Some(tp) => tp.ink_bounds_styled(origin, text, size_px, style),
         None => {
             // Mirrors `PaintList::push_text`'s box model and the
             // paint audit's `probe_text`: `0.6·size` per char, one

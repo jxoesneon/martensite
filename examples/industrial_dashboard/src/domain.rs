@@ -518,9 +518,23 @@ pub struct PlantModel {
     /// (take) and activates the tab. Cleared on consume so rebuilds
     /// never re-fire stale requests.
     pub page_request: Signal<[Option<u8>; 4]>,
-    /// Zone content width in pt — `ZonePanel::layout` publishes;
-    /// `Page` reads it for rail collapse breakpoints.
-    pub zone_width: Signal<f32>,
+    /// Deep-link sub-target — `(page, inner view)` a `page_request`
+    /// should land on: the page's own index plus its inner
+    /// Swap/Segmented index (REGISTRY's List view, DETAIL's Inspector
+    /// dossier, DOCUMENTS' artifact). Written by
+    /// [`PlantModel::request_page_deep`]; drained (take) by the
+    /// activated page's strip binding, which only ticks while the
+    /// page is visible — so a sub lands exactly once, post-activation.
+    /// The page index rides along so a still-visible page can never
+    /// consume a sub meant for its sibling. A plain `request_page`
+    /// clears a pending sub for its zone.
+    pub page_request_sub: Signal<[Option<(u8, u8)>; 4]>,
+    /// Zone content width in pt — one slot per zone so a panel's
+    /// publish can never bleed into a sibling zone's pages (the
+    /// single shared signal was last-writer-wins across all four
+    /// panels). `ZonePanel::layout` writes `zone_width[zone_index]`;
+    /// `Page` reads its zone's slot for rail collapse breakpoints.
+    pub zone_width: [Signal<f32>; 4],
     /// Shell toast inbox — any zone enqueues a `Toast`; the
     /// `ShellOverlays` owner drains it into the viewport-anchored
     /// `ToastHost`. Toasts are chrome, not page layout.
@@ -601,7 +615,8 @@ impl PlantModel {
             selected_recording: Signal::new(Some(1)),
             commands: Signal::new(seed_commands()),
             page_request: Signal::new([None; 4]),
-            zone_width: Signal::new(960.0),
+            page_request_sub: Signal::new([None; 4]),
+            zone_width: std::array::from_fn(|_| Signal::new(960.0)),
             toast_inbox: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             channel_sel: Signal::new(0),
             active_chrome: Signal::new(0),
@@ -667,10 +682,47 @@ impl PlantModel {
 
     /// Request a zone page — `page_request[zone] = Some(page)`;
     /// `ZonePanel::tick` drains the slot and activates the tab.
+    /// A plain request lands on the page's default inner view, so a
+    /// pending deep-link sub for the zone is cleared with it.
     pub fn request_page(&self, zone: usize, page: u8) {
         let mut req = self.page_request.get();
         req[zone] = Some(page);
         self.page_request.set(req);
+        let mut sub = self.page_request_sub.get();
+        if sub[zone].take().is_some() {
+            self.page_request_sub.set(sub);
+        }
+    }
+
+    /// Deep-link request — activate `page` and land on its inner
+    /// `sub` view (the page's Swap/Segmented index). The page drains
+    /// the sub via [`take_page_sub`](Self::take_page_sub) once it
+    /// ticks — i.e. after activation, while visible.
+    pub fn request_page_deep(&self, zone: usize, page: u8, sub: u8) {
+        let mut req = self.page_request.get();
+        req[zone] = Some(page);
+        self.page_request.set(req);
+        let mut s = self.page_request_sub.get();
+        s[zone] = Some((page, sub));
+        self.page_request_sub.set(s);
+    }
+
+    /// Drain this zone's pending deep-link sub *for `page`*
+    /// (take semantics — a consumed sub never re-fires). Called by
+    /// the activated page's strip `Segmented` pull; hidden pages
+    /// don't tick, so a sub can only land on the page that was just
+    /// activated — and a sub addressed to a different page is left
+    /// for it.
+    pub fn take_page_sub(&self, zone: usize, page: u8) -> Option<u8> {
+        let mut req = self.page_request_sub.get();
+        match req[zone] {
+            Some((p, sub)) if p == page => {
+                req[zone] = None;
+                self.page_request_sub.set(req);
+                Some(sub)
+            }
+            _ => None,
+        }
     }
 
     /// Mutate one maintenance task — the MAINTENANCE rail's
