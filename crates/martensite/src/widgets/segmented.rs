@@ -434,7 +434,7 @@ impl Segmented {
     }
 
     /// Appends one option carrying a badge annotation — a
-    /// [`BadgeSpec`](crate::widgets::badge::BadgeSpec) painted as a
+    /// [`BadgeSpec`] painted as a
     /// small pill beside the label and folded into the segment's
     /// accessible name (`"{label}, {badge}"`).
     ///

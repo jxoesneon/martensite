@@ -698,7 +698,7 @@ impl Tabs {
     }
 
     /// Appends a tab carrying a badge annotation — a
-    /// [`BadgeSpec`](crate::widgets::badge::BadgeSpec) painted as a
+    /// [`BadgeSpec`] painted as a
     /// small pill beside the label and folded into the tab's
     /// accessible name (`"{label}, {badge}"`). For the C2-lite
     /// count+severity annunciation prefer
