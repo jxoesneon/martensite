@@ -42,9 +42,71 @@
 
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 
+pub(crate) mod source_span;
+pub(crate) mod tweak;
+
 // ---------------------------------------------------------------------------
-// Public macro entry point
+// Public macro entry points
 // ---------------------------------------------------------------------------
+
+/// Live property tweak procedural attribute macro.
+///
+/// Annotates variables, fields, or functions with a live-tweak identifier and default value,
+/// as specified in `docs/dx/LIVE_TWEAKS.md`.
+///
+/// When the `devtools` feature is disabled, expands to zero-overhead direct literal values.
+/// When the `devtools` feature is enabled, registers or queries the devtools tweak registry.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_macros::tweak;
+///
+/// #[tweak("button/padding", 8.0f32)]
+/// const PADDING: f32 = 8.0f32;
+/// assert_eq!(PADDING, 8.0f32);
+/// ```
+///
+/// ```
+/// use martensite_macros::tweak;
+///
+/// #[tweak("button/label_color", "#ff0000")]
+/// const COLOR: &'static str = "#ff0000";
+/// assert_eq!(COLOR, "#ff0000");
+/// ```
+///
+/// ```
+/// use martensite_macros::tweak;
+///
+/// #[tweak("app/is_active", true)]
+/// const ACTIVE: bool = true;
+/// assert!(ACTIVE);
+/// ```
+#[proc_macro_attribute]
+pub fn tweak(attr: TokenStream, item: TokenStream) -> TokenStream {
+    tweak::expand_tweak(attr, item)
+}
+
+/// Source span tracking procedural attribute macro.
+///
+/// Annotates functions or methods with `#[track_caller]` for live-tweak callsite capture
+/// when source spans are active.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_macros::source_span;
+///
+/// #[source_span]
+/// fn create_view() -> u32 {
+///     42
+/// }
+/// assert_eq!(create_view(), 42);
+/// ```
+#[proc_macro_attribute]
+pub fn source_span(attr: TokenStream, item: TokenStream) -> TokenStream {
+    source_span::expand_source_span(attr, item)
+}
 
 /// Declares a Martensite widget, expanding to a struct that implements
 /// [`Default`] together with convenience accessor methods.
@@ -423,7 +485,14 @@ fn expand_simple(name: &Ident) -> TokenStream {
     let source = format!(
         "/// Auto-generated Martensite widget struct.\n\
          #[derive(Default, Debug)]\n\
-         pub struct {name};"
+         pub struct {name};\n\n\
+         impl {name} {{\n\
+             /// Constructs a new unit widget.\n\
+             #[track_caller]\n\
+             pub fn new() -> Self {{\n\
+                 Self::default()\n\
+             }}\n\
+         }}"
     );
     source
         .parse()
@@ -465,6 +534,7 @@ fn expand_with_fields(name: &Ident, fields: &[Field]) -> TokenStream {
     // --- Inherent impl with accessors ---------------------------------------
     out.push_str(&format!("impl {name} {{\n"));
     out.push_str("    /// Constructs a new widget initialised with default property values.\n");
+    out.push_str("    #[track_caller]\n");
     out.push_str("    pub fn new() -> Self {\n");
     out.push_str("        Self::default()\n");
     out.push_str("    }\n");
@@ -481,9 +551,22 @@ fn expand_with_fields(name: &Ident, fields: &[Field]) -> TokenStream {
         ));
         out.push_str(&format!(
             "    /// Sets the `{fname}` property.\n\
+             #[track_caller]\n\
              pub fn set_{fname}(&mut self, value: {ty}) {{ self.{fname} = value; }}\n"
         ));
+        out.push_str(&format!(
+            "    /// Builder method setting the `{fname}` property.\n\
+             #[track_caller]\n\
+             pub fn with_{fname}(mut self, value: {ty}) -> Self {{ self.{fname} = value; self }}\n"
+        ));
     }
+    out.push_str(
+        "    /// Formats a live-tweak source patch for a property change.\n\
+         pub fn emit_patch(property: &str, old_value: &str, new_value: &str, file: &str, line: u32) -> String {\n\
+             let prop = property.trim_start_matches('.');\n\
+             format!(\"{file}:{line}: .{prop}({old_value}) -> .{prop}({new_value})\")\n\
+         }\n"
+    );
     out.push_str("}\n");
 
     out.parse()

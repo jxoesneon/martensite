@@ -19,5 +19,10 @@ proc-macro = true
 
 [dev-dependencies]
 
+[features]
+default = []
+devtools = []
+devtools-source-spans = ["devtools"]
+
 [lints]
 workspace = true
