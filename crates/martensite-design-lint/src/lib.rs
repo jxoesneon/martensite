@@ -39,7 +39,7 @@
 //! assert!(report.is_clean());
 //! ```
 
-mod config;
+pub mod config;
 mod fix;
 mod report;
 mod rule;

@@ -488,6 +488,16 @@ jobs:
           # `cargo build` of a minimal guest cdylib — no network needed.
           cargo test --release -p martensite-host --test hot_reload_latency -- --ignored
 
+  scaffold-smoke:
+    name: First-Run Funnel (scaffold-smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run scaffold smoke test
+        run: cargo test -p cargo-martensite --test scaffold_smoke
+
   shell-linux-integration:
     name: Shell Integration (Linux D-Bus + Wayland)
     runs-on: ubuntu-latest
