@@ -389,38 +389,7 @@ pub fn autofix(scene: &mut LintScene, config: &LintConfig, opts: &FixOptions) ->
 /// colors, font sizes, fill/text geometry — used to detect
 /// oscillating fixes (A→B→A) before `max_depth` burns out.
 fn scene_signature(scene: &LintScene) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    fn hash_node(n: &LintNode, h: &mut std::collections::hash_map::DefaultHasher) {
-        for v in [n.bounds.x0, n.bounds.y0, n.bounds.x1, n.bounds.y1] {
-            v.to_bits().hash(h);
-        }
-        for c in &n.colors {
-            c.hash(h);
-        }
-        for s in &n.font_sizes {
-            s.to_bits().hash(h);
-        }
-        for f in &n.fills {
-            f.color.hash(h);
-            for v in [f.rect.x0, f.rect.y0, f.rect.x1, f.rect.y1] {
-                v.to_bits().hash(h);
-            }
-        }
-        for t in &n.texts {
-            t.color.hash(h);
-            t.size.to_bits().hash(h);
-            t.origin.x.to_bits().hash(h);
-            t.origin.y.to_bits().hash(h);
-        }
-        for c in &n.children {
-            hash_node(c, h);
-        }
-    }
-    for r in &scene.roots {
-        hash_node(r, &mut h);
-    }
-    h.finish()
+    scene.fingerprint()
 }
 
 /// Apply one [`FixOp`] to the scene — `true` when it changed

@@ -633,6 +633,58 @@ impl LintScene {
         }
         out
     }
+
+    /// A cheap fingerprint of everything that affects linting and fixes —
+    /// node structure, bounds, colors, font sizes, fill and text geometry.
+    ///
+    /// Reuses the same hash autofix's cycle-detector computes. Used by
+    /// the runtime bridge to skip re-linting unchanged frames ($O(\text{frame-change})$).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_design_lint::LintScene;
+    ///
+    /// let scene = LintScene::default();
+    /// let fp = scene.fingerprint();
+    /// assert_eq!(fp, scene.fingerprint());
+    /// ```
+    pub fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        fn hash_node(n: &LintNode, h: &mut std::collections::hash_map::DefaultHasher) {
+            n.name.hash(h);
+            for v in [n.bounds.x0, n.bounds.y0, n.bounds.x1, n.bounds.y1] {
+                v.to_bits().hash(h);
+            }
+            for c in &n.colors {
+                c.hash(h);
+            }
+            for s in &n.font_sizes {
+                s.to_bits().hash(h);
+            }
+            for f in &n.fills {
+                f.color.hash(h);
+                for v in [f.rect.x0, f.rect.y0, f.rect.x1, f.rect.y1] {
+                    v.to_bits().hash(h);
+                }
+            }
+            for t in &n.texts {
+                t.color.hash(h);
+                t.size.to_bits().hash(h);
+                t.origin.x.to_bits().hash(h);
+                t.origin.y.to_bits().hash(h);
+            }
+            for c in &n.children {
+                hash_node(c, h);
+            }
+        }
+        self.scale_factor.to_bits().hash(&mut h);
+        for r in &self.roots {
+            hash_node(r, &mut h);
+        }
+        h.finish()
+    }
 }
 
 /// Parse `Name@lint:...`, `Name@level:N`, and semantic
