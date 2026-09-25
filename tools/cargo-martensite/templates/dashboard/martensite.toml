@@ -1,0 +1,13 @@
+# {{project_name}} — Martensite developer toolchain configuration.
+
+[dev]
+# Development server port for hot reload coordination.
+port = 8765
+
+[lint]
+# Path to design lint configuration.
+config = "design-lint.toml"
+
+[inspector]
+# Enable devtools HUD and remote inspector in debug builds.
+enabled = true

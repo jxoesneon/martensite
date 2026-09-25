@@ -14,10 +14,16 @@ readme = "README.md"
 publish = false
 
 [dependencies]
+wgpu = { workspace = true }
+pollster = { workspace = true }
+fontdb = { workspace = true, features = ["std", "fontconfig"] }
+martensite-design-lint = { workspace = true }
+
 
 [dev-dependencies]
 tempfile = "3.27"
 martensite-host = { workspace = true }
+toml = "0.9"
 
 [lib]
 name = "cargo_martensite"

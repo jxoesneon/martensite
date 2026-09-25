@@ -1,0 +1,24 @@
+# {{project_name}} — martensite-design-lint configuration.
+# Documentation: https://martensite.dev/docs/design-standards
+
+# Display scale factor (device px to logical pt conversion).
+scale_factor = 1.0
+
+# Base URL or path where finding documentation links resolve.
+docs_base = "https://martensite.dev/docs/design-standards"
+
+# Active standards catalogs for UI validation:
+# - wcag: WCAG 2.2 AA accessibility (contrast, target sizing, readability)
+# - hci-laws: Ergonomic rules (Fitts's law, Hick's law, choice complexity)
+# - consistency: Typography scale, padding rhythm, layout alignment
+# - perception: Gestalt grouping principles and optical balance
+standards = ["wcag", "hci-laws", "consistency", "perception"]
+
+# Scope-name reclassification for custom widgets:
+[classify]
+# "MyCustomNav" = "navigation"
+
+# Path-scoped suppressions (pruned to active exemptions):
+# [[allow]]
+# path = "App/Header/**"
+# rules = ["choice-count"]

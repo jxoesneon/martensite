@@ -1,0 +1,14 @@
+# {{project_name}} (Martensite Industrial Dashboard)
+
+> AI documentation index and context pointer for `{{project_name}}`.
+
+## Project Context
+- [AGENTS.md](./AGENTS.md): Local architecture, HMI mental model, and reactive conventions.
+- [design-lint.toml](./design-lint.toml): Active design lint standards (ISA-101) and rule configurations.
+- [martensite.toml](./martensite.toml): Developer toolchain settings.
+
+## Martensite Framework Documentation
+- [Martensite Homepage](https://martensite.dev): Official guides and introduction.
+- [API Reference](https://docs.rs/martensite): Crate documentation and public API on docs.rs.
+- [Tutorials](https://martensite.dev/tutorials): Framework tutorials and patterns.
+- [Design Standards](https://martensite.dev/docs/design-standards): WCAG and ISA-101 design rules.

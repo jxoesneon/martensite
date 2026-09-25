@@ -45,6 +45,42 @@ pub enum Command {
         /// The guest crate name to build (defaults to current package).
         package: Option<String>,
     },
+    /// `cargo martensite new <name>` — create a new Martensite project from a template.
+    New {
+        /// Project name or path to create.
+        name: String,
+        /// Template to use (`app`, `bare`, `dashboard`). Defaults to `app`.
+        template: Option<String>,
+    },
+    /// `cargo martensite init` — generate missing DX context into an existing project.
+    Init {
+        /// Target directory (defaults to current directory).
+        path: Option<String>,
+        /// Only write AGENTS.md.
+        agents_only: bool,
+        /// Only write design-lint.toml.
+        lint_only: bool,
+        /// Template to draw defaults from (`app`, `dashboard`). Defaults to `app`.
+        template: Option<String>,
+    },
+    /// `cargo martensite doctor` — diagnose the development environment.
+    Doctor {
+        /// Whether to apply safe remediations automatically.
+        fix: bool,
+        /// Target project directory (defaults to current directory).
+        path: Option<String>,
+    },
+    /// `cargo martensite check` — composite format, clippy, and design lint checks.
+    Check {
+        /// Whether to check with `--all-features`.
+        all_features: bool,
+        /// Specific package to check.
+        package: Option<String>,
+        /// Whether to apply automatic fixes.
+        fix: bool,
+        /// Target project directory (defaults to current directory).
+        path: Option<String>,
+    },
     /// `cargo martensite help` — print usage information.
     Help,
     /// `cargo martensite --version` — print the toolchain version.
@@ -100,6 +136,12 @@ impl From<ReloadError> for CliError {
     }
 }
 
+impl From<crate::scaffold::ScaffoldError> for CliError {
+    fn from(err: crate::scaffold::ScaffoldError) -> Self {
+        CliError::ExecutionFailed(err.to_string())
+    }
+}
+
 /// Parses the raw argument vector into a [`Command`].
 ///
 /// The leading program name (if present) is ignored, and the Cargo-injected
@@ -137,6 +179,10 @@ pub fn parse_args(args: &[String]) -> Result<Command, CliError> {
     let rest = &tokens[1..];
 
     match sub {
+        "new" => parse_new(rest),
+        "init" => parse_init(rest),
+        "doctor" => parse_doctor(rest),
+        "check" => parse_check(rest),
         "dev" => parse_dev(rest),
         "build" => parse_build(rest),
         "help" | "--help" | "-h" => Ok(Command::Help),
@@ -223,6 +269,194 @@ fn parse_build(rest: &[&str]) -> Result<Command, CliError> {
     Ok(Command::Build { release, package })
 }
 
+/// Parses flags for the `new` subcommand.
+fn parse_new(rest: &[&str]) -> Result<Command, CliError> {
+    let mut name: Option<String> = None;
+    let mut template: Option<String> = None;
+
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--template" | "-t" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--template".to_string(),
+                    reason: "missing value".to_string(),
+                })?;
+                template = Some((*raw).to_string());
+            }
+            other if other.starts_with('-') => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unknown flag for `new`".to_string(),
+                });
+            }
+            pos => {
+                if name.is_none() {
+                    name = Some(pos.to_string());
+                } else {
+                    return Err(CliError::InvalidArgument {
+                        flag: pos.to_string(),
+                        reason: "unexpected multiple positional arguments for `new`".to_string(),
+                    });
+                }
+            }
+        }
+        i += 1;
+    }
+
+    let name = name.ok_or_else(|| CliError::InvalidArgument {
+        flag: "<name>".to_string(),
+        reason: "missing project name for `new`".to_string(),
+    })?;
+
+    Ok(Command::New { name, template })
+}
+
+/// Parses flags for the `init` subcommand.
+fn parse_init(rest: &[&str]) -> Result<Command, CliError> {
+    let mut path: Option<String> = None;
+    let mut agents_only = false;
+    let mut lint_only = false;
+    let mut template: Option<String> = None;
+
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--agents" => agents_only = true,
+            "--lint" => lint_only = true,
+            "--template" | "-t" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--template".to_string(),
+                    reason: "missing value".to_string(),
+                })?;
+                template = Some((*raw).to_string());
+            }
+            other if other.starts_with('-') => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unknown flag for `init`".to_string(),
+                });
+            }
+            pos => {
+                if path.is_none() {
+                    path = Some(pos.to_string());
+                } else {
+                    return Err(CliError::InvalidArgument {
+                        flag: pos.to_string(),
+                        reason: "unexpected multiple positional arguments for `init`".to_string(),
+                    });
+                }
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::Init {
+        path,
+        agents_only,
+        lint_only,
+        template,
+    })
+}
+
+/// Parses flags for the `doctor` subcommand.
+fn parse_doctor(rest: &[&str]) -> Result<Command, CliError> {
+    let mut fix = false;
+    let mut path: Option<String> = None;
+
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--fix" => fix = true,
+            "--path" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--path".to_string(),
+                    reason: "missing value".to_string(),
+                })?;
+                path = Some((*raw).to_string());
+            }
+            other if other.starts_with('-') => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unknown flag for `doctor`".to_string(),
+                });
+            }
+            pos => {
+                if path.is_none() {
+                    path = Some(pos.to_string());
+                } else {
+                    return Err(CliError::InvalidArgument {
+                        flag: pos.to_string(),
+                        reason: "unexpected multiple positional arguments for `doctor`".to_string(),
+                    });
+                }
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::Doctor { fix, path })
+}
+
+/// Parses flags for the `check` subcommand.
+fn parse_check(rest: &[&str]) -> Result<Command, CliError> {
+    let mut all_features = false;
+    let mut package: Option<String> = None;
+    let mut fix = false;
+    let mut path: Option<String> = None;
+
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--all-features" => all_features = true,
+            "--package" | "-p" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--package".to_string(),
+                    reason: "missing value".to_string(),
+                })?;
+                package = Some((*raw).to_string());
+            }
+            "--fix" => fix = true,
+            "--path" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--path".to_string(),
+                    reason: "missing value".to_string(),
+                })?;
+                path = Some((*raw).to_string());
+            }
+            other if other.starts_with('-') => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unknown flag for `check`".to_string(),
+                });
+            }
+            pos => {
+                if path.is_none() {
+                    path = Some(pos.to_string());
+                } else {
+                    return Err(CliError::InvalidArgument {
+                        flag: pos.to_string(),
+                        reason: "unexpected multiple positional arguments for `check`".to_string(),
+                    });
+                }
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::Check {
+        all_features,
+        package,
+        fix,
+        path,
+    })
+}
+
 /// Executes a parsed [`Command`], performing any side effects.
 ///
 /// Returns `Ok(())` on success or a [`CliError`] describing the failure. The
@@ -238,6 +472,20 @@ pub fn run_command(cmd: Command) -> Result<(), CliError> {
             println!("cargo-martensite {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        Command::New { name, template } => run_new(&name, template.as_deref()),
+        Command::Init {
+            path,
+            agents_only,
+            lint_only,
+            template,
+        } => run_init(path.as_deref(), agents_only, lint_only, template.as_deref()),
+        Command::Doctor { fix, path } => run_doctor_cmd(fix, path.as_deref()),
+        Command::Check {
+            all_features,
+            package,
+            fix,
+            path,
+        } => run_check_cmd(all_features, package, fix, path.as_deref()),
         Command::Build { release, package } => run_build(release, package),
         Command::Dev {
             watch,
@@ -245,6 +493,120 @@ pub fn run_command(cmd: Command) -> Result<(), CliError> {
             package,
         } => run_dev(watch, port, package),
     }
+}
+
+/// Runs the `doctor` subcommand to diagnose development environment readiness.
+fn run_doctor_cmd(fix: bool, path: Option<&str>) -> Result<(), CliError> {
+    let opts = crate::doctor::DoctorOptions {
+        fix,
+        path: path.map(std::path::PathBuf::from),
+    };
+    let report = crate::doctor::run_doctor(&opts);
+    report.print_report();
+
+    if report.is_success() {
+        Ok(())
+    } else {
+        Err(CliError::ExecutionFailed(format!(
+            "doctor reported {} failure(s)",
+            report.failures().len()
+        )))
+    }
+}
+
+/// Runs the `check` subcommand composite check (fmt + clippy + design-lint).
+fn run_check_cmd(
+    all_features: bool,
+    package: Option<String>,
+    fix: bool,
+    path: Option<&str>,
+) -> Result<(), CliError> {
+    let opts = crate::check::CheckOptions {
+        all_features,
+        workspace: package.is_none(),
+        package,
+        fix,
+        path: path.map(std::path::PathBuf::from),
+    };
+    let report =
+        crate::check::run_check(&opts).map_err(|e| CliError::ExecutionFailed(e.to_string()))?;
+
+    if report.is_success() {
+        Ok(())
+    } else {
+        Err(CliError::ExecutionFailed(
+            "one or more check legs failed".to_string(),
+        ))
+    }
+}
+
+/// Runs the `new` subcommand to scaffold a project from a template.
+fn run_new(name: &str, template: Option<&str>) -> Result<(), CliError> {
+    let kind = if let Some(t) = template {
+        crate::scaffold::TemplateKind::parse(t).map_err(|e| CliError::InvalidArgument {
+            flag: "--template".to_string(),
+            reason: e.to_string(),
+        })?
+    } else {
+        crate::scaffold::TemplateKind::App
+    };
+
+    let opts = crate::scaffold::ScaffoldOptions::new(name).with_template(kind);
+    let _path = crate::scaffold::scaffold_project(&opts)
+        .map_err(|e| CliError::ExecutionFailed(e.to_string()))?;
+
+    println!("Scaffolded new Martensite project `{name}` (template: {kind}).\n");
+    println!("Next steps:");
+    println!("  cd {name}");
+    println!("  cargo martensite doctor");
+    println!("  cargo martensite dev");
+
+    Ok(())
+}
+
+/// Runs the `init` subcommand to generate missing DX context files into an existing project.
+fn run_init(
+    path: Option<&str>,
+    agents_only: bool,
+    lint_only: bool,
+    template: Option<&str>,
+) -> Result<(), CliError> {
+    let kind = if let Some(t) = template {
+        crate::scaffold::TemplateKind::parse(t).map_err(|e| CliError::InvalidArgument {
+            flag: "--template".to_string(),
+            reason: e.to_string(),
+        })?
+    } else {
+        crate::scaffold::TemplateKind::App
+    };
+
+    let target_dir = path
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let opts = crate::scaffold::InitOptions::new()
+        .with_template(kind)
+        .with_agents_only(agents_only)
+        .with_lint_only(lint_only);
+
+    let results = crate::scaffold::init_project(&target_dir, &opts)
+        .map_err(|e| CliError::ExecutionFailed(e.to_string()))?;
+
+    for status in results {
+        match status {
+            crate::scaffold::FileInitStatus::Created(p) => {
+                println!("Created: {}", p.display());
+            }
+            crate::scaffold::FileInitStatus::Unchanged(p) => {
+                println!("Unchanged: {}", p.display());
+            }
+            crate::scaffold::FileInitStatus::DiffersNotOverwritten(p) => {
+                println!("Differs (preserved, not overwritten): {}", p.display());
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Prints the help text to stdout.
@@ -256,12 +618,22 @@ fn print_help() {
          cargo martensite <SUBCOMMAND> [OPTIONS]\n\
          \n\
          SUBCOMMANDS:\n    \
+         new      Create a new Martensite project from a template\n    \
+         init     Generate missing DX context into an existing project\n    \
+         doctor   Diagnose development environment and toolchain readiness\n    \
+         check    Composite pre-commit check (fmt + clippy + design lint)\n    \
          dev      Launch the hot-reload development loop [default: --watch]\n    \
          build    Compile the guest crate as a cdylib\n    \
          help     Print this message\n    \
          version  Print the toolchain version\n\
          \n\
          OPTIONS:\n    \
+         --template <T>, -t <T> Template kind: app, bare, dashboard (new, init)\n    \
+         --agents               Only generate AGENTS.md (init)\n    \
+         --lint                 Only generate design-lint.toml (init)\n    \
+         --fix                  Apply safe fixes/remediations (doctor, check)\n    \
+         --all-features         Check with all feature flags enabled (check)\n    \
+         --package <P>, -p <P>  Target a specific workspace package (dev, build, check)\n    \
          --watch / --no-watch   Toggle file watching (dev)\n    \
          --port <N>, -p <N>     Development server port (dev, default {port})\n    \
          --release              Build in release mode (build)\n",
@@ -596,5 +968,219 @@ mod tests {
     #[test]
     fn run_help_succeeds() {
         assert!(run_command(Command::Help).is_ok());
+    }
+
+    #[test]
+    fn parse_new_default_template() {
+        let cmd = parse_args(&args(&["martensite", "new", "my-app"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::New {
+                name: "my-app".to_string(),
+                template: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_new_with_template() {
+        let cmd = parse_args(&args(&[
+            "martensite",
+            "new",
+            "my-app",
+            "--template",
+            "dashboard",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cmd,
+            Command::New {
+                name: "my-app".to_string(),
+                template: Some("dashboard".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_new_short_template_flag() {
+        let cmd = parse_args(&args(&["martensite", "new", "my-app", "-t", "bare"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::New {
+                name: "my-app".to_string(),
+                template: Some("bare".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_new_missing_name_errors() {
+        let err = parse_args(&args(&["martensite", "new"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "<name>"));
+    }
+
+    #[test]
+    fn parse_new_unknown_flag_errors() {
+        let err = parse_args(&args(&["martensite", "new", "my-app", "--bogus"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--bogus"));
+    }
+
+    #[test]
+    fn parse_init_defaults() {
+        let cmd = parse_args(&args(&["martensite", "init"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Init {
+                path: None,
+                agents_only: false,
+                lint_only: false,
+                template: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_init_with_flags_and_path() {
+        let cmd = parse_args(&args(&[
+            "martensite",
+            "init",
+            "some/path",
+            "--agents",
+            "-t",
+            "dashboard",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cmd,
+            Command::Init {
+                path: Some("some/path".to_string()),
+                agents_only: true,
+                lint_only: false,
+                template: Some("dashboard".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_init_lint_only() {
+        let cmd = parse_args(&args(&["martensite", "init", "--lint"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Init {
+                path: None,
+                agents_only: false,
+                lint_only: true,
+                template: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_init_unknown_flag_errors() {
+        let err = parse_args(&args(&["martensite", "init", "--bogus"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--bogus"));
+    }
+
+    #[test]
+    fn parse_doctor_default() {
+        let cmd = parse_args(&args(&["martensite", "doctor"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Doctor {
+                fix: false,
+                path: None
+            }
+        );
+    }
+
+    #[test]
+    fn parse_doctor_fix() {
+        let cmd = parse_args(&args(&["martensite", "doctor", "--fix"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Doctor {
+                fix: true,
+                path: None
+            }
+        );
+    }
+
+    #[test]
+    fn parse_doctor_with_path() {
+        let cmd = parse_args(&args(&[
+            "martensite",
+            "doctor",
+            "--fix",
+            "--path",
+            "custom/dir",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cmd,
+            Command::Doctor {
+                fix: true,
+                path: Some("custom/dir".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_doctor_positional_path() {
+        let cmd = parse_args(&args(&["martensite", "doctor", "custom/dir"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Doctor {
+                fix: false,
+                path: Some("custom/dir".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_doctor_unknown_flag_errors() {
+        let err = parse_args(&args(&["martensite", "doctor", "--bogus"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--bogus"));
+    }
+
+    #[test]
+    fn parse_check_default() {
+        let cmd = parse_args(&args(&["martensite", "check"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Check {
+                all_features: false,
+                package: None,
+                fix: false,
+                path: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_check_options() {
+        let cmd = parse_args(&args(&[
+            "martensite",
+            "check",
+            "--all-features",
+            "-p",
+            "my_pkg",
+            "--fix",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cmd,
+            Command::Check {
+                all_features: true,
+                package: Some("my_pkg".to_string()),
+                fix: true,
+                path: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_check_unknown_flag_errors() {
+        let err = parse_args(&args(&["martensite", "check", "--unknown"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--unknown"));
     }
 }
