@@ -334,6 +334,15 @@ impl MacosBackdropController {
     /// ```
     #[must_use]
     pub fn supports_liquid_glass() -> bool {
+        // SAFETY:
+        // Preconditions:
+        // - `NSProcessInfo` class is checked for runtime registration via `class(c"NSProcessInfo")`.
+        // Invariants:
+        // - `processInfo` message returns the shared singleton.
+        // - `operatingSystemVersion` returns `NSOperatingSystemVersion` by value matching the
+        //   runtime struct layout and encoding.
+        // Postconditions:
+        // - Returns true if the host OS major version is >= 26 (Liquid Glass introduction).
         unsafe {
             let Some(cls) = class(c"NSProcessInfo") else {
                 return false;
@@ -422,11 +431,17 @@ impl MacosBackdropController {
     ///
     /// # Safety
     ///
-    /// `ns_window` must be a valid `NSWindow*` and `effect_view` a valid
-    /// `NSVisualEffectView*`. Must be called on the main thread.
+    /// `ns_window` must be a valid, non-null `NSWindow*` and `effect_view` a valid,
+    /// non-null effect-view instance (`NSVisualEffectView*` or `NSGlassEffectView*`).
+    /// Must be called on the main thread (AppKit requirement).
     unsafe fn attach_effect_view(ns_window: *mut AnyObject, effect_view: *mut AnyObject) {
-        // `contentView` returns the window's content view (autoreleased,
-        // retained by `Retained`).
+        if ns_window.is_null() || effect_view.is_null() {
+            return;
+        }
+
+        // SAFETY:
+        // Preconditions: `ns_window` is verified non-null above.
+        // Invariants: `contentView` returns the window's root content view.
         let content_view: Option<Retained<AnyObject>> =
             unsafe { msg_send![ns_window, contentView] };
         let Some(content_view) = content_view else {
@@ -437,32 +452,39 @@ impl MacosBackdropController {
         // we pass it straight to `setFrame:`. The autoresizing mask
         // `NSViewWidthSizable | NSViewHeightSizable` (2 | 16 = 18) makes
         // the effect view track the content view's width and height.
-        let bounds: NSRect = unsafe { msg_send![&content_view, bounds] };
-        let _: () = unsafe { msg_send![effect_view, setFrame: bounds] };
-        let mask: u64 = 18; // NSViewWidthSizable | NSViewHeightSizable
-        let _: () = unsafe { msg_send![effect_view, setAutoresizingMask: mask] };
-        // Place the effect view at the back of the subview z-order so the
-        // GPU swapchain layer (added on top) composites over it.
-        let _: () = unsafe {
-            msg_send![
+        // SAFETY:
+        // Preconditions: `content_view` and `effect_view` are valid non-null objects.
+        // Invariants: AppKit frame and hierarchy mutations occur on the main thread.
+        // Postconditions: The effect view is framed to match bounds and placed below all subviews.
+        unsafe {
+            let bounds: NSRect = msg_send![&content_view, bounds];
+            let _: () = msg_send![effect_view, setFrame: bounds];
+            let mask: u64 = 18; // NSViewWidthSizable | NSViewHeightSizable
+            let _: () = msg_send![effect_view, setAutoresizingMask: mask];
+            // Place the effect view at the back of the subview z-order so the
+            // GPU swapchain layer (added on top) composites over it.
+            let _: () = msg_send![
                 &content_view,
                 addSubview: effect_view,
                 positioned: NS_WINDOW_ORDERING_MODE_BELOW,
                 relativeTo: core::ptr::null_mut::<AnyObject>(),
-            ]
-        };
+            ];
+        }
     }
 
     /// Removes the effect view from its superview and releases the
     /// controller's `+1` retain on it.
     fn remove_effect_view(&mut self) {
         if let Some(effect_view) = self.effect_view.take() {
-            // SAFETY: `removeFromSuperview` is a no-op if the view has no
-            // superview. `Retained::from_raw` reclaims the +1 retain and
-            // dropping the `Retained` releases it.
-            unsafe {
-                let _: () = msg_send![effect_view, removeFromSuperview];
-                let _ = Retained::from_raw(effect_view);
+            if !effect_view.is_null() {
+                // SAFETY:
+                // Preconditions: `effect_view` is verified non-null.
+                // Invariants: `removeFromSuperview` is safe to call even if the view is already detached.
+                // Postconditions: `Retained::from_raw` reclaims the +1 retain and drops it cleanly.
+                unsafe {
+                    let _: () = msg_send![effect_view, removeFromSuperview];
+                    let _ = Retained::from_raw(effect_view);
+                }
             }
         }
         self.effect_view_kind = EffectViewKind::None;
@@ -491,6 +513,10 @@ impl MacosBackdropController {
     /// ```
     #[must_use]
     pub fn reduce_transparency_enabled() -> bool {
+        // SAFETY:
+        // Preconditions: `NSWorkspace` class is looked up via runtime registry check.
+        // Invariants: `sharedWorkspace` returns the process-wide workspace singleton.
+        // Postconditions: Queries the `accessibilityDisplayOptions` bitmask without mutating state.
         unsafe {
             let Some(cls) = class(c"NSWorkspace") else {
                 return false;
@@ -803,6 +829,14 @@ impl AppearanceObserver {
     /// ```
     #[must_use]
     pub fn is_dark_mode(&self) -> bool {
+        // SAFETY:
+        // Preconditions:
+        // - `NSApplication` class is looked up via runtime registry check.
+        // - Query must execute on the main thread (AppKit requirement).
+        // Invariants:
+        // - `sharedApplication` and `effectiveAppearance` return valid AppKit objects.
+        // Postconditions:
+        // - Returns true if the app's effective appearance matches NSAppearanceNameDarkAqua.
         unsafe {
             let Some(app_cls) = class(c"NSApplication") else {
                 return false;
@@ -894,9 +928,10 @@ impl AppearanceObserver {
     /// Must be called on the main thread.
     unsafe fn register_observer(&self) -> Option<*mut AnyObject> {
         let cls = class(c"NSDistributedNotificationCenter")?;
-        // `defaultCenter` returns the shared distributed notification
-        // center (a singleton).
+        // SAFETY: `defaultCenter` is a standard class method on NSDistributedNotificationCenter
+        // returning the shared singleton instance.
         let center: Retained<AnyObject> = unsafe { msg_send![cls, defaultCenter] };
+        // SAFETY: Creating an NSString from a static C string literal is valid.
         let name = unsafe { ns_string(c"AppleInterfaceThemeChangedNotification") }?;
 
         // The block is invoked when the system appearance preference

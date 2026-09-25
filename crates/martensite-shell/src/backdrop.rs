@@ -249,12 +249,8 @@ impl StubBackdropController {
 }
 
 impl BackdropController for StubBackdropController {
-    #[allow(unsafe_code)]
-    fn set_material(&mut self, _window: &dyn Window, material: BackdropMaterial) {
-        // SAFETY: stub does not dereference the handle.
-        let _ = unsafe { _window.raw_handle() };
-        // Stub: ignore the request, always report None.
-        let _ = material;
+    fn set_material(&mut self, _window: &dyn Window, _material: BackdropMaterial) {
+        // Stub: ignore the request, always report None. No platform FFI calls are made.
     }
     fn current_material(&self) -> BackdropMaterial {
         BackdropMaterial::None

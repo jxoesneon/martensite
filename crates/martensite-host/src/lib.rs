@@ -152,9 +152,24 @@ impl GuestLibrary {
     /// assert!(lib.is_err());
     /// ```
     pub fn load(path: &Path) -> Result<Self, HostError> {
-        // SAFETY: `Library::new` calls `dlopen`/`LoadLibrary`, which is unsafe
-        // because the loaded code may execute arbitrary initialization. The
-        // guest cdylib is trusted build output from `cargo-martensite`.
+        if path.as_os_str().is_empty() {
+            return Err(HostError::LoadFailed(
+                path.to_path_buf(),
+                "library path cannot be empty".to_string(),
+            ));
+        }
+
+        // SAFETY:
+        // Preconditions:
+        // - `path` is validated above to be non-empty and points to a dynamic library artifact.
+        // - The target cdylib is compiled code whose initialization routines (e.g. `DllMain`
+        //   on Windows, `.init` / Mach-O initializers on Unix) do not violate Rust soundness invariants.
+        // Invariants:
+        // - `libloading::Library::new` wraps native `LoadLibraryW` on Windows or `dlopen` on Unix.
+        // - The resulting `Library` owns the OS handle and prevents leaking loader references.
+        // Postconditions:
+        // - On success, returns an initialized `GuestLibrary` whose drop unloads the library via
+        //   `FreeLibrary` or `dlclose`.
         let library = unsafe { Library::new(path) }
             .map_err(|e| HostError::LoadFailed(path.to_path_buf(), e.to_string()))?;
         Ok(Self {
@@ -200,12 +215,42 @@ impl GuestLibrary {
     where
         T: 'static,
     {
-        // SAFETY: `Library::get` calls `dlsym`/`GetProcAddress`, which is unsafe
-        // because the caller must guarantee the symbol has the expected type
-        // and lifetime. The caller (host) is responsible for matching the
-        // guest's declared ABI.
-        unsafe { self.library.get(name.as_bytes()) }
-            .map_err(|_| HostError::SymbolNotFound(name.to_string()))
+        // Precondition 1: Validate symbol name is non-empty and contains no interior NUL bytes.
+        if name.is_empty() || name.as_bytes().contains(&0) {
+            return Err(HostError::SymbolNotFound(name.to_string()));
+        }
+
+        // Precondition 2: Pointer size and alignment invariant.
+        // The requested type `T` must match the size of a pointer (`*const ()`) and must not
+        // exceed pointer alignment. This guarantees that `libloading::Symbol::deref` will not
+        // perform unaligned or out-of-bounds reads on the loaded symbol address.
+        if core::mem::size_of::<T>() != core::mem::size_of::<*const ()>()
+            || core::mem::align_of::<T>() > core::mem::align_of::<*const ()>()
+        {
+            return Err(HostError::SymbolNotFound(format!(
+                "incompatible symbol type layout for '{name}'"
+            )));
+        }
+
+        // SAFETY:
+        // Preconditions:
+        // - `name` has been verified non-empty and free of interior NUL bytes.
+        // - The target type `T` has been verified to match pointer size and permissible alignment.
+        // - The lifetime bound `T: 'static` guarantees the type contains no borrowed references
+        //   that could become invalid.
+        // Invariants:
+        // - `libloading::Library::get` issues `GetProcAddress` on Windows or `dlsym` on Unix.
+        // - The returned `Symbol<'_, Option<T>>` ties the symbol's lifetime to `&self`, ensuring
+        //   callers cannot use the symbol after the library is dropped or reloaded.
+        // - `lift_option` checks if the resolved pointer is null before yielding `Symbol<'_, T>`,
+        //   preventing null pointer dereferences when invoking the symbol.
+        // Postconditions:
+        // - On success, returns a valid, non-null, lifetime-bound `Symbol<'_, T>`.
+        let sym: Symbol<'_, Option<T>> = unsafe { self.library.get(name.as_bytes()) }
+            .map_err(|_| HostError::SymbolNotFound(name.to_string()))?;
+
+        sym.lift_option()
+            .ok_or_else(|| HostError::SymbolNotFound(name.to_string()))
     }
 
     /// Unloads the current library and loads a fresh copy from `path`.
@@ -342,9 +387,15 @@ impl HostApp {
             .guest
             .get_symbol(RENDER_SYMBOL_NAME)
             .map_err(|_| HostError::MissingRenderSymbol)?;
-        // SAFETY: The guest's `martensite_render` symbol is declared with a C
-        // ABI and no parameters by the guest crate. Calling it is safe as long
-        // as the guest honors that contract.
+        // SAFETY:
+        // Preconditions:
+        // - `render` was verified non-null and valid by `get_symbol` above.
+        // - The guest's `martensite_render` symbol conforms to the standard C ABI with no parameters
+        //   and no return value.
+        // Invariants:
+        // - The host's execution context is preserved across the C ABI function call boundary.
+        // Postconditions:
+        // - Component layout and paint encoding for the current frame have executed.
         (*render)();
         Ok(())
     }
@@ -377,6 +428,20 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             HostError::LoadFailed(p, _) => assert_eq!(p, path),
+            other => panic!("expected LoadFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn guest_library_load_empty_path_returns_error() {
+        let path = Path::new("");
+        let result = GuestLibrary::load(path);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            HostError::LoadFailed(p, msg) => {
+                assert_eq!(p, path);
+                assert!(msg.contains("cannot be empty"));
+            }
             other => panic!("expected LoadFailed, got {other:?}"),
         }
     }

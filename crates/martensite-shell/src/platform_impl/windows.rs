@@ -191,18 +191,26 @@ impl WindowsBackdropController {
     pub fn set_title_bar_style(&mut self, window: &dyn Window, style: &TitleBarStyle) {
         #[cfg(feature = "windows-backend")]
         {
-            // SAFETY: the caller guarantees the window is alive for the
-            // duration of this call, so the HWND is valid to pass to DWM.
+            // SAFETY:
+            // Preconditions:
+            // - The caller guarantees the window is alive for the duration of this call.
+            // Invariants:
+            // - `raw_handle` must return a non-null Win32 HWND. We defensively validate
+            //   that `handle` is non-null before attempting any Win32 DWM calls.
+            // Postconditions:
+            // - If the handle is null, no FFI calls are performed and the function returns early.
             let handle = unsafe { window.raw_handle() };
+            if handle.is_null() {
+                return;
+            }
             let hwnd = HWND(handle);
 
             // DWMWA_USE_IMMERSIVE_DARK_MODE — BOOL (i32, 0 or 1).
             if let Some(dark) = style.dark_mode {
                 let value: i32 = i32::from(dark);
-                // SAFETY: `hwnd` is valid for this call (see above), and
-                // `&value` points to a live `i32` for exactly
-                // `size_of::<i32>()` bytes — the BOOL type and size this
-                // attribute expects.
+                // SAFETY: `hwnd` is a verified non-null HWND valid for this call (see above),
+                // and `&value` points to a live `i32` for exactly `size_of::<i32>()` bytes —
+                // the BOOL type and size this attribute expects.
                 let _ = unsafe {
                     DwmSetWindowAttribute(
                         hwnd,
@@ -220,11 +228,9 @@ impl WindowsBackdropController {
                 } else {
                     DWMWCP_DEFAULT
                 };
-                // SAFETY: `hwnd` is valid for this call (see above), and
-                // `&value` points to a live `i32` for exactly
-                // `size_of::<i32>()` bytes — the
-                // `DWM_WINDOW_CORNER_PREFERENCE` type and size this
-                // attribute expects.
+                // SAFETY: `hwnd` is a verified non-null HWND valid for this call (see above),
+                // and `&value` points to a live `i32` for exactly `size_of::<i32>()` bytes —
+                // the `DWM_WINDOW_CORNER_PREFERENCE` type and size this attribute expects.
                 let _ = unsafe {
                     DwmSetWindowAttribute(
                         hwnd,
@@ -237,10 +243,9 @@ impl WindowsBackdropController {
 
             // DWMWA_CAPTION_COLOR — COLORREF (u32).
             if let Some(color) = style.caption_color {
-                // SAFETY: `hwnd` is valid for this call (see above), and
-                // `&color` points to a live `u32` for exactly
-                // `size_of::<u32>()` bytes — the COLORREF type and size
-                // this attribute expects.
+                // SAFETY: `hwnd` is a verified non-null HWND valid for this call (see above),
+                // and `&color` points to a live `u32` for exactly `size_of::<u32>()` bytes —
+                // the COLORREF type and size this attribute expects.
                 let _ = unsafe {
                     DwmSetWindowAttribute(
                         hwnd,
@@ -253,10 +258,9 @@ impl WindowsBackdropController {
 
             // DWMWA_TEXT_COLOR — COLORREF (u32).
             if let Some(color) = style.text_color {
-                // SAFETY: `hwnd` is valid for this call (see above), and
-                // `&color` points to a live `u32` for exactly
-                // `size_of::<u32>()` bytes — the COLORREF type and size
-                // this attribute expects.
+                // SAFETY: `hwnd` is a verified non-null HWND valid for this call (see above),
+                // and `&color` points to a live `u32` for exactly `size_of::<u32>()` bytes —
+                // the COLORREF type and size this attribute expects.
                 let _ = unsafe {
                     DwmSetWindowAttribute(
                         hwnd,
@@ -271,8 +275,7 @@ impl WindowsBackdropController {
         #[cfg(not(feature = "windows-backend"))]
         {
             // Without the windows-backend feature, no FFI is available.
-            // SAFETY: stub does not dereference the handle.
-            let _ = unsafe { window.raw_handle() };
+            let _ = (window, style);
         }
     }
 }
@@ -327,14 +330,26 @@ impl BackdropController for WindowsBackdropController {
                 BackdropMaterial::Vibrancy(_) => DWMSBT_NONE, // unreachable; handled above
             };
 
-            // SAFETY: the caller guarantees the window is alive for the
-            // duration of this call, so the HWND is valid to pass to DWM.
+            // SAFETY:
+            // Preconditions:
+            // - The caller guarantees the window is alive for the duration of this call.
+            // Invariants:
+            // - `raw_handle` must return a non-null Win32 HWND. We defensively validate
+            //   that `handle` is non-null before attempting any Win32 DWM calls.
+            // Postconditions:
+            // - If the handle is null, the controller records `BackdropMaterial::None` and
+            //   `supported = false`, returning early without making DWM FFI calls.
             let handle = unsafe { window.raw_handle() };
+            if handle.is_null() {
+                self.material = BackdropMaterial::None;
+                self.supported = false;
+                return;
+            }
             let hwnd = HWND(handle);
-            // SAFETY: `hwnd` is valid for this call (see above), and
-            // `&dwm_type` points to a live `DWM_SYSTEMBACKDROP_TYPE` for
-            // exactly `size_of::<DWM_SYSTEMBACKDROP_TYPE>()` bytes — the
-            // type and size `DWMWA_SYSTEMBACKDROP_TYPE` expects.
+            // SAFETY: `hwnd` is a verified non-null HWND valid for this call (see above),
+            // and `&dwm_type` points to a live `DWM_SYSTEMBACKDROP_TYPE` for exactly
+            // `size_of::<DWM_SYSTEMBACKDROP_TYPE>()` bytes — the type and size
+            // `DWMWA_SYSTEMBACKDROP_TYPE` expects.
             let result = unsafe {
                 DwmSetWindowAttribute(
                     hwnd,
@@ -357,8 +372,7 @@ impl BackdropController for WindowsBackdropController {
         #[cfg(not(feature = "windows-backend"))]
         {
             // Without the windows-backend feature, no FFI is available.
-            // SAFETY: stub does not dereference the handle.
-            let _ = unsafe { window.raw_handle() };
+            let _ = window;
             self.material = material;
             self.supported = false;
         }
@@ -593,5 +607,93 @@ impl Default for WindowsSnapLayout {
     /// ```
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A null `Window` handle used to exercise null-handle safety paths
+    /// without requiring a live Win32 window.
+    struct NullWindow;
+    impl Window for NullWindow {
+        unsafe fn raw_handle(&self) -> *mut core::ffi::c_void {
+            core::ptr::null_mut()
+        }
+    }
+
+    #[test]
+    fn new_controller_starts_with_none_material() {
+        let ctrl = WindowsBackdropController::new();
+        assert_eq!(ctrl.current_material(), BackdropMaterial::None);
+        assert!(!ctrl.supports_material(BackdropMaterial::Mica));
+        assert_eq!(ctrl.mode(), BackdropMode::Opaque);
+    }
+
+    #[test]
+    fn default_controller_matches_new() {
+        let ctrl = WindowsBackdropController::default();
+        assert_eq!(ctrl.current_material(), BackdropMaterial::None);
+    }
+
+    #[test]
+    fn set_material_null_window_marks_unsupported() {
+        let mut ctrl = WindowsBackdropController::new();
+        ctrl.set_material(&NullWindow, BackdropMaterial::Mica);
+        assert_eq!(ctrl.current_material(), BackdropMaterial::None);
+        assert!(!ctrl.supports_material(BackdropMaterial::Mica));
+    }
+
+    #[test]
+    fn set_material_vibrancy_is_unsupported_on_windows() {
+        let mut ctrl = WindowsBackdropController::new();
+        ctrl.set_material(
+            &NullWindow,
+            BackdropMaterial::Vibrancy(crate::backdrop::VibrancyMaterial::Sidebar),
+        );
+        assert_eq!(ctrl.current_material(), BackdropMaterial::None);
+        assert!(!ctrl.supports_material(BackdropMaterial::Vibrancy(
+            crate::backdrop::VibrancyMaterial::Sidebar
+        )));
+    }
+
+    #[test]
+    fn set_title_bar_style_null_window_does_not_panic() {
+        let mut ctrl = WindowsBackdropController::new();
+        let style = TitleBarStyle {
+            dark_mode: Some(true),
+            rounded_corners: Some(true),
+            caption_color: Some(0x00FF0000),
+            text_color: Some(0x0000FF00),
+        };
+        ctrl.set_title_bar_style(&NullWindow, &style);
+    }
+
+    #[test]
+    fn snap_layout_hit_test_maximize_button() {
+        let snap = WindowsSnapLayout::new();
+        assert!(!snap.is_supported());
+        assert_eq!(snap.max_zones(), 0);
+
+        // Maximize button region: top-right corner, 46px wide, 32px high in 1000px window.
+        assert!(snap.hit_test_maximize_button(980, 16, 1000, 32));
+        assert!(!snap.hit_test_maximize_button(950, 16, 1000, 32));
+        assert!(!snap.hit_test_maximize_button(980, 35, 1000, 32));
+    }
+
+    #[test]
+    fn snap_layout_set_supported() {
+        let mut snap = WindowsSnapLayout::new();
+        snap.set_supported(true);
+        assert!(snap.is_supported());
+        assert_eq!(snap.max_zones(), 4);
+        assert!(snap.should_show_snap_flyout(true));
+        assert!(!snap.should_show_snap_flyout(false));
+
+        snap.set_supported(false);
+        assert!(!snap.is_supported());
+        assert_eq!(snap.max_zones(), 0);
+        assert!(!snap.should_show_snap_flyout(true));
     }
 }
