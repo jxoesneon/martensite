@@ -26,16 +26,11 @@
 //! Precedent: `martensite-render-test/tests/parity.rs` bundles the
 //! same face for its glyph-run tests.
 //!
-//! LIMITATION (documented, not fixable from this crate): every
-//! `martensite::widgets::text::Text` owns a private
-//! `FontManager::new()` with no `FontSource` injection seam, and the
-//! facade's `TextPainter` hardcodes `FontManager::new()` as well.
-//! Text painted through `Text` widgets — the bulk of the dashboard —
-//! therefore still resolves system fonts, and goldens can drift across
-//! machines until martensite-text/martensite grow a font-fixture API
-//! (those crates are owned by other workstreams — do not patch here).
-//! The ambient-painter half is still worth wiring: chrome labels make
-//! up a meaningful share of the frame and are now stable.
+//! `Text` widgets lazily construct `FontManager::new()` per widget —
+//! the sweep installs the same bundled face through
+//! [`install_test_fonts`] (the thread-local fixture override in
+//! `martensite-text`) so widget-shaped text resolves identically on
+//! every host as well. Both text paths are now host-independent.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -45,7 +40,7 @@ use kurbo::{Point, Rect};
 use martensite::core::paint::{
     FontResource, GlyphInstance, GlyphRun, PaintList, TextShaper, TextStyle,
 };
-use martensite::text::{shape_text_with_attrs, Attrs, FontManager, FontSystem, Style, Weight};
+use martensite::text::{shape_text_with_attrs, Attrs, FontManager, FontSource, Style, Weight};
 use martensite_render::diff::perceptual_diff;
 use martensite_render::{RenderBackend, TinySkiaBackend};
 use parking_lot::Mutex;
@@ -307,25 +302,20 @@ fn read_png_rgba(path: &Path) -> std::io::Result<(u32, u32, Vec<u8>)> {
 // ---------------------------------------------------------------------------
 
 /// Builds a [`FontManager`] whose `fontdb` contains ONLY the bundled
-/// Fira Mono — [`FontSystem::new_with_locale_and_db`] is the one
-/// constructor that skips `db.load_system_fonts()` (`with_fonts` and
-/// `FontManager::new` both scan the host), which is what makes the
-/// fixture deterministic. All generic families alias the loaded face
-/// so family-name resolution cannot wander.
+/// Fira Mono — [`FontManager::only_fonts`] skips `load_system_fonts`
+/// and aliases every generic family to the loaded face, which is what
+/// makes the fixture deterministic across hosts.
 fn fixture_font_manager() -> FontManager {
-    let mut db = fontdb::Database::new();
-    let ids = db.load_font_source(fontdb::Source::Binary(Arc::new(FIRA_MONO.to_vec())));
-    let family = ids
-        .first()
-        .and_then(|id| db.face(*id))
-        .and_then(|f| f.families.first().map(|(name, _)| name.clone()))
-        .unwrap_or_else(|| "Fira Mono".to_string());
-    db.set_sans_serif_family(&family);
-    db.set_serif_family(&family);
-    db.set_monospace_family(&family);
-    db.set_cursive_family(&family);
-    db.set_fantasy_family(&family);
-    FontManager::from_system(FontSystem::new_with_locale_and_db("en-US".to_string(), db))
+    FontManager::only_fonts([FontSource::binary(FIRA_MONO.to_vec())])
+}
+
+/// Installs the bundled Fira Mono as the thread-local
+/// [`FontManager::new`] override (`martensite_text::font::set_test_fonts`)
+/// so `Text` widgets — which lazily construct their own managers —
+/// shape through the same fixture as the ambient painter. Hold the
+/// guard for the duration of the sweep.
+pub fn install_test_fonts() -> martensite::text::font::TestFontsGuard {
+    martensite::text::font::set_test_fonts(vec![FontSource::binary(FIRA_MONO.to_vec())])
 }
 
 /// A [`TextShaper`] backed by the bundled-font [`FontManager`] —

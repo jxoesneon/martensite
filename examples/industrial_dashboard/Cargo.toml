@@ -75,9 +75,6 @@ martensite-render = { workspace = true }
 # vendored-vello lockfile entry (already cargo-vet exempt); tiny-skia's
 # disabled `png-format` feature stays OFF per spec A1.
 png = "=0.18.1"
-# `fontdb::Database` is needed to build the bundled-font-only
-# `FontSystem` behind the deterministic text fixture (spec A2).
-fontdb = { workspace = true }
 # winit/wgpu feature pins mirror examples/viewport_showcase — the vendored
 # accesskit_winit fork and the wgpu engine both build against these.
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }

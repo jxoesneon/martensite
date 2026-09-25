@@ -244,11 +244,56 @@ pub struct FontManager {
     generation: u64,
 }
 
+thread_local! {
+    /// Thread-local fixture override consulted by [`FontManager::new`].
+    /// `None` (the default) means normal system-font discovery.
+    static TEST_FONT_OVERRIDE: std::cell::RefCell<Option<Vec<FontSource>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Restores the previous test-font override on drop — see
+/// [`set_test_fonts`].
+#[must_use = "the override is active only while the guard is held"]
+pub struct TestFontsGuard(Option<Vec<FontSource>>);
+
+impl Drop for TestFontsGuard {
+    fn drop(&mut self) {
+        TEST_FONT_OVERRIDE.with(|c| *c.borrow_mut() = self.0.take());
+    }
+}
+
+/// Installs a thread-local fixture-font override consulted by
+/// [`FontManager::new`]. While the returned guard is held, every
+/// `FontManager::new()` on the calling thread builds a
+/// [`FontManager::only_fonts`] database from `fonts` instead of
+/// scanning the host — so `Text` widgets and any other lazily
+/// constructed managers shape identically on every machine.
+///
+/// The override is thread-local: parallel tests on other threads are
+/// unaffected. Nested installs restore in LIFO order.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_text::font::{set_test_fonts, FontSource};
+///
+/// let guard = set_test_fonts(vec![FontSource::binary(vec![0u8; 4])]);
+/// // `FontManager::new()` on this thread now sees only the fixture.
+/// drop(guard);
+/// ```
+pub fn set_test_fonts(fonts: Vec<FontSource>) -> TestFontsGuard {
+    let prev = TEST_FONT_OVERRIDE.with(|c| c.borrow_mut().replace(fonts));
+    TestFontsGuard(prev)
+}
+
 impl FontManager {
     /// Creates a new `FontManager` that discovers all system fonts.
     ///
     /// This is an expensive operation (up to ~1s on release builds)
-    /// and should be called once at startup.
+    /// and should be called once at startup. When a thread-local
+    /// fixture override is installed via [`set_test_fonts`], `new()`
+    /// builds a [`FontManager::only_fonts`] manager from the override
+    /// sources instead of scanning the host.
     ///
     /// # Examples
     ///
@@ -259,14 +304,19 @@ impl FontManager {
     /// let _faces = manager.faces();
     /// ```
     pub fn new() -> Self {
+        if let Some(fonts) = TEST_FONT_OVERRIDE.with(|c| c.borrow().clone()) {
+            return Self::only_fonts(fonts);
+        }
         Self {
             system: FontSystem::new(),
             generation: 0,
         }
     }
 
-    /// Creates a new `FontManager` with only the specified custom fonts,
-    /// without loading any system fonts.
+    /// Creates a new `FontManager` with the specified custom fonts in
+    /// addition to the system fonts (system fonts are always scanned).
+    /// For a database containing ONLY the given fonts — no host scan —
+    /// use [`FontManager::only_fonts`].
     ///
     /// # Examples
     ///
@@ -286,6 +336,55 @@ impl FontManager {
             .collect();
         Self {
             system: FontSystem::new_with_fonts(sources),
+            generation: 0,
+        }
+    }
+
+    /// Creates a `FontManager` whose font database contains ONLY the
+    /// supplied fonts — no system font scan, no host-dependent
+    /// fallback resolution. Every generic family (sans-serif, serif,
+    /// monospace, cursive, fantasy) aliases the first loaded face's
+    /// family so family-name resolution cannot wander between hosts.
+    /// The locale is fixed to `en-US`.
+    ///
+    /// This is the fixture constructor for deterministic rendering in
+    /// tests, lint sweeps, and golden-image pipelines; it is also what
+    /// [`FontManager::new`] delegates to while a [`set_test_fonts`]
+    /// override is active.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_text::{font::FontSource, FontManager};
+    ///
+    /// let manager = FontManager::only_fonts(std::iter::empty());
+    /// assert_eq!(manager.faces().len(), 0);
+    /// ```
+    pub fn only_fonts(fonts: impl IntoIterator<Item = FontSource>) -> Self {
+        let mut db = fontdb::Database::new();
+        let mut first_family = None;
+        for src in fonts {
+            let source = match src {
+                FontSource::File(path) => fontdb::Source::File(path),
+                FontSource::Binary(data) => fontdb::Source::Binary(data),
+            };
+            let ids = db.load_font_source(source);
+            if first_family.is_none() {
+                first_family = ids
+                    .first()
+                    .and_then(|id| db.face(*id))
+                    .and_then(|f| f.families.first().map(|(name, _)| name.clone()));
+            }
+        }
+        if let Some(family) = first_family {
+            db.set_sans_serif_family(&family);
+            db.set_serif_family(&family);
+            db.set_monospace_family(&family);
+            db.set_cursive_family(&family);
+            db.set_fantasy_family(&family);
+        }
+        Self {
+            system: FontSystem::new_with_locale_and_db("en-US".to_string(), db),
             generation: 0,
         }
     }

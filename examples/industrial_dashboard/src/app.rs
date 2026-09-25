@@ -2894,6 +2894,10 @@ mod tests {
             }
         }
 
+        // Same deterministic-font setup as `lint_sweep::run` — `Text`
+        // widgets' lazily-built `FontManager`s resolve the bundled
+        // fixture, so the audit can't drift with the host's font set.
+        let _font_guard = crate::frames::install_test_fonts();
         let app = App::new(Some(ThemeChoice::Dark), false);
         type ZonePages = Vec<(&'static str, crate::zone::Page)>;
         let mut pages_by_zone: Vec<(&str, usize, f32, f32, ZonePages)> = vec![];
@@ -3179,6 +3183,9 @@ mod tests {
     /// `cargo test -p industrial_dashboard dump_widget_tree -- --nocapture`.
     #[test]
     fn dump_widget_tree() {
+        // Text measure runs through per-widget `FontManager`s — the
+        // fixture keeps the tree identical across host font sets.
+        let _font_guard = crate::frames::install_test_fonts();
         let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.build_arena();
         app.apply_dock_layout_at(1680, 980);

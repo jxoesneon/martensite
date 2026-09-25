@@ -73,15 +73,13 @@ pub struct SweepReport {
     /// Sorted `"rule :: path"` lines for every gating finding — the
     /// comparable form the checked-in baseline asserts against.
     /// Keyed on path, not message: messages embed font-derived
-    /// metrics (target sizes, areas) that drift with the host's
-    /// installed font set — `Text` widgets shape through per-widget
-    /// system `FontManager`s, not the fixture — while the widget-tree
-    /// path is deterministic on any host. Granularity: a second
-    /// finding under an already-flagged path doesn't extend the
-    /// baseline (the backlog is per-location). Sorted for stability.
-    /// Residual: a finding sitting near its threshold can still flip
-    /// baseline *membership* across hosts until `Text` grows a font
-    /// fixture seam (IMP-006 #8).
+    /// metrics (target sizes, areas), and although the sweep installs
+    /// the bundled-font fixture on both text paths (ambient painter +
+    /// `FontManager::new` thread-local override), path keys keep the
+    /// baseline robust against any residual metric drift. Granularity:
+    /// a second finding under an already-flagged path doesn't extend
+    /// the baseline (the backlog is per-location). Sorted for
+    /// stability.
     pub gating_details: Vec<String>,
     /// Unique `(rule, message)` suppressed findings.
     pub unique_suppressed: usize,
@@ -224,11 +222,15 @@ pub fn run(cfg: &LintConfig, opts: &SweepOptions) -> SweepReport {
         collect(tag, &report, acc, opts.quiet, log);
     }
 
-    // Deterministic-font ambient painter — built once, cloned into
-    // every arena so the bundled-font FontSystem (and its shaping
-    // caches) is shared. Always on: lint metrics must be identical
-    // between the dump and plain-sweep paths (and across machines —
-    // system fonts drift), so `LINT_GATING_BASELINE.txt` stays honest.
+    // Deterministic fonts on BOTH paths: the ambient painter gets the
+    // bundled-font FixtureTextShaper (built once, cloned into every
+    // arena so its FontSystem + shaping caches are shared), and the
+    // thread-local `FontManager::new` override routes the per-widget
+    // managers inside `Text` through the same bundled face — lint
+    // metrics and finding membership are identical between the dump
+    // and plain-sweep paths and across machines (system fonts drift),
+    // so `LINT_GATING_BASELINE.txt` stays honest.
+    let _font_guard = crate::frames::install_test_fonts();
     let fixture = Some(crate::frames::FixtureTextShaper::new());
 
     let mut app = App::new(Some(ThemeChoice::Dark), false);
