@@ -17,6 +17,8 @@
 | Contribute code | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Review a PR | [Code Review Checklist](CODE_REVIEW_CHECKLIST.md) |
 | Understand the architecture | [Architecture Overview](ARCHITECTURE_OVERVIEW.md) |
+| Follow task recipes | [Task Cookbook](cookbook/README.md) |
+| Migrate from other frameworks | [Migration Guides](migration/README.md) |
 | Plan implementation | [Roadmap](ROADMAP.md) · [Milestone Specifications](milestones/INDEX.md) · [Implementation Checklist](IMPLEMENTATION_CHECKLIST.md) |
 | Understand test strategy | [Testing Strategy](TESTING_STRATEGY.md) |
 | Understand platform coverage | [Platform Support](PLATFORM_SUPPORT.md) |
@@ -139,6 +141,8 @@ Each DDR specifies a crate's internal algorithms, data structures, and invariant
 - [VENDORED_FORKS.md](VENDORED_FORKS.md) — Vendored-fork maintenance policy (vello, cosmic-text, accesskit-winit, naga dedup, Bevy pin)
 - [REPRODUCIBLE_BUILDS.md](REPRODUCIBLE_BUILDS.md) — Build determinism pins, variance sources, local verification
 - [tutorials/](tutorials/README.md) — End-to-end tutorials (setup, reactive state, custom widgets, accessibility validation)
+- [cookbook/](cookbook/README.md) — Task-oriented recipes (responsive layout, reactive data binding, custom painting)
+- [migration/](migration/README.md) — Architectural migration guides (from egui, from Iced)
 
 ---
 
