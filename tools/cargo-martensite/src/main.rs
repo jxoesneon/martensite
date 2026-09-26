@@ -15,13 +15,13 @@ fn main() {
         Err(err) => {
             eprintln!("cargo-martensite: {err}");
             eprintln!("Run `cargo martensite help` for usage.");
-            std::process::exit(2);
+            std::process::exit(err.exit_code());
         }
     };
 
     if let Err(err) = run_command(cmd) {
         eprintln!("cargo-martensite: {err}");
-        std::process::exit(1);
+        std::process::exit(err.exit_code());
     }
 }
 
@@ -102,5 +102,21 @@ mod api_surface {
         let _ = cargo_martensite::CheckReport::new();
         let _ = cargo_martensite::LegResult::pass("l", "c");
         let _ = cargo_martensite::run_check as fn(_) -> _;
+
+        // Lint surface
+        let _ = cargo_martensite::LintOptions::default();
+        let _ = cargo_martensite::LintSummary::default();
+        let _ = cargo_martensite::OutputFormat::Text;
+        let _ = cargo_martensite::run_lint as fn(_) -> _;
+        let _ = cargo_martensite::load_scene_from_file as fn(_) -> _;
+
+        // Inspect surface
+        let _ = cargo_martensite::InspectOptions::default();
+        let _ = cargo_martensite::run_inspect as fn(_) -> _;
+
+        // Dev channel surface
+        let _ = cargo_martensite::PROTOCOL_VERSION;
+        let _ = cargo_martensite::MARTENSITE_VERSION;
+        let _ = cargo_martensite::discover_socket as fn(_) -> _;
     }
 }

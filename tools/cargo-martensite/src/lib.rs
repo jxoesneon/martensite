@@ -13,15 +13,28 @@
 pub mod check;
 /// Command-line interface parsing and dispatch.
 pub mod cli;
+/// Dev channel IPC client, server, and wire protocol (ADR-0038).
+pub mod dev_channel;
 /// Environment diagnosis and readiness checks.
 pub mod doctor;
 /// Hot-reload coordination framework (file watching, build triggering, timing).
 pub mod hot_reload;
+/// Headless widget inspector attached to running dev app.
+pub mod inspect;
+/// Design standard linting in offline and dev-channel attach modes.
+pub mod lint;
 /// Project scaffolding and embedded templates.
 pub mod scaffold;
 
 pub use check::{run_check, CheckError, CheckOptions, CheckReport, LegResult};
 pub use cli::{parse_args, run_command, CliError, Command, DEFAULT_DEV_PORT};
+#[cfg(unix)]
+pub use dev_channel::DevServer;
+pub use dev_channel::{
+    discover_socket, DevChannelError, DevClient, DevError, DevRequest, DevResponse,
+    InspectSelectData, LayoutStep, TreeSnapshotData, WireTreeNode, MARTENSITE_VERSION,
+    PROTOCOL_VERSION,
+};
 pub use doctor::{
     check_accessibility, check_design_lint, check_gpu, check_text_and_fonts, check_toolchain,
     check_version_parity, run_doctor, CheckResult, CheckStatus, DoctorOptions, DoctorReport,
@@ -31,6 +44,8 @@ pub use hot_reload::{
     build_guest_crate, is_within_reload_budget, reload_cycle, versioned_library_path, FileWatcher,
     HotReloadConfig, HotReloadState, ReloadError, RELOAD_BUDGET_MS,
 };
+pub use inspect::{run_inspect, InspectError, InspectOptions};
+pub use lint::{load_scene_from_file, run_lint, LintError, LintOptions, LintSummary, OutputFormat};
 pub use scaffold::{
     get_template_files, init_project, render_template, scaffold_project, validate_project_name,
     FileInitStatus, InitOptions, ScaffoldError, ScaffoldOptions, TemplateFile, TemplateKind,

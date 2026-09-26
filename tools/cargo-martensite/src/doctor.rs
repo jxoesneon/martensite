@@ -515,6 +515,9 @@ pub fn check_text_and_fonts() -> Vec<CheckResult> {
     // 1. Font provider inspection
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
+    if db.is_empty() && std::path::Path::new("/system/fonts").is_dir() {
+        db.load_fonts_dir("/system/fonts");
+    }
     let count = db.len();
 
     if count > 0 {

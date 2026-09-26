@@ -18,6 +18,9 @@ wgpu = { workspace = true }
 pollster = { workspace = true }
 fontdb = { workspace = true, features = ["std", "fontconfig"] }
 martensite-design-lint = { workspace = true }
+martensite-devtools = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 
 [dev-dependencies]

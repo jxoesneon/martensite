@@ -81,6 +81,44 @@ pub enum Command {
         /// Target project directory (defaults to current directory).
         path: Option<String>,
     },
+    /// `cargo martensite lint` — evaluate design standards in offline or attach mode.
+    Lint {
+        /// Optional path to serialized scene or dump file (`--scene <path>`).
+        scene: Option<String>,
+        /// Whether to apply Safe autofix ops.
+        fix: bool,
+        /// Whether to force Risky autofixes.
+        force: bool,
+        /// Disable recursive autofix convergence.
+        no_recursive: bool,
+        /// Maximum recursion passes for autofix.
+        max_recursiveness: usize,
+        /// Standards to enable (e.g. `wcag`, `isa101`).
+        standards: Vec<String>,
+        /// Minimum severity to report (e.g. `warn`, `error`, `info`).
+        severity: Option<String>,
+        /// Substring filter for node paths.
+        filter: Option<String>,
+        /// Output format (`text` or `json`).
+        format: String,
+        /// Socket path override for dev-channel IPC.
+        socket: Option<String>,
+        /// Allow connecting when dev app version mismatches CLI.
+        allow_version_mismatch: bool,
+    },
+    /// `cargo martensite inspect` — headless widget inspector attached to running dev app.
+    Inspect {
+        /// Stream updates / follow changes in the app.
+        follow: bool,
+        /// Wait for user click in app and inspect selected node.
+        pick: bool,
+        /// Output format (`text` or `json`).
+        format: String,
+        /// Socket path override for dev-channel IPC.
+        socket: Option<String>,
+        /// Allow connecting when dev app version mismatches CLI.
+        allow_version_mismatch: bool,
+    },
     /// `cargo martensite help` — print usage information.
     Help,
     /// `cargo martensite --version` — print the toolchain version.
@@ -104,6 +142,33 @@ pub enum CliError {
     /// An underlying system or build process failure occurred while executing
     /// a command.
     ExecutionFailed(String),
+    /// Lint findings at Warn or above were detected (exit code 1).
+    LintFindings(String),
+    /// Version mismatch between CLI and running dev app (exit code 3).
+    VersionMismatch {
+        /// App version reported.
+        app_version: String,
+        /// CLI version.
+        cli_version: String,
+    },
+    /// Infrastructure failure (e.g. cannot connect to socket, dev session not found) (exit code 3).
+    InfrastructureFailure(String),
+}
+
+impl CliError {
+    /// Returns the uniform process exit code for this error:
+    /// - 1 for lint/doctor/check findings or execution failures
+    /// - 2 for usage / argument parsing errors
+    /// - 3 for infrastructure failures and version mismatches
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            CliError::UnknownCommand(_)
+            | CliError::InvalidArgument { .. }
+            | CliError::MissingCommand => 2,
+            CliError::LintFindings(_) | CliError::ExecutionFailed(_) => 1,
+            CliError::VersionMismatch { .. } | CliError::InfrastructureFailure(_) => 3,
+        }
+    }
 }
 
 impl fmt::Display for CliError {
@@ -118,11 +183,26 @@ impl fmt::Display for CliError {
             CliError::MissingCommand => {
                 write!(
                     f,
-                    "no subcommand supplied (expected `dev`, `build`, or `help`)"
+                    "no subcommand supplied (expected `dev`, `build`, `lint`, `inspect`, `doctor`, `check`, or `help`)"
                 )
             }
             CliError::ExecutionFailed(msg) => {
                 write!(f, "command execution failed: {msg}")
+            }
+            CliError::LintFindings(msg) => {
+                write!(f, "design-lint: {msg}")
+            }
+            CliError::VersionMismatch {
+                app_version,
+                cli_version,
+            } => {
+                write!(
+                    f,
+                    "version mismatch: app version `{app_version}` does not match CLI version `{cli_version}` (pass `--allow-version-mismatch` to override)"
+                )
+            }
+            CliError::InfrastructureFailure(msg) => {
+                write!(f, "infrastructure failure: {msg}")
             }
         }
     }
@@ -139,6 +219,50 @@ impl From<ReloadError> for CliError {
 impl From<crate::scaffold::ScaffoldError> for CliError {
     fn from(err: crate::scaffold::ScaffoldError) -> Self {
         CliError::ExecutionFailed(err.to_string())
+    }
+}
+
+impl From<crate::lint::LintError> for CliError {
+    fn from(err: crate::lint::LintError) -> Self {
+        match err {
+            crate::lint::LintError::Findings(summary) => CliError::LintFindings(format!(
+                "{} warning(s), {} error(s) found",
+                summary.warnings, summary.errors
+            )),
+            crate::lint::LintError::DevChannel(
+                crate::dev_channel::DevChannelError::VersionMismatch {
+                    app_version,
+                    cli_version,
+                },
+            ) => CliError::VersionMismatch {
+                app_version,
+                cli_version,
+            },
+            crate::lint::LintError::DevChannel(err) => {
+                CliError::InfrastructureFailure(err.to_string())
+            }
+            other => CliError::ExecutionFailed(other.to_string()),
+        }
+    }
+}
+
+impl From<crate::inspect::InspectError> for CliError {
+    fn from(err: crate::inspect::InspectError) -> Self {
+        match err {
+            crate::inspect::InspectError::DevChannel(
+                crate::dev_channel::DevChannelError::VersionMismatch {
+                    app_version,
+                    cli_version,
+                },
+            ) => CliError::VersionMismatch {
+                app_version,
+                cli_version,
+            },
+            crate::inspect::InspectError::DevChannel(err) => {
+                CliError::InfrastructureFailure(err.to_string())
+            }
+            other => CliError::ExecutionFailed(other.to_string()),
+        }
     }
 }
 
@@ -183,6 +307,8 @@ pub fn parse_args(args: &[String]) -> Result<Command, CliError> {
         "init" => parse_init(rest),
         "doctor" => parse_doctor(rest),
         "check" => parse_check(rest),
+        "lint" => parse_lint(rest),
+        "inspect" => parse_inspect(rest),
         "dev" => parse_dev(rest),
         "build" => parse_build(rest),
         "help" | "--help" | "-h" => Ok(Command::Help),
@@ -457,6 +583,191 @@ fn parse_check(rest: &[&str]) -> Result<Command, CliError> {
     })
 }
 
+/// Parses flags for the `lint` subcommand.
+fn parse_lint(rest: &[&str]) -> Result<Command, CliError> {
+    let mut scene: Option<String> = None;
+    let mut fix = false;
+    let mut force = false;
+    let mut no_recursive = false;
+    let mut max_recursiveness = 8usize;
+    let mut standards = Vec::new();
+    let mut severity = None;
+    let mut filter = None;
+    let mut format = "text".to_string();
+    let mut socket = None;
+    let mut allow_version_mismatch = false;
+
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--scene" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--scene".to_string(),
+                    reason: "missing path value".to_string(),
+                })?;
+                scene = Some((*raw).to_string());
+            }
+            "--fix" => fix = true,
+            "--force" => force = true,
+            "--no-recursive" => no_recursive = true,
+            "--max-recursiveness" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--max-recursiveness".to_string(),
+                    reason: "missing numeric value".to_string(),
+                })?;
+                max_recursiveness = raw.parse().map_err(|_| CliError::InvalidArgument {
+                    flag: "--max-recursiveness".to_string(),
+                    reason: format!("`{raw}` is not a valid number"),
+                })?;
+            }
+            "--standard" | "-s" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--standard".to_string(),
+                    reason: "missing standard name".to_string(),
+                })?;
+                for part in raw.split(',') {
+                    let trimmed = part.trim();
+                    if !trimmed.is_empty() {
+                        standards.push(trimmed.to_string());
+                    }
+                }
+            }
+            "--severity" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--severity".to_string(),
+                    reason: "missing severity level".to_string(),
+                })?;
+                severity = Some((*raw).to_string());
+            }
+            "--filter" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--filter".to_string(),
+                    reason: "missing filter pattern".to_string(),
+                })?;
+                filter = Some((*raw).to_string());
+            }
+            "--format" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--format".to_string(),
+                    reason: "missing format (`text` or `json`)".to_string(),
+                })?;
+                if *raw != "text" && *raw != "json" {
+                    return Err(CliError::InvalidArgument {
+                        flag: "--format".to_string(),
+                        reason: format!("unknown format `{raw}` (expected `text` or `json`)"),
+                    });
+                }
+                format = (*raw).to_string();
+            }
+            "--socket" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--socket".to_string(),
+                    reason: "missing socket path".to_string(),
+                })?;
+                socket = Some((*raw).to_string());
+            }
+            "--allow-version-mismatch" => allow_version_mismatch = true,
+            other if other.starts_with('-') => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unknown flag for `lint`".to_string(),
+                });
+            }
+            pos => {
+                if scene.is_none() {
+                    scene = Some(pos.to_string());
+                } else {
+                    return Err(CliError::InvalidArgument {
+                        flag: pos.to_string(),
+                        reason: "unexpected positional argument for `lint`".to_string(),
+                    });
+                }
+            }
+        }
+        i += 1;
+    }
+
+    if force && !fix {
+        fix = true;
+    }
+
+    Ok(Command::Lint {
+        scene,
+        fix,
+        force,
+        no_recursive,
+        max_recursiveness,
+        standards,
+        severity,
+        filter,
+        format,
+        socket,
+        allow_version_mismatch,
+    })
+}
+
+/// Parses flags for the `inspect` subcommand.
+fn parse_inspect(rest: &[&str]) -> Result<Command, CliError> {
+    let mut follow = false;
+    let mut pick = false;
+    let mut format = "text".to_string();
+    let mut socket = None;
+    let mut allow_version_mismatch = false;
+
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--follow" | "-f" => follow = true,
+            "--pick" | "-p" => pick = true,
+            "--format" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--format".to_string(),
+                    reason: "missing format (`text` or `json`)".to_string(),
+                })?;
+                if *raw != "text" && *raw != "json" {
+                    return Err(CliError::InvalidArgument {
+                        flag: "--format".to_string(),
+                        reason: format!("unknown format `{raw}` (expected `text` or `json`)"),
+                    });
+                }
+                format = (*raw).to_string();
+            }
+            "--socket" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--socket".to_string(),
+                    reason: "missing socket path".to_string(),
+                })?;
+                socket = Some((*raw).to_string());
+            }
+            "--allow-version-mismatch" => allow_version_mismatch = true,
+            other => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unknown flag for `inspect`".to_string(),
+                });
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::Inspect {
+        follow,
+        pick,
+        format,
+        socket,
+        allow_version_mismatch,
+    })
+}
+
 /// Executes a parsed [`Command`], performing any side effects.
 ///
 /// Returns `Ok(())` on success or a [`CliError`] describing the failure. The
@@ -486,6 +797,50 @@ pub fn run_command(cmd: Command) -> Result<(), CliError> {
             fix,
             path,
         } => run_check_cmd(all_features, package, fix, path.as_deref()),
+        Command::Lint {
+            scene,
+            fix,
+            force,
+            no_recursive,
+            max_recursiveness,
+            standards,
+            severity,
+            filter,
+            format,
+            socket,
+            allow_version_mismatch,
+        } => {
+            let opts = crate::lint::LintOptions {
+                scene: scene.map(std::path::PathBuf::from),
+                fix,
+                force,
+                no_recursive,
+                max_recursiveness,
+                standards,
+                severity,
+                filter,
+                format: crate::lint::OutputFormat::parse(&format).unwrap_or_default(),
+                socket: socket.map(std::path::PathBuf::from),
+                allow_version_mismatch,
+            };
+            run_lint_cmd(&opts)
+        }
+        Command::Inspect {
+            follow,
+            pick,
+            format,
+            socket,
+            allow_version_mismatch,
+        } => {
+            let opts = crate::inspect::InspectOptions {
+                follow,
+                pick,
+                format: crate::lint::OutputFormat::parse(&format).unwrap_or_default(),
+                socket: socket.map(std::path::PathBuf::from),
+                allow_version_mismatch,
+            };
+            run_inspect_cmd(&opts)
+        }
         Command::Build { release, package } => run_build(release, package),
         Command::Dev {
             watch,
@@ -493,6 +848,18 @@ pub fn run_command(cmd: Command) -> Result<(), CliError> {
             package,
         } => run_dev(watch, port, package),
     }
+}
+
+/// Runs the `lint` subcommand.
+fn run_lint_cmd(opts: &crate::lint::LintOptions) -> Result<(), CliError> {
+    crate::lint::run_lint(opts)?;
+    Ok(())
+}
+
+/// Runs the `inspect` subcommand.
+fn run_inspect_cmd(opts: &crate::inspect::InspectOptions) -> Result<(), CliError> {
+    crate::inspect::run_inspect(opts)?;
+    Ok(())
 }
 
 /// Runs the `doctor` subcommand to diagnose development environment readiness.
@@ -622,21 +989,35 @@ fn print_help() {
          init     Generate missing DX context into an existing project\n    \
          doctor   Diagnose development environment and toolchain readiness\n    \
          check    Composite pre-commit check (fmt + clippy + design lint)\n    \
+         lint     Evaluate design standards in offline or dev-channel attach mode\n    \
+         inspect  Headless widget inspector attached to running dev app\n    \
          dev      Launch the hot-reload development loop [default: --watch]\n    \
          build    Compile the guest crate as a cdylib\n    \
          help     Print this message\n    \
          version  Print the toolchain version\n\
          \n\
          OPTIONS:\n    \
-         --template <T>, -t <T> Template kind: app, bare, dashboard (new, init)\n    \
-         --agents               Only generate AGENTS.md (init)\n    \
-         --lint                 Only generate design-lint.toml (init)\n    \
-         --fix                  Apply safe fixes/remediations (doctor, check)\n    \
-         --all-features         Check with all feature flags enabled (check)\n    \
-         --package <P>, -p <P>  Target a specific workspace package (dev, build, check)\n    \
-         --watch / --no-watch   Toggle file watching (dev)\n    \
-         --port <N>, -p <N>     Development server port (dev, default {port})\n    \
-         --release              Build in release mode (build)\n",
+         --template <T>, -t <T>  Template kind: app, bare, dashboard (new, init)\n    \
+         --agents                Only generate AGENTS.md (init)\n    \
+         --lint                  Only generate design-lint.toml (init)\n    \
+         --fix                   Apply safe fixes/remediations (doctor, check, lint)\n    \
+         --force                 Also apply risky autofixes (lint)\n    \
+         --no-recursive          Single-pass autofix (lint)\n    \
+         --max-recursiveness <N> Maximum recursion passes for autofix (lint)\n    \
+         --scene <path>          Serialized scene or dump file for offline mode (lint)\n    \
+         --standard <S>, -s <S>  Select design standard filter (lint)\n    \
+         --severity <S>          Minimum severity threshold (lint)\n    \
+         --filter <STR>          Path substring filter (lint)\n    \
+         --follow, -f            Stream live widget tree updates (inspect)\n    \
+         --pick, -p              Wait for click in app to inspect node (inspect)\n    \
+         --format <F>            Output presentation format: text, json (lint, inspect)\n    \
+         --socket <P>            Dev channel socket path override (lint, inspect)\n    \
+         --allow-version-mismatch Allow connecting on version mismatch (lint, inspect)\n    \
+         --all-features          Check with all feature flags enabled (check)\n    \
+         --package <P>, -p <P>   Target a specific workspace package (dev, build, check)\n    \
+         --watch / --no-watch    Toggle file watching (dev)\n    \
+         --port <N>, -p <N>      Development server port (dev, default {port})\n    \
+         --release               Build in release mode (build)\n",
         version = env!("CARGO_PKG_VERSION"),
         port = DEFAULT_DEV_PORT,
     );
@@ -1182,5 +1563,204 @@ mod tests {
     fn parse_check_unknown_flag_errors() {
         let err = parse_args(&args(&["martensite", "check", "--unknown"])).unwrap_err();
         assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--unknown"));
+    }
+
+    #[test]
+    fn parse_lint_defaults() {
+        let cmd = parse_args(&args(&["martensite", "lint"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Lint {
+                scene: None,
+                fix: false,
+                force: false,
+                no_recursive: false,
+                max_recursiveness: 8,
+                standards: Vec::new(),
+                severity: None,
+                filter: None,
+                format: "text".to_string(),
+                socket: None,
+                allow_version_mismatch: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_lint_all_flags() {
+        let cmd = parse_args(&args(&[
+            "martensite",
+            "lint",
+            "--scene",
+            "dump.bin",
+            "--fix",
+            "--force",
+            "--no-recursive",
+            "--max-recursiveness",
+            "4",
+            "-s",
+            "wcag,isa101",
+            "--severity",
+            "warn",
+            "--filter",
+            "Panel",
+            "--format",
+            "json",
+            "--socket",
+            "/tmp/test.sock",
+            "--allow-version-mismatch",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            cmd,
+            Command::Lint {
+                scene: Some("dump.bin".to_string()),
+                fix: true,
+                force: true,
+                no_recursive: true,
+                max_recursiveness: 4,
+                standards: vec!["wcag".to_string(), "isa101".to_string()],
+                severity: Some("warn".to_string()),
+                filter: Some("Panel".to_string()),
+                format: "json".to_string(),
+                socket: Some("/tmp/test.sock".to_string()),
+                allow_version_mismatch: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_lint_positional_scene() {
+        let cmd = parse_args(&args(&["martensite", "lint", "my_scene.bin"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Lint {
+                scene: Some("my_scene.bin".to_string()),
+                fix: false,
+                force: false,
+                no_recursive: false,
+                max_recursiveness: 8,
+                standards: Vec::new(),
+                severity: None,
+                filter: None,
+                format: "text".to_string(),
+                socket: None,
+                allow_version_mismatch: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_lint_invalid_format_errors() {
+        let err = parse_args(&args(&["martensite", "lint", "--format", "yaml"])).unwrap_err();
+        assert!(
+            matches!(err, CliError::InvalidArgument { ref flag, ref reason } if flag == "--format" && reason.contains("yaml"))
+        );
+    }
+
+    #[test]
+    fn parse_lint_unknown_flag_errors() {
+        let err = parse_args(&args(&["martensite", "lint", "--bogus"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--bogus"));
+    }
+
+    #[test]
+    fn parse_inspect_defaults() {
+        let cmd = parse_args(&args(&["martensite", "inspect"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Inspect {
+                follow: false,
+                pick: false,
+                format: "text".to_string(),
+                socket: None,
+                allow_version_mismatch: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_inspect_all_flags() {
+        let cmd = parse_args(&args(&[
+            "martensite",
+            "inspect",
+            "--follow",
+            "--pick",
+            "--format",
+            "json",
+            "--socket",
+            "/tmp/app.sock",
+            "--allow-version-mismatch",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            cmd,
+            Command::Inspect {
+                follow: true,
+                pick: true,
+                format: "json".to_string(),
+                socket: Some("/tmp/app.sock".to_string()),
+                allow_version_mismatch: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_inspect_short_flags() {
+        let cmd = parse_args(&args(&["martensite", "inspect", "-f", "-p"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Inspect {
+                follow: true,
+                pick: true,
+                format: "text".to_string(),
+                socket: None,
+                allow_version_mismatch: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_inspect_invalid_format_errors() {
+        let err = parse_args(&args(&["martensite", "inspect", "--format", "csv"])).unwrap_err();
+        assert!(
+            matches!(err, CliError::InvalidArgument { ref flag, ref reason } if flag == "--format" && reason.contains("csv"))
+        );
+    }
+
+    #[test]
+    fn parse_inspect_unknown_flag_errors() {
+        let err = parse_args(&args(&["martensite", "inspect", "--bogus"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--bogus"));
+    }
+
+    #[test]
+    fn exit_codes_conformance() {
+        assert_eq!(CliError::MissingCommand.exit_code(), 2);
+        assert_eq!(CliError::UnknownCommand("x".into()).exit_code(), 2);
+        assert_eq!(
+            CliError::InvalidArgument {
+                flag: "-x".into(),
+                reason: "r".into()
+            }
+            .exit_code(),
+            2
+        );
+        assert_eq!(CliError::ExecutionFailed("fail".into()).exit_code(), 1);
+        assert_eq!(CliError::LintFindings("findings".into()).exit_code(), 1);
+        assert_eq!(
+            CliError::VersionMismatch {
+                app_version: "1.0".into(),
+                cli_version: "2.0".into()
+            }
+            .exit_code(),
+            3
+        );
+        assert_eq!(
+            CliError::InfrastructureFailure("no socket".into()).exit_code(),
+            3
+        );
     }
 }
