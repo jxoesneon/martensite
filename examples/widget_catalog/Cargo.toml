@@ -1,0 +1,27 @@
+[package]
+name = "widget_catalog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Comprehensive widget catalog and developer reference for Martensite."
+publish = false
+
+[dependencies]
+martensite = { workspace = true }
+martensite-core = { workspace = true }
+martensite-reactive = { workspace = true }
+martensite-theme = { workspace = true }
+martensite-layout = { workspace = true }
+martensite-design-lint = { workspace = true }
+accesskit = { workspace = true }
+glam = { workspace = true }
+kurbo = { workspace = true }
+
+[lints]
+workspace = true

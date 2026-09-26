@@ -169,30 +169,35 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   v0.19.0 is now Widget Breadth & DX, so the candidates are v0.20.0
   (shared with or after Distribution) or post-1.0.
   Spec: `docs/milestones/vNEXT-developer-experience.md`.
-  - **W1 Inspector** — select mode, lazy tree, layout chain, a11y
-    tree, lint/events panels; in-app per ADR-0036.
-    Spec: `docs/dx/INSPECTOR.md`.
+  - **W1 Inspector & W7 Error surface** — select mode, lazy tree, layout chain, a11y
+    tree, lint/events panels (ADR-0036); overflow hatch tape, diagnostics overlay,
+    structured dev-mode panic with crash bundle; structured `LayoutDiagnostic` in
+    `martensite-layout` and `PaintErrorDiagnostic` in `martensite-render`.
+    **Status: IMPLEMENTED & VERIFIED**.
   - **W2 CLI** — `new`, `init`, `lint`, `inspect`, `doctor`, `check`;
     version-handshook dev channel per ADR-0038.
-    Spec: `docs/dx/CLI.md`.
+    **Status: IMPLEMENTED & VERIFIED** in `tools/cargo-martensite`.
   - **W3 Scaffolding** — 3 templates + generated `AGENTS.md`/
     `llms.txt`/`design-lint.toml`; `scaffold_smoke` CI.
-    Spec: `docs/dx/SCAFFOLDING.md`.
+    **Status: IMPLEMENTED & VERIFIED**.
   - **W4 Dev lint** — `LintBridge` live-lints frames; inspector panel,
     HUD badge, CLI attach, `--scene` dump.
-    Spec: `docs/dx/DEV_LINT.md`.
+    **Status: IMPLEMENTED & VERIFIED**.
   - **W5 Live tweaks** — `TweakRegistry` + inspector editors + source
     write-back; survives reload by name (ADR-0037 contract).
     Spec: `docs/dx/LIVE_TWEAKS.md`.
   - **W6 Event debugging** — `EventRecord` ledger over production
-    dispatch; `MARTENSITE_DEBUG_EVENTS`, inspector panel.
-    Spec: `docs/dx/EVENT_DEBUGGING.md`.
-  - **W7 Error surface** — overflow tape, diagnostics overlay,
-    structured dev-mode panic with crash bundle.
-    Spec: `docs/dx/ERROR_SURFACE.md`.
-  - **W8 Onboarding** — `examples/widget_catalog` (lint-clean,
-    alias-searchable), 12-recipe cookbook, migration guides, drift
-    guards. Spec: `docs/dx/ONBOARDING.md`.
+    dispatch in `martensite-window`; zero-cost when off; hit rejection
+    diagnostics and ring buffer tracking; `MARTENSITE_DEBUG_EVENTS`.
+    **Status: IMPLEMENTED & VERIFIED**.
+  - **ADR-0038 Dev Channel IPC** — Unix domain socket JSON-RPC-lite transport
+    in `martensite-host` with strict version lock handshake and 0600 permissions.
+    **Status: IMPLEMENTED & VERIFIED**.
+  - **W8 Onboarding** — `examples/widget_catalog` (all widget families & states,
+    runnable snippets, alias search), migration guides (`from-react-web.md`,
+    `from-slint.md`), drift guards.
+    **Status: IMPLEMENTED & VERIFIED**.
+
 
 
 ## v0.15.0 — Engine Showcase (RELEASED)

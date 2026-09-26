@@ -1,0 +1,21 @@
+# widget_catalog — martensite-design-lint project configuration.
+#
+# The widget catalog is the canonical clean-slate reference: it passes
+# design-lint with zero unsuppressed findings.
+scale_factor = 1.0
+
+# Standards citations resolve against this docs root when a report is rendered.
+docs_base = "../../docs/design-standards"
+
+# Scope-name reclassification for catalog structural containers
+[classify]
+"CatalogRoot" = "container"
+"CatalogHeader" = "container"
+"CatalogSidebar" = "container"
+"CatalogContent" = "container"
+"CatalogCard" = "container"
+"StatesRow" = "container"
+"StateBox" = "container"
+"SnippetBox" = "container"
+"CardHeader" = "container"
+"FilterBar" = "container"

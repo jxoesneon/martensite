@@ -154,7 +154,7 @@ Each DDR specifies a crate's internal algorithms, data structures, and invariant
   - [10. Headless Component Testing](cookbook/10-headless-testing.md)
   - [11. Localization & BiDi Layout](cookbook/11-localization-bidi.md)
   - [12. Automated Design Linting in CI](cookbook/12-ci-design-lint.md)
-- [migration/](migration/README.md) — Architectural migration guides (from egui, from Iced)
+- [migration/](migration/README.md) — Architectural migration guides (from egui, from Iced, from Slint, from React Web)
 
 ---
 

@@ -33,9 +33,17 @@ For developers transitioning from The Elm Architecture (TEA).
 - **Mental Model**: Moving from "central message enum + view tree rebuild" to "fine-grained reactive signals and retained arena widgets".
 - **Key Focus**: Eliminating full-tree rebuilds, replacing monolithic messages with atomic transaction batches (`batch`), Taffy two-level layout, and custom widget authoring.
 
-### 3. Additional Guides (Upcoming)
-- **Migrating from Slint (`from-slint.md`)** — Mapping `.slint` markup DSL and property bindings to Martensite builder APIs and reactive signals.
-- **Migrating from React Web (`from-react-web.md`)** — Virtual DOM $\rightarrow$ Retained Arena, Hooks $\rightarrow$ Signals, CSS Flexbox $\rightarrow$ Taffy.
+### 3. [Migrating from Slint (`from-slint.md`)](from-slint.md)
+For developers transitioning from Slint's markup DSL.
+- **Mental Model**: Moving from external `.slint` markup and `build.rs` code generation to 100% pure Rust code-first widget composition.
+- **Key Focus**: Replacing `.slint` property bindings (`<=>`) with type-safe `Signal<T>` and `Memo<T>`, event routing via `Widget::event`, and eliminating runtime DSL overhead.
+
+### 4. [Migrating from React Web (`from-react-web.md`)](from-react-web.md)
+For frontend and full-stack developers transitioning from React and the Virtual DOM.
+- **Mental Model**: Moving from functional VDOM reconciliation and Fiber diffing to persistent arena nodes and fine-grained reactive push-pull DAG.
+- **Key Focus**: Replacing `useState`/`useEffect` hooks with signals and memos (no manual dependency arrays, no stale closures), CSS flexbox $\rightarrow$ Taffy two-level layout, and theme tokens.
+
+### 5. Additional Guides (Upcoming)
 - **Migrating from Qt / C++ (`from-qt.md`)** — QObject signals/slots $\rightarrow$ Push-pull reactive DAG, QWidget $\rightarrow$ `Widget` trait, QAbstractItemModel $\rightarrow$ `DataTable`.
 
 ---

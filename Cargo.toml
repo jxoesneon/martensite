@@ -56,6 +56,7 @@ members = [
     "examples/industrial_dashboard",
     "examples/ios_demo",
     "examples/web",
+    "examples/widget_catalog",
     "benches/bench_suite",
 ]
 
