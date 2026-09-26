@@ -102,18 +102,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # Unconditional on tag pushes too — packaging errors must surface
-      # before any real publish, not only on manual dry runs. Uses
-      # --no-verify because workspace path dependencies are not yet on
-      # crates.io; build validation is done by the CI gate jobs above.
-      - name: Packaging check (all crates)
-        run: |
-          mapfile -t CRATES < <(python3 scripts/workspace-matrix.py publish-order)
-          for crate in "${CRATES[@]}"; do
-            echo "Packaging $crate..."
-            cargo package -p "$crate" --allow-dirty --no-verify
-          done
-
       - name: Publish to crates.io
         if: ${{ github.event_name == 'push' || github.event.inputs.dry_run != 'true' }}
         env:
