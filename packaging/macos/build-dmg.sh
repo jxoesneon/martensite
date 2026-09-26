@@ -264,4 +264,3 @@ fi
 echo "SUCCESS: macOS DMG created successfully!"
 echo "File:   ${DMG_PATH}"
 echo "Size:   $(stat -f%z "${DMG_PATH}" 2>/dev/null || wc -c < "${DMG_PATH}") bytes"
-EOF

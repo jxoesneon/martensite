@@ -832,11 +832,12 @@ jobs:
       - semver-checks
     steps:
       - name: Verify All Preceding Gates
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           python3 -c '
-          import json, sys
-          raw = """${{ toJSON(needs) }}"""
-          needs = json.loads(raw)
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS_JSON"])
           failed = []
           for name, data in needs.items():
               res = data.get("result")

@@ -339,10 +339,11 @@ fn test_mock_update_dry_run_workflow() {
         },
     );
 
+    let target_version = "99.0.0".to_string();
     let mut manifest = UpdateManifest {
-        version: "0.20.0".to_string(),
+        version: target_version,
         release_date: "2026-10-01".to_string(),
-        release_notes: "v0.20.0 release notes".to_string(),
+        release_notes: "v99.0.0 release notes".to_string(),
         min_version: Some("0.18.0".to_string()),
         assets,
         signature: None,
