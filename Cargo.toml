@@ -75,7 +75,7 @@ exclude = [
 # They are not built, tested, or published with the rest of the workspace.
 
 [workspace.package]
-version = "0.19.0"
+version = "0.20.0"
 edition = "2021"
 rust-version = "1.89.0"
 authors = ["Jose Eduardo Rojas Jimenez <joseeduardox@gmail.com>"]
@@ -86,52 +86,52 @@ keywords = ["gui", "ui", "wgpu", "vello", "reactive"]
 categories = ["gui", "rendering::graphics-api"]
 
 [workspace.dependencies]
-martensite = { version = "0.19.0", path = "crates/martensite" }
-martensite-core = { version = "0.19.0", path = "crates/martensite-core" }
-martensite-reactive = { version = "0.19.0", path = "crates/martensite-reactive" }
-martensite-layout = { version = "0.19.0", path = "crates/martensite-layout" }
-martensite-wgpu = { version = "0.19.0", path = "crates/martensite-wgpu" }
-martensite-render = { version = "0.19.0", path = "crates/martensite-render" }
-martensite-text = { version = "0.19.0", path = "crates/martensite-text" }
-martensite-access = { version = "0.19.0", path = "crates/martensite-access" }
-martensite-access-platform = { version = "0.19.0", path = "crates/martensite-access-platform" }
-martensite-design-lint = { version = "0.19.0", path = "crates/martensite-design-lint" }
-martensite-window = { version = "0.19.0", path = "crates/martensite-window" }
-martensite-focus = { version = "0.19.0", path = "crates/martensite-focus" }
-martensite-clipboard = { version = "0.19.0", path = "crates/martensite-clipboard" }
-martensite-dialog = { version = "0.19.0", path = "crates/martensite-dialog" }
-martensite-dnd = { version = "0.19.0", path = "crates/martensite-dnd" }
-martensite-theme = { version = "0.19.0", path = "crates/martensite-theme" }
-martensite-motion = { version = "0.19.0", path = "crates/martensite-motion" }
-martensite-notify = { version = "0.19.0", path = "crates/martensite-notify" }
-martensite-persist = { version = "0.19.0", path = "crates/martensite-persist" }
-martensite-print = { version = "0.19.0", path = "crates/martensite-print" }
-martensite-share = { version = "0.19.0", path = "crates/martensite-share" }
-martensite-media = { version = "0.19.0", path = "crates/martensite-media" }
-martensite-media-platform = { version = "0.19.0", path = "crates/martensite-media-platform" }
-martensite-history = { version = "0.19.0", path = "crates/martensite-history" }
-martensite-assets = { version = "0.19.0", path = "crates/martensite-assets" }
-martensite-l10n = { version = "0.19.0", path = "crates/martensite-l10n" }
-martensite-devtools = { version = "0.19.0", path = "crates/martensite-devtools" }
-martensite-macros = { version = "0.19.0", path = "crates/martensite-macros" }
-martensite-test = { version = "0.19.0", path = "crates/martensite-test" }
-martensite-blessed = { version = "0.19.0", path = "crates/martensite-blessed" }
-martensite-plugin = { version = "0.19.0", path = "crates/martensite-plugin" }
-cargo-martensite = { version = "0.19.0", path = "tools/cargo-martensite" }
+martensite = { version = "0.20.0", path = "crates/martensite" }
+martensite-core = { version = "0.20.0", path = "crates/martensite-core" }
+martensite-reactive = { version = "0.20.0", path = "crates/martensite-reactive" }
+martensite-layout = { version = "0.20.0", path = "crates/martensite-layout" }
+martensite-wgpu = { version = "0.20.0", path = "crates/martensite-wgpu" }
+martensite-render = { version = "0.20.0", path = "crates/martensite-render" }
+martensite-text = { version = "0.20.0", path = "crates/martensite-text" }
+martensite-access = { version = "0.20.0", path = "crates/martensite-access" }
+martensite-access-platform = { version = "0.20.0", path = "crates/martensite-access-platform" }
+martensite-design-lint = { version = "0.20.0", path = "crates/martensite-design-lint" }
+martensite-window = { version = "0.20.0", path = "crates/martensite-window" }
+martensite-focus = { version = "0.20.0", path = "crates/martensite-focus" }
+martensite-clipboard = { version = "0.20.0", path = "crates/martensite-clipboard" }
+martensite-dialog = { version = "0.20.0", path = "crates/martensite-dialog" }
+martensite-dnd = { version = "0.20.0", path = "crates/martensite-dnd" }
+martensite-theme = { version = "0.20.0", path = "crates/martensite-theme" }
+martensite-motion = { version = "0.20.0", path = "crates/martensite-motion" }
+martensite-notify = { version = "0.20.0", path = "crates/martensite-notify" }
+martensite-persist = { version = "0.20.0", path = "crates/martensite-persist" }
+martensite-print = { version = "0.20.0", path = "crates/martensite-print" }
+martensite-share = { version = "0.20.0", path = "crates/martensite-share" }
+martensite-media = { version = "0.20.0", path = "crates/martensite-media" }
+martensite-media-platform = { version = "0.20.0", path = "crates/martensite-media-platform" }
+martensite-history = { version = "0.20.0", path = "crates/martensite-history" }
+martensite-assets = { version = "0.20.0", path = "crates/martensite-assets" }
+martensite-l10n = { version = "0.20.0", path = "crates/martensite-l10n" }
+martensite-devtools = { version = "0.20.0", path = "crates/martensite-devtools" }
+martensite-macros = { version = "0.20.0", path = "crates/martensite-macros" }
+martensite-test = { version = "0.20.0", path = "crates/martensite-test" }
+martensite-blessed = { version = "0.20.0", path = "crates/martensite-blessed" }
+martensite-plugin = { version = "0.20.0", path = "crates/martensite-plugin" }
+cargo-martensite = { version = "0.20.0", path = "tools/cargo-martensite" }
 martensite-cosmic-text = { version = "0.19.0-martensite.2", path = "crates/martensite-cosmic-text" }
-martensite-font-fallback = { version = "0.19.0", path = "crates/martensite-font-fallback" }
-martensite-clipboard-platform = { version = "0.19.0", path = "crates/martensite-clipboard-platform" }
-martensite-dialog-platform = { version = "0.19.0", path = "crates/martensite-dialog-platform" }
-martensite-notify-platform = { version = "0.19.0", path = "crates/martensite-notify-platform" }
-martensite-print-platform = { version = "0.19.0", path = "crates/martensite-print-platform" }
-martensite-share-platform = { version = "0.19.0", path = "crates/martensite-share-platform" }
-martensite-host = { version = "0.19.0", path = "crates/martensite-host" }
-martensite-shell = { version = "0.19.0", path = "crates/martensite-shell" }
-martensite-webview = { version = "0.19.0", path = "crates/martensite-webview" }
-martensite-pdf = { version = "0.19.0", path = "crates/martensite-pdf" }
-martensite-pdf-platform = { version = "0.19.0", path = "crates/martensite-pdf-platform" }
-martensite-webview-platform = { version = "0.19.0", path = "crates/martensite-webview-platform" }
-martensite-engine-bridge = { version = "0.19.0", path = "crates/martensite-engine-bridge" }
+martensite-font-fallback = { version = "0.20.0", path = "crates/martensite-font-fallback" }
+martensite-clipboard-platform = { version = "0.20.0", path = "crates/martensite-clipboard-platform" }
+martensite-dialog-platform = { version = "0.20.0", path = "crates/martensite-dialog-platform" }
+martensite-notify-platform = { version = "0.20.0", path = "crates/martensite-notify-platform" }
+martensite-print-platform = { version = "0.20.0", path = "crates/martensite-print-platform" }
+martensite-share-platform = { version = "0.20.0", path = "crates/martensite-share-platform" }
+martensite-host = { version = "0.20.0", path = "crates/martensite-host" }
+martensite-shell = { version = "0.20.0", path = "crates/martensite-shell" }
+martensite-webview = { version = "0.20.0", path = "crates/martensite-webview" }
+martensite-pdf = { version = "0.20.0", path = "crates/martensite-pdf" }
+martensite-pdf-platform = { version = "0.20.0", path = "crates/martensite-pdf-platform" }
+martensite-webview-platform = { version = "0.20.0", path = "crates/martensite-webview-platform" }
+martensite-engine-bridge = { version = "0.20.0", path = "crates/martensite-engine-bridge" }
 
 # Core rendering stack — versions verified against crates.io on 2026-09-06
 # wgpu backends are enabled unconditionally; wgpu internally gates them by
@@ -170,7 +170,7 @@ taffy = { version = "=0.14.0", default-features = false, features = ["flexbox", 
 cosmic-text = { package = "martensite-cosmic-text", version = "0.19.0-martensite.2", path = "crates/martensite-cosmic-text", default-features = false, features = ["std", "swash"] }
 fontdb = { version = "0.24", default-features = false }
 accesskit = { version = "0.25" }
-accesskit_winit = { package = "martensite-accesskit-winit", version = "0.19.0", path = "crates/martensite-accesskit-winit" }
+accesskit_winit = { package = "martensite-accesskit-winit", version = "0.20.0", path = "crates/martensite-accesskit-winit" }
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }
 # Win32/COM FFI for DWM system materials and Snap Layouts (martensite-shell).
 # Version 0.61.3 was published 2025-06-12 (well over 7 days ago).

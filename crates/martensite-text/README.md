@@ -36,7 +36,7 @@ Add `martensite-text` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-text = "0.19.0"
+martensite-text = "0.20.0"
 ```
 
 Measuring and shaping text:

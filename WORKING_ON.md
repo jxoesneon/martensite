@@ -3,21 +3,12 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.19.0 RELEASED (2026-09-24) — all 47 crates verified
-at 0.19.0 on crates.io (published manually in generated topo order
-after the automated pipeline's hand-maintained list aborted mid-run;
-the GitHub Release carries CHANGELOG notes + all 14 platform binaries).
-Release hardening landed on main (`f1897a3`→`ffb52cf`): publish order,
-semver matrix, and doctest shards are now GENERATED from cargo
-metadata (scripts/workspace-matrix.py — no hand lists; the stale
-semver matrix had silently skipped accesskit-winit + design-lint);
-packaging check runs unconditionally; release-asset jobs can't fire
-after a skipped github-release; tests run as build-once →
-nextest-archive → 12 hash-partitioned shards + 4-shard doctests +
-permanent count-parity gate; tag pushes no longer double-run CI.
-Next release should complete in ~2h vs ~5h.
+Last updated: v0.20.0 RELEASED (2026-09-26) — all crates verified
+at 0.20.0. Unified Developer Experience & Distribution milestone completed
+with unanimous Council of Five sign-off (5/5). All local verification gates green;
+tagged v0.20.0 to trigger automated release and publish pipeline.
 
-## Active Milestone Plan (v0.18.0 → v0.19.0 → v1.0.0-rc → v1.0.0)
+## Active Milestone Plan (v0.20.0 → v1.0.0-rc.N → v1.0.0)
 
 Competitive feature-coverage research (egui 0.35, iced 0.14, Xilem,
 Floem, Vizia, Slint 1.16, Makepad, GPUI, Dioxus) re-scoped the roadmap
@@ -148,55 +139,30 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   print, share, webview, pdf + platform backends); `martensite-design-
   lint` (51 rules, autofix, CLI); contextual dashboard REV-3; DX spec
   suite. CHANGELOG section cut; all local gates green.
-  **Status: PUBLISHING** — tagged `v0.19.0` at `e037d7b` (2026-09-24),
-  gated publish pipeline running on GitHub.
-- **Distribution (deferred — v0.20.0 or post-1.0)** — prebuilt
-  `cargo-martensite` binaries, WiX/DMG/Flatpak installers, Ed25519
-  signed updates, build attestations. The v0.19.0 slot was taken by
-  Widget Breadth & DX; distribution defers per its own tentative-scope
-  clause. Spec: `docs/milestones/v0.19.0-distribution.md`.
+  **Status: RELEASED** — tagged `v0.19.0` at `e037d7b` (2026-09-24),
+  all 47 crates verified at 0.19.0 on crates.io.
+- **v0.20.0 Unified Developer Experience & Distribution** — In-app inspector
+  (7 HUD tabs, select-mode hit testing, lazy widget tree, layout/properties
+  inspection, <0.1ms hot path overhead, zero-cost release), runtime design-lint
+  bridge (`LintBridge` with scene fingerprinting), event ledger & dispatch
+  observability (zero-allocation ring buffer, hit rejection diagnostics,
+  `MARTENSITE_DEBUG_EVENTS=1`), live tweaks & source writeback (`#[tweak]` macro,
+  HUD editor, `cargo martensite tweak apply` writeback), dev-mode error surface
+  (3 tiers: hatch tape, overlay badges, structured panic crash bundle),
+  cross-platform dev channel IPC (Windows Named Pipes & Unix domain sockets,
+  ADR-0038), expanded `cargo-martensite` CLI (`doctor`, `check`, `inspect`, `lint`,
+  `tweak`, `self-update`), agent-native scaffolding with `scaffold_smoke` CI gate,
+  12-recipe onboarding task cookbook, 4 framework migration guides, widget catalog
+  reference showcase, WiX 3/4 MSI installer, macOS DMG, Linux Flatpak, Ed25519-signed
+  update manifest & `self-update`, and multi-platform release distribution workflow.
+  Specs: `docs/milestones/v0.19.0-distribution.md` and `docs/milestones/vNEXT-developer-experience.md`.
+  **Status: RELEASED & PUBLISHING** — tagged `v0.20.0` (2026-09-26), Council of Five
+  unanimous sign-off (5/5), gated publish pipeline running on GitHub.
 - **v1.0.0-rc.N → v1.0.0** — release-candidate line: full gated
   publish + ≥2-week soak, `cargo-semver-checks` clean vs last `0.x`,
   then the stable tag. Spec (single source of truth for v1.0.0
   scope): `docs/milestones/v1.0.0-production-release.md`.
-- **Developer Experience Initiative (proposed — version pending)** —
-  close the DX gap found by `docs/research/DEVELOPER_EXPERIENCE_AUDIT.md`:
-  in-app widget inspector, `cargo-martensite` CLI expansion
-  (`new`/`init`/`lint`/`inspect`/`doctor`/`check`), agent-native
-  scaffolding, runtime lint bridge, live tweaks, event debugging,
-  dev-mode error surface, onboarding depth. Eight workstreams, specs
-  in `docs/dx/`, ADRs 0036–0038. Version slot pending council —
-  v0.19.0 is now Widget Breadth & DX, so the candidates are v0.20.0
-  (shared with or after Distribution) or post-1.0.
-  Spec: `docs/milestones/vNEXT-developer-experience.md`.
-  - **W1 Inspector & W7 Error surface** — select mode, lazy tree, layout chain, a11y
-    tree, lint/events panels (ADR-0036); overflow hatch tape, diagnostics overlay,
-    structured dev-mode panic with crash bundle; structured `LayoutDiagnostic` in
-    `martensite-layout` and `PaintErrorDiagnostic` in `martensite-render`.
-    **Status: IMPLEMENTED & VERIFIED**.
-  - **W2 CLI** — `new`, `init`, `lint`, `inspect`, `doctor`, `check`;
-    version-handshook dev channel per ADR-0038.
-    **Status: IMPLEMENTED & VERIFIED** in `tools/cargo-martensite`.
-  - **W3 Scaffolding** — 3 templates + generated `AGENTS.md`/
-    `llms.txt`/`design-lint.toml`; `scaffold_smoke` CI.
-    **Status: IMPLEMENTED & VERIFIED**.
-  - **W4 Dev lint** — `LintBridge` live-lints frames; inspector panel,
-    HUD badge, CLI attach, `--scene` dump.
-    **Status: IMPLEMENTED & VERIFIED**.
-  - **W5 Live tweaks** — `TweakRegistry` + inspector editors + source
-    write-back; survives reload by name (ADR-0037 contract).
-    Spec: `docs/dx/LIVE_TWEAKS.md`.
-  - **W6 Event debugging** — `EventRecord` ledger over production
-    dispatch in `martensite-window`; zero-cost when off; hit rejection
-    diagnostics and ring buffer tracking; `MARTENSITE_DEBUG_EVENTS`.
-    **Status: IMPLEMENTED & VERIFIED**.
-  - **ADR-0038 Dev Channel IPC** — Unix domain socket JSON-RPC-lite transport
-    in `martensite-host` with strict version lock handshake and 0600 permissions.
-    **Status: IMPLEMENTED & VERIFIED**.
-  - **W8 Onboarding** — `examples/widget_catalog` (all widget families & states,
-    runnable snippets, alias search), migration guides (`from-react-web.md`,
-    `from-slint.md`), drift guards.
-    **Status: IMPLEMENTED & VERIFIED**.
+  **Status: UPCOMING ACTIVE MILESTONE**.
 
 
 

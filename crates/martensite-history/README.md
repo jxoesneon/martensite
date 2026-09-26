@@ -34,7 +34,7 @@ Add `martensite-history` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-history = "0.19.0"
+martensite-history = "0.20.0"
 ```
 
 Managing non-linear branching state:

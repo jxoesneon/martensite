@@ -7,7 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added — Design-lint standards
+## [0.20.0] - 2026-09-26
+
+### Added — Developer Experience & Diagnostics (W1–W5)
+
+- **In-App Inspector (`martensite-devtools`)** — Full runtime visual inspector
+  compiled into debug builds behind the `devtools` feature with hot-path
+  overhead < 0.1 ms/frame and zero cost in release.
+  - **HUD & Inspector Tabs**: `Tree`, `Layout`, `Properties`, `Lint`, `Events`,
+    `Errors`, and `Tweaks` panel tabs.
+  - **Select-Mode Hit Testing**: Activated via `Ctrl+Shift+C` or F12 toggle;
+    resolves identical `WidgetId`s as production routing and captures the
+    complete ancestry chain.
+  - **Lazy Widget Tree**: Scalable representation reporting `debug_name`,
+    local/screen bounds, kind, active signal subscriptions, and diagnostic badges.
+  - **Layout & Property Inspector**: Visualizes constraint cascades (parent
+    constraint -> widget measure -> allocated bounds) and extracts inline
+    markers (`@level`, `@lint`, `@alarm`), AccessKit roles, and reactive signals.
+- **Runtime Design-Lint Bridge** — `martensite-devtools::lint_bridge` integrates
+  `martensite-design-lint` directly into running applications. Replays paint
+  streams into `LintScene`s with fast scene fingerprinting to skip relinting on
+  unmodified frames, real-time node finding queries, and offline dump/IPC query
+  capabilities.
+- **Event Ledger & Dispatch Observability** — High-performance ring buffer
+  recording complete input lifecycles (Pointer, Key, Scroll, Ime, Focus, Dnd)
+  with zero hot-path heap allocation. Captures hit rejection reasons
+  (`OutsideBounds`, `OccludedBy`, `HitTestDisabled`, `UnderModal`, `CapturedByOther`)
+  and dispositions (`Handled`, `Ignored`, `BubbledTo`, `Captured`). Supports
+  grep-friendly single-line diagnostic output via `MARTENSITE_DEBUG_EVENTS=1`.
+- **Developer Error Surface** — Three-tier diagnostic hierarchy:
+  - *Tier 1 (Inline)*: Hatch tape and overflow delta annotations on offending widgets.
+  - *Tier 2 (Overlay)*: Frame-level diagnostic badges and inspector error tab.
+  - *Tier 3 (Structured Panic)*: In-app crash bundle with widget path, breadcrumbs,
+    and formatted copy-ready GitHub issue report.
+- **Live Tweaks & Source Writeback** — `#[tweak]` procedural macro in
+  `martensite-macros` backed by `martensite-devtools::tweak` registry. Allows
+  interactive runtime tweaking of numeric values, booleans, colors, and strings
+  via the HUD panel or CLI, with automated AST source patch generation and
+  writeback via `cargo martensite tweak apply`. Expands to zero-cost literals in
+  release builds with full compile-time verification.
+- **Cross-Platform Dev Channel (ADR-0038)** — IPC dev channel for external tooling
+  attach. Full cross-platform parity supporting Windows Named Pipes
+  (`\\.\pipe\martensite-<build_id>`) and Unix Domain Sockets
+  (`$XDG_RUNTIME_DIR/martensite/<build_id>.sock`), featuring strict protocol
+  handshake and bi-directional RPC.
+
+### Added — CLI Expansion & Scaffolding (W6–W7)
+
+- **`cargo-martensite` CLI Suite** — Expanded developer CLI tool:
+  - `doctor`: Comprehensive environment diagnostics verifying Rust toolchain,
+    wgpu GPU adapter limits, fontdb/system fonts, IME subsystems, accessibility
+    daemons (Windows UIA, macOS NSAccessibility, Linux AT-SPI), and `design-lint.toml`.
+  - `check`: Unified quality gate running formatting, clippy warnings check,
+    and design-lint rules in a single pass.
+  - `inspect` & `lint`: Connects to running applications over the dev channel to
+    extract live widget trees and design-lint reports.
+  - `tweak`: Dumps active tweaks and applies patch hunks back into source code.
+  - `self-update`: Cryptographically verified binary updates.
+- **Agent-Native Project Scaffolding** — `cargo martensite new` and `init` with
+  three optimized templates: `app` (standard desktop app), `bare` (minimal compiling
+  main), and `dashboard` (HMI industrial control skeleton). Scaffolds include
+  ready-to-use `design-lint.toml`, `martensite.toml`, `llms.txt`, and
+  standardized `AGENTS.md` guardrails.
+- **First-Run Funnel CI Gate (`scaffold_smoke`)** — End-to-end integration test
+  verifying template scaffolding, TOML validity, markdown parsing, and doctor
+  execution within a 60-second budget on push and PR.
+
+### Added — Onboarding Cookbook, Migration Guides & Showcase (W8)
+
+- **12-Recipe Onboarding Task Cookbook (`docs/cookbook/`)**:
+  - `01-responsive-layout.md`: Flex, Container, Stack, and underflow policies.
+  - `02-data-binding.md`: Fine-grained reactivity, signals, memos, batching.
+  - `03-custom-painting.md`: Custom `Widget` painting, `PaintList`, hit/clip shapes.
+  - `04-form-validation.md`: Field and form-level reactive validation and AccessKit.
+  - `05-virtualized-lists.md`: Million-row virtualized scrolling and recycling pools.
+  - `06-async-data.md`: Async `Resource<T>`, loading/error states, channel bridging.
+  - `07-theming-tokens.md`: Three-tier tokens, Oklab perceptual color space, dark mode.
+  - `08-keyboard-focus.md`: 2D spatial focus beam, focus trapping, shortcut routing.
+  - `09-dnd-clipboard.md`: MIME clipboard, drag payloads, external DnD sessions.
+  - `10-headless-testing.md`: `VirtualClock` deterministic time, golden frame diffs.
+  - `11-localization-bidi.md`: Fluent integration, BiDi mirroring, vertical text.
+  - `12-ci-design-lint.md`: CI pipeline lint gating and autofix workflows.
+- **4 Comprehensive Framework Migration Guides (`docs/migration/`)**:
+  - `from-egui.md`: Immediate-mode to retained-mode reactive arena migration.
+  - `from-iced.md`: Elm-architecture message loops to fine-grained signals.
+  - `from-druid.md`: Lens-based state and widget trees to reactive arenas.
+  - `from-slint.md`: Domain-specific markup languages to pure-Rust reactive widgets.
+- **Widget Catalog Showcase (`examples/widget_catalog`)** — Standalone reference
+  application demonstrating all standard widgets, themes, and inspector features.
+
+### Added — Distribution & Packaging (W9)
+
+- **Native Installers & Packages**:
+  - **Windows WiX 3/4 MSI (`packaging/windows/wix/main.wxs`)**: Full installation
+    package with Start Menu shortcuts and automatic PATH registration.
+  - **macOS DMG (`packaging/macos/build-dmg.sh`)**: Multi-architecture application
+    bundle packaging.
+  - **Linux Flatpak (`packaging/linux/flatpak/org.martensite.WidgetCatalog.yaml`)**:
+    Flatpak manifest targeting Freedesktop SDK 24.08.
+- **Multi-Platform Release Distribution (`.github/workflows/release-distribution.yml`)**:
+  - Automated build matrix for Windows (`x86_64-pc-windows-msvc`), macOS
+    (`x86_64-apple-darwin`, `aarch64-apple-darwin`), and Linux
+    (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`).
+  - Automated SHA-256 checksum digest emission (`SHA256SUMS.txt`).
+  - SLSA Level 3 build provenance attestation via GitHub Actions.
+- **Cryptographically Signed Updates & Self-Update**:
+  - `UpdateManifest` schema with SHA-256 asset checksums and Ed25519 digital signatures.
+  - Pure-Rust signature verification (`ed25519-dalek` v2) rejecting untrusted or
+    tampered release manifests.
+  - `cargo martensite self-update` with atomic binary replacement and rollback.
+
+### Added — Design-Lint Standards
 
 - **Two new lint standards** — `nureg-0700` (NRC Human-System Interface
   Design Review Guidelines; the most quantified HSI standard in print)
