@@ -28,7 +28,25 @@ use martensite_core::{
 use martensite_devtools::timemachine::{ReplayError, SignalWrite, TimeMachine, World};
 use martensite_history::{ChangeOp, LedgerError};
 use martensite_reactive::{Memo, ReactiveRuntime, Signal};
-use martensite_test::VirtualClock;
+
+#[derive(Debug, Default)]
+struct VirtualClock {
+    elapsed: std::time::Duration,
+}
+
+impl VirtualClock {
+    fn new() -> Self {
+        Self::default()
+    }
+    fn step_60fps(&mut self) {
+        self.elapsed += FRAME_60FPS;
+    }
+    fn elapsed_millis(&self) -> u128 {
+        self.elapsed.as_millis()
+    }
+}
+
+const FRAME_60FPS: std::time::Duration = std::time::Duration::from_nanos(16_666_667);
 
 /// Widget with journaled internal state: a tick counter plus a value
 /// produced by the seeded RNG — both snapshotted via `TimemachineState`.
@@ -218,7 +236,7 @@ fn virtual_clock_replay_reproduces_recorded_state() {
     let mut recorded = Vec::new();
     for _ in 0..9 {
         clock.step_60fps();
-        let dt = martensite_test::FRAME_60FPS.as_nanos() as u64;
+        let dt = FRAME_60FPS.as_nanos() as u64;
         tm.commit(Box::new(FrameOp::new(&tick, counter, dt, rng.next())));
         tm.commit(Box::new(SignalWrite::new(
             &label,

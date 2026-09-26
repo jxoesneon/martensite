@@ -892,9 +892,9 @@ impl PlantModel {
     /// (`push_history` at 4 Hz, `tick_acoustic` every frame,
     /// `tick_minute` per second — see `App::redraw`) would otherwise
     /// sit at seed state and every chart/spectrum/gauge would paint
-    /// the flat seed line. One call replays a full [`HISTORY_LEN`]
-    /// window: cpu/mem advance through [`telemetry_waveform`] at the
-    /// panel's [`TELEMETRY_PHASE_STEP`] cadence, each sample is pushed
+    /// the flat seed line. One call replays a full `HISTORY_LEN`
+    /// window: cpu/mem advance through `telemetry_waveform` at the
+    /// panel's `TELEMETRY_PHASE_STEP` cadence, each sample is pushed
     /// into the rings, the acoustic model ticks at the same phase,
     /// and the shift clock ticks once per four samples (the live
     /// 1 sim-minute-per-second ÷ 4 Hz cadence). Deterministic — no

@@ -940,13 +940,13 @@ impl std::error::Error for UpdateError {}
 /// assert_eq!(bytes, b"hello");
 /// ```
 pub fn fetch_url_or_path(url_or_path: &str) -> Result<Vec<u8>, UpdateError> {
-    if let Some(mut file_path) = url_or_path.strip_prefix("file://") {
+    if let Some(file_path) = url_or_path.strip_prefix("file://") {
         #[cfg(windows)]
-        {
-            if file_path.starts_with('/') && file_path.chars().nth(2) == Some(':') {
-                file_path = &file_path[1..];
-            }
-        }
+        let file_path = if file_path.starts_with('/') && file_path.chars().nth(2) == Some(':') {
+            &file_path[1..]
+        } else {
+            file_path
+        };
         return std::fs::read(file_path).map_err(|e| {
             UpdateError::FetchFailed(format!("failed to read local file `{file_path}`: {e}"))
         });

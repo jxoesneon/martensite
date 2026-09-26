@@ -3043,7 +3043,6 @@ dependencies = [
  "martensite-macros",
  "martensite-reactive",
  "martensite-render",
- "martensite-test",
  "parking_lot",
  "serde",
  "serde_json",

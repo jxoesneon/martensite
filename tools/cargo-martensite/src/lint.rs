@@ -4,8 +4,8 @@
 //! and `docs/dx/DEV_LINT.md`.
 //!
 //! Supports two modes of operation:
-//! 1. **Offline mode** (`--scene <path>`): reads a serialized [`LintDump`] or
-//!    [`LintScene`] snapshot file and runs [`martensite_design_lint::lint`].
+//! 1. **Offline mode** (`--scene <path>`): reads a serialized `LintDump` or
+//!    `LintScene` snapshot file and runs [`martensite_design_lint::lint`].
 //! 2. **Attach mode** (default when dev session is live): connects to the app's
 //!    ADR-0038 dev-channel Unix domain socket, pulls the current scene/report,
 //!    and outputs findings.
@@ -224,8 +224,8 @@ pub fn run_lint(options: &LintOptions) -> Result<LintSummary, LintError> {
     }
 }
 
-/// Reads a [`LintScene`] from a disk path (supports binary [`LintDump`], JSON [`LintDump`],
-/// and raw [`SerializedLintScene`]).
+/// Reads a `LintScene` from a disk path (supports binary `LintDump`, JSON `LintDump`,
+/// and raw `SerializedLintScene`).
 pub fn load_scene_from_file(path: &Path) -> Result<LintScene, LintError> {
     let bytes = std::fs::read(path)
         .map_err(|e| LintError::Io(format!("failed to read `{}`: {e}", path.display())))?;
@@ -261,7 +261,7 @@ pub fn load_scene_from_file(path: &Path) -> Result<LintScene, LintError> {
     )))
 }
 
-/// Resolves the [`LintConfig`] to use for evaluation, incorporating project `design-lint.toml`
+/// Resolves the `LintConfig` to use for evaluation, incorporating project `design-lint.toml`
 /// and CLI flag overrides.
 fn resolve_lint_config(options: &LintOptions) -> Result<LintConfig, LintError> {
     let mut config = if let Ok(Some(cfg)) = LintConfig::from_file(Path::new("design-lint.toml")) {

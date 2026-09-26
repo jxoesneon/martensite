@@ -13,9 +13,9 @@
 //!   `protocol_version`. Mismatch fails fast with exit code 3 (D1 audit constraint).
 //! - **Methods**:
 //!   - `hello`: Handshake carrying versions.
-//!   - `lint_pull`: Retrieve current frame's [`LintScene`] and [`LintReport`].
-//!   - `lint_apply`: Apply [`FixOp`]s to a copy of the scene and report converged state.
-//!   - `tree_snapshot`: Retrieve the current [`WidgetArena`] hierarchy for headless inspection.
+//!   - `lint_pull`: Retrieve current frame's `LintScene` and `LintReport`.
+//!   - `lint_apply`: Apply `FixOp`s to a copy of the scene and report converged state.
+//!   - `tree_snapshot`: Retrieve the current `WidgetArena` hierarchy for headless inspection.
 //!   - `inspector_select`: Arm select-mode, wait for user click, and resolve selected node.
 
 use std::collections::BTreeMap;
