@@ -16,7 +16,7 @@
 //! # Dev Channel IPC (ADR-0038)
 //!
 //! When the `dev-channel` feature is enabled, this crate also provides the
-//! [`dev_channel`] subsystem: a narrow, local Unix-socket JSON-RPC-lite IPC
+//! `dev_channel` subsystem: a narrow, local Unix-socket JSON-RPC-lite IPC
 //! server that enables developer tools (like `cargo-martensite` attach mode)
 //! to inspect running applications, query widget tree snapshots and design-lint
 //! findings, and observe event dispatches with strict version-handshake gating

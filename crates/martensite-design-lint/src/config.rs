@@ -7,11 +7,11 @@
 //! 1. **Standard selection** — enable the whole catalog (default),
 //!    a subset via [`only_standards`](LintConfig::only_standards), or
 //!    all-but via [`without_standard`](LintConfig::without_standard).
-//! 2. **Per-rule severity** — [`set_rule`](LintConfig::set_rule),
+//! 2. **Per-rule severity** — [`with_rule`](LintConfig::with_rule),
 //!    including [`Severity::Off`].
 //! 3. **Per-rule parameters** — every threshold is tunable via
-//!    [`set_rule_param`](LintConfig::set_rule_param) (or TOML).
-//! 4. **Path allows** — [`allow`](LintConfig::allow) suppresses
+//!    [`with_rule_param`](LintConfig::with_rule_param) (or TOML).
+//! 4. **Path allows** — [`with_allow`](LintConfig::with_allow) suppresses
 //!    findings for a scope subtree by path glob, for named rules or
 //!    whole standards. Inline per-element ignores use the
 //!    `@lint:rule` suffix on `Widget::debug_name` — see
