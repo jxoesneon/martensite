@@ -15,11 +15,13 @@
 #![forbid(unsafe_code)]
 
 pub mod diff;
+pub mod error;
 pub mod paint;
 pub mod presentation;
 pub mod tinyskia_backend;
 pub mod vello_backend;
 
+pub use error::{PaintDiagnosticInfo, PaintError};
 pub use martensite_core::shape::{self, CornerRadii, CornerStyle, CornerStyles, Shape};
 pub use paint::{
     FontResource, GlyphInstance, GlyphRun, GradientStop, GradientStops, ImageData, PaintCommand,

@@ -82,6 +82,118 @@ impl std::fmt::Display for LayoutError {
 
 impl std::error::Error for LayoutError {}
 
+/// Structured diagnostic representing a layout constraint violation or dimension overflow.
+///
+/// # Examples
+///
+/// ```
+/// use glam::Vec2;
+/// use martensite_core::{Rect, WidgetId};
+/// use martensite_layout::LayoutDiagnostic;
+///
+/// let diag = LayoutDiagnostic::new(
+///     WidgetId::from_parts(1, 1),
+///     Rect::new(0.0, 0.0, 150.0, 100.0),
+///     Vec2::new(100.0, 100.0),
+///     Vec2::new(150.0, 100.0),
+/// );
+/// assert!(diag.has_overflow());
+/// assert_eq!(diag.overflow_delta.x, 50.0);
+/// assert_eq!(diag.max_overflow(), 50.0);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayoutDiagnostic {
+    /// The widget where the violation occurred, if known.
+    pub widget_id: Option<WidgetId>,
+    /// Offending bounds in logical pixels.
+    pub bounds: Rect,
+    /// Offered size or constraints from parent or container.
+    pub offered_size: Vec2,
+    /// Final resolved dimensions of the node.
+    pub resolved_size: Vec2,
+    /// Overflow amount along each axis (`(resolved - offered).max(0)`).
+    pub overflow_delta: Vec2,
+}
+
+impl LayoutDiagnostic {
+    /// Creates a new `LayoutDiagnostic` computing the overflow delta along each axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::Rect;
+    /// use martensite_layout::LayoutDiagnostic;
+    ///
+    /// let diag = LayoutDiagnostic::new(
+    ///     None,
+    ///     Rect::new(0.0, 0.0, 120.0, 50.0),
+    ///     Vec2::new(100.0, 50.0),
+    ///     Vec2::new(120.0, 50.0),
+    /// );
+    /// assert_eq!(diag.overflow_delta.x, 20.0);
+    /// assert_eq!(diag.overflow_delta.y, 0.0);
+    /// ```
+    pub fn new(
+        widget_id: impl Into<Option<WidgetId>>,
+        bounds: Rect,
+        offered_size: Vec2,
+        resolved_size: Vec2,
+    ) -> Self {
+        let delta_x = (resolved_size.x - offered_size.x).max(0.0);
+        let delta_y = (resolved_size.y - offered_size.y).max(0.0);
+        Self {
+            widget_id: widget_id.into(),
+            bounds,
+            offered_size,
+            resolved_size,
+            overflow_delta: Vec2::new(delta_x, delta_y),
+        }
+    }
+
+    /// Returns `true` if there is a measurable overflow (> 0.01 px).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::Rect;
+    /// use martensite_layout::LayoutDiagnostic;
+    ///
+    /// let clean = LayoutDiagnostic::new(None, Rect::new(0.0, 0.0, 0.0, 0.0), Vec2::splat(100.0), Vec2::splat(100.0));
+    /// assert!(!clean.has_overflow());
+    ///
+    /// let overflow = LayoutDiagnostic::new(None, Rect::new(0.0, 0.0, 0.0, 0.0), Vec2::splat(100.0), Vec2::splat(120.0));
+    /// assert!(overflow.has_overflow());
+    /// ```
+    #[inline]
+    pub fn has_overflow(&self) -> bool {
+        self.overflow_delta.x > 0.01 || self.overflow_delta.y > 0.01
+    }
+
+    /// Returns the maximum overflow magnitude across axes in pixels.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::Rect;
+    /// use martensite_layout::LayoutDiagnostic;
+    ///
+    /// let diag = LayoutDiagnostic::new(
+    ///     None,
+    ///     Rect::new(0.0, 0.0, 0.0, 0.0),
+    ///     Vec2::new(100.0, 100.0),
+    ///     Vec2::new(145.0, 110.0),
+    /// );
+    /// assert_eq!(diag.max_overflow(), 45.0);
+    /// ```
+    #[inline]
+    pub fn max_overflow(&self) -> f32 {
+        self.overflow_delta.x.max(self.overflow_delta.y)
+    }
+}
+
 /// Converts a Taffy [`Layout`] to a Martensite [`Rect`].
 ///
 /// Taffy layouts use `f32` coordinates with origin at the parent's top-left.
@@ -245,6 +357,8 @@ pub struct LayoutEngine {
     /// restore check and the exponential backoff that bounds
     /// collapse/restore oscillation.
     collapse_states: std::collections::HashMap<WidgetId, CollapseState>,
+    /// Structured diagnostics emitted during layout computation (e.g. constraint overflows).
+    diagnostics: Vec<LayoutDiagnostic>,
 }
 
 impl Default for LayoutEngine {
@@ -262,6 +376,7 @@ impl LayoutEngine {
             writing_mode: WritingMode::HorizontalTb,
             bidi_layouts: std::collections::HashMap::new(),
             collapse_states: std::collections::HashMap::new(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -273,6 +388,7 @@ impl LayoutEngine {
             writing_mode: WritingMode::HorizontalTb,
             bidi_layouts: std::collections::HashMap::with_capacity(capacity),
             collapse_states: std::collections::HashMap::with_capacity(capacity),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -390,6 +506,109 @@ impl LayoutEngine {
         self.tree = TaffyTree::new();
         self.id_map.clear();
         self.bidi_layouts.clear();
+        self.diagnostics.clear();
+    }
+
+    /// Returns a slice of layout diagnostics recorded during the most recent layout pass.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_layout::LayoutEngine;
+    ///
+    /// let engine = LayoutEngine::new();
+    /// assert!(engine.diagnostics().is_empty());
+    /// ```
+    #[inline]
+    pub fn diagnostics(&self) -> &[LayoutDiagnostic] {
+        &self.diagnostics
+    }
+
+    /// Takes and clears the recorded layout diagnostics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_layout::LayoutEngine;
+    ///
+    /// let mut engine = LayoutEngine::new();
+    /// let taken = engine.take_diagnostics();
+    /// assert!(taken.is_empty());
+    /// ```
+    #[inline]
+    pub fn take_diagnostics(&mut self) -> Vec<LayoutDiagnostic> {
+        std::mem::take(&mut self.diagnostics)
+    }
+
+    /// Clears any recorded layout diagnostics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_layout::LayoutEngine;
+    ///
+    /// let mut engine = LayoutEngine::new();
+    /// engine.clear_diagnostics();
+    /// assert!(!engine.has_diagnostics());
+    /// ```
+    #[inline]
+    pub fn clear_diagnostics(&mut self) {
+        self.diagnostics.clear();
+    }
+
+    /// Returns `true` if any constraint violations or overflows were recorded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_layout::LayoutEngine;
+    ///
+    /// let engine = LayoutEngine::new();
+    /// assert!(!engine.has_diagnostics());
+    /// ```
+    #[inline]
+    pub fn has_diagnostics(&self) -> bool {
+        !self.diagnostics.is_empty()
+    }
+
+    /// Emits a structured layout diagnostic into the engine's collection.
+    ///
+    /// Only diagnostics with measurable overflow (`has_overflow() == true`) are retained.
+    /// Deduplicates entries for the same widget by retaining the higher overflow magnitude.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::Rect;
+    /// use martensite_layout::{LayoutDiagnostic, LayoutEngine};
+    ///
+    /// let mut engine = LayoutEngine::new();
+    /// engine.emit_diagnostic(LayoutDiagnostic::new(
+    ///     None,
+    ///     Rect::new(0.0, 0.0, 0.0, 0.0),
+    ///     Vec2::new(100.0, 50.0),
+    ///     Vec2::new(130.0, 50.0),
+    /// ));
+    /// assert_eq!(engine.diagnostics().len(), 1);
+    /// ```
+    pub fn emit_diagnostic(&mut self, diagnostic: LayoutDiagnostic) {
+        if !diagnostic.has_overflow() {
+            return;
+        }
+        if let Some(wid) = diagnostic.widget_id {
+            if let Some(existing) = self
+                .diagnostics
+                .iter_mut()
+                .find(|d| d.widget_id == Some(wid))
+            {
+                if diagnostic.max_overflow() > existing.max_overflow() {
+                    *existing = diagnostic;
+                }
+                return;
+            }
+        }
+        self.diagnostics.push(diagnostic);
     }
 
     /// The Taffy style seeded for a node at registration: `min_size`
@@ -544,11 +763,15 @@ impl LayoutEngine {
         let logical_available = logical_available(available, self.writing_mode);
         let scale = arena.scale_factor();
 
+        self.diagnostics.clear();
+
         // Run Taffy layout with a measure function that calls Widget::measure
         // with the actual constraints Taffy provides. This ensures text
         // wrapping, flex sizing, and container padding all respond to
         // real parent constraints rather than unbounded space.
         for pass in 0..2 {
+            self.diagnostics.clear();
+            let leaf_diagnostics = std::cell::RefCell::new(Vec::new());
             let tree = &mut self.tree;
             let measure_trans = FlowTransposition::new(self.writing_mode, GeomSize::zero());
             let mut leaf_measure =
@@ -612,6 +835,24 @@ impl LayoutEngine {
                             };
                             let mut cx = LayoutContext { hot, scale };
                             let size = cold.widget.measure(&mut cx, constraints);
+
+                            // Detect if the leaf widget's measured size overflows offered max constraints.
+                            let (max_w, max_h) = (physical.max_width, physical.max_height);
+                            if (max_w.is_finite() && max_w > 0.0 && size.x > max_w + 0.01)
+                                || (max_h.is_finite() && max_h > 0.0 && size.y > max_h + 0.01)
+                            {
+                                let offered = Vec2::new(
+                                    if max_w.is_finite() { max_w } else { size.x },
+                                    if max_h.is_finite() { max_h } else { size.y },
+                                );
+                                leaf_diagnostics.borrow_mut().push(LayoutDiagnostic::new(
+                                    Some(*widget_id),
+                                    hot.bounds,
+                                    offered,
+                                    size,
+                                ));
+                            }
+
                             let logical =
                                 measure_trans.to_logical_size(GeomSize::new(size.x, size.y));
                             return Size {
@@ -639,6 +880,10 @@ impl LayoutEngine {
 
             tree.compute_layout_with_measure(root_node, logical_available, measure)
                 .map_err(|e| LayoutError::TaffyError(format!("{e:?}")))?;
+
+            for diag in leaf_diagnostics.into_inner() {
+                self.emit_diagnostic(diag);
+            }
 
             // Apply layouts back to arena and call Widget::layout
             self.apply_layout_with_widgets(arena, root, container_size);
@@ -808,6 +1053,24 @@ impl LayoutEngine {
             // call `WidgetArena::update_underflow_all` themselves.
             arena.update_underflow(wid);
 
+            // Record structured layout diagnostic if resolved bounds overflow offered container size.
+            if container_size.width > 0.0 || container_size.height > 0.0 {
+                let offered_w = container_size.width;
+                let offered_h = container_size.height;
+                let resolved_w = (bounds.origin.x + bounds.width()).max(bounds.width());
+                let resolved_h = (bounds.origin.y + bounds.height()).max(bounds.height());
+                if (offered_w > 0.0 && resolved_w > offered_w + 0.01)
+                    || (offered_h > 0.0 && resolved_h > offered_h + 0.01)
+                {
+                    self.emit_diagnostic(LayoutDiagnostic::new(
+                        Some(wid),
+                        bounds,
+                        Vec2::new(offered_w, offered_h),
+                        Vec2::new(resolved_w, resolved_h),
+                    ));
+                }
+            }
+
             // Enqueue children, using this widget's physical size as their
             // containing box size.
             let child_container = GeomSize::new(bounds.width(), bounds.height());
@@ -865,6 +1128,24 @@ impl LayoutEngine {
                 hot.bounds = bounds;
             }
             self.bidi_layouts.insert(wid, bidi);
+
+            // Record structured layout diagnostic if resolved bounds overflow offered container size.
+            if container_size.width > 0.0 || container_size.height > 0.0 {
+                let offered_w = container_size.width;
+                let offered_h = container_size.height;
+                let resolved_w = (bounds.origin.x + bounds.width()).max(bounds.width());
+                let resolved_h = (bounds.origin.y + bounds.height()).max(bounds.height());
+                if (offered_w > 0.0 && resolved_w > offered_w + 0.01)
+                    || (offered_h > 0.0 && resolved_h > offered_h + 0.01)
+                {
+                    self.emit_diagnostic(LayoutDiagnostic::new(
+                        Some(wid),
+                        bounds,
+                        Vec2::new(offered_w, offered_h),
+                        Vec2::new(resolved_w, resolved_h),
+                    ));
+                }
+            }
 
             // Enqueue children, using this widget's physical size as their
             // containing box size.
@@ -1767,5 +2048,98 @@ mod tests {
         assert_eq!(bidi.logical_size, LogicalSize::new(200.0, 100.0));
         assert_eq!(bidi.logical_origin, LogicalPoint::new(0.0, 0.0));
         assert_eq!(bidi.physical_size, crate::geometry::Size::new(100.0, 200.0));
+    }
+
+    #[test]
+    fn test_layout_diagnostic_emission_on_container_overflow() {
+        struct OverflowWidget;
+        impl martensite_core::widget::Widget for OverflowWidget {
+            fn measure(
+                &mut self,
+                _cx: &mut martensite_core::widget::LayoutContext,
+                _constraints: martensite_core::widget::LayoutConstraints,
+            ) -> glam::Vec2 {
+                // Force size that overflows container (offered: 100x100, resolved: 160x100)
+                glam::Vec2::new(160.0, 100.0)
+            }
+            fn layout(
+                &mut self,
+                _cx: &mut martensite_core::widget::LayoutContext,
+                _bounds: martensite_core::Rect,
+            ) {
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(
+            HotNode::new(NodeId::new(1)),
+            ColdNode::new(Box::new(OverflowWidget)),
+        );
+
+        let mut engine = LayoutEngine::new();
+        engine
+            .compute_with_widgets(
+                &mut arena,
+                root,
+                Size {
+                    width: AvailableSpace::Definite(100.0),
+                    height: AvailableSpace::Definite(100.0),
+                },
+            )
+            .unwrap();
+
+        assert!(engine.has_diagnostics());
+        let diags = engine.diagnostics();
+        assert!(!diags.is_empty());
+        let diag = &diags[0];
+        assert_eq!(diag.widget_id, Some(root));
+        assert!(diag.has_overflow());
+        assert_eq!(diag.overflow_delta.x, 60.0);
+        assert_eq!(diag.max_overflow(), 60.0);
+
+        let taken = engine.take_diagnostics();
+        assert_eq!(taken.len(), 1);
+        assert!(!engine.has_diagnostics());
+    }
+
+    #[test]
+    fn test_layout_diagnostic_zero_on_clean_layout() {
+        struct FitWidget;
+        impl martensite_core::widget::Widget for FitWidget {
+            fn measure(
+                &mut self,
+                _cx: &mut martensite_core::widget::LayoutContext,
+                _constraints: martensite_core::widget::LayoutConstraints,
+            ) -> glam::Vec2 {
+                glam::Vec2::new(80.0, 60.0)
+            }
+            fn layout(
+                &mut self,
+                _cx: &mut martensite_core::widget::LayoutContext,
+                _bounds: martensite_core::Rect,
+            ) {
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(
+            HotNode::new(NodeId::new(1)),
+            ColdNode::new(Box::new(FitWidget)),
+        );
+
+        let mut engine = LayoutEngine::new();
+        engine
+            .compute_with_widgets(
+                &mut arena,
+                root,
+                Size {
+                    width: AvailableSpace::Definite(200.0),
+                    height: AvailableSpace::Definite(200.0),
+                },
+            )
+            .unwrap();
+
+        assert!(!engine.has_diagnostics());
+        assert!(engine.diagnostics().is_empty());
     }
 }
