@@ -17,6 +17,10 @@ fn system_c_library_path() -> &'static str {
     {
         "libc.so.6"
     }
+    #[cfg(target_os = "android")]
+    {
+        "libc.so"
+    }
     #[cfg(target_os = "macos")]
     {
         "libSystem.dylib"
@@ -25,9 +29,14 @@ fn system_c_library_path() -> &'static str {
     {
         "kernel32.dll"
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "windows"
+    )))]
     {
-        compile_error!("host_dynamic_loading tests require linux, macos, or windows");
+        compile_error!("host_dynamic_loading tests require linux, android, macos, or windows");
     }
 }
 
@@ -36,6 +45,10 @@ fn second_system_library_path() -> &'static str {
     #[cfg(target_os = "linux")]
     {
         "libm.so.6"
+    }
+    #[cfg(target_os = "android")]
+    {
+        "libm.so"
     }
     #[cfg(target_os = "macos")]
     {

@@ -13,6 +13,15 @@
 //! the [`libloading`] crate to wrap `dlopen`/`dlsym` (Unix) and
 //! `LoadLibrary`/`GetProcAddress` (Windows) behind a safe, ergonomic API.
 //!
+//! # Dev Channel IPC (ADR-0038)
+//!
+//! When the `dev-channel` feature is enabled, this crate also provides the
+//! [`dev_channel`] subsystem: a narrow, local Unix-socket JSON-RPC-lite IPC
+//! server that enables developer tools (like `cargo-martensite` attach mode)
+//! to inspect running applications, query widget tree snapshots and design-lint
+//! findings, and observe event dispatches with strict version-handshake gating
+//! (Constraint D1).
+//!
 //! # Safety policy
 //!
 //! This crate uses `#![allow(unsafe_code)]` at the crate level because dynamic
@@ -46,6 +55,19 @@
 
 #![allow(unsafe_code)]
 #![deny(missing_docs)]
+
+#[cfg(feature = "dev-channel")]
+pub mod dev_channel;
+
+#[cfg(feature = "dev-channel")]
+pub use dev_channel::{
+    socket_path_for_session, DefaultDevChannelHandler, DevChannelClient, DevChannelConfig,
+    DevChannelHandler, DevChannelServer, EventLedgerParams, HelloParams, HelloResult,
+    InspectorSelectParams, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LintApplyParams,
+    LintPullParams, TreeSnapshotParams, DEV_CHANNEL_PROTOCOL_VERSION, ERR_HANDSHAKE_REQUIRED,
+    ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE,
+    ERR_VERSION_MISMATCH, MARTENSITE_VERSION,
+};
 
 use libloading::{Library, Symbol};
 use std::fmt;
