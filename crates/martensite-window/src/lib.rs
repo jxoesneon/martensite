@@ -95,3 +95,9 @@ pub use lifecycle::{surface_lifecycle, SurfaceLifecycle};
 pub use manager::{WindowEntry, WindowEventOutcome, WindowKey, WindowManager};
 pub use quiescent::{Quiescence, QuiescentApp};
 pub use window_attributes::{MacOSWindowAttributes, WindowsWindowAttributes};
+
+#[cfg(feature = "devtools")]
+pub use event::{
+    is_debug_events_enabled, set_debug_events_enabled, Disposition, EventFilter, EventKind,
+    EventLedger, EventRecord, HitPath, HitRejection, Point,
+};

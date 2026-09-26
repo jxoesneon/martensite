@@ -38,6 +38,12 @@ use crate::hit_test::HitTester;
 use crate::WindowEvent;
 use crate::WindowId;
 
+#[cfg(feature = "devtools")]
+pub use martensite_devtools::event_ledger::{
+    is_debug_events_enabled, set_debug_events_enabled, Disposition, EventFilter, EventKind,
+    EventLedger, EventRecord, HitPath, HitRejection, Point,
+};
+
 bitflags::bitflags! {
     /// Bitfield tracking which keyboard modifier keys are currently active.
     ///
@@ -612,9 +618,165 @@ pub struct EventRouter {
     pending_focus: Option<WidgetId>,
     /// Multi-click streak state feeding `PointerPressed::count`.
     clicks: ClickTracker,
+    /// Preallocated ring buffer for event dispatch observability.
+    #[cfg(feature = "devtools")]
+    ledger: martensite_devtools::event_ledger::EventLedger,
+    /// Current frame number recorded in devtools event ledger.
+    #[cfg(feature = "devtools")]
+    current_frame: u64,
+    /// Whether devtools ledger recording is locally enabled on this router.
+    #[cfg(feature = "devtools")]
+    ledger_enabled: bool,
 }
 
 impl EventRouter {
+    /// Returns a shared reference to the recorded event ledger.
+    ///
+    /// Available when the `devtools` feature is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "devtools")] {
+    /// use martensite_window::event::EventRouter;
+    ///
+    /// let router = EventRouter::new();
+    /// assert_eq!(router.event_ledger().len(), 0);
+    /// # }
+    /// ```
+    #[cfg(feature = "devtools")]
+    #[must_use]
+    pub fn event_ledger(&self) -> &martensite_devtools::event_ledger::EventLedger {
+        &self.ledger
+    }
+
+    /// Returns a mutable reference to the recorded event ledger.
+    ///
+    /// Available when the `devtools` feature is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "devtools")] {
+    /// use martensite_window::event::EventRouter;
+    ///
+    /// let mut router = EventRouter::new();
+    /// router.event_ledger_mut().clear();
+    /// # }
+    /// ```
+    #[cfg(feature = "devtools")]
+    pub fn event_ledger_mut(&mut self) -> &mut martensite_devtools::event_ledger::EventLedger {
+        &mut self.ledger
+    }
+
+    /// Sets the current frame number used when recording event records.
+    ///
+    /// Available when the `devtools` feature is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "devtools")] {
+    /// use martensite_window::event::EventRouter;
+    ///
+    /// let mut router = EventRouter::new();
+    /// router.set_frame(42);
+    /// assert_eq!(router.current_frame(), 42);
+    /// # }
+    /// ```
+    #[cfg(feature = "devtools")]
+    pub fn set_frame(&mut self, frame: u64) {
+        self.current_frame = frame;
+    }
+
+    /// Returns the current frame number.
+    ///
+    /// Available when the `devtools` feature is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "devtools")] {
+    /// use martensite_window::event::EventRouter;
+    ///
+    /// let router = EventRouter::new();
+    /// assert_eq!(router.current_frame(), 0);
+    /// # }
+    /// ```
+    #[cfg(feature = "devtools")]
+    #[must_use]
+    pub const fn current_frame(&self) -> u64 {
+        self.current_frame
+    }
+
+    /// Advances the current frame number by one.
+    ///
+    /// Available when the `devtools` feature is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "devtools")] {
+    /// use martensite_window::event::EventRouter;
+    ///
+    /// let mut router = EventRouter::new();
+    /// router.advance_frame();
+    /// assert_eq!(router.current_frame(), 1);
+    /// # }
+    /// ```
+    #[cfg(feature = "devtools")]
+    pub fn advance_frame(&mut self) {
+        self.current_frame = self.current_frame.saturating_add(1);
+    }
+
+    /// Enables or disables event ledger recording on this router.
+    ///
+    /// When disabled, recording is still active if `MARTENSITE_DEBUG_EVENTS=1`
+    /// is set in the environment or `set_debug_events_enabled(true)` was called.
+    ///
+    /// Available when the `devtools` feature is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "devtools")] {
+    /// use martensite_window::event::EventRouter;
+    ///
+    /// let mut router = EventRouter::new();
+    /// router.set_ledger_enabled(true);
+    /// assert!(router.is_ledger_enabled());
+    /// # }
+    /// ```
+    #[cfg(feature = "devtools")]
+    pub fn set_ledger_enabled(&mut self, enabled: bool) {
+        self.ledger_enabled = enabled;
+    }
+
+    /// Returns whether event ledger recording is currently active.
+    ///
+    /// Returns `true` if locally enabled on this router or if global
+    /// debug events are enabled via `MARTENSITE_DEBUG_EVENTS=1`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_window::event::EventRouter;
+    ///
+    /// let router = EventRouter::new();
+    /// let _ = router.is_ledger_enabled();
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_ledger_enabled(&self) -> bool {
+        #[cfg(feature = "devtools")]
+        {
+            self.ledger_enabled || martensite_devtools::event_ledger::is_debug_events_enabled()
+        }
+        #[cfg(not(feature = "devtools"))]
+        {
+            false
+        }
+    }
     /// Creates a new, empty event router with no capture and no tracked
     /// mouse state.
     #[must_use]
@@ -906,6 +1068,21 @@ impl EventRouter {
                 // `PointerLeave` fires.
                 self.mouse.update_position(window_id, event.position);
                 self.drain_focus(arena);
+                #[cfg(feature = "devtools")]
+                if self.is_ledger_enabled() {
+                    let mut path = martensite_devtools::event_ledger::HitPath::new();
+                    path.push(root);
+                    let record = martensite_devtools::event_ledger::EventRecord::new(
+                        0,
+                        self.current_frame,
+                        martensite_devtools::event_ledger::EventKind::Pointer,
+                        martensite_devtools::event_ledger::Disposition::Handled(root),
+                    )
+                    .with_position(event.position)
+                    .with_hit_path(path)
+                    .with_focus(None, self.pending_focus);
+                    self.ledger.push(record);
+                }
                 return Some(overlay_response);
             }
             // `Ignored` means the press landed outside every popup
@@ -930,7 +1107,7 @@ impl EventRouter {
                 let _ = arena.dispatch_event(new, &WidgetEvent::PointerEnter);
             }
         }
-        let result = match outcome {
+        match outcome {
             EventDispatchOutcome::Handled(id) => {
                 match arena.dispatch_event_ex(id, &widget_event_for_pointer(event, click_count)) {
                     Some((responder, response)) => {
@@ -943,18 +1120,94 @@ impl EventRouter {
                             }
                             _ => {}
                         }
+                        self.drain_focus(arena);
+                        #[cfg(feature = "devtools")]
+                        if self.is_ledger_enabled() {
+                            let disp = if arena_captured {
+                                martensite_devtools::event_ledger::Disposition::Captured(responder)
+                            } else if responder == id {
+                                martensite_devtools::event_ledger::Disposition::Handled(responder)
+                            } else {
+                                martensite_devtools::event_ledger::Disposition::BubbledTo(responder)
+                            };
+                            let path = build_hit_path(arena, Some(root), id);
+                            let record = martensite_devtools::event_ledger::EventRecord::new(
+                                0,
+                                self.current_frame,
+                                martensite_devtools::event_ledger::EventKind::Pointer,
+                                disp,
+                            )
+                            .with_position(event.position)
+                            .with_hit_path(path)
+                            .with_focus(None, self.pending_focus);
+                            self.ledger.push(record);
+                        }
                         Some(response)
                     }
                     // The event bubbled past the root: it was delivered
                     // but ignored, which is `Some(Ignored)` — not `None`
                     // (that would mean no widget was hit at all).
-                    None => Some(EventResponse::Ignored),
+                    None => {
+                        self.drain_focus(arena);
+                        #[cfg(feature = "devtools")]
+                        if self.is_ledger_enabled() {
+                            let path = build_hit_path(arena, Some(root), id);
+                            let record = martensite_devtools::event_ledger::EventRecord::new(
+                                0,
+                                self.current_frame,
+                                martensite_devtools::event_ledger::EventKind::Pointer,
+                                martensite_devtools::event_ledger::Disposition::Ignored,
+                            )
+                            .with_position(event.position)
+                            .with_hit_path(path)
+                            .with_focus(None, self.pending_focus);
+                            self.ledger.push(record);
+                        }
+                        Some(EventResponse::Ignored)
+                    }
                 }
             }
-            _ => None,
-        };
-        self.drain_focus(arena);
-        result
+            _ => {
+                self.drain_focus(arena);
+                #[cfg(feature = "devtools")]
+                if self.is_ledger_enabled() {
+                    let (path, rejection) = if arena_captured {
+                        let capturer = self.capture.captured(event.pointer_id);
+                        let p = capturer
+                            .map(|c| build_hit_path(arena, Some(root), c))
+                            .unwrap_or_default();
+                        (
+                            p,
+                            capturer.map(
+                                martensite_devtools::event_ledger::HitRejection::CapturedByOther,
+                            ),
+                        )
+                    } else if arena.overlay().has_modal() {
+                        let (p, _) = diagnose_hit_rejection(arena, root, event.position);
+                        (
+                            p,
+                            Some(martensite_devtools::event_ledger::HitRejection::UnderModal),
+                        )
+                    } else {
+                        diagnose_hit_rejection(arena, root, event.position)
+                    };
+                    let mut record = martensite_devtools::event_ledger::EventRecord::new(
+                        0,
+                        self.current_frame,
+                        martensite_devtools::event_ledger::EventKind::Pointer,
+                        martensite_devtools::event_ledger::Disposition::Ignored,
+                    )
+                    .with_position(event.position)
+                    .with_hit_path(path)
+                    .with_focus(None, self.pending_focus);
+                    if let Some(rej) = rejection {
+                        record = record.with_hit_rejection(rej);
+                    }
+                    self.ledger.push(record);
+                }
+                None
+            }
+        }
     }
 
     /// Routes a keyboard event to the focused widget and delivers it.
@@ -1004,14 +1257,80 @@ impl EventRouter {
         let overlay_response = arena.overlay_mut().dispatch_event(&event);
         if overlay_response != EventResponse::Ignored {
             self.drain_focus(arena);
+            #[cfg(feature = "devtools")]
+            if self.is_ledger_enabled() {
+                let mut path = martensite_devtools::event_ledger::HitPath::new();
+                if let Some(f) = focused {
+                    path.push(f);
+                }
+                let rejection = if arena.overlay().has_modal() && focused.is_some() {
+                    Some(martensite_devtools::event_ledger::HitRejection::UnderModal)
+                } else {
+                    None
+                };
+                let mut record = martensite_devtools::event_ledger::EventRecord::new(
+                    0,
+                    self.current_frame,
+                    martensite_devtools::event_ledger::EventKind::Key,
+                    martensite_devtools::event_ledger::Disposition::Handled(
+                        focused.unwrap_or_else(|| WidgetId::from_parts(1, 1)),
+                    ),
+                )
+                .with_hit_path(path)
+                .with_focus(focused, self.pending_focus);
+                if let Some(rej) = rejection {
+                    record = record.with_hit_rejection(rej);
+                }
+                self.ledger.push(record);
+            }
             return Some(overlay_response);
         }
-        let result = match self.route_keyboard_event(focused) {
-            EventDispatchOutcome::Handled(id) => Some(arena.dispatch_event(id, &event)),
-            _ => None,
-        };
-        self.drain_focus(arena);
-        result
+        match self.route_keyboard_event(focused) {
+            EventDispatchOutcome::Handled(id) => {
+                let response = arena.dispatch_event_ex(id, &event);
+                self.drain_focus(arena);
+                #[cfg(feature = "devtools")]
+                if self.is_ledger_enabled() {
+                    let disp = match response {
+                        Some((responder, _)) => {
+                            if responder == id {
+                                martensite_devtools::event_ledger::Disposition::Handled(responder)
+                            } else {
+                                martensite_devtools::event_ledger::Disposition::BubbledTo(responder)
+                            }
+                        }
+                        None => martensite_devtools::event_ledger::Disposition::Ignored,
+                    };
+                    let path = build_hit_path(arena, None, id);
+                    let record = martensite_devtools::event_ledger::EventRecord::new(
+                        0,
+                        self.current_frame,
+                        martensite_devtools::event_ledger::EventKind::Key,
+                        disp,
+                    )
+                    .with_hit_path(path)
+                    .with_focus(focused, self.pending_focus);
+                    self.ledger.push(record);
+                }
+                response.map(|(_, r)| r).or(Some(EventResponse::Ignored))
+            }
+            _ => {
+                self.drain_focus(arena);
+                #[cfg(feature = "devtools")]
+                if self.is_ledger_enabled() {
+                    let record = martensite_devtools::event_ledger::EventRecord::new(
+                        0,
+                        self.current_frame,
+                        martensite_devtools::event_ledger::EventKind::Key,
+                        martensite_devtools::event_ledger::Disposition::Ignored,
+                    )
+                    .with_hit_path(martensite_devtools::event_ledger::HitPath::new())
+                    .with_focus(focused, self.pending_focus);
+                    self.ledger.push(record);
+                }
+                None
+            }
+        }
     }
 
     /// Routes a scroll event to the hovered widget and delivers it.
@@ -1032,16 +1351,75 @@ impl EventRouter {
             .dispatch_event(&WidgetEvent::Scroll { position, delta });
         if overlay_response != EventResponse::Ignored {
             self.drain_focus(arena);
+            #[cfg(feature = "devtools")]
+            if self.is_ledger_enabled() {
+                let record = martensite_devtools::event_ledger::EventRecord::new(
+                    0,
+                    self.current_frame,
+                    martensite_devtools::event_ledger::EventKind::Scroll,
+                    martensite_devtools::event_ledger::Disposition::Handled(WidgetId::from_parts(
+                        1, 1,
+                    )),
+                )
+                .with_position(position)
+                .with_hit_path(martensite_devtools::event_ledger::HitPath::new())
+                .with_focus(None, self.pending_focus);
+                self.ledger.push(record);
+            }
             return Some(overlay_response);
         }
-        let result = match self.route_scroll_event(window_id, delta) {
+        match self.route_scroll_event(window_id, delta) {
             EventDispatchOutcome::Handled(id) => {
-                Some(arena.dispatch_event(id, &WidgetEvent::Scroll { position, delta }))
+                let response =
+                    arena.dispatch_event_ex(id, &WidgetEvent::Scroll { position, delta });
+                self.drain_focus(arena);
+                #[cfg(feature = "devtools")]
+                if self.is_ledger_enabled() {
+                    let disp = match response {
+                        Some((responder, _)) => {
+                            if responder == id {
+                                martensite_devtools::event_ledger::Disposition::Handled(responder)
+                            } else {
+                                martensite_devtools::event_ledger::Disposition::BubbledTo(responder)
+                            }
+                        }
+                        None => martensite_devtools::event_ledger::Disposition::Ignored,
+                    };
+                    let path = build_hit_path(arena, None, id);
+                    let record = martensite_devtools::event_ledger::EventRecord::new(
+                        0,
+                        self.current_frame,
+                        martensite_devtools::event_ledger::EventKind::Scroll,
+                        disp,
+                    )
+                    .with_position(position)
+                    .with_hit_path(path)
+                    .with_focus(None, self.pending_focus);
+                    self.ledger.push(record);
+                }
+                response.map(|(_, r)| r).or(Some(EventResponse::Ignored))
             }
-            _ => None,
-        };
-        self.drain_focus(arena);
-        result
+            _ => {
+                self.drain_focus(arena);
+                #[cfg(feature = "devtools")]
+                if self.is_ledger_enabled() {
+                    let record = martensite_devtools::event_ledger::EventRecord::new(
+                        0,
+                        self.current_frame,
+                        martensite_devtools::event_ledger::EventKind::Scroll,
+                        martensite_devtools::event_ledger::Disposition::Ignored,
+                    )
+                    .with_position(position)
+                    .with_hit_path(martensite_devtools::event_ledger::HitPath::new())
+                    .with_hit_rejection(
+                        martensite_devtools::event_ledger::HitRejection::OutsideBounds,
+                    )
+                    .with_focus(None, self.pending_focus);
+                    self.ledger.push(record);
+                }
+                None
+            }
+        }
     }
 
     /// Routes an IME event to the focused widget and delivers it.
@@ -1079,13 +1457,177 @@ impl EventRouter {
                 cursor: *cursor,
             },
         };
-        let result = match self.route_keyboard_event(focused) {
-            EventDispatchOutcome::Handled(id) => Some(arena.dispatch_event(id, &widget_event)),
-            _ => None,
-        };
-        self.drain_focus(arena);
-        result
+        match self.route_keyboard_event(focused) {
+            EventDispatchOutcome::Handled(id) => {
+                let response = arena.dispatch_event_ex(id, &widget_event);
+                self.drain_focus(arena);
+                #[cfg(feature = "devtools")]
+                if self.is_ledger_enabled() {
+                    let disp = match response {
+                        Some((responder, _)) => {
+                            if responder == id {
+                                martensite_devtools::event_ledger::Disposition::Handled(responder)
+                            } else {
+                                martensite_devtools::event_ledger::Disposition::BubbledTo(responder)
+                            }
+                        }
+                        None => martensite_devtools::event_ledger::Disposition::Ignored,
+                    };
+                    let path = build_hit_path(arena, None, id);
+                    let record = martensite_devtools::event_ledger::EventRecord::new(
+                        0,
+                        self.current_frame,
+                        martensite_devtools::event_ledger::EventKind::Ime,
+                        disp,
+                    )
+                    .with_hit_path(path)
+                    .with_focus(focused, self.pending_focus);
+                    self.ledger.push(record);
+                }
+                response.map(|(_, r)| r).or(Some(EventResponse::Ignored))
+            }
+            _ => {
+                self.drain_focus(arena);
+                #[cfg(feature = "devtools")]
+                if self.is_ledger_enabled() {
+                    let record = martensite_devtools::event_ledger::EventRecord::new(
+                        0,
+                        self.current_frame,
+                        martensite_devtools::event_ledger::EventKind::Ime,
+                        martensite_devtools::event_ledger::Disposition::Ignored,
+                    )
+                    .with_hit_path(martensite_devtools::event_ledger::HitPath::new())
+                    .with_focus(focused, self.pending_focus);
+                    self.ledger.push(record);
+                }
+                None
+            }
+        }
     }
+}
+
+#[cfg(feature = "devtools")]
+fn build_hit_path(
+    arena: &WidgetArena,
+    root: Option<WidgetId>,
+    target: WidgetId,
+) -> martensite_devtools::event_ledger::HitPath {
+    let mut path = martensite_devtools::event_ledger::HitPath::new();
+    let mut ancestors = [None; 32];
+    let mut count = 0;
+    let mut curr = Some(target);
+    while let Some(id) = curr {
+        if count < ancestors.len() {
+            ancestors[count] = Some(id);
+            count += 1;
+        }
+        if Some(id) == root {
+            break;
+        }
+        curr = arena.parent(id);
+    }
+    for i in (0..count).rev() {
+        if let Some(id) = ancestors[i] {
+            path.push(id);
+        }
+    }
+    path
+}
+
+#[cfg(feature = "devtools")]
+fn diagnose_hit_rejection(
+    arena: &WidgetArena,
+    root: WidgetId,
+    screen_point: Vec2,
+) -> (
+    martensite_devtools::event_ledger::HitPath,
+    Option<martensite_devtools::event_ledger::HitRejection>,
+) {
+    use crate::hit_test::point_in_rect;
+    use martensite_core::NodeFlags;
+    use martensite_devtools::event_ledger::{HitPath, HitRejection};
+
+    if !screen_point.is_finite() || !arena.is_alive(root) {
+        return (HitPath::new(), Some(HitRejection::OutsideBounds));
+    }
+
+    let Some(root_hot) = arena.get_hot(root) else {
+        return (HitPath::new(), Some(HitRejection::OutsideBounds));
+    };
+
+    if !point_in_rect(screen_point, root_hot.bounds) {
+        let mut path = HitPath::new();
+        path.push(root);
+        return (path, Some(HitRejection::OutsideBounds));
+    }
+
+    // Traverse down to the deepest node whose bounds contain screen_point.
+    let mut path = HitPath::new();
+    let mut current = root;
+    path.push(current);
+
+    'descend: loop {
+        let mut child = arena.last_child(current);
+        while let Some(child_id) = child {
+            if let Some(hot) = arena.get_hot(child_id) {
+                if hot.flags.contains(NodeFlags::VISIBLE) && point_in_rect(screen_point, hot.bounds)
+                {
+                    current = child_id;
+                    path.push(current);
+                    continue 'descend;
+                }
+            }
+            child = arena.prev_sibling(child_id);
+        }
+        break;
+    }
+
+    // Determine the rejection reason for current.
+    let rejection = if let Some(hot) = arena.get_hot(current) {
+        let is_disabled = !hot.flags.contains(NodeFlags::HIT_TEST_ENABLED)
+            || hot.flags.contains(NodeFlags::INERT)
+            || path.iter().any(|id| {
+                arena.get_hot(id).is_some_and(|h| {
+                    !h.flags.contains(NodeFlags::HIT_TEST_ENABLED)
+                        || h.flags.contains(NodeFlags::INERT)
+                })
+            });
+
+        if is_disabled {
+            // Check if there is an enabled lower sibling that was occluded by this disabled widget
+            let mut occluded = false;
+            let mut sib = arena.prev_sibling(current);
+            while let Some(s) = sib {
+                if let Some(s_hot) = arena.get_hot(s) {
+                    if s_hot.flags.contains(NodeFlags::VISIBLE)
+                        && !s_hot.flags.contains(NodeFlags::INERT)
+                        && point_in_rect(screen_point, s_hot.bounds)
+                    {
+                        occluded = true;
+                        break;
+                    }
+                }
+                sib = arena.prev_sibling(s);
+            }
+            if occluded {
+                HitRejection::OccludedBy(current)
+            } else {
+                HitRejection::HitTestDisabled
+            }
+        } else if arena
+            .get_cold(current)
+            .and_then(|c| c.underflow_policy())
+            .is_some_and(|p| p.covers_input())
+        {
+            HitRejection::HitTestDisabled
+        } else {
+            HitRejection::OutsideBounds
+        }
+    } else {
+        HitRejection::OutsideBounds
+    };
+
+    (path, Some(rejection))
 }
 
 /// A normalized IME event destined for the focused widget.

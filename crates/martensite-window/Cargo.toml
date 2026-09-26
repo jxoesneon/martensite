@@ -21,6 +21,7 @@ glam = { workspace = true }
 kurbo = { workspace = true }
 bitflags = { workspace = true }
 tracing = { workspace = true }
+martensite-devtools = { workspace = true, optional = true }
 
 # Android: select winit's GameActivity backend. `NativeActivity` is
 # unsupported — IME events are unreliable and the AccessKit adapter
@@ -51,6 +52,8 @@ web-sys = { workspace = true, features = [
 ] }
 
 [features]
+default = []
+devtools = ["dep:martensite-devtools"]
 docs-rs = ["winit/x11"]
 
 [package.metadata.docs.rs]

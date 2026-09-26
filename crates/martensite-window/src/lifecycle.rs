@@ -37,10 +37,15 @@
 /// ```
 /// use martensite_window::lifecycle::SurfaceLifecycle;
 ///
-/// // On desktop and iOS the surface outlives suspend/resume cycles.
+/// #[cfg(not(target_os = "android"))]
 /// assert_eq!(
 ///     martensite_window::lifecycle::surface_lifecycle(),
 ///     SurfaceLifecycle::Persistent,
+/// );
+/// #[cfg(target_os = "android")]
+/// assert_eq!(
+///     martensite_window::lifecycle::surface_lifecycle(),
+///     SurfaceLifecycle::RecreateOnSuspend,
 /// );
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -82,9 +87,10 @@ pub enum SurfaceLifecycle {
 /// ```
 /// use martensite_window::lifecycle::{surface_lifecycle, SurfaceLifecycle};
 ///
-/// // Outside Android, surfaces do not need to be re-created after
-/// // suspend/resume.
+/// #[cfg(not(target_os = "android"))]
 /// assert_eq!(surface_lifecycle(), SurfaceLifecycle::Persistent);
+/// #[cfg(target_os = "android")]
+/// assert_eq!(surface_lifecycle(), SurfaceLifecycle::RecreateOnSuspend);
 /// ```
 #[must_use]
 pub const fn surface_lifecycle() -> SurfaceLifecycle {
