@@ -64,10 +64,11 @@ pub use error_surface::{
 };
 #[cfg(feature = "devtools")]
 pub use inspector::{
-    hit_test_select, Axis, ConstraintStep, ConstraintViolation, DevToolsOptions, HitTestResult,
-    InlineMarkers, InspectionMode, InspectorState, InspectorTreeModel, InspectorTreeNode, KeyCode,
-    KeyCombo, LayoutInspection, LayoutInspector, LayoutStyleSummary, Modifiers, NodeBadges,
-    OverflowInfo, TrackedSignalInfo, WidgetProperties,
+    hit_test_select, render_tweaks_panel, Axis, ConstraintStep, ConstraintViolation,
+    DevToolsOptions, HitTestResult, InlineMarkers, InspectionMode, InspectorState, InspectorTab,
+    InspectorTreeModel, InspectorTreeNode, KeyCode, KeyCombo, LayoutInspection, LayoutInspector,
+    LayoutStyleSummary, Modifiers, NodeBadges, OverflowInfo, TrackedSignalInfo, TweakControlKind,
+    TweakPanelRow, TweaksPanelActions, TweaksPanelModel, WidgetProperties,
 };
 #[cfg(feature = "devtools")]
 pub use lint_bridge::{LintBadgeSummary, LintBridge, LintDump, LintDumpError};

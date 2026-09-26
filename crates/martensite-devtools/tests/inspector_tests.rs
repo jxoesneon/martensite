@@ -593,3 +593,182 @@ fn test_marker_parsing_edge_cases() {
     let (_, m_inv) = InlineMarkers::parse("Widget@level:5@level:0");
     assert_eq!(m_inv.isa_level, None);
 }
+
+#[test]
+fn test_inspector_tab_enum_and_state() {
+    use martensite_devtools::inspector::InspectorTab;
+
+    let tabs = [
+        (InspectorTab::Tree, "Elements", InspectionMode::Tree),
+        (InspectorTab::Layout, "Layout", InspectionMode::Layout),
+        (
+            InspectorTab::Properties,
+            "Properties",
+            InspectionMode::Properties,
+        ),
+        (InspectorTab::Lint, "Design Lint", InspectionMode::Lint),
+        (InspectorTab::Events, "Events", InspectionMode::Events),
+        (InspectorTab::Errors, "Errors", InspectionMode::Errors),
+        (InspectorTab::Tweaks, "Tweaks", InspectionMode::Tweaks),
+    ];
+
+    for (tab, title, mode) in tabs {
+        assert_eq!(tab.title(), title);
+        assert_eq!(InspectionMode::from(tab), mode);
+        assert_eq!(InspectorTab::from(mode), tab);
+    }
+
+    let mut state = InspectorState::new();
+    assert_eq!(state.tab(), InspectorTab::Tree);
+
+    state.set_tab(InspectorTab::Tweaks);
+    assert_eq!(state.tab(), InspectorTab::Tweaks);
+    assert_eq!(state.mode(), InspectionMode::Tweaks);
+
+    state.set_tab(InspectorTab::Layout);
+    assert_eq!(state.tab(), InspectorTab::Layout);
+    assert_eq!(state.mode(), InspectionMode::Layout);
+}
+
+#[test]
+fn test_render_tweaks_panel_all_variants_and_badges() {
+    use kurbo::Rect as KurboRect;
+    use martensite_core::PaintList;
+    use martensite_devtools::inspector::{render_tweaks_panel, TweakControlKind};
+    use martensite_devtools::tweak::{SourceSpan, TweakRegistry};
+
+    let registry = TweakRegistry::new();
+
+    // 1. F32 tweak (modified)
+    let span_f32 = SourceSpan::new("src/ui/header.rs", 10, 4);
+    registry.register_or_get_with_span("padding", 12.0f32, span_f32, "padding");
+    registry.set_value("padding", 18.5f32);
+
+    // 2. F64 tweak (unmodified)
+    let span_f64 = SourceSpan::new("src/ui/chart.rs", 25, 8);
+    registry.register_or_get_with_span("aspect_ratio", 1.777f64, span_f64, "aspect_ratio");
+
+    // 3. I32 tweak (modified)
+    let span_i32 = SourceSpan::new("src/ui/list.rs", 42, 12);
+    registry.register_or_get_with_span("item_count", 5i32, span_i32, "item_count");
+    registry.set_value("item_count", 10i32);
+
+    // 4. U32 tweak (unmodified)
+    let span_u32 = SourceSpan::new("src/ui/grid.rs", 15, 2);
+    registry.register_or_get_with_span("columns", 4u32, span_u32, "columns");
+
+    // 5. Bool tweak (modified)
+    let span_bool = SourceSpan::new("src/ui/debug.rs", 99, 1);
+    registry.register_or_get_with_span("show_fps", false, span_bool, "show_fps");
+    registry.set_value("show_fps", true);
+
+    // 6. Color tweak (modified)
+    let span_color = SourceSpan::new("src/ui/theme.rs", 7, 5);
+    registry.register_or_get_with_span(
+        "accent_color",
+        [255, 0, 0, 255],
+        span_color,
+        "accent_color",
+    );
+    registry.set_value("accent_color", [0, 255, 0, 255]);
+
+    // 7. String tweak (unmodified)
+    let span_str = SourceSpan::new("src/ui/label.rs", 3, 10);
+    registry.register_or_get_with_span("title", "Martensite".to_string(), span_str, "title");
+
+    let mut paint = PaintList::new();
+    let bounds = KurboRect::new(0.0, 0.0, 900.0, 700.0);
+    let model = render_tweaks_panel(&registry, &mut paint, bounds);
+
+    assert_eq!(model.total_count, 7);
+    assert_eq!(model.modified_count, 4);
+    assert_eq!(model.rows.len(), 7);
+    assert!(!paint.is_empty());
+
+    // Check action buttons
+    assert_eq!(model.actions.reset_all_label, "Reset All");
+    assert_eq!(model.actions.copy_patches_label, "Copy All Patches");
+    assert_eq!(model.actions.patches.len(), 4);
+
+    // Check specific rows and controls
+    let padding_row = model
+        .rows
+        .iter()
+        .find(|r| r.name == "padding")
+        .expect("padding row");
+    assert!(padding_row.is_modified);
+    assert_eq!(padding_row.badge(), Some("~"));
+    assert_eq!(
+        padding_row.source_span,
+        Some("src/ui/header.rs:10:4".to_string())
+    );
+    assert_eq!(padding_row.current_value, "18.5");
+    assert_eq!(padding_row.default_value, "12.0");
+    match &padding_row.control {
+        TweakControlKind::FloatSlider { value, .. } => assert_eq!(*value, 18.5),
+        other => panic!("expected FloatSlider, got {:?}", other),
+    }
+
+    let aspect_row = model
+        .rows
+        .iter()
+        .find(|r| r.name == "aspect_ratio")
+        .expect("aspect row");
+    assert!(!aspect_row.is_modified);
+    assert_eq!(aspect_row.badge(), None);
+    match &aspect_row.control {
+        TweakControlKind::FloatSlider { value, .. } => assert_eq!(*value, 1.777),
+        other => panic!("expected FloatSlider, got {:?}", other),
+    }
+
+    let item_count_row = model
+        .rows
+        .iter()
+        .find(|r| r.name == "item_count")
+        .expect("item_count row");
+    assert!(item_count_row.is_modified);
+    assert_eq!(item_count_row.badge(), Some("~"));
+    match &item_count_row.control {
+        TweakControlKind::IntegerStepper { value, step } => {
+            assert_eq!(*value, 10);
+            assert_eq!(*step, 1);
+        }
+        other => panic!("expected IntegerStepper, got {:?}", other),
+    }
+
+    let show_fps_row = model
+        .rows
+        .iter()
+        .find(|r| r.name == "show_fps")
+        .expect("show_fps row");
+    assert!(show_fps_row.is_modified);
+    assert_eq!(show_fps_row.badge(), Some("~"));
+    match &show_fps_row.control {
+        TweakControlKind::ToggleSwitch { state } => assert!(*state),
+        other => panic!("expected ToggleSwitch, got {:?}", other),
+    }
+
+    let accent_row = model
+        .rows
+        .iter()
+        .find(|r| r.name == "accent_color")
+        .expect("accent_color row");
+    assert!(accent_row.is_modified);
+    assert_eq!(accent_row.badge(), Some("~"));
+    match &accent_row.control {
+        TweakControlKind::ColorPicker { rgba, .. } => assert_eq!(*rgba, [0, 255, 0, 255]),
+        other => panic!("expected ColorPicker, got {:?}", other),
+    }
+
+    let title_row = model
+        .rows
+        .iter()
+        .find(|r| r.name == "title")
+        .expect("title row");
+    assert!(!title_row.is_modified);
+    assert_eq!(title_row.badge(), None);
+    match &title_row.control {
+        TweakControlKind::TextInput { text } => assert_eq!(text, "Martensite"),
+        other => panic!("expected TextInput, got {:?}", other),
+    }
+}

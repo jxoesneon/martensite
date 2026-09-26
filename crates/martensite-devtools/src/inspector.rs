@@ -24,9 +24,10 @@
 use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
+use kurbo::{Point, Rect as KurboRect};
 use martensite_core::{
-    ColdNode, HotNode, LayoutConstraints, NodeFlags, Rect, RenderMinimum, UnderflowPolicy,
-    WidgetArena, WidgetId,
+    ColdNode, HotNode, LayoutConstraints, NodeFlags, PaintList, Rect, RenderMinimum,
+    UnderflowPolicy, WidgetArena, WidgetId,
 };
 pub use martensite_design_lint::NodeKind;
 
@@ -432,6 +433,10 @@ pub enum InspectionMode {
     Accessibility,
     /// Event dispatch ring buffer panel.
     Events,
+    /// In-app error surface and diagnostics panel.
+    Errors,
+    /// Live runtime property tweaks panel.
+    Tweaks,
 }
 
 impl InspectionMode {
@@ -444,6 +449,7 @@ impl InspectionMode {
     ///
     /// assert_eq!(InspectionMode::Tree.title(), "Elements");
     /// assert_eq!(InspectionMode::Layout.title(), "Layout");
+    /// assert_eq!(InspectionMode::Tweaks.title(), "Tweaks");
     /// ```
     pub const fn title(&self) -> &'static str {
         match self {
@@ -453,6 +459,90 @@ impl InspectionMode {
             Self::Lint => "Design Lint",
             Self::Accessibility => "Accessibility",
             Self::Events => "Events",
+            Self::Errors => "Errors",
+            Self::Tweaks => "Tweaks",
+        }
+    }
+}
+
+/// Active tab in the DevTools inspector panel.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_devtools::inspector::InspectorTab;
+///
+/// let tab = InspectorTab::Tweaks;
+/// assert_eq!(tab.title(), "Tweaks");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum InspectorTab {
+    /// Widget hierarchy tree panel (indented tree with lazy expansion).
+    #[default]
+    Tree,
+    /// Layout constraint and sizing panel.
+    Layout,
+    /// Properties, semantic markers, and reactive bindings panel.
+    Properties,
+    /// Design-lint findings and rule diagnostics panel.
+    Lint,
+    /// Event dispatch ring buffer panel.
+    Events,
+    /// In-app error surface and diagnostics panel.
+    Errors,
+    /// Live runtime property tweaks panel.
+    Tweaks,
+}
+
+impl InspectorTab {
+    /// Returns the human-readable display title for the panel tab.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_devtools::inspector::InspectorTab;
+    ///
+    /// assert_eq!(InspectorTab::Tree.title(), "Elements");
+    /// assert_eq!(InspectorTab::Tweaks.title(), "Tweaks");
+    /// ```
+    pub const fn title(&self) -> &'static str {
+        match self {
+            Self::Tree => "Elements",
+            Self::Layout => "Layout",
+            Self::Properties => "Properties",
+            Self::Lint => "Design Lint",
+            Self::Events => "Events",
+            Self::Errors => "Errors",
+            Self::Tweaks => "Tweaks",
+        }
+    }
+}
+
+impl From<InspectorTab> for InspectionMode {
+    fn from(tab: InspectorTab) -> Self {
+        match tab {
+            InspectorTab::Tree => Self::Tree,
+            InspectorTab::Layout => Self::Layout,
+            InspectorTab::Properties => Self::Properties,
+            InspectorTab::Lint => Self::Lint,
+            InspectorTab::Events => Self::Events,
+            InspectorTab::Errors => Self::Errors,
+            InspectorTab::Tweaks => Self::Tweaks,
+        }
+    }
+}
+
+impl From<InspectionMode> for InspectorTab {
+    fn from(mode: InspectionMode) -> Self {
+        match mode {
+            InspectionMode::Tree => Self::Tree,
+            InspectionMode::Layout => Self::Layout,
+            InspectionMode::Properties => Self::Properties,
+            InspectionMode::Lint => Self::Lint,
+            InspectionMode::Accessibility => Self::Tree,
+            InspectionMode::Events => Self::Events,
+            InspectionMode::Errors => Self::Errors,
+            InspectionMode::Tweaks => Self::Tweaks,
         }
     }
 }
@@ -785,6 +875,64 @@ impl InspectorState {
     /// ```
     pub fn set_mode(&mut self, mode: InspectionMode) {
         self.mode = mode;
+    }
+
+    /// Returns the currently active inspector tab.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_devtools::inspector::{InspectorState, InspectorTab};
+    ///
+    /// let mut state = InspectorState::new();
+    /// assert_eq!(state.tab(), InspectorTab::Tree);
+    /// state.set_tab(InspectorTab::Tweaks);
+    /// assert_eq!(state.tab(), InspectorTab::Tweaks);
+    /// ```
+    #[inline]
+    pub fn tab(&self) -> InspectorTab {
+        InspectorTab::from(self.mode)
+    }
+
+    /// Sets the active inspector tab.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_devtools::inspector::{InspectorState, InspectorTab};
+    ///
+    /// let mut state = InspectorState::new();
+    /// state.set_tab(InspectorTab::Tweaks);
+    /// assert_eq!(state.tab(), InspectorTab::Tweaks);
+    /// ```
+    #[inline]
+    pub fn set_tab(&mut self, tab: InspectorTab) {
+        self.mode = InspectionMode::from(tab);
+    }
+
+    /// Renders the Live Tweaks HUD panel for this inspector state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kurbo::Rect;
+    /// use martensite_core::PaintList;
+    /// use martensite_devtools::inspector::InspectorState;
+    /// use martensite_devtools::tweak::TweakRegistry;
+    ///
+    /// let state = InspectorState::new();
+    /// let registry = TweakRegistry::new();
+    /// let mut paint = PaintList::new();
+    /// let model = state.render_tweaks_panel(&registry, &mut paint, Rect::new(0.0, 0.0, 800.0, 600.0));
+    /// assert_eq!(model.total_count, 0);
+    /// ```
+    pub fn render_tweaks_panel(
+        &self,
+        registry: &crate::tweak::TweakRegistry,
+        paint: &mut PaintList,
+        bounds: KurboRect,
+    ) -> TweaksPanelModel {
+        render_tweaks_panel(registry, paint, bounds)
     }
 
     /// Returns the ancestry chain for the currently selected widget (`[root, ..., selected]`).
@@ -2362,4 +2510,659 @@ impl WidgetProperties {
 
         None
     }
+}
+
+/// Interactive control type rendered in the live tweaks panel.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_devtools::inspector::TweakControlKind;
+///
+/// let ctrl = TweakControlKind::FloatSlider { min: 0.0, max: 100.0, step: 1.0, value: 50.0 };
+/// assert_eq!(ctrl.type_name(), "slider");
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub enum TweakControlKind {
+    /// Slider + number field + reset button for `f32` and `f64`.
+    FloatSlider {
+        /// Lower bound of the slider.
+        min: f64,
+        /// Upper bound of the slider.
+        max: f64,
+        /// Step resolution.
+        step: f64,
+        /// Active floating-point value.
+        value: f64,
+    },
+    /// Stepper buttons (`[-]`/`[+]`) + number field + reset button for integers.
+    IntegerStepper {
+        /// Active integer value.
+        value: i64,
+        /// Step increment.
+        step: i64,
+    },
+    /// On/Off toggle switch + reset button for booleans.
+    ToggleSwitch {
+        /// Active boolean state.
+        state: bool,
+    },
+    /// Hex input + preview color swatch + reset button for colors.
+    ColorPicker {
+        /// Formatted `#rrggbb` or `#rrggbbaa` hex string.
+        hex: String,
+        /// Active RGBA bytes.
+        rgba: [u8; 4],
+    },
+    /// Text input box + reset button for strings.
+    TextInput {
+        /// Active text value.
+        text: String,
+    },
+}
+
+impl TweakControlKind {
+    /// Returns the human-readable name of this control kind.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_devtools::inspector::TweakControlKind;
+    ///
+    /// let ctrl = TweakControlKind::ToggleSwitch { state: true };
+    /// assert_eq!(ctrl.type_name(), "toggle");
+    /// ```
+    pub const fn type_name(&self) -> &'static str {
+        match self {
+            Self::FloatSlider { .. } => "slider",
+            Self::IntegerStepper { .. } => "stepper",
+            Self::ToggleSwitch { .. } => "toggle",
+            Self::ColorPicker { .. } => "color_picker",
+            Self::TextInput { .. } => "text_input",
+        }
+    }
+}
+
+/// A row rendered in the live tweaks panel.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_devtools::inspector::{TweakControlKind, TweakPanelRow};
+///
+/// let row = TweakPanelRow {
+///     name: "button/padding".to_string(),
+///     source_span: Some("src/ui.rs:142:5".to_string()),
+///     current_value: "16.0".to_string(),
+///     default_value: "12.0".to_string(),
+///     is_modified: true,
+///     control: TweakControlKind::FloatSlider { min: 0.0, max: 64.0, step: 1.0, value: 16.0 },
+///     has_reset: true,
+/// };
+/// assert!(row.is_modified);
+/// assert_eq!(row.badge(), Some("~"));
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct TweakPanelRow {
+    /// Unique identifier or path of the tweak.
+    pub name: String,
+    /// Callsite source location (`file:line:col`) if recorded.
+    pub source_span: Option<String>,
+    /// String representation of current live value.
+    pub current_value: String,
+    /// String representation of compiled default value.
+    pub default_value: String,
+    /// Whether current value differs from compiled default.
+    pub is_modified: bool,
+    /// Control variant used to edit this tweak.
+    pub control: TweakControlKind,
+    /// Whether a reset button is present.
+    pub has_reset: bool,
+}
+
+impl TweakPanelRow {
+    /// Returns the transient modification badge text (`"~"` if modified, `None` otherwise).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_devtools::inspector::{TweakControlKind, TweakPanelRow};
+    ///
+    /// let row = TweakPanelRow {
+    ///     name: "gap".to_string(),
+    ///     source_span: None,
+    ///     current_value: "4.0".to_string(),
+    ///     default_value: "4.0".to_string(),
+    ///     is_modified: false,
+    ///     control: TweakControlKind::FloatSlider { min: 0.0, max: 20.0, step: 1.0, value: 4.0 },
+    ///     has_reset: false,
+    /// };
+    /// assert_eq!(row.badge(), None);
+    /// ```
+    pub fn badge(&self) -> Option<&'static str> {
+        if self.is_modified {
+            Some("~")
+        } else {
+            None
+        }
+    }
+}
+
+/// Action buttons rendered in the live tweaks panel header.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_devtools::inspector::TweaksPanelActions;
+///
+/// let actions = TweaksPanelActions::new(vec!["src/ui.rs:142: .padding(12.0) -> .padding(16.0)".to_string()]);
+/// assert_eq!(actions.reset_all_label, "Reset All");
+/// assert_eq!(actions.copy_patches_label, "Copy All Patches");
+/// assert_eq!(actions.patches.len(), 1);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct TweaksPanelActions {
+    /// Label for the "Reset All" action button.
+    pub reset_all_label: &'static str,
+    /// Label for the "Copy All Patches" action button.
+    pub copy_patches_label: &'static str,
+    /// Formatted patch strings generated using `emit_all_patches`.
+    pub patches: Vec<String>,
+}
+
+impl TweaksPanelActions {
+    /// Constructs a new `TweaksPanelActions` instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_devtools::inspector::TweaksPanelActions;
+    ///
+    /// let actions = TweaksPanelActions::new(Vec::new());
+    /// assert!(actions.patches.is_empty());
+    /// ```
+    pub fn new(patches: Vec<String>) -> Self {
+        Self {
+            reset_all_label: "Reset All",
+            copy_patches_label: "Copy All Patches",
+            patches,
+        }
+    }
+
+    /// Formats all patch hunks into a multi-line string for copying.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_devtools::inspector::TweaksPanelActions;
+    ///
+    /// let actions = TweaksPanelActions::new(vec!["p1".to_string(), "p2".to_string()]);
+    /// assert_eq!(actions.format_patches_text(), "p1\np2");
+    /// ```
+    pub fn format_patches_text(&self) -> String {
+        self.patches.join("\n")
+    }
+}
+
+/// Structured model of the rendered live tweaks panel.
+///
+/// # Examples
+///
+/// ```
+/// use kurbo::Rect;
+/// use martensite_devtools::inspector::{TweaksPanelActions, TweaksPanelModel};
+///
+/// let model = TweaksPanelModel {
+///     bounds: Rect::new(0.0, 0.0, 600.0, 400.0),
+///     rows: Vec::new(),
+///     actions: TweaksPanelActions::new(Vec::new()),
+///     total_count: 0,
+///     modified_count: 0,
+/// };
+/// assert_eq!(model.total_count, 0);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct TweaksPanelModel {
+    /// Bounds allocated for the tweaks panel.
+    pub bounds: KurboRect,
+    /// Item rows rendered in the panel.
+    pub rows: Vec<TweakPanelRow>,
+    /// Action buttons rendered in the panel.
+    pub actions: TweaksPanelActions,
+    /// Total number of tweaks.
+    pub total_count: usize,
+    /// Number of modified/transient tweaks.
+    pub modified_count: usize,
+}
+
+impl TweaksPanelModel {
+    /// Builds a `TweaksPanelModel` from all entries in a [`TweakRegistry`](crate::tweak::TweakRegistry).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kurbo::Rect;
+    /// use martensite_devtools::inspector::TweaksPanelModel;
+    /// use martensite_devtools::tweak::TweakRegistry;
+    ///
+    /// let reg = TweakRegistry::new();
+    /// let model = TweaksPanelModel::from_registry(&reg, Rect::new(0.0, 0.0, 600.0, 400.0));
+    /// assert_eq!(model.total_count, 0);
+    /// ```
+    pub fn from_registry(registry: &crate::tweak::TweakRegistry, bounds: KurboRect) -> Self {
+        let mut entries = registry.all_entries();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let total_count = entries.len();
+        let modified_count = entries.iter().filter(|e| e.is_modified()).count();
+        let patches = registry.emit_all_patches();
+
+        let mut rows = Vec::with_capacity(total_count);
+        for entry in &entries {
+            let is_mod = entry.is_modified();
+            let source_span = entry.source_span.as_ref().map(|s| s.display());
+            let current_value = entry.current_value.format_value();
+            let default_value = entry.default_value.format_value();
+
+            let control = match &entry.current_value {
+                crate::tweak::TweakValue::F32(v, range) => {
+                    let (min, max) = range.unwrap_or((0.0, (*v * 2.0).max(100.0)));
+                    TweakControlKind::FloatSlider {
+                        min: min as f64,
+                        max: max as f64,
+                        step: 0.5,
+                        value: *v as f64,
+                    }
+                }
+                crate::tweak::TweakValue::F64(v, range) => {
+                    let (min, max) = range.unwrap_or((0.0, (*v * 2.0).max(100.0)));
+                    TweakControlKind::FloatSlider {
+                        min,
+                        max,
+                        step: 0.5,
+                        value: *v,
+                    }
+                }
+                crate::tweak::TweakValue::I32(v) => TweakControlKind::IntegerStepper {
+                    value: *v as i64,
+                    step: 1,
+                },
+                crate::tweak::TweakValue::U32(v) => TweakControlKind::IntegerStepper {
+                    value: *v as i64,
+                    step: 1,
+                },
+                crate::tweak::TweakValue::Bool(b) => TweakControlKind::ToggleSwitch { state: *b },
+                crate::tweak::TweakValue::Color(rgba) => TweakControlKind::ColorPicker {
+                    hex: entry.current_value.format_value(),
+                    rgba: *rgba,
+                },
+                crate::tweak::TweakValue::String(s) => {
+                    TweakControlKind::TextInput { text: s.clone() }
+                }
+            };
+
+            rows.push(TweakPanelRow {
+                name: entry.name.clone(),
+                source_span,
+                current_value,
+                default_value,
+                is_modified: is_mod,
+                control,
+                has_reset: true,
+            });
+        }
+
+        Self {
+            bounds,
+            rows,
+            actions: TweaksPanelActions::new(patches),
+            total_count,
+            modified_count,
+        }
+    }
+
+    /// Renders this tweaks panel model into a [`PaintList`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kurbo::Rect;
+    /// use martensite_core::PaintList;
+    /// use martensite_devtools::inspector::TweaksPanelModel;
+    /// use martensite_devtools::tweak::TweakRegistry;
+    ///
+    /// let reg = TweakRegistry::new();
+    /// let model = TweaksPanelModel::from_registry(&reg, Rect::new(0.0, 0.0, 600.0, 400.0));
+    /// let mut paint = PaintList::new();
+    /// model.render(&mut paint);
+    /// assert!(!paint.is_empty());
+    /// ```
+    pub fn render(&self, paint: &mut PaintList) {
+        let b = self.bounds;
+
+        // 1. Panel background & outer border
+        paint.push_fill_rect(b, [24, 24, 27, 240]);
+        paint.push_stroke_rect(b, 1.0, [63, 63, 70, 255]);
+
+        // 2. Header bar
+        let header_h = 44.0;
+        let header_rect = KurboRect::new(b.x0, b.y0, b.x1, b.y0 + header_h);
+        paint.push_fill_rect(header_rect, [39, 39, 42, 255]);
+        paint.push_stroke_rect(header_rect, 1.0, [63, 63, 70, 255]);
+
+        // Title and counts
+        paint.push_text(
+            Point::new(b.x0 + 16.0, b.y0 + 27.0),
+            "Live Tweaks (HUD)".to_string(),
+            14.0,
+            [255, 255, 255, 255],
+        );
+        let summary_text = format!(
+            "{} modified / {} total",
+            self.modified_count, self.total_count
+        );
+        paint.push_text(
+            Point::new(b.x0 + 175.0, b.y0 + 26.5),
+            summary_text,
+            11.0,
+            [161, 161, 170, 255],
+        );
+
+        // Action buttons
+        let reset_btn_w = 90.0;
+        let reset_btn_h = 28.0;
+        let reset_btn_x = (b.x1 - 240.0).max(b.x0 + 250.0);
+        let reset_btn_y = b.y0 + 8.0;
+        let reset_btn_rect = KurboRect::new(
+            reset_btn_x,
+            reset_btn_y,
+            reset_btn_x + reset_btn_w,
+            reset_btn_y + reset_btn_h,
+        );
+
+        let reset_color = if self.modified_count > 0 {
+            [220, 38, 38, 220] // active red
+        } else {
+            [60, 60, 65, 180] // disabled
+        };
+        paint.push_fill_rect(reset_btn_rect, reset_color);
+        paint.push_stroke_rect(reset_btn_rect, 1.0, [255, 255, 255, 50]);
+        paint.push_text(
+            Point::new(reset_btn_x + 14.0, reset_btn_y + 19.0),
+            self.actions.reset_all_label.to_string(),
+            11.0,
+            [255, 255, 255, 255],
+        );
+
+        let copy_btn_w = 120.0;
+        let copy_btn_h = 28.0;
+        let copy_btn_x = reset_btn_x + reset_btn_w + 10.0;
+        let copy_btn_y = reset_btn_y;
+        let copy_btn_rect = KurboRect::new(
+            copy_btn_x,
+            copy_btn_y,
+            copy_btn_x + copy_btn_w,
+            copy_btn_y + copy_btn_h,
+        );
+
+        let copy_color = if !self.actions.patches.is_empty() {
+            [59, 130, 246, 220] // active blue
+        } else {
+            [60, 60, 65, 180] // disabled
+        };
+        paint.push_fill_rect(copy_btn_rect, copy_color);
+        paint.push_stroke_rect(copy_btn_rect, 1.0, [255, 255, 255, 50]);
+        paint.push_text(
+            Point::new(copy_btn_x + 10.0, copy_btn_y + 19.0),
+            self.actions.copy_patches_label.to_string(),
+            11.0,
+            [255, 255, 255, 255],
+        );
+
+        // 3. Render rows
+        let row_h = 50.0;
+        let mut row_y = b.y0 + header_h + 8.0;
+
+        for row in &self.rows {
+            if row_y + row_h > b.y1 {
+                break;
+            }
+
+            let row_rect = KurboRect::new(b.x0 + 10.0, row_y, b.x1 - 10.0, row_y + row_h - 4.0);
+            paint.push_fill_rect(row_rect, [30, 30, 35, 200]);
+            paint.push_stroke_rect(row_rect, 1.0, [45, 45, 52, 200]);
+
+            // Badge if modified
+            let name_x = if row.is_modified {
+                let badge_rect =
+                    KurboRect::new(b.x0 + 18.0, row_y + 13.0, b.x0 + 36.0, row_y + 33.0);
+                paint.push_fill_rect(badge_rect, [245, 158, 11, 255]);
+                paint.push_text(
+                    Point::new(b.x0 + 23.0, row_y + 27.5),
+                    "~".to_string(),
+                    14.0,
+                    [0, 0, 0, 255],
+                );
+                b.x0 + 44.0
+            } else {
+                b.x0 + 20.0
+            };
+
+            // Name
+            paint.push_text(
+                Point::new(name_x, row_y + 20.0),
+                row.name.clone(),
+                12.0,
+                [240, 240, 245, 255],
+            );
+
+            // Source span
+            if let Some(ref span) = row.source_span {
+                paint.push_text(
+                    Point::new(name_x, row_y + 36.0),
+                    span.clone(),
+                    10.0,
+                    [150, 150, 160, 255],
+                );
+            }
+
+            // Current value
+            let val_x = (b.x0 + 230.0).max(name_x + 120.0);
+            paint.push_text(
+                Point::new(val_x, row_y + 27.0),
+                row.current_value.clone(),
+                11.0,
+                [96, 165, 250, 255],
+            );
+
+            // Control rendering
+            let ctrl_x = val_x + 70.0;
+            match &row.control {
+                TweakControlKind::FloatSlider {
+                    min, max, value, ..
+                } => {
+                    let track_w = 120.0;
+                    let track_rect =
+                        KurboRect::new(ctrl_x, row_y + 20.0, ctrl_x + track_w, row_y + 26.0);
+                    paint.push_fill_rect(track_rect, [60, 60, 68, 255]);
+
+                    let range = (*max - *min).max(0.001);
+                    let norm = ((*value - *min) / range).clamp(0.0, 1.0);
+                    let thumb_x = ctrl_x + norm * track_w;
+                    let thumb_rect =
+                        KurboRect::new(thumb_x - 4.0, row_y + 14.0, thumb_x + 4.0, row_y + 32.0);
+                    paint.push_fill_rect(thumb_rect, [59, 130, 246, 255]);
+
+                    let num_rect = KurboRect::new(
+                        ctrl_x + track_w + 10.0,
+                        row_y + 11.0,
+                        ctrl_x + track_w + 60.0,
+                        row_y + 35.0,
+                    );
+                    paint.push_fill_rect(num_rect, [20, 20, 24, 255]);
+                    paint.push_stroke_rect(num_rect, 1.0, [60, 60, 68, 255]);
+                    paint.push_text(
+                        Point::new(ctrl_x + track_w + 14.0, row_y + 27.0),
+                        format!("{value:.1}"),
+                        10.0,
+                        [240, 240, 245, 255],
+                    );
+                }
+                TweakControlKind::IntegerStepper { value, .. } => {
+                    let minus_rect =
+                        KurboRect::new(ctrl_x, row_y + 11.0, ctrl_x + 24.0, row_y + 35.0);
+                    paint.push_fill_rect(minus_rect, [45, 45, 52, 255]);
+                    paint.push_text(
+                        Point::new(ctrl_x + 8.0, row_y + 27.0),
+                        "-".to_string(),
+                        12.0,
+                        [255, 255, 255, 255],
+                    );
+
+                    let val_rect =
+                        KurboRect::new(ctrl_x + 28.0, row_y + 11.0, ctrl_x + 78.0, row_y + 35.0);
+                    paint.push_fill_rect(val_rect, [20, 20, 24, 255]);
+                    paint.push_stroke_rect(val_rect, 1.0, [60, 60, 68, 255]);
+                    paint.push_text(
+                        Point::new(ctrl_x + 36.0, row_y + 27.0),
+                        format!("{value}"),
+                        11.0,
+                        [240, 240, 245, 255],
+                    );
+
+                    let plus_rect =
+                        KurboRect::new(ctrl_x + 82.0, row_y + 11.0, ctrl_x + 106.0, row_y + 35.0);
+                    paint.push_fill_rect(plus_rect, [45, 45, 52, 255]);
+                    paint.push_text(
+                        Point::new(ctrl_x + 90.0, row_y + 27.0),
+                        "+".to_string(),
+                        12.0,
+                        [255, 255, 255, 255],
+                    );
+                }
+                TweakControlKind::ToggleSwitch { state } => {
+                    let switch_w = 46.0;
+                    let switch_rect =
+                        KurboRect::new(ctrl_x, row_y + 14.0, ctrl_x + switch_w, row_y + 32.0);
+                    let color = if *state {
+                        [34, 197, 94, 255]
+                    } else {
+                        [75, 75, 82, 255]
+                    };
+                    paint.push_fill_rect(switch_rect, color);
+
+                    let thumb_x = if *state { ctrl_x + 26.0 } else { ctrl_x + 2.0 };
+                    let thumb_rect =
+                        KurboRect::new(thumb_x, row_y + 16.0, thumb_x + 18.0, row_y + 30.0);
+                    paint.push_fill_rect(thumb_rect, [255, 255, 255, 255]);
+
+                    let label = if *state { "ON" } else { "OFF" };
+                    paint.push_text(
+                        Point::new(ctrl_x + switch_w + 8.0, row_y + 27.0),
+                        label.to_string(),
+                        10.0,
+                        [200, 200, 210, 255],
+                    );
+                }
+                TweakControlKind::ColorPicker { hex, rgba } => {
+                    let swatch_rect =
+                        KurboRect::new(ctrl_x, row_y + 12.0, ctrl_x + 24.0, row_y + 34.0);
+                    paint.push_fill_rect(swatch_rect, *rgba);
+                    paint.push_stroke_rect(swatch_rect, 1.0, [255, 255, 255, 200]);
+
+                    let hex_rect =
+                        KurboRect::new(ctrl_x + 30.0, row_y + 11.0, ctrl_x + 110.0, row_y + 35.0);
+                    paint.push_fill_rect(hex_rect, [20, 20, 24, 255]);
+                    paint.push_stroke_rect(hex_rect, 1.0, [60, 60, 68, 255]);
+                    paint.push_text(
+                        Point::new(ctrl_x + 36.0, row_y + 27.0),
+                        hex.clone(),
+                        10.0,
+                        [240, 240, 245, 255],
+                    );
+                }
+                TweakControlKind::TextInput { text } => {
+                    let input_rect =
+                        KurboRect::new(ctrl_x, row_y + 11.0, ctrl_x + 150.0, row_y + 35.0);
+                    paint.push_fill_rect(input_rect, [20, 20, 24, 255]);
+                    paint.push_stroke_rect(input_rect, 1.0, [60, 60, 68, 255]);
+                    let truncated = if text.len() > 18 {
+                        format!("{}...", &text[..15])
+                    } else {
+                        text.clone()
+                    };
+                    paint.push_text(
+                        Point::new(ctrl_x + 8.0, row_y + 27.0),
+                        truncated,
+                        10.0,
+                        [240, 240, 245, 255],
+                    );
+                }
+            }
+
+            // Reset button for this row
+            let row_reset_w = 60.0;
+            let row_reset_x = b.x1 - 80.0;
+            let row_reset_rect = KurboRect::new(
+                row_reset_x,
+                row_y + 11.0,
+                row_reset_x + row_reset_w,
+                row_y + 35.0,
+            );
+            let btn_color = if row.is_modified {
+                [55, 65, 81, 255]
+            } else {
+                [35, 35, 40, 160]
+            };
+            paint.push_fill_rect(row_reset_rect, btn_color);
+            paint.push_stroke_rect(row_reset_rect, 1.0, [75, 85, 99, 200]);
+            let text_color = if row.is_modified {
+                [255, 255, 255, 255]
+            } else {
+                [140, 140, 145, 180]
+            };
+            paint.push_text(
+                Point::new(row_reset_x + 14.0, row_y + 27.0),
+                "Reset".to_string(),
+                10.0,
+                text_color,
+            );
+
+            row_y += row_h;
+        }
+    }
+}
+
+/// Renders the live tweaks panel into a [`PaintList`].
+///
+/// Convenience function constructing a [`TweaksPanelModel`] from the registry
+/// and recording its paint commands into `paint`.
+///
+/// # Examples
+///
+/// ```
+/// use kurbo::Rect;
+/// use martensite_core::PaintList;
+/// use martensite_devtools::inspector::render_tweaks_panel;
+/// use martensite_devtools::tweak::{SourceSpan, TweakRegistry};
+///
+/// let registry = TweakRegistry::new();
+/// let span = SourceSpan::new("src/main.rs", 42, 5);
+/// registry.register_or_get_with_span("padding", 12.0f32, span, "padding");
+/// registry.set_value("padding", 16.0f32);
+///
+/// let mut paint = PaintList::new();
+/// let model = render_tweaks_panel(&registry, &mut paint, Rect::new(0.0, 0.0, 800.0, 600.0));
+/// assert_eq!(model.total_count, 1);
+/// assert_eq!(model.modified_count, 1);
+/// assert!(!paint.is_empty());
+/// ```
+pub fn render_tweaks_panel(
+    registry: &crate::tweak::TweakRegistry,
+    paint: &mut PaintList,
+    bounds: KurboRect,
+) -> TweaksPanelModel {
+    let model = TweaksPanelModel::from_registry(registry, bounds);
+    model.render(paint);
+    model
 }
