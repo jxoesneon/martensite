@@ -55,7 +55,34 @@ use std::time::Duration;
 use std::os::unix::net::{UnixListener, UnixStream};
 
 #[cfg(windows)]
-use std::os::windows::net::{UnixListener, UnixStream};
+mod win32 {
+    pub const PIPE_ACCESS_DUPLEX: u32 = 0x00000003;
+    pub const PIPE_TYPE_BYTE: u32 = 0x00000000;
+    pub const PIPE_WAIT: u32 = 0x00000000;
+    pub const PIPE_UNLIMITED_INSTANCES: u32 = 255;
+    pub const INVALID_HANDLE_VALUE: isize = -1;
+    pub const ERROR_PIPE_CONNECTED: u32 = 535;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        pub fn CreateNamedPipeW(
+            lpName: *const u16,
+            dwOpenMode: u32,
+            dwPipeMode: u32,
+            nMaxInstances: u32,
+            nOutBufferSize: u32,
+            nInBufferSize: u32,
+            nDefaultTimeOut: u32,
+            lpSecurityAttributes: *mut std::ffi::c_void,
+        ) -> isize;
+
+        pub fn ConnectNamedPipe(hNamedPipe: isize, lpOverlapped: *mut std::ffi::c_void) -> i32;
+
+        pub fn CloseHandle(hObject: isize) -> i32;
+
+        pub fn GetLastError() -> u32;
+    }
+}
 
 use serde::{Deserialize, Serialize};
 
@@ -292,6 +319,7 @@ impl JsonRpcResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HelloParams {
     /// The client application's Martensite framework version.
+    #[serde(alias = "version")]
     pub client_version: String,
     /// Protocol version supported by the client.
     pub protocol_version: u32,
@@ -314,6 +342,7 @@ pub struct HelloParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HelloResult {
     /// Martensite framework version of the server.
+    #[serde(alias = "version")]
     pub server_version: String,
     /// Dev Channel protocol version negotiated with the server.
     pub protocol_version: u32,
@@ -568,11 +597,12 @@ pub struct DefaultDevChannelHandler;
 
 impl DevChannelHandler for DefaultDevChannelHandler {}
 
-/// Computes the default Unix domain socket path for a dev session.
+/// Computes the default Unix domain socket or Windows Named Pipe path for a dev session.
 ///
 /// Follows ADR-0038 path resolution:
-/// - If `$XDG_RUNTIME_DIR` is set and non-empty: `$XDG_RUNTIME_DIR/martensite/<build_id>.sock`
-/// - Otherwise: `/tmp/martensite-<user>/<build_id>.sock`, where `<user>` is determined from
+/// - On Windows: `\\.\pipe\martensite-<build_id>`
+/// - On Unix: If `$XDG_RUNTIME_DIR` is set and non-empty: `$XDG_RUNTIME_DIR/martensite/<build_id>.sock`
+/// - Otherwise on Unix: `/tmp/martensite-<user>/<build_id>.sock`, where `<user>` is determined from
 ///   the `USER` or `LOGNAME` environment variables (defaulting to `"user"`).
 ///
 /// # Examples
@@ -581,8 +611,9 @@ impl DevChannelHandler for DefaultDevChannelHandler {}
 /// use martensite_host::dev_channel::socket_path_for_session;
 ///
 /// let path = socket_path_for_session("test_session");
-/// assert!(path.to_string_lossy().contains("test_session.sock"));
+/// assert!(path.to_string_lossy().contains("test_session"));
 /// ```
+#[cfg(unix)]
 pub fn socket_path_for_session(build_id: &str) -> PathBuf {
     let dir = if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
         if !xdg.trim().is_empty() {
@@ -596,6 +627,28 @@ pub fn socket_path_for_session(build_id: &str) -> PathBuf {
     dir.join(format!("{build_id}.sock"))
 }
 
+/// Computes the default Unix domain socket or Windows Named Pipe path for a dev session.
+///
+/// Follows ADR-0038 path resolution:
+/// - On Windows: `\\.\pipe\martensite-<build_id>`
+/// - On Unix: If `$XDG_RUNTIME_DIR` is set and non-empty: `$XDG_RUNTIME_DIR/martensite/<build_id>.sock`
+/// - Otherwise on Unix: `/tmp/martensite-<user>/<build_id>.sock`, where `<user>` is determined from
+///   the `USER` or `LOGNAME` environment variables (defaulting to `"user"`).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_host::dev_channel::socket_path_for_session;
+///
+/// let path = socket_path_for_session("test_session");
+/// assert!(path.to_string_lossy().contains("test_session"));
+/// ```
+#[cfg(windows)]
+pub fn socket_path_for_session(build_id: &str) -> PathBuf {
+    PathBuf::from(format!(r"\\.\pipe\martensite-{build_id}"))
+}
+
+#[cfg(unix)]
 fn fallback_tmp_dir() -> PathBuf {
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("LOGNAME"))
@@ -614,6 +667,321 @@ fn prepare_socket_parent_dir(path: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Cross-platform communication stream abstraction for the Dev Channel.
+///
+/// Wraps a Unix domain socket on Unix platforms, and a Windows Named Pipe on Windows.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_host::dev_channel::DevStream;
+/// use std::path::Path;
+///
+/// # #[cfg(unix)]
+/// let _stream = DevStream::connect(Path::new("/tmp/test.sock"));
+/// # #[cfg(windows)]
+/// let _stream = DevStream::connect(Path::new(r"\\.\pipe\test_pipe"));
+/// ```
+pub struct DevStream {
+    #[cfg(unix)]
+    inner: UnixStream,
+    #[cfg(windows)]
+    inner: std::fs::File,
+}
+
+impl fmt::Debug for DevStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DevStream").finish_non_exhaustive()
+    }
+}
+
+impl io::Read for DevStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl io::Write for DevStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl DevStream {
+    /// Attempts to clone the underlying stream handle.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_host::dev_channel::DevStream;
+    /// use std::path::Path;
+    ///
+    /// # #[cfg(unix)]
+    /// {
+    ///     let stream = DevStream::connect(Path::new("/tmp/test.sock")).unwrap();
+    ///     let _cloned = stream.try_clone().unwrap();
+    /// }
+    /// # #[cfg(windows)]
+    /// {
+    ///     let stream = DevStream::connect(Path::new(r"\\.\pipe\test_pipe")).unwrap();
+    ///     let _cloned = stream.try_clone().unwrap();
+    /// }
+    /// ```
+    pub fn try_clone(&self) -> io::Result<Self> {
+        Ok(Self {
+            inner: self.inner.try_clone()?,
+        })
+    }
+
+    /// Connects to a dev channel server at the given path or named pipe.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_host::dev_channel::DevStream;
+    /// use std::path::Path;
+    ///
+    /// # #[cfg(unix)]
+    /// let _stream = DevStream::connect(Path::new("/tmp/test.sock"));
+    /// # #[cfg(windows)]
+    /// let _stream = DevStream::connect(Path::new(r"\\.\pipe\test_pipe"));
+    /// ```
+    pub fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
+        let path = path.as_ref();
+        #[cfg(unix)]
+        {
+            let stream = UnixStream::connect(path)?;
+            Ok(Self { inner: stream })
+        }
+        #[cfg(windows)]
+        {
+            let pipe_path = resolve_windows_connect_path(path)?;
+            let file = connect_named_pipe_with_retry(&pipe_path)?;
+            Ok(Self { inner: file })
+        }
+    }
+}
+
+/// Cross-platform listener abstraction for the Dev Channel.
+///
+/// Wraps a Unix domain socket listener on Unix platforms, and a Windows Named Pipe listener on Windows.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_host::dev_channel::DevListener;
+/// use std::path::Path;
+///
+/// # #[cfg(unix)]
+/// let _listener = DevListener::bind(Path::new("/tmp/test.sock"));
+/// # #[cfg(windows)]
+/// let _listener = DevListener::bind(Path::new(r"\\.\pipe\test_pipe"));
+/// ```
+pub struct DevListener {
+    #[cfg(unix)]
+    inner: UnixListener,
+    #[cfg(windows)]
+    pipe_name_wide: Vec<u16>,
+    #[cfg(windows)]
+    #[allow(dead_code)]
+    pipe_path: PathBuf,
+    #[cfg(windows)]
+    file_path: Option<PathBuf>,
+}
+
+impl fmt::Debug for DevListener {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DevListener").finish_non_exhaustive()
+    }
+}
+
+impl DevListener {
+    /// Binds a new dev channel listener to the given path or named pipe.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_host::dev_channel::DevListener;
+    /// use std::path::Path;
+    ///
+    /// # #[cfg(unix)]
+    /// let _listener = DevListener::bind(Path::new("/tmp/test.sock")).unwrap();
+    /// # #[cfg(windows)]
+    /// let _listener = DevListener::bind(Path::new(r"\\.\pipe\test_pipe")).unwrap();
+    /// ```
+    pub fn bind(path: impl AsRef<Path>) -> io::Result<Self> {
+        let path = path.as_ref();
+        #[cfg(unix)]
+        {
+            prepare_socket_parent_dir(path)?;
+            if path.exists() {
+                let _ = std::fs::remove_file(path);
+            }
+            let inner = UnixListener::bind(path)?;
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            Ok(Self { inner })
+        }
+        #[cfg(windows)]
+        {
+            let path_str = path.to_string_lossy();
+            let is_pipe = path_str.starts_with(r"\\.\pipe\");
+            let (pipe_path, file_path) = if is_pipe {
+                (path.to_path_buf(), None)
+            } else {
+                prepare_socket_parent_dir(path)?;
+                if path.exists() {
+                    let _ = std::fs::remove_file(path);
+                }
+                let pipe = pipe_name_from_path(path);
+                std::fs::write(path, pipe.to_string_lossy().as_bytes())?;
+                (pipe, Some(path.to_path_buf()))
+            };
+
+            use std::ffi::OsStr;
+            use std::os::windows::ffi::OsStrExt;
+            let pipe_name_wide: Vec<u16> = OsStr::new(pipe_path.as_os_str())
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            Ok(Self {
+                pipe_name_wide,
+                pipe_path,
+                file_path,
+            })
+        }
+    }
+
+    /// Accepts a new incoming client connection.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_host::dev_channel::DevListener;
+    /// use std::path::Path;
+    ///
+    /// # #[cfg(unix)]
+    /// {
+    ///     let listener = DevListener::bind(Path::new("/tmp/test.sock")).unwrap();
+    ///     let (_stream, _) = listener.accept().unwrap();
+    /// }
+    /// # #[cfg(windows)]
+    /// {
+    ///     let listener = DevListener::bind(Path::new(r"\\.\pipe\test_pipe")).unwrap();
+    ///     let (_stream, _) = listener.accept().unwrap();
+    /// }
+    /// ```
+    pub fn accept(&self) -> io::Result<(DevStream, ())> {
+        #[cfg(unix)]
+        {
+            let (stream, _) = self.inner.accept()?;
+            Ok((DevStream { inner: stream }, ()))
+        }
+        #[cfg(windows)]
+        {
+            use win32::*;
+            let handle = unsafe {
+                CreateNamedPipeW(
+                    self.pipe_name_wide.as_ptr(),
+                    PIPE_ACCESS_DUPLEX,
+                    PIPE_TYPE_BYTE | PIPE_WAIT,
+                    PIPE_UNLIMITED_INSTANCES,
+                    65536,
+                    65536,
+                    0,
+                    std::ptr::null_mut(),
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(io::Error::last_os_error());
+            }
+
+            let res = unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) };
+            let last_err = unsafe { GetLastError() };
+
+            if res != 0 || last_err == ERROR_PIPE_CONNECTED {
+                use std::os::windows::io::FromRawHandle;
+                let file = unsafe { std::fs::File::from_raw_handle(handle as _) };
+                Ok((DevStream { inner: file }, ()))
+            } else {
+                unsafe { CloseHandle(handle) };
+                Err(io::Error::from_raw_os_error(last_err as i32))
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for DevListener {
+    fn drop(&mut self) {
+        if let Some(ref path) = self.file_path {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn resolve_windows_connect_path(path: &Path) -> io::Result<PathBuf> {
+    let s = path.to_string_lossy();
+    if s.starts_with(r"\\.\pipe\") {
+        return Ok(path.to_path_buf());
+    }
+    if path.is_file() {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            let trimmed = content.trim();
+            if trimmed.starts_with(r"\\.\pipe\") {
+                return Ok(PathBuf::from(trimmed));
+            }
+            if !trimmed.is_empty() {
+                return Ok(PathBuf::from(format!(r"\\.\pipe\martensite-{trimmed}")));
+            }
+        }
+    }
+    Ok(pipe_name_from_path(path))
+}
+
+#[cfg(windows)]
+fn pipe_name_from_path(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if s.starts_with(r"\\.\pipe\") {
+        return path.to_path_buf();
+    }
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("dev");
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&s, &mut hasher);
+    let h = std::hash::Hasher::finish(&hasher);
+    PathBuf::from(format!(r"\\.\pipe\martensite-{stem}-{h:016x}"))
+}
+
+#[cfg(windows)]
+fn connect_named_pipe_with_retry(pipe_path: &Path) -> io::Result<std::fs::File> {
+    let start = std::time::Instant::now();
+    loop {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(pipe_path)
+        {
+            Ok(file) => return Ok(file),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if (code == Some(231) || code == Some(2) || e.kind() == io::ErrorKind::WouldBlock)
+                    && start.elapsed() < Duration::from_secs(5)
+                {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
 }
 
 /// Configuration builder for launching a [`DevChannelServer`].
@@ -805,21 +1173,7 @@ impl DevChannelServer {
             ));
         };
 
-        prepare_socket_parent_dir(&socket_path)?;
-
-        // Remove any stale socket file at the target path before binding.
-        if socket_path.exists() {
-            let _ = std::fs::remove_file(&socket_path);
-        }
-
-        let listener = UnixListener::bind(&socket_path)?;
-
-        // Enforce user-only socket permissions (0600) per ADR-0038.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600));
-        }
+        let listener = DevListener::bind(&socket_path)?;
 
         let running = Arc::new(AtomicBool::new(true));
         let running_listener = Arc::clone(&running);
@@ -885,15 +1239,23 @@ impl DevChannelServer {
 
         // Unblock accept() by connecting to the socket if it still exists.
         if let Some(ref path) = self.socket_path {
-            let _ = UnixStream::connect(path);
+            let _ = DevStream::connect(path);
         }
 
         if let Some(handle) = self.accept_thread.take() {
             let _ = handle.join();
         }
 
+        #[cfg(unix)]
         if let Some(ref path) = self.socket_path {
             let _ = std::fs::remove_file(path);
+        }
+
+        #[cfg(windows)]
+        if let Some(ref path) = self.socket_path {
+            if !path.to_string_lossy().starts_with(r"\\.\pipe\") {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
 }
@@ -906,7 +1268,7 @@ impl Drop for DevChannelServer {
 
 /// Main accept loop running in a background thread.
 fn run_listener_loop(
-    listener: UnixListener,
+    listener: DevListener,
     handler: Arc<dyn DevChannelHandler>,
     running: Arc<AtomicBool>,
     build_id: Option<String>,
@@ -938,7 +1300,7 @@ fn run_listener_loop(
 
 /// Handles incoming requests from an accepted client connection.
 fn handle_client(
-    mut stream: UnixStream,
+    mut stream: DevStream,
     handler: Arc<dyn DevChannelHandler>,
     running: Arc<AtomicBool>,
     build_id: Option<String>,
@@ -1196,8 +1558,8 @@ pub(crate) fn process_request_line(
 /// assert!(handshake.is_ok());
 /// ```
 pub struct DevChannelClient {
-    stream: UnixStream,
-    reader: BufReader<UnixStream>,
+    stream: DevStream,
+    reader: BufReader<DevStream>,
     next_id: AtomicU64,
 }
 
@@ -1210,7 +1572,7 @@ impl fmt::Debug for DevChannelClient {
 }
 
 impl DevChannelClient {
-    /// Connects to a Dev Channel Unix domain socket at `path`.
+    /// Connects to a Dev Channel Unix domain socket or Windows Named Pipe at `path`.
     ///
     /// # Examples
     ///
@@ -1218,10 +1580,13 @@ impl DevChannelClient {
     /// use martensite_host::dev_channel::DevChannelClient;
     /// use std::path::Path;
     ///
+    /// # #[cfg(unix)]
     /// let client = DevChannelClient::connect(Path::new("/tmp/test.sock"));
+    /// # #[cfg(windows)]
+    /// let client = DevChannelClient::connect(Path::new(r"\\.\pipe\test_pipe"));
     /// ```
     pub fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
-        let stream = UnixStream::connect(path.as_ref())?;
+        let stream = DevStream::connect(path.as_ref())?;
         let read_stream = stream.try_clone()?;
         Ok(Self {
             stream,

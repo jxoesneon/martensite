@@ -26,6 +26,12 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 
+#[cfg(unix)]
+type TransportStream = UnixStream;
+
+#[cfg(windows)]
+type TransportStream = std::fs::File;
+
 use martensite_design_lint::{LintReport, LintScene};
 use martensite_devtools::lint_bridge::{LintDump, SerializedLintReport, SerializedLintScene};
 use serde::{Deserialize, Serialize};
@@ -289,16 +295,128 @@ pub fn default_socket_dir() -> PathBuf {
     std::env::temp_dir().join("martensite")
 }
 
+#[cfg(windows)]
+fn resolve_windows_pipe_path(socket_path: &Path) -> PathBuf {
+    let s = socket_path.to_string_lossy();
+    if s.starts_with(r"\\.\pipe\") {
+        socket_path.to_path_buf()
+    } else if socket_path.is_file() {
+        if let Ok(content) = std::fs::read_to_string(socket_path) {
+            let trimmed = content.trim();
+            if trimmed.starts_with(r"\\.\pipe\") {
+                PathBuf::from(trimmed)
+            } else if !trimmed.is_empty() {
+                PathBuf::from(format!(r"\\.\pipe\martensite-{trimmed}"))
+            } else {
+                fallback_pipe_name(socket_path)
+            }
+        } else {
+            fallback_pipe_name(socket_path)
+        }
+    } else {
+        fallback_pipe_name(socket_path)
+    }
+}
+
+#[cfg(windows)]
+fn fallback_pipe_name(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if s.starts_with(r"\\.\pipe\") {
+        return path.to_path_buf();
+    }
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("dev");
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&s, &mut hasher);
+    let h = std::hash::Hasher::finish(&hasher);
+    PathBuf::from(format!(r"\\.\pipe\martensite-{stem}-{h:016x}"))
+}
+
+#[cfg(windows)]
+fn connect_windows_pipe(socket_path: &Path) -> Result<std::fs::File, DevChannelError> {
+    let target_pipe = resolve_windows_pipe_path(socket_path);
+    let start = std::time::Instant::now();
+    loop {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&target_pipe)
+        {
+            Ok(f) => return Ok(f),
+            Err(e) => {
+                let code = e.raw_os_error();
+                if (code == Some(231)
+                    || code == Some(2)
+                    || e.kind() == std::io::ErrorKind::WouldBlock)
+                    && start.elapsed() < std::time::Duration::from_millis(1500)
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                return Err(DevChannelError::ConnectionFailed(format!(
+                    "cannot connect to `{}`: {e}",
+                    target_pipe.display()
+                )));
+            }
+        }
+    }
+}
+
+/// Discovers all available dev session sockets or named pipes.
+pub fn discover_dev_sessions() -> Result<Vec<PathBuf>, DevChannelError> {
+    let mut sessions = Vec::new();
+
+    #[cfg(windows)]
+    {
+        if let Ok(entries) = std::fs::read_dir(r"\\.\pipe\") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("martensite-") {
+                    sessions.push(PathBuf::from(format!(r"\\.\pipe\{name}")));
+                }
+            }
+        }
+    }
+
+    let dir = default_socket_dir();
+    if dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.extension().and_then(|s| s.to_str()) == Some("sock") && !sessions.contains(&p)
+                {
+                    sessions.push(p);
+                }
+            }
+        }
+    }
+
+    Ok(sessions)
+}
+
+/// Finds an active dev socket or named pipe, probing candidates for responsiveness.
+pub fn find_dev_socket(explicit: Option<&Path>) -> Result<PathBuf, DevChannelError> {
+    discover_socket(explicit)
+}
+
 /// Discovers an active dev-channel socket path.
 ///
 /// Priority:
 /// 1. Explicit path from `--socket <path>`.
 /// 2. `MARTENSITE_DEV_SOCKET` environment variable.
-/// 3. Search `default_socket_dir()` for `.sock` files, probing live sessions.
+/// 3. Search `discover_dev_sessions()`, probing live sessions.
 pub fn discover_socket(explicit: Option<&Path>) -> Result<PathBuf, DevChannelError> {
     if let Some(path) = explicit {
-        if path.exists() {
-            return Ok(path.to_path_buf());
+        #[cfg(windows)]
+        {
+            if path.to_string_lossy().starts_with(r"\\.\pipe\") || path.exists() {
+                return Ok(path.to_path_buf());
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if path.exists() {
+                return Ok(path.to_path_buf());
+            }
         }
         return Err(DevChannelError::NoSessionFound(format!(
             "specified socket `{}` does not exist",
@@ -308,64 +426,48 @@ pub fn discover_socket(explicit: Option<&Path>) -> Result<PathBuf, DevChannelErr
 
     if let Ok(env_path) = std::env::var("MARTENSITE_DEV_SOCKET") {
         let p = PathBuf::from(env_path);
-        if p.exists() {
-            return Ok(p);
+        #[cfg(windows)]
+        {
+            if p.to_string_lossy().starts_with(r"\\.\pipe\") || p.exists() {
+                return Ok(p);
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if p.exists() {
+                return Ok(p);
+            }
         }
     }
 
-    let dir = default_socket_dir();
-    if !dir.exists() {
-        return Err(DevChannelError::NoSessionFound(format!(
-            "socket directory `{}` does not exist",
-            dir.display()
-        )));
-    }
+    let mut sessions = discover_dev_sessions()?;
 
-    let entries = std::fs::read_dir(&dir).map_err(|e| {
-        DevChannelError::NoSessionFound(format!(
-            "failed to read socket directory `{}`: {e}",
-            dir.display()
-        ))
-    })?;
-
-    let mut sockets = Vec::new();
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.extension().and_then(|s| s.to_str()) == Some("sock") {
-            sockets.push(p);
-        }
-    }
-
-    if sockets.is_empty() {
-        return Err(DevChannelError::NoSessionFound(format!(
-            "no .sock files in `{}`",
-            dir.display()
-        )));
+    if sessions.is_empty() {
+        return Err(DevChannelError::NoSessionFound(
+            "no dev sessions found".to_string(),
+        ));
     }
 
     // Sort by modification time (most recent first).
-    sockets.sort_by_key(|p| {
+    sessions.sort_by_key(|p| {
         std::fs::metadata(p)
             .and_then(|m| m.modified())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
     });
-    sockets.reverse();
+    sessions.reverse();
 
-    #[cfg(unix)]
-    {
-        for sock_path in &sockets {
-            // Quick probe to verify the socket is alive and responsive.
-            if let Ok(client) = DevClient::connect(sock_path, true) {
-                if client.handshake_done {
-                    return Ok(sock_path.clone());
-                }
+    for sock_path in &sessions {
+        // Quick probe to verify the socket is alive and responsive.
+        if let Ok(client) = DevClient::connect(sock_path, true) {
+            if client.handshake_done {
+                return Ok(sock_path.clone());
             }
         }
     }
 
     // If probing failed to find a responsive socket, return the most recent socket
     // so connection error surfaces the detailed failure.
-    if let Some(first) = sockets.first() {
+    if let Some(first) = sessions.first() {
         return Ok(first.clone());
     }
 
@@ -376,10 +478,8 @@ pub fn discover_socket(explicit: Option<&Path>) -> Result<PathBuf, DevChannelErr
 
 /// Client for communicating with a running Martensite dev session over the dev channel.
 pub struct DevClient {
-    #[cfg(unix)]
-    stream: UnixStream,
-    #[cfg(unix)]
-    reader: BufReader<UnixStream>,
+    stream: TransportStream,
+    reader: BufReader<TransportStream>,
     next_id: u64,
     handshake_done: bool,
     app_version: String,
@@ -395,68 +495,63 @@ impl DevClient {
         socket_path: &Path,
         allow_version_mismatch: bool,
     ) -> Result<Self, DevChannelError> {
-        #[cfg(not(unix))]
-        {
-            let _ = (socket_path, allow_version_mismatch);
-            return Err(DevChannelError::ConnectionFailed(
-                "Unix domain sockets are not supported on this platform".to_string(),
-            ));
-        }
-
         #[cfg(unix)]
-        {
-            let stream = UnixStream::connect(socket_path).map_err(|e| {
-                DevChannelError::ConnectionFailed(format!(
-                    "cannot connect to `{}`: {e}",
-                    socket_path.display()
-                ))
-            })?;
+        let stream = UnixStream::connect(socket_path).map_err(|e| {
+            DevChannelError::ConnectionFailed(format!(
+                "cannot connect to `{}`: {e}",
+                socket_path.display()
+            ))
+        })?;
 
-            let reader_stream = stream
-                .try_clone()
-                .map_err(|e| DevChannelError::Io(format!("failed to clone socket: {e}")))?;
-            let reader = BufReader::new(reader_stream);
+        #[cfg(windows)]
+        let stream = connect_windows_pipe(socket_path)?;
 
-            let mut client = Self {
-                stream,
-                reader,
-                next_id: 1,
-                handshake_done: false,
-                app_version: String::new(),
-                protocol_version: 0,
-            };
+        let reader_stream = stream
+            .try_clone()
+            .map_err(|e| DevChannelError::Io(format!("failed to clone socket: {e}")))?;
+        let reader = BufReader::new(reader_stream);
 
-            // Perform mandatory hello handshake.
-            let hello_params = serde_json::json!({
-                "version": MARTENSITE_VERSION,
-                "protocol_version": PROTOCOL_VERSION,
+        let mut client = Self {
+            stream,
+            reader,
+            next_id: 1,
+            handshake_done: false,
+            app_version: String::new(),
+            protocol_version: 0,
+        };
+
+        // Perform mandatory hello handshake.
+        let hello_params = serde_json::json!({
+            "client_version": MARTENSITE_VERSION,
+            "version": MARTENSITE_VERSION,
+            "protocol_version": PROTOCOL_VERSION,
+        });
+
+        let res = client.call("hello", hello_params)?;
+
+        let app_version = res
+            .get("server_version")
+            .or_else(|| res.get("version"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let proto_ver = res
+            .get("protocol_version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        client.app_version = app_version.clone();
+        client.protocol_version = proto_ver;
+        client.handshake_done = true;
+
+        if !allow_version_mismatch && app_version != MARTENSITE_VERSION {
+            return Err(DevChannelError::VersionMismatch {
+                app_version,
+                cli_version: MARTENSITE_VERSION.to_string(),
             });
-
-            let res = client.call("hello", hello_params)?;
-
-            let app_version = res
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let proto_ver = res
-                .get("protocol_version")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
-
-            client.app_version = app_version.clone();
-            client.protocol_version = proto_ver;
-            client.handshake_done = true;
-
-            if !allow_version_mismatch && app_version != MARTENSITE_VERSION {
-                return Err(DevChannelError::VersionMismatch {
-                    app_version,
-                    cli_version: MARTENSITE_VERSION.to_string(),
-                });
-            }
-
-            Ok(client)
         }
+
+        Ok(client)
     }
 
     /// Dispatches an RPC request and waits for the response line.
@@ -465,63 +560,53 @@ impl DevClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, DevChannelError> {
-        #[cfg(not(unix))]
-        {
-            let _ = (method, params);
-            return Err(DevChannelError::Io("unsupported platform".to_string()));
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let req = DevRequest {
+            id,
+            method: method.to_string(),
+            params,
+        };
+
+        let req_json =
+            serde_json::to_string(&req).map_err(|e| DevChannelError::Json(e.to_string()))?;
+
+        self.stream
+            .write_all(req_json.as_bytes())
+            .map_err(|e| DevChannelError::Io(e.to_string()))?;
+        self.stream
+            .write_all(b"\n")
+            .map_err(|e| DevChannelError::Io(e.to_string()))?;
+        self.stream
+            .flush()
+            .map_err(|e| DevChannelError::Io(e.to_string()))?;
+
+        let mut line = String::new();
+        let n = self
+            .reader
+            .read_line(&mut line)
+            .map_err(|e| DevChannelError::Io(e.to_string()))?;
+
+        if n == 0 {
+            return Err(DevChannelError::ProtocolError(
+                "unexpected EOF from dev channel socket".to_string(),
+            ));
         }
 
-        #[cfg(unix)]
-        {
-            let id = self.next_id;
-            self.next_id += 1;
+        let resp: DevResponse = serde_json::from_str(line.trim_end())
+            .map_err(|e| DevChannelError::Json(format!("invalid response: {e}; raw: `{line}`")))?;
 
-            let req = DevRequest {
-                id,
-                method: method.to_string(),
-                params,
-            };
-
-            let req_json =
-                serde_json::to_string(&req).map_err(|e| DevChannelError::Json(e.to_string()))?;
-
-            self.stream
-                .write_all(req_json.as_bytes())
-                .map_err(|e| DevChannelError::Io(e.to_string()))?;
-            self.stream
-                .write_all(b"\n")
-                .map_err(|e| DevChannelError::Io(e.to_string()))?;
-            self.stream
-                .flush()
-                .map_err(|e| DevChannelError::Io(e.to_string()))?;
-
-            let mut line = String::new();
-            let n = self
-                .reader
-                .read_line(&mut line)
-                .map_err(|e| DevChannelError::Io(e.to_string()))?;
-
-            if n == 0 {
-                return Err(DevChannelError::ProtocolError(
-                    "unexpected EOF from dev channel socket".to_string(),
-                ));
-            }
-
-            let resp: DevResponse = serde_json::from_str(line.trim_end()).map_err(|e| {
-                DevChannelError::Json(format!("invalid response: {e}; raw: `{line}`"))
-            })?;
-
-            if let Some(err) = resp.error {
-                return Err(DevChannelError::RpcError {
-                    code: err.code,
-                    message: err.message,
-                });
-            }
-
-            resp.result.ok_or_else(|| {
-                DevChannelError::ProtocolError("response missing result payload".to_string())
-            })
+        if let Some(err) = resp.error {
+            return Err(DevChannelError::RpcError {
+                code: err.code,
+                message: err.message,
+            });
         }
+
+        resp.result.ok_or_else(|| {
+            DevChannelError::ProtocolError("response missing result payload".to_string())
+        })
     }
 
     /// Pulls the latest frame's lint scene and report from the dev app (`LintPull`).

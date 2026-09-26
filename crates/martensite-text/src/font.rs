@@ -247,6 +247,7 @@ pub struct FontManager {
 thread_local! {
     /// Thread-local fixture override consulted by [`FontManager::new`].
     /// `None` (the default) means normal system-font discovery.
+    #[allow(clippy::missing_const_for_thread_local)]
     static TEST_FONT_OVERRIDE: std::cell::RefCell<Option<Vec<FontSource>>> =
         const { std::cell::RefCell::new(None) };
 }

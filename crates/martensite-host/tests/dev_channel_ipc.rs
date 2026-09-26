@@ -8,20 +8,29 @@ use std::sync::Arc;
 
 use martensite_host::dev_channel::{
     socket_path_for_session, DevChannelClient, DevChannelConfig, DevChannelHandler,
-    DevChannelServer, EventLedgerParams, InspectorSelectParams, JsonRpcRequest, LintApplyParams,
-    LintPullParams, TreeSnapshotParams, DEV_CHANNEL_PROTOCOL_VERSION, ERR_HANDSHAKE_REQUIRED,
-    ERR_METHOD_NOT_FOUND, ERR_PARSE, ERR_VERSION_MISMATCH, MARTENSITE_VERSION,
+    DevChannelServer, DevStream, EventLedgerParams, InspectorSelectParams, JsonRpcRequest,
+    LintApplyParams, LintPullParams, TreeSnapshotParams, DEV_CHANNEL_PROTOCOL_VERSION,
+    ERR_HANDSHAKE_REQUIRED, ERR_METHOD_NOT_FOUND, ERR_PARSE, ERR_VERSION_MISMATCH,
+    MARTENSITE_VERSION,
 };
 use tempfile::tempdir;
 
 #[test]
 fn test_socket_path_derivation() {
     let path = socket_path_for_session("session_abc123");
-    assert!(path.to_string_lossy().ends_with("session_abc123.sock"));
+    #[cfg(unix)]
+    {
+        assert!(path.to_string_lossy().ends_with("session_abc123.sock"));
 
-    // Verify parent directory component is either XDG_RUNTIME_DIR or tmp
-    let parent = path.parent().expect("parent directory exists");
-    assert!(parent.to_string_lossy().contains("martensite"));
+        // Verify parent directory component is either XDG_RUNTIME_DIR or tmp
+        let parent = path.parent().expect("parent directory exists");
+        assert!(parent.to_string_lossy().contains("martensite"));
+    }
+    #[cfg(windows)]
+    {
+        assert!(path.to_string_lossy().contains("martensite-session_abc123"));
+        assert!(path.to_string_lossy().starts_with(r"\\.\pipe\"));
+    }
 }
 
 #[test]
@@ -378,12 +387,9 @@ fn test_parse_error_on_malformed_json() {
     let sock_path = tmp.path().join("malformed.sock");
     let _server = DevChannelServer::bind(&sock_path).expect("server binds");
 
-    #[cfg(unix)]
     use std::io::{BufRead, BufReader, Write};
-    #[cfg(unix)]
-    use std::os::unix::net::UnixStream;
 
-    let mut stream = UnixStream::connect(&sock_path).expect("connect");
+    let mut stream = DevStream::connect(&sock_path).expect("connect");
     stream
         .write_all(b"this is not valid json\n")
         .expect("write malformed line");
