@@ -7,11 +7,13 @@ color-budget :: ScrollView/Container/Page/Fill/Flex/Flex
 color-budget :: ScrollView/Container/Page/Fill/ScrollView
 color-budget :: ScrollView/Container/Page/Fill/ScrollView/Flex
 color-budget :: ScrollView/Container/Page/Fill/ScrollView/Flex/Flex
+color-budget :: ScrollView/Container/Page/Fill/Swap/GroupBox/Flex
 color-budget :: ScrollView/Container/Page/Fill/Swap/GroupBox/Flex/Flex
 color-only-info :: ScrollView/Container/Page/Disclosure/ScrollView/Flex/Flex/Band/StepSequencer
 color-only-info :: ScrollView/Container/Page/Fill/Flex/Flex/Band/LedMatrix
 color-only-info :: ScrollView/Container/Page/Fill/Flex/Flex/Filmstrip
 color-only-info :: ScrollView/Container/Page/Fill/Flex/Flex/VideoGrid
+color-only-info :: ScrollView/Container/Page/Fill/ScrollView/Flex/Flex/Band/Spectrum
 color-only-info :: ScrollView/Container/Page/Fill/ScrollView/Flex/Flex/Flex/StackLight
 color-only-info :: ScrollView/Container/Page/Fill/ScrollView/Flex/Flex/LevelBar
 color-only-info :: ScrollView/Container/Page/Fill/ScrollView/Flex/Flex/NowPlaying
@@ -62,8 +64,8 @@ reserved-hue :: ScrollView/Container/Page/Fill/ScrollView/Flex/Flex/Flex/StackLi
 reserved-hue :: ScrollView/Container/Page/Fill/ScrollView/Flex/Flex/Flex/StatusDot
 reserved-hue :: ScrollView/Container/Page/Fill/ScrollView/Flex/Flex/LevelBar
 reserved-hue :: ScrollView/Container/Page/Fill/Swap/GroupBox/Flex/Flex/Band/AspectFrame/PieChart
+reserved-hue :: ScrollView/Container/Page/Fill/Swap/GroupBox/Flex/Flex/Band/Candlestick
 reserved-hue :: ScrollView/Container/Page/Fill/Swap/GroupBox/Flex/Flex/Band/FunnelChart
-reserved-hue :: ScrollView/Container/Page/Fill/Swap/GroupBox/Flex/Flex/Band/LevelBar
 reserved-hue :: ScrollView/Container/Page/Fill/Swap/GroupBox/Flex/Flex/Band/Thermometer
 saturated-area-cap :: ScrollView
 saturated-area-cap :: ScrollView/Container

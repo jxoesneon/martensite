@@ -5323,9 +5323,7 @@ mod tests {
                     let mut clips: Vec<(kurbo::Rect, String)> = Vec::new();
                     for cmd in &list.commands {
                         match cmd {
-                            PaintCommand::PushScope { name, .. } => {
-                                scopes.push(name.to_string())
-                            }
+                            PaintCommand::PushScope { name, .. } => scopes.push(name.to_string()),
                             PaintCommand::PopScope => {
                                 scopes.pop();
                             }
@@ -5347,9 +5345,7 @@ mod tests {
                                     continue;
                                 }
                                 let w = martensite::core::paint::TextShaper::measure_text(
-                                    &shaper,
-                                    s,
-                                    *size,
+                                    &shaper, s, *size,
                                 )
                                 .unwrap_or(0.0);
                                 note_hit(

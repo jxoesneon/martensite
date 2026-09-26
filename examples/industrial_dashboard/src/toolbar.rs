@@ -401,7 +401,17 @@ impl Widget for Toolbar {
             }
             x = r.max_x() + gap;
         }
-        let r = Rect::new(x, y, fw_width(x, right), h);
+        // The filter is the flexible remainder — but a sliver is worse
+        // than none: below a usable lane it suspends like any slot that
+        // can't fit (`child_bounds` → None drops it from paint, tick,
+        // and hit-testing) instead of painting a bordered box that
+        // reads as a scrollbar gutter at the strip's right edge.
+        let w = fw_width(x, right);
+        let r = if w >= MIN_FILTER_W * s {
+            Rect::new(x, y, w, h)
+        } else {
+            Rect::new(x, y, 0.0, h)
+        };
         self.rects[FILTER] = r;
         if r.width() >= MIN_SLOT_W {
             if let Some(c) = self.child_mut_at(FILTER) {
@@ -625,6 +635,12 @@ fn fw_width(x: f32, right: f32) -> f32 {
 /// Narrowest slot that still presents a control — below this the slot
 /// is suspended (no paint/tick/events) rather than clipped.
 const MIN_SLOT_W: f32 = 4.0;
+
+/// Narrowest usable filter field (logical pt) — the text lane needs
+/// room for its placeholder stem plus the caret, so below ~8em the
+/// slot collapses entirely (the fixed slots already dropped off first)
+/// instead of presenting a field too small to type feedback into.
+const MIN_FILTER_W: f32 = 96.0;
 
 #[cfg(test)]
 mod tests {
