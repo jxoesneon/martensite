@@ -119,6 +119,34 @@ pub enum Command {
         /// Allow connecting when dev app version mismatches CLI.
         allow_version_mismatch: bool,
     },
+    /// `cargo martensite self-update` — update the toolchain binary using signed manifests.
+    SelfUpdate {
+        /// Check if a newer version is available without replacing the binary.
+        check: bool,
+        /// Target a specific version.
+        version: Option<String>,
+        /// Bypass prompt or downgrade check.
+        force: bool,
+        /// Simulate the update without writing to the executable path.
+        dry_run: bool,
+        /// Custom manifest URL or local path.
+        manifest_url: Option<String>,
+        /// Public key override (hex string or file path).
+        public_key: Option<String>,
+    },
+    /// `cargo martensite tweak` — dump active live tweaks or apply source patches back to files.
+    Tweak {
+        /// Sub-action: dump (default) or apply.
+        action: crate::tweak::TweakAction,
+        /// Socket path override for dev-channel IPC.
+        socket: Option<String>,
+        /// Allow connecting when dev app version mismatches CLI.
+        allow_version_mismatch: bool,
+        /// File containing patches to apply or dump.
+        file: Option<String>,
+        /// Dry run mode for apply (preview changes without modifying files).
+        dry_run: bool,
+    },
     /// `cargo martensite help` — print usage information.
     Help,
     /// `cargo martensite --version` — print the toolchain version.
@@ -266,6 +294,42 @@ impl From<crate::inspect::InspectError> for CliError {
     }
 }
 
+impl From<crate::update::UpdateError> for CliError {
+    fn from(err: crate::update::UpdateError) -> Self {
+        match err {
+            crate::update::UpdateError::InvalidPublicKey(reason)
+            | crate::update::UpdateError::InvalidVersion(reason) => CliError::InvalidArgument {
+                flag: "--version / --public-key".to_string(),
+                reason,
+            },
+            crate::update::UpdateError::FetchFailed(reason) => {
+                CliError::InfrastructureFailure(reason)
+            }
+            other => CliError::ExecutionFailed(other.to_string()),
+        }
+    }
+}
+
+impl From<crate::tweak::TweakError> for CliError {
+    fn from(err: crate::tweak::TweakError) -> Self {
+        match err {
+            crate::tweak::TweakError::DevChannel(
+                crate::dev_channel::DevChannelError::VersionMismatch {
+                    app_version,
+                    cli_version,
+                },
+            ) => CliError::VersionMismatch {
+                app_version,
+                cli_version,
+            },
+            crate::tweak::TweakError::DevChannel(err) => {
+                CliError::InfrastructureFailure(err.to_string())
+            }
+            other => CliError::ExecutionFailed(other.to_string()),
+        }
+    }
+}
+
 /// Parses the raw argument vector into a [`Command`].
 ///
 /// The leading program name (if present) is ignored, and the Cargo-injected
@@ -311,6 +375,8 @@ pub fn parse_args(args: &[String]) -> Result<Command, CliError> {
         "inspect" => parse_inspect(rest),
         "dev" => parse_dev(rest),
         "build" => parse_build(rest),
+        "tweak" | "tweaks" => parse_tweak(rest),
+        "self-update" | "update" => parse_self_update(rest),
         "help" | "--help" | "-h" => Ok(Command::Help),
         "--version" | "-V" | "version" => Ok(Command::Version),
         other => Err(CliError::UnknownCommand(other.to_string())),
@@ -768,6 +834,135 @@ fn parse_inspect(rest: &[&str]) -> Result<Command, CliError> {
     })
 }
 
+/// Parses flags for the `self-update` subcommand.
+fn parse_self_update(rest: &[&str]) -> Result<Command, CliError> {
+    let mut check = false;
+    let mut version = None;
+    let mut force = false;
+    let mut dry_run = false;
+    let mut manifest_url = None;
+    let mut public_key = None;
+
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--check" => check = true,
+            "--force" => force = true,
+            "--dry-run" => dry_run = true,
+            "--version" | "-v" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--version".to_string(),
+                    reason: "missing version value".to_string(),
+                })?;
+                version = Some((*raw).to_string());
+            }
+            "--manifest-url" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--manifest-url".to_string(),
+                    reason: "missing manifest URL value".to_string(),
+                })?;
+                manifest_url = Some((*raw).to_string());
+            }
+            "--public-key" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--public-key".to_string(),
+                    reason: "missing public key value".to_string(),
+                })?;
+                public_key = Some((*raw).to_string());
+            }
+            other if other.starts_with('-') => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unknown flag for `self-update`".to_string(),
+                });
+            }
+            other => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unexpected positional argument for `self-update`".to_string(),
+                });
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::SelfUpdate {
+        check,
+        version,
+        force,
+        dry_run,
+        manifest_url,
+        public_key,
+    })
+}
+
+/// Parses flags for the `tweak` subcommand.
+fn parse_tweak(rest: &[&str]) -> Result<Command, CliError> {
+    let mut action = crate::tweak::TweakAction::Dump;
+    let mut socket = None;
+    let mut allow_version_mismatch = false;
+    let mut file = None;
+    let mut dry_run = false;
+
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "dump" | "--dump" => action = crate::tweak::TweakAction::Dump,
+            "apply" | "--apply" => action = crate::tweak::TweakAction::Apply,
+            "--dry-run" => dry_run = true,
+            "--file" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--file".to_string(),
+                    reason: "missing file path".to_string(),
+                })?;
+                file = Some((*raw).to_string());
+            }
+            "--socket" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--socket".to_string(),
+                    reason: "missing socket path".to_string(),
+                })?;
+                socket = Some((*raw).to_string());
+            }
+            "--allow-version-mismatch" => allow_version_mismatch = true,
+            other if other.starts_with('-') => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unknown flag for `tweak`".to_string(),
+                });
+            }
+            other => {
+                if other.eq_ignore_ascii_case("dump") {
+                    action = crate::tweak::TweakAction::Dump;
+                } else if other.eq_ignore_ascii_case("apply") {
+                    action = crate::tweak::TweakAction::Apply;
+                } else {
+                    return Err(CliError::InvalidArgument {
+                        flag: other.to_string(),
+                        reason: format!(
+                            "unexpected positional argument `{other}` for `tweak` (expected `dump` or `apply`)"
+                        ),
+                    });
+                }
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::Tweak {
+        action,
+        socket,
+        allow_version_mismatch,
+        file,
+        dry_run,
+    })
+}
+
 /// Executes a parsed [`Command`], performing any side effects.
 ///
 /// Returns `Ok(())` on success or a [`CliError`] describing the failure. The
@@ -847,7 +1042,51 @@ pub fn run_command(cmd: Command) -> Result<(), CliError> {
             port,
             package,
         } => run_dev(watch, port, package),
+        Command::SelfUpdate {
+            check,
+            version,
+            force,
+            dry_run,
+            manifest_url,
+            public_key,
+        } => {
+            let opts = crate::update::SelfUpdateOptions {
+                check,
+                target_version: version,
+                force,
+                dry_run,
+                manifest_url,
+                public_key,
+            };
+            crate::update::run_self_update(&opts).map_err(CliError::from)
+        }
+        Command::Tweak {
+            action,
+            socket,
+            allow_version_mismatch,
+            file,
+            dry_run,
+        } => run_tweak_cmd(action, socket, allow_version_mismatch, file, dry_run),
     }
+}
+
+/// Runs the `tweak` subcommand.
+fn run_tweak_cmd(
+    action: crate::tweak::TweakAction,
+    socket: Option<String>,
+    allow_version_mismatch: bool,
+    file: Option<String>,
+    dry_run: bool,
+) -> Result<(), CliError> {
+    let opts = crate::tweak::TweakOptions {
+        action,
+        socket: socket.map(std::path::PathBuf::from),
+        allow_version_mismatch,
+        file: file.map(std::path::PathBuf::from),
+        dry_run,
+    };
+    crate::tweak::run_tweak(&opts)?;
+    Ok(())
 }
 
 /// Runs the `lint` subcommand.
@@ -993,15 +1232,23 @@ fn print_help() {
          inspect  Headless widget inspector attached to running dev app\n    \
          dev      Launch the hot-reload development loop [default: --watch]\n    \
          build    Compile the guest crate as a cdylib\n    \
+         tweak    Dump active live tweaks or apply source patches back to files\n    \
+         self-update Update the cargo-martensite binary via signed manifests\n    \
          help     Print this message\n    \
          version  Print the toolchain version\n\
          \n\
          OPTIONS:\n    \
+         --file <P>              Path to patch file for dump or apply (tweak)\n    \
+         --check                 Check for available updates without applying (self-update)\n    \
+         --version <ver>         Target a specific version (self-update)\n    \
+         --dry-run               Simulate update without modifying binary (self-update)\n    \
+         --manifest-url <url>    Custom update manifest URL or path (self-update)\n    \
+         --public-key <key>      Public key hex or key file override (self-update)\n    \
          --template <T>, -t <T>  Template kind: app, bare, dashboard (new, init)\n    \
          --agents                Only generate AGENTS.md (init)\n    \
          --lint                  Only generate design-lint.toml (init)\n    \
          --fix                   Apply safe fixes/remediations (doctor, check, lint)\n    \
-         --force                 Also apply risky autofixes (lint)\n    \
+         --force                 Also apply risky autofixes / allow downgrade (lint, self-update)\n    \
          --no-recursive          Single-pass autofix (lint)\n    \
          --max-recursiveness <N> Maximum recursion passes for autofix (lint)\n    \
          --scene <path>          Serialized scene or dump file for offline mode (lint)\n    \
@@ -1733,6 +1980,74 @@ mod tests {
     #[test]
     fn parse_inspect_unknown_flag_errors() {
         let err = parse_args(&args(&["martensite", "inspect", "--bogus"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--bogus"));
+    }
+
+    #[test]
+    fn parse_self_update_defaults() {
+        let cmd = parse_args(&args(&["martensite", "self-update"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::SelfUpdate {
+                check: false,
+                version: None,
+                force: false,
+                dry_run: false,
+                manifest_url: None,
+                public_key: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_self_update_all_flags() {
+        let cmd = parse_args(&args(&[
+            "martensite",
+            "self-update",
+            "--check",
+            "--version",
+            "0.20.0",
+            "--force",
+            "--dry-run",
+            "--manifest-url",
+            "https://updates.martensite.dev/manifest.json",
+            "--public-key",
+            "1234abcd",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            cmd,
+            Command::SelfUpdate {
+                check: true,
+                version: Some("0.20.0".to_string()),
+                force: true,
+                dry_run: true,
+                manifest_url: Some("https://updates.martensite.dev/manifest.json".to_string()),
+                public_key: Some("1234abcd".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_self_update_alias_update() {
+        let cmd = parse_args(&args(&["martensite", "update", "--dry-run"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::SelfUpdate {
+                check: false,
+                version: None,
+                force: false,
+                dry_run: true,
+                manifest_url: None,
+                public_key: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_self_update_unknown_flag_errors() {
+        let err = parse_args(&args(&["martensite", "self-update", "--bogus"])).unwrap_err();
         assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--bogus"));
     }
 
