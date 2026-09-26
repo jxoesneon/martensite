@@ -738,13 +738,13 @@ impl Widget for Text {
         // Try the inline cache first (Tier 1)
         if let Some((cached_width, cached_height)) = self.inline_cache.get(available_width) {
             let width = if available_width.is_finite() {
-                available_width.min(cached_width)
+                available_width.min(cached_width).max(0.0)
             } else {
                 cached_width
             };
             // Clamp height to max constraint
             let height = if max_height.is_finite() {
-                cached_height.min(max_height)
+                cached_height.min(max_height).max(0.0)
             } else {
                 cached_height
             };
@@ -760,13 +760,13 @@ impl Widget for Text {
             .put(available_width, metrics.width, metrics.height);
 
         let width = if available_width.is_finite() {
-            metrics.width.min(available_width)
+            metrics.width.min(available_width).max(0.0)
         } else {
             metrics.width
         };
         // Clamp height to max constraint to respect the measure contract
         let height = if max_height.is_finite() {
-            metrics.height.min(max_height)
+            metrics.height.min(max_height).max(0.0)
         } else {
             metrics.height
         };
@@ -1337,5 +1337,313 @@ mod tests {
 
         assert_eq!(s0, s1, "Frame 0 and Frame 1 should match");
         assert_eq!(s1, s2, "Frame 1 and Frame 2 should match");
+    }
+
+    // -----------------------------------------------------------------
+    // Wrap conformance — exercised through the bundled Fira Mono so
+    // every assertion is host-independent (the same face the render
+    // parity tests and dashboard sweeps use).
+    // -----------------------------------------------------------------
+
+    const FIRA_MONO: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../martensite-render-test/tests/assets/FiraMono-Medium.ttf"
+    ));
+
+    fn fixture_fonts() -> martensite_text::font::TestFontsGuard {
+        martensite_text::font::set_test_fonts(vec![martensite_text::font::FontSource::binary(
+            FIRA_MONO.to_vec(),
+        )])
+    }
+
+    /// Shapes `content` at `font_size` for `wrap_w` device px and
+    /// returns the wrapped lines (empty vec when no fonts resolve).
+    fn wrapped_lines(
+        content: &str,
+        font_size: f32,
+        wrap_w: f32,
+    ) -> Vec<martensite_text::ShapedLine> {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut t = Text::new(content).font_size(font_size);
+        t.layout(&mut cx, Rect::new(0.0, 0.0, wrap_w, 1000.0));
+        t.last_shape
+            .as_ref()
+            .map(|s| s.lines.clone())
+            .unwrap_or_default()
+    }
+
+    /// Advance of one fixture-mono glyph at `size` — all glyphs share
+    /// the advance, so a width in chars is `n * char_w`.
+    fn char_w(size: f32) -> f32 {
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut t = Text::new("0000000000").font_size(size);
+        t.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(1e6, 1e6),
+            },
+        )
+        .x / 10.0
+    }
+
+    /// A `(start, end)` byte span into the source text.
+    type Span = (usize, usize);
+
+    /// Byte spans each wrapped line covers, from its glyphs' cluster
+    /// indices (`ShapedLine::text` is the whole paragraph, not the
+    /// line's slice).
+    fn line_spans(l: &martensite_text::ShapedLine) -> Vec<Span> {
+        let mut v: Vec<Span> = l.glyphs.iter().map(|g| (g.start, g.end)).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Every span in `lines` merged — with the byte offsets of gaps
+    /// left between lines (folded break whitespace).
+    fn coverage(lines: &[martensite_text::ShapedLine]) -> (Vec<Span>, Vec<Span>) {
+        let mut spans: Vec<Span> = lines.iter().flat_map(line_spans).collect();
+        spans.sort_unstable();
+        let mut gaps = Vec::new();
+        let mut merged: Vec<Span> = Vec::new();
+        for (s, e) in spans {
+            if e <= s {
+                continue;
+            }
+            match merged.last_mut() {
+                Some(last) if s <= last.1 => last.1 = last.1.max(e),
+                Some(last) => {
+                    gaps.push((last.1, s));
+                    merged.push((s, e));
+                }
+                None => merged.push((s, e)),
+            }
+        }
+        (merged, gaps)
+    }
+
+    #[test]
+    fn wrap_breaks_only_at_word_boundaries() {
+        let _g = fixture_fonts();
+        let cw = char_w(10.0);
+        if cw <= 0.0 {
+            return;
+        }
+        let text = "aa bb cc dd ee ff";
+        // "aa bb" is 5 chars — a 5.5-char lane fits exactly two words.
+        let lines = wrapped_lines(text, 10.0, cw * 5.5);
+        assert!(
+            lines.len() >= 3,
+            "expected ≥3 wrapped lines, got {}",
+            lines.len()
+        );
+        for (i, l) in lines.iter().enumerate() {
+            let spans = line_spans(l);
+            let Some(&(first, _)) = spans.first() else {
+                continue;
+            };
+            if first == 0 {
+                continue;
+            }
+            // A break must land on whitespace — the byte before the
+            // line's first glyph cluster is a break space.
+            let prev = text.as_bytes()[first - 1];
+            assert!(
+                prev.is_ascii_whitespace(),
+                "line {i} starts mid-word (byte {first} after {prev:#x})"
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_unbreakable_run_glyph_breaks_without_overflow() {
+        let _g = fixture_fonts();
+        let cw = char_w(10.0);
+        if cw <= 0.0 {
+            return;
+        }
+        let text = "aaaaaaaaaaaaaaaaaaaa";
+        let lane = cw * 6.5; // 20 chars cannot fit a 6.5-char lane.
+        let lines = wrapped_lines(text, 10.0, lane);
+        assert!(
+            lines.len() >= 2,
+            "unbreakable run must glyph-break, got {} line",
+            lines.len()
+        );
+        for (i, l) in lines.iter().enumerate() {
+            assert!(
+                l.line_w <= lane + 0.5,
+                "line {i} width {} overruns lane {lane}",
+                l.line_w
+            );
+        }
+        // Coverage tiles the whole run — nothing dropped or doubled.
+        let (merged, _) = coverage(&lines);
+        assert_eq!(merged, [(0, text.len())]);
+    }
+
+    #[test]
+    fn wrap_preserves_explicit_newlines() {
+        let _g = fixture_fonts();
+        let cw = char_w(10.0);
+        if cw <= 0.0 {
+            return;
+        }
+        let lines = wrapped_lines("one\ntwo\nthree", 10.0, cw * 100.0);
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.trim()).collect();
+        assert_eq!(texts, ["one", "two", "three"]);
+        // And still wraps inside each paragraph at a narrow width.
+        let narrow = wrapped_lines("aaaa bbbb\ncc", 10.0, cw * 5.0);
+        assert!(narrow.len() >= 3, "expected ≥3 lines, got {}", narrow.len());
+    }
+
+    #[test]
+    fn wrap_cjk_breaks_between_ideographs() {
+        let _g = fixture_fonts();
+        let cw = char_w(10.0);
+        if cw <= 0.0 {
+            return;
+        }
+        // No spaces — UAX #14 allows breaks between ideographs.
+        let text = "日本語の文章はここにあります";
+        let lines = wrapped_lines(text, 10.0, cw * 6.0);
+        assert!(
+            lines.len() >= 2,
+            "CJK must wrap without spaces, got {} line",
+            lines.len()
+        );
+        // Coverage tiles the whole string — no dropped/doubled bytes,
+        // no gaps (no whitespace to fold).
+        let (merged, gaps) = coverage(&lines);
+        assert_eq!(merged, [(0, text.len())], "coverage gaps: {gaps:?}");
+    }
+
+    #[test]
+    fn wrap_emoji_zwj_sequence_stays_intact() {
+        let _g = fixture_fonts();
+        let cw = char_w(10.0);
+        if cw <= 0.0 {
+            return;
+        }
+        // Pad so the family cluster straddles the wrap point — a
+        // breaker that splits inside ZWJ separates rendered emoji.
+        let text = "xx 👨‍👩‍👧‍👦 yy";
+        let cluster = "👨‍👩‍👧‍👦";
+        let c0 = text.find(cluster).unwrap();
+        let c1 = c0 + cluster.len();
+        let lines = wrapped_lines(text, 10.0, cw * 6.0);
+        assert!(lines.len() >= 2, "expected wrap, got 1 line");
+        for (i, l) in lines.iter().enumerate() {
+            // A line may cover the whole cluster or none of it —
+            // never a proper subrange (a split mid-sequence).
+            let covered: Vec<(usize, usize)> = line_spans(l)
+                .into_iter()
+                .filter(|(s, e)| *s < c1 && *e > c0)
+                .collect();
+            if covered.is_empty() {
+                continue;
+            }
+            let lo = covered.iter().map(|s| s.0).min().unwrap();
+            let hi = covered.iter().map(|s| s.1).max().unwrap();
+            assert!(
+                lo <= c0 && hi >= c1,
+                "line {i} splits the ZWJ cluster: covers {lo}..{hi} of {c0}..{c1}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_degenerate_widths_do_not_panic() {
+        let _g = fixture_fonts();
+        for w in [
+            0.0f32,
+            -5.0,
+            0.5,
+            f32::NAN,
+            f32::INFINITY,
+            f32::MIN_POSITIVE,
+        ] {
+            let mut hot = HotNode::new(taffy::NodeId::new(1));
+            let mut cx = make_cx(&mut hot);
+            let mut t = Text::new("degenerate width probe text").font_size(10.0);
+            let s = t.measure(
+                &mut cx,
+                LayoutConstraints {
+                    min_size: Vec2::ZERO,
+                    max_size: Vec2::new(w, 1000.0),
+                },
+            );
+            assert!(s.x >= 0.0 && s.y >= 0.0, "width {w}: {s:?}");
+            assert!(s.x.is_finite() && s.y.is_finite(), "width {w}: {s:?}");
+        }
+    }
+
+    #[test]
+    fn wrap_layout_at_narrower_width_reshapes() {
+        let _g = fixture_fonts();
+        let cw = char_w(10.0);
+        if cw <= 0.0 {
+            return;
+        }
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut t = Text::new("aaaa bbbb cccc dddd").font_size(10.0);
+        // Measure unconstrained — one line.
+        let _ = t.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(1e6, 1e6),
+            },
+        );
+        // Then lay out at a 5-char lane — the paint shape must be the
+        // wrapped one, not the stale unbounded shape.
+        t.layout(&mut cx, Rect::new(0.0, 0.0, cw * 5.0, 500.0));
+        let lines = t.last_shape.as_ref().unwrap().lines.len();
+        assert!(
+            lines >= 3,
+            "layout must re-shape at the allocated width, got {lines} lines"
+        );
+    }
+
+    #[test]
+    fn wrap_painted_glyphs_stay_inside_clip() {
+        use martensite_core::paint::PaintCommand;
+        let _g = fixture_fonts();
+        let cw = char_w(10.0);
+        if cw <= 0.0 {
+            return;
+        }
+        let lane = cw * 6.0;
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let mut t = Text::new("alpha beta gamma delta epsilon zeta").font_size(10.0);
+        t.layout(&mut cx, Rect::new(0.0, 0.0, lane, 60.0));
+        let mut list = martensite_core::PaintList::new();
+        let theme = martensite_theme::Theme::new("test");
+        {
+            let mut pcx = PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, lane, 60.0),
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            };
+            t.paint(&mut pcx);
+        }
+        for c in &list.commands {
+            if let PaintCommand::DrawGlyphRun(r) = c {
+                for g in &r.glyphs {
+                    assert!(
+                        g.x >= -0.5 && g.x + g.width <= lane + 0.5,
+                        "glyph at x={} w={} escapes lane {lane}",
+                        g.x,
+                        g.width
+                    );
+                }
+            }
+        }
     }
 }

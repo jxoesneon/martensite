@@ -2275,6 +2275,40 @@ pub fn ambient_measure_text(text: &str, size_px: f32) -> Option<f32> {
     })
 }
 
+/// [`ambient_measure_text`] with an explicit [`TextStyle`] axis —
+/// styled callers (semibold headings, tracked labels) must measure
+/// through this channel or wrap plans disagree with painted output.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::paint::{ambient_measure_text_styled, TextStyle};
+///
+/// assert_eq!(ambient_measure_text_styled("hi", 14.0, TextStyle::default()), None);
+/// ```
+pub fn ambient_measure_text_styled(text: &str, size_px: f32, style: TextStyle) -> Option<f32> {
+    AMBIENT_MEASURER.with(|s| {
+        s.borrow()
+            .as_ref()
+            .and_then(|m| m.measure_text_styled(text, size_px, style))
+    })
+}
+
+/// The installed ambient measurer — `None` outside a guarded layout
+/// pass. For callers that need the provider itself (e.g. to drive a
+/// per-word measure closure) rather than one-off queries.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::paint::ambient_measurer;
+///
+/// assert!(ambient_measurer().is_none());
+/// ```
+pub fn ambient_measurer() -> Option<Arc<dyn TextShaper + Send + Sync>> {
+    AMBIENT_MEASURER.with(|s| s.borrow().clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

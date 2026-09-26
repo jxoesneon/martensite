@@ -322,20 +322,59 @@ impl Widget for PageFlip {
         for (rect, page_idx) in [(self.left_rect, l), (self.right_rect, l + 1)] {
             cx.list.push_fill_rect(krect(rect), PAGE);
             if let Some(text) = self.pages.get(page_idx) {
-                // Lay the body out as fixed-width lines.
+                // Lay the body out word-wrapped to the inner lane —
+                // measured through the painter so line breaks land on
+                // word boundaries, not mid-glyph char chunks.
                 let inner_x = rect.min_x() + PAD_PT * s;
                 let inner_w = (rect.width() - PAD_PT * 2.0 * s).max(0.0);
+                let body_sz = BODY_PT * s;
                 let char_w = BODY_PT * 0.55 * s;
-                let per_line = (inner_w / char_w.max(1.0)) as usize;
+                let width_of = |t: &str| {
+                    painter
+                        .and_then(|p| p.measure_text(t, body_sz))
+                        .unwrap_or_else(|| t.chars().count() as f32 * char_w)
+                };
                 let max_lines = ((rect.height() - PAD_PT * 2.0 * s) / (LINE_PT * s)) as usize;
-                for (li, chunk) in text
-                    .chars()
-                    .collect::<Vec<_>>()
-                    .chunks(per_line.max(1))
-                    .take(max_lines)
-                    .enumerate()
-                {
-                    let line: String = chunk.iter().collect();
+                // Greedy word-wrap; a word wider than the lane is
+                // broken mid-word at the last fitting char boundary.
+                let mut rows: Vec<String> = Vec::new();
+                let mut cur = String::new();
+                for word in text.split_whitespace() {
+                    let mut w = word;
+                    loop {
+                        let cand = if cur.is_empty() {
+                            w.to_string()
+                        } else {
+                            format!("{cur} {w}")
+                        };
+                        if width_of(&cand) <= inner_w {
+                            cur = cand;
+                            break;
+                        }
+                        if !cur.is_empty() {
+                            rows.push(std::mem::take(&mut cur));
+                            continue;
+                        }
+                        // Lone word overruns the lane — break at the
+                        // last fitting char boundary (≥1 char).
+                        let mut fit = 0usize;
+                        for (b, _) in w.char_indices().skip(1) {
+                            if width_of(&w[..b]) > inner_w {
+                                break;
+                            }
+                            fit = b;
+                        }
+                        if fit == 0 {
+                            fit = w.chars().next().map_or(0, char::len_utf8);
+                        }
+                        rows.push(w[..fit].to_string());
+                        w = &w[fit..];
+                    }
+                }
+                if !cur.is_empty() {
+                    rows.push(cur);
+                }
+                for (li, line) in rows.iter().take(max_lines).enumerate() {
                     crate::text_paint::paint_label(
                         painter,
                         cx.list,
@@ -343,8 +382,8 @@ impl Widget for PageFlip {
                             f64::from(inner_x),
                             f64::from(rect.min_y() + PAD_PT * s + li as f32 * LINE_PT * s),
                         ),
-                        &line,
-                        BODY_PT * s,
+                        line,
+                        body_sz,
                         INK,
                     );
                 }
@@ -500,5 +539,63 @@ mod tests {
             text_painter: None,
         });
         assert!(!list.is_empty());
+    }
+
+    #[test]
+    fn body_wraps_at_word_boundaries() {
+        // The body used to be laid out as fixed-width char chunks —
+        // mid-word splits in the middle of a line. Wrap at word
+        // boundaries instead, breaking only a lone oversized word.
+        let body = "alpha beta gamma delta epsilon zeta eta theta";
+        let mut p = PageFlip::new().page(body).page("x");
+        laid_out(&mut p);
+        let mut list = martensite_core::PaintList::default();
+        let theme = martensite_theme::Theme::new("test");
+        p.paint(&mut PaintContext {
+            list: &mut list,
+            bounds: p.bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        });
+        let lines: Vec<String> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                martensite_core::PaintCommand::DrawText(_, t, _, _) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(lines.len() > 1, "expected wrapped lines, got {lines:?}");
+        // Consume `body` a whole line at a time — every emitted line
+        // must continue the source text word-for-word (other pages'
+        // text and the widget label are skipped once the body is
+        // exhausted).
+        let mut consumed = String::new();
+        let mut kept = Vec::new();
+        for l in &lines {
+            let cand = if consumed.is_empty() {
+                l.clone()
+            } else {
+                format!("{consumed} {l}")
+            };
+            if body.starts_with(&cand) {
+                consumed = cand;
+                kept.push(l.clone());
+            }
+        }
+        assert_eq!(
+            consumed, body,
+            "wrapped lines must tile the source: {kept:?}"
+        );
+        // No line may be wider than the word-wrap would allow: each
+        // line is a whole-word run, so it never ends mid-word.
+        for (i, l) in kept.iter().enumerate() {
+            let last = l.chars().last().unwrap();
+            assert!(
+                last.is_alphanumeric(),
+                "line {i} ends mid-word or mid-space: {l:?}"
+            );
+        }
     }
 }

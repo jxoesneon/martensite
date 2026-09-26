@@ -564,31 +564,73 @@ fn wrap_runs(
                 }
                 i += c.len_utf8();
             }
-            let word = &text[wstart..i];
-            let ww = measure(word, eff, flags_style(flags));
-            let cur = lines.last_mut().expect("lines is never empty");
-            let need = ww
-                + if cur.is_empty() || !pending_space {
-                    0.0
-                } else {
-                    space_w
-                };
-            if !cur.is_empty() && cur_w + need > width {
-                lines.push(Vec::new());
-                cur_w = 0.0;
+            let mut word = &text[wstart..i];
+            let mut space_before = pending_space;
+            loop {
+                let ww = measure(word, eff, flags_style(flags));
+                let cur_empty = lines.last().expect("lines is never empty").is_empty();
+                let need = ww
+                    + if cur_empty || !space_before {
+                        0.0
+                    } else {
+                        space_w
+                    };
+                if !cur_empty && cur_w + need > width {
+                    lines.push(Vec::new());
+                    cur_w = 0.0;
+                }
+                if lines.last().unwrap().is_empty() && ww > width {
+                    // A lone word wider than the line (URL, serial)
+                    // would paint past the right edge — break it at
+                    // the last fitting char boundary and continue the
+                    // remainder on the next line, matching TextArea's
+                    // mid-word fallback.
+                    let mut fit = 0usize;
+                    for (b, _) in word.char_indices().skip(1) {
+                        if measure(&word[..b], eff, flags_style(flags)) > width {
+                            break;
+                        }
+                        fit = b;
+                    }
+                    // Even a single char can overrun a degenerate
+                    // width — still split at the first char so the
+                    // loop makes progress rather than placing the
+                    // whole word past the edge.
+                    if fit == 0 {
+                        fit = word.chars().next().map_or(0, char::len_utf8);
+                    }
+                    let piece = &word[..fit];
+                    let pw = measure(piece, eff, flags_style(flags));
+                    lines.last_mut().unwrap().push(WItem {
+                        text: piece.to_string(),
+                        flags,
+                        link: run.link.clone(),
+                        w: pw,
+                        space_before,
+                    });
+                    lines.push(Vec::new());
+                    cur_w = 0.0;
+                    word = &word[fit..];
+                    space_before = false;
+                    if word.is_empty() {
+                        break;
+                    }
+                    continue;
+                }
+                let cur = lines.last_mut().expect("lines is never empty");
+                if !cur.is_empty() && space_before {
+                    cur_w += space_w;
+                }
+                cur_w += ww;
+                cur.push(WItem {
+                    text: word.to_string(),
+                    flags,
+                    link: run.link.clone(),
+                    w: ww,
+                    space_before,
+                });
+                break;
             }
-            let cur = lines.last_mut().expect("lines is never empty");
-            if !cur.is_empty() && pending_space {
-                cur_w += space_w;
-            }
-            cur_w += ww;
-            cur.push(WItem {
-                text: word.to_string(),
-                flags,
-                link: run.link.clone(),
-                w: ww,
-                space_before: pending_space,
-            });
             pending_space = false;
         }
     }
@@ -907,9 +949,38 @@ impl Markdown {
         out
     }
 
+    /// The advance-measure provider for plan building — the widget's
+    /// explicit painter first, then the ambient measurer installed for
+    /// the layout pass, else `None` (callers fall back per word to the
+    /// `0.5·size·chars` heuristic). Mirrors `resolve_painter`
+    /// precedence so wrap plans measure through the same shaping
+    /// pipeline the paint pass will use.
+    fn plan_provider(
+        &self,
+    ) -> Option<std::sync::Arc<dyn martensite_core::paint::TextShaper + Send + Sync>> {
+        if let Some(p) = &self.text_painter {
+            return Some(std::sync::Arc::new(p.clone()));
+        }
+        martensite_core::paint::ambient_measurer()
+    }
+
+    /// `measure` closure over `provider` — real styled advances when
+    /// it can measure, heuristic per word otherwise.
+    fn plan_measure<'p>(
+        provider: &'p Option<std::sync::Arc<dyn martensite_core::paint::TextShaper + Send + Sync>>,
+    ) -> impl Fn(&str, f32, TextStyle) -> f32 + 'p {
+        move |t: &str, s: f32, st: TextStyle| -> f32 {
+            provider
+                .as_ref()
+                .and_then(|p| p.measure_text_styled(t, s, st))
+                .unwrap_or_else(|| heuristic(t, s, st))
+        }
+    }
+
     /// Flows `self.blocks` into a positioned [`Plan`] for `bounds`.
-    /// `measure` is the advance estimator — the real painter at paint
-    /// time, the `0.5·size·chars` heuristic at layout time.
+    /// `measure` is the advance estimator — the real painter when one
+    /// resolves (explicit or ambient), the `0.5·size·chars` heuristic
+    /// otherwise.
     fn build_plan(
         &self,
         bounds: Rect,
@@ -1065,11 +1136,17 @@ impl Widget for Markdown {
         } else {
             cx.pt(320.0)
         };
+        // Wrap with real styled advances when a provider resolves so
+        // the reported height carries the same line breaks paint will
+        // emit — the heuristic under-reads wide faces and reports a
+        // short plan, which is how wrapped bodies get clipped.
+        let provider = self.plan_provider();
+        let measured = provider.is_some();
         let plan = self.build_plan(
             Rect::new(0.0, 0.0, w.max(0.0), 0.0),
             cx.scale,
-            false,
-            &heuristic,
+            measured,
+            &Self::plan_measure(&provider),
         );
         Vec2::new(w, plan.height.min(constraints.max_size.y.max(0.0)))
     }
@@ -1080,9 +1157,12 @@ impl Widget for Markdown {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
-        // LayoutContext carries no text painter — wrap with the
-        // documented heuristic; paint replans with real metrics.
-        let plan = self.build_plan(bounds, cx.scale, false, &heuristic);
+        // Wrap with real advances when the ambient/explicit painter
+        // resolves — the plan then carries the same line breaks the
+        // paint pass will emit instead of being replanned at paint.
+        let provider = self.plan_provider();
+        let measured = provider.is_some();
+        let plan = self.build_plan(bounds, cx.scale, measured, &Self::plan_measure(&provider));
         *self.plan.lock() = plan;
     }
 
@@ -1406,5 +1486,68 @@ mod tests {
         let mut narrow = Markdown::new(src);
         laid_out(&mut narrow, 120.0, 500.0);
         assert!(narrow.content_height() > wide.content_height());
+    }
+
+    #[test]
+    fn oversized_word_breaks_mid_word() {
+        // A word wider than the lane (URL, serial) used to be placed
+        // whole and paint past the right edge. It must split at the
+        // last fitting char boundary — every emitted run stays inside
+        // the wrap width.
+        let src = "prefix http://example.com/a-very-long-unbreakable-resource-path suffix";
+        let mut m = Markdown::new(src);
+        laid_out(&mut m, 120.0, 500.0);
+        let plan = m.plan.lock();
+        assert!(plan.runs.len() > 2, "expected the word to split");
+        for r in &plan.runs {
+            assert!(
+                r.rect.max_x() <= 120.0 + 0.5,
+                "run {:?} overruns the lane: {:?}",
+                r.text,
+                r.rect
+            );
+        }
+        // And no run may contain a prefix+suffix join — the pieces
+        // must tile the original word with nothing dropped.
+        let pieces: String = plan
+            .runs
+            .iter()
+            .filter(|r| {
+                r.text.contains("example.com")
+                    || r.text.contains("resource")
+                    || r.text.contains("path")
+            })
+            .map(|r| r.text.as_str())
+            .collect();
+        assert!(
+            !pieces.is_empty(),
+            "the long word must still paint (in pieces)"
+        );
+    }
+
+    #[test]
+    fn layout_plan_uses_ambient_measurer_when_installed() {
+        use crate::text_paint::shared_painter;
+        use std::sync::Arc;
+        // The ambient measurer is what `LayoutEngine` installs for a
+        // pass — with it the layout plan carries real metrics so paint
+        // doesn't replan differently.
+        let _guard = martensite_core::paint::install_ambient_measurer(Arc::new(shared_painter()));
+        let mut m = Markdown::new("a paragraph that wraps onto several lines when narrowed down");
+        laid_out(&mut m, 120.0, 500.0);
+        assert!(
+            m.plan.lock().measured,
+            "layout must wrap with real advances when a measurer is installed"
+        );
+    }
+
+    #[test]
+    fn layout_plan_without_measurer_stays_heuristic() {
+        // No ambient measurer installed on this thread — the plan
+        // falls back to the heuristic and stays marked unmeasured so
+        // paint replans with real metrics.
+        let mut m = Markdown::new("some body text");
+        laid_out(&mut m, 120.0, 500.0);
+        assert!(!m.plan.lock().measured);
     }
 }
