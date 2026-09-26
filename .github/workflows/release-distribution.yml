@@ -1,0 +1,284 @@
+name: Release Distribution & Packaging
+
+# Release Distribution Workflow
+# Builds cross-platform binaries, native desktop installers (WiX .msi, macOS .dmg,
+# Linux Flatpak), generates Ed25519-signed update manifests, emits SLSA Level 3
+# build provenance attestations, and publishes all assets to GitHub Releases.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (e.g. v0.20.0). Defaults to github.ref if triggered by tag."
+        required: false
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ──────────────────────────────────────────────────────────
+  # VALIDATE — extract and verify release tag and metadata
+  # ──────────────────────────────────────────────────────────
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.TAG }}
+      version: ${{ steps.meta.outputs.VERSION }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          RAW_TAG="${{ inputs.release_tag || github.ref_name }}"
+          if [[ "$RAW_TAG" =~ ^refs/tags/ ]]; then
+            RAW_TAG="${RAW_TAG#refs/tags/}"
+          fi
+          echo "TAG=$RAW_TAG" >> "$GITHUB_OUTPUT"
+          VERSION="${RAW_TAG#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved Release Tag: $RAW_TAG (Version: $VERSION)"
+
+  # ──────────────────────────────────────────────────────────
+  # BUILD MATRIX — compile binaries and native installers
+  # ──────────────────────────────────────────────────────────
+  build-distribution:
+    name: Build (${{ matrix.target }})
+    needs: [validate]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows x86_64 + WiX MSI
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+            build_msi: true
+            build_dmg: false
+            build_flatpak: false
+
+          # macOS x86_64 (Intel) + DMG
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive_ext: tar.gz
+            build_msi: false
+            build_dmg: true
+            build_dmg_arch: x86_64
+            build_flatpak: false
+
+          # macOS aarch64 (Apple Silicon) + DMG
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+            build_msi: false
+            build_dmg: true
+            build_dmg_arch: arm64
+            build_flatpak: false
+
+          # Linux x86_64 (GNU) + Flatpak / Tarball
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+            build_msi: false
+            build_dmg: false
+            build_flatpak: true
+
+          # Linux aarch64 (ARM64 GNU)
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive_ext: tar.gz
+            build_msi: false
+            build_dmg: false
+            build_flatpak: false
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Install Linux cross-compiler for aarch64
+      - name: Install Linux Cross Linker
+        if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      # Compile CLI and Widget Catalog release binaries
+      - name: Build Binaries
+        run: cargo build --release --locked -p cargo-martensite -p widget_catalog --target ${{ matrix.target }}
+
+      # Package standalone archives (Unix: tar.gz)
+      - name: Package Archives (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          mkdir -p dist
+
+          # 1. cargo-martensite archive
+          CLI_ASSET="cargo-martensite-${VERSION}-${TARGET}.tar.gz"
+          tar -czf "dist/${CLI_ASSET}" \
+            -C "target/${TARGET}/release" cargo-martensite \
+            -C "$GITHUB_WORKSPACE" LICENSE-APACHE LICENSE-MIT
+
+          # 2. widget_catalog archive
+          CATALOG_ASSET="widget_catalog-${VERSION}-${TARGET}.tar.gz"
+          tar -czf "dist/${CATALOG_ASSET}" \
+            -C "target/${TARGET}/release" widget_catalog \
+            -C "$GITHUB_WORKSPACE" LICENSE-APACHE LICENSE-MIT
+
+      # Package standalone archives (Windows: zip)
+      - name: Package Archives (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ needs.validate.outputs.version }}"
+          $target = "${{ matrix.target }}"
+          New-Item -ItemType Directory -Force dist | Out-Null
+
+          # 1. cargo-martensite archive
+          $cliAsset = "cargo-martensite-$version-$target.zip"
+          Compress-Archive -DestinationPath "dist/$cliAsset" -Path `
+            "target/$target/release/cargo-martensite.exe", `
+            "LICENSE-APACHE", `
+            "LICENSE-MIT"
+
+          # 2. widget_catalog archive
+          $catalogAsset = "widget_catalog-$version-$target.zip"
+          Compress-Archive -DestinationPath "dist/$catalogAsset" -Path `
+            "target/$target/release/widget_catalog.exe", `
+            "LICENSE-APACHE", `
+            "LICENSE-MIT"
+
+      # Windows Native Installer: WiX .msi
+      - name: Build Windows WiX MSI Installer
+        if: ${{ matrix.build_msi }}
+        shell: pwsh
+        run: |
+          & .\packaging\windows\build-msi.ps1 `
+            -Version "${{ needs.validate.outputs.version }}" `
+            -Arch "x64" `
+            -BinDir "target/${{ matrix.target }}/release" `
+            -OutputDir "dist" `
+            -SkipBuild
+
+      # macOS Native Installer: .dmg
+      - name: Build macOS DMG Package
+        if: ${{ matrix.build_dmg }}
+        run: |
+          bash packaging/macos/build-dmg.sh \
+            --version "${{ needs.validate.outputs.version }}" \
+            --arch "${{ matrix.build_dmg_arch }}" \
+            --bin-dir "target/${{ matrix.target }}/release" \
+            --output-dir "dist" \
+            --skip-build
+
+      # Linux Flatpak packaging artifacts
+      - name: Package Linux Flatpak Artifacts
+        if: ${{ matrix.build_flatpak }}
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          # Archive flatpak manifest and integration metadata into dist/
+          tar -czf "dist/martensite-widget-catalog-flatpak-${VERSION}.tar.gz" \
+            -C packaging/linux/flatpak .
+
+      # Upload intermediate artifacts for release consolidation
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: dist/*
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────
+  # CONSOLIDATE, SIGN MANIFEST, SLSA PROVENANCE & RELEASE
+  # ──────────────────────────────────────────────────────────
+  publish-release:
+    name: Sign Manifest & Attest Release
+    needs: [validate, build-distribution]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Python Cryptography
+        run: python3 -m pip install --upgrade pip cryptography
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: dist
+          merge-multiple: true
+
+      - name: Inspect consolidated distribution artifacts
+        run: |
+          echo "=== Consolidated Distribution Artifacts ==="
+          ls -lah dist/
+
+      # Generate SHA256SUMS.txt, update-manifest.json, and Ed25519 signature
+      - name: Generate Signed Update Manifest & Checksums
+        env:
+          RELEASE_ED25519_PRIVATE_KEY: ${{ secrets.RELEASE_ED25519_PRIVATE_KEY }}
+        run: |
+          python3 scripts/generate-update-manifest.py \
+            --dist-dir dist \
+            --version "${{ needs.validate.outputs.version }}" \
+            --channel "stable" \
+            --verify
+
+      # Generate SLSA Level 3 build provenance attestation
+      - name: Generate SLSA Build Provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*"
+
+      # Attach all distribution packages, checksums, and manifests to GitHub Release
+      - name: Upload Assets to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: ${{ needs.validate.outputs.tag }}
+          files: dist/*
+          draft: false
+          prerelease: false
+
+      # Verify that all mandatory distribution assets landed cleanly
+      - name: Verify Distribution Asset Integrity
+        run: |
+          set -euo pipefail
+          echo "=== Verifying Distribution Integrity ==="
+          test -f dist/SHA256SUMS.txt
+          test -f dist/update-manifest.json
+          test -f dist/update-manifest.json.sig
+          test -f dist/update-manifest.pub
+
+          echo "SHA256 Checksums:"
+          cat dist/SHA256SUMS.txt
+
+          echo "Update Manifest:"
+          cat dist/update-manifest.json

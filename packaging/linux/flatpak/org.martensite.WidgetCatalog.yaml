@@ -1,0 +1,57 @@
+app-id: org.martensite.WidgetCatalog
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: widget_catalog
+
+finish-args:
+  # Display server access (Wayland native with X11 fallback)
+  - --socket=wayland
+  - --socket=fallback-x11
+  # Shared memory IPC for zero-copy presentation
+  - --share=ipc
+  # Hardware GPU access (DRI/DRM for wgpu, Vulkan, and OpenGL)
+  - --device=dri
+  # Audio pipeline
+  - --socket=pulseaudio
+  # Desktop notification service
+  - --talk-name=org.freedesktop.Notifications
+  # Portals and settings
+  - --filesystem=xdg-run/dconf
+  - --talk-name=ca.desrt.dconf
+  - --env=DCONF_USER_CONFIG_DIR=.config/dconf
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/widget_catalog/cargo
+    RUST_BACKTRACE: '1'
+    RUSTFLAGS: '-C opt-level=3'
+
+modules:
+  - name: widget_catalog
+    buildsystem: simple
+    build-commands:
+      # Inspect toolchain environment
+      - cargo --version
+      - rustc --version
+      # Compile release binaries for Widget Catalog and CLI
+      - cargo build --release --locked -p widget_catalog -p cargo-martensite
+      # Install binaries into Flatpak application bin path
+      - install -Dm755 target/release/widget_catalog /app/bin/widget_catalog
+      - install -Dm755 target/release/cargo-martensite /app/bin/cargo-martensite
+      # Install desktop integration files
+      - install -Dm644 org.martensite.WidgetCatalog.desktop /app/share/applications/org.martensite.WidgetCatalog.desktop
+      - install -Dm644 org.martensite.WidgetCatalog.metainfo.xml /app/share/metainfo/org.martensite.WidgetCatalog.metainfo.xml
+      - install -Dm644 org.martensite.WidgetCatalog.svg /app/share/icons/hicolor/scalable/apps/org.martensite.WidgetCatalog.svg
+    sources:
+      - type: dir
+        path: ../../..
+      - type: file
+        path: org.martensite.WidgetCatalog.desktop
+      - type: file
+        path: org.martensite.WidgetCatalog.metainfo.xml
+      - type: file
+        path: org.martensite.WidgetCatalog.svg

@@ -1,10 +1,9 @@
-# Milestone Specification: Developer Experience Initiative
+# Milestone Specification: v0.20.0 — Developer Experience & Distribution Initiative
 
-**Status:** Draft — **version assignment pending council.** The
-`v0.19.0` slot shipped as Widget Breadth & Developer Experience
-(2026-09-23), so candidates are `v0.20.0` (shared with or after
-Distribution) or post-1.0. This doc defines the workstreams; it does
-not presume the version.
+**Status:** Ratified — **Assigned to v0.20.0.** The council formally
+unified the Developer Experience Initiative (Workstreams W1–W8) and
+Distribution Packaging & Native Installers (Workstream W9; see
+`docs/milestones/v0.19.0-distribution.md`) under the `v0.20.0` milestone slot.
 
 ## 1. Executive Summary & Objectives
 
@@ -17,9 +16,14 @@ scaffolding, and event observability — while *avoiding the documented
 failure modes* of Flutter DevTools, Dioxus subsecond, Slint live
 preview, and cargo-generate templates (constraints D1–D8).
 
-The governing principle: **feedback-loop speed and honesty**. Every
-workstream is measured by the time between a developer's intent and a
-trustworthy rendered or reported result.
+Simultaneously, Workstream W9 delivers complete end-user distribution
+artifacts (native WiX .msi, macOS .dmg, Linux Flatpak, Ed25519-signed update
+manifests, and SLSA Level 3 build provenance), establishing a verified
+path from development to production release.
+
+The governing principle: **feedback-loop speed, honesty, and reliable delivery**.
+Every workstream is measured by the time between a developer's intent and a
+trustworthy rendered, reported, or packaged result.
 
 ## 2. Evidence Base & Constraints
 
@@ -29,10 +33,12 @@ trustworthy rendered or reported result.
   ADR-0038 (dev-channel transport).
 * Specs: `docs/dx/` — one per workstream, each bound to the D-
   constraints it defends.
+* Distribution Spec: `docs/milestones/v0.19.0-distribution.md` — native
+  packaging architecture and release workflows.
 
 ## 3. Target Crates & Modules
 
-- `tools/cargo-martensite` — CLI expansion (W2, W3)
+- `tools/cargo-martensite` — CLI expansion (W2, W3, W9)
 - `martensite-devtools` — inspector, lint bridge, tweak registry,
   event ledger, error surface (W1, W4, W5, W6, W7)
 - `martensite-macros` — `#[tweak]` / source spans (W5)
@@ -40,14 +46,17 @@ trustworthy rendered or reported result.
   (W6)
 - `martensite-layout` / `-render` — structured diagnostics (W7)
 - `martensite-host` — dev channel, reload contract (ADR-0037/38)
-- `examples/widget_catalog`, `docs/cookbook`, `docs/migration` (W8)
+- `examples/widget_catalog`, `docs/cookbook`, `docs/migration` (W8, W9)
 - `martensite-design-lint` — engine unchanged; bridge consumes it (W4)
+- `packaging/windows/` (WiX MSI), `packaging/macos/` (DMG), `packaging/linux/flatpak/` (Flatpak) (W9)
+- `.github/workflows/release-distribution.yml` & `scripts/generate-update-manifest.py` (W9)
 
 ## 4. Entry Criteria
 
 - `v0.18.0` released (production hardening complete; API audit gives
   the stable surface the docs and scaffold will teach).
-- Version slot assigned by council (see Status).
+- `v0.19.0` released (Widget Breadth & DX foundation established).
+- Version slot assigned and unified as `v0.20.0` by council.
 - ADRs 0036–0038 ratified.
 
 ## 5. Architectural Deliverables — Workstreams
@@ -62,6 +71,7 @@ trustworthy rendered or reported result.
 | W6 | `docs/dx/EVENT_DEBUGGING.md` | `EventRecord` ledger + dispatch instrumentation + env stream + panel | Click on disabled widget → ledger records path + rejection; ledger-off cost ≈ 0 |
 | W7 | `docs/dx/ERROR_SURFACE.md` | Inline overflow tape + diagnostics overlay + structured dev panic | Forced overflow renders hatch+amount; dev panic shows node path + crash bundle |
 | W8 | `docs/dx/ONBOARDING.md` | Widget catalog, 12-recipe cookbook, 3+ migration guides, drift guards | Catalog lint-clean; all recipes CI-compiled; 10-min funnel runs in CI |
+| W9 | `docs/milestones/v0.19.0-distribution.md` | Distribution Packaging & Installers: Windows WiX `.msi`, macOS `.dmg`, Linux Flatpak, CI release workflow, Ed25519 manifests, SLSA Level 3 | All 3 desktop installers compile cleanly in CI; Ed25519 signed manifest verified; SLSA provenance generated |
 
 ## 6. Sequencing
 
@@ -75,6 +85,9 @@ Dependency order (parallelizable within a tier):
 - **Tier 2 (integration):** W5 tweaks (needs inspector panel + reload
   contract), W7 error surface (needs W4 + W6), W8 onboarding (needs W3
   scaffold for the funnel).
+- **Packaging & Distribution (W9):** can proceed concurrently across
+  tiers; exercises the build, packaging, and signing toolchains on `cargo-martensite`
+  and `widget_catalog`.
 - Suggested subagent slots per the established double-loop method:
   implementation agents on disjoint crate/file sets, then adversarial
   reviewers per workstream.
@@ -82,37 +95,42 @@ Dependency order (parallelizable within a tier):
 ## 7. Verified Invariants
 
 1. **Zero-cost-when-off:** every dev feature behind `devtools`-class
-   features is absent — symbols, cost, and surface — in release
-   builds. Verified by a release `nm`/feature-gate test.
+  features is absent — symbols, cost, and surface — in release
+  builds. Verified by a release `nm`/feature-gate test.
 2. **One truth:** the inspector, event ledger, and lint bridge read
-   the *production* hit-test/arena/paint paths — no parallel geometry
-   or shadow scene that can drift (D7).
+  the *production* hit-test/arena/paint paths — no parallel geometry
+  or shadow scene that can drift (D7).
 3. **Never crash:** every dev-tool failure degrades to a diagnostic
-   keeping last-known-good UI live (D3).
+  keeping last-known-good UI live (D3).
 4. **No scores:** findings always identify a node; no aggregate
-   quality metric exists anywhere in the tooling (D7).
+  quality metric exists anywhere in the tooling (D7).
 5. **Version lock:** any wire carries a handshake that fails loudly
-   on mismatch (D1).
+  on mismatch (D1).
+6. **Verifiable provenance:** published distribution packages carry
+  Ed25519-signed update manifests and cryptographically attestable SLSA
+  Level 3 provenance.
 
 ## 8. Exit Criteria & Verification Gates
 
-1. All eight workstream acceptance gates (spec docs) pass.
+1. All nine workstream acceptance gates (spec docs) pass.
 2. The 10-minute first-run funnel executes in CI end-to-end
-   (scaffold_smoke extended).
+  (scaffold_smoke extended).
 3. Standard local gates: fmt, clippy `-D warnings` both feature sets,
-   workspace tests, doctests, `cargo doc -D warnings`.
+  workspace tests, doctests, `cargo doc -D warnings`.
 4. Release-mode binary of the dashboard contains no `devtools`,
-   `tweak`, or dev-channel symbols (invariant 1 gate).
-5. `docs/INDEX.md` and `WORKING_ON.md` updated; each workstream spec
-   linked from both.
+  `tweak`, or dev-channel symbols (invariant 1 gate).
+5. Native installers (Windows WiX MSI, macOS DMG, Linux Flatpak) and
+  signed release manifests build cleanly in CI workflow
+  (`.github/workflows/release-distribution.yml`).
+6. `docs/INDEX.md` and `WORKING_ON.md` updated; each workstream spec
+  linked from both.
 
 ## 9. Risks
 
-- **Scope breadth** — eight workstreams is a lot; Tier-0 sequencing +
+- **Scope breadth** — nine workstreams is a lot; Tier-0 sequencing +
   hotswappable subagent slots (the method used for the design-lint
   expansion) is the mitigation. Each WS is independently shippable —
-  the milestone degrades gracefully to "W1+W2+W3 land" without losing
-  coherence.
+  the milestone degrades gracefully without losing coherence.
 - **Inspector self-inclusion bugs** — the overlay must be excluded
   from a11y/lint/focus; the exclusion contract is a named deliverable
   with its own test, not a side note.
@@ -120,3 +138,5 @@ Dependency order (parallelizable within a tier):
   compile in CI, catalog is lint-gated, scaffold smoke-runs on PR.
 - **Channel creep** — the dev channel stays read-mostly; any write
   RPC requires a new ADR (ADR-0038 makes mutation a separate door).
+- **Installer signing credentials** — documented graceful fallbacks for
+  unsigned development packages and dry runs.

@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- Configurable preprocessor variables with default fallbacks -->
+  <?ifndef Version?>
+    <?define Version = "0.20.0"?>
+  <?endif?>
+  <?ifndef BinDir?>
+    <?define BinDir = "..\..\..\target\release"?>
+  <?endif?>
+  <?ifndef Manufacturer?>
+    <?define Manufacturer = "Martensite Project"?>
+  <?endif?>
+
+  <Product Id="*"
+           Name="Martensite Toolchain and Widget Catalog"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="$(var.Manufacturer)"
+           UpgradeCode="4C7A8F3E-94C3-4E86-9A1D-E1D96D2BC8E1">
+
+    <Package Id="*"
+             InstallerVersion="301"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="Martensite Toolchain and Widget Catalog $(var.Version)"
+             Comments="Martensite is a high-performance reactive GUI framework for Rust" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  AllowSameVersionUpgrades="yes" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Feature Definition -->
+    <Feature Id="MainFeature"
+             Title="Martensite"
+             Level="1"
+             Description="The complete Martensite developer toolchain and widget catalog.">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="ApplicationShortcut" />
+    </Feature>
+
+    <!-- Directory Structure -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Martensite">
+          <Directory Id="BINDIR" Name="bin" />
+        </Directory>
+      </Directory>
+
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Martensite" />
+      </Directory>
+    </Directory>
+
+    <!-- Shortcuts -->
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcut" Guid="B8246EAA-53D2-4874-9C81-80775C5F401A">
+        <Shortcut Id="WidgetCatalogStartMenuShortcut"
+                  Name="Martensite Widget Catalog"
+                  Description="Comprehensive widget catalog and developer reference for Martensite"
+                  Target="[BINDIR]widget_catalog.exe"
+                  WorkingDirectory="BINDIR" />
+        <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\MartensiteProject\Martensite"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Components -->
+    <ComponentGroup Id="ProductComponents" Directory="BINDIR">
+      <Component Id="CargoMartensiteExe" Guid="A3E78736-2E11-4043-98C1-5B3931D80C14" Win64="yes">
+        <File Id="CargoMartensiteExeFile"
+              Source="$(var.BinDir)\cargo-martensite.exe"
+              KeyPath="yes"
+              Checksum="yes" />
+      </Component>
+
+      <Component Id="WidgetCatalogExe" Guid="F2C5E890-41BC-45DA-8809-76885DC652B1" Win64="yes">
+        <File Id="WidgetCatalogExeFile"
+              Source="$(var.BinDir)\widget_catalog.exe"
+              KeyPath="yes"
+              Checksum="yes" />
+      </Component>
+
+      <!-- System PATH Registration -->
+      <Component Id="PathEnvironment" Guid="E63A7D6C-271C-4B47-B9E4-190CC66F12C3" Win64="yes">
+        <CreateFolder />
+        <Environment Id="PATH"
+                     Name="PATH"
+                     Value="[BINDIR]"
+                     Permanent="no"
+                     Part="last"
+                     Action="set"
+                     System="yes" />
+      </Component>
+    </ComponentGroup>
+
+  </Product>
+</Wix>

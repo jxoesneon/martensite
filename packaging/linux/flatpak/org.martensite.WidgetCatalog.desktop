@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Martensite Widget Catalog
+GenericName=GUI Component Showcase
+Comment=Comprehensive widget catalog and developer reference for the Martensite GUI framework
+Exec=widget_catalog
+Icon=org.martensite.WidgetCatalog
+Terminal=false
+Categories=Development;GUIDesigner;Utility;
+Keywords=Rust;GUI;Widget;Catalog;WGPU;Vello;Reactive;Design;
+StartupNotify=true
+StartupWMClass=widget_catalog

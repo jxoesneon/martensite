@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.martensite.WidgetCatalog</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0 OR MIT</project_license>
+  <name>Martensite Widget Catalog</name>
+  <summary>Comprehensive widget catalog and developer reference for Martensite</summary>
+  <description>
+    <p>
+      Martensite is a high-performance reactive GUI framework for Rust.
+      The Widget Catalog provides an interactive showcase of over 250 widgets,
+      layout containers, motion primitives, and design-lint rules with live property inspection.
+    </p>
+    <p>Key Capabilities:</p>
+    <ul>
+      <li>Interactive component exploration across button, text, container, and input families</li>
+      <li>Live theme switching with dark/light mode and perceptual Oklab color palettes</li>
+      <li>Built-in design linter diagnostics (WCAG 2.2, ISA-101, NUREG-0700, FAA-HFDS)</li>
+      <li>Hardware-accelerated WGPU and Vello rendering demonstration</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.martensite.WidgetCatalog.desktop</launchable>
+  <url type="homepage">https://martensite.dev</url>
+  <url type="vcs-browser">https://github.com/jxoesneon/martensite</url>
+  <provides>
+    <binary>widget_catalog</binary>
+    <binary>cargo-martensite</binary>
+  </provides>
+  <releases>
+    <release version="0.20.0" date="2026-09-26">
+      <description>
+        <p>Distribution &amp; Developer Experience release featuring native packaging, in-app inspector, and design lint bridge.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>
