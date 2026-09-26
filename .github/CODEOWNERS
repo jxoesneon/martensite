@@ -1,0 +1,8 @@
+# Martensite Code Ownership & Supply-Chain Governance
+# Critical supply-chain, security, and CI workflow configurations require maintainer review.
+
+/supply-chain/               @jxoesneon
+/.cargo/audit.toml           @jxoesneon
+/deny.toml                   @jxoesneon
+/.github/workflows/          @jxoesneon
+/scripts/workspace-matrix.py @jxoesneon

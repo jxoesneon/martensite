@@ -366,7 +366,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.VERSION }}
           name: ${{ steps.version.outputs.VERSION }}
           body_path: /tmp/full_notes.md
-          draft: false
+          draft: true
           prerelease: false
           # CHANGELOG.md is the canonical source of release notes.
           generate_release_notes: false
@@ -511,7 +511,7 @@ jobs:
           ((startsWith(github.ref, 'refs/tags/v') && needs.github-release.result == 'success') ||
            (inputs.binaries_tag != '' && needs.github-release.result != 'failure' && needs.github-release.result != 'cancelled')) }}
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Assert all release assets exist
         env:
@@ -559,3 +559,13 @@ jobs:
           done
 
           [ "$missing" -eq 0 ]
+
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.binaries_tag || github.ref_name }}"
+          echo "Publishing verified release $TAG (converting from draft to public)..."
+          gh release edit "$TAG" -R "${{ github.repository }}" --draft=false
+          echo "Release $TAG is now publicly available."

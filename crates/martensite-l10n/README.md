@@ -34,7 +34,7 @@ Add `martensite-l10n` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-l10n = "0.20.0"
+martensite-l10n = "0.20.1"
 ```
 
 Reactive localization with dynamic locale switching:

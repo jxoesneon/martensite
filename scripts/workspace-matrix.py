@@ -11,6 +11,10 @@ Subcommands (run from the repository root):
 
     publish-order   topo-sorted publishable crates, one per line
     publishable     publishable crates (unsorted), one per line
+    blast-radius [base]
+                    reverse-dependency closure of changed crates relative
+                    to base ref (defaults to origin/main), with saturation
+                    fallback to all publishable crates
     semver-checks   crates with a checkable API surface: publishable,
                     has a lib target, and tracks the workspace version
                     (excludes proc-macro crates and independently-
@@ -190,6 +194,85 @@ def main() -> int:
 
     if cmd == "publish-order":
         for n in topo_order(ws, publishable_set(ws)):
+            print(n)
+        return 0
+
+    if cmd == "blast-radius":
+        base_ref = sys.argv[2] if len(sys.argv) > 2 else "origin/main"
+        changed_files = []
+        try:
+            diff_out = subprocess.check_output(
+                ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
+                stderr=subprocess.DEVNULL,
+            ).decode().splitlines()
+            changed_files = [f.strip() for f in diff_out if f.strip()]
+        except Exception:
+            try:
+                diff_out = subprocess.check_output(
+                    ["git", "diff", "--name-only", "HEAD~1"],
+                    stderr=subprocess.DEVNULL,
+                ).decode().splitlines()
+                changed_files = [f.strip() for f in diff_out if f.strip()]
+            except Exception:
+                changed_files = []
+
+        all_publishable = sorted(publishable_set(ws))
+        if not changed_files:
+            for n in all_publishable:
+                print(n)
+            return 0
+
+        # Global triggers: root configs, scripts, or core facade modifications
+        # mandate a full workspace verification pass.
+        global_triggers = (
+            "Cargo.lock",
+            "Cargo.toml",
+            ".cargo/",
+            ".github/",
+            "scripts/",
+            "benches/",
+            "crates/martensite/",
+        )
+        if any(f.startswith(global_triggers) or f in ("Cargo.lock", "Cargo.toml") for f in changed_files):
+            for n in all_publishable:
+                print(n)
+            return 0
+
+        direct_crates = set()
+        for f in changed_files:
+            if f.startswith("crates/"):
+                parts = f.split("/")
+                if len(parts) >= 2 and parts[1] in ws:
+                    direct_crates.add(parts[1])
+            elif f.startswith("tools/cargo-martensite"):
+                if "cargo-martensite" in ws:
+                    direct_crates.add("cargo-martensite")
+
+        if not direct_crates:
+            return 0
+
+        rev_deps = {n: set() for n in ws}
+        for n in ws:
+            for dep in workspace_deps(ws[n], ws.keys()):
+                rev_deps[dep].add(n)
+
+        closure = set(direct_crates)
+        queue = list(direct_crates)
+        while queue:
+            cur = queue.pop(0)
+            for parent in rev_deps.get(cur, ()):
+                if parent not in closure:
+                    closure.add(parent)
+                    queue.append(parent)
+
+        # Saturation fallback: if over 35% of crates or the root facade are impacted
+        if len(closure) > 15 or "martensite" in closure:
+            for n in all_publishable:
+                print(n)
+            return 0
+
+        affected = sorted(c for c in closure if c in all_publishable)
+        for n in affected:
             print(n)
         return 0
 

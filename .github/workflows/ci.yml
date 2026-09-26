@@ -4,8 +4,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.event.merge_group.head_ref || (github.event_name == 'pull_request' && github.head_ref || github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   push:
@@ -15,11 +15,14 @@ on:
   # run the entire suite twice per release.
   pull_request:
     branches: [main]
+  merge_group:
+    types: [checks_requested]
   # Allow the publish workflow to reuse this pipeline without duplicating jobs.
   workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
   RUSTFLAGS: "-D warnings"
 
 jobs:
@@ -143,10 +146,10 @@ jobs:
       # FFmpeg/libva are needed on BOTH legs: the industrial_dashboard
       # workspace member enables martensite's decoder-* features directly,
       # so even the default graph compiles cros-libva/ffmpeg on Linux.
-      - name: Install Mesa + Pango/Cairo + FFmpeg/libva
+      - name: Install mold + Mesa + Pango/Cairo + FFmpeg/libva
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1 \
+          sudo apt-get install -y mold libvulkan1 mesa-vulkan-drivers libegl1 \
             libcairo2-dev libpango1.0-dev libglib2.0-dev pkg-config \
             libva-dev libavcodec-dev libavutil-dev libswscale-dev \
             libavfilter-dev libavdevice-dev libavformat-dev
@@ -155,6 +158,9 @@ jobs:
       # --list` would also enumerate doctests, which nextest never runs —
       # that mismatch is what the parity check exists to catch, not hide.
       - name: Build + archive tests
+        env:
+          RUSTFLAGS: "-D warnings -C link-arg=-fuse-ld=mold"
+          NEXTEST_ZSTD_LEVEL: "1"
         run: >-
           cargo nextest archive --workspace
           --bins --lib --tests
@@ -794,4 +800,53 @@ jobs:
         # crates reuse real names (stubs/martensite collides with
         # crates/martensite) and -p resolution is ambiguous for them.
         run: cargo semver-checks --manifest-path crates/${{ matrix.crate }}/Cargo.toml --default-features
+
+  # Unified status check gatekeeper for branch protection and release gating.
+  # Aggregates all upstream jobs and programmatically ensures none failed or were cancelled.
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - style-and-lints
+      - version-consistency
+      - purity-and-bans
+      - cargo-vet
+      - build-tests
+      - test-suite
+      - doc-tests
+      - doc-tests-facade
+      - ignored-tests
+      - audit
+      - docs
+      - benchmarks
+      - performance-gates
+      - scaffold-smoke
+      - shell-linux-integration
+      - shell-windows-integration
+      - ffi-macos-check
+      - ffi-windows-check
+      - adapters
+      - target-checks
+      - workspace-matrix
+      - semver-checks
+    steps:
+      - name: Verify All Preceding Gates
+        run: |
+          python3 -c '
+          import json, sys
+          raw = """${{ toJSON(needs) }}"""
+          needs = json.loads(raw)
+          failed = []
+          for name, data in needs.items():
+              res = data.get("result")
+              if res in ("failure", "cancelled"):
+                  failed.append(f"{name}: {res}")
+          if failed:
+              print("::error::One or more required CI gates failed:")
+              for f in failed:
+                  print(f"  - {f}")
+              sys.exit(1)
+          print(f"CI Gate passed: all {len(needs)} gates verified successfully.")
+          '
 

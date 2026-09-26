@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-09-26
+
+### Added — CI/CD Pipeline Hardening & Stability Refinements
+
+- **Unified Status Gate (`ci-gate`)** — Aggregates all 22 matrix, architecture,
+  and policy verification jobs into a terminal aggregator running under
+  `if: always()`. Programmatically evaluates upstream results to provide an
+  unambiguous status check for branch protection rules and automated releases.
+- **Monorepo Blast-Radius Closure** — Computes the reverse-dependency closure of
+  changed crates using Breadth-First Search (BFS) over `cargo metadata` in
+  `scripts/workspace-matrix.py`. Implements a 35% saturation fallback threshold
+  and global root triggers (`Cargo.lock`, `Cargo.toml`, `.cargo/*`, `.github/*`,
+  `scripts/*`, `benches/*`, `crates/martensite/*`) to optimize runner minutes while
+  retaining complete safety.
+- **Supply-Chain Code Ownership** — Added `.github/CODEOWNERS` mandating maintainer
+  approval for critical supply-chain surfaces, including `/supply-chain/`,
+  `/.cargo/audit.toml`, `/deny.toml`, `/.github/workflows/`, and
+  `/scripts/workspace-matrix.py`.
+- **Hermetic Debug Symbols & Linker Profiles** — Added `[profile.test]` and
+  `[profile.ci]` with `debug = 1` and `split-debuginfo = "off"` to preserve
+  symbolicated panic backtraces across distributed nextest execution shards without
+  detached `.o` trees. Configured `codegen-units = 32` and `opt-level = 2` for
+  workspace dependencies.
+- **Vello Bump Buffer & Software Adapter Assertions** — Hardened
+  `gpu_cpu_dssim_parity` tests in `crates/martensite-render-test/tests/parity.rs`
+  with non-zero pixel entropy assertions (`assert!(non_zero_gpu > 100)`) to guard
+  against silent Vello bump allocator overflows under Mesa Lavapipe emulation.
+- **Draft-Verify-Publish Release Gating** — GitHub Releases are staged initially
+  with `draft: true` and only converted to public releases upon 100% cryptographic
+  asset and binary package verification in `verify-release-assets`.
+
 ## [0.20.0] - 2026-09-26
 
 ### Added — Developer Experience & Diagnostics (W1–W5)

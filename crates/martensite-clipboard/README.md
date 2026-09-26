@@ -34,7 +34,7 @@ Add `martensite-clipboard` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-clipboard = "0.20.0"
+martensite-clipboard = "0.20.1"
 ```
 
 Offering multiple formats with lazy generation:

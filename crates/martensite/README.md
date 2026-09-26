@@ -40,7 +40,7 @@ Add `martensite` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite = "0.20.0"
+martensite = "0.20.1"
 ```
 
 Create a reactive interface:

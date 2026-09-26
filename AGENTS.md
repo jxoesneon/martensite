@@ -37,7 +37,10 @@ Release automatically after publishing, extracting notes from
 showing only commit messages on the GitHub tags page.
 
 **Fix**: The `github-release` job in `publish.yml` extracts the relevant
-section from `CHANGELOG.md` and creates a proper GitHub Release.
+section from `CHANGELOG.md` and creates a proper GitHub Release in `draft: true`
+mode. Following binary compilation and cryptographic asset verification by
+`verify-release-assets`, the release is automatically converted to public
+(`draft: false`). This guarantees users never observe half-uploaded releases.
 
 ### 3. Doc examples are required for public API items
 
@@ -142,6 +145,36 @@ serialized via the `system-clipboard` test-group in
 that may be absent must serve a stub in-process (see
 `status_notifier_item_*` in martensite-shell) or probe-and-skip with a
 printed reason — never `continue-on-error`.
+
+### 9. Unified Status Gate (`ci-gate`) for Branch Protection
+
+All 21 matrix and verification jobs roll up into a single terminal
+`ci-gate` aggregator. It runs with `if: always()` and programmatically
+inspects all upstream job states:
+- Failed or cancelled upstream jobs cause `ci-gate` to exit with an error.
+- Permissibly skipped jobs (such as heavy adapters on PRs) are ignored.
+This provides a single, unambiguous status check for GitHub branch
+protection rules without brittle per-shard job roster matching.
+
+### 10. Monorepo Blast-Radius Closure with Saturation Fallback
+
+PR verification uses `scripts/workspace-matrix.py blast-radius` to
+compute the reverse-dependency closure via BFS over `cargo metadata`.
+Modifications to global surfaces (`Cargo.lock`, `Cargo.toml`, `.cargo/*`,
+`.github/*`, `scripts/*`, `benches/*`, or `crates/martensite/*`) or any
+change impacting over 35% of workspace crates automatically triggers a
+saturation fallback, scheduling the full workspace test suite.
+
+### 11. Hermetic Debug Symbols & Linker Tuning
+
+Test compilation uses `[profile.test]` and `[profile.ci]` with:
+- `debug = 1` (line tables only, cutting binary sizes by 80%).
+- `split-debuginfo = "off"` (self-contained binaries so distributed
+  nextest shards retain symbolicated panic backtraces without `.o` trees).
+- `codegen-units = 32` (prevents thread contention on 4-vCPU runners).
+- `opt-level = 2` for `package."*"` dependencies (ensures layout and
+  compute shaders run at native performance in test runs).
+- Target-isolated linkers: `mold` on Linux GNU and `lld-link` on Windows MSVC.
 
 ## Verification Checklist (run before every release)
 

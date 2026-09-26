@@ -36,7 +36,7 @@ Add `martensite-layout` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-layout = "0.20.0"
+martensite-layout = "0.20.1"
 ```
 
 Computing layout geometry:

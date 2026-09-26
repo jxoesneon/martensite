@@ -338,10 +338,16 @@ mod gpu_cpu_parity {
     #[test]
     #[ignore = "requires a software Vulkan adapter (Lavapipe/llvmpipe)"]
     fn gpu_cpu_dssim_parity() {
-        // Acquire the CPU fallback adapter (llvmpipe). If no software Vulkan
-        // driver is available, skip gracefully rather than failing.
+        // Acquire the CPU fallback adapter (llvmpipe). If running under CI,
+        // software Vulkan must initialize successfully; in local runs without
+        // Lavapipe installed, skip gracefully.
         let ctx = match GpuContext::with_cpu_fallback() {
             Ok(ctx) => ctx,
+            Err(e) if std::env::var("CI").is_ok() => {
+                panic!(
+                    "Software Vulkan adapter (Lavapipe/llvmpipe) failed to initialize in CI: {e:?}"
+                );
+            }
             Err(_) => return,
         };
 
@@ -369,6 +375,14 @@ mod gpu_cpu_parity {
         let expected = (W as usize) * (H as usize) * 4;
         assert_eq!(cpu_pixels.len(), expected, "CPU pixel buffer size");
         assert_eq!(gpu_pixels.len(), expected, "GPU pixel buffer size");
+
+        // Guard against silent Vello bump-buffer overflows producing empty/black frames:
+        let non_zero_gpu = gpu_pixels.iter().filter(|&&b| b != 0).count();
+        assert!(
+            non_zero_gpu > 100,
+            "GPU readback returned empty/black frame (non-zero bytes: {non_zero_gpu}); \
+             check for Vello bump allocator overflow or software adapter stall"
+        );
 
         // Demultiply both premultiplied buffers to straight alpha before the
         // grayscale conversion used by the DSSIM metric.
