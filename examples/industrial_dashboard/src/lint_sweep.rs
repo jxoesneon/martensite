@@ -291,6 +291,12 @@ pub fn run(cfg: &LintConfig, opts: &SweepOptions) -> SweepReport {
             } else {
                 arena.set_text_painter(martensite::text_paint::shared_painter());
             }
+            // Manual layout bypasses `LayoutEngine` — install the
+            // ambient measurer so widget `measure` calls see the same
+            // glyph metrics the paint pass will use.
+            let _measurer = arena
+                .text_painter_shared()
+                .map(martensite::core::paint::install_ambient_measurer);
             let mut hot = HotNode::default();
             hot.flags |= NodeFlags::VISIBLE;
             let root = arena.insert_with_widget(hot, Box::new(view));

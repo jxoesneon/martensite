@@ -374,8 +374,12 @@ impl Widget for MessageList {
             if y > self.bounds.max_y() {
                 break;
             }
-            // Bubble width by body length.
-            let bw = (m.body.chars().count() as f32 * text_sz * 0.52 + bubble_pad * 2.0)
+            // Bubble width by body advance — real glyph metrics when
+            // a painter is resolved, per-char estimate otherwise.
+            let body_w = painter
+                .and_then(|p| p.measure_text(&m.body, text_sz))
+                .unwrap_or_else(|| m.body.chars().count() as f32 * text_sz * 0.52);
+            let bw = (body_w + bubble_pad * 2.0)
                 .min(max_bubble)
                 .max(bubble_pad * 4.0);
             let bh = row - meta_sz * 1.6;

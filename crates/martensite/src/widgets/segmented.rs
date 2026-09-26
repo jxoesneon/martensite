@@ -161,14 +161,18 @@ impl Segment {
 
 impl Widget for Segment {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        // Approximate label width — real shaping lives in the
-        // `martensite-text` pipeline; this is the same coarse
-        // per-grapheme estimate `RadioOption` uses.
-        let w = cx
-            .pt(2.0 * TEXT_PAD_X
-                + 8.0 * self.label.chars().count() as f32
-                + self.badge.as_ref().map_or(0.0, |b| b.width_pt() + 6.0))
-            .max(cx.pt(SEG_MIN_W));
+        // Real glyph advance when a measurer is installed — the per-
+        // grapheme estimate under-measures wide faces, and `Segmented`
+        // distributes measured widths across cells so a short measure
+        // clips the painted label mid-glyph. The estimate stays as the
+        // no-painter fallback (the same coarse one `RadioOption` uses).
+        let label_w =
+            crate::text_paint::measure_label(&self.text_painter, cx.scale, &self.label, 14.0)
+                .unwrap_or_else(|| cx.pt(8.0 * self.label.chars().count() as f32));
+        let w = (cx.pt(2.0 * TEXT_PAD_X)
+            + label_w
+            + cx.pt(self.badge.as_ref().map_or(0.0, |b| b.width_pt() + 6.0)))
+        .max(cx.pt(SEG_MIN_W));
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
             cx.pt(STRIP_H).min(constraints.max_size.y.max(0.0)),
@@ -811,16 +815,42 @@ impl Widget for Segmented {
         if n == 0 {
             return;
         }
+        // Shares follow measured content width: equal shares clip a
+        // long label mid-glyph while a short one hoards slack. An
+        // equal split remains the fallback when the measures carry no
+        // signal — and coincides with it when every label is the same
+        // length, keeping the M3 look for uniform sets.
+        let intrinsic: Vec<f32> = self
+            .segments
+            .iter_mut()
+            .map(|segment| {
+                let c = LayoutConstraints {
+                    min_size: Vec2::ZERO,
+                    max_size: if self.direction.is_row() {
+                        Vec2::new(f32::MAX, bounds.height())
+                    } else {
+                        Vec2::new(bounds.width(), f32::MAX)
+                    },
+                };
+                self.direction.main(segment.measure(cx, c))
+            })
+            .collect();
+        let total: f32 = intrinsic.iter().copied().sum();
+        let mut acc = 0.0f32;
         for (i, segment) in self.segments.iter_mut().enumerate() {
-            // Equal segments — the NSSegmentedControl/M3 contract; the
-            // last segment absorbs the rounding remainder.
+            let start = acc;
+            acc += if total > 0.0 {
+                intrinsic[i] / total
+            } else {
+                1.0 / n as f32
+            };
             let rect = if self.direction.is_row() {
-                let x0 = bounds.min_x() + bounds.width() * i as f32 / n as f32;
-                let x1 = bounds.min_x() + bounds.width() * (i + 1) as f32 / n as f32;
+                let x0 = bounds.min_x() + bounds.width() * start;
+                let x1 = bounds.min_x() + bounds.width() * acc;
                 Rect::new(x0, bounds.min_y(), (x1 - x0).max(0.0), bounds.height())
             } else {
-                let y0 = bounds.min_y() + bounds.height() * i as f32 / n as f32;
-                let y1 = bounds.min_y() + bounds.height() * (i + 1) as f32 / n as f32;
+                let y0 = bounds.min_y() + bounds.height() * start;
+                let y1 = bounds.min_y() + bounds.height() * acc;
                 Rect::new(bounds.min_x(), y0, bounds.width(), (y1 - y0).max(0.0))
             };
             self.segment_bounds.push(rect);

@@ -508,6 +508,14 @@ impl LayoutEngine {
         root: WidgetId,
         available: Size<AvailableSpace>,
     ) -> Result<(), LayoutError> {
+        // Install the arena's ambient painter as this thread's text
+        // measurer so `LayoutContext::measure_text` sees real glyph
+        // metrics during `Widget::measure`/`layout` instead of falling
+        // back to per-widget estimates.
+        let _measurer = arena
+            .text_painter_shared()
+            .map(martensite_core::paint::install_ambient_measurer);
+
         // Ensure the tree is synced
         self.sync_from_arena(arena, root);
 

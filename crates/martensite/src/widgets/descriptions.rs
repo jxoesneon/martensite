@@ -511,7 +511,7 @@ impl Widget for Descriptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use martensite_core::HotNode;
+    use martensite_core::{HotNode, PaintCommand, PaintList, Theme};
 
     fn laid_out(d: &mut Descriptions, w: f32, h: f32) {
         let mut hot = HotNode::default();
@@ -567,6 +567,41 @@ mod tests {
             .with_item(DescriptionItem::new("a", "1").span(2));
         laid_out(&mut d, 400.0, 100.0);
         assert_eq!(d.child_bounds(0).unwrap().width(), 400.0);
+    }
+
+    /// Values must actually reach the paint list — the dashboard
+    /// inspector showed labels-only cells; without a painter the
+    /// `DrawText` fallback keeps the string so it's directly
+    /// assertable.
+    #[test]
+    fn paint_emits_label_and_content() {
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut d = Descriptions::new()
+            .item("WO", "WO-4469")
+            .item("STATUS", "open");
+        laid_out(&mut d, 400.0, 100.0);
+        {
+            let mut cx = PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 400.0, 100.0),
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            };
+            d.paint(&mut cx);
+        }
+        let texts: Vec<&str> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::DrawText(_, t, _, _) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        for want in ["WO", "WO-4469", "STATUS", "open"] {
+            assert!(texts.contains(&want), "missing {want}: {texts:?}");
+        }
     }
 
     #[test]

@@ -355,12 +355,38 @@ fn dispatch(m: &PlantModel, cmd: Cmd) {
 // WORK ORDER FORM — the inspector. Every field writes `update_wo`.
 // ---------------------------------------------------------------------------
 
+/// The inspector card's contents for `wo` — shared by the `Bound`
+/// seed and its push reflect so the first `measure` already reserves
+/// the card's real height. `Bound`'s post-push re-layout replays the
+/// *last allotted* bounds, so a re-seat that added rows at tick time
+/// would paint items outside the allocated rect (the clip cull drops
+/// them — the blank value column).
+fn wo_card(wo: &WorkOrder, m: &PlantModel) -> Descriptions {
+    Descriptions::new()
+        .title("INSPECTED WORK ORDER")
+        .bordered(true)
+        .item("WO", format!("WO-{}", wo.id))
+        .item("ASSET", m.asset_name(wo.asset))
+        .item("STATUS", wo.status.label())
+        .item("PRIORITY", wo.priority.label())
+        .item("DUE", WEEKDAYS[wo.due_day as usize % 7])
+        .item("PROGRESS", format!("{:.0}%", wo.progress * 100.0))
+}
+
 fn work_order_form(model: &PlantModel) -> Page {
-    // Live inspector card — rebuilt only when the shown summary moves.
+    let wo0 = sel_wo(model);
+
+    // Live inspector card — seeded with the selected WO's rows (the
+    // shape the push will reflect) and rebuilt only when the shown
+    // summary moves.
     let header = Bound::new(
-        Descriptions::new()
-            .title("INSPECTED WORK ORDER")
-            .bordered(true),
+        wo0.as_ref()
+            .map(|wo| wo_card(wo, model))
+            .unwrap_or_else(|| {
+                Descriptions::new()
+                    .title("INSPECTED WORK ORDER")
+                    .bordered(true)
+            }),
         model,
     )
     .push({
@@ -385,19 +411,9 @@ fn work_order_form(model: &PlantModel) -> Page {
                 return;
             }
             *g = summary;
-            *w = Descriptions::new()
-                .title("INSPECTED WORK ORDER")
-                .bordered(true)
-                .item("WO", format!("WO-{}", wo.id))
-                .item("ASSET", m.asset_name(wo.asset))
-                .item("STATUS", wo.status.label())
-                .item("PRIORITY", wo.priority.label())
-                .item("DUE", WEEKDAYS[wo.due_day as usize % 7])
-                .item("PROGRESS", format!("{:.0}%", wo.progress * 100.0));
+            *w = wo_card(&wo, m);
         }
     });
-
-    let wo0 = sel_wo(model);
 
     // Title — write-through; the title store interns edited strings.
     let title = Bound::new(
@@ -2464,8 +2480,11 @@ fn wo_rail(model: &PlantModel) -> Flex {
                 }
             })
     };
-    let detail = Bound::new(Descriptions::new(), model).push(|d: &mut Descriptions, m| {
-        *d = match sel_wo(m) {
+    // Same seed-shape rule as `wo_card`: mount with the rows the push
+    // will reflect or the first measure under-reserves height and the
+    // clip cull drops every item.
+    fn wo_detail(w: Option<&WorkOrder>, m: &PlantModel) -> Descriptions {
+        match w {
             Some(w) => Descriptions::new()
                 .title(format!("WO-{}", w.id))
                 .bordered(true)
@@ -2476,8 +2495,14 @@ fn wo_rail(model: &PlantModel) -> Flex {
             None => Descriptions::new()
                 .title("WO")
                 .item("state", "none selected"),
-        };
-    });
+        }
+    }
+    let detail = Bound::new(wo_detail(sel_wo(model).as_ref(), model), model).push(
+        |d: &mut Descriptions, m| {
+            let w = sel_wo(m);
+            *d = wo_detail(w.as_ref(), m);
+        },
+    );
     Flex::column().gap(ZONE_GAP).child(pick).child(detail)
 }
 
@@ -2605,6 +2630,81 @@ mod tests {
             .find(|w| w.id == 4470)
             .unwrap();
         assert_eq!(wo.status, WoStatus::Done);
+    }
+
+    /// The inspector card must emit every item's label AND value —
+    /// the `Bound` seed once mounted a title-only `Descriptions`, so
+    /// `measure` reserved ~one row; the push then re-seated six rows
+    /// into those stale bounds and the clip cull dropped all of them
+    /// (the "blank value column" frame defect).
+    #[test]
+    fn inspector_items_reach_paint_list() {
+        use martensite::core::{
+            HotNode, LayoutContext, NodeFlags, PaintCommand, PaintList, Rect, WidgetArena,
+        };
+        use martensite::widgets::container::Container;
+        use martensite::widgets::scrollview::ScrollView;
+
+        let m = model();
+        m.warm_demo_state();
+        m.zone_width[2].set(600.0);
+        let page = work_order_form(&m);
+        let view = ScrollView::new(
+            Container::new()
+                .padding_uniform(crate::zone::ZONE_PAD)
+                .child(page),
+        );
+        let mut arena = WidgetArena::new();
+        arena.set_theme(martensite::theme::tokens::default_dark());
+        arena.set_scale_factor(2.0);
+        let mut hot = HotNode::default();
+        hot.flags |= NodeFlags::VISIBLE;
+        let root = arena.insert_with_widget(hot, Box::new(view));
+        let bounds = Rect::new(0.0, 0.0, 1200.0, 350.0);
+        if let Some((hot, cold)) = arena.get_both_mut(root) {
+            hot.bounds = bounds;
+            cold.widget
+                .layout(&mut LayoutContext { hot, scale: 2.0 }, bounds);
+        }
+        fn tick_all(w: &mut dyn martensite::core::Widget, dt: Duration) {
+            let _ = w.tick(dt);
+            for i in 0..w.child_count() {
+                if w.child_bounds(i).is_none() {
+                    continue;
+                }
+                if let Some(c) = w.child_mut(i) {
+                    tick_all(c, dt);
+                }
+            }
+        }
+        if let Some(cold) = arena.get_cold_mut(root) {
+            tick_all(&mut *cold.widget, Duration::from_millis(16));
+        }
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+        let texts: Vec<&str> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::DrawText(_, t, _, _) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        for want in [
+            "INSPECTED WORK ORDER",
+            "WO",
+            "ASSET",
+            "STATUS",
+            "PRIORITY",
+            "DUE",
+            "PROGRESS",
+        ] {
+            assert!(texts.contains(&want), "missing inspector label {want}");
+        }
+        assert!(
+            texts.iter().any(|t| t.starts_with("WO-4")),
+            "missing inspector WO value: {texts:?}"
+        );
     }
 
     /// The reference week anchor really is a Monday (the due-day

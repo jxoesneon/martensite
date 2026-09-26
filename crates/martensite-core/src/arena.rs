@@ -360,6 +360,42 @@ impl WidgetArena {
         self.text_painter.as_deref()
     }
 
+    /// Shared handle to the ambient painter — for installing the
+    /// [ambient measurer](crate::paint::install_ambient_measurer)
+    /// around manual layout passes that bypass `LayoutEngine`, so
+    /// [`LayoutContext::measure_text`](crate::LayoutContext::measure_text)
+    /// sees the same glyph metrics the paint pass will use.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::paint::TextShaper;
+    /// use martensite_core::WidgetArena;
+    ///
+    /// struct Nop;
+    /// impl TextShaper for Nop {
+    ///     fn paint_shaped_text(
+    ///         &self,
+    ///         _: &mut martensite_core::PaintList,
+    ///         _: kurbo::Point,
+    ///         _: &str,
+    ///         _: f32,
+    ///         _: [u8; 4],
+    ///     ) {
+    ///     }
+    /// }
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// assert!(arena.text_painter_shared().is_none());
+    /// arena.set_text_painter(Nop);
+    /// assert!(arena.text_painter_shared().is_some());
+    /// ```
+    pub fn text_painter_shared(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::paint::TextShaper + Send + Sync>> {
+        self.text_painter.clone()
+    }
+
     /// Returns the arena-owned in-window [`OverlayLayer`].
     ///
     /// The layer holds popups opened by widgets (e.g. `Dropdown`,

@@ -719,6 +719,13 @@ impl App {
         let Some(arena) = &mut self.arena else {
             return;
         };
+        // This manual path bypasses `LayoutEngine`, so it must install
+        // the ambient text measurer itself — otherwise widget
+        // `measure` calls fall back to per-char estimates that
+        // disagree with the glyphs the paint pass emits.
+        let _measurer = arena
+            .text_painter_shared()
+            .map(martensite::core::paint::install_ambient_measurer);
         let s = self.scale.get();
         let (w, h) = (f64::from(width), f64::from(height));
         // Popups clamp into the real window — without this the layer's
@@ -2959,6 +2966,12 @@ mod tests {
                 // Fixture painter, not shared_painter — the audit must
                 // not drift with the host's installed font set.
                 arena.set_text_painter(crate::frames::FixtureTextShaper::new());
+                // Manual layout bypasses `LayoutEngine`, so install
+                // the measurer it would: widget `measure` calls then
+                // see fixture glyph metrics, not the estimate.
+                let _measurer = arena
+                    .text_painter_shared()
+                    .map(martensite::core::paint::install_ambient_measurer);
                 let mut hot = HotNode::default();
                 hot.flags |= NodeFlags::VISIBLE;
                 let root = arena.insert_with_widget(hot, Box::new(view));

@@ -805,8 +805,11 @@ fn registry(m: &PlantModel) -> Page {
     let search = {
         let mut last_push = m.filter_text.get();
         Bound::new(
+            // The placeholder doesn't scroll — it's painted once and
+            // hard-clipped at the field's text lane, so it must fit
+            // the lane (adornments eat ~40pt of the 160pt mount).
             SearchField::new()
-                .placeholder("filter assets — name · serial · status")
+                .placeholder("filter assets…")
                 .label("registry filter"),
             m,
         )
@@ -927,12 +930,19 @@ fn registry(m: &PlantModel) -> Page {
     // have no mutator).
     let crumb = {
         let mut last = (m.selected_asset.get(), assets_sig(m));
+        // The widget keeps the trailing two segments even when they
+        // overflow the band, truncating them mid-glyph — so the
+        // segments are pre-fit here: the em-dash process suffix
+        // ("Line 2 — Welding") is redundant next to the site crumb,
+        // and anything still long is elided to a crumb-sized lane.
+        // Index ↔ ancestry mapping is preserved for the nav pull.
         let build = |m: &PlantModel| {
-            Breadcrumb::new().segments(
-                ancestry(m, m.selected_asset.get().unwrap_or(1))
-                    .iter()
-                    .map(|a| a.name),
-            )
+            Breadcrumb::new().segments(ancestry(m, m.selected_asset.get().unwrap_or(1)).iter().map(
+                |a| {
+                    let short = a.name.split(" — ").next().unwrap_or(a.name);
+                    elide_to(short, 120.0, 13.0)
+                },
+            ))
         };
         Bound::new(build(m), m)
             .pull(|w: &mut Breadcrumb, m| {
@@ -1106,8 +1116,14 @@ fn registry(m: &PlantModel) -> Page {
         let sig2 = split.clone();
         Bound::new(
             SplitView::horizontal()
-                .first(tree)
-                .second(table)
+                // Both panes are fixed-geometry surfaces narrower
+                // than their content on small widths: the tree's
+                // measure under-reports (per-char estimate), the
+                // table's declared columns are honest but wide.
+                // Scroll-mounted so the pane edge is a scrollport
+                // cut, not a mid-label clip.
+                .first(ScrollView::horizontal(MinW::new(240.0, tree)))
+                .second(ScrollView::horizontal(table))
                 .ratio(split.get()),
             m,
         )
@@ -1245,14 +1261,17 @@ fn registry(m: &PlantModel) -> Page {
         let build = |m: &PlantModel| {
             let a = m.assets.get();
             let n = |k: AssetKind| a.iter().filter(|x| x.kind == k).count();
+            // Single column: the rail's two-up cells leave ~50 pt of
+            // label lane — "Plant OEE" alone needs ~70. Row names stay
+            // ≤6 chars; the card title carries the plant context.
             Descriptions::new()
                 .title("Plant registry")
                 .item("Sites", n(AssetKind::Site).to_string())
                 .item("Lines", n(AssetKind::Line).to_string())
                 .item("Cells", n(AssetKind::Cell).to_string())
-                .item("Plant OEE", format!("{:.0}%", m.plant_oee() * 100.0))
+                .item("OEE", format!("{:.0}%", m.plant_oee() * 100.0))
                 .bordered(true)
-                .column_count(2)
+                .column_count(1)
         };
         let mut last = assets_sig(m);
         Bound::new(build(m), m).push(move |w: &mut Descriptions, m| {
@@ -1270,18 +1289,23 @@ fn registry(m: &PlantModel) -> Page {
     // to LOCATE — the rail keeps only detail-of-selection (C1).
     let sel_card = {
         let build = |m: &PlantModel| match sel_asset(m) {
+            // Single column at rail width: two-up cells give each
+            // value lane ~70 pt — less than one serial. Labels stay
+            // ≤6 chars ("Since" reads as the install year); values
+            // are pre-fit to the ~86 pt lane (the serial lives on in
+            // the crumb/nav surfaces at full length).
             Some(a) => Descriptions::new()
                 .title(a.name)
                 .item("Kind", kind_name(a.kind))
-                .item("Status", a.status.label())
+                .item("Status", elide_to(a.status.label(), 80.0, 13.0))
                 .item("OEE", format!("{:.0}%", a.oee * 100.0))
-                .item("Serial", a.serial)
-                .item("Installed", a.installed.to_string())
+                .item("Serial", elide_to(a.serial, 80.0, 13.0))
+                .item("Since", a.installed.to_string())
                 .bordered(true)
-                .column_count(2),
+                .column_count(1),
             None => Descriptions::new()
                 .title("No selection")
-                .item("—", "pick an asset in the register")
+                .item("—", "pick an asset in the list")
                 .column_count(1),
         };
         let mut last = (m.selected_asset.get(), assets_sig(m));
@@ -1416,7 +1440,9 @@ fn registry(m: &PlantModel) -> Page {
             strip()
                 .child(open_detail)
                 .child(Separator::vertical())
-                .child(search)
+                // 160pt mount so the placeholder + typed query lane
+                // is wider than the field's 120pt floor.
+                .child(MinW::new(160.0, search))
                 .child(site)
                 .child(kind)
                 .child(view)
@@ -1479,6 +1505,131 @@ fn muted_ink() -> martensite::theme::Oklab {
             b: -0.01,
             alpha: 1.0,
         })
+}
+
+// ---------------------------------------------------------------------------
+// Text-fit + minimum-width helpers — several Grid surfaces are
+// hard-clipped, non-wrapping lanes (Gantt's fixed label column,
+// WeekView's day cells, Descriptions value cells, the fishbone's
+// rib/head zones). The honest fit for those lanes is pre-fit text
+// through the real painter (same idiom as `zones::media`), and for
+// genuinely oversized surfaces a `ScrollView::horizontal` mount that
+// hands the child its intrinsic width so any cut lands on the
+// scrollport's viewport edge — the sanctioned affordance — instead
+// of a widget-local clip.
+// ---------------------------------------------------------------------------
+
+/// Shaped advance of `text` at `size_pt`, through the shared painter.
+fn measure_pt(text: &str, size_pt: f32) -> f32 {
+    thread_local! {
+        static PAINTER: martensite::text_paint::SharedTextPainter =
+            martensite::text_paint::shared_painter();
+    }
+    PAINTER.with(|p| p.measure(text, size_pt))
+}
+
+/// Elide `text` with a trailing "…" until it measures within
+/// `max_pt` at `size_pt` — the honest fit for a hard-clipped,
+/// non-wrapping text lane.
+fn elide_to(text: &str, max_pt: f32, size_pt: f32) -> String {
+    if measure_pt(text, size_pt) <= max_pt {
+        return text.to_string();
+    }
+    let mut t = String::new();
+    for c in text.chars() {
+        let mut cand = t.clone();
+        cand.push(c);
+        cand.push('…');
+        if measure_pt(&cand, size_pt) > max_pt {
+            break;
+        }
+        t.push(c);
+    }
+    t.push('…');
+    t
+}
+
+/// Minimum-width mount — reports `min_pt` as the lower bound of its
+/// measured width and lays its child out to the real bounds. Used
+/// inside `ScrollView::horizontal` for a child whose `measure`
+/// under-reports its true content extent (`TreeView` widths come from
+/// a per-char estimate that under-reads the mono fixture face): the
+/// child then gets full content width and the scrollport owns the
+/// viewport-edge clip — the sanctioned overflow affordance — instead
+/// of the widget's own hard clip cutting labels mid-glyph.
+struct MinW {
+    child: Box<dyn Widget>,
+    min_pt: f32,
+    bounds: martensite::core::Rect,
+}
+
+impl MinW {
+    fn new(min_pt: f32, w: impl Widget + 'static) -> Self {
+        Self {
+            child: Box::new(w),
+            min_pt,
+            bounds: martensite::core::Rect::default(),
+        }
+    }
+}
+
+/// Fenced-code fit — pretty-printed JSON when the body parses,
+/// otherwise each source line hard-folded at ~56 chars. Markdown
+/// code lines never wrap, so the fold keeps every character readable
+/// instead of letting the code panel mid-glyph clip at its edge.
+fn fold_code_body(raw: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+        if let Ok(pretty) = serde_json::to_string_pretty(&v) {
+            return pretty;
+        }
+    }
+    raw.lines()
+        .flat_map(|l| {
+            l.chars()
+                .collect::<Vec<_>>()
+                .chunks(56)
+                .map(|c| c.iter().collect::<String>())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+impl Widget for MinW {
+    fn debug_name(&self) -> &'static str {
+        "MinW"
+    }
+
+    fn measure(
+        &mut self,
+        cx: &mut martensite::core::LayoutContext,
+        c: martensite::core::LayoutConstraints,
+    ) -> glam::Vec2 {
+        let s = self.child.measure(cx, c);
+        glam::Vec2::new(s.x.max(cx.pt(self.min_pt)), s.y)
+    }
+
+    fn layout(&mut self, cx: &mut martensite::core::LayoutContext, bounds: martensite::core::Rect) {
+        self.bounds = bounds;
+        self.child.layout(cx, bounds);
+    }
+
+    fn accessibility(&self, node: &mut accesskit::Node) {
+        node.set_role(accesskit::Role::Group);
+    }
+
+    fn child_count(&self) -> usize {
+        1
+    }
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        (index == 0).then_some(&*self.child)
+    }
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        (index == 0).then_some(&mut *self.child)
+    }
+    fn child_bounds(&self, index: usize) -> Option<martensite::core::Rect> {
+        (index == 0).then_some(self.bounds)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1869,8 +2020,12 @@ fn detail(m: &PlantModel) -> Page {
     let grid = {
         let build = |m: &PlantModel| {
             let a = sel_asset(m);
+            // A 0.34 name fraction: "Installed"/"Maintenance" clear
+            // their lane while the value column keeps the room a
+            // serial or free-text note needs.
             PropertyGrid::new()
                 .label("asset properties")
+                .columns(0.34)
                 .section(
                     "Identity",
                     [
@@ -2254,9 +2409,14 @@ fn detail(m: &PlantModel) -> Page {
         1.0,
     );
     // The record form clamps at a readable width — a property grid
-    // stretched full-theater is a slop tell.
+    // stretched full-theater is a slop tell. `tighten_threshold`
+    // stays off: the grid's own `measure` reports its 320pt content
+    // cap, which would leave the value column needlessly narrow
+    // (and mid-clip notes) inside a wider theater.
+    let mut record_clamp = Clamp::new().maximum(560.0);
+    record_clamp.tighten_threshold = false;
     let primary = Swap::new(&dossier_sel)
-        .view(Clamp::new().maximum(560.0).child(grid))
+        .view(record_clamp.child(grid))
         .view(inspector)
         .view(identity)
         .view(crate::zones::editor::scan_lookup(m))
@@ -2268,14 +2428,20 @@ fn detail(m: &PlantModel) -> Page {
         .child(
             GroupBox::new("CONDITION").child(
                 strip()
-                    .child(lamp)
+                    // StatusDot's measure is a per-char estimate that
+                    // under-reports the mono face — floor the mount at
+                    // dot + "Maintenance" so the label never mid-clips.
+                    .child(MinW::new(96.0, lamp))
                     .child(rating)
                     .child_flex(DummyWidget, 1.0),
             ),
         )
         .child_flex(
-            ExpanderRow::new("Alarms on this asset")
-                .subtitle("double-click a row to ack")
+            // Short title/subtitle — the rail's disclosure lane is
+            // ~140pt; the expansion chevron and icon already eat
+            // ~30pt of it.
+            ExpanderRow::new("Asset alarms")
+                .subtitle("dbl-click acks")
                 .icon("⚠")
                 .child(alarm_list),
             1.0,
@@ -3195,9 +3361,10 @@ fn work_orders(m: &PlantModel) -> Page {
             None => "no work order selected".to_string(),
         });
     });
-    let sel_card = Card::outlined()
-        .title("Selected work order")
-        .child(sel_text);
+    // Short title — the rail-width card's title lane can't carry
+    // "Selected work order" at title size without a mid-glyph cut;
+    // the selection context already reads from the EXECUTION caption.
+    let sel_card = Card::outlined().title("Selected WO").child(sel_text);
     let advance = Bound::new(Button::new("Advance ▸"), m).pull(|w: &mut Button, m| {
         if w.take_activated() {
             if let Some(wo) = sel_wo(m) {
@@ -3336,10 +3503,20 @@ fn maintenance(m: &PlantModel) -> Page {
     // task (the pickers below then edit it).
     let gantt = {
         let build = |m: &PlantModel| {
-            let mut g = Gantt::new().total_days(14.0).label("two-week plan");
+            // total_days 15 keeps the last "14" axis tick ~7% of the
+            // chart off the right edge (the tick's own clip is centred
+            // on its day x; the step=2 tick stride means 15 itself is
+            // never painted); task names are pre-fit to the fixed
+            // 110pt label column (104pt of lane at 12pt) instead of
+            // mid-glyph clipping.
+            let mut g = Gantt::new().total_days(15.0).label("two-week plan");
             for t in m.schedule.get() {
                 g = g
-                    .task(t.title, f32::from(t.start_day), f32::from(t.days))
+                    .task(
+                        elide_to(t.title, 96.0, 12.0),
+                        f32::from(t.start_day),
+                        f32::from(t.days),
+                    )
                     .progress(if t.done { 1.0 } else { 0.0 });
             }
             g
@@ -3372,7 +3549,10 @@ fn maintenance(m: &PlantModel) -> Page {
             for t in m.schedule.get() {
                 let day = (t.start_day % 7) as usize;
                 let (s, e) = (8.0, (8.0 + f32::from(t.days) * 2.0).min(18.0));
-                v = v.event(WeekEvent::new(t.title, day, s, e));
+                // Block width is the day column (~66pt of lane at the
+                // widget's 560pt content width) — pre-fit the title so
+                // a narrow block never shows a mid-glyph sliver.
+                v = v.event(WeekEvent::new(elide_to(t.title, 66.0, 12.0), day, s, e));
             }
             v
         };
@@ -3601,7 +3781,10 @@ fn maintenance(m: &PlantModel) -> Page {
     let primary = Flex::column()
         .gap(ZONE_GAP)
         .child_flex(gantt, 3.0)
-        .child_flex(week, 2.0);
+        // The week grid is a fixed-geometry surface (7 day columns +
+        // hour gutter ≈ 560pt): narrower allocations scroll the week
+        // rather than squeezing day cells into slivers.
+        .child_flex(ScrollView::horizontal(week), 2.0);
 
     // --- rail: detail-of-`selected_task` -----------------------------
     let rail_col = Flex::column()
@@ -4094,13 +4277,27 @@ fn documents(m: &PlantModel) -> Page {
     let doc_markdown = {
         let build = |m: &PlantModel| {
             let d = sel_doc(m);
-            let title = d.as_ref().map(|d| d.title).unwrap_or("document");
+            // The H1 runs ~26.5pt — in the narrowest artifact lane
+            // (~330pt) a long title mid-clips at the page wall, so the
+            // title is pre-fit to the lane (the full title also heads
+            // the chooser row that opened this view).
+            let title = d
+                .as_ref()
+                .map(|d| elide_to(d.title, 300.0, 26.5))
+                .unwrap_or_else(|| "document".to_string());
             let owner = d
                 .as_ref()
                 .and_then(|d| d.asset)
                 .map(|id| m.asset_name(id).to_string())
                 .unwrap_or_else(|| "site-wide".into());
-            let body = d.as_ref().map(|d| d.body).unwrap_or("");
+            // Code blocks don't wrap — a one-line JSON body (~700pt
+            // shaped) would mid-glyph clip at the panel edge in a
+            // narrow view. Pretty-print when it parses, hard-fold
+            // otherwise; every byte still reads.
+            let body = d
+                .as_ref()
+                .map(|d| fold_code_body(d.body))
+                .unwrap_or_default();
             Markdown::new(format!(
                 "# {title}\n\n**Asset:** {owner}\n\n```\n{body}\n```"
             ))
@@ -4228,8 +4425,15 @@ fn documents(m: &PlantModel) -> Page {
                 DocKind::Firmware => 2,
                 DocKind::Log => 3,
             };
-            let owner = d.asset.map(|id| m.asset_name(id)).unwrap_or("site-wide");
-            let title = format!("{} · {} · {owner}", d.kind.label().to_lowercase(), d.title);
+            // The disclosure title lane in the chooser is ~110pt at
+            // 14pt — the full "kind · title · owner" triple mid-clips
+            // at the rail edge. Kind + title elided; the owner reads
+            // in the row's Asset ▸ verb.
+            let title = elide_to(
+                &format!("{} · {}", d.kind.label().to_lowercase(), d.title),
+                110.0,
+                14.0,
+            );
             let preview: String = {
                 let first = d
                     .body
@@ -4299,7 +4503,7 @@ fn documents(m: &PlantModel) -> Page {
                 m,
                 &doc_open,
                 u32::MAX - i as u32,
-                format!("{title} · generated"),
+                elide_to(&format!("{title} · generated"), 110.0, 14.0),
                 body,
             ));
         }
@@ -4666,26 +4870,30 @@ fn diagnostics(m: &PlantModel) -> Page {
 
     // Console settings — real HMI flags the rest of the app reads;
     // each row's trailing Switch is two-way bound to its signal.
+    // Bare tracks (`Switch::new("")` — the row's own title names the
+    // setting): the trailing lane is capped at a third of the row,
+    // which is ~50pt at the narrowest rail — a painted switch label
+    // would mid-clip. Subtitles likewise stay ≤ ~90pt.
     let settings = SettingsGroup::new("CONSOLE")
         .row(
             SettingsRow::new("Line running")
-                .subtitle("drives the acoustic model + stack light")
-                .trailing(bound_switch(m, "line running", m.line_running.clone())),
+                .subtitle("audio + beacon")
+                .trailing(bound_switch(m, "", m.line_running.clone())),
         )
         .row(
             SettingsRow::new("Console lock")
-                .subtitle("security inputs gate the HMI")
-                .trailing(bound_switch(m, "console lock", m.console_locked.clone())),
+                .subtitle("gates the HMI")
+                .trailing(bound_switch(m, "", m.console_locked.clone())),
         )
         .row(
             SettingsRow::new("Alert strip")
                 .subtitle("toolbar banner")
-                .trailing(bound_switch(m, "alerts", m.alerts_on.clone())),
+                .trailing(bound_switch(m, "", m.alerts_on.clone())),
         )
         .row(
             SettingsRow::new("Reduced motion")
                 .subtitle("accessibility")
-                .trailing(bound_switch(m, "reduced motion", m.reduced_motion.clone())),
+                .trailing(bound_switch(m, "", m.reduced_motion.clone())),
         );
 
     // About — the HMI's identity; credits list the real crew roster.
@@ -4746,11 +4954,15 @@ fn diagnostics(m: &PlantModel) -> Page {
         })
     };
 
-    // Primary: terminal dominant, tail bounded at ~35%.
+    // Primary: terminal dominant, tail bounded at ~35%. Both are
+    // fixed-pitch line surfaces — LogView's 240pt measure
+    // under-reports real lines (~340pt with insets), so the h-scroll
+    // mounts carry a 360pt floor and the scrollport owns any cut at
+    // the viewport edge.
     let primary = Flex::column()
         .gap(ZONE_GAP)
-        .child_flex(term, 13.0)
-        .child_flex(sys_tail, 7.0);
+        .child_flex(ScrollView::horizontal(MinW::new(360.0, term)), 13.0)
+        .child_flex(ScrollView::horizontal(MinW::new(360.0, sys_tail)), 7.0);
 
     let rail_col = Flex::column()
         .gap(ZONE_STACK)
@@ -5008,25 +5220,36 @@ fn hierarchy(m: &PlantModel) -> Page {
         {
             Some(al) => {
                 let a = m.asset(al.asset);
-                Fishbone::new(format!("#{} {}", al.id, al.message))
-                    .bone(
-                        Bone::new("Machine")
-                            .cause(a.as_ref().map(|a| a.serial).unwrap_or("—"))
-                            .cause(a.as_ref().map(|a| a.note).unwrap_or("no note")),
-                    )
-                    .bone(
-                        Bone::new("Condition")
-                            .cause(a.as_ref().map(|a| a.status.label()).unwrap_or("—"))
-                            .cause(format!(
-                                "oee {:.0}%",
-                                a.as_ref().map(|a| a.oee).unwrap_or(0.0) * 100.0
-                            )),
-                    )
-                    .bone(Bone::new("Severity").cause(al.severity.label()))
+                // Fixed-geometry widget: the effect head is ≤90pt and
+                // each rib's *cause* lane is `(tip_x−bx)·(1−t) − 10pt`
+                // ≈ 0–10pt — geometrically unprintable, so the key
+                // datum is folded into the category label instead.
+                // Tip labels clip to the rib's spine share (~80pt at
+                // the 440pt content width) — pre-fit, and the full
+                // strings stay readable on the alarm/asset surfaces.
+                Fishbone::new(elide_to(&format!("#{} {}", al.id, al.message), 80.0, 12.0))
+                    .bone(Bone::new(elide_to(
+                        &format!("Machine {}", a.as_ref().map(|a| a.serial).unwrap_or("—")),
+                        76.0,
+                        12.0,
+                    )))
+                    .bone(Bone::new(elide_to(
+                        &format!(
+                            "Cond. {}",
+                            a.as_ref().map(|a| a.status.label()).unwrap_or("—")
+                        ),
+                        76.0,
+                        12.0,
+                    )))
+                    .bone(Bone::new(elide_to(
+                        &format!("Sev. {}", al.severity.label()),
+                        76.0,
+                        12.0,
+                    )))
                     .label("root cause")
             }
-            None => Fishbone::new("no active alarms")
-                .bone(Bone::new("—").cause("all clear"))
+            None => Fishbone::new("no alarms")
+                .bone(Bone::new("all clear"))
                 .label("root cause"),
         };
         Bound::new(build(m), m).push(move |w: &mut Fishbone, m| {
@@ -5095,7 +5318,16 @@ fn hierarchy(m: &PlantModel) -> Page {
         .view(decompose);
 
     let rail_col = Flex::column().gap(ZONE_STACK).child_flex(
-        GroupBox::new("ROOT CAUSE").child(Container::new().padding_uniform(4.0).child(fish)),
+        GroupBox::new("ROOT CAUSE").child(
+            Container::new()
+                .padding_uniform(4.0)
+                // The fishbone is fixed-geometry; the MinW floor
+                // spreads its three ribs over 440pt so each tip label
+                // gets ~80pt of lane, and at rail width the h-scroll
+                // scrollport owns the overflow instead of ribs
+                // squeezing into slivers.
+                .child(ScrollView::horizontal(MinW::new(440.0, fish))),
+        ),
         1.0,
     );
 
@@ -5165,6 +5397,51 @@ mod tests {
                 );
             }
             assert!(page.child_count() > 1, "{label} has no content rows");
+        }
+    }
+
+    /// TEMP debug: dump the widget tree for each page at a width.
+    #[test]
+    fn debug_page_tree() {
+        use martensite::core::{LayoutContext, Rect};
+        use martensite::prelude::*;
+        use martensite::widgets::container::Container;
+        use martensite::widgets::scrollview::ScrollView;
+
+        let _font_guard = crate::frames::install_test_fonts();
+        let shaper = crate::frames::FixtureTextShaper::new();
+        let m = seeded();
+        m.warm_demo_state();
+        let zw: f32 = std::env::var("DBG_ZW")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1200.0);
+        let only = std::env::var("DBG_PAGE").unwrap_or_default();
+        m.zone_width[0].set(zw / 2.0);
+        for (label, page) in pages(&m) {
+            if !only.is_empty() && label != only {
+                continue;
+            }
+            let view = ScrollView::new(
+                Container::new()
+                    .padding_uniform(crate::zone::ZONE_PAD)
+                    .child(page),
+            );
+            let mut arena = WidgetArena::new();
+            arena.set_theme(martensite::theme::tokens::default_dark());
+            arena.set_scale_factor(2.0);
+            arena.set_text_painter(shaper.clone());
+            let mut hot = HotNode::default();
+            hot.flags |= NodeFlags::VISIBLE;
+            let root = arena.insert_with_widget(hot, Box::new(view));
+            let bounds = Rect::new(0.0, 0.0, zw, 480.0);
+            if let Some((hot, cold)) = arena.get_both_mut(root) {
+                hot.bounds = bounds;
+                cold.widget
+                    .layout(&mut LayoutContext { hot, scale: 2.0 }, bounds);
+            }
+            eprintln!("===== {label}@{zw} =====");
+            eprintln!("{}", arena.debug_tree());
         }
     }
 
@@ -5254,15 +5531,34 @@ mod tests {
             } else {
                 return;
             };
-            let owner = clips
+            // The edge is owned by every clip rect sharing it. Any
+            // ScrollView owning the cutting edge is the sanctioned
+            // scroll affordance — the widget shows the axis's bar on
+            // overflow regardless of its unbounded-measure axis, so a
+            // cut at a scrollport edge is always reachable by
+            // scrolling — even when a widget-local clip happens to
+            // coincide (e.g. TreeItemRow clips to the visible region).
+            // Otherwise the innermost coincident widget clip is the
+            // culprit.
+            let matching: Vec<&String> = clips
                 .iter()
-                .rev()
-                .find(|(r, _)| {
+                .filter(|(r, _)| {
                     (side == "R" && (r.max_x() - eff.max_x()).abs() < 0.5)
                         || (side == "L" && (r.min_x() - eff.min_x()).abs() < 0.5)
                 })
-                .map(|(_, n)| n.clone())
-                .unwrap_or_else(|| "<frame>".into());
+                .map(|(_, n)| n)
+                .collect();
+            let owner = if matching
+                .iter()
+                .any(|n| n.contains("scrollview::ScrollView"))
+            {
+                "SCROLL-VP".to_string()
+            } else {
+                matching
+                    .last()
+                    .map(|n| (*n).clone())
+                    .unwrap_or_else(|| "<frame>".into())
+            };
             let key = format!(
                 "{side} cut @x{edge:.0} clip_owner={owner} scope={} | {what}",
                 scopes.last().map(String::as_str).unwrap_or("?")
@@ -5287,6 +5583,11 @@ mod tests {
                 arena.set_theme(martensite::theme::tokens::default_dark());
                 arena.set_scale_factor(2.0);
                 arena.set_text_painter(shaper.clone());
+                // Same manual-layout caveat: install the ambient
+                // measurer so `measure` agrees with the paint pass.
+                let _measurer = arena
+                    .text_painter_shared()
+                    .map(martensite::core::paint::install_ambient_measurer);
                 let mut hot = HotNode::default();
                 hot.flags |= NodeFlags::VISIBLE;
                 let root = arena.insert_with_widget(hot, Box::new(view));
@@ -5386,6 +5687,17 @@ mod tests {
                 eprintln!("=== grid/{label}@{zw:.0} ===");
                 for (k, n) in &hits {
                     eprintln!("  x{n} {k}");
+                }
+                // Gate: every mid-glyph cut must be owned by a
+                // ScrollView viewport edge — the sanctioned scroll
+                // affordance. A cut owned by any other clip means a
+                // widget's fixed geometry is slicing glyphs the user
+                // can never reach.
+                for k in hits.keys() {
+                    assert!(
+                        k.contains("clip_owner=SCROLL-VP"),
+                        "grid/{label}@{zw:.0}: mid-glyph cut outside a scrollport: {k}"
+                    );
                 }
             }
         }

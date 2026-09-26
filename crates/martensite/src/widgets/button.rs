@@ -13,7 +13,7 @@
 //! assert_eq!(btn.label, "Click me");
 //! ```
 
-use crate::text_paint::estimate_label_width;
+use crate::text_paint::{estimate_label_width, measure_label};
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use kurbo::Shape as _;
@@ -258,9 +258,14 @@ impl Button {
 impl Widget for Button {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A button has a default minimum size of 80x32 logical pt, but
-        // grows to fit its label (same case-aware estimate as tabs) —
-        // a fixed 80 pt slot clipped every label past ~8 chars.
-        let label_w = cx.pt(estimate_label_width(&self.label) + 2.0 * TEXT_PAD_X);
+        // grows to fit its label. Real glyph advance when a measurer
+        // is installed (the per-char estimate under-measures faces
+        // wider than the ~7.6 pt/char model, and a toolbar laying a
+        // button out at an underestimated width clips the label
+        // mid-glyph); the estimate stays as the no-painter fallback.
+        let label_w = measure_label(&self.text_painter, cx.scale, &self.label, 14.0)
+            .map(|w| w + cx.pt(2.0 * TEXT_PAD_X))
+            .unwrap_or_else(|| cx.pt(estimate_label_width(&self.label) + 2.0 * TEXT_PAD_X));
         let min_w = cx
             .pt(80.0)
             .max(label_w)

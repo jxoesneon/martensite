@@ -59,7 +59,7 @@ use martensite::widgets::dial::Dial;
 use martensite::widgets::digital_clock::DigitalClock;
 use martensite::widgets::dropdown::Dropdown;
 use martensite::widgets::empty_state::EmptyState;
-use martensite::widgets::flex::Flex;
+use martensite::widgets::flex::{Flex, MainAxisAlignment};
 use martensite::widgets::funnel_chart::FunnelChart;
 use martensite::widgets::gantt::Gantt;
 use martensite::widgets::gauge::Gauge;
@@ -469,66 +469,44 @@ fn trends(m: &PlantModel) -> Page {
             }
         })
     };
+    // Trend pages read hero-first: one dominant trend surface, then a
+    // compact row of secondary idioms of the same signal. The hero band
+    // is sized so the whole first surface sits above a ~240pt zone fold
+    // (strip + heading + pad ≈ 80pt); `BAND_M` would crop it mid-chart.
+    const HERO_H: f32 = 150.0;
     let g0 = Flex::column()
         .gap(ZONE_GAP)
         .child(
-            row()
-                .child_flex(
-                    band(
-                        BAND_M,
-                        Bound::new(
-                            LineChart::new()
-                                .series(LineSeries::new("cpu", hist(&m.cpu_hist)))
-                                .axis(true),
-                            m,
-                        )
-                        .push({
-                            let mut last = hist_sig(m);
-                            move |c: &mut LineChart, m| {
-                                let sig = hist_sig(m);
-                                if sig != last {
-                                    if let Some(s) = c.series.first_mut() {
-                                        s.points = hist(&m.cpu_hist);
-                                    }
-                                    last = sig;
+            row().child_flex(
+                band(
+                    HERO_H,
+                    Bound::new(
+                        LineChart::new()
+                            .series(LineSeries::new("cpu", hist(&m.cpu_hist)))
+                            .axis(true),
+                        m,
+                    )
+                    .push({
+                        let mut last = hist_sig(m);
+                        move |c: &mut LineChart, m| {
+                            let sig = hist_sig(m);
+                            if sig != last {
+                                if let Some(s) = c.series.first_mut() {
+                                    s.points = hist(&m.cpu_hist);
                                 }
+                                last = sig;
                             }
-                        }),
-                    ),
-                    1.0,
-                )
-                .child_flex(
-                    band(
-                        BAND_M,
-                        Bound::new(
-                            Candlestick::new()
-                                .candles(candles(m))
-                                .y_range(0.0, 1.0)
-                                .grid(true),
-                            m,
-                        )
-                        .push({
-                            let mut last = hist_sig(m);
-                            move |c: &mut Candlestick, m| {
-                                let sig = hist_sig(m);
-                                if sig != last {
-                                    *c = Candlestick::new()
-                                        .candles(candles(m))
-                                        .y_range(0.0, 1.0)
-                                        .grid(true);
-                                    last = sig;
-                                }
-                            }
-                        }),
-                    ),
-                    1.0,
+                        }
+                    }),
                 ),
+                1.0,
+            ),
         )
         .child(
             row()
                 .child_flex(
                     band(
-                        BAND_M,
+                        BAND_S,
                         Bound::new(
                             StripChart::new()
                                 .capacity(HISTORY_LEN)
@@ -553,7 +531,7 @@ fn trends(m: &PlantModel) -> Page {
                 )
                 .child_flex(
                     band(
-                        BAND_M,
+                        BAND_S,
                         Bound::new(
                             Sparkline::new(hist(&m.cpu_hist))
                                 .style(SparkStyle::Area)
@@ -575,11 +553,12 @@ fn trends(m: &PlantModel) -> Page {
                 ),
         );
     let g0 = GroupBox::new("CPU LOAD — 240-SAMPLE RING").child(g0);
-    let g1 = Flex::column().gap(ZONE_GAP).child(
-        row()
-            .child_flex(
+    let g1 = Flex::column()
+        .gap(ZONE_GAP)
+        .child(
+            row().child_flex(
                 band(
-                    BAND_M,
+                    HERO_H,
                     Bound::new(
                         LineChart::new()
                             .series(LineSeries::new("mem", hist(&m.mem_hist)))
@@ -600,128 +579,164 @@ fn trends(m: &PlantModel) -> Page {
                     }),
                 ),
                 1.0,
-            )
-            .child_flex(
-                band(
-                    BAND_M,
-                    Bound::new(
-                        Sparkline::new(hist(&m.mem_hist))
-                            .style(SparkStyle::Bars)
-                            .label("mem bars"),
-                        m,
-                    )
-                    .push({
-                        let mut last = hist_sig(m);
-                        move |s: &mut Sparkline, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                s.set_data(hist(&m.mem_hist));
-                                last = sig;
-                            }
-                        }
-                    }),
-                ),
-                1.0,
-            )
-            .child_flex(
-                band(
-                    BAND_M,
-                    Bound::new(mem_bars(m), m).push({
-                        let mut last = hist_sig(m);
-                        move |b: &mut BarChart, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                *b = mem_bars(m);
-                                last = sig;
-                            }
-                        }
-                    }),
-                ),
-                1.0,
             ),
-    );
-    let g1 = GroupBox::new("MEMORY — SAME RING, OTHER VIEWS").child(g1);
-    let g2 = Flex::column().gap(ZONE_GAP).child(
-        row()
-            .child_flex(
-                band(
-                    BAND_M,
-                    Bound::new(
-                        StreamGraph::new()
-                            .layer("cpu", hist(&m.cpu_hist))
-                            .layer("mem", hist(&m.mem_hist))
-                            .label("load layers"),
-                        m,
-                    )
-                    .push({
-                        // One rev covers both rings — `push_history`
-                        // bumps it after updating cpu and mem.
-                        let mut last = hist_sig(m);
-                        move |g: &mut StreamGraph, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                *g = StreamGraph::new()
-                                    .layer("cpu", hist(&m.cpu_hist))
-                                    .layer("mem", hist(&m.mem_hist))
-                                    .label("load layers");
-                                last = sig;
-                            }
-                        }
-                    }),
-                ),
-                1.0,
-            )
-            .child_flex(
-                band(
-                    BAND_M,
-                    Bound::new(HeatMap::new(6, 40), m).push({
-                        // Mounted empty — the first tick fills the grid.
-                        let mut last = None;
-                        move |hm: &mut HeatMap, m| {
-                            let sig = hist_sig(m);
-                            if Some(sig) != last {
-                                let h = m.cpu_hist.get();
-                                for r in 0..6 {
-                                    for c in 0..40 {
-                                        let v = h.get(r * 40 + c).copied().unwrap_or(0.0);
-                                        hm.set_cell(r, c, (v * 10.0) as f32);
-                                    }
+        )
+        .child(
+            row()
+                .child_flex(
+                    band(
+                        BAND_S,
+                        Bound::new(
+                            Sparkline::new(hist(&m.mem_hist))
+                                .style(SparkStyle::Bars)
+                                .label("mem bars"),
+                            m,
+                        )
+                        .push({
+                            let mut last = hist_sig(m);
+                            move |s: &mut Sparkline, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    s.set_data(hist(&m.mem_hist));
+                                    last = sig;
                                 }
-                                last = Some(sig);
                             }
-                        }
-                    }),
-                ),
-                1.0,
-            )
-            .child_flex(
-                band(
-                    BAND_M,
-                    Bound::new(
-                        Histogram::new()
-                            .bins(10)
-                            .samples(hist(&m.cpu_hist))
-                            .label("cpu distribution"),
-                        m,
-                    )
-                    .push({
-                        let mut last = hist_sig(m);
-                        move |h: &mut Histogram, m| {
-                            let sig = hist_sig(m);
-                            if sig != last {
-                                *h = Histogram::new()
-                                    .bins(10)
-                                    .samples(hist(&m.cpu_hist))
-                                    .label("cpu distribution");
-                                last = sig;
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_S,
+                        Bound::new(mem_bars(m), m).push({
+                            let mut last = hist_sig(m);
+                            move |b: &mut BarChart, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    *b = mem_bars(m);
+                                    last = sig;
+                                }
                             }
-                        }
-                    }),
+                        }),
+                    ),
+                    1.0,
                 ),
-                1.0,
-            ),
-    );
-    let g2 = GroupBox::new("DERIVED — SAME SIGNALS, OTHER SHAPES").child(g2);
+        );
+    let g1 = GroupBox::new("MEMORY — 240-SAMPLE RING").child(g1);
+    // Derived forms of the same rings — two compact rows so the first
+    // surfaces clear the fold instead of stretching one three-wide row.
+    let g2 = Flex::column()
+        .gap(ZONE_GAP)
+        .child(
+            row()
+                .child_flex(
+                    band(
+                        BAND_S,
+                        Bound::new(
+                            Candlestick::new()
+                                .candles(candles(m))
+                                .y_range(0.0, 1.0)
+                                .grid(true),
+                            m,
+                        )
+                        .push({
+                            let mut last = hist_sig(m);
+                            move |c: &mut Candlestick, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    *c = Candlestick::new()
+                                        .candles(candles(m))
+                                        .y_range(0.0, 1.0)
+                                        .grid(true);
+                                    last = sig;
+                                }
+                            }
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_S,
+                        Bound::new(
+                            StreamGraph::new()
+                                .layer("cpu", hist(&m.cpu_hist))
+                                .layer("mem", hist(&m.mem_hist))
+                                .label("load layers"),
+                            m,
+                        )
+                        .push({
+                            // One rev covers both rings — `push_history`
+                            // bumps it after updating cpu and mem.
+                            let mut last = hist_sig(m);
+                            move |g: &mut StreamGraph, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    *g = StreamGraph::new()
+                                        .layer("cpu", hist(&m.cpu_hist))
+                                        .layer("mem", hist(&m.mem_hist))
+                                        .label("load layers");
+                                    last = sig;
+                                }
+                            }
+                        }),
+                    ),
+                    1.0,
+                ),
+        )
+        .child(
+            row()
+                .child_flex(
+                    band(
+                        BAND_S,
+                        Bound::new(HeatMap::new(6, 40), m).push({
+                            // Mounted empty — the first tick fills the grid.
+                            let mut last = None;
+                            move |hm: &mut HeatMap, m| {
+                                let sig = hist_sig(m);
+                                if Some(sig) != last {
+                                    let h = m.cpu_hist.get();
+                                    for r in 0..6 {
+                                        for c in 0..40 {
+                                            let v = h.get(r * 40 + c).copied().unwrap_or(0.0);
+                                            hm.set_cell(r, c, (v * 10.0) as f32);
+                                        }
+                                    }
+                                    last = Some(sig);
+                                }
+                            }
+                        }),
+                    ),
+                    1.0,
+                )
+                .child_flex(
+                    band(
+                        BAND_S,
+                        Bound::new(
+                            Histogram::new()
+                                .bins(10)
+                                .samples(hist(&m.cpu_hist))
+                                .label("cpu distribution"),
+                            m,
+                        )
+                        .push({
+                            let mut last = hist_sig(m);
+                            move |h: &mut Histogram, m| {
+                                let sig = hist_sig(m);
+                                if sig != last {
+                                    *h = Histogram::new()
+                                        .bins(10)
+                                        .samples(hist(&m.cpu_hist))
+                                        .label("cpu distribution");
+                                    last = sig;
+                                }
+                            }
+                        }),
+                    ),
+                    1.0,
+                ),
+        );
+    let g2 = GroupBox::new("DERIVED — AGGREGATES OF THE RINGS").child(g2);
     let primary = Swap::new(&view_sel).view(g0).view(g1).view(g2);
     Page::new(
         Variant::Theater,
@@ -766,12 +781,15 @@ fn instruments(m: &PlantModel) -> Page {
             }
         })
     };
+    // The ANALOG row is four glanceable instruments abreast — a quarter-
+    // width `BAND_S` cell keeps every face complete above the fold in a
+    // ~240pt zone pane; `BAND_M` would push half the row under it.
     let g0 = Flex::column().gap(ZONE_GAP).child(
         row()
-            .child_flex(band(BAND_M, framed(1.0, cpu_gauge(m))), 1.0)
+            .child_flex(band(BAND_S, framed(1.0, cpu_gauge(m))), 1.0)
             .child_flex(
                 band(
-                    BAND_M,
+                    BAND_S,
                     framed(
                         1.0,
                         Bound::new(
@@ -791,7 +809,7 @@ fn instruments(m: &PlantModel) -> Page {
             )
             .child_flex(
                 band(
-                    BAND_M,
+                    BAND_S,
                     Bound::new(
                         Thermometer::new()
                             .range(0.0, 100.0)
@@ -826,7 +844,7 @@ fn instruments(m: &PlantModel) -> Page {
             )
             .child_flex(
                 band(
-                    BAND_M,
+                    BAND_S,
                     Bound::new(
                         LevelBar::new()
                             .value(0.0)
@@ -840,28 +858,14 @@ fn instruments(m: &PlantModel) -> Page {
             ),
     );
     let g0 = GroupBox::new("ANALOG — LIVE LOAD").child(g0);
+    // OEE: the ring is the glanceable headline; the progress bar, bullet
+    // chart, and line-state spinner are intrinsic controls — a metric
+    // column beside the ring, not banded surfaces.
     let g1 = Flex::column().gap(ZONE_GAP).child(
         row()
             .child_flex(
                 band(
-                    BAND_M,
-                    Bound::new(ProgressBar::new().value(0.0), m).push({
-                        // `plant_oee` folds the cell assets — gate on them.
-                        let mut last = None;
-                        move |p: &mut ProgressBar, m| {
-                            let sig = assets_sig(m);
-                            if Some(sig) != last {
-                                *p = ProgressBar::new().value(m.plant_oee() as f32);
-                                last = Some(sig);
-                            }
-                        }
-                    }),
-                ),
-                1.0,
-            )
-            .child_flex(
-                band(
-                    BAND_M,
+                    BAND_S,
                     framed(
                         1.0,
                         Bound::new(ActivityRing::new().label("load goals"), m).push({
@@ -889,44 +893,57 @@ fn instruments(m: &PlantModel) -> Page {
                 1.0,
             )
             .child_flex(
-                band(
-                    BAND_M,
-                    Bound::new(
-                        BulletChart::new()
-                            .label("OEE %")
-                            .value(0.0)
-                            .target(85.0)
-                            .ranges([60.0, 80.0, 100.0]),
-                        m,
-                    )
-                    .push({
+                Flex::column()
+                    .gap(ZONE_GAP)
+                    .main_axis_alignment(MainAxisAlignment::SpaceEvenly)
+                    .child(Bound::new(ProgressBar::new().value(0.0), m).push({
+                        // `plant_oee` folds the cell assets — gate on them.
                         let mut last = None;
-                        move |b: &mut BulletChart, m| {
+                        move |p: &mut ProgressBar, m| {
                             let sig = assets_sig(m);
                             if Some(sig) != last {
-                                *b = BulletChart::new()
-                                    .label("OEE %")
-                                    .value((m.plant_oee() * 100.0) as f32)
-                                    .target(85.0)
-                                    .ranges([60.0, 80.0, 100.0]);
+                                *p = ProgressBar::new().value(m.plant_oee() as f32);
                                 last = Some(sig);
                             }
                         }
-                    }),
-                ),
+                    }))
+                    .child(
+                        Bound::new(
+                            BulletChart::new()
+                                .label("OEE %")
+                                .value(0.0)
+                                .target(85.0)
+                                .ranges([60.0, 80.0, 100.0]),
+                            m,
+                        )
+                        .push({
+                            let mut last = None;
+                            move |b: &mut BulletChart, m| {
+                                let sig = assets_sig(m);
+                                if Some(sig) != last {
+                                    *b = BulletChart::new()
+                                        .label("OEE %")
+                                        .value((m.plant_oee() * 100.0) as f32)
+                                        .target(85.0)
+                                        .ranges([60.0, 80.0, 100.0]);
+                                    last = Some(sig);
+                                }
+                            }
+                        }),
+                    )
+                    .child(Bound::new(Spinner::new().label("LINE"), m).push(
+                        |s: &mut Spinner, m| {
+                            let run = m.line_running.get() && !m.paused.get();
+                            if s.is_active() != run {
+                                if run {
+                                    s.start();
+                                } else {
+                                    s.stop();
+                                }
+                            }
+                        },
+                    )),
                 1.0,
-            )
-            .child(
-                Bound::new(Spinner::new().label("LINE"), m).push(|s: &mut Spinner, m| {
-                    let run = m.line_running.get() && !m.paused.get();
-                    if s.is_active() != run {
-                        if run {
-                            s.start();
-                        } else {
-                            s.stop();
-                        }
-                    }
-                }),
             ),
     );
     let g1 = GroupBox::new("EFFECTIVENESS — OEE").child(g1);

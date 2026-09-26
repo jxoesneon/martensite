@@ -66,14 +66,25 @@ const TAB_BG: [u8; 4] = [240, 242, 246, 255];
 /// Width reserved for the `×` affordance on a closable tab.
 const CLOSE_W: f32 = 18.0;
 
-/// Case-aware label width estimate (logical pt): the shared 14 pt
-/// per-char estimate plus 24 pt of horizontal padding, `CLOSE_W` when
-/// the tab is closable, and the badge pill plus its gap when one is
-/// attached.
-fn label_width(label: &str, closable: bool, badge: Option<&BadgeSpec>) -> f32 {
-    24.0 + crate::text_paint::estimate_label_width(label)
-        + if closable { CLOSE_W } else { 0.0 }
-        + badge.map_or(0.0, |b| b.width_pt() + 6.0)
+/// Natural tab width in device px at `scale`: the label's real glyph
+/// advance when a measurer is installed (the per-char estimate under-
+/// measures wide faces, and `natural_width` feeds the strip's tab
+/// slots — a short measure clips the painted label), else the shared
+/// estimate — plus 24 pt padding, `CLOSE_W` when closable, and the
+/// badge pill plus its gap.
+fn label_width(
+    painter: &Option<crate::text_paint::SharedTextPainter>,
+    scale: f32,
+    label: &str,
+    closable: bool,
+    badge: Option<&BadgeSpec>,
+) -> f32 {
+    let chrome =
+        (24.0 + if closable { CLOSE_W } else { 0.0 } + badge.map_or(0.0, |b| b.width_pt() + 6.0))
+            * scale;
+    chrome
+        + crate::text_paint::measure_label(painter, scale, label, 14.0)
+            .unwrap_or_else(|| crate::text_paint::estimate_label_width(label) * scale)
 }
 
 /// Remaps an index after `remove(from)` + `insert(to)` so tracked
@@ -159,10 +170,16 @@ impl TabItem {
 
 impl Widget for TabItem {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        // Approximate label width — real shaping lives in the
-        // `martensite-text` pipeline. Case-aware: uppercase/digits run
-        // wider than mixed case at the tab font size.
-        let w = cx.pt(label_width(&self.label, self.closable, self.badge.as_ref()));
+        // `label_width` measures through the installed shaper when
+        // one is ambient; the estimate fallback is case-aware —
+        // uppercase/digits run wider than mixed case at the tab font.
+        let w = label_width(
+            &self.text_painter,
+            cx.scale,
+            &self.label,
+            self.closable,
+            self.badge.as_ref(),
+        );
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
             cx.pt(STRIP_H).min(constraints.max_size.y.max(0.0)),
@@ -339,7 +356,13 @@ impl TabStrip {
     /// Associated (no `&self`) so it stays callable while `self.tabs`
     /// is mutably borrowed in `layout`.
     fn natural_width(tab: &TabItem, scale: f32) -> f32 {
-        label_width(&tab.label, tab.closable, tab.badge.as_ref()) * scale
+        label_width(
+            &tab.text_painter,
+            scale,
+            &tab.label,
+            tab.closable,
+            tab.badge.as_ref(),
+        )
     }
 
     /// Clamps `scroll_x` into `0..=overflow` using the stored

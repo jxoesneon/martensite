@@ -264,6 +264,34 @@ impl LayoutContext<'_> {
         v * self.scale
     }
 
+    /// Advance width of `text` rendered at `size_pt` logical points,
+    /// measured through the ambient
+    /// [`TextShaper`](crate::paint::TextShaper) installed for the
+    /// current layout pass. The result is in this context's coordinate
+    /// space (device pixels), ready to compare against constraint and
+    /// bounds sizes.
+    ///
+    /// `None` when no ambient measurer is installed or it cannot
+    /// measure — callers keep their estimate-based fallback for that
+    /// case. `LayoutEngine::compute_with_widgets` installs the arena's
+    /// ambient painter automatically; manual layout passes (tests,
+    /// harness sweeps) install one via
+    /// [`install_ambient_measurer`](crate::paint::install_ambient_measurer).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{HotNode, LayoutContext};
+    ///
+    /// let mut hot = HotNode::default();
+    /// let cx = LayoutContext { hot: &mut hot, scale: 1.0 };
+    /// // No ambient measurer installed by default.
+    /// assert_eq!(cx.measure_text("hi", 14.0), None);
+    /// ```
+    pub fn measure_text(&self, text: &str, size_pt: f32) -> Option<f32> {
+        crate::paint::ambient_measure_text(text, size_pt * self.scale)
+    }
+
     /// Lays out an internal child widget, preserving this node's
     /// [`NodeFlags::FOCUSABLE`](crate::NodeFlags::FOCUSABLE) flag.
     ///

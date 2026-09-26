@@ -405,7 +405,8 @@ impl Default for ThemeDictionary {
 /// Constructs the default light theme.
 ///
 /// The light theme uses a near-white background (`Oklab` lightness ≈ `0.96`),
-/// dark text (lightness ≈ `0.20`), and a blue primary accent.
+/// dark text (lightness ≈ `0.20`), and a violet primary accent (Oklab
+/// hue ≈ 310°, `a: 0.10, b: -0.12`).
 pub fn default_light() -> Theme {
     let mut theme = Theme::new("Light");
 
@@ -708,8 +709,8 @@ pub fn default_light() -> Theme {
 /// Constructs the default dark theme.
 ///
 /// The dark theme uses a dark background (`Oklab` lightness ≈ `0.20`), light
-/// text (lightness ≈ `0.96`), and a brighter blue primary accent adjusted for
-/// the dark surround.
+/// text (lightness ≈ `0.96`), and a brighter magenta primary accent
+/// (Oklab hue ≈ 342°, `a: 0.15, b: -0.05`) raised for the dark surround.
 pub fn default_dark() -> Theme {
     let mut theme = Theme::new("Dark");
 

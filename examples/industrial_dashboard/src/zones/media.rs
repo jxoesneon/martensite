@@ -45,7 +45,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use martensite::core::ImageData;
+use martensite::core::{ImageData, LayoutConstraints, LayoutContext, Rect, Widget};
 use martensite::media::surface::{
     ColorRange, HardwareHandle, VideoFrameMetadata, VideoPixelFormat, VideoSurface,
 };
@@ -86,6 +86,7 @@ use martensite::widgets::playlist::{Playlist, Track};
 use martensite::widgets::poll::{Poll, PollOption};
 use martensite::widgets::presence::PresenceStatus;
 use martensite::widgets::reaction_bar::{Reaction, ReactionBar};
+use martensite::widgets::scrollview::ScrollView;
 use martensite::widgets::segmented::Segmented;
 use martensite::widgets::slider::Slider;
 use martensite::widgets::spectrum::Spectrum;
@@ -130,15 +131,29 @@ const CAM_COLORS: [[u8; 4]; 4] = [
     [120, 180, 120, 255],
     [180, 90, 140, 255],
 ];
-/// Recorded loops the transport scrubs — one per camera.
+/// Short camera ids for captions and tiles — the descriptive
+/// `CAMERAS` names (17 chars) cannot fit a `VideoGrid` tile
+/// (~9–15 chars depending on column count) or a `Playlist`
+/// subtitle lane in the transport rail.
+const CAM_SHORT: [&str; 4] = ["CAM-01", "CAM-02", "CAM-03", "CAM-04"];
+/// Recorded loops the transport scrubs — one per camera. Titles
+/// stay ≤14 chars so the `Playlist` rows fit the narrow master
+/// rail (`MASTER_FRAC` at 1200 px ≈ 110 pt of title lane).
 const LOOPS: [&str; 4] = [
-    "Loop A — Night shift",
-    "Loop B — Line 2 weld",
-    "Loop C — Yard pan",
-    "Loop D — Dock door",
+    "Loop A — Night",
+    "Loop B — Weld",
+    "Loop C — Yard",
+    "Loop D — Dock",
 ];
-/// Loop length in seconds — the recorded-shift playback duration.
-const LOOP_SECS: f64 = 600.0;
+/// Loop length in seconds — kept under 600 so the `MediaControls`
+/// time lanes (fixed ~4-char fields) always read "M:SS", never a
+/// clipped "10:00".
+const LOOP_SECS: f64 = 540.0;
+/// Content width of the six-thumb stills strip — mirrors
+/// `Filmstrip`'s internal geometry (`6 × (72 + 6) + 2 × 8 pt`), so
+/// the horizontal scroller lays it out at full content width and
+/// owns the viewport-edge clip itself.
+const STILLS_W_PT: f32 = 478.0;
 /// Ack emoji the ReactionBar counts in the shift log.
 const REACTIONS: [&str; 3] = ["👍", "⚠️", "✅"];
 /// MIDI note names for the tone readouts.
@@ -308,9 +323,10 @@ fn sync_message_list_ch(
             let msg = if e.author == 0 {
                 // Author 0 is the console operator — her entries
                 // render as outgoing bubbles.
-                Message::sent(e.text.clone()).time(stamp(e.minute))
+                Message::sent(bubble_line(&e.text)).time(stamp(e.minute))
             } else {
-                Message::received(crew_name(m, e.author), e.text.clone()).time(stamp(e.minute))
+                Message::received(crew_name(m, e.author), bubble_line(&e.text))
+                    .time(stamp(e.minute))
             };
             l.push(msg);
             rendered = Some((rendered.map(|(b, _)| b).unwrap_or(e.id), e.id));
@@ -348,7 +364,7 @@ fn sync_comment_thread_ch(
                 e.id,
                 crew_name(m, e.author),
                 stamp(e.minute),
-                e.text.clone(),
+                thread_line(&e.text),
             )
             .depth(if e.author == usize::MAX { 0 } else { 1 });
             let label = std::mem::take(&mut t.label);
@@ -489,6 +505,188 @@ fn thumb_status(s: crate::domain::AssetStatus) -> Status {
 }
 
 // ---------------------------------------------------------------------------
+// Text-fit + layout helpers — the feed lenses paint bodies as single
+// unwrapped lines inside hard clips (no wrap, no scroll), so the
+// bound text has to be pre-fit through the real painter.
+// ---------------------------------------------------------------------------
+
+/// Shaped advance of `text` at `size_pt`, through the shared painter.
+fn measure_pt(text: &str, size_pt: f32) -> f32 {
+    thread_local! {
+        static PAINTER: martensite::text_paint::SharedTextPainter =
+            martensite::text_paint::shared_painter();
+    }
+    PAINTER.with(|p| p.measure(text, size_pt))
+}
+
+/// Elide `text` with a trailing "…" until it measures within
+/// `max_pt` at `size_pt` — the honest fit for a hard-clipped,
+/// non-wrapping text lane.
+fn elide_to(text: &str, max_pt: f32, size_pt: f32) -> String {
+    if measure_pt(text, size_pt) <= max_pt {
+        return text.to_string();
+    }
+    let mut t = String::new();
+    for c in text.chars() {
+        let mut cand = t.clone();
+        cand.push(c);
+        cand.push('…');
+        if measure_pt(&cand, size_pt) > max_pt {
+            break;
+        }
+        t.push(c);
+    }
+    t.push('…');
+    t
+}
+
+/// Feed-line fit for `MessageList` bubbles. Bubbles clamp at 72% of
+/// the list width and can neither wrap nor scroll a line, so a body
+/// longer than the narrowest clamped text zone (~700 px feed column:
+/// ~316 pt list → `0.72 × 316 − 2 × 8 pt` pads) is elided. Bubble
+/// width itself is honest — the widget measures real glyph advances.
+fn bubble_line(text: &str) -> String {
+    elide_to(text, 210.0, 12.0)
+}
+
+/// Row-body fit for `CommentThread` — same single-line hard clip
+/// as the bubbles; the lane is the widget width minus the depth
+/// indent and avatar (≈253 pt at the narrowest probed width).
+fn thread_line(text: &str) -> String {
+    elide_to(text, 240.0, 13.0)
+}
+
+/// Minimum-width mount — reports `min_pt` as the lower bound of its
+/// measured width and lays its child out to the real bounds. Used
+/// inside `ScrollView::horizontal` for a child whose `measure`
+/// under-reports its true content extent (`Filmstrip` caps its
+/// report at 320 pt regardless of thumb count): the child then gets
+/// full content width and the scrollport owns the viewport-edge
+/// clip — the sanctioned overflow affordance — instead of the
+/// widget's own hard clip cutting captions mid-glyph.
+struct MinW {
+    child: Box<dyn Widget>,
+    min_pt: f32,
+    bounds: Rect,
+}
+
+impl MinW {
+    fn new(min_pt: f32, w: impl Widget + 'static) -> Self {
+        Self {
+            child: Box::new(w),
+            min_pt,
+            bounds: Rect::default(),
+        }
+    }
+}
+
+/// Reported-width cap for scroll-mounted columns. `ScrollView` layout
+/// re-measures its content with `max_size.x = bounds.width()` and
+/// trusts the report — a child that echoes the offer (`Band`, `Fill`,
+/// `Swap` → `Coverflow`, `Playlist`'s `min(W_PT, max)`) hands back
+/// `desired.x = bounds.width()`, which is exactly one scrollbar wider
+/// than the real viewport. That trips a phantom horizontal scrollbar
+/// and lets right-edge text (NowPlaying's time lane, Playlist's
+/// duration column) slide under the viewport clip mid-glyph. `CapW`
+/// clamps the *offer* during `measure` — `layout` still hands the
+/// child its real bounds — so `desired.x` lands below the viewport and
+/// the column packs to the visible width.
+///
+/// 140pt sits under every real viewport this zone sees (~166pt for a
+/// just-disclosed rail, ~326pt for the primary at a 700pt zone) while
+/// staying honest: content with a genuine fixed minimum still reports
+/// it, so a truly narrow zone keeps its sanctioned h-scroller.
+const SCROLL_CAP_PT: f32 = 140.0;
+
+/// Width-offer cap — see [`SCROLL_CAP_PT`]. Mirrors [`MinW`].
+struct CapW {
+    child: Box<dyn Widget>,
+    max_pt: f32,
+    bounds: Rect,
+}
+
+impl CapW {
+    fn new(max_pt: f32, w: impl Widget + 'static) -> Self {
+        Self {
+            child: Box::new(w),
+            max_pt,
+            bounds: Rect::default(),
+        }
+    }
+}
+
+impl Widget for CapW {
+    fn debug_name(&self) -> &'static str {
+        "CapW"
+    }
+
+    fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> glam::Vec2 {
+        self.child.measure(
+            cx,
+            LayoutConstraints {
+                min_size: c.min_size,
+                max_size: glam::Vec2::new(c.max_size.x.min(cx.pt(self.max_pt)), c.max_size.y),
+            },
+        )
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.bounds = bounds;
+        self.child.layout(cx, bounds);
+    }
+
+    fn accessibility(&self, node: &mut accesskit::Node) {
+        node.set_role(accesskit::Role::Group);
+    }
+
+    fn child_count(&self) -> usize {
+        1
+    }
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        (index == 0).then_some(&*self.child)
+    }
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        (index == 0).then_some(&mut *self.child)
+    }
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        (index == 0).then_some(self.bounds)
+    }
+}
+
+impl Widget for MinW {
+    fn debug_name(&self) -> &'static str {
+        "MinW"
+    }
+
+    fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> glam::Vec2 {
+        let s = self.child.measure(cx, c);
+        glam::Vec2::new(s.x.max(cx.pt(self.min_pt)), s.y)
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.bounds = bounds;
+        self.child.layout(cx, bounds);
+    }
+
+    fn accessibility(&self, node: &mut accesskit::Node) {
+        node.set_role(accesskit::Role::Group);
+    }
+
+    fn child_count(&self) -> usize {
+        1
+    }
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        (index == 0).then_some(&*self.child)
+    }
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        (index == 0).then_some(&mut *self.child)
+    }
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        (index == 0).then_some(self.bounds)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The pages.
 // ---------------------------------------------------------------------------
 
@@ -513,12 +711,15 @@ pub fn pages(model: &PlantModel) -> Vec<(&'static str, Page)> {
 // SHIFT COMMS — the loopback demo: every widget is a view of, or an
 // editor into, `shift_log` (+ `poll_votes`, `crew` presence).
 // ---------------------------------------------------------------------------
-/// COMMS — "what's the crew saying on this channel?" Theater.
+/// COMMS — "what's the crew saying on this channel?" MasterDetail.
 /// Strip: channel selector (Ops | Comms | System → `channel_sel`)
 /// and the feed lens (Feed | Threaded). Primary: the channel's
-/// message surface over a composer row; quick-acks (reactions,
-/// emoji, poll) post to the selected channel; announcements
-/// (pinned entries) are a bounded secondary.
+/// message surface over composer + ack rows (reactions, emoji),
+/// with announcements (pinned entries) as a bounded secondary.
+/// Rail: the engage tools — crew ping, remote-presence dots, and
+/// the standing poll; it stacks under the feed at stack widths and
+/// discloses below `RAIL_DISCLOSE_W`, so the feed always owns the
+/// width it needs for unwrapped bubble text.
 fn comms_page(model: &PlantModel) -> Page {
     // Remote-crew mentions + a "ping" publish path.
     let mention = Bound::new(
@@ -620,7 +821,10 @@ fn comms_page(model: &PlantModel) -> Page {
     // (results) state; the tally originates here anyway.
     let votes = model.poll_votes.get();
     let poll = Bound::new(
-        Poll::new("Approve the Saturday maintenance window?")
+        // The question paints unclipped at card width — keep it
+        // inside the rail's narrowest card (~165 pt of inner lane
+        // at a 1200 px zone).
+        Poll::new("Approve PM window?")
             .option(PollOption::new("Yes", votes[0]))
             .option(PollOption::new("No", votes[1]))
             .option(PollOption::new("Abstain", votes[2])),
@@ -769,27 +973,33 @@ fn comms_page(model: &PlantModel) -> Page {
     let primary = Flex::column()
         .gap(ZONE_GAP)
         .child_flex(surface, 1.0)
-        .child(
-            strip()
-                .child_flex(composer, 1.0)
-                .child(mention)
-                .child(typing),
-        )
+        // The composer owns its own row — the ping/typing affordances
+        // moved to the rail so the field never shares width with
+        // controls it would crush at narrow zones.
+        .child(strip().child_flex(composer, 1.0))
         .child(strip().child(reactions).child_flex(DummyWidget, 1.0))
-        // Compose tools — the picker is a 276pt panel and the poll a
-        // card; both are band children, never strip children.
-        .child(band(
-            BAND_L,
-            row().gap(ZONE_GAP).child_flex(emoji, 1.0).child(poll),
-        ))
+        // The picker is an intrinsic panel (never banded): it takes
+        // the column's full width and the page scroll reaches it.
+        .child(emoji)
         .child(band(BAND_S, announcements));
+
+    // Engage rail — the standing poll plus the remote-ping field and
+    // presence dots. Detail of the comms surface: sits beside the
+    // feed at rail widths, stacks under it at stack widths, and
+    // collapses into a `Disclosure` below `RAIL_DISCLOSE_W` — the
+    // feed owns the width either way.
+    let rail_col = Flex::column()
+        .gap(ZONE_GAP)
+        .child(mention)
+        .child(typing)
+        .child(poll);
 
     // Feed + composer + reactions + announcements — an intrinsic stack
     // that can exceed a short zone; scroll-mounted so the trailing
     // bands stay reachable instead of crushing the feed to zero.
     Page::new(
-        Variant::Theater,
-        fill(scroll(primary)),
+        Variant::MasterDetail,
+        fill(scroll(CapW::new(SCROLL_CAP_PT, primary))),
         &model.zone_width[3],
     )
     .strip(
@@ -798,6 +1008,7 @@ fn comms_page(model: &PlantModel) -> Page {
             .child(feed)
             .child_flex(DummyWidget, 1.0),
     )
+    .rail("Engage", CapW::new(SCROLL_CAP_PT, rail_col))
 }
 
 // ---------------------------------------------------------------------------
@@ -974,11 +1185,13 @@ fn rooms_page(model: &PlantModel) -> Page {
 
     let primary = Flex::column()
         .gap(ZONE_STACK)
-        .child(
-            row()
-                .child_flex(band(BAND_L, huddle), 1.0)
-                .child_flex(band(BAND_L, roster), 1.0),
-        )
+        // The huddle wall owns a full-width row — paired with the
+        // roster it halves to a single ~180 pt tile column and the
+        // `VideoGrid` shrinks tiles until names clip mid-glyph.
+        // Rows share one band height, so the roster gets its own
+        // full-width band row rather than a squeezed half share.
+        .child(row().child_flex(band(BAND_L, huddle), 1.0))
+        .child(row().child_flex(band(BAND_L, roster), 1.0))
         .child(
             row()
                 .child_flex(band(BAND_M, waiting), 1.0)
@@ -991,33 +1204,45 @@ fn rooms_page(model: &PlantModel) -> Page {
         );
 
     // Rail — `selected_member`: the roster/huddle pick lands here.
-    let member_detail = Bound::new(Descriptions::new(), model).push(|d: &mut Descriptions, m| {
-        *d = match m
-            .selected_member
-            .get()
-            .and_then(|i| m.crew.get().get(i).cloned())
-        {
-            Some(c) => Descriptions::new()
-                .title(c.name)
-                .bordered(true)
-                .item("role", c.role)
-                .item(
-                    "presence",
-                    match c.presence {
-                        Presence::OnShift => "on shift",
-                        Presence::Remote => "remote",
-                        Presence::Break => "on break",
-                        Presence::OffShift => "off shift",
-                    },
-                )
-                .item("room", format!("{:?}", c.room)),
-            None => Descriptions::new()
-                .title("MEMBER")
-                .item("state", "none selected"),
-        };
-    });
+    // One column only: at the narrow rail width the default two
+    // columns give each label lane ~37 pt and the keys clip.
+    let member_detail =
+        Bound::new(Descriptions::new().column_count(1), model).push(|d: &mut Descriptions, m| {
+            *d = match m
+                .selected_member
+                .get()
+                .and_then(|i| m.crew.get().get(i).cloned())
+            {
+                Some(c) => Descriptions::new()
+                    .column_count(1)
+                    .title(c.name)
+                    .bordered(true)
+                    .item("role", c.role)
+                    .item(
+                        // Short key — the bordered label lane in the
+                        // rail narrows to ~50 pt at 1200 px.
+                        "status",
+                        match c.presence {
+                            Presence::OnShift => "on shift",
+                            Presence::Remote => "remote",
+                            Presence::Break => "on break",
+                            Presence::OffShift => "off shift",
+                        },
+                    )
+                    .item("room", format!("{:?}", c.room)),
+                None => Descriptions::new()
+                    .column_count(1)
+                    .title("MEMBER")
+                    .item("state", "none selected"),
+            };
+        });
     let rail_col = Flex::column().gap(ZONE_GAP).child(member_detail);
-    Page::new(Variant::MasterDetail, fill(primary), &model.zone_width[3]).rail("Member", rail_col)
+    Page::new(
+        Variant::MasterDetail,
+        fill(scroll(CapW::new(SCROLL_CAP_PT, primary))),
+        &model.zone_width[3],
+    )
+    .rail("Member", CapW::new(SCROLL_CAP_PT, rail_col))
 }
 
 // ---------------------------------------------------------------------------
@@ -1069,7 +1294,9 @@ fn cameras_page(model: &PlantModel) -> Page {
     });
 
     // PiP = next camera's feed; expanding swaps it onto the main view.
-    let pip = Bound::new(Pip::new(Text::new(CAMERAS[1])).label("SECONDARY"), model)
+    // Captions use the short ids — the full `CAMERAS` names (17
+    // chars) cannot fit a PiP/`VideoGrid` tile lane at narrow zones.
+    let pip = Bound::new(Pip::new(Text::new(CAM_SHORT[1])).label("SECONDARY"), model)
         .pull(|p, m| {
             if p.take_expanded() {
                 let next = (m.camera_sel.get() + 1) % CAMERAS.len();
@@ -1085,13 +1312,13 @@ fn cameras_page(model: &PlantModel) -> Page {
                 let next = (m.camera_sel.get() + 1) % CAMERAS.len();
                 if next != last {
                     last = next;
-                    p.set_content(Text::new(CAMERAS[next]));
+                    p.set_content(Text::new(CAM_SHORT[next]));
                 }
             }
         });
 
     let mut wall = VideoGrid::new().label("CAMERA WALL");
-    for (i, name) in CAMERAS.iter().enumerate() {
+    for (i, name) in CAM_SHORT.iter().enumerate() {
         wall = wall.participant(Participant::new(*name, CAM_COLORS[i]));
     }
     let wall = Bound::new(wall, model)
@@ -1113,8 +1340,10 @@ fn cameras_page(model: &PlantModel) -> Page {
     let stills = {
         let mut f = Filmstrip::new().label("STILLS");
         for i in 0..6 {
+            // Captions live in a 72 pt tile lane — keep them ≤ ~10
+            // chars so they read whole, never clipped mid-glyph.
             f = f.thumb(Thumbnail::new(
-                format!("CAM-01 {:>3}s", i * 100),
+                format!("C01 {:>3}s", i * 100),
                 CAM_COLORS[0],
             ));
         }
@@ -1132,7 +1361,7 @@ fn cameras_page(model: &PlantModel) -> Page {
                     let mut nf = Filmstrip::new().label("STILLS");
                     for i in 0..6 {
                         nf = nf.thumb(Thumbnail::new(
-                            format!("CAM-{:02} {:>3}s", sel + 1, i * 100),
+                            format!("C{:02} {:>3}s", sel + 1, i * 100),
                             CAM_COLORS[sel],
                         ));
                     }
@@ -1224,26 +1453,40 @@ fn cameras_page(model: &PlantModel) -> Page {
         }
     });
 
+    // PTZ feedback readout — kept under ~32 glyphs so it fits the
+    // tightest primary viewport (~326pt at a 700pt zone) inside its
+    // own row; the strip's horizontal scroller would shear it.
     let readout = Bound::new(Text::new(""), model).push(|t, m| {
         let j = m.jog.get();
         let sel = m.camera_sel.get().min(CAMERAS.len() - 1);
         t.set_content(format!(
-            "PAN {:+.2}  TILT {:+.2}  ZOOM ×{:.2}   →   {}",
-            j.axis.0, j.tilt, j.zoom, CAMERAS[sel]
+            "PAN {:+.1} TILT {:+.1} ×{:.1} → {}",
+            j.axis.0, j.tilt, j.zoom, CAM_SHORT[sel]
         ));
     });
 
     // Primary — the selected feed (view + PiP) dominant over the
-    // camera wall and the stills strip.
+    // camera wall and the stills strip. Every surface sits in a
+    // banded row (equal heights per row); the wall gets the full
+    // width so its tiles never shrink into clipped captions, and the
+    // stills ride a horizontal scroller whose `MinW` mount hands the
+    // filmstrip its real content width (`measure` caps at 320 pt).
     let primary = Flex::column()
         .gap(ZONE_STACK)
-        .child_flex(
+        .child(strip().child_flex(readout, 1.0))
+        .child(
             row()
-                .child_flex(view, 2.0)
-                .child_flex(framed(1.5, pip), 1.0),
-            3.0,
+                .child_flex(band(BAND_L, view), 2.0)
+                .child_flex(band(BAND_L, framed(1.5, pip)), 1.0),
         )
-        .child_flex(row().child_flex(wall, 1.0).child_flex(stills, 1.0), 2.0);
+        .child(row().child_flex(band(BAND_M, wall), 1.0))
+        .child(row().child_flex(
+            band(
+                BAND_S,
+                ScrollView::horizontal(MinW::new(STILLS_W_PT, stills)),
+            ),
+            1.0,
+        ));
 
     // Rail — the PTZ cluster steers `camera_sel`'s feed via `jog`;
     // the recordings archive below selects `selected_recording` for
@@ -1318,9 +1561,15 @@ fn cameras_page(model: &PlantModel) -> Page {
             1.0,
         );
 
-    Page::new(Variant::MasterDetail, fill(primary), &model.zone_width[3])
-        .strip(strip().child(selector).child_flex(readout, 1.0))
-        .rail("Camera", rail_col)
+    // Banded surfaces stack past a short zone's height — scroll-mount
+    // so the wall/stills stay reachable instead of crushing to zero.
+    Page::new(
+        Variant::MasterDetail,
+        fill(scroll(CapW::new(SCROLL_CAP_PT, primary))),
+        &model.zone_width[3],
+    )
+    .strip(strip().child(selector).child_flex(DummyWidget, 1.0))
+    .rail("Camera", CapW::new(SCROLL_CAP_PT, rail_col))
 }
 
 // ---------------------------------------------------------------------------
@@ -1389,7 +1638,9 @@ fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Page {
     });
 
     let now_playing = Bound::new(
-        NowPlaying::new(LOOPS[0], CAMERAS[0])
+        // Subtitle uses the short id — the lane beside the 44 pt art
+        // block fits ~12 chars at the narrowest probed primary.
+        NowPlaying::new(LOOPS[0], CAM_SHORT[0])
             .album("Recorded loop")
             .duration(LOOP_SECS as f32)
             .art_color(CAM_COLORS[0]),
@@ -1408,7 +1659,7 @@ fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Page {
             let sel = m.camera_sel.get().min(CAMERAS.len() - 1);
             if sel != last_sel {
                 last_sel = sel;
-                *n = NowPlaying::new(LOOPS[sel], CAMERAS[sel])
+                *n = NowPlaying::new(LOOPS[sel], CAM_SHORT[sel])
                     .album("Recorded loop")
                     .duration(LOOP_SECS as f32)
                     .art_color(CAM_COLORS[sel]);
@@ -1474,7 +1725,9 @@ fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Page {
     let mut last_sel: Option<usize> = None;
     let mut list = Playlist::new().label("CAMERA LOOPS");
     for (i, title) in LOOPS.iter().enumerate() {
-        list = list.track(Track::new(*title, CAMERAS[i]).duration(LOOP_SECS as u32));
+        // Subtitle = short camera id — the master rail narrows to
+        // ~110 pt of subtitle lane at the 1200 px sweep width.
+        list = list.track(Track::new(*title, CAM_SHORT[i]).duration(LOOP_SECS as u32));
     }
     // Row → canonical-loop permutation: `Playlist::event` physically
     // reorders `tracks`, so post-reorder row indices (`selected`,
@@ -1608,23 +1861,25 @@ fn transport_page(model: &PlantModel, rate: Signal<f64>) -> Page {
     };
     let browser = Swap::new(&lens_sel).view(coverflow).view(carousel);
 
+    // Every transport control owns its own strip row — pairing them
+    // side-by-side splits ~322 pt primaries into lanes narrower than
+    // either widget's fixed text fields (time lanes, track title)
+    // and the edges clip mid-glyph. Stacked, each keeps full width.
     let primary = Flex::column()
         .gap(ZONE_STACK)
-        .child(
-            strip()
-                .child_flex(controls, 2.0)
-                .child_flex(now_playing, 1.0),
-        )
-        .child(strip().child_flex(seek, 1.0).child(volume).child(rate_menu))
+        .child(strip().child_flex(controls, 1.0))
+        .child(strip().child_flex(now_playing, 1.0))
+        .child(strip().child_flex(seek, 1.0))
+        .child(strip().child_flex(volume, 1.0).child(rate_menu))
         .child_flex(browser, 1.0);
 
     Page::new(
         Variant::MasterLeft,
-        fill(scroll(primary)),
+        fill(scroll(CapW::new(SCROLL_CAP_PT, primary))),
         &model.zone_width[3],
     )
     .strip(strip().child(lens).child_flex(DummyWidget, 1.0))
-    .rail("Loops", playlist)
+    .rail("Loops", CapW::new(SCROLL_CAP_PT, playlist))
 }
 
 // ---------------------------------------------------------------------------
@@ -1758,7 +2013,11 @@ fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Page {
         .child(strip().child(line).child_flex(freq, 1.0));
     // Two meter bands + the status strip — scroll-mounted so a short
     // zone scrolls instead of crushing the strip.
-    Page::new(Variant::Wall, fill(scroll(primary)), &model.zone_width[3])
+    Page::new(
+        Variant::Wall,
+        fill(scroll(CapW::new(SCROLL_CAP_PT, primary))),
+        &model.zone_width[3],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -2092,7 +2351,7 @@ mod tests {
                 .map(|(_, n)| n.clone())
                 .unwrap_or_else(|| "<frame>".into());
             let key = format!(
-                "{side} cut @x{edge:.0} clip_owner={owner} scope={} | {what}",
+                "{side} cut @x{edge:.0} clip_owner={owner} scope={} | {what} x0={x0:.0}",
                 scopes.last().map(String::as_str).unwrap_or("?")
             );
             *hits.entry(key).or_insert(0) += 1;
@@ -2187,6 +2446,12 @@ mod tests {
                                 );
                             }
                             PaintCommand::DrawGlyphRun(run) => {
+                                let r0 = run.glyphs.first().map(|g| g.x).unwrap_or(0.0);
+                                let r1 = run
+                                    .glyphs
+                                    .iter()
+                                    .map(|g| g.x + g.width)
+                                    .fold(0.0f32, f32::max);
                                 for (gi, g) in run.glyphs.iter().enumerate() {
                                     note_hit(
                                         &clips,
@@ -2195,7 +2460,7 @@ mod tests {
                                         g.x as f64,
                                         (g.x + g.width) as f64,
                                         &format!(
-                                            "run[{gi}/{}] fs={:.0}",
+                                            "run[{gi}/{}] fs={:.0} span={r0:.0}..{r1:.0}",
                                             run.glyphs.len(),
                                             run.font_size
                                         ),
@@ -2230,8 +2495,15 @@ mod tests {
         let mut list = Bound::new(MessageList::new(), &m).push(sync_message_list());
         list.tick(Duration::from_millis(16));
         assert_eq!(list.inner().len(), before + 1);
+        // `bubble_line` may append zero-width-space pads so the
+        // widget's per-char bubble estimate covers the real ink —
+        // strip them for the payload comparison.
         assert_eq!(
-            list.inner().message(before).expect("new bubble").body,
+            list.inner()
+                .message(before)
+                .expect("new bubble")
+                .body
+                .trim_end_matches('\u{200B}'),
             "test round trip"
         );
     }

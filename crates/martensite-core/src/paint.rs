@@ -2194,6 +2194,87 @@ pub trait TextShaper {
     }
 }
 
+thread_local! {
+    /// The ambient text-measure provider for the current layout pass —
+    /// see [`install_ambient_measurer`].
+    static AMBIENT_MEASURER: std::cell::RefCell<Option<Arc<dyn TextShaper + Send + Sync>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// RAII guard that restores the previous ambient measurer on drop —
+/// see [`install_ambient_measurer`].
+#[must_use = "the ambient measurer is uninstalled when the guard drops"]
+pub struct AmbientMeasurerGuard(Option<Arc<dyn TextShaper + Send + Sync>>);
+
+impl Drop for AmbientMeasurerGuard {
+    fn drop(&mut self) {
+        let prior = self.0.take();
+        AMBIENT_MEASURER.with(|s| *s.borrow_mut() = prior);
+    }
+}
+
+/// Installs `measurer` as this thread's ambient text-measure provider
+/// until the returned [`AmbientMeasurerGuard`] drops. Widgets query it
+/// through
+/// [`LayoutContext::measure_text`](crate::LayoutContext::measure_text)
+/// during `Widget::measure`/`Widget::layout`; `LayoutEngine` installs
+/// the arena's ambient painter automatically, so manual layout passes
+/// (tests, harness sweeps) install one themselves via
+/// [`WidgetArena::text_painter_shared`](crate::WidgetArena::text_painter_shared).
+///
+/// The guard is thread-local and re-entrant: nested installs restore
+/// in LIFO order. When no measurer is installed,
+/// `LayoutContext::measure_text` returns `None` and widgets keep their
+/// estimate-based fallback.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::paint::{ambient_measure_text, install_ambient_measurer, TextShaper};
+/// use martensite_core::PaintList;
+/// use std::sync::Arc;
+///
+/// struct Fixed;
+/// impl TextShaper for Fixed {
+///     fn paint_shaped_text(&self, _: &mut PaintList, _: kurbo::Point, _: &str, _: f32, _: [u8; 4]) {}
+///     fn measure_text(&self, text: &str, size_px: f32) -> Option<f32> {
+///         Some(text.len() as f32 * size_px * 0.5)
+///     }
+/// }
+///
+/// assert_eq!(ambient_measure_text("hi", 14.0), None);
+/// let _guard = install_ambient_measurer(Arc::new(Fixed));
+/// assert_eq!(ambient_measure_text("hi", 14.0), Some(14.0));
+/// ```
+pub fn install_ambient_measurer(
+    measurer: Arc<dyn TextShaper + Send + Sync>,
+) -> AmbientMeasurerGuard {
+    let prior = AMBIENT_MEASURER.with(|s| s.replace(Some(measurer)));
+    AmbientMeasurerGuard(prior)
+}
+
+/// Advance width of `text` at `size_px` device pixels through the
+/// ambient measurer — `None` when none is installed or it cannot
+/// measure. Widgets should not call this directly; use
+/// [`LayoutContext::measure_text`](crate::LayoutContext::measure_text),
+/// which applies the context scale.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::paint::ambient_measure_text;
+///
+/// // No measurer installed by default.
+/// assert_eq!(ambient_measure_text("hi", 14.0), None);
+/// ```
+pub fn ambient_measure_text(text: &str, size_px: f32) -> Option<f32> {
+    AMBIENT_MEASURER.with(|s| {
+        s.borrow()
+            .as_ref()
+            .and_then(|m| m.measure_text(text, size_px))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

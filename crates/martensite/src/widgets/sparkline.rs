@@ -226,13 +226,14 @@ impl Widget for Sparkline {
         let ink = if self.enabled { accent } else { muted };
         let stroke_w = cx.pt(1.5);
 
-        // Baseline hairline.
+        // Baseline hairline — drawn inside the bounds edge so nothing
+        // relies on an ancestor clip to stay invisible.
         cx.list.push_fill_rect(
             kurbo::Rect::new(
                 f64::from(b.min_x()),
-                f64::from(b.max_y() - cx.pt(0.5)),
+                f64::from(b.max_y() - cx.pt(1.0)),
                 f64::from(b.max_x()),
-                f64::from(b.max_y() + cx.pt(0.5)),
+                f64::from(b.max_y()),
             ),
             baseline,
         );
@@ -282,12 +283,21 @@ impl Widget for Sparkline {
         if self.show_dot && self.style != SparkStyle::Bars {
             let last = pts[n - 1];
             let d = cx.pt(5.0);
+            // The last sample sits on the right edge — clamp the dot
+            // centre inward by its radius instead of overshooting the
+            // bounds and relying on an ancestor clip.
+            let dx = last
+                .x
+                .clamp(b.min_x() + d * 0.5, (b.max_x() - d * 0.5).max(b.min_x()));
+            let dy = last
+                .y
+                .clamp(b.min_y() + d * 0.5, (b.max_y() - d * 0.5).max(b.min_y()));
             cx.list.push_fill_shape(
                 kurbo::Rect::new(
-                    f64::from(last.x - d * 0.5),
-                    f64::from(last.y - d * 0.5),
-                    f64::from(last.x + d * 0.5),
-                    f64::from(last.y + d * 0.5),
+                    f64::from(dx - d * 0.5),
+                    f64::from(dy - d * 0.5),
+                    f64::from(dx + d * 0.5),
+                    f64::from(dy + d * 0.5),
                 ),
                 &martensite_core::shape::Shape::ELLIPSE,
                 ink,

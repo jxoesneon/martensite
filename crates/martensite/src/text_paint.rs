@@ -559,6 +559,25 @@ pub(crate) fn resolve_painter<'a>(
         .or(ambient)
 }
 
+/// Advance width of `text` at `size_pt` logical pt, in device pixels,
+/// measured through `explicit` (the widget's injected painter) or the
+/// ambient measurer — `None` when neither can measure so callers keep
+/// their estimate fallback. Layout-side sibling of
+/// [`resolve_painter`]: measure must see the same shaping pipeline the
+/// paint pass will use or sized-to-fit controls clip mid-glyph.
+pub(crate) fn measure_label(
+    explicit: &Option<SharedTextPainter>,
+    scale: f32,
+    text: &str,
+    size_pt: f32,
+) -> Option<f32> {
+    let size_px = size_pt * scale;
+    if let Some(p) = explicit {
+        return Some(p.measure(text, size_px));
+    }
+    martensite_core::paint::ambient_measure_text(text, size_px)
+}
+
 /// Case-aware label width estimate (logical pt at the 14 pt UI font):
 /// uppercase letters and digits run ~9.6 pt, other chars ~7.6 pt.
 /// Layout-side sibling of [`paint_label_clipped`] — widgets whose
