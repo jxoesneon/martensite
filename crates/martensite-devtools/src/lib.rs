@@ -39,6 +39,8 @@
 #![deny(missing_docs)]
 
 #[cfg(feature = "devtools")]
+pub mod dev_session;
+#[cfg(feature = "devtools")]
 pub mod error_surface;
 pub mod event_ledger;
 pub mod hud;
@@ -52,6 +54,13 @@ pub mod tracy;
 #[cfg(feature = "devtools")]
 pub mod tweak;
 
+#[cfg(feature = "devtools")]
+pub use dev_session::{
+    layout_store::{LayoutNodeRecord, LayoutStore},
+    log_ring::{LogRecord, LogRing},
+    ArenaProbe, DevSession, NullProbe, ReloadStats, SessionResult, SignalAdapter, SignalReadJson,
+    SignalWriteJson, WidgetArenaProbe,
+};
 #[cfg(feature = "devtools")]
 pub use error_surface::{
     clear_in_flight, current_in_flight, install_dev_panic_hook, is_dev_panic_enabled,

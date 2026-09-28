@@ -14,13 +14,20 @@ readme = "README.md"
 
 [dependencies]
 libloading = { workspace = true }
+martensite-core = { workspace = true, optional = true }
 martensite-devtools = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 [features]
 default = []
-dev-channel = ["dep:martensite-devtools", "dep:serde", "dep:serde_json"]
+dev-channel = [
+    "dep:martensite-core",
+    "dep:martensite-devtools",
+    "dep:serde",
+    "dep:serde_json",
+    "martensite-devtools/devtools",
+]
 
 # This crate uses `#![allow(unsafe_code)]` at the crate level because dynamic
 # library loading (`dlopen`/`dlsym` on Unix, `LoadLibrary`/`GetProcAddress` on

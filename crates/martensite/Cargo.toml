@@ -41,6 +41,8 @@ martensite-devtools = { workspace = true }
 martensite-design-lint = { workspace = true }
 # Optional: OS-native font fallback providers (DirectWrite, CoreText, Fontconfig).
 martensite-font-fallback = { workspace = true, optional = true }
+# Optional: dev-channel IPC server (ADR-0038) for devtools/MCP attach.
+martensite-host = { workspace = true, optional = true }
 accesskit = { workspace = true }
 glam = { workspace = true }
 kurbo = { workspace = true }
@@ -84,10 +86,24 @@ decoder-videotoolbox = ["martensite-media/decoder-videotoolbox"]
 decoder-mf = ["martensite-media/decoder-mf"]
 decoder-vaapi = ["martensite-media/decoder-vaapi"]
 decoder-ffmpeg = ["martensite-media/decoder-ffmpeg"]
+# Dev-channel IPC server for devtools and MCP attach (ADR-0038). Exposes
+# `martensite::dev_channel`; set MARTENSITE_DEV_CHANNEL=1 in a debug build
+# to serve the session socket.
+dev-channel = [
+    "dep:martensite-host",
+    "martensite-host/dev-channel",
+    "martensite-devtools/devtools",
+    # The channel's event-ledger surface needs the router recording —
+    # `EventRouter::event_ledger` lives behind this flag.
+    "martensite-window/devtools",
+]
 # Time-travel debugging state capture (martensite-devtools). Mirrors
 # martensite-core's feature so widget wrappers built on the facade
 # can forward the timemachine hooks correctly.
-devtools-timemachine = ["martensite-core/devtools-timemachine"]
+devtools-timemachine = [
+    "martensite-core/devtools-timemachine",
+    "martensite-devtools/devtools-timemachine",
+]
 
 [package.metadata.docs.rs]
 features = ["docs-rs"]

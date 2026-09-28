@@ -2857,6 +2857,7 @@ dependencies = [
  "martensite-focus",
  "martensite-font-fallback",
  "martensite-history",
+ "martensite-host",
  "martensite-l10n",
  "martensite-layout",
  "martensite-macros",
@@ -3034,19 +3035,24 @@ name = "martensite-devtools"
 version = "0.20.1"
 dependencies = [
  "accesskit",
+ "base64",
  "bitflags",
  "glam",
  "kurbo",
  "martensite-core",
  "martensite-design-lint",
+ "martensite-focus",
  "martensite-history",
+ "martensite-layout",
  "martensite-macros",
  "martensite-reactive",
  "martensite-render",
+ "martensite-theme",
  "parking_lot",
  "serde",
  "serde_json",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3120,6 +3126,7 @@ name = "martensite-host"
 version = "0.20.1"
 dependencies = [
  "libloading",
+ "martensite-core",
  "martensite-devtools",
  "serde",
  "serde_json",
@@ -5465,6 +5472,7 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "log",
+ "png",
  "tiny-skia-path",
 ]
 

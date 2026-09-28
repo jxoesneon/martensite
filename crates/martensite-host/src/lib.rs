@@ -57,17 +57,29 @@
 #![deny(missing_docs)]
 
 #[cfg(feature = "dev-channel")]
+pub mod auto;
+#[cfg(feature = "dev-channel")]
 pub mod dev_channel;
+#[cfg(feature = "dev-channel")]
+pub mod session_handler;
 
 #[cfg(feature = "dev-channel")]
+pub use auto::{serve_dev_session_from_env, DevChannelError};
+#[cfg(feature = "dev-channel")]
 pub use dev_channel::{
-    socket_path_for_session, DefaultDevChannelHandler, DevChannelClient, DevChannelConfig,
-    DevChannelHandler, DevChannelServer, EventLedgerParams, HelloParams, HelloResult,
-    InspectorSelectParams, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LintApplyParams,
-    LintPullParams, TreeSnapshotParams, DEV_CHANNEL_PROTOCOL_VERSION, ERR_HANDSHAKE_REQUIRED,
-    ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE,
-    ERR_VERSION_MISMATCH, MARTENSITE_VERSION,
+    socket_path_for_session, A11yActionParams, A11yTreeParams, AuditPaintParams, CaptureNodeParams,
+    DefaultDevChannelHandler, DevChannelClient, DevChannelConfig, DevChannelHandler,
+    DevChannelServer, EventDispatchParams, EventLedgerParams, HelloParams, HelloResult,
+    HotReloadParams, InspectorSelectParams, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
+    LayoutChainParams, LintApplyParams, LintPullParams, LogsParams, NodeSetLoadingParams,
+    OverflowScanParams, ReloadStatusParams, RuntimeErrorsParams, SignalSetParams,
+    SignalTriggerParams, SignalsListParams, ThemeGetParams, ThemeSetParams, TimemachineStepParams,
+    TreeNodeParams, TreeSnapshotParams, TweakSetParams, TweaksListParams, TweaksSyncParams,
+    DEV_CHANNEL_PROTOCOL_VERSION, ERR_HANDSHAKE_REQUIRED, ERR_INTERNAL, ERR_INVALID_PARAMS,
+    ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE, ERR_VERSION_MISMATCH, MARTENSITE_VERSION,
 };
+#[cfg(feature = "dev-channel")]
+pub use session_handler::{serve_dev_session, SessionDevChannelHandler};
 
 use libloading::{Library, Symbol};
 use std::fmt;

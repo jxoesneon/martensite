@@ -28,7 +28,8 @@
 use std::path::{Path, PathBuf};
 
 use kurbo::{Point, Rect};
-use martensite_core::PaintList;
+use martensite_core::{PaintList, WidgetArena};
+use martensite_design_lint::LoadingTracker;
 pub use martensite_design_lint::{
     Confidence, FillStat, Finding, FixSafety, LintConfig, LintConfigError, LintNode, LintReport,
     LintScene, NodeKind, Severity, Standard, TextStat,
@@ -61,6 +62,10 @@ pub struct LintBridge {
     skipped_count: usize,
     frames_evaluated: usize,
     dump_path: Option<PathBuf>,
+    /// Tracks consecutive loading sightings per node so the
+    /// `loading-stuck` rule sees persistence, fed by
+    /// [`sample_loading`](Self::sample_loading).
+    loading: LoadingTracker,
 }
 
 impl Default for LintBridge {
@@ -93,6 +98,7 @@ impl LintBridge {
             skipped_count: 0,
             frames_evaluated: 0,
             dump_path: None,
+            loading: LoadingTracker::new(),
         }
     }
 
@@ -338,6 +344,26 @@ impl LintBridge {
         self.last_fingerprint
     }
 
+    /// Sample the live arena's per-node loading states once per audit
+    /// tick — call right before [`on_frame`](Self::on_frame) so the
+    /// `loading-stuck` rule can report a skeleton that never resolves.
+    /// Nodes that resolve or disappear reset automatically.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::WidgetArena;
+    /// use martensite_design_lint::LintConfig;
+    /// use martensite_devtools::lint_bridge::LintBridge;
+    ///
+    /// let mut bridge = LintBridge::new(LintConfig::new());
+    /// let arena = WidgetArena::new();
+    /// bridge.sample_loading(&arena);
+    /// ```
+    pub fn sample_loading(&mut self, arena: &WidgetArena) {
+        self.loading.sample_arena(arena);
+    }
+
     /// Feed the frame's paint list.
     ///
     /// When disabled, this is a zero-cost early return that does not construct
@@ -372,6 +398,9 @@ impl LintBridge {
         self.frames_evaluated += 1;
         let mut scene = LintScene::from_paint_list(list);
         scene.scale_factor = self.config.scale_factor;
+        // Stamp `@loading:N` sighting counts before fingerprinting so
+        // the `loading-stuck` rule sees accumulated persistence.
+        self.loading.annotate(&mut scene);
         let fp = scene.fingerprint();
 
         if self.last_fingerprint == Some(fp) && self.last_report.is_some() {

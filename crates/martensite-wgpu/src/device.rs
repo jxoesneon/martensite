@@ -279,6 +279,13 @@ impl GpuContext {
     pub fn instance_descriptor() -> wgpu::InstanceDescriptor {
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
         desc.backends = platform_backends();
+        // hasvk reports conformanceVersion 0.0.0.0 (gen7.5 is not a
+        // conformance-tested configuration); wgpu-hal hides such
+        // adapters unless told to keep them. The flag only widens
+        // enumeration — `request_device` still validates features and
+        // limits, so an adapter that truly can't run the workload is
+        // still rejected downstream.
+        desc.flags |= wgpu::InstanceFlags::ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER;
         desc
     }
 

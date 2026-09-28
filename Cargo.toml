@@ -188,11 +188,13 @@ slotmap = { version = "1.1", features = ["serde"] }
 bitflags = "2.13"
 bytemuck = { version = "1.25", features = ["derive"] }
 tracing = "0.1.44"
+tracing-subscriber = "0.3"
+base64 = "0.22"
 smallvec = { version = "1.13", features = ["union"] }
 kurbo = "0.13"
 peniko = "0.6"
 glam = { version = "0.33", features = ["bytemuck"] }
-tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }
 softbuffer = { version = "0.4" }
 raw-window-handle = { package = "raw-window-handle", version = "0.6", features = ["std"] }
 pollster = "1.0"

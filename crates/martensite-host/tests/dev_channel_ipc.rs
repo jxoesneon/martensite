@@ -7,10 +7,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use martensite_host::dev_channel::{
-    socket_path_for_session, DevChannelClient, DevChannelConfig, DevChannelHandler,
-    DevChannelServer, DevStream, EventLedgerParams, InspectorSelectParams, JsonRpcRequest,
-    LintApplyParams, LintPullParams, TreeSnapshotParams, DEV_CHANNEL_PROTOCOL_VERSION,
-    ERR_HANDSHAKE_REQUIRED, ERR_METHOD_NOT_FOUND, ERR_PARSE, ERR_VERSION_MISMATCH,
+    socket_path_for_session, A11yActionParams, DevChannelClient, DevChannelConfig,
+    DevChannelHandler, DevChannelServer, DevStream, EventLedgerParams, HotReloadParams,
+    InspectorSelectParams, JsonRpcRequest, LintApplyParams, LintPullParams, LogsParams,
+    RuntimeErrorsParams, SignalSetParams, TreeSnapshotParams, DEV_CHANNEL_PROTOCOL_VERSION,
+    ERR_HANDSHAKE_REQUIRED, ERR_INTERNAL, ERR_METHOD_NOT_FOUND, ERR_PARSE, ERR_VERSION_MISMATCH,
     MARTENSITE_VERSION,
 };
 use tempfile::tempdir;
@@ -305,6 +306,7 @@ fn test_all_supported_requests_end_to_end() {
         .tree_snapshot(TreeSnapshotParams {
             max_depth: Some(4),
             root_id: Some(100),
+            ..Default::default()
         })
         .expect("io")
         .expect("tree ok");
@@ -326,6 +328,7 @@ fn test_all_supported_requests_end_to_end() {
     let ledger = client
         .event_ledger(EventLedgerParams {
             tail_count: Some(25),
+            ..Default::default()
         })
         .expect("io")
         .expect("ledger ok");
@@ -347,6 +350,7 @@ fn test_all_supported_requests_end_to_end() {
         .lint_apply(LintApplyParams {
             ops: vec![serde_json::json!({ "op": "set_padding", "value": 12 })],
             force: true,
+            ..Default::default()
         })
         .expect("io")
         .expect("apply ok");
@@ -444,6 +448,7 @@ fn test_concurrent_clients() {
                 .tree_snapshot(TreeSnapshotParams {
                     max_depth: Some(i),
                     root_id: None,
+                    ..Default::default()
                 })
                 .expect("io")
                 .expect("tree ok");
@@ -453,5 +458,218 @@ fn test_concurrent_clients() {
 
     for h in handles {
         h.join().expect("thread finished cleanly");
+    }
+}
+
+/// Mock handler for the dev-session typed dispatch arms
+/// (`signal_set`, `runtime_errors`, `logs`, `a11y_action`, `hot_reload`)
+/// added for ADR-0038/ADR-0039: proves each wire method reaches its typed
+/// `DevChannelHandler` override with deserialized params rather than
+/// falling through to `handle_custom`.
+struct TypedDevMethodsHandler;
+
+impl DevChannelHandler for TypedDevMethodsHandler {
+    fn handle_signal_set(&self, params: SignalSetParams) -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({
+            "handler": "signal_set",
+            "signal_id": params.signal_id,
+            "value": params.value,
+        }))
+    }
+
+    fn handle_runtime_errors(
+        &self,
+        params: RuntimeErrorsParams,
+    ) -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({
+            "handler": "runtime_errors",
+            "limit": params.limit,
+            "severity": params.severity,
+            "clear": params.clear,
+        }))
+    }
+
+    fn handle_logs(&self, params: LogsParams) -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({
+            "handler": "logs",
+            "limit": params.limit,
+            "level": params.level,
+            "target_prefix": params.target_prefix,
+            "contains": params.contains,
+        }))
+    }
+
+    fn handle_a11y_action(&self, params: A11yActionParams) -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({
+            "handler": "a11y_action",
+            "node_id": params.node_id,
+            "action": params.action,
+            "value": params.value,
+            "point": params.point,
+        }))
+    }
+
+    fn handle_hot_reload(&self, params: HotReloadParams) -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({
+            "handler": "hot_reload",
+            "reason": params.reason,
+        }))
+    }
+}
+
+#[test]
+fn test_new_dev_methods_typed_dispatch() {
+    let tmp = tempdir().expect("tempdir created");
+    let sock_path = tmp.path().join("new_methods_dispatch.sock");
+
+    let config = DevChannelConfig::new()
+        .with_socket_path(&sock_path)
+        .with_handler(Arc::new(TypedDevMethodsHandler));
+    let _server = config.start().expect("server starts");
+
+    let mut client = DevChannelClient::connect(&sock_path).expect("client connects");
+    client
+        .hello(MARTENSITE_VERSION, DEV_CHANNEL_PROTOCOL_VERSION)
+        .expect("io")
+        .expect("hello ok");
+
+    let cases: [(&str, serde_json::Value, &str); 5] = [
+        (
+            "signal_set",
+            serde_json::json!({ "signal_id": "counter", "value": 3 }),
+            "signal_set",
+        ),
+        (
+            "runtime_errors",
+            serde_json::json!({ "limit": 10, "severity": "error", "clear": true }),
+            "runtime_errors",
+        ),
+        (
+            "logs",
+            serde_json::json!({ "limit": 20, "level": "warn", "target_prefix": "app::" }),
+            "logs",
+        ),
+        (
+            "a11y_action",
+            serde_json::json!({ "node_id": "7", "action": "click" }),
+            "a11y_action",
+        ),
+        (
+            "hot_reload",
+            serde_json::json!({ "reason": "fix button" }),
+            "hot_reload",
+        ),
+    ];
+
+    for (i, (method, params, want)) in cases.iter().enumerate() {
+        let req = JsonRpcRequest::new(Some(i as u64 + 1), *method, params.clone());
+        let resp = client.send_raw(&req).expect("send succeeds");
+        assert!(
+            resp.error.is_none(),
+            "{method} must not error: {:?}",
+            resp.error
+        );
+        let result = resp.result.expect("{method} must return a result");
+        assert_eq!(
+            result["handler"], *want,
+            "{method} must reach its typed handler"
+        );
+        // Spot-check param deserialization survived the round trip.
+        for (key, value) in params.as_object().expect("params object") {
+            assert_eq!(&result[key], value, "{method} param {key} must echo");
+        }
+    }
+
+    // Method names normalize: mixed case and separators hit the same arm.
+    let req = JsonRpcRequest::new(
+        Some(90),
+        "SignalSet",
+        serde_json::json!({ "signal_id": "s" }),
+    );
+    let resp = client.send_raw(&req).expect("send succeeds");
+    assert_eq!(
+        resp.result.expect("SignalSet result")["handler"],
+        "signal_set"
+    );
+
+    let req = JsonRpcRequest::new(Some(91), "Runtime-Errors", serde_json::json!({}));
+    let resp = client.send_raw(&req).expect("send succeeds");
+    assert_eq!(
+        resp.result.expect("runtime_errors result")["handler"],
+        "runtime_errors"
+    );
+}
+
+#[test]
+fn test_new_dev_methods_default_handler_reports_not_implemented() {
+    let tmp = tempdir().expect("tempdir created");
+    let sock_path = tmp.path().join("new_methods_default.sock");
+    // DefaultDevChannelHandler: every new typed arm returns
+    // `not_implemented:*`, which the dispatcher maps to -32601.
+    let _server = DevChannelServer::bind(&sock_path).expect("server binds");
+
+    let mut client = DevChannelClient::connect(&sock_path).expect("client connects");
+    client
+        .hello(MARTENSITE_VERSION, DEV_CHANNEL_PROTOCOL_VERSION)
+        .expect("io")
+        .expect("hello ok");
+
+    for (i, method) in [
+        "signal_set",
+        "runtime_errors",
+        "logs",
+        "a11y_action",
+        "hot_reload",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let req = JsonRpcRequest::new(Some(i as u64 + 1), *method, serde_json::json!({}));
+        let resp = client.send_raw(&req).expect("send succeeds");
+        let err = resp
+            .error
+            .unwrap_or_else(|| panic!("{method} must error under the default handler"));
+        assert_eq!(err.code, ERR_METHOD_NOT_FOUND, "{method} error code");
+        assert!(
+            err.message.starts_with("not_implemented:"),
+            "{method} must carry the not_implemented marker: {}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn test_new_dev_methods_error_mapping() {
+    let tmp = tempdir().expect("tempdir created");
+    let sock_path = tmp.path().join("new_methods_errors.sock");
+
+    /// Handler whose typed arms fail with a non-`not_implemented` error —
+    /// the dispatcher must map it to `ERR_INTERNAL`, not -32601.
+    struct FailingHandler;
+    impl DevChannelHandler for FailingHandler {
+        fn handle_logs(&self, _params: LogsParams) -> Result<serde_json::Value, String> {
+            Err("ring buffer corrupted".to_string())
+        }
+        fn handle_hot_reload(&self, _params: HotReloadParams) -> Result<serde_json::Value, String> {
+            Err("unavailable: no coordinator".to_string())
+        }
+    }
+
+    let config = DevChannelConfig::new()
+        .with_socket_path(&sock_path)
+        .with_handler(Arc::new(FailingHandler));
+    let _server = config.start().expect("server starts");
+
+    let mut client = DevChannelClient::connect(&sock_path).expect("client connects");
+    client
+        .hello(MARTENSITE_VERSION, DEV_CHANNEL_PROTOCOL_VERSION)
+        .expect("io")
+        .expect("hello ok");
+
+    for (i, method) in ["logs", "hot_reload"].iter().enumerate() {
+        let req = JsonRpcRequest::new(Some(i as u64 + 1), *method, serde_json::json!({}));
+        let resp = client.send_raw(&req).expect("send succeeds");
+        let err = resp.error.expect("error response");
+        assert_eq!(err.code, ERR_INTERNAL, "{method} error code");
     }
 }
