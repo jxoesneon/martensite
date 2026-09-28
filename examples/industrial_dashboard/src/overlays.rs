@@ -9,6 +9,11 @@
 //!   clicks consumed but not dismissing — a real modal.
 //! - **Inspector drawer** — `Drawer` at `OverlayAnchor::EdgeRight` with
 //!   `modal().light_dismiss()`: scrim tap or the header's × closes it.
+//!   Its content is rebuilt from live `PlantModel` reads and re-seated
+//!   via `replace_content` whenever the model-derived signature moves —
+//!   overlay entries never tick, so `Bound` pull/push can't run inside
+//!   them and whole-content re-seat is the binding seam (the same
+//!   idiom `sync_message_list` uses for shift-log appends).
 //! - **Toast strip** — `ToastHost` at `OverlayAnchor::Viewport`
 //!   bottom-right with `OverlayOptions::passthrough()`: clicks outside
 //!   a card fall through to content, and an outside press never
@@ -29,14 +34,14 @@ use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect, Widget,
 };
 use martensite::prelude::Signal;
-use martensite::widgets::{Banner, Dialog, Disclosure, Severity, Switch, Toast, ToastHost};
+use martensite::widgets::{Banner, Dialog, Disclosure, Severity, Toast, ToastHost};
 use martensite::widgets::{
-    Battery, DigitalClock, Equalizer, StripChart, Terminal, Thermometer, Time, VuMeter,
+    Battery, DigitalClock, StripChart, Terminal, Thermometer, Time, VuMeter,
 };
 use martensite::widgets::{BulletChart, Spectrum, Waveform, XYPad};
 use martensite::widgets::{Drawer, Flex, Text};
-use martensite::widgets::{KeyCapture, Rating, Segmented, SettingsGroup, SettingsRow, SpinBox};
 use martensite::widgets::{LogSeverity, LogView, Status as DotStatus, StatusDot};
+use martensite::widgets::{SettingsGroup, SettingsRow};
 
 /// The toast inbox — producers `lock().push(Toast)`; the host drains
 /// them on the next tick.
@@ -56,10 +61,19 @@ pub struct ShellOverlays {
     about_req: Signal<bool>,
     /// Toolbar "Inspector" button → open request.
     inspector_req: Signal<bool>,
-    /// The drawer content's alert toggle — bound to the app's
-    /// `alerts_on` cell so flipping it in the drawer drives the
-    /// telemetry banner live.
+    /// The app-wide `alerts_on` cell — the drawer mirrors it as a
+    /// status lamp (overlay content can't drain a Switch's write-back,
+    /// so the row alerts row is a readout, not a dead control).
     alerts_on: Signal<bool>,
+    /// The shared plant model — the inspector drawer's content binds
+    /// to it (live feeds, KPIs, acoustic, alarms) instead of seeded
+    /// literals.
+    model: crate::domain::PlantModel,
+    /// Signature of the drawer's seated content — `sync_overlay`
+    /// compares it against [`Self::drawer_signature`] each pass and
+    /// re-seats the entry via `replace_content` on a difference, so
+    /// the drawer stays live without any widget inside it ticking.
+    drawer_sig: Option<u64>,
     /// Canonical toast state — overlay entries are never ticked, so
     /// the owner ticks and pushes snapshots via `replace_content`.
     toasts: ToastHost,
@@ -81,11 +95,14 @@ impl ShellOverlays {
         inspector_req: Signal<bool>,
         alerts_on: Signal<bool>,
         toast_inbox: ToastInbox,
+        model: crate::domain::PlantModel,
     ) -> Self {
         Self {
             about_req,
             inspector_req,
             alerts_on,
+            model,
+            drawer_sig: None,
             toasts: ToastHost::new().with_text_painter(martensite::text_paint::shared_painter()),
             dialog_id: None,
             drawer_id: None,
@@ -105,222 +122,482 @@ impl ShellOverlays {
             .with_text_painter(martensite::text_paint::shared_painter())
     }
 
+    /// FNV-1a mix step — the field-hash signature idiom the zones use
+    /// (`crew_sig`/`log_sig` in `zones::media`); those folds are
+    /// private, so the drawer carries its own copy.
+    fn sig_fold(h: u64, v: u64) -> u64 {
+        (h ^ v).wrapping_mul(0x100_0000_01b3)
+    }
+
+    fn bool_fold(h: u64, v: bool) -> u64 {
+        Self::sig_fold(h, u64::from(v))
+    }
+
+    fn f64_fold(h: u64, v: f64) -> u64 {
+        Self::sig_fold(h, v.to_bits())
+    }
+
+    fn str_fold(h: u64, s: &str) -> u64 {
+        let mut h = Self::sig_fold(h, s.len() as u64);
+        for b in s.bytes() {
+            h = Self::sig_fold(h, u64::from(b));
+        }
+        h
+    }
+
+    /// Change-detection signature over every `PlantModel` value
+    /// [`Self::inspector_drawer`] reads. `sync_overlay` compares it
+    /// per pass and re-seats the drawer's content on a difference —
+    /// a re-seat drops in-widget press state (a `Disclosure`'s open
+    /// flag, a Terminal's scroll), so it must fire only when the data
+    /// actually moved; folding everything displayed keeps that test
+    /// strictly correct. `hist_rev` stands in for the history rings
+    /// (bumped by `push_history` — domain.rs calls it the strictly
+    /// correct signature) and `log_seq` for `shift_log` appends.
+    fn drawer_signature(&self) -> u64 {
+        let m = &self.model;
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        // Scalar flags the lamps/sections mirror.
+        for v in [
+            self.alerts_on.get(),
+            m.line_running.get(),
+            m.console_locked.get(),
+            m.reduced_motion.get(),
+            m.paused.get(),
+            m.media_playing.get(),
+        ] {
+            h = Self::bool_fold(h, v);
+        }
+        // Selection + filters shown in the Selection disclosure.
+        h = Self::sig_fold(h, m.selected_asset.get().map(u64::from).unwrap_or(u64::MAX));
+        h = Self::str_fold(h, &m.filter_text.get());
+        h = Self::str_fold(h, &m.site_filter.get());
+        // Alarms — banner severity + the feeds' unacked lamp.
+        for a in &m.alarms.get() {
+            h = Self::sig_fold(h, u64::from(a.id));
+            h = Self::bool_fold(h, a.active);
+            h = Self::bool_fold(h, a.acked);
+            h = Self::sig_fold(h, a.severity as u64);
+        }
+        // Assets — the KPI charts read kind/name/status/oee.
+        for a in &m.assets.get() {
+            h = Self::sig_fold(h, u64::from(a.id));
+            h = Self::sig_fold(h, a.status as u64);
+            h = Self::f64_fold(h, a.oee);
+            h = Self::str_fold(h, a.name);
+        }
+        // Acoustic monitor — vibration + line-noise sections.
+        let ac = m.acoustic.get();
+        for b in ac.bands {
+            h = Self::f64_fold(h, b);
+        }
+        h = Self::f64_fold(h, ac.level.0);
+        h = Self::f64_fold(h, ac.level.1);
+        h = Self::f64_fold(h, ac.dominant_hz);
+        // Jog pad readout.
+        let j = m.jog.get();
+        h = Self::f64_fold(h, j.axis.0);
+        h = Self::f64_fold(h, j.axis.1);
+        h = Self::f64_fold(h, j.tilt);
+        h = Self::f64_fold(h, j.zoom);
+        // Board load + history rings + shift clock + log tail.
+        h = Self::f64_fold(h, m.cpu.get());
+        h = Self::f64_fold(h, m.mem.get());
+        h = Self::sig_fold(h, m.hist_rev.get());
+        h = Self::sig_fold(h, u64::from(m.shift_minute.get()));
+        h = Self::sig_fold(h, m.log_seq.load(std::sync::atomic::Ordering::Relaxed));
+        h
+    }
+
     /// Builds the inspector drawer — a `Flex` column of facade widgets
-    /// (banner, disclosures, a live switch) inside the drawer surface.
+    /// (banner, disclosures, settings cards) inside the drawer
+    /// surface.
+    ///
+    /// Every section reads the shared [`PlantModel`](crate::domain::PlantModel)
+    /// at build time; the overlay entry never receives `tick`, so
+    /// `sync_overlay` re-seats the whole drawer whenever
+    /// [`Self::drawer_signature`] moves — the model animates the
+    /// content without any widget inside it ticking. Widgets whose
+    /// writes could only leave through a `pull` drain (Switch,
+    /// Equalizer faders, an interactive XYPad, Terminal submissions)
+    /// have no drain path inside an overlay, so they mount as honest
+    /// readouts (`enabled(false)`, `StatusDot` lamps) or are cut —
+    /// the bind-or-cut rule bars dead controls.
     fn inspector_drawer(&self) -> Drawer {
         let painter = martensite::text_paint::shared_painter();
-        // Mirrors `alerts_on` at open time — the drawer's content tree
-        // owns the switch, so in-drawer flips are visual-only.
-        let alerts = Switch::new("row alerts")
-            .on(self.alerts_on.get())
-            .with_text_painter(painter.clone());
-        // Dogfood the preferences widgets — a carded SettingsGroup
-        // whose rows carry the newer facade controls as trailing
-        // editors.
-        let prefs = SettingsGroup::new("Inspector preferences")
+        let m = &self.model;
+        // Shared lamp builder — the trailing state word + status +
+        // pulse each flag/feed row declares.
+        let dot = |text: &str, status: DotStatus, pulse: bool| {
+            StatusDot::new(text)
+                .status(status)
+                .pulse(pulse)
+                .with_text_painter(painter.clone())
+        };
+        let unacked = m.active_alarms();
+        let crit = unacked
+            .iter()
+            .filter(|a| a.severity == crate::domain::AlarmSeverity::Critical)
+            .count();
+        // Banner doubles as the plant's alarm headline — a real
+        // readout of `active_alarms`, not a fixed "attached" strip.
+        let (sev, msg) = if crit > 0 {
+            (
+                Severity::Error,
+                format!("{crit} critical · {} unacked alarms", unacked.len()),
+            )
+        } else if !unacked.is_empty() {
+            (
+                Severity::Warning,
+                format!("{} unacked alarms", unacked.len()),
+            )
+        } else {
+            (
+                Severity::Info,
+                "Inspector attached — plant nominal".to_string(),
+            )
+        };
+        // Selection — the inspected asset plus any active filters.
+        let mut sel = match m.selected_asset.get() {
+            Some(id) => match m.asset(id) {
+                Some(a) => format!(
+                    "{} — {} · OEE {:.0}%",
+                    a.name,
+                    a.status.label(),
+                    a.oee * 100.0
+                ),
+                None => format!("asset #{id} — not in registry"),
+            },
+            None => "no asset selected".to_string(),
+        };
+        let (flt, site) = (m.filter_text.get(), m.site_filter.get());
+        if !flt.is_empty() {
+            sel.push_str(&format!(" · filter \"{flt}\""));
+        }
+        if !site.is_empty() {
+            sel.push_str(&format!(" · site {site}"));
+        }
+        // The "row alerts" Switch is gone: seeded from `alerts_on`
+        // but undrainable, an in-drawer flip was visual-only — a dead
+        // control. The lamp mirrors the shared cell honestly; the
+        // toolbar owns the write path.
+        let alerts = dot(
+            if self.alerts_on.get() {
+                "row alerts on"
+            } else {
+                "row alerts off"
+            },
+            if self.alerts_on.get() {
+                DotStatus::Ok
+            } else {
+                DotStatus::Off
+            },
+            self.alerts_on.get(),
+        );
+        // Plant flags — the old gallery's fake prefs (Density/
+        // Refresh/Confidence/Focus shortcut) had no model signal to
+        // bind, so they're cut; these rows are the flags the model
+        // actually carries, mirrored as lamps for the same
+        // can't-drain reason as the alerts row.
+        let locked = m.console_locked.get();
+        let running = m.line_running.get();
+        let reduced = m.reduced_motion.get();
+        let prefs = SettingsGroup::new("Plant flags")
             .carded(true)
             .row(
-                SettingsRow::new("Density")
-                    .subtitle("Row height preset")
-                    .trailing(
-                        Segmented::new()
-                            .options(["Compact", "Normal", "Roomy"])
-                            .selected(1)
-                            .with_text_painter(painter.clone()),
-                    ),
+                SettingsRow::new("Line running")
+                    .subtitle("drives the acoustic monitor")
+                    .trailing(dot(
+                        if running { "running" } else { "stopped" },
+                        if running {
+                            DotStatus::Ok
+                        } else {
+                            DotStatus::Off
+                        },
+                        running,
+                    )),
             )
             .row(
-                SettingsRow::new("Refresh cadence")
-                    .subtitle("Telemetry tick rate")
-                    .trailing(
-                        SpinBox::new()
-                            .range(1.0, 60.0)
-                            .suffix(" Hz")
-                            .with_text_painter(painter.clone()),
-                    ),
+                SettingsRow::new("Console lock")
+                    .subtitle("gates the HMI")
+                    .trailing(dot(
+                        if locked { "locked" } else { "unlocked" },
+                        if locked {
+                            DotStatus::Warning
+                        } else {
+                            DotStatus::Ok
+                        },
+                        false,
+                    )),
             )
             .row(
-                SettingsRow::new("Confidence floor")
-                    .subtitle("Minimum score for flags")
-                    .trailing(
-                        Rating::new()
-                            .max(5)
-                            .value(3.0)
-                            .with_text_painter(painter.clone()),
-                    ),
+                SettingsRow::new("Alert strip")
+                    .subtitle("toolbar banner")
+                    .trailing(dot(
+                        if self.alerts_on.get() { "on" } else { "off" },
+                        if self.alerts_on.get() {
+                            DotStatus::Ok
+                        } else {
+                            DotStatus::Off
+                        },
+                        self.alerts_on.get(),
+                    )),
             )
             .row(
-                SettingsRow::new("Focus shortcut")
-                    .subtitle("Capture a key chord")
-                    .trailing(
-                        KeyCapture::new()
-                            .placeholder("press keys…")
-                            .with_text_painter(painter.clone()),
-                    ),
+                SettingsRow::new("Reduced motion")
+                    .subtitle("accessibility")
+                    .trailing(dot(
+                        if reduced { "on" } else { "off" },
+                        if reduced {
+                            DotStatus::Ok
+                        } else {
+                            DotStatus::Off
+                        },
+                        false,
+                    )),
             )
             .with_text_painter(painter.clone());
-        // Dogfood StatusDot — a feeds card whose rows carry live-ish
-        // status lamps (pulse on the healthy feed).
+        // Feeds — the same StatusDot gallery, now lamped from real
+        // model state instead of seeded "online/degraded/offline".
+        let paused = m.paused.get();
+        let playing = m.media_playing.get();
         let feeds = SettingsGroup::new("Feeds")
             .carded(true)
             .row(
-                SettingsRow::new("Field bus")
-                    .subtitle("Modbus heartbeat")
-                    .trailing(
-                        StatusDot::new("online")
-                            .status(DotStatus::Ok)
-                            .pulse(true)
-                            .with_text_painter(painter.clone()),
-                    ),
+                SettingsRow::new("Production line")
+                    .subtitle("line_running")
+                    .trailing(dot(
+                        if running { "live" } else { "stopped" },
+                        if running {
+                            DotStatus::Ok
+                        } else {
+                            DotStatus::Off
+                        },
+                        running,
+                    )),
             )
             .row(
-                SettingsRow::new("Cell telemetry")
-                    .subtitle("RF uplink")
-                    .trailing(
-                        StatusDot::new("degraded")
-                            .status(DotStatus::Warning)
-                            .with_text_painter(painter.clone()),
-                    ),
+                SettingsRow::new("Alarms")
+                    .subtitle("unacked annunciations")
+                    .trailing(if unacked.is_empty() {
+                        dot("clear", DotStatus::Ok, false)
+                    } else {
+                        dot(
+                            &format!("{} unacked", unacked.len()),
+                            if crit > 0 {
+                                DotStatus::Error
+                            } else {
+                                DotStatus::Warning
+                            },
+                            true,
+                        )
+                    }),
             )
             .row(
-                SettingsRow::new("Remote archive")
-                    .subtitle("Nightly sync target")
-                    .trailing(
-                        StatusDot::new("offline")
-                            .status(DotStatus::Off)
-                            .with_text_painter(painter.clone()),
-                    ),
+                SettingsRow::new("Console")
+                    .subtitle("operator lock")
+                    .trailing(dot(
+                        if locked { "locked" } else { "unlocked" },
+                        if locked {
+                            DotStatus::Warning
+                        } else {
+                            DotStatus::Ok
+                        },
+                        false,
+                    )),
+            )
+            .row(
+                SettingsRow::new("Media monitor")
+                    .subtitle("loopback playback")
+                    .trailing(dot(
+                        if playing { "playing" } else { "idle" },
+                        if playing {
+                            DotStatus::Ok
+                        } else {
+                            DotStatus::Off
+                        },
+                        playing,
+                    )),
+            )
+            .row(
+                SettingsRow::new("Telemetry")
+                    .subtitle("frame sampler")
+                    .trailing(dot(
+                        if paused { "paused" } else { "live" },
+                        if paused {
+                            DotStatus::Off
+                        } else {
+                            DotStatus::Ok
+                        },
+                        !paused,
+                    )),
             )
             .with_text_painter(painter.clone());
-        // Dogfood LogView — a small event feed under a disclosure.
+        // Event feed — the shift log's tail, severity by channel:
+        // OPS chatter reads Info, COMMS traffic Debug, and the SYSTEM
+        // annunciator gets Warning so machine noise stands out.
         let mut feed = LogView::new()
             .max_lines(200)
             .with_text_painter(painter.clone());
-        feed.push(LogSeverity::Info, "inspector attached");
-        feed.push(LogSeverity::Info, "telemetry tick 60 Hz");
-        feed.push(LogSeverity::Warning, "cell 3 uplink jitter 240 ms");
-        feed.push(LogSeverity::Error, "archive sync stalled — retrying");
-        feed.push(LogSeverity::Debug, "drawer opened via toolbar");
-        // Dogfood BulletChart — cell KPIs reading value-vs-target
-        // over qualitative bands, the standard OEE strip.
-        let kpis = Flex::column().gap(4.0).children([
-            Box::new(
+        for e in m.shift_log.get().iter().rev().take(40).rev() {
+            let sev = match e.channel {
+                crate::domain::LogChannel::Ops => LogSeverity::Info,
+                crate::domain::LogChannel::Comms => LogSeverity::Debug,
+                crate::domain::LogChannel::System => LogSeverity::Warning,
+            };
+            feed.push(
+                sev,
+                format!(
+                    "[{}] {} {}",
+                    crate::zones::grid::shift_hhmm(e.minute),
+                    e.channel.label(),
+                    e.text
+                ),
+            );
+        }
+        // Cell KPIs — the plant OEE rollup plus per-cell values from
+        // `assets` (BulletChart's value-vs-target strip, 85% goal).
+        let mut kpi_children: Vec<Box<dyn Widget>> = vec![Box::new(
+            BulletChart::new()
+                .label("Plant OEE")
+                .value((m.plant_oee() * 100.0) as f32)
+                .target(85.0)
+                .ranges([60.0, 80.0, 100.0])
+                .with_text_painter(painter.clone()),
+        )];
+        for c in m
+            .assets
+            .get()
+            .iter()
+            .filter(|a| a.kind == crate::domain::AssetKind::Cell)
+            .take(3)
+        {
+            kpi_children.push(Box::new(
                 BulletChart::new()
-                    .label("OEE")
-                    .value(78.0)
+                    .label(c.name)
+                    .value((c.oee * 100.0) as f32)
                     .target(85.0)
                     .ranges([60.0, 80.0, 100.0])
                     .with_text_painter(painter.clone()),
-            ) as Box<dyn Widget>,
-            Box::new(
-                BulletChart::new()
-                    .label("Yield")
-                    .value(94.0)
-                    .target(92.0)
-                    .ranges([70.0, 85.0, 100.0])
-                    .with_text_painter(painter.clone()),
-            ),
-            Box::new(
-                BulletChart::new()
-                    .label("Throughput")
-                    .value(61.0)
-                    .target(75.0)
-                    .ranges([50.0, 70.0, 100.0])
-                    .with_text_painter(painter.clone()),
-            ),
-        ]);
-        // Dogfood Waveform + Spectrum — a vibration monitor pairing
-        // the amplitude signature with its band decomposition.
+            ));
+        }
+        let kpis = Flex::column().gap(4.0).children(kpi_children);
+        // Acoustic condition monitor — `acoustic.bands` drives both
+        // the trace and the spectrum; the dominant frequency reads
+        // out as text. `enabled(false)` on the waveform: its click is
+        // a seek affordance with no drain path here.
+        let ac = m.acoustic.get();
         let vibration = Flex::column().gap(4.0).children([
             Box::new(
                 Waveform::new()
                     .label("Spindle vibration")
-                    .peaks([
-                        0.2, 0.35, 0.6, 0.4, 0.9, 0.55, 0.3, 0.7, 0.45, 0.25, 0.8, 0.5, 0.35, 0.6,
-                        0.3, 0.2,
-                    ])
-                    .position(0.4),
+                    .peaks(ac.bands.iter().map(|b| *b as f32))
+                    .enabled(false),
             ) as Box<dyn Widget>,
             Box::new(
                 Spectrum::new()
                     .label("Band analysis")
-                    .bands([0.3, 0.55, 0.8, 0.65, 0.4, 0.7, 0.35, 0.2]),
+                    .bands(ac.bands.iter().map(|b| *b as f32)),
             ),
+            Box::new(Text::new(format!("dominant {:.0} Hz", ac.dominant_hz))),
         ]);
-        // Dogfood XYPad — a robot-jog pad for cell positioning.
-        let jog = XYPad::new()
-            .labels("X jog", "Y jog")
-            .value(0.5, 0.5)
-            .with_text_painter(painter.clone());
-        // Dogfood Thermometer + Battery — cabinet environment and
-        // the UPS state in one disclosure.
+        // Jog readout — the pad displays the live axis target written
+        // by the grid/camera jog controls (`jog.axis` is −1..1, the
+        // pad's normalized frame is 0..1). `take_changed` has no
+        // drain path inside an overlay, so it's a disabled readout —
+        // honest position display, not a dead editor.
+        let j = m.jog.get();
+        let jog = Flex::column().gap(4.0).children([
+            Box::new(
+                XYPad::new()
+                    .labels("X jog", "Y jog")
+                    .value(
+                        ((j.axis.0 + 1.0) * 0.5) as f32,
+                        ((j.axis.1 + 1.0) * 0.5) as f32,
+                    )
+                    .enabled(false)
+                    .with_text_painter(painter.clone()),
+            ) as Box<dyn Widget>,
+            Box::new(Text::new(format!(
+                "axis ({:+.2}, {:+.2}) · tilt {:+.2} · zoom {:.1}×",
+                j.axis.0, j.axis.1, j.tilt, j.zoom
+            ))),
+        ]);
+        // Board load — the sim's cpu/mem gauges, labeled for what
+        // they are (no cabinet-temperature or UPS-reserve fiction).
         let environment = Flex::column().gap(4.0).children([
             Box::new(
                 Thermometer::new()
-                    .label("Cabinet temp")
-                    .range(-10.0, 80.0)
-                    .value(43.0)
+                    .label("line load %")
+                    .range(0.0, 100.0)
+                    .value((m.cpu.get() * 100.0) as f32)
                     .warning(0.7)
                     .critical(0.9),
             ) as Box<dyn Widget>,
             Box::new(
                 Battery::new()
-                    .label("UPS reserve")
-                    .level(0.72)
-                    .charging(true),
+                    .label("memory pool")
+                    .level(m.mem.get() as f32)
+                    .charging(false),
             ),
         ]);
-        // Dogfood VuMeter + Equalizer — a channel-strip pair for
-        // the cell's audio alarm bus.
-        let audio_bus = Flex::column().gap(4.0).children([
+        // Line noise — the acoustic monitor's stereo level. The
+        // Equalizer that used to sit beside it is cut: its faders are
+        // editors with no drain path inside an overlay.
+        let noise = VuMeter::new()
+            .label("monitor level")
+            .channels(2)
+            .levels([ac.level.0 as f32, ac.level.1 as f32]);
+        // Shift clock — `shift_minute` as time-of-day (shift starts
+        // 06:00, `zones::telemetry::shift_time`'s convention).
+        // `running(false)`: the widget's own tick-advance never runs
+        // in an overlay — the model drives the displayed time.
+        let min = m.shift_minute.get();
+        let clock = Flex::column().gap(4.0).children([
             Box::new(
-                VuMeter::new()
-                    .label("Alarm bus")
-                    .channels(2)
-                    .levels([0.62, 0.45]),
+                DigitalClock::new()
+                    .time(Time {
+                        hour: (6 + min / 60) % 24,
+                        minute: min % 60,
+                    })
+                    .running(false),
             ) as Box<dyn Widget>,
-            Box::new(
-                Equalizer::new()
-                    .faders(6)
-                    .bands([0.5, 0.65, 0.4, 0.55, 0.7, 0.5]),
-            ),
+            Box::new(Text::new(format!("shift +{min:03}m"))),
         ]);
-        // Dogfood DigitalClock — shift-clock readout.
-        let clock = DigitalClock::new()
-            .time(Time {
-                hour: 14,
-                minute: 32,
-            })
-            .running(true);
-        // Dogfood StripChart — the scrolling pressure trace.
-        let mut telemetry = StripChart::new()
-            .label("Hydraulic pressure")
-            .range(0.0, 10.0);
-        telemetry.extend([
-            4.2, 4.4, 4.1, 4.6, 4.9, 5.2, 4.8, 5.5, 5.8, 5.4, 5.0, 5.6, 6.1, 5.7, 5.3, 5.9, 6.4,
-            6.0, 5.5, 5.1,
-        ]);
-        // Dogfood Terminal — a diagnostics console with a seeded
-        // scrollback.
+        // Load history — the shared cpu/mem rings every trend chart
+        // in the app reads (`HISTORY_LEN` window, newest last).
+        let mut load = StripChart::new().label("line load (cpu)").range(0.0, 1.0);
+        load.extend(m.cpu_hist.get().iter().map(|v| *v as f32));
+        let mut pool = StripChart::new().label("memory pool").range(0.0, 1.0);
+        pool.extend(m.mem_hist.get().iter().map(|v| *v as f32));
+        let telemetry = Flex::column()
+            .gap(4.0)
+            .children([Box::new(load) as Box<dyn Widget>, Box::new(pool)]);
+        // Shift-log tail — the real entries, not a seeded scrollback.
+        // Typed input still echoes locally (Terminal owns its own
+        // input line) but `take_submitted` has no drain path, so the
+        // disclosure is titled for what it is: a tail view.
         let mut console = Terminal::new()
-            .prompt("cell>")
-            .lines([
-                "boot ok — plc v2.4.1",
-                "field bus attached (modbus:502)",
-                "cell> status",
-                "3 axes online, pressure nominal",
-            ])
+            .prompt("log>")
+            .label("shift log tail")
             .with_text_painter(painter.clone());
-        console.write("watchdog armed");
+        for e in m.shift_log.get().iter().rev().take(12).rev() {
+            console.write(format!(
+                "[{}] {} {}",
+                crate::zones::grid::shift_hhmm(e.minute),
+                e.channel.label(),
+                e.text
+            ));
+        }
         let content = Flex::column().gap(8.0).children([
             Box::new(
-                Banner::new(Severity::Info, "Inspector attached")
+                Banner::new(sev, msg)
                     .dismissible(false)
                     .with_text_painter(painter.clone()),
             ) as Box<dyn Widget>,
             Box::new(
                 Disclosure::new("Selection")
-                    .child(Text::new("focused panel, sort, and filter state"))
+                    .child(Text::new(sel))
                     .with_text_painter(painter.clone()),
             ),
             Box::new(
@@ -346,13 +623,13 @@ impl ShellOverlays {
                     .with_text_painter(painter.clone()),
             ),
             Box::new(
-                Disclosure::new("Environment")
+                Disclosure::new("Board load")
                     .child(environment)
                     .with_text_painter(painter.clone()),
             ),
             Box::new(
-                Disclosure::new("Alarm bus")
-                    .child(audio_bus)
+                Disclosure::new("Line noise")
+                    .child(noise)
                     .with_text_painter(painter.clone()),
             ),
             Box::new(
@@ -361,12 +638,12 @@ impl ShellOverlays {
                     .with_text_painter(painter.clone()),
             ),
             Box::new(
-                Disclosure::new("Pressure")
+                Disclosure::new("Load history")
                     .child(telemetry)
                     .with_text_painter(painter.clone()),
             ),
             Box::new(
-                Disclosure::new("Console")
+                Disclosure::new("Shift log")
                     .child(console)
                     .with_text_painter(painter.clone()),
             ),
@@ -463,6 +740,7 @@ impl Widget for ShellOverlays {
         if let Some(id) = self.drawer_id {
             if !overlay.is_open(id) {
                 self.drawer_id = None;
+                self.drawer_sig = None;
                 self.inspector_req.set(false);
             }
         }
@@ -472,11 +750,26 @@ impl Widget for ShellOverlays {
                     if let Some(id) = self.drawer_id.take() {
                         overlay.close(id);
                     }
+                    self.drawer_sig = None;
                     self.inspector_req.set(false);
                 }
             }
         }
+        if let Some(id) = self.drawer_id {
+            // The entry never ticks, so the drawer's content is
+            // re-seated here — rebuild from live model reads and
+            // `replace_content` when the signature moved. Fires only
+            // on a real change: a re-seat drops in-widget state
+            // (Disclosure open flags, scroll offsets), matching the
+            // `sync_message_list` re-seat tradeoff.
+            let sig = self.drawer_signature();
+            if self.drawer_sig != Some(sig) {
+                self.drawer_sig = Some(sig);
+                overlay.replace_content(id, Box::new(self.inspector_drawer()));
+            }
+        }
         if self.inspector_req.get() && self.drawer_id.is_none() {
+            self.drawer_sig = Some(self.drawer_signature());
             self.drawer_id = Some(overlay.open_with(
                 Box::new(self.inspector_drawer()),
                 OverlayAnchor::EdgeRight,

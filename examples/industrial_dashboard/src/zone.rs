@@ -888,6 +888,19 @@ impl<W: Widget> Widget for Bound<W> {
         self.widget.paint(cx);
     }
 
+    fn is_loading(&self) -> bool {
+        // Transparent wrapper — the arena's loading treatment must
+        // see the wrapped widget's flag.
+        self.widget.is_loading()
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // Same — a `Bound` widget paints its own pending surface
+        // (popup skeleton rows, chart plot skeletons, the safety
+        // widgets' unknown marks), never a generic block.
+        self.widget.paint_loading(cx, phase);
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         self.widget.event(cx)
     }
@@ -1235,5 +1248,57 @@ mod tests {
         .push(|_w: &mut Probe, _m| {});
         b.tick(Duration::from_millis(16));
         assert_eq!(layouts.load(Ordering::Relaxed), 0);
+    }
+
+    /// ADR-0040 — `Bound` must be transparent to the loading contract:
+    /// a push that flips the wrapped widget's flag surfaces through
+    /// `Bound::is_loading`, and `paint_loading` delegates so the
+    /// wrapped widget paints its own pending surface (chart plot
+    /// skeletons here), never a generic block.
+    #[test]
+    fn bound_forwards_loading_contract() {
+        use martensite::core::PaintCommand;
+        use martensite::widgets::BarChart;
+
+        let m = model();
+        let mut b = Bound::new(BarChart::new().bar("cpu", 0.4).bar("mem", 0.6), &m)
+            .push(|c: &mut BarChart, m| c.set_loading(m.simulate_latency.get()));
+
+        // No reflect has run yet — the widget starts clean.
+        assert!(!b.inner().is_loading());
+        assert!(!b.is_loading());
+
+        m.simulate_latency.set(true);
+        b.tick(Duration::from_millis(16));
+        assert!(b.inner().is_loading());
+        // The arena consults the wrapper — the flag must pass through.
+        assert!(<Bound<BarChart> as Widget>::is_loading(&b));
+
+        // The delegated paint_loading emits the chart's own pending
+        // surface: skeleton columns + the surviving baseline axis.
+        let theme = martensite::theme::Theme::new("test");
+        let mut list = martensite::render::PaintList::new();
+        let bounds = Rect::new(0.0, 0.0, 160.0, 80.0);
+        b.paint_loading(
+            &mut PaintContext {
+                list: &mut list,
+                bounds,
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            },
+            None,
+        );
+        let skeletons = list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::FillPath(..)))
+            .count();
+        assert_eq!(skeletons, 2, "one skeleton column per bar slot");
+
+        // Clearing the signal unwinds the same path.
+        m.simulate_latency.set(false);
+        b.tick(Duration::from_millis(16));
+        assert!(!b.is_loading());
     }
 }

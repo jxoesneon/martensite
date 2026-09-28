@@ -26,6 +26,7 @@ pub mod domain;
 pub mod frames;
 pub mod headless;
 pub mod lint_sweep;
+pub mod lock_screen;
 pub mod media_stream;
 pub mod menu;
 pub mod model;
@@ -49,6 +50,11 @@ pub fn run_cli() {
         headless::run();
         return;
     }
+    // `--live-headless` — the full widget tree + dev channel without a
+    // window/GPU. For machines with no usable graphics adapter (or CI);
+    // MCP tooling attaches to the served socket exactly like the
+    // windowed app.
+    let live_headless = std::env::args().any(|a| a == "--live-headless");
     // `--theme <dark|light|system>` — boots settled into the mode,
     // overriding the persisted preference (which restores when the
     // flag is absent; the store falls back to dark). Verification
@@ -66,7 +72,12 @@ pub fn run_cli() {
     // `--audit-locale` — opt the paint audit into the `MissingLocale`
     // lint (user-visible strings without a shipped FTL translation).
     let audit_locale = std::env::args().any(|a| a == "--audit-locale");
-    if let Err(err) = app::run(theme, audit_locale) {
+    let result = if live_headless {
+        app::run_live_headless(theme, audit_locale)
+    } else {
+        app::run(theme, audit_locale)
+    };
+    if let Err(err) = result {
         eprintln!("industrial_dashboard: {err}");
         std::process::exit(1);
     }

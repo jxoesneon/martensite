@@ -54,8 +54,11 @@ pub fn alert_count(rows: &[MetricRow]) -> usize {
 ///
 /// The bottom row spans the full window width — nesting Media as a
 /// corner of the right column (the old topology) left it ~16% of the
-/// window, under the 320pt zone minimum, so it fell back to the
-/// "enlarge to restore" placeholder at every reasonable size.
+/// window, so even the compact zone tiers could not give the media
+/// surface an honest slice. Zone panels declare a ~120×80pt tombstone
+/// floor now (compact tiers cover the range up to the ~320×240pt
+/// full-layout stack), but a ~100pt-wide column would still starve
+/// every tier.
 pub fn build_dock_tree(widget_ids: &[u64; 4]) -> DockTree {
     let mut tree = DockTree::with_capacity(8);
     let root = tree.insert_root(DockPanel::new(widget_ids[0], "Process Grid"));
@@ -77,7 +80,7 @@ pub fn build_dock_tree(widget_ids: &[u64; 4]) -> DockTree {
         .expect("split grid");
     // Editor gets the wider share — code needs horizontal room; Media
     // still lands ~38% of the full window width (≈575pt at 1512),
-    // comfortably above the zone minimum.
+    // above even the zone panels' full-layout floor.
     tree.split_leaf(
         bottom,
         SplitDirection::Vertical,

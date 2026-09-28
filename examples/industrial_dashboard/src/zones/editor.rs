@@ -655,12 +655,14 @@ fn work_order_form(model: &PlantModel) -> Page {
             }
         });
 
-    // Notes — TextArea writes the String field directly.
+    // Notes — TextArea writes the String field directly; the
+    // APPEARANCE "wrap notes" toggle drives its soft-wrap flag live.
     let notes = Bound::new(
         TextArea::new()
             .label("notes")
             .placeholder("operator notes…")
             .with_value(wo0.as_ref().map(|w| w.notes.clone()).unwrap_or_default())
+            .wrap(model.editor_wrap.get())
             .min_lines(3),
         model,
     )
@@ -676,6 +678,10 @@ fn work_order_form(model: &PlantModel) -> Page {
                 w.set_value(wo.notes.clone());
                 w.take_edited(); // set_value flags edited — drain the echo
             }
+        }
+        let wrap = m.editor_wrap.get();
+        if w.wrap != wrap {
+            w.wrap = wrap;
         }
     });
 
@@ -1860,9 +1866,12 @@ fn cmd_of(id: &str) -> Option<Cmd> {
 
 /// Demo credentials for the sim's lock screen — the model has no
 /// credential store, so the enrolled secrets live in the zone.
-const CONSOLE_PIN: &str = "4471";
-const CONSOLE_OTP: &str = "447100";
-const CONSOLE_PW: &str = "martensite";
+/// The console's enrolled credentials — shared with the app-level
+/// `lock_screen` overlay so the lock gates the whole shell with the
+/// same PIN/OTP/password the CONSOLE page accepts.
+pub(crate) const CONSOLE_PIN: &str = "4471";
+pub(crate) const CONSOLE_OTP: &str = "447100";
+pub(crate) const CONSOLE_PW: &str = "martensite";
 
 fn console_lock(model: &PlantModel) -> Page {
     // Status — the lock indicator reflects console_locked.

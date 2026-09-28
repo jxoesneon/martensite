@@ -43,6 +43,19 @@ pub mod telemetry;
 /// tabs fill the remainder (~70%, per the ratified layout grammar).
 const OP_FRAC: f32 = 0.30;
 
+/// Tombstone floor (logical pt): below ~120×80pt not even a tab strip
+/// plus a content sliver fits, so `paint_underflow` takes over. The
+/// full stacked layout wants ~320×240pt; everything between the two
+/// is served by the compact tiers in `layout` — a tiled/compositor-
+/// shrunk panel degrades, it does not blank.
+const UNDERFLOW_W: f32 = 120.0;
+const UNDERFLOW_H: f32 = 80.0;
+
+/// Height the compact tiers reserve for the tab strip (logical pt) —
+/// mirrors `Tabs`' private `STRIP_H` so navigation survives a short
+/// panel even when the active page's own slice collapses to zero.
+const TAB_STRIP_PT: f32 = 32.0;
+
 /// A panel = operational view on top + domain-named zone pages below.
 /// The operational widget is untouched (keeps its own chrome, focus,
 /// events); the `Tabs` provides one-visible-surface semantics — hidden
@@ -173,7 +186,13 @@ impl Widget for ZonePanel {
     }
 
     fn min_render(&self) -> RenderMinimum {
-        RenderMinimum::new(Vec2::new(320.0, 240.0)).with_policy(UnderflowPolicy::Fallback)
+        // The honest floor — below ~120×80pt no tier (op view, tab
+        // strip, page slice) renders meaningfully. Between this and
+        // the full ~320×240pt stack, `layout` runs compact tiers:
+        // tiling WMs hand panels whatever the grid says, so a
+        // shrunken panel must degrade rather than tombstone.
+        RenderMinimum::new(Vec2::new(UNDERFLOW_W, UNDERFLOW_H))
+            .with_policy(UnderflowPolicy::Fallback)
     }
 
     fn paint_underflow(&self, cx: &mut PaintContext) {
@@ -188,30 +207,51 @@ impl Widget for ZonePanel {
         );
         cx.list.push_fill_rect(b, pal.surface);
         cx.list.push_stroke_rect(b, 1.0, pal.border);
-        let msg = "PANEL — enlarge to restore";
+        // Named, like the sibling panel placeholders — a dock of
+        // collapsed panels must identify which one starved.
+        let msg = format!("{} — enlarge to restore", self.title.to_uppercase());
         let size = 12.0 * s;
-        let tw = f64::from(text.measure(msg, size));
+        let tw = f64::from(text.measure(&msg, size));
         let x = (b.x0 + (b.width() - tw) * 0.5).max(b.x0 + 2.0);
         let y = b.y0 + (b.height() - f64::from(size)) * 0.5;
-        text.push(cx.list, Point::new(x, y), msg, size, pal.text_muted, None);
+        text.push(cx.list, Point::new(x, y), &msg, size, pal.text_muted, None);
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
         let s = self.s();
-        // `inner_h` never exceeds the panel — a degenerate-height
-        // panel gives the zones region 0pt (the underflow fallback
-        // paints "enlarge to restore" anyway).
-        // The operational view keeps at least its own declared
-        // `min_render` height (in pt, scaled) so a shorter panel
-        // never pushes it into its underflow placeholder just to
-        // give the zones a fixed fraction.
-        let inner_min = self.inner.min_render().size.y * s;
-        let inner_h = (bounds.height() * OP_FRAC)
-            .max(TITLE_H * s + 24.0)
-            .max(inner_min)
-            .min(bounds.height())
-            .max(0.0);
+        let s_safe = s.max(f32::EPSILON);
+        let inner_min = self.inner.min_render().size;
+        let strip = TAB_STRIP_PT * s;
+        // Compact-tier selection (the comparison runs in pt so the
+        // declared pt floors stay honest at any scale):
+        //
+        // - Viable — the operational view can meet its own declared
+        //   `min_render` on both axes AND leave a tab strip: it keeps
+        //   the top at its usual share, and the zones take the rest
+        //   (`Tabs` degrades to strip-only when the remainder is
+        //   short — navigation still works, the active page's slice
+        //   just shrinks).
+        // - Sub-viable — the op view could only paint its own
+        //   underflow chrome (or collapse outright): the zone pages
+        //   take the whole panel. A working tab strip plus a clipped
+        //   page slice is a better degrade than a nested tombstone —
+        //   the panel's priority content is whatever surface the
+        //   operator switched to.
+        let viable = bounds.width() / s_safe >= inner_min.x
+            && bounds.height() / s_safe >= inner_min.y + TAB_STRIP_PT;
+        let inner_h = if viable {
+            // The `min(height - strip)` cap is a guard — viability
+            // already implies `height - strip ≥ inner_min`, so the
+            // zones region never loses its strip to the op view.
+            (bounds.height() * OP_FRAC)
+                .max(TITLE_H * s + 24.0)
+                .max(inner_min.y * s)
+                .min(bounds.height() - strip)
+                .max(0.0)
+        } else {
+            0.0
+        };
         self.inner_bounds = Rect::new(bounds.min_x(), bounds.min_y(), bounds.width(), inner_h);
         self.zones_bounds = Rect::new(
             bounds.min_x(),
@@ -286,9 +326,9 @@ impl Widget for ZonePanel {
         let pal = Palette::from_theme(cx.theme);
         let s = self.s();
         // Divider between the operational view and the zone tabs —
-        // skipped when the zones region collapsed to 0pt (a degenerate
-        // panel height would otherwise paint it below the panel).
-        if self.zones_bounds.height() > 0.0 {
+        // skipped when either region collapsed (a degenerate height
+        // would otherwise paint a stray hairline along an edge).
+        if self.inner_bounds.height() > 0.0 && self.zones_bounds.height() > 0.0 {
             let y = f64::from(self.zones_bounds.min_y() - 0.5);
             cx.list.push_fill_rect(
                 krect(
@@ -349,6 +389,28 @@ mod tests {
     use super::*;
     use crate::zone::{fill, Page, Variant};
     use martensite::core::widget::DummyWidget;
+    use martensite::core::HotNode;
+
+    /// Probe inner with a declared render floor — stands in for an
+    /// operational panel so the compact-tier switch is testable
+    /// without dragging a real panel's widget tree into the test.
+    struct Floored {
+        min: Vec2,
+    }
+
+    impl Widget for Floored {
+        fn debug_name(&self) -> &'static str {
+            "Floored"
+        }
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            self.min
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn paint(&self, _cx: &mut PaintContext) {}
+        fn min_render(&self) -> RenderMinimum {
+            RenderMinimum::new(self.min).with_policy(UnderflowPolicy::Fallback)
+        }
+    }
 
     fn model() -> PlantModel {
         PlantModel::seeded(
@@ -357,6 +419,21 @@ mod tests {
             Signal::new(false),
             Signal::new(true),
             Signal::new(String::new()),
+        )
+    }
+
+    /// A zone panel over a `Floored` inner at `min`, scale 2.0 —
+    /// the observed Hyprland tile ran at scale 2.
+    fn floored_panel(m: &PlantModel, min: Vec2) -> ZonePanel {
+        let page =
+            |m: &PlantModel| Page::new(Variant::Theater, fill(DummyWidget), &m.zone_width[2]);
+        ZonePanel::new(
+            Box::new(Floored { min }),
+            "TEST",
+            Signal::new(2.0),
+            m,
+            2,
+            vec![("A", page(m)), ("B", page(m))],
         )
     }
 
@@ -407,5 +484,88 @@ mod tests {
             Some("ALARMS"),
             "telemetry page order changed — update TELEMETRY_ALARMS_TAB"
         );
+    }
+
+    /// The collapsed-dock regression: a compositor-tiled window handed
+    /// the bottom-row panels ~315×175 logical pt (630×350px at scale
+    /// 2) — under the old 320×240 floor both tombstoned on first
+    /// launch. The declared floor must now sit under the allotment so
+    /// the arena never engages `paint_underflow`, and `layout` must
+    /// still produce a visible op-view + tab-strip split.
+    #[test]
+    fn compact_tier_keeps_content_at_tiled_sizes() {
+        let m = model();
+        let mut panel = floored_panel(&m, Vec2::new(220.0, 130.0));
+        let min = panel.min_render();
+        assert_eq!(min.policy, UnderflowPolicy::Fallback);
+        assert!(
+            min.size.x <= 315.0 && min.size.y <= 175.0,
+            "floor {min:?} would still tombstone a 315×175pt panel"
+        );
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 2.0,
+        };
+        panel.layout(&mut cx, Rect::new(0.0, 0.0, 630.0, 350.0));
+        // Viable tier: the op view gets at least its declared floor and
+        // the zones keep at least a full tab strip.
+        assert!(
+            panel.inner_bounds.height() >= 130.0 * 2.0,
+            "op view shrank under its own floor: {:?}",
+            panel.inner_bounds
+        );
+        assert!(
+            panel.zones_bounds.height() >= TAB_STRIP_PT * 2.0,
+            "tab strip lost: {:?}",
+            panel.zones_bounds
+        );
+    }
+
+    /// Below the op view's viability floor the zone pages take the
+    /// whole panel — a working tab strip plus a clipped page slice is
+    /// a better degrade than an inner tombstone or a collapsed slot.
+    #[test]
+    fn sub_viable_size_gives_zones_the_panel() {
+        let m = model();
+        let mut panel = floored_panel(&m, Vec2::new(220.0, 130.0));
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 2.0,
+        };
+        // 315×140pt — under inner_min + strip (162pt) → zones-priority.
+        panel.layout(&mut cx, Rect::new(0.0, 0.0, 630.0, 280.0));
+        assert_eq!(panel.inner_bounds.height(), 0.0);
+        assert!(
+            panel.zones_bounds.height() >= 279.0,
+            "zones did not inherit the panel: {:?}",
+            panel.zones_bounds
+        );
+        // 190×400pt — tall but under the op view's 220pt width floor →
+        // the same zones-priority switch applies on the narrow axis.
+        panel.layout(&mut cx, Rect::new(0.0, 0.0, 380.0, 800.0));
+        assert_eq!(panel.inner_bounds.height(), 0.0);
+        assert!(panel.zones_bounds.height() >= 799.0);
+        // Tab navigation still works in the collapsed tier.
+        panel.zones.activate(1);
+        assert_eq!(panel.zones.selected(), 1);
+    }
+
+    /// Above the compact range the split is unchanged — the op view
+    /// keeps its `OP_FRAC` share and the zones take the remainder.
+    #[test]
+    fn full_layout_unchanged_above_compact_floor() {
+        let m = model();
+        let mut panel = floored_panel(&m, Vec2::new(220.0, 130.0));
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 2.0,
+        };
+        panel.layout(&mut cx, Rect::new(0.0, 0.0, 1280.0, 960.0));
+        // inner_h = max(960·0.3, TITLE_H·2+24, 130·2) = 288px.
+        assert_eq!(panel.inner_bounds.height(), 288.0);
+        assert_eq!(panel.zones_bounds.height(), 671.0);
     }
 }

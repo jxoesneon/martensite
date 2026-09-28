@@ -23,8 +23,8 @@ use martensite::blessed::{
 };
 use martensite::core::shape::Shape;
 use martensite::core::{
-    ColdNode, HotNode, LayoutContext, NodeFlags, Rect, TextStyle, WidgetArena, WidgetEvent,
-    WidgetId,
+    ColdNode, EventContext, HotNode, LayoutContext, NodeFlags, Rect, TextStyle, WidgetArena,
+    WidgetEvent, WidgetId,
 };
 use martensite::focus::{FocusManager, TabNavigation};
 use martensite::motion::{AnimationDriver, AnimationId};
@@ -57,9 +57,11 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowAttributes};
 
+use martensite::devtools::dev_session::log_ring::LogRing;
 #[cfg(feature = "devtools")]
 use martensite::devtools::hud::{DiagnosticHud, FrameTiming};
 
+use crate::lock_screen::GateOverlays;
 use crate::model::{build_dock_tree, Palette};
 use crate::overlays::{push_toast, ShellOverlays, ToastInbox};
 use crate::panels::{
@@ -284,6 +286,16 @@ pub(crate) struct App {
     /// The overlay owner's arena node — zero-bounds widget whose
     /// `sync_overlay` reconciles the dialog, drawer, and toast strip.
     shell_overlays: Option<WidgetId>,
+    /// The gate overlay owner's arena node — `sync_overlay`
+    /// reconciles the console-lock card and the first-run tour.
+    gate_overlays: Option<WidgetId>,
+    /// The live lock entry's overlay id — `GateOverlays` publishes it
+    /// so the input gate can route keys/IME into the card while the
+    /// console is locked (`None` while unlocked).
+    lock_entry: Arc<std::sync::Mutex<Option<u64>>>,
+    /// Last autosave commit seen — the `autosave_seq` edge detector
+    /// for the shift-log line.
+    last_autosave_seq: u64,
     pal: Palette,
     /// Theme state — the dictionary ships both themes; `choice` is the
     /// selection (System resolves through winit each frame), and the
@@ -301,12 +313,25 @@ pub(crate) struct App {
     dock_drag: Option<DockDrag>,
     /// arena is built in `can_create_surfaces` once the real scale
     /// factor is known (F18 — widgets get scale through the signal).
-    pub(crate) arena: Option<WidgetArena>,
+    /// Shared (std Mutex, not parking_lot — the dev-channel socket
+    /// threads lock it) so `serve_dev_session_from_env` can expose the
+    /// live arena to `cargo martensite mcp`.
+    pub(crate) arena: Option<Arc<std::sync::Mutex<WidgetArena>>>,
+    /// Dev-channel socket server — `Some` only when
+    /// `MARTENSITE_DEV_CHANNEL` opted in (debug builds). Held for the
+    /// app's lifetime; dropping unlinks the socket.
+    dev_server: Option<martensite::dev_channel::DevChannelServer>,
+    /// The served session — fed `on_frame`/`absorb_events` each frame
+    /// so the MCP lint/event surfaces see live data.
+    dev_session: Option<Arc<martensite::dev_channel::DevSession>>,
+    /// Bounded tracing sink attached to the session (when served) —
+    /// `martensite_logs` reads it.
+    log_ring: Arc<LogRing>,
     pub(crate) root: Option<WidgetId>,
     panels: [Option<WidgetId>; 4],
     panel_names: [&'static str; 4],
     router: EventRouter,
-    focus: FocusManager,
+    focus: Arc<std::sync::Mutex<FocusManager>>,
     mods: ModifiersState,
     actions: Arc<Mutex<Vec<ActionRequest>>>,
     initial_tree: Arc<Mutex<Option<TreeUpdate>>>,
@@ -428,6 +453,9 @@ impl App {
             toolbar: None,
             statusbar: None,
             shell_overlays: None,
+            gate_overlays: None,
+            lock_entry: Arc::new(std::sync::Mutex::new(None)),
+            last_autosave_seq: 0,
             pal: Palette::dark(),
             themes: ThemeDictionary::new(),
             theme_choice: choice,
@@ -437,11 +465,14 @@ impl App {
             dock: martensite::blessed::DockTree::with_capacity(8),
             dock_drag: None,
             arena: None,
+            dev_server: None,
+            dev_session: None,
+            log_ring: Arc::new(LogRing::new(512)),
             root: None,
             panels: [None, None, None, None],
             panel_names: ["Process Grid", "Telemetry", "Editor", "Media"],
             router: EventRouter::new(),
-            focus: FocusManager::new(),
+            focus: Arc::new(std::sync::Mutex::new(FocusManager::new())),
             mods: ModifiersState::empty(),
             actions: Arc::new(Mutex::new(Vec::new())),
             initial_tree: Arc::new(Mutex::new(None)),
@@ -485,6 +516,12 @@ impl App {
         // button labels, dropdown face/options, …) emits real glyph
         // runs through this one shared FontManager.
         arena.set_text_painter(martensite::text_paint::shared_painter());
+        // ADR-0040 phase 2: one-shot OS preference consult — mirrors the
+        // platform's prefers-reduced-motion setting (or the
+        // MARTENSITE_REDUCED_MOTION override) into the arena so loading
+        // skeletons paint statically. Not live-tracked; re-call on a
+        // settings-change hook to refresh.
+        martensite::window::prefs::apply_platform_preferences(&mut arena);
         self.installed_mode = mode;
 
         // Transparent root — paints nothing itself; children get their
@@ -540,6 +577,7 @@ impl App {
                     scale.clone(),
                     self.filter_text.clone(),
                     self.clipboard_out.clone(),
+                    self.model.grid_rows.clone(),
                 )),
                 "Process Grid",
                 scale.clone(),
@@ -572,6 +610,10 @@ impl App {
                         doc_out: self.doc_out.clone(),
                         open_req: self.open_req.clone(),
                         export_req: self.export_req.clone(),
+                        font_pt: self.model.editor_font_pt.clone(),
+                        accent: self.model.editor_accent.clone(),
+                        autosave: self.model.editor_autosave.clone(),
+                        autosave_seq: self.model.autosave_seq.clone(),
                     },
                 )),
                 "Editor",
@@ -581,7 +623,12 @@ impl App {
                 crate::zones::editor::pages(&self.model),
             )),
             Box::new(crate::zones::ZonePanel::new(
-                Box::new(MediaPanel::new(scale.clone())),
+                Box::new(MediaPanel::new(
+                    scale.clone(),
+                    self.model.media_playing.clone(),
+                    self.model.media_pos.clone(),
+                    self.model.media_vol.clone(),
+                )),
                 "Media",
                 scale.clone(),
                 &self.model,
@@ -615,6 +662,8 @@ impl App {
                 self.locale_sel.clone(),
                 self.cpu.clone(),
                 self.paused.clone(),
+                self.model.console_locked.clone(),
+                self.model.reduced_motion.clone(),
             )));
             cold.debug_name = Some("StatusBar");
             let id = arena.insert(hot, cold);
@@ -634,6 +683,7 @@ impl App {
                 self.inspector_req.clone(),
                 self.alerts_on.clone(),
                 self.toast_inbox.clone(),
+                self.model.clone(),
             )));
             cold.debug_name = Some("ShellOverlays");
             let id = arena.insert(hot, cold);
@@ -641,17 +691,84 @@ impl App {
             self.shell_overlays = Some(id);
         }
 
+        // The gate overlay owner — same zero-bounds pattern for the
+        // shell's modal surfaces: the console-lock card (reconciled
+        // against `console_locked`) and the first-run tour
+        // (`tour_seen`). Its `lock_entry` slot is the app's handle
+        // for routing keys/IME into the lock card.
+        {
+            let gate = GateOverlays::new(&self.model);
+            self.lock_entry = Arc::clone(&gate.lock_entry);
+            let mut hot = HotNode::default();
+            hot.flags |= NodeFlags::VISIBLE;
+            let mut cold = ColdNode::new(Box::new(gate));
+            cold.debug_name = Some("GateOverlays");
+            let id = arena.insert(hot, cold);
+            arena.append_child(root, id).expect("append gate overlays");
+            self.gate_overlays = Some(id);
+        }
+
         let ids: Vec<u64> = panels.iter().map(|p| p.unwrap().to_u64()).collect();
         self.dock = build_dock_tree(&ids.try_into().expect("4 panels"));
+        let arena = Arc::new(std::sync::Mutex::new(arena));
+        // Opt-in dev channel: `MARTENSITE_DEV_CHANNEL=1` in a debug
+        // build serves this arena over the session socket so
+        // `cargo martensite mcp` can inspect/mutate the live tree
+        // (docs/dx/MCP.md §3.1). A bind failure never sinks the app.
+        match martensite::dev_channel::serve_dev_session_from_env(Arc::clone(&arena)) {
+            Ok(Some((server, session))) => {
+                session.set_log_ring(Arc::clone(&self.log_ring));
+                session.set_error_surface(martensite::devtools::error_surface::ErrorSurface::new());
+                session.attach_focus_manager(Arc::clone(&self.focus));
+                // The app's live signals, name-keyed — `signals_list`
+                // reports values, `set_signal`/`trigger_signal` writes
+                // land in the same `Signal<T>` the widgets read.
+                for adapter in [
+                    signal_adapter("paused", self.paused.clone()),
+                    signal_adapter("glow", self.glow.clone()),
+                    signal_adapter("tick_ms", self.tick_ms.clone()),
+                    signal_adapter("theme_sel", self.theme_sel.clone()),
+                    signal_adapter("filter_text", self.filter_text.clone()),
+                    signal_adapter("alerts_on", self.alerts_on.clone()),
+                    signal_adapter("commands_req", self.commands_req.clone()),
+                    signal_adapter("bell_req", self.bell_req.clone()),
+                    signal_adapter("about_req", self.about_req.clone()),
+                    signal_adapter("inspector_req", self.inspector_req.clone()),
+                    signal_adapter("console_req", self.console_req.clone()),
+                    signal_adapter("console_locked", self.model.console_locked.clone()),
+                    signal_adapter("tour_seen", self.model.tour_seen.clone()),
+                    signal_adapter("media_playing", self.model.media_playing.clone()),
+                    signal_adapter("media_pos", self.model.media_pos.clone()),
+                    signal_adapter("media_vol", self.model.media_vol.clone()),
+                    signal_adapter("editor_font_pt", self.model.editor_font_pt.clone()),
+                    signal_adapter("editor_autosave", self.model.editor_autosave.clone()),
+                    signal_adapter("editor_wrap", self.model.editor_wrap.clone()),
+                    signal_adapter("editor_accent", self.model.editor_accent.clone()),
+                    signal_adapter("grid_rows", self.model.grid_rows.clone()),
+                    signal_adapter("autosave_seq", self.model.autosave_seq.clone()),
+                ] {
+                    session.register_signal_adapter(adapter);
+                }
+                self.dev_server = Some(server);
+                self.dev_session = Some(session);
+            }
+            Ok(None) => {}
+            Err(err) => eprintln!("dev channel disabled: {err}"),
+        }
         self.arena = Some(arena);
         self.root = Some(root);
         self.panels = panels;
-        self.focus = focus;
+        *self.focus.lock().unwrap() = focus;
         // Focus lands on the grid first — it is the hero panel.
         // `apply_focus_request` (not `try_set_focus`) so FocusGained
-        // actually dispatches to the widget (F22).
-        if let (Some(arena), Some(first)) = (&mut self.arena, panels[0]) {
-            self.focus.apply_focus_request(arena, first);
+        // actually dispatches to the widget (F22). Lock order is
+        // arena → focus, matching the dev-session probe.
+        if let (Some(arena), Some(first)) = (self.arena.as_ref(), panels[0]) {
+            let mut arena = arena.lock().unwrap();
+            self.focus
+                .lock()
+                .unwrap()
+                .apply_focus_request(&mut arena, first);
         }
     }
 
@@ -716,9 +833,10 @@ impl App {
         // authority for the rect the BSP subdivides (the pointer
         // hit-tests use it too).
         let area = self.dock_area_at(width, height);
-        let Some(arena) = &mut self.arena else {
+        let Some(arena) = self.arena.as_ref() else {
             return;
         };
+        let mut arena = arena.lock().unwrap();
         // This manual path bypasses `LayoutEngine`, so it must install
         // the ambient text measurer itself — otherwise widget
         // `measure` calls fall back to per-char estimates that
@@ -811,7 +929,7 @@ impl App {
         // (engage/release hysteresis lives inside), then relocate
         // focus if the focused node just became covered.
         arena.update_underflow_all();
-        self.focus.revalidate(arena);
+        self.focus.lock().unwrap().revalidate(&mut arena);
     }
 
     /// The active drag's preview: `(drop-zone rect, pointer pos,
@@ -844,7 +962,7 @@ impl App {
         // The focus readout names whichever arena node holds focus —
         // panels by title, the two chrome strips by role, `none`
         // otherwise (e.g. the transparent root).
-        let focused_id = self.focus.current_focus();
+        let focused_id = self.focus.lock().unwrap().current_focus();
         let focused_name = focused_id
             .map(|id| {
                 if let Some(i) = self.panels.iter().position(|p| *p == Some(id)) {
@@ -874,7 +992,13 @@ impl App {
             |key: &str, fallback: &str| self.l10n.get(key).unwrap_or_else(|| fallback.to_string());
         let mut kpis = vec![
             (chip("kpi-uptime", "UPTIME"), uptime, pal.text_muted),
-            (chip("kpi-procs", "PROCS"), fmt_count(1_000_000), pal.text),
+            // The grid publishes its real store size — not a literal
+            // that would drift from the generated table.
+            (
+                chip("kpi-procs", "PROCS"),
+                fmt_count(self.model.grid_rows.get()),
+                pal.text,
+            ),
             (
                 chip("kpi-mem", "MEM"),
                 format!("{:.0}%", self.mem.get() * 100.0),
@@ -1165,9 +1289,10 @@ impl App {
     /// the interpolated colors on screen, not the stale endpoint.
     fn start_theme_fade(&mut self) {
         let target = self.themes.theme(self.effective_mode()).clone();
-        let Some(arena) = &mut self.arena else {
+        let Some(arena) = self.arena.as_ref() else {
             return;
         };
+        let mut arena = arena.lock().unwrap();
         let diff = ThemeDiff::from_themes(arena.theme(), &target);
         if diff.deltas().is_empty() {
             arena.set_theme(target);
@@ -1465,15 +1590,11 @@ impl App {
         }
     }
 
-    /// One frame: tick widgets, paint, composite, present, feed AT.
-    fn redraw(&mut self) {
-        if self.window.is_none() || self.orchestrator.is_none() || self.arena.is_none() {
-            return;
-        }
-        let now = Instant::now();
-        let dt = now - self.last_frame;
-        self.last_frame = now;
-
+    /// Signal → app-state drains shared by `redraw` and
+    /// `live_headless_frame`: toolbar dropdowns, the clipboard write,
+    /// and the theme fade/install. Runs before `tick` so the widgets
+    /// see this frame's resolved theme.
+    fn drain_ui_signals(&mut self, dt: Duration) {
         // Dropdown → choice: the toolbar publishes its index; apply it.
         let sel = self.theme_sel.get();
         let wanted = match sel {
@@ -1502,6 +1623,18 @@ impl App {
                 .expect("LOCALE_CODES are registered bundles");
         }
 
+        // Editor autosave → shift log: `EditorPanel` bumps
+        // `autosave_seq` once per real commit batch (only when a
+        // buffer actually changed), so one log line per bump keeps the
+        // audit honest without per-frame noise.
+        let seq = self.model.autosave_seq.get();
+        if seq != self.last_autosave_seq {
+            if seq > self.last_autosave_seq {
+                self.model.log(usize::MAX, "editor autosave committed");
+            }
+            self.last_autosave_seq = seq;
+        }
+
         // Context menu → OS clipboard: the grid publishes the payload;
         // the backend write happens here, app-side. The success toast
         // only fires when a native backend actually wrote — `write`
@@ -1525,13 +1658,13 @@ impl App {
             }
         }
 
-        // 0. Theme — advance any in-flight fade and install the
-        //    resolved theme; widgets resolve it through
-        //    `PaintContext::theme`, chrome through `self.pal`.
+        // Theme — advance any in-flight fade and install the resolved
+        // theme; widgets resolve it through `PaintContext::theme`,
+        // chrome through `self.pal`.
         {
             let mode = self.effective_mode();
             let target = self.themes.theme(mode).clone();
-            let arena = self.arena.as_mut().expect("checked");
+            let mut arena = self.arena.as_ref().expect("checked").lock().unwrap();
             if let Some((id, diff)) = self.theme_fade.take() {
                 self.theme_anim.advance(dt.as_secs_f32());
                 let t = self.theme_anim.position(id).unwrap_or(1.0);
@@ -1563,11 +1696,27 @@ impl App {
                 sub.set_theme(arena.theme());
             }
         }
+    }
+
+    /// One frame: tick widgets, paint, composite, present, feed AT.
+    fn redraw(&mut self) {
+        if self.window.is_none() || self.orchestrator.is_none() || self.arena.is_none() {
+            return;
+        }
+        let now = Instant::now();
+        let dt = now - self.last_frame;
+        self.last_frame = now;
+        self.drain_ui_signals(dt);
 
         // 1. Widget ticks — telemetry advances its signals, media pumps
         //    its pacing queue; dirty widgets mark repaint.
         let t0 = Instant::now();
-        self.arena.as_mut().expect("checked").tick(dt);
+        self.arena
+            .as_ref()
+            .expect("checked")
+            .lock()
+            .unwrap()
+            .tick(dt);
 
         // Drive the plant model AFTER the tick so history/acoustic
         // read this frame's fresh cpu/mem samples. History samples at
@@ -1623,7 +1772,21 @@ impl App {
         {
             let root = self.root.expect("checked");
             let arena = self.arena.as_ref().expect("checked");
-            arena.build_paint_list(root, &mut list);
+            arena.lock().unwrap().build_paint_list(root, &mut list);
+        }
+        // Feed the dev session: the recorded paint list drives MCP
+        // lint/capture surfaces; real routed input merges into the
+        // event ledger alongside MCP-injected events.
+        if let Some(session) = &self.dev_session {
+            if let Some(arena) = self.arena.as_ref() {
+                session
+                    .lint
+                    .lock()
+                    .unwrap()
+                    .sample_loading(&arena.lock().unwrap());
+            }
+            session.on_frame(&list);
+            session.absorb_events(self.router.event_ledger());
         }
         // App chrome sits outside the widget tree — wrap it in a manual
         // provenance scope so audit findings still name a component.
@@ -1638,18 +1801,20 @@ impl App {
 
         // Report the focused widget's rect (device px) so the audit can
         // verify a painted focus indicator exists (WCAG 2.4.7).
-        let focus_rect = self
-            .focus
-            .current_focus()
-            .and_then(|id| self.arena.as_ref().and_then(|a| a.get_hot(id)))
-            .map(|h| {
-                kurbo::Rect::new(
-                    f64::from(h.bounds.min_x()),
-                    f64::from(h.bounds.min_y()),
-                    f64::from(h.bounds.max_x()),
-                    f64::from(h.bounds.max_y()),
-                )
-            });
+        let focused = self.focus.lock().unwrap().current_focus();
+        let focus_rect = focused.and_then(|id| {
+            self.arena.as_ref().and_then(|a| {
+                let arena = a.lock().unwrap();
+                arena.get_hot(id).map(|h| {
+                    kurbo::Rect::new(
+                        f64::from(h.bounds.min_x()),
+                        f64::from(h.bounds.min_y()),
+                        f64::from(h.bounds.max_x()),
+                        f64::from(h.bounds.max_y()),
+                    )
+                })
+            })
+        });
 
         // 4. Composite + present. The paint audit runs inside `render`.
         {
@@ -1660,8 +1825,9 @@ impl App {
             };
             orchestrator.set_audit_focus_rect(focus_rect);
             if let Some(arena) = self.arena.as_ref() {
-                orchestrator.audit_target_sizes(arena);
-                orchestrator.audit_underflow(arena);
+                let arena = arena.lock().unwrap();
+                orchestrator.audit_target_sizes(&arena);
+                orchestrator.audit_underflow(&arena);
             }
             orchestrator.render(&list, &self.recovery);
             if let Err(err) = orchestrator.render_to_surface(&gpu.device, &gpu.queue, surface) {
@@ -1688,22 +1854,22 @@ impl App {
         //    full-tree rebuild is throttled to `A11Y_EMIT_INTERVAL`;
         //    an AT action or a focus change forces an immediate emit.
         if let Some(a11y) = &mut self.a11y {
-            let arena = self.arena.as_mut().expect("checked");
+            let mut arena = self.arena.as_ref().expect("checked").lock().unwrap();
             let mut dispatched = false;
             for request in std::mem::take(&mut *self.actions.lock()) {
-                if let Some(action) = a11y.tree.decode_action(arena, &request) {
-                    dispatch_a11y_action(arena, &action);
+                if let Some(action) = a11y.tree.decode_action(&arena, &request) {
+                    dispatch_a11y_action(&mut arena, &action);
                     dispatched = true;
                 }
             }
-            let focus = self.focus.current_focus();
+            let focus = self.focus.lock().unwrap().current_focus();
             a11y.tree.set_focus(focus);
             if dispatched || focus != self.a11y_last_focus {
                 self.a11y_force = true;
             }
             if self.a11y_force || self.a11y_last_emit.elapsed() >= A11Y_EMIT_INTERVAL {
                 a11y.adapter
-                    .update_if_active(|| a11y.tree.build_update(arena));
+                    .update_if_active(|| a11y.tree.build_update(&mut arena));
                 self.a11y_force = false;
                 self.a11y_last_emit = Instant::now();
                 self.a11y_last_focus = focus;
@@ -1958,7 +2124,7 @@ impl ApplicationHandler for App {
 
         self.scale.set(window.scale_factor() as f32);
 
-        let instance = wgpu::Instance::default();
+        let instance = martensite_wgpu::device::GpuContext::create_instance();
         let raw_surface = instance
             .create_surface(Arc::clone(&window))
             .expect("create surface");
@@ -2013,9 +2179,9 @@ impl ApplicationHandler for App {
             let mut tree = AccessKitAdapter::new(root);
             tree.set_toolkit_name("Martensite");
             tree.set_toolkit_version(env!("CARGO_PKG_VERSION"));
-            let arena = self.arena.as_mut().expect("arena built");
-            tree.set_focus(self.focus.current_focus());
-            *self.initial_tree.lock() = Some(tree.build_update(arena));
+            let arena = self.arena.as_ref().expect("arena built");
+            tree.set_focus(self.focus.lock().unwrap().current_focus());
+            *self.initial_tree.lock() = Some(tree.build_update(&mut arena.lock().unwrap()));
             A11y {
                 adapter: accesskit_winit::Adapter::with_direct_handlers(
                     event_loop,
@@ -2047,8 +2213,12 @@ impl ApplicationHandler for App {
             self.console_req.set(false);
             if self.subwindow.is_none() {
                 if let (Some(gpu), Some(arena)) = (&self.gpu, &self.arena) {
-                    self.subwindow =
-                        SubWindow::open(event_loop, gpu, arena.theme(), self.cpu.clone());
+                    self.subwindow = SubWindow::open(
+                        event_loop,
+                        gpu,
+                        arena.lock().unwrap().theme(),
+                        self.cpu.clone(),
+                    );
                     if self.subwindow.is_some() {
                         push_toast(
                             &self.toast_inbox,
@@ -2100,8 +2270,8 @@ impl ApplicationHandler for App {
                 if let Some(window) = &self.window {
                     let scale = window.scale_factor();
                     self.scale.set(scale as f32);
-                    if let Some(arena) = &mut self.arena {
-                        arena.set_scale_factor(scale as f32);
+                    if let Some(arena) = &self.arena {
+                        arena.lock().unwrap().set_scale_factor(scale as f32);
                     }
                     if let Some(o) = &mut self.orchestrator {
                         o.set_audit_scale_factor(scale);
@@ -2158,12 +2328,22 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::PixelDelta(p) => Vec2::new(p.x as f32, p.y as f32),
                     _ => return,
                 };
-                if let (Some(arena), Some(window)) = (&mut self.arena, &self.window) {
-                    self.router.dispatch_scroll_event(arena, window.id(), d);
+                if let (Some(arena), Some(window)) = (self.arena.as_ref(), self.window.as_ref()) {
+                    self.router
+                        .dispatch_scroll_event(&mut arena.lock().unwrap(), window.id(), d);
                 }
                 self.sync_focus();
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                // Console lock gates EVERYTHING keyboard-side — Tab
+                // traversal, the HUD toggle, chords, key dispatch, and
+                // committed text. The card receives the keystrokes
+                // itself: its password and OTP fields type through
+                // them, and the same signal that gates input releases
+                // it on a valid credential.
+                if self.dispatch_locked_key(&event) {
+                    return;
+                }
                 let pressed = event.state == ElementState::Pressed;
                 // Tab traversal is app-level chrome — panels never see it.
                 if pressed && event.logical_key == Key::Named(NamedKey::Tab) {
@@ -2172,13 +2352,14 @@ impl ApplicationHandler for App {
                     } else {
                         TabNavigation::Forward
                     };
-                    if let Some(arena) = &mut self.arena {
+                    if let Some(arena) = &self.arena {
                         // `apply_tab` advances *and* dispatches
                         // FocusLost/FocusGained. (The raw `tab` +
                         // `apply_focus_request` pairing was a silent
                         // no-op — `tab` commits the transition before
                         // returning, so nothing ever dispatched.)
-                        self.focus.apply_tab(arena, dir);
+                        let mut arena = arena.lock().unwrap();
+                        self.focus.lock().unwrap().apply_tab(&mut arena, dir);
                     }
                     return;
                 }
@@ -2217,10 +2398,11 @@ impl ApplicationHandler for App {
                         _ => None,
                     };
                     if let Some(name) = synthetic {
-                        let focused = self.focus.current_focus();
-                        if let Some(arena) = &mut self.arena {
+                        let focused = self.focus.lock().unwrap().current_focus();
+                        if let Some(arena) = &self.arena {
+                            let mut arena = arena.lock().unwrap();
                             self.router.dispatch_keyboard_event(
-                                arena,
+                                &mut arena,
                                 focused,
                                 name,
                                 true,
@@ -2230,7 +2412,7 @@ impl ApplicationHandler for App {
                             // press/release pairs (GridPanel's shift
                             // state) must not see a stuck key.
                             self.router
-                                .dispatch_keyboard_event(arena, focused, name, false, false);
+                                .dispatch_keyboard_event(&mut arena, focused, name, false, false);
                         }
                         self.sync_focus();
                         return;
@@ -2246,10 +2428,11 @@ impl ApplicationHandler for App {
                     "Space" => " ".to_string(),
                     other => other.to_string(),
                 };
-                let focused = self.focus.current_focus();
-                if let Some(arena) = &mut self.arena {
+                let focused = self.focus.lock().unwrap().current_focus();
+                if let Some(arena) = &self.arena {
+                    let mut arena = arena.lock().unwrap();
                     self.router.dispatch_keyboard_event(
-                        arena,
+                        &mut arena,
                         focused,
                         &key_name,
                         pressed,
@@ -2274,10 +2457,30 @@ impl ApplicationHandler for App {
                 // IME composition stream — Preedit/Commit route to the
                 // focused widget; Enabled/Disabled are host lifecycle
                 // and drop out of `ime_event_for_winit` as `None`.
+                // The router never consults the overlay layer for IME,
+                // so the lock gates it here: composition text goes to
+                // the card's credential fields, never the widgets
+                // beneath the scrim.
+                if self.model.console_locked.get() {
+                    let wev = match ime_event_for_winit(&ime) {
+                        Some(martensite::window::event::ImeEvent::Committed(text)) => {
+                            Some(WidgetEvent::ImeCommitted { text })
+                        }
+                        Some(martensite::window::event::ImeEvent::Preedit { text, cursor }) => {
+                            Some(WidgetEvent::ImePreedit { text, cursor })
+                        }
+                        None => None,
+                    };
+                    if let Some(wev) = wev {
+                        self.deliver_lock_event(&wev);
+                    }
+                    return;
+                }
                 if let Some(ev) = ime_event_for_winit(&ime) {
-                    let focused = self.focus.current_focus();
-                    if let Some(arena) = &mut self.arena {
-                        self.router.dispatch_ime_event(arena, focused, &ev);
+                    let focused = self.focus.lock().unwrap().current_focus();
+                    if let Some(arena) = &self.arena {
+                        self.router
+                            .dispatch_ime_event(&mut arena.lock().unwrap(), focused, &ev);
                     }
                     self.sync_focus();
                 }
@@ -2330,14 +2533,77 @@ impl App {
     /// resolve-before-hit-test so a popup opened this frame (synthetic
     /// event streams can press before the next `tick`) still counts.
     fn press_over_overlay(&mut self, pos: Vec2) -> bool {
-        let Some(arena) = self.arena.as_mut() else {
+        let Some(arena) = self.arena.as_ref() else {
             return false;
         };
-        let overlay = arena.overlay_mut();
-        if overlay.viewport().width() > 0.0 && overlay.viewport().height() > 0.0 {
-            overlay.layout_pass();
+        let mut arena = arena.lock().unwrap();
+        let hit = {
+            let overlay = arena.overlay_mut();
+            if overlay.viewport().width() > 0.0 && overlay.viewport().height() > 0.0 {
+                overlay.layout_pass();
+            }
+            overlay.entries().any(|e| e.bounds().contains(pos))
+        };
+        hit
+    }
+
+    /// While `console_locked` holds, keyboard input belongs to the
+    /// lock card alone — Tab traversal, HUD toggles, and chord
+    /// synthesis must not run underneath it. The card still receives
+    /// keystrokes and committed text so its credential fields work.
+    /// Returns `true` when the gate applied (event consumed).
+    fn dispatch_locked_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+        if !self.model.console_locked.get() {
+            return false;
         }
-        overlay.entries().any(|e| e.bounds().contains(pos))
+        let pressed = event.state == ElementState::Pressed;
+        let key_name = match &event.logical_key {
+            Key::Named(n) => format!("{n:?}"),
+            Key::Character(c) => c.to_string(),
+            _ => return true,
+        };
+        let key_name = match key_name.as_str() {
+            "Space" => " ".to_string(),
+            other => other.to_string(),
+        };
+        self.deliver_lock_event(&if pressed {
+            WidgetEvent::KeyPressed {
+                key: key_name,
+                repeat: event.repeat,
+            }
+        } else {
+            WidgetEvent::KeyReleased { key: key_name }
+        });
+        if pressed && !event.repeat {
+            if let Some(text) = &event.text {
+                let t = text.to_string();
+                if !t.is_empty() {
+                    self.deliver_lock_event(&WidgetEvent::ImeCommitted { text: t });
+                }
+            }
+        }
+        true
+    }
+
+    /// Delivers one event to the lock card — the overlay entry the
+    /// `GateOverlays` owner published via `lock_entry`. No-ops when no
+    /// lock entry is live (the modal scrim still floors the event).
+    fn deliver_lock_event(&mut self, ev: &WidgetEvent) {
+        let id = *self.lock_entry.lock().unwrap();
+        let (Some(arena), Some(id)) = (self.arena.as_ref(), id) else {
+            return;
+        };
+        let mut arena = arena.lock().unwrap();
+        let overlay = arena.overlay_mut();
+        if let Some(entry) = overlay.entry_mut(id) {
+            let bounds = entry.bounds();
+            let mut cx = EventContext {
+                event: ev,
+                bounds,
+                scale: self.scale.get(),
+            };
+            entry.content_mut().event(&mut cx);
+        }
     }
 
     /// Left-press inside a leaf's title band seeds a drag candidate.
@@ -2439,21 +2705,27 @@ impl App {
         // event, so clicks that never leave the dead-zone behave
         // exactly as before. Presses consumed by an open overlay popup
         // (menus, dropdown lists — the overlay hit-tests first) never
-        // seed a candidate.
-        match state {
-            PointerState::Pressed if button == Some(MButton::Left) => {
-                let p = Vec2::new(pos.x as f32, pos.y as f32);
-                self.dock_drag = if self.press_over_overlay(p) {
-                    None
-                } else {
-                    self.dock_press_candidate(pos)
-                };
+        // seed a candidate. While the console is locked the scrim eats
+        // every pointer event, so no drag state may be seeded, moved,
+        // or applied at all.
+        if self.model.console_locked.get() {
+            self.dock_drag = None;
+        } else {
+            match state {
+                PointerState::Pressed if button == Some(MButton::Left) => {
+                    let p = Vec2::new(pos.x as f32, pos.y as f32);
+                    self.dock_drag = if self.press_over_overlay(p) {
+                        None
+                    } else {
+                        self.dock_press_candidate(pos)
+                    };
+                }
+                PointerState::Moved => self.update_dock_drag(pos),
+                PointerState::Released if button == Some(MButton::Left) => {
+                    self.finish_dock_drag(pos);
+                }
+                _ => {}
             }
-            PointerState::Moved => self.update_dock_drag(pos),
-            PointerState::Released if button == Some(MButton::Left) => {
-                self.finish_dock_drag(pos);
-            }
-            _ => {}
         }
         let mods = {
             let mut k = ModifierKeys::empty();
@@ -2473,10 +2745,11 @@ impl App {
             button,
             modifiers: mods,
         };
-        if let (Some(arena), Some(root), Some(window)) = (&mut self.arena, self.root, &self.window)
+        if let (Some(arena), Some(root), Some(window)) =
+            (self.arena.as_ref(), self.root, self.window.as_ref())
         {
             self.router
-                .dispatch_pointer_event(arena, root, window.id(), &ev);
+                .dispatch_pointer_event(&mut arena.lock().unwrap(), root, window.id(), &ev);
         }
         self.sync_focus();
     }
@@ -2484,8 +2757,55 @@ impl App {
     /// `CaptureFocus` responses land in the router's pending slot; feed
     /// them to the FocusManager so Tab order and click focus agree.
     fn sync_focus(&mut self) {
-        if let (Some(arena), Some(id)) = (&mut self.arena, self.router.take_focus_request()) {
-            self.focus.apply_focus_request(arena, id);
+        if let (Some(arena), Some(id)) = (self.arena.as_ref(), self.router.take_focus_request()) {
+            let mut arena = arena.lock().unwrap();
+            self.focus
+                .lock()
+                .unwrap()
+                .apply_focus_request(&mut arena, id);
+        }
+    }
+
+    /// One `--live-headless` frame — the widget-side half of `redraw`
+    /// (tick, plant model, service drains, paint list, dev-session
+    /// feeds) with no window/GPU attached. MCP-dispatched events reach
+    /// widgets through the shared arena; their signal writes are
+    /// drained exactly like real input.
+    fn live_headless_frame(&mut self, dt: Duration) {
+        self.drain_ui_signals(dt);
+        self.arena.as_ref().expect("arena").lock().unwrap().tick(dt);
+        if !self.paused.get() {
+            self.hist_acc += dt.as_secs_f64();
+            while self.hist_acc >= 0.25 {
+                self.hist_acc -= 0.25;
+                self.model.push_history();
+            }
+            self.minute_acc += dt.as_secs_f64();
+            while self.minute_acc >= 1.0 {
+                self.minute_acc -= 1.0;
+                self.model.tick_minute();
+            }
+            self.model
+                .tick_acoustic(self.started.elapsed().as_secs_f64());
+        }
+        self.drain_service_requests();
+        self.watch_alarms();
+        self.persist_prefs();
+        let mut list = PaintList::new();
+        self.arena
+            .as_ref()
+            .expect("arena")
+            .lock()
+            .unwrap()
+            .build_paint_list(self.root.expect("root"), &mut list);
+        if let Some(session) = &self.dev_session {
+            session
+                .lint
+                .lock()
+                .unwrap()
+                .sample_loading(&self.arena.as_ref().expect("arena").lock().unwrap());
+            session.on_frame(&list);
+            session.absorb_events(self.router.event_ledger());
         }
     }
 }
@@ -2501,18 +2821,95 @@ pub fn run(
     flag_choice: Option<ThemeChoice>,
     audit_locale: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
-        )
-        .init();
+    let app = App::new(flag_choice, audit_locale);
+    init_tracing(&app.log_ring);
     let event_loop = EventLoop::new()?;
     // Wait, not Poll: the trailing request_redraw() in `redraw` is
     // vsync-paced, so the loop still ticks ~60 Hz while animating but
     // sleeps between events instead of busy-spinning.
     event_loop.set_control_flow(ControlFlow::Wait);
-    event_loop.run_app(App::new(flag_choice, audit_locale))?;
+    event_loop.run_app(app)?;
     Ok(())
+}
+
+/// tracing init shared by `run`/`run_live_headless`: stderr fmt honors
+/// `RUST_LOG` (default `warn`); the dev-channel `LogRing` sees every
+/// record unfiltered so `martensite_logs` can slice by level/target.
+/// Also installs the dev panic hook so `martensite_runtime_errors`
+/// reports panics with node context.
+fn init_tracing(log_ring: &Arc<LogRing>) {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::Layer;
+    martensite::devtools::error_surface::install_dev_panic_hook();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+        ))
+        .with(
+            // INFO floor: the log→tracing bridge floods TRACE with
+            // per-glyph shaping records (cosmic_text), which would
+            // bury the app's own entries in the 512-slot ring.
+            log_ring
+                .layer()
+                .with_filter(tracing_subscriber::filter::LevelFilter::INFO),
+        )
+        .try_init()
+        .ok();
+}
+
+/// JSON codec adapter exposing one typed `Signal<T>` to the dev
+/// session — `signals_list` reports its live value and
+/// `set_signal`/`trigger_signal` writes land in the same handle the
+/// widgets read each frame.
+fn signal_adapter<T>(name: &str, sig: Signal<T>) -> martensite::devtools::dev_session::SignalAdapter
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + Clone + Send + Sync + 'static,
+{
+    let read = sig.clone();
+    let write = sig;
+    let wname = name.to_string();
+    martensite::devtools::dev_session::SignalAdapter {
+        name: wname.clone(),
+        signal_id: Some(read.id().raw()),
+        read_json: Box::new(move || serde_json::to_value(read.get()).ok()),
+        write_json: Box::new(move |v| {
+            serde_json::from_value::<T>(v.clone())
+                .map(|val| write.set(val))
+                .map_err(|e| format!("`{wname}` expects {}: {e}", std::any::type_name::<T>()))
+        }),
+    }
+}
+
+/// `--live-headless`: runs the full widget tree — and the dev channel
+/// when `MARTENSITE_DEV_CHANNEL` is set — without a window or GPU. This
+/// is the MCP/dev-tooling path for machines with no usable adapter:
+/// tree/a11y/event/theme/lint surfaces are live; `capture_node` and
+/// `audit_paint` stay `not_implemented` because no renderer exists.
+/// `tick` + paint-list builds pump at ~60 Hz so signals stay live.
+pub fn run_live_headless(
+    flag_choice: Option<ThemeChoice>,
+    audit_locale: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = App::new(flag_choice, audit_locale);
+    init_tracing(&app.log_ring);
+    app.scale.set(1.0);
+    app.build_arena();
+    app.apply_dock_layout_at(1600, 1000);
+    if app.dev_server.is_some() {
+        eprintln!(
+            "live-headless: dev channel serving (pid {})",
+            std::process::id()
+        );
+    }
+    let mut last = Instant::now();
+    loop {
+        let now = Instant::now();
+        let dt = now - last;
+        last = now;
+        app.live_headless_frame(dt);
+        std::thread::sleep(Duration::from_millis(16));
+    }
 }
 
 #[cfg(test)]
@@ -2644,7 +3041,8 @@ mod tests {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.build_arena();
         {
-            let overlay = app.arena.as_mut().expect("arena").overlay_mut();
+            let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
+            let overlay = arena.overlay_mut();
             overlay.set_viewport(Rect::new(0.0, 0.0, 1000.0, 600.0));
             overlay.open(
                 Box::new(Sized),
@@ -2668,12 +3066,17 @@ mod tests {
     fn tab_traversal_visits_panels_and_chrome() {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.build_arena();
-        let arena = app.arena.as_mut().expect("arena");
+        let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
         let mut visited = std::collections::HashSet::new();
         // One full cycle — six FOCUSABLE nodes: toolbar, four
         // panels, status bar.
         for _ in 0..6 {
-            if let Some(id) = app.focus.apply_tab(arena, TabNavigation::Forward) {
+            if let Some(id) = app
+                .focus
+                .lock()
+                .unwrap()
+                .apply_tab(&mut arena, TabNavigation::Forward)
+            {
                 visited.insert(id.to_u64());
             }
         }
@@ -2859,7 +3262,7 @@ mod tests {
         app.scale.set(1.0);
         app.build_arena();
         app.apply_dock_layout_at(3200, 2100);
-        let arena = app.arena.as_ref().expect("arena");
+        let arena = app.arena.as_ref().expect("arena").lock().unwrap();
         let mut list = PaintList::new();
         arena.build_paint_list(app.root.expect("root"), &mut list);
         // Audit at the scale the list was painted at — a mismatch
@@ -3128,7 +3531,7 @@ mod tests {
         eprintln!("arena built");
         app.apply_dock_layout_at(1600, 1000);
         eprintln!("layout done");
-        let arena = app.arena.as_ref().expect("arena");
+        let arena = app.arena.as_ref().expect("arena").lock().unwrap();
         let mut list = PaintList::new();
         arena.build_paint_list(app.root.expect("root"), &mut list);
         eprintln!("paint list: {} commands", list.commands.len());
@@ -3168,9 +3571,9 @@ mod tests {
     fn a11y_tree_exposes_roles_labels_and_values() {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.build_arena();
-        let arena = app.arena.as_mut().expect("arena");
+        let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
         let mut adapter = AccessKitAdapter::new(app.root.expect("root"));
-        let update = adapter.build_update(arena);
+        let update = adapter.build_update(&mut arena);
 
         let roles: Vec<accesskit::Role> = update.nodes.iter().map(|(_, n)| n.role()).collect();
         for want in [
@@ -3224,7 +3627,7 @@ mod tests {
                 }
             }
         }
-        let arena = app.arena.as_mut().expect("arena");
+        let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
         if let Some(cold) = arena.get_cold_mut(app.root.expect("root")) {
             tick_deep(&mut *cold.widget, Duration::from_millis(16));
         }
@@ -3255,6 +3658,8 @@ mod tests {
         app.arena
             .as_ref()
             .expect("arena")
+            .lock()
+            .unwrap()
             .build_paint_list(app.root.expect("root"), &mut list);
         list.push_scope(None, "App Chrome", kurbo::Rect::new(0.0, 0.0, w, h));
         app.paint_chrome(&mut list, w, h);

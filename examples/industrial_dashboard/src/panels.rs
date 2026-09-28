@@ -78,13 +78,15 @@ use martensite::media::surface::{VideoPixelFormat, VideoSurface};
 use martensite::prelude::*;
 use martensite::render::{BezPath, PaintList, Point};
 use martensite::widgets::media::{MediaView, VideoFit};
-use martensite::widgets::{Banner, Severity};
+use martensite::widgets::{Banner, BarChart, Severity};
 use martensite_assets::vfs::{EmbeddedVfs, Vfs};
 use martensite_motion::RubberBandScroller;
 
+use crate::domain::PlantModel;
 use crate::menu::{ContextMenu, MenuState};
 use crate::model::{alert_count, gen_rows, MetricRow, Palette, SOURCES};
 use crate::text::{SpanColor, TextPainter};
+use crate::zone::Bound;
 
 /// Title-bar height in logical pt — one constant for the chrome paint
 /// and every hit-zone/layout computation that subtracts it (including
@@ -505,6 +507,10 @@ pub struct GridPanel {
     context_row: Option<MetricRow>,
     /// "· copied" title flash after a successful clipboard write.
     copied_flash: Option<Instant>,
+    /// Total backing-store rows — written once at construction so the
+    /// app's PROCS KPI reports the real store size, not a paint
+    /// literal; also read here for the a11y label's "of N" total.
+    row_count: Signal<usize>,
     /// Rubber-band overscroll driver (vertical, device px) — the
     /// `ScrollView::scroller` analogue. The table's `scroll_offset`
     /// stays the authoritative clamped position; the band adds
@@ -529,9 +535,13 @@ impl GridPanel {
         scale: Signal<f32>,
         filter_text: Signal<String>,
         clipboard_out: Signal<Option<String>>,
+        row_count: Signal<usize>,
     ) -> Self {
         let rows = gen_rows(1_000_000);
         let alert_rows = alert_count(&rows);
+        // Publish the real store size — the app's PROCS KPI reads
+        // this cell instead of hardcoding the count.
+        row_count.set(rows.len());
         // 26px rows keep the WCAG 2.5.8 24px target floor at 1x.
         let mut table = DataTable::new(rows, 30.0 * scale.get().max(1.0));
         let mut c_pid = ColumnConfig::new(96.0);
@@ -570,6 +580,7 @@ impl GridPanel {
             menu_anchor: Vec2::ZERO,
             context_row: None,
             copied_flash: None,
+            row_count,
             band: RubberBandScroller::new(0.0, 0.0),
             resizing: None,
             default_widths,
@@ -1121,8 +1132,9 @@ impl Widget for GridPanel {
             }
         };
         node.set_label(format!(
-            "{name} — {} of 1,000,000 rows, {} selected",
+            "{name} — {} of {} rows, {} selected",
             self.table.display_row_count(),
+            fmt_count(self.row_count.get()),
             self.table.selection().selected_count()
         ));
     }
@@ -1300,6 +1312,16 @@ impl Widget for GridPanel {
                 let Some(&(x0, w)) = cols.get(ci) else {
                     continue;
                 };
+                // Alarm-conditioned ink — warn/error hues on an
+                // alerting row are the alarm channel, not decoration.
+                let alarmed = ci == 1 && (row.alert || row.cpu_milli > 70_000);
+                if alarmed {
+                    cx.list.push_scope(
+                        None,
+                        "AlarmCell@alarm",
+                        krect(f64::from(x0), ry, f64::from(w), row_h),
+                    );
+                }
                 let tw = text.measure(&value, font_px);
                 text.push(
                     cx.list,
@@ -1309,6 +1331,9 @@ impl Widget for GridPanel {
                     color,
                     Some(w),
                 );
+                if alarmed {
+                    cx.list.pop_scope();
+                }
             }
             // Status chip — only when the column survived the collapse.
             let Some(&(x0, w)) = cols.get(3) else {
@@ -1324,6 +1349,13 @@ impl Widget for GridPanel {
             } else {
                 (Palette::alpha(pal.ok, 40), pal.text)
             };
+            if row.alert {
+                cx.list.push_scope(
+                    None,
+                    "AlertChip@alarm",
+                    krect(chip_x, chip_y, chip_w, chip_h),
+                );
+            }
             cx.list.push_fill_shape(
                 krect(chip_x, chip_y, chip_w, chip_h),
                 &Shape::squircle((chip_h * 0.35) as f32),
@@ -1339,6 +1371,9 @@ impl Widget for GridPanel {
                 chip_fg,
                 None,
             );
+            if row.alert {
+                cx.list.pop_scope();
+            }
         }
 
         // Scrollbar — track + proportional thumb.
@@ -1414,15 +1449,44 @@ pub struct TelemetryPanel {
     banner: Banner,
     /// The banner's strip rect — zero when alerts are off.
     banner_rect: Rect,
+    /// ADR-0040 live demo: a `Bound<BarChart>` docked along the
+    /// panel's bottom edge. Its push re-seats the chart from live
+    /// cpu/mem cells and sets `loading` from `simulate_latency`, so
+    /// the plot skeletonizes in place while the axis and bar labels
+    /// keep painting — the native pending treatment on a real
+    /// surface, not a mock.
+    link: Bound<BarChart>,
+    /// The strip's rect — always allocated so `tick_recursive` keeps
+    /// the push reflect running.
+    link_rect: Rect,
+    /// Shared cell with the link strip's model — the panel's `L` key
+    /// writes it, the Bound's push reads it.
+    latency: Signal<bool>,
     phase: f64,
     history: VecDeque<(f64, f64)>,
     elapsed: Duration,
+}
+
+/// Builds the telemetry uplink strip's chart — one bar per live
+/// signal. `Bound::push` re-seats the chart every tick (the documented
+/// `*w = build(m)` reflect), so `loading` must be applied inside the
+/// builder or a re-seat would flash stale bars between pushes.
+fn uplink_chart(m: &PlantModel) -> BarChart {
+    BarChart::new()
+        .label("uplink — cpu/mem")
+        .bar("cpu", m.cpu.get() as f32)
+        .bar("mem", m.mem.get() as f32)
+        .loading(m.simulate_latency.get())
+        .with_text_painter(martensite::text_paint::shared_painter())
 }
 
 impl TelemetryPanel {
     const CAP: usize = 240;
     /// Cpu% at which an outlier marker escalates from warn to error.
     const ALERT_PCT: f64 = 90.0;
+    /// Uplink-strip height in logical pt — a caption row sits in the
+    /// gap above it.
+    const LINK_STRIP_H: f32 = 48.0;
 
     pub fn new(
         scale: Signal<f32>,
@@ -1433,6 +1497,19 @@ impl TelemetryPanel {
         tick_ms: Signal<f64>,
         alerts: Signal<bool>,
     ) -> Self {
+        // The strip's model shares this panel's live cells — a
+        // private `PlantModel` (the app's own model is sealed behind
+        // `app.rs`), so `simulate_latency` is minted by `seeded` and
+        // cloned out here as the `L` key's write path; the Bound's
+        // push reflect reads the same cell every tick.
+        let link_model = PlantModel::seeded(
+            cpu.clone(),
+            mem.clone(),
+            paused.clone(),
+            alerts.clone(),
+            Signal::new(String::new()),
+        );
+        let latency = link_model.simulate_latency.clone();
         Self {
             text: Mutex::new(TextPainter::new()),
             scale,
@@ -1450,6 +1527,10 @@ impl TelemetryPanel {
             )
             .with_text_painter(martensite::text_paint::shared_painter()),
             banner_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
+            link: Bound::new(uplink_chart(&link_model), &link_model)
+                .push(|c: &mut BarChart, m| *c = uplink_chart(m)),
+            link_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
+            latency,
             phase: 0.0,
             history: VecDeque::with_capacity(Self::CAP + 1),
             elapsed: Duration::ZERO,
@@ -1493,6 +1574,18 @@ impl Widget for TelemetryPanel {
         } else {
             self.banner_rect = Rect::new(bounds.origin.x, bounds.origin.y, 0.0, 0.0);
         }
+        // The uplink strip docks along the panel's bottom edge —
+        // always allocated, even when collapsed to 1pt, or
+        // `tick_recursive` would skip the Bound and its push reflect
+        // would stop reflecting `simulate_latency`.
+        let strip_h = (Self::LINK_STRIP_H * s).min((bounds.size.y * 0.3).max(1.0));
+        self.link_rect = Rect::new(
+            bounds.origin.x + 10.0 * s,
+            bounds.origin.y + bounds.size.y - strip_h - 6.0 * s,
+            (bounds.size.x - 20.0 * s).max(1.0),
+            strip_h,
+        );
+        cx.layout_child(&mut self.link, self.link_rect);
     }
 
     fn tick(&mut self, dt: Duration) -> bool {
@@ -1527,13 +1620,18 @@ impl Widget for TelemetryPanel {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
-        // The banner's × is the only interactive element — forward
-        // positional events that land inside its rect.
+        // Forward positional events to the interactive strips — the
+        // banner's × and the uplink chart's own hit zones.
         if self.alerts.get() {
             if let Some(pos) = cx.event.position() {
                 if self.banner_rect.contains(pos) {
                     return self.banner.event(cx);
                 }
+            }
+        }
+        if let Some(pos) = cx.event.position() {
+            if self.link_rect.contains(pos) {
+                return self.link.event(cx);
             }
         }
         match cx.event {
@@ -1544,6 +1642,11 @@ impl Widget for TelemetryPanel {
             WidgetEvent::KeyPressed { key, repeat } => {
                 if key == " " && !repeat {
                     self.paused.set(!self.paused.get());
+                }
+                if (key == "l" || key == "L") && !repeat {
+                    // Live latency demo — writes the shared cell the
+                    // uplink strip's Bound::push reads.
+                    self.latency.set(!self.latency.get());
                 }
                 EventResponse::Handled
             }
@@ -1572,17 +1675,24 @@ impl Widget for TelemetryPanel {
             self.cpu.get() * 100.0,
             self.mem.get() * 100.0,
             self.history.len(),
-            if self.paused.get() { ", paused" } else { "" }
+            if self.paused.get() { ", paused" } else { "" },
         ));
+        if self.latency.get() {
+            node.set_description(
+                "uplink latency simulated — strip data pending; press L to resume",
+            );
+        }
     }
 
     fn child_count(&self) -> usize {
-        usize::from(self.alerts.get())
+        usize::from(self.alerts.get()) + 1
     }
 
     fn child(&self, index: usize) -> Option<&dyn Widget> {
         if index == 0 && self.alerts.get() {
             Some(&self.banner)
+        } else if index == usize::from(self.alerts.get()) {
+            Some(&self.link)
         } else {
             None
         }
@@ -1591,6 +1701,8 @@ impl Widget for TelemetryPanel {
     fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
         if index == 0 && self.alerts.get() {
             Some(&mut self.banner)
+        } else if index == usize::from(self.alerts.get()) {
+            Some(&mut self.link)
         } else {
             None
         }
@@ -1599,6 +1711,8 @@ impl Widget for TelemetryPanel {
     fn child_bounds(&self, index: usize) -> Option<Rect> {
         if index == 0 && self.alerts.get() {
             Some(self.banner_rect)
+        } else if index == usize::from(self.alerts.get()) {
+            Some(self.link_rect)
         } else {
             None
         }
@@ -1644,11 +1758,14 @@ impl Widget for TelemetryPanel {
         let pad = 14.0 * sd;
         let label_w = 34.0 * sd;
         let legend_h = 20.0 * sd;
+        // Reserve the uplink strip + its caption band at the panel's
+        // bottom — `layout` allocates the same space as `link_rect`.
+        let link_reserve = (f64::from(Self::LINK_STRIP_H) + 22.0) * sd;
         let plot = krect(
             inner.x0 + label_w,
             inner.y0 + pad * 0.6,
             (inner.width() - label_w - pad).max(1.0),
-            (inner.height() - pad * 0.6 - legend_h - pad * 0.4).max(1.0),
+            (inner.height() - pad * 0.6 - legend_h - pad * 0.4 - link_reserve).max(1.0),
         );
 
         // Auto-bounds across both series — Chart::bounds() is the model
@@ -1819,7 +1936,14 @@ impl Widget for TelemetryPanel {
 
         // Outlier markers last so they sit on top of both strokes —
         // `error` when the sample is also in alert territory, `warn`
-        // otherwise. Radius is device px, matching the scale math.
+        // otherwise. Radius is device px, matching the scale math. The
+        // whole layer is alarm-conditioned (`@alarm` scope): markers
+        // only exist for out-of-band samples.
+        cx.list.push_scope(
+            None,
+            "OutlierMarkers@alarm",
+            krect(plot.x0, plot.y0, plot.width(), plot.height()),
+        );
         for scatter in chart.scatters() {
             let r = scatter.radius;
             for p in &scatter.points {
@@ -1834,6 +1958,7 @@ impl Widget for TelemetryPanel {
                     .push_fill_rect(krect(qx - r, qy - r, 2.0 * r, 2.0 * r), color);
             }
         }
+        cx.list.pop_scope();
 
         // Legend.
         let legend_y = plot.y1 + 8.0 * sd;
@@ -1854,7 +1979,8 @@ impl Widget for TelemetryPanel {
         }
         // Outlier marker — a square matching the scatter glyph, shown
         // only while outliers are actually in the window. The chip
-        // escalates to the error color when every visible outlier does.
+        // escalates to the error color when every visible outlier does
+        // — alarm-channel paint, so it sits in an `@alarm` scope.
         if !chart.scatters().is_empty() {
             let chip = if chart
                 .scatters()
@@ -1865,10 +1991,16 @@ impl Widget for TelemetryPanel {
             } else {
                 pal.warn
             };
+            cx.list.push_scope(
+                None,
+                "OutlierChip@alarm",
+                krect(lx + 3.5 * sd, legend_y + 3.0 * sd, 5.0 * sd, 5.0 * sd),
+            );
             cx.list.push_fill_rect(
                 krect(lx + 3.5 * sd, legend_y + 3.0 * sd, 5.0 * sd, 5.0 * sd),
                 chip,
             );
+            cx.list.pop_scope();
             text.push(
                 cx.list,
                 Point::new(lx + 16.0 * sd, legend_y),
@@ -1878,6 +2010,21 @@ impl Widget for TelemetryPanel {
                 None,
             );
         }
+        // Uplink-strip caption — the strip itself is the `link` child
+        // (a `Bound<BarChart>` the internal-child walk paints). The
+        // caption names the keyboard path since no toolbar reaches
+        // `simulate_latency` (ADR-0040).
+        text.push(
+            cx.list,
+            Point::new(
+                inner.x0 + 10.0 * sd,
+                inner.y1 - (f64::from(Self::LINK_STRIP_H) + 18.0) * sd,
+            ),
+            "UPLINK · L simulates latency",
+            10.0 * s,
+            pal.text_muted,
+            None,
+        );
         panel_border(cx.list, self.bounds, pal, s, self.focused);
     }
 }
@@ -1955,11 +2102,26 @@ pub struct EditorSignals {
     pub open_req: Signal<bool>,
     /// Tab-strip "save as…" chip → request an OS save-file dialog.
     pub export_req: Signal<bool>,
+    /// APPEARANCE's editor font preference (pt) — the buffer, gutter
+    /// numbers, caret, and selection geometry all read it live
+    /// through `font_px`.
+    pub font_pt: Signal<f64>,
+    /// APPEARANCE's accent — paints the caret and the active tab's
+    /// underline so a color-suite edit is visible on this surface.
+    pub accent: Signal<[u8; 4]>,
+    /// APPEARANCE's autosave preference — while on, `tick` commits
+    /// changed buffers back to their baselines on edit (the dirty
+    /// marker clears and `doc_out` republishes).
+    pub autosave: Signal<bool>,
+    /// Panel → app: bumps once per autosave commit so the app can
+    /// log the event to the shift log — the panel stays model-free.
+    pub autosave_seq: Signal<u64>,
 }
 
 /// Detached cells for tests — `Signal` has no `Default`, so tests and
 /// headless harnesses get a freestanding set rather than wiring app
-/// state.
+/// state. `autosave` defaults off: tests that check `tab_dirty`
+/// semantics get the explicit save model unless they opt in.
 impl Default for EditorSignals {
     fn default() -> Self {
         Self {
@@ -1968,6 +2130,10 @@ impl Default for EditorSignals {
             doc_out: Signal::new(None),
             open_req: Signal::new(false),
             export_req: Signal::new(false),
+            font_pt: Signal::new(13.0),
+            accent: Signal::new([96, 165, 250, 255]),
+            autosave: Signal::new(false),
+            autosave_seq: Signal::new(0),
         }
     }
 }
@@ -1998,6 +2164,13 @@ pub struct EditorPanel {
     doc_out: Signal<Option<(String, String)>>,
     open_req: Signal<bool>,
     export_req: Signal<bool>,
+    /// APPEARANCE's live preferences — `font_pt` drives `font_px`,
+    /// `accent` the caret/tab underline, `autosave` the tick-time
+    /// baseline commit (see [`EditorSignals`]).
+    font_pt: Signal<f64>,
+    accent: Signal<[u8; 4]>,
+    autosave: Signal<bool>,
+    autosave_seq: Signal<u64>,
     /// Set by any event that could mutate the buffer or the active
     /// tab — `tick` republishes `doc_out` only while dirty so an idle
     /// frame doesn't clone the whole document at 60 Hz.
@@ -2041,6 +2214,10 @@ impl EditorPanel {
             doc_out: signals.doc_out,
             open_req: signals.open_req,
             export_req: signals.export_req,
+            font_pt: signals.font_pt,
+            accent: signals.accent,
+            autosave: signals.autosave,
+            autosave_seq: signals.autosave_seq,
             doc_dirty: true,
         }
     }
@@ -2049,8 +2226,17 @@ impl EditorPanel {
         self.scale.get()
     }
 
+    /// The buffer's live font size in device px — APPEARANCE's
+    /// `editor_font_pt` preference through the display scale. Every
+    /// code-face measurement (paint, hit-testing, caret/selection
+    /// geometry) goes through this one helper so the preference
+    /// applies consistently the moment it changes.
+    fn font_px(&self) -> f32 {
+        (self.font_pt.get() as f32).max(1.0) * self.s()
+    }
+
     fn line_h(&self) -> f32 {
-        12.0 * self.s() * 1.4
+        self.font_px() * 1.4
     }
 
     fn gutter_w(&self) -> f32 {
@@ -2081,7 +2267,11 @@ impl EditorPanel {
             + ((position.y - content_top) / line_h).max(0.0) as usize)
             .min(self.tab().editor.lines().len().saturating_sub(1));
         let text_x = position.x - (self.bounds.min_x() + self.gutter_w() + 8.0 * s);
-        let col = text.column_at(&self.tab().editor.lines()[line], 12.0 * s, text_x.max(0.0));
+        let col = text.column_at(
+            &self.tab().editor.lines()[line],
+            self.font_px(),
+            text_x.max(0.0),
+        );
         Cursor::new(line, col)
     }
 
@@ -2116,7 +2306,9 @@ impl EditorPanel {
             TokenKind::Keyword => pal.accent,
             TokenKind::String => pal.ok,
             TokenKind::Comment => pal.text_muted,
-            TokenKind::Number => pal.warn,
+            // Numbers get a muted warm series hue — `warn` is the
+            // reserved alarm channel, not decoration (reserved-hue).
+            TokenKind::Number => pal.series[3],
             _ => pal.text,
         }
     }
@@ -2280,6 +2472,26 @@ impl Widget for EditorPanel {
             self.active = self.tabs.len() - 1;
             self.doc_dirty = true;
             dirty = true;
+        }
+        // Autosave — APPEARANCE's preference commits a changed buffer
+        // back to its baseline on edit, not per frame: `doc_dirty` is
+        // the "something may have changed" edge, the baseline compare
+        // is the commit test, and `autosave_seq` bumps once per
+        // commit so the app can log it to the shift log. With the
+        // preference off the dirty marker stands until save-as.
+        if self.autosave.get() && self.doc_dirty {
+            let mut committed = 0usize;
+            for tab in &mut self.tabs {
+                let text = tab.editor.text();
+                if text.as_bytes() != tab.baseline.as_slice() {
+                    tab.baseline = text.into_bytes();
+                    committed += 1;
+                }
+            }
+            if committed > 0 {
+                self.autosave_seq.update(|n| *n += 1);
+                dirty = true;
+            }
         }
         // Publish the active tab for the app's save dialog, and the
         // selection index for the persisted preference. `doc_out`
@@ -2630,7 +2842,12 @@ impl Widget for EditorPanel {
         let pad = 8.0 * sd;
         let gutter_w = f64::from(self.gutter_w());
         let line_h = f64::from(self.line_h());
-        let font = 12.0 * s;
+        // APPEARANCE's font preference — code lines, gutter numbers,
+        // caret, and selection geometry share this one size.
+        let font = self.font_px();
+        // APPEARANCE's accent — the caret and active-tab underline
+        // paint it so a color-suite edit lands on this surface.
+        let accent = self.accent.get();
         cx.list
             .push_clip(krect(inner.x0, inner.y0, inner.width(), inner.height()));
 
@@ -2674,7 +2891,7 @@ impl Widget for EditorPanel {
                         chip_w - 8.0 * sd,
                         2.0 * sd,
                     ),
-                    pal.accent,
+                    accent,
                 );
             }
             text.push(
@@ -2746,14 +2963,15 @@ impl Widget for EditorPanel {
             if y + line_h > inner.y1 {
                 break;
             }
-            // Line number.
+            // Line number — the code font, so it tracks the
+            // APPEARANCE preference with the buffer it numbers.
             let num = format!("{}", li + 1);
-            let nw = text.measure(&num, 12.0 * s);
+            let nw = text.measure(&num, font);
             text.push(
                 cx.list,
                 Point::new(inner.x0 + gutter_w - 8.0 * sd - f64::from(nw), y + 1.5 * sd),
                 &num,
-                12.0 * s,
+                font,
                 if caret.is_some_and(|c| c.line == li) {
                     pal.text
                 } else {
@@ -2813,14 +3031,14 @@ impl Widget for EditorPanel {
                 &spans,
                 None,
             );
-            // Caret.
+            // Caret — the APPEARANCE accent, live.
             if self.focused && caret.is_some_and(|c| c.line == li) {
                 let col = caret.expect("checked").column;
                 let prefix: String = line.chars().take(col).collect();
                 let caret_x =
                     inner.x0 + gutter_w + 8.0 * sd + f64::from(text.measure(&prefix, font));
                 cx.list
-                    .push_fill_rect(krect(caret_x, y, 2.0, line_h.min(16.0 * sd)), pal.accent);
+                    .push_fill_rect(krect(caret_x, y, 2.0, line_h.min(16.0 * sd)), accent);
             }
             y += line_h;
         }
@@ -2859,10 +3077,38 @@ pub struct MediaPanel {
     /// A persistent `send_packet` failure disables feeding (the overlay
     /// shows the stalled queue honestly rather than spinning).
     feed_failed: bool,
+    /// TRANSPORT's play gate — `false` holds both the packet pump and
+    /// the presentation clock, so the shown frame freezes honestly
+    /// instead of the queue draining on under a pause flag.
+    playing: Signal<bool>,
+    /// TRANSPORT's normalized playhead (0..1 through the archive the
+    /// zone models). A one-tick jump beyond [`SEEK_DELTA`] is an
+    /// external scrub — the pump re-seeks to it.
+    pos: Signal<f64>,
+    /// Monitor gain 0..1 — surfaced in the title chrome (the fixture
+    /// has no audio path; the readout is the honest consumer).
+    vol: Signal<f64>,
+    /// The `media_pos` value seen last tick — the scrub detector's
+    /// reference. Updated every tick, seek or not, so the transport's
+    /// own incremental advance never accumulates into a false scrub.
+    last_pos: f64,
+    /// The `media_vol` value seen last tick — repaint on change.
+    last_vol: f64,
 }
 
+/// A one-tick `media_pos` jump larger than this counts as an external
+/// scrub/still selection. The transport's own advance is ~0.0001 per
+/// tick at 1× on the 540 s archive (≤~0.0008 under a stalled 4× loop),
+/// so a real playback tick can never trip this threshold.
+const SEEK_DELTA: f64 = 0.01;
+
 impl MediaPanel {
-    pub fn new(scale: Signal<f32>) -> Self {
+    pub fn new(
+        scale: Signal<f32>,
+        playing: Signal<bool>,
+        pos: Signal<f64>,
+        vol: Signal<f64>,
+    ) -> Self {
         let clip = crate::media_stream::ClipStream::load();
         let mut view = MediaView::new().with_fit(VideoFit::Contain);
         if let Some(clip) = clip.as_ref() {
@@ -2886,6 +3132,13 @@ impl MediaPanel {
             frame_index: 0,
             eos_sent: false,
             feed_failed: false,
+            playing,
+            pos: pos.clone(),
+            vol: vol.clone(),
+            // Seed the trackers at the live values — first tick must
+            // not read the signal's initial state as a scrub.
+            last_pos: pos.get(),
+            last_vol: vol.get(),
         }
     }
 
@@ -2929,6 +3182,32 @@ impl MediaPanel {
             self.eos_sent = false;
         }
     }
+
+    /// Re-arms the pump at the position the transport scrubbed to.
+    /// `media_pos` is the archive playhead (0..1); the panel owns the
+    /// real decode, so a scrub maps onto the loaded clip's access
+    /// units: the decoder flushes (re-arming its keyframe gate), the
+    /// feed restarts at the containing GOP's keyframe, and EOS clears
+    /// so the pass resumes mid-stream instead of at the next wrap.
+    fn seek_to(&mut self, pos: f64) {
+        let Some(clip) = self.clip.as_ref() else {
+            return;
+        };
+        let mut idx = (pos.clamp(0.0, 1.0) * clip.len() as f64) as usize;
+        idx = idx.min(clip.len().saturating_sub(1));
+        // A flushed decoder drops delta packets until the next
+        // keyframe — back the feed up to the GOP head so a mid-GOP
+        // scrub resumes instead of stalling to the wrap.
+        while idx > 0 && !clip.packet(idx, 0).is_keyframe {
+            idx -= 1;
+        }
+        self.feed_idx = idx;
+        if let Some(dec) = self.view.decoder_mut() {
+            let _ = dec.flush();
+        }
+        self.eos_sent = false;
+        self.feed_budget_ns = 0;
+    }
 }
 
 impl Widget for MediaPanel {
@@ -2943,7 +3222,11 @@ impl Widget for MediaPanel {
         // The dock's manual layout cannot honor `display:none`
         // semantics, so Collapse degrades to hide-like behavior here —
         // the slot is retained and the panel simply stops painting.
-        RenderMinimum::new(Vec2::new(220.0, 130.0)).with_policy(UnderflowPolicy::Collapse)
+        // 96pt is the honest floor: TITLE_H plus a contain-fit video
+        // slice (~68pt) still reads as a media surface; below that the
+        // panel yields and a ZonePanel host hands its zone pages the
+        // space instead of watching a collapsed slot.
+        RenderMinimum::new(Vec2::new(220.0, 96.0)).with_policy(UnderflowPolicy::Collapse)
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
@@ -2960,9 +3243,28 @@ impl Widget for MediaPanel {
     }
 
     fn tick(&mut self, dt: Duration) -> bool {
+        // The TRANSPORT zone owns the transport — this panel is the
+        // sink: a playhead jump re-seeks the packet stream (works
+        // while paused too, so a scrub under pause still lands the
+        // pump where playback resumes), `media_vol` repaints the
+        // chrome readout, and `media_playing == false` holds BOTH the
+        // packet pump and the presentation clock — queued frames
+        // stay queued and the shown frame freezes.
+        let pos = self.pos.get();
+        if (pos - self.last_pos).abs() > SEEK_DELTA {
+            self.seek_to(pos);
+        }
+        self.last_pos = pos;
+        let vol = self.vol.get();
+        let mut dirty = vol != self.last_vol;
+        self.last_vol = vol;
+        if !self.playing.get() {
+            return dirty;
+        }
         self.elapsed_nanos += dt.as_nanos() as u64;
         self.feed_decoder(dt.as_nanos() as u64);
-        self.view.advance(self.elapsed_nanos)
+        dirty |= self.view.advance(self.elapsed_nanos);
+        dirty
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -3005,12 +3307,22 @@ impl Widget for MediaPanel {
         let pal = &pal;
         let s = self.s();
         let mut text = self.text.lock();
-        // Compact status — tiered to the actual panel width so the
-        // title bar never shows a mid-word ellipsis.
-        let right = if self.bounds.width() >= 170.0 * s {
-            format!("drop {:.1}%", self.view.drop_rate_pct())
-        } else if self.bounds.width() >= 120.0 * s {
-            format!("{:.1}%", self.view.drop_rate_pct())
+        // Transport cells surface in the title readout — play state
+        // and monitor gain alongside the decoder's drop rate, all
+        // live; tiered to the actual panel width so the bar never
+        // shows a mid-word ellipsis.
+        let playing = self.playing.get();
+        let state = if playing { "LIVE" } else { "PAUSED" };
+        let vol_pct = (self.vol.get() * 100.0).round() as i32;
+        let right = if self.bounds.width() >= 250.0 * s {
+            format!(
+                "{state} · vol {vol_pct}% · drop {:.1}%",
+                self.view.drop_rate_pct()
+            )
+        } else if self.bounds.width() >= 170.0 * s {
+            format!("{state} · vol {vol_pct}%")
+        } else if self.bounds.width() >= 90.0 * s {
+            state.to_string()
         } else {
             String::new()
         };
@@ -3079,6 +3391,18 @@ impl Widget for MediaPanel {
                 }
             }
         };
+        // A paused transport stays visible on the video even when the
+        // (real) frames keep flowing — the title readout can truncate
+        // away, the overlay line can't.
+        let (l1, l2) = if !playing {
+            if l2.is_empty() {
+                (l1, "paused".to_string())
+            } else {
+                (l1, format!("{l2} · paused"))
+            }
+        } else {
+            (l1, l2)
+        };
         // The letterbox is black in every theme — overlay text stays
         // light regardless of the palette (on-video convention).
         const VIDEO_INK: [u8; 4] = [226, 232, 240, 255];
@@ -3139,6 +3463,7 @@ mod tests {
             Signal::new(1.0),
             Signal::new(String::new()),
             Signal::new(None),
+            Signal::new(0usize),
         )
     }
 
@@ -3397,7 +3722,7 @@ mod tests {
         let col_x = |p: &mut EditorPanel, line: usize, col: usize| {
             let mut t = p.text.lock();
             let prefix: String = p.tab().editor.lines()[line].chars().take(col).collect();
-            bounds.min_x() + p.gutter_w() + 8.0 + t.measure(&prefix, 12.0)
+            bounds.min_x() + p.gutter_w() + 8.0 + t.measure(&prefix, p.font_px())
         };
         let press = |p: &mut EditorPanel, x: f32, y: f32, count: u8| {
             send(
@@ -3454,6 +3779,203 @@ mod tests {
         );
         assert!(p.drag.is_none());
     }
+
+    /// The grid publishes its real store size through `row_count` at
+    /// construction — the PROCS KPI reads the cell, not a literal.
+    #[test]
+    fn grid_publishes_row_count() {
+        let rows = Signal::new(0usize);
+        let _p = GridPanel::new(
+            Signal::new(1.0),
+            Signal::new(String::new()),
+            Signal::new(None),
+            rows.clone(),
+        );
+        assert_eq!(rows.get(), 1_000_000);
+    }
+
+    /// APPEARANCE's `editor_font_pt` drives every code-face measure —
+    /// the line height and the click→cursor column both follow the
+    /// live signal, not a baked constant.
+    #[test]
+    fn editor_font_pt_drives_geometry() {
+        let font_pt = Signal::new(13.0);
+        let signals = EditorSignals {
+            font_pt: font_pt.clone(),
+            ..EditorSignals::default()
+        };
+        let mut p = EditorPanel::new(Signal::new(1.0), signals);
+        let base = p.line_h();
+        font_pt.set(20.0);
+        assert!((p.line_h() - 20.0 * 1.4).abs() < 1e-5);
+        assert!(p.line_h() > base);
+        // Hit-testing follows too: the same pixel lands on a later
+        // line index at a smaller font than at a larger one.
+        let bounds = Rect::new(0.0, 0.0, 800.0, 400.0);
+        layout_at(&mut p, bounds);
+        let (_, strip_bottom) = p.strip_band();
+        let content_top = strip_bottom + 8.0;
+        let y = content_top + 100.0;
+        let line_at = |p: &EditorPanel| {
+            let mut t = p.text.lock();
+            p.cursor_at(
+                &mut t,
+                Vec2::new(p.bounds.min_x() + p.gutter_w() + 10.0, y),
+                content_top,
+                p.line_h(),
+            )
+            .line
+        };
+        font_pt.set(10.0);
+        let small = line_at(&p);
+        font_pt.set(22.0);
+        let big = line_at(&p);
+        assert!(
+            small > big,
+            "font grew but click landed deeper: {small} vs {big}"
+        );
+    }
+
+    /// Autosave ON: an edit commits the buffer to its baseline on the
+    /// next tick (dirty marker clears, `doc_out` republishes, and
+    /// `autosave_seq` bumps once per commit — not per frame). OFF:
+    /// the dirty marker stands.
+    #[test]
+    fn editor_autosave_commits_on_edit_only() {
+        let autosave = Signal::new(true);
+        let seq = Signal::new(0u64);
+        let signals = EditorSignals {
+            autosave: autosave.clone(),
+            autosave_seq: seq.clone(),
+            ..EditorSignals::default()
+        };
+        let mut p = EditorPanel::new(Signal::new(1.0), signals);
+        let bounds = Rect::new(0.0, 0.0, 800.0, 400.0);
+        layout_at(&mut p, bounds);
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::ImeCommitted {
+                text: "X".to_string(),
+            },
+        );
+        p.tick(Duration::from_millis(16));
+        assert!(!p.tab_dirty(0), "autosave did not commit the edit");
+        assert_eq!(seq.get(), 1);
+        // Idle ticks commit nothing — no repeated baseline writes,
+        // no seq churn.
+        for _ in 0..5 {
+            p.tick(Duration::from_millis(16));
+        }
+        assert_eq!(seq.get(), 1);
+        // With the preference off the same edit stays dirty.
+        autosave.set(false);
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::ImeCommitted {
+                text: "Y".to_string(),
+            },
+        );
+        p.tick(Duration::from_millis(16));
+        assert!(p.tab_dirty(0), "autosave off must leave the buffer dirty");
+        assert_eq!(seq.get(), 1);
+    }
+
+    fn telemetry() -> TelemetryPanel {
+        TelemetryPanel::new(
+            Signal::new(1.0),
+            Signal::new(0.4),
+            Signal::new(0.6),
+            Signal::new(false),
+            Signal::new(false),
+            Signal::new(16.0),
+            Signal::new(false),
+        )
+    }
+
+    /// ADR-0040 — the uplink strip is a real internal child: always
+    /// allocated (so `tick_recursive` keeps its Bound::push running)
+    /// and indexed after the conditional banner.
+    #[test]
+    fn uplink_strip_is_an_allocated_internal_child() {
+        let mut p = telemetry();
+        let bounds = Rect::new(0.0, 0.0, 600.0, 300.0);
+        layout_at(&mut p, bounds);
+        assert_eq!(p.child_count(), 1, "alerts off — only the strip");
+        assert_eq!(p.child_bounds(0), Some(p.link_rect));
+        assert!(p.link_rect.size.y > 0.0, "strip must be allocated");
+        // With the alerts banner up the strip shifts to index 1.
+        p.alerts.set(true);
+        layout_at(&mut p, bounds);
+        assert_eq!(p.child_count(), 2);
+        assert_eq!(p.child_bounds(0), Some(p.banner_rect));
+        assert_eq!(p.child_bounds(1), Some(p.link_rect));
+    }
+
+    /// ADR-0040 — `L` writes the shared `simulate_latency` cell and
+    /// the Bound's push reflect drives `is_loading` on the wrapped
+    /// BarChart; a second `L` unwinds it.
+    #[test]
+    fn l_key_toggles_uplink_loading_through_the_binding() {
+        let mut p = telemetry();
+        let bounds = Rect::new(0.0, 0.0, 600.0, 300.0);
+        layout_at(&mut p, bounds);
+        assert!(!p.link.inner().is_loading());
+
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::KeyPressed {
+                key: "l".to_string(),
+                repeat: false,
+            },
+        );
+        // The reflect runs on the Bound's own tick — in production the
+        // arena reaches it via `tick_recursive` over internal children.
+        p.link.tick(Duration::from_millis(16));
+        assert!(p.link.inner().is_loading(), "push must set loading");
+        assert!(<Bound<BarChart> as Widget>::is_loading(&p.link));
+
+        send(
+            &mut p,
+            bounds,
+            &WidgetEvent::KeyPressed {
+                key: "L".to_string(),
+                repeat: false,
+            },
+        );
+        p.link.tick(Duration::from_millis(16));
+        assert!(!p.link.inner().is_loading(), "push must clear loading");
+    }
+
+    /// ADR-0040 — the strip's push re-seats the chart from live model
+    /// cells (the `*w = build(m)` reflect), so fresh cpu/mem samples
+    /// show up without any panel-side plumbing.
+    #[test]
+    fn uplink_strip_push_reseats_from_live_cells() {
+        let cpu = Signal::new(0.4);
+        let mut p = TelemetryPanel::new(
+            Signal::new(1.0),
+            cpu.clone(),
+            Signal::new(0.6),
+            Signal::new(false),
+            Signal::new(false),
+            Signal::new(16.0),
+            Signal::new(false),
+        );
+        layout_at(&mut p, Rect::new(0.0, 0.0, 600.0, 300.0));
+        p.link.tick(Duration::from_millis(16));
+        assert_eq!(p.link.inner().bar_count(), 2);
+        assert!((p.link.inner().max_value() - 0.6).abs() < 1e-4);
+        cpu.set(0.95);
+        p.link.tick(Duration::from_millis(16));
+        assert!(
+            (p.link.inner().max_value() - 0.95).abs() < 1e-4,
+            "push must re-seat live bars, got {}",
+            p.link.inner().max_value()
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3461,12 +3983,16 @@ mod decoder_tests {
     use super::*;
     use std::time::Instant;
 
+    fn media(playing: Signal<bool>, pos: Signal<f64>, vol: Signal<f64>) -> MediaPanel {
+        MediaPanel::new(Signal::new(1.0), playing, pos, vol)
+    }
+
     /// macOS: `MediaPanel` must attach the real VideoToolbox decoder and
     /// produce NV12 frames from the checked-in H.264 fixture — never the
     /// "no decoder" fallback. Skips gracefully where no backend exists.
     #[test]
     fn media_panel_decodes_fixture_through_platform_decoder() {
-        let mut panel = MediaPanel::new(Signal::new(1.0));
+        let mut panel = media(Signal::new(true), Signal::new(0.0), Signal::new(0.8));
         if panel.view.decoder().is_none() {
             eprintln!("no platform decoder on this target — skipping");
             return;
@@ -3498,6 +4024,48 @@ mod decoder_tests {
         );
     }
 
+    /// `media_playing == false` must hold BOTH the packet pump and the
+    /// presentation clock — `frame_index` and the elapsed clock stay
+    /// frozen — and a paused playhead jump still re-seeks the feed so
+    /// playback resumes where the transport scrubbed to.
+    #[test]
+    fn media_pause_freezes_pump_and_scrub_reseeks() {
+        let playing = Signal::new(false);
+        let pos = Signal::new(0.0);
+        let mut panel = media(playing.clone(), pos.clone(), Signal::new(0.8));
+        // Nothing moves while paused — pump, clock, and feed all hold.
+        for _ in 0..10 {
+            panel.tick(Duration::from_millis(33));
+        }
+        assert_eq!(panel.frame_index, 0);
+        assert_eq!(panel.feed_idx, 0);
+        assert_eq!(panel.elapsed_nanos, 0);
+        // An external scrub while paused re-arms the feed at the
+        // containing keyframe — at-or-before the mapped AU (0.6·30 =
+        // AU 18), always landing on a real GOP head so the flushed
+        // decoder doesn't stall to the wrap. No packets pump until
+        // playback resumes.
+        pos.set(0.6);
+        panel.tick(Duration::from_millis(33));
+        assert_eq!(panel.last_pos, 0.6);
+        assert_eq!(panel.frame_index, 0);
+        let clip = panel.clip.as_ref().expect("fixture loads");
+        assert!(panel.feed_idx <= 18, "seek overshot the scrub target");
+        assert!(clip.packet(panel.feed_idx, 0).is_keyframe);
+        // Play resumes the pump from the seek position — packets
+        // only flow where a real decoder exists; on the mock path
+        // the presentation clock advancing is the honest signal.
+        playing.set(true);
+        for _ in 0..10 {
+            panel.tick(Duration::from_millis(33));
+        }
+        if panel.view.decoder().is_some() {
+            assert!(panel.frame_index > 0);
+        } else {
+            assert!(panel.elapsed_nanos > 0);
+        }
+    }
+
     /// The dock panels declare their render floors with the intended
     /// degradation policies — the contract `apply_dock_layout`'s
     /// `update_underflow_all` consumes.
@@ -3507,6 +4075,7 @@ mod decoder_tests {
             Signal::new(1.0),
             Signal::new(String::new()),
             Signal::new(None),
+            Signal::new(0usize),
         );
         let min = grid.min_render();
         assert_eq!(min.policy, UnderflowPolicy::Fallback);
@@ -3526,7 +4095,12 @@ mod decoder_tests {
         let editor = EditorPanel::new(Signal::new(1.0), EditorSignals::default());
         assert_eq!(editor.min_render().policy, UnderflowPolicy::Clip);
 
-        let media = MediaPanel::new(Signal::new(1.0));
+        let media = MediaPanel::new(
+            Signal::new(1.0),
+            Signal::new(true),
+            Signal::new(0.0),
+            Signal::new(0.8),
+        );
         assert_eq!(media.min_render().policy, UnderflowPolicy::Collapse);
     }
 }

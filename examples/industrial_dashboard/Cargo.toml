@@ -35,7 +35,20 @@ vaapi = ["martensite/decoder-vaapi"]
 martensite = { workspace = true, features = [
     "decoder-videotoolbox",
     "decoder-mf",
+    # Dev-channel socket server (ADR-0038) — the app opts in at
+    # runtime via `MARTENSITE_DEV_CHANNEL=1`; the feature only gates
+    # the `martensite::dev_channel` API surface.
+    "dev-channel",
+    # Reactive-runtime signal enumeration + TimeMachine stepping for
+    # the dev channel — `inspect_signals`/`step_timemachine` answer
+    # with real signal ids instead of declining.
+    "devtools-timemachine",
 ] }
+# Direct dep to enable devtools' `render` feature — feature unification
+# gives the dev-session probe the TinySkia raster path, so
+# `capture_node`/`audit_paint` rasterize real paint lists in
+# `--live-headless` too (no GPU needed).
+martensite-devtools = { workspace = true, features = ["render"] }
 # Editor tab buffers resolve through `EmbeddedVfs` — one VFS document
 # per `model::SOURCES` entry.
 martensite-assets = { workspace = true }
@@ -61,6 +74,7 @@ martensite-l10n = { workspace = true }
 martensite-persist = { workspace = true }
 # `StateStore::set` is generic (`impl Into<serde_json::Value>`), so the
 # dashboard's `PrefStore` enum names `Value` directly to implement it.
+serde = { workspace = true }
 serde_json = { workspace = true }
 martensite-notify = { workspace = true, features = ["platform"] }
 martensite-dialog = { workspace = true, features = ["platform"] }

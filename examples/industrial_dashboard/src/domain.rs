@@ -469,6 +469,11 @@ pub struct PlantModel {
     /// Reduced-motion flag — every animated widget consults it
     /// (Inclusion requirement; a real HMI accessibility setting).
     pub reduced_motion: Signal<bool>,
+    /// Simulated telemetry latency — when set, live-bound widgets
+    /// report `is_loading` while fresh samples are "in flight", so
+    /// the dashboard can demonstrate the ADR-0040 pending treatment
+    /// on real surfaces instead of a mock.
+    pub simulate_latency: Signal<bool>,
 
     // --- telemetry history ---
     /// Rolling cpu/mem history (0..1 each, newest last, capped at
@@ -547,6 +552,13 @@ pub struct PlantModel {
     pub active_chrome: Signal<u8>,
     /// APPEARANCE left-nav — which picker section the rail shows.
     pub editor_section: Signal<u8>,
+    /// GRID — the real store size `GridPanel` publishes, so the
+    /// header's PROCS KPI reports the live table, not a literal.
+    pub grid_rows: Signal<usize>,
+    /// Bumps once per APPEARANCE editor autosave commit (not per
+    /// frame) — the app watches it to log each commit without
+    /// re-scanning editor buffers.
+    pub autosave_seq: Signal<u64>,
 }
 
 /// Ring-buffer length for the telemetry history signals.
@@ -597,6 +609,7 @@ impl PlantModel {
             line_running: Signal::new(true),
             tour_seen: Signal::new(false),
             reduced_motion: Signal::new(false),
+            simulate_latency: Signal::new(false),
             cpu_hist: Signal::new(vec![0.35; HISTORY_LEN]),
             mem_hist: Signal::new(vec![0.55; HISTORY_LEN]),
             hist_rev: Signal::new(0),
@@ -621,6 +634,8 @@ impl PlantModel {
             channel_sel: Signal::new(0),
             active_chrome: Signal::new(0),
             editor_section: Signal::new(0),
+            grid_rows: Signal::new(0),
+            autosave_seq: Signal::new(0),
         }
     }
 

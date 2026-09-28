@@ -63,6 +63,17 @@ pub type Entry = (&'static str, Box<dyn Widget>);
 /// showcase scroll region fills the remainder.
 const OP_FRAC: f32 = 0.58;
 
+/// Tombstone floor (logical pt): below ~120×80pt no tier (op view or
+/// a card-field slice) renders meaningfully. Between this and the
+/// full ~320×240pt stack, `layout` runs the compact tiers — a
+/// compositor-shrunk panel degrades, it does not blank.
+const UNDERFLOW_W: f32 = 120.0;
+const UNDERFLOW_H: f32 = 80.0;
+
+/// Smallest scroll-region slice (logical pt) worth keeping next to a
+/// viable operational view — below it the showcase takes the panel.
+const VIEW_SLICE_PT: f32 = 48.0;
+
 /// The showcase host: an operational panel on top, a scrollable
 /// grid of contextually-related live widgets below. The inner panel
 /// is untouched — it gets a `Widget` child slot and keeps its own
@@ -164,6 +175,15 @@ pub fn media_sections() -> Vec<(&'static str, Vec<Entry>)> {
     vec![("MEDIA & SOCIAL", social::entries())]
 }
 
+/// A standalone showcase page — the `showcase_column` section stack
+/// (`group_label` caption + `FlowBox` of `card`s) inside a
+/// `ScrollView`. `ShowcasePanel` hosts the same column beneath an
+/// operational view; this is for surfaces that mount the gallery as
+/// their whole content — the console window's deck pages.
+pub fn gallery_page(sections: Vec<(&'static str, Vec<Entry>)>) -> ScrollView {
+    ScrollView::new(showcase_column(sections))
+}
+
 /// Wraps a demo widget in a titled `GroupBox` — the card is the
 /// showcase label, so no separate caption widget is needed. The
 /// `Clamp` caps card width: `GroupBox` fills whatever width it is
@@ -255,7 +275,11 @@ impl Widget for ShowcasePanel {
     }
 
     fn min_render(&self) -> RenderMinimum {
-        RenderMinimum::new(Vec2::new(320.0, 240.0)).with_policy(UnderflowPolicy::Fallback)
+        // Same contract as `ZonePanel`: below ~120×80pt tombstone;
+        // between that and the full stack, `layout` runs compact
+        // tiers instead of blanking the panel.
+        RenderMinimum::new(Vec2::new(UNDERFLOW_W, UNDERFLOW_H))
+            .with_policy(UnderflowPolicy::Fallback)
     }
 
     fn paint_underflow(&self, cx: &mut PaintContext) {
@@ -270,23 +294,40 @@ impl Widget for ShowcasePanel {
         );
         cx.list.push_fill_rect(b, pal.surface);
         cx.list.push_stroke_rect(b, 1.0, pal.border);
-        let msg = "SHOWCASE — enlarge to restore";
+        // Named, like the sibling panel placeholders — a dock of
+        // collapsed panels must identify which one starved.
+        let msg = format!("{} — enlarge to restore", self.title.to_uppercase());
         // Sole-content placeholders stay ≥12pt — micro text under the
         // Caption floor fails legibility for the only thing shown.
         let size = 12.0 * s;
-        let tw = f64::from(text.measure(msg, size));
+        let tw = f64::from(text.measure(&msg, size));
         let x = (b.x0 + (b.width() - tw) * 0.5).max(b.x0 + 2.0);
         let y = b.y0 + (b.height() - f64::from(size)) * 0.5;
-        text.push(cx.list, Point::new(x, y), msg, size, pal.text_muted, None);
+        text.push(cx.list, Point::new(x, y), &msg, size, pal.text_muted, None);
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
         let s = self.s();
-        // Operational view on top, showcase below a 1px divider —
-        // the inner panel owns its title bar inside its region.
-        let inner_h = (bounds.height() * OP_FRAC).max(TITLE_H * s + 24.0);
-        let inner_h = inner_h.min((bounds.height() - 48.0).max(TITLE_H * s + 24.0));
+        let s_safe = s.max(f32::EPSILON);
+        let inner_min = self.inner.min_render().size;
+        // Compact-tier selection (the comparison runs in pt — same
+        // contract as `ZonePanel`): when the operational view can
+        // meet its declared floor AND leave a useful scroll slice it
+        // keeps the top; below that it could only paint underflow
+        // chrome, so the scrollable card field takes the whole panel —
+        // a clipped showcase slice beats a nested tombstone.
+        let viable = bounds.width() / s_safe >= inner_min.x
+            && bounds.height() / s_safe >= inner_min.y + VIEW_SLICE_PT;
+        let inner_h = if viable {
+            (bounds.height() * OP_FRAC)
+                .max(TITLE_H * s + 24.0)
+                .max(inner_min.y * s)
+                .min(bounds.height() - VIEW_SLICE_PT * s)
+                .max(0.0)
+        } else {
+            0.0
+        };
         self.inner_bounds = Rect::new(bounds.min_x(), bounds.min_y(), bounds.width(), inner_h);
         self.view_bounds = Rect::new(
             bounds.min_x(),
@@ -306,17 +347,20 @@ impl Widget for ShowcasePanel {
         let pal = Palette::from_theme(cx.theme);
         let s = self.s();
         // Divider between the operational view and the showcase —
-        // the inner panel and the scroll content paint themselves.
-        let y = f64::from(self.view_bounds.min_y() - 0.5);
-        cx.list.push_fill_rect(
-            krect(
-                f64::from(self.bounds.min_x()),
-                y,
-                f64::from(self.bounds.width()),
-                1.0,
-            ),
-            pal.border,
-        );
+        // skipped when either region collapsed (a stray hairline
+        // along an edge reads as a rendering bug, not a degrade).
+        if self.inner_bounds.height() > 0.0 && self.view_bounds.height() > 0.0 {
+            let y = f64::from(self.view_bounds.min_y() - 0.5);
+            cx.list.push_fill_rect(
+                krect(
+                    f64::from(self.bounds.min_x()),
+                    y,
+                    f64::from(self.bounds.width()),
+                    1.0,
+                ),
+                pal.border,
+            );
+        }
         panel_border(cx.list, self.bounds, &pal, s, false);
     }
 
@@ -530,5 +574,69 @@ mod tests {
         // A tick walk must reach every card without panicking —
         // animated demos (clocks, countdowns) depend on it.
         let _ = panel.tick(Duration::from_millis(16));
+    }
+
+    /// Probe inner with a declared render floor — stands in for an
+    /// operational panel so the compact-tier switch is testable.
+    struct Floored {
+        min: Vec2,
+    }
+
+    impl Widget for Floored {
+        fn debug_name(&self) -> &'static str {
+            "Floored"
+        }
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            self.min
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn paint(&self, _cx: &mut PaintContext) {}
+        fn min_render(&self) -> RenderMinimum {
+            RenderMinimum::new(self.min).with_policy(UnderflowPolicy::Fallback)
+        }
+    }
+
+    /// The collapsed-dock regression applies here too: at ~315×175
+    /// logical pt the old 320×240 floor tombstoned the whole panel.
+    /// Now the op view keeps its declared floor and the scroll region
+    /// keeps a live slice — or owns the panel outright when the op
+    /// view cannot render honestly.
+    #[test]
+    fn compact_tier_keeps_content_at_tiled_sizes() {
+        let mut panel = ShowcasePanel::new(
+            Box::new(Floored {
+                min: Vec2::new(220.0, 130.0),
+            }),
+            "Test",
+            Signal::new(2.0),
+            vec![(
+                "SECTION",
+                vec![(
+                    "card",
+                    Box::new(martensite::core::widget::DummyWidget) as Box<dyn Widget>,
+                )],
+            )],
+        );
+        let min = panel.min_render();
+        assert_eq!(min.policy, UnderflowPolicy::Fallback);
+        assert!(
+            min.size.x <= 315.0 && min.size.y <= 175.0,
+            "floor {min:?} would still tombstone a 315×175pt panel"
+        );
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 2.0,
+        };
+        // 315×180pt at 2× — viable (180 ≥ 130 + 48): op view at its
+        // floor plus a scroll slice.
+        panel.layout(&mut cx, Rect::new(0.0, 0.0, 630.0, 360.0));
+        assert!(panel.inner_bounds.height() >= 130.0 * 2.0);
+        assert!(panel.view_bounds.height() >= VIEW_SLICE_PT * 2.0 - 1.0);
+        // 315×150pt — under inner_min + slice (178pt): the card
+        // field takes the panel rather than a nested placeholder.
+        panel.layout(&mut cx, Rect::new(0.0, 0.0, 630.0, 300.0));
+        assert_eq!(panel.inner_bounds.height(), 0.0);
+        assert!(panel.view_bounds.height() >= 299.0);
     }
 }

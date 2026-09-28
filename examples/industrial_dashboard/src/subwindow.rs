@@ -5,16 +5,23 @@
 //! (`instance`/`device`/`queue` are `Arc`s by design — surfaces must be
 //! created from the same `wgpu::Instance` to present).
 //!
-//! Content is a `Flex` column of facade widgets — `Banner`,
-//! `Disclosure`+`Text`, `ProgressBar`, `Switch` — so the second window
-//! exercises the same widget stack, theme dictionary, and shaped text
-//! pipeline as the main surface, including its own overlay layer.
+//! Content is a `Deck` — a `Segmented` strip over one-of-N pages:
+//! the original console column (heading, `Banner`, `Disclosure`,
+//! telemetry `Switch`+`ProgressBar`) plus one gallery page per main-
+//! window zone mounting the `showcase` card sections for real. The
+//! second window therefore exercises the same widget stack, theme
+//! dictionary, shaped text pipeline, and overlay layer as the main
+//! surface — and the whole 274-widget catalog.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use accesskit::Node as AccessKitNode;
 use glam::Vec2;
-use martensite::core::{ColdNode, HotNode, LayoutContext, NodeFlags, Rect, WidgetArena, WidgetId};
+use martensite::core::{
+    ColdNode, EventContext, EventResponse, HotNode, LayoutConstraints, LayoutContext, NodeFlags,
+    PaintContext, Rect, Widget, WidgetArena, WidgetId,
+};
 use martensite::focus::FocusManager;
 use martensite::prelude::Signal;
 use martensite::render::PaintList;
@@ -24,7 +31,7 @@ use martensite::wgpu::{
     SurfaceWrapper,
 };
 use martensite::widgets::{
-    Banner, Container, Disclosure, Flex, ProgressBar, Severity, Switch, Text,
+    Banner, Container, Disclosure, Flex, ProgressBar, Segmented, Severity, Switch, Text,
 };
 use martensite::window::event::{
     ime_event_for_winit, EventRouter, ModifierKeys, MouseButton as MButton, PointerEvent,
@@ -34,6 +41,193 @@ use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
+
+/// A `Segmented` strip over a single-page deck — the console window's
+/// surface switcher. `Tabs` was considered and rejected: its `event`
+/// override only forwards `PointerPressed` into the panel stack
+/// (moves, releases, and wheel deltas die at the tab set), which would
+/// starve the gallery `ScrollView`s of every gesture that scrolls
+/// them. Here the strip and the pages are siblings, so the default
+/// bounds-gated forwarding delivers every positional event to
+/// whichever region it lands in, and non-positional events reach the
+/// shown page first, then the strip.
+///
+/// Child protocol: `child(0)` is the strip, `child(1..=n)` the pages.
+/// Only the selected page reports `child_bounds` — the same
+/// "not presented" signal `TabPanelChild` uses — so the arena's
+/// recursive tick, the paint walk, and hit-testing all skip hidden
+/// pages: 274 showcase widgets cost nothing while their page is
+/// parked. Every page still lays out against the shared region each
+/// pass, so a page is correctly sized the frame it is selected.
+struct Deck {
+    /// The option strip (child 0).
+    strip: Segmented,
+    /// Page widgets (children 1..=n).
+    pages: Vec<Box<dyn Widget>>,
+    /// Shown page index — mirrors `strip.selected_index()`, synced in
+    /// `tick` (the same parked-state idiom `take_selected` wraps).
+    selected: usize,
+    /// Strip bounds from the last layout pass.
+    strip_bounds: Option<Rect>,
+    /// Page region bounds from the last layout pass.
+    page_bounds: Option<Rect>,
+}
+
+impl Widget for Deck {
+    fn debug_name(&self) -> &'static str {
+        "Console Deck"
+    }
+
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        let strip = self.strip.measure(cx, constraints);
+        let page_constraints = LayoutConstraints {
+            min_size: Vec2::ZERO,
+            max_size: Vec2::new(
+                constraints.max_size.x,
+                (constraints.max_size.y - strip.y).max(0.0),
+            ),
+        };
+        let mut pages = Vec2::ZERO;
+        for page in &mut self.pages {
+            pages = pages.max(page.measure(cx, page_constraints));
+        }
+        Vec2::new(
+            strip
+                .x
+                .max(pages.x)
+                .clamp(0.0, constraints.max_size.x.max(0.0)),
+            (strip.y + pages.y).clamp(0.0, constraints.max_size.y.max(0.0)),
+        )
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        // The strip's measured height leads — `Segmented` owns its row
+        // metrics (segment padding + label), so the deck asks rather
+        // than hard-coding a constant.
+        let strip_h = self
+            .strip
+            .measure(
+                cx,
+                LayoutConstraints {
+                    min_size: Vec2::ZERO,
+                    max_size: bounds.size,
+                },
+            )
+            .y
+            .min(bounds.height());
+        let strip = Rect::new(bounds.min_x(), bounds.min_y(), bounds.width(), strip_h);
+        let region = Rect::new(
+            bounds.min_x(),
+            bounds.min_y() + strip_h,
+            bounds.width(),
+            (bounds.height() - strip_h).max(0.0),
+        );
+        self.strip_bounds = Some(strip);
+        self.page_bounds = Some(region);
+        cx.layout_child(&mut self.strip, strip);
+        for page in &mut self.pages {
+            cx.layout_child(page.as_mut(), region);
+        }
+    }
+
+    fn tick(&mut self, _dt: Duration) -> bool {
+        // `set_selected` (from the strip's pointer/keyboard dispatch)
+        // moves `selected_index` synchronously; mirroring it once per
+        // frame swaps the page the same frame the input landed without
+        // a callback seam. `take_selected` is drained too so the
+        // documented change seam never goes stale.
+        let _ = self.strip.take_selected();
+        let selected = self.strip.selected_index();
+        let changed = selected != self.selected;
+        self.selected = selected;
+        changed
+    }
+
+    fn accessibility(&self, node: &mut AccessKitNode) {
+        node.set_role(accesskit::Role::GenericContainer);
+        node.set_label("Console surface selector");
+    }
+
+    fn clips_children(&self) -> bool {
+        // Pages fill the deck; a mis-measured demo must not paint up
+        // into the strip or out into the container padding.
+        true
+    }
+
+    fn child_count(&self) -> usize {
+        1 + self.pages.len()
+    }
+
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        if index == 0 {
+            Some(&self.strip)
+        } else {
+            self.pages.get(index - 1).map(|p| &**p as &dyn Widget)
+        }
+    }
+
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        if index == 0 {
+            Some(&mut self.strip)
+        } else {
+            self.pages
+                .get_mut(index - 1)
+                .map(|p| &mut **p as &mut dyn Widget)
+        }
+    }
+
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        if index == 0 {
+            self.strip_bounds
+        } else if index - 1 == self.selected {
+            self.page_bounds
+        } else {
+            None
+        }
+    }
+}
+
+/// The facade `Switch` owns its `on` flag and offers no signal-out
+/// seam, so this probe mirrors the flag into `gate` after every
+/// dispatch (and each tick as a catch-all for programmatic toggles) —
+/// the window reads the toggle without reaching into the widget tree.
+struct MirrorSwitch {
+    switch: Switch,
+    gate: Signal<bool>,
+}
+
+impl Widget for MirrorSwitch {
+    fn debug_name(&self) -> &'static str {
+        "Mirror Switch"
+    }
+
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        self.switch.measure(cx, constraints)
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.switch.layout(cx, bounds);
+    }
+
+    fn paint(&self, cx: &mut PaintContext) {
+        self.switch.paint(cx);
+    }
+
+    fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        let response = self.switch.event(cx);
+        let _ = self.gate.set_if_changed(self.switch.on);
+        response
+    }
+
+    fn tick(&mut self, dt: Duration) -> bool {
+        let _ = self.gate.set_if_changed(self.switch.on);
+        self.switch.tick(dt)
+    }
+
+    fn accessibility(&self, node: &mut AccessKitNode) {
+        self.switch.accessibility(node);
+    }
+}
 
 /// An open secondary window: window + surface + orchestrator + arena +
 /// router — everything needed to route events and present frames
@@ -47,6 +241,15 @@ pub struct SubWindow {
     root: WidgetId,
     router: EventRouter,
     focus: FocusManager,
+    /// The primary window's shared CPU telemetry signal — the mirror
+    /// source.
+    cpu: Signal<f64>,
+    /// The console-local signal the `ProgressBar` actually reads;
+    /// written from `cpu` each frame only while `mirror_gate` holds.
+    mirror: Signal<f64>,
+    /// Whether the telemetry mirror is live — driven by the console
+    /// page's `Switch` through `MirrorSwitch`.
+    mirror_gate: Signal<bool>,
     last_frame: Instant,
 }
 
@@ -66,8 +269,8 @@ impl SubWindow {
         let window: Arc<dyn Window> = event_loop
             .create_window(
                 WindowAttributes::default()
-                    .with_title("Martensite — Console")
-                    .with_surface_size(PhysicalSize::new(520, 420)),
+                    .with_title("Martensite — Console & Gallery")
+                    .with_surface_size(PhysicalSize::new(680, 560)),
             )
             .ok()?
             .into();
@@ -111,37 +314,73 @@ impl SubWindow {
         let root = arena.insert_with_widget(root_hot, Box::new(Container::new()));
 
         let painter = martensite::text_paint::shared_painter();
-        let content = Container::new().padding_uniform(16.0).child(
-            Flex::column().gap(10.0).children([
-                // Title-tier heading (spec B1): 15 pt semibold — the
-                // console window's one heading gets the same tier as
-                // the shell's title chrome.
-                Box::new(
-                    Text::new("Console — secondary OS window")
-                        .font_size(15.0)
-                        .font_weight(martensite::core::FontWeight::SEMIBOLD),
-                ) as Box<dyn martensite::core::Widget>,
-                Box::new(
-                    Banner::new(Severity::Info, "Same arena, separate surface")
-                        .with_text_painter(painter.clone()),
-                ),
-                Box::new(
-                    Disclosure::new("Facilities")
-                        .child(Text::new(
-                            "This window has its own arena, router, focus manager, and overlay layer.",
-                        ))
-                        .with_text_painter(painter.clone()),
-                ),
-                Box::new(
-                    Switch::new("mirror telemetry")
-                        .on(true)
-                        .with_text_painter(painter.clone()),
-                ),
-                // `bind` dogfoods reactive progress: the bar polls the
-                // shared CPU signal in `tick` and dirties itself.
-                Box::new(ProgressBar::new().bind(cpu)),
-            ]),
-        );
+        // The telemetry mirror: the console bar binds `mirror`, not
+        // `cpu` — `render` copies `cpu` into it only while the gate
+        // holds, so the switch freezes the feed instead of resetting
+        // it. The gate starts `true`, matching the switch's `.on(true)`.
+        let mirror = Signal::new(cpu.get());
+        let mirror_gate = Signal::new(true);
+        // The console page — the fixed `Flex` column this window has
+        // always hosted, now one page of the deck.
+        let console_page = Flex::column().gap(10.0).children([
+            // Title-tier heading (spec B1): 15 pt semibold — the
+            // console window's one heading gets the same tier as
+            // the shell's title chrome.
+            Box::new(
+                Text::new("Console — secondary OS window")
+                    .font_size(15.0)
+                    .font_weight(martensite::core::FontWeight::SEMIBOLD),
+            ) as Box<dyn Widget>,
+            Box::new(
+                Banner::new(Severity::Info, "Same arena, separate surface")
+                    .with_text_painter(painter.clone()),
+            ),
+            Box::new(
+                Disclosure::new("Facilities")
+                    .child(Text::new(
+                        "This window has its own arena, router, focus manager, and overlay layer.",
+                    ))
+                    .with_text_painter(painter.clone()),
+            ),
+            Box::new(MirrorSwitch {
+                switch: Switch::new("mirror telemetry")
+                    .on(true)
+                    .with_text_painter(painter.clone()),
+                gate: mirror_gate.clone(),
+            }),
+            // `bind` dogfoods reactive progress: the bar polls the
+            // gated mirror signal in `tick` and dirties itself.
+            Box::new(ProgressBar::new().bind(mirror.clone())),
+        ]);
+        // The gallery pages reuse the showcase's own section split so
+        // the deck reads in the same zone order as the main window —
+        // GRID/TELEMETRY/EDITOR/MEDIA map onto `grid_sections` …
+        // `media_sections`. Only the shown page reports bounds, so the
+        // 274-card catalog costs nothing while parked.
+        let deck = Deck {
+            strip: Segmented::new()
+                .options(["CONSOLE", "GRID", "TELEMETRY", "EDITOR", "MEDIA"])
+                .with_text_painter(painter),
+            pages: vec![
+                Box::new(console_page),
+                Box::new(crate::showcase::gallery_page(
+                    crate::showcase::grid_sections(),
+                )),
+                Box::new(crate::showcase::gallery_page(
+                    crate::showcase::telemetry_sections(),
+                )),
+                Box::new(crate::showcase::gallery_page(
+                    crate::showcase::editor_sections(),
+                )),
+                Box::new(crate::showcase::gallery_page(
+                    crate::showcase::media_sections(),
+                )),
+            ],
+            selected: 0,
+            strip_bounds: None,
+            page_bounds: None,
+        };
+        let content = Container::new().padding_uniform(16.0).child(deck);
         let mut hot = HotNode::default();
         hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
         let mut cold = ColdNode::new(Box::new(content));
@@ -161,6 +400,9 @@ impl SubWindow {
             root,
             router: EventRouter::new(),
             focus,
+            cpu,
+            mirror,
+            mirror_gate,
             last_frame: Instant::now(),
         };
         w.relayout();
@@ -306,6 +548,15 @@ impl SubWindow {
         let now = Instant::now();
         let dt = now - self.last_frame;
         self.last_frame = now;
+        // Telemetry mirror: while the console's switch holds the gate
+        // open, copy the shared CPU signal into the console-local
+        // `mirror` the ProgressBar polls — closed, `mirror` simply
+        // stops being written and the bar freezes on its last sample
+        // (a drop to zero would read as a telemetry fault, not a
+        // paused mirror).
+        if self.mirror_gate.get() {
+            self.mirror.set(self.cpu.get());
+        }
         self.arena.tick(dt);
 
         let size = self.window.surface_size();
@@ -344,5 +595,88 @@ impl SubWindow {
     /// changes so both surfaces track the same dictionary entry.
     pub fn set_theme(&mut self, theme: &Theme) {
         self.arena.set_theme(theme.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deck() -> Deck {
+        Deck {
+            strip: Segmented::new().options(["A", "B", "C"]),
+            pages: vec![
+                Box::new(Text::new("page a")),
+                Box::new(Text::new("page b")),
+                Box::new(Text::new("page c")),
+            ],
+            selected: 0,
+            strip_bounds: None,
+            page_bounds: None,
+        }
+    }
+
+    /// Before any layout pass nothing reports bounds — no child is
+    /// presented, matching the `TabPanelChild` contract the arena's
+    /// tick/paint/hit walks key off.
+    #[test]
+    fn deck_unlaid_out_presents_nothing() {
+        let deck = deck();
+        assert_eq!(deck.child_count(), 4);
+        for i in 0..4 {
+            assert!(deck.child_bounds(i).is_none());
+        }
+    }
+
+    /// Only the selected page reports bounds after layout — hidden
+    /// pages are skipped by the recursive tick/paint/hit walks, which
+    /// is what makes parking a 274-card gallery page free.
+    #[test]
+    fn deck_presents_only_selected_page() {
+        let mut deck = deck();
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        deck.layout(&mut cx, Rect::new(0.0, 0.0, 640.0, 480.0));
+        assert!(deck.child_bounds(0).is_some(), "strip always presented");
+        assert!(deck.child_bounds(1).is_some(), "page 0 selected");
+        assert!(deck.child_bounds(2).is_none(), "page 1 parked");
+        assert!(deck.child_bounds(3).is_none(), "page 2 parked");
+    }
+
+    /// `set_selected` on the strip lands in `selected` on the next
+    /// `tick` — the same frame the dispatch ran — and reports dirty
+    /// so the swap repaints.
+    #[test]
+    fn deck_selection_follows_strip_on_tick() {
+        let mut deck = deck();
+        deck.strip.set_selected(2);
+        assert!(deck.tick(Duration::from_millis(16)));
+        assert_eq!(deck.selected, 2);
+        assert!(!deck.tick(Duration::from_millis(16)));
+    }
+
+    /// The switch probe mirrors `on` into the gate on dispatch —
+    /// toggling the wrapped `Switch` flips the gate.
+    #[test]
+    fn mirror_switch_writes_gate_on_event() {
+        let gate = Signal::new(true);
+        let mut probe = MirrorSwitch {
+            switch: Switch::new("mirror telemetry").on(true),
+            gate: gate.clone(),
+        };
+        let ev = martensite::core::WidgetEvent::KeyPressed {
+            key: "Enter".to_string(),
+            repeat: false,
+        };
+        let mut cx = EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 200.0, 24.0),
+            scale: 1.0,
+        };
+        let _ = probe.event(&mut cx);
+        assert!(!gate.get());
     }
 }

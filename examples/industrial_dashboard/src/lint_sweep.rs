@@ -367,7 +367,7 @@ pub fn run(cfg: &LintConfig, opts: &SweepOptions) -> SweepReport {
         app.build_arena();
         app.apply_dock_layout_at(1600, 1000);
         let root = app.root.expect("root");
-        let arena = app.arena.as_mut().expect("arena");
+        let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
         // Same fixture swap as the per-zone arenas — overwrites the
         // `shared_painter` `build_arena` installed.
         if let Some(p) = &fixture {

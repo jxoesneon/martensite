@@ -1,7 +1,11 @@
 //! Status bar — the workstation's bottom chrome strip.
 //!
 //! A minimal container `Widget` modeled on [`crate::toolbar::Toolbar`]
-//! holding a single internal child: a facade `Dropdown` of locales.
+//! holding internal children: a facade `Dropdown` of locales, the
+//! live-feed `Spinner`, a CPU `ProgressBar`, and a `MorphIcon` lock
+//! indicator that springs `LOCK ↔ LOCK_OPEN` on real `console_locked`
+//! edges (ADR-0041 dogfood — a model-driven transition, not a demo
+//! timer).
 //! `paint_chrome` hand-paints the strip's left segment (fill, hints,
 //! frame stats); this widget fills its own rightmost segment (chrome
 //! paints after widgets — a shared fill would cover the face) and owns
@@ -13,8 +17,9 @@
 //! channel the toolbar uses for theme/filter/tick.
 //!
 //! Focus model: arena focus lands on the status bar as one unit. The
-//! dropdown is the only child, so every non-positional event is its
-//! key target — no `key_target` tracking like the toolbar needs.
+//! dropdown is the only *interactive* child (the indicators ignore
+//! events), so every non-positional event is its key target — no
+//! `key_target` tracking like the toolbar needs.
 //! Positional events forward only when they hit the dropdown's rect;
 //! the rest of the strip stays transparent to the pointer so clicks
 //! on the hints text fall through to the root.
@@ -27,8 +32,10 @@ use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect,
     SemanticAction, Widget, WidgetEvent,
 };
+use martensite::motion::SpringConfig;
 use martensite::prelude::Signal;
 use martensite::theme::TokenKey;
+use martensite::widgets::morph_icon::{demo as morph_icon_demo, MorphIcon};
 use martensite::widgets::{Dropdown, ProgressBar, Spinner};
 
 /// Width `apply_dock_layout` reserves for the widget at the right end
@@ -171,12 +178,34 @@ pub struct StatusBar {
     spinner: Spinner,
     /// CPU progress bar — mirrors the shared `cpu` signal.
     progress: ProgressBar,
-    /// Telemetry signals driving the two indicators.
+    /// Console-lock indicator — a `MorphIcon` driven by real
+    /// `console_locked` edges in `tick` (ADR-0041 dogfood). Carries
+    /// the semantic label ("console locked"/"console unlocked") since
+    /// the lock state appears nowhere else in this strip. Seeded
+    /// empty; the first `tick` lands the resting shape via `set_icon`
+    /// (no flight) — constructor-time icon construction would parse
+    /// `d` geometry before the model is even observed.
+    lock_icon: MorphIcon,
+    /// Telemetry + lock signals driving the indicators.
     cpu: Signal<f64>,
     paused: Signal<bool>,
+    console_locked: Signal<bool>,
+    /// The HMI's own reduced-motion toggle — OR'd with the arena-pushed
+    /// platform flag for the icon (every animated widget consults it).
+    reduced_motion: Signal<bool>,
+    /// The `console_locked` value the icon was last driven to —
+    /// `None` until the first `tick` seeds the resting shape. Edge
+    /// detection so `morph_to` fires once per transition, never per
+    /// frame (mid-flight calls re-enter the spring).
+    lock_seen: Option<bool>,
+    /// The platform reduced-motion flag the arena pushed through
+    /// `set_reduced_motion` — remembered so `tick` can keep the icon
+    /// at `platform || model` without losing the OS preference.
+    platform_reduced: bool,
     /// Child rects resolved in `layout` (device px).
     spinner_rect: Rect,
     progress_rect: Rect,
+    lock_rect: Rect,
 }
 
 impl StatusBar {
@@ -185,6 +214,8 @@ impl StatusBar {
         locale_sel: Signal<usize>,
         cpu: Signal<f64>,
         paused: Signal<bool>,
+        console_locked: Signal<bool>,
+        reduced_motion: Signal<bool>,
     ) -> Self {
         Self {
             scale,
@@ -200,15 +231,37 @@ impl StatusBar {
             locale_sel,
             spinner: Spinner::new().size(14.0),
             progress: ProgressBar::new().value(0.0),
+            // Same footprint as the spinner; the semantic label tracks
+            // the target state (set again on every edge in `tick`).
+            lock_icon: MorphIcon::new().size(16.0).label(if console_locked.get() {
+                "console locked"
+            } else {
+                "console unlocked"
+            }),
             cpu,
             paused,
+            console_locked,
+            reduced_motion,
+            // `None` → the first `tick` seeds the resting shape with
+            // `set_icon` so the icon lands settled, not mid-flight.
+            lock_seen: None,
+            platform_reduced: false,
             spinner_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             progress_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
+            lock_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
         }
     }
 
     fn s(&self) -> f32 {
         self.scale.get().max(1.0)
+    }
+
+    /// The icon's effective reduced-motion flag: the OS preference the
+    /// arena pushed (`set_reduced_motion`) OR the HMI's own toggle —
+    /// either one snaps the morph instead of springing it.
+    fn push_icon_motion_pref(&mut self) {
+        let reduced = self.platform_reduced || self.reduced_motion.get();
+        self.lock_icon.set_reduced_motion(reduced);
     }
 
     /// Push the dropdown's committed index into the outcome signal.
@@ -256,7 +309,7 @@ impl Widget for StatusBar {
         let w = (bounds.size.x - pad).max(1.0);
         let h = (bounds.size.y - pad * 0.75).max(1.0);
         // Right-to-left: locale dropdown, then the spinner, then the
-        // CPU progress bar filling the remainder.
+        // lock icon, then the CPU progress bar filling the remainder.
         let dd_w = (110.0 * self.s()).min(w);
         let r = Rect::new(
             bounds.max_x() - pad - dd_w,
@@ -275,7 +328,18 @@ impl Widget for StatusBar {
             sp_d,
         );
         cx.layout_child(&mut self.spinner, self.spinner_rect);
-        let pb_w = (sp_x - pad - bounds.origin.x).max(0.0);
+        // The lock icon sits left of the spinner — same optical size,
+        // same vertical centering.
+        let ic_d = (16.0 * self.s()).min(h);
+        let ic_x = (sp_x - pad * 0.5 - ic_d).max(bounds.origin.x);
+        self.lock_rect = Rect::new(
+            ic_x,
+            bounds.origin.y + (bounds.size.y - ic_d) * 0.5,
+            ic_d,
+            ic_d,
+        );
+        cx.layout_child(&mut self.lock_icon, self.lock_rect);
+        let pb_w = (ic_x - pad - bounds.origin.x).max(0.0);
         self.progress_rect = Rect::new(
             bounds.origin.x,
             bounds.origin.y + (bounds.size.y - 6.0 * self.s()) * 0.5,
@@ -317,12 +381,53 @@ impl Widget for StatusBar {
 
     fn tick(&mut self, _dt: std::time::Duration) -> bool {
         // `WidgetArena::tick_recursive` already ticks internal children
-        // via `child_mut` — that's what animates the Spinner's phase.
+        // via `child_mut` — that's what animates the Spinner's phase
+        // and advances the MorphIcon's spring.
         // The progress bar mirrors the shared `cpu` signal; rebuilding
         // it here keeps the fraction honest (it holds no other state).
         self.progress = ProgressBar::new().value(self.cpu.get() as f32);
+        // Reduced-motion pref must be current *before* `morph_to`
+        // consults it below — model-toggle writes land between pushes.
+        self.push_icon_motion_pref();
+        // ADR-0041 dogfood: drive the lock icon off the real
+        // `console_locked` signal — the CONSOLE LOCK page's LOCK
+        // button, the command verb, and the lock overlay's unlock
+        // paths all write the same cell. First observation seeds the
+        // resting shape (`set_icon` — no flight); later edges morph.
+        let locked = self.console_locked.get();
+        if self.lock_seen != Some(locked) {
+            let first = self.lock_seen.is_none();
+            self.lock_seen = Some(locked);
+            let res = if first {
+                self.lock_icon.set_icon(lock_icon_d(locked))
+            } else {
+                self.lock_icon
+                    .morph_to(lock_icon_d(locked), LOCK_MORPH_SPRING)
+            };
+            // The demo `d` constants are curated — a rejection is an
+            // engine-side bug, not input the bar can recover.
+            debug_assert!(res.is_ok(), "morph_icon demo path rejected: {res:?}");
+            self.lock_icon.set_label(if locked {
+                "console locked"
+            } else {
+                "console unlocked"
+            });
+        }
         self.publish();
         true
+    }
+
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        // The arena push (OS preference via `apply_platform_preferences`)
+        // forwards verbatim to the children — the default impl's
+        // contract, minus the `paused`-suspended spinner hole — while
+        // the icon takes the union with the HMI toggle (`tick`
+        // re-applies it so a model-side flip needs no new push).
+        self.platform_reduced = reduced;
+        self.dropdown.set_reduced_motion(reduced);
+        self.spinner.set_reduced_motion(reduced);
+        self.progress.set_reduced_motion(reduced);
+        self.push_icon_motion_pref();
     }
 
     fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
@@ -340,11 +445,12 @@ impl Widget for StatusBar {
     fn child_count(&self) -> usize {
         // The spinner drops out of the tree while paused — it stops
         // ticking (frozen) and stops painting, which is the honest
-        // "feed halted" cue.
+        // "feed halted" cue. The lock icon stays: console lock is a
+        // state, not an activity.
         if self.paused.get() {
-            2
-        } else {
             3
+        } else {
+            4
         }
     }
 
@@ -353,7 +459,8 @@ impl Widget for StatusBar {
         match (index, live) {
             (0, _) => Some(&self.dropdown),
             (1, true) => Some(&self.spinner),
-            (1, false) | (2, true) => Some(&self.progress),
+            (1, false) | (2, true) => Some(&self.lock_icon),
+            (2, false) | (3, true) => Some(&self.progress),
             _ => None,
         }
     }
@@ -363,7 +470,8 @@ impl Widget for StatusBar {
         match (index, live) {
             (0, _) => Some(&mut self.dropdown),
             (1, true) => Some(&mut self.spinner),
-            (1, false) | (2, true) => Some(&mut self.progress),
+            (1, false) | (2, true) => Some(&mut self.lock_icon),
+            (2, false) | (3, true) => Some(&mut self.progress),
             _ => None,
         }
     }
@@ -373,7 +481,8 @@ impl Widget for StatusBar {
         match (index, live) {
             (0, _) => Some(self.dd_rect),
             (1, true) => Some(self.spinner_rect),
-            (1, false) | (2, true) => Some(self.progress_rect),
+            (1, false) | (2, true) => Some(self.lock_rect),
+            (2, false) | (3, true) => Some(self.progress_rect),
             _ => None,
         }
     }
@@ -417,9 +526,39 @@ impl Widget for StatusBar {
     }
 }
 
+/// The lock icon's resting/target `d` for a `console_locked` value —
+/// the demo pair written for this seam (`morph_icon::demo`, ADR-0041).
+fn lock_icon_d(locked: bool) -> &'static str {
+    if locked {
+        morph_icon_demo::LOCK
+    } else {
+        morph_icon_demo::LOCK_OPEN
+    }
+}
+
+/// The lock morph's spring — `SNAPPY` (ζ≈0.72): a quick, small
+/// overshoot on a status indicator, not a bouncy celebration.
+const LOCK_MORPH_SPRING: SpringConfig = SpringConfig::SNAPPY;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    fn status_bar(
+        locale_sel: Signal<usize>,
+        console_locked: Signal<bool>,
+        reduced_motion: Signal<bool>,
+    ) -> StatusBar {
+        StatusBar::new(
+            Signal::new(1.0f32),
+            locale_sel,
+            Signal::new(0.5f64),
+            Signal::new(false),
+            console_locked,
+            reduced_motion,
+        )
+    }
 
     #[test]
     fn all_locale_bundles_parse() {
@@ -474,14 +613,123 @@ mod tests {
         // next write-through. `StatusBar::new` now seeds the dropdown
         // from the signal, so publish is a no-op until the user picks.
         let sel = Signal::new(3usize); // "de" — a restored store value
-        let mut sb = StatusBar::new(
-            Signal::new(1.0f32),
-            sel.clone(),
-            Signal::new(0.5f64),
-            Signal::new(false),
-        );
+        let mut sb = status_bar(sel.clone(), Signal::new(false), Signal::new(false));
         sb.publish();
         assert_eq!(sel.get(), 3, "publish clobbered the restored locale");
+    }
+
+    #[test]
+    fn lock_icon_path_tracks_console_locked() {
+        // The icon's target `d` is a pure function of the signal —
+        // this half of the contract is engine-independent.
+        assert_eq!(lock_icon_d(true), morph_icon_demo::LOCK);
+        assert_eq!(lock_icon_d(false), morph_icon_demo::LOCK_OPEN);
+    }
+
+    /// `true` once the morph geometry engine is live. While the port
+    /// is pending, `icon`/`set_icon`/`morph_to` end in
+    /// `unimplemented!()` — the morph behavioral tests probe this and
+    /// skip with a printed reason (suite stays green in the interim).
+    fn morph_engine_live() -> bool {
+        std::panic::catch_unwind(|| MorphIcon::icon(morph_icon_demo::LOCK).map(|_| ())).is_ok()
+    }
+
+    /// Drives internal children the way `WidgetArena::tick_recursive`
+    /// does — the icon's spring advances through `child_mut`, not
+    /// through `StatusBar::tick` itself.
+    fn tick_children(sb: &mut StatusBar, dt: Duration) {
+        for i in 0..sb.child_count() {
+            if let Some(c) = sb.child_mut(i) {
+                let _ = c.tick(dt);
+            }
+        }
+    }
+
+    /// Frame-step the icon until its spring settles (bounded so a
+    /// never-settling spring fails rather than hangs).
+    fn settle_icon(sb: &mut StatusBar) {
+        for _ in 0..500 {
+            if !sb.lock_icon.is_animating() {
+                return;
+            }
+            tick_children(sb, Duration::from_millis(16));
+        }
+        panic!("lock icon spring never settled");
+    }
+
+    #[test]
+    fn console_locked_edge_morphs_the_statusbar_icon() {
+        if !morph_engine_live() {
+            eprintln!("skip: morph_icon geometry engine port pending (unimplemented!)");
+            return;
+        }
+        let locked = Signal::new(false);
+        let mut sb = status_bar(Signal::new(0usize), locked.clone(), Signal::new(false));
+        // First tick seeds the resting shape — no flight on boot.
+        sb.tick(Duration::from_millis(16));
+        assert!(!sb.lock_icon.is_animating(), "seed must land settled");
+        assert_eq!(sb.lock_icon.progress(), 1.0);
+        // A real signal edge starts the morph toward LOCK — the spring
+        // is in flight immediately after the `morph_to` call.
+        locked.set(true);
+        sb.tick(Duration::from_millis(16));
+        assert!(
+            sb.lock_icon.is_animating(),
+            "console_locked edge did not start a morph"
+        );
+        // A steady signal never restarts the spring — the icon flies
+        // to settle on LOCK.
+        sb.tick(Duration::from_millis(16));
+        tick_children(&mut sb, Duration::from_millis(16));
+        assert!(sb.lock_icon.is_animating());
+        settle_icon(&mut sb);
+        for _ in 0..3 {
+            sb.tick(Duration::from_millis(16));
+            tick_children(&mut sb, Duration::from_millis(16));
+            assert!(
+                !sb.lock_icon.is_animating(),
+                "steady console_locked restarted the spring"
+            );
+        }
+        // Releasing the lock morphs back to LOCK_OPEN.
+        locked.set(false);
+        sb.tick(Duration::from_millis(16));
+        assert!(sb.lock_icon.is_animating());
+        settle_icon(&mut sb);
+        assert_eq!(sb.lock_icon.progress(), 1.0);
+    }
+
+    #[test]
+    fn reduced_motion_snaps_the_lock_icon() {
+        if !morph_engine_live() {
+            eprintln!("skip: morph_icon geometry engine port pending (unimplemented!)");
+            return;
+        }
+        let locked = Signal::new(false);
+        let hmi_reduced = Signal::new(false);
+        let mut sb = status_bar(Signal::new(0usize), locked.clone(), hmi_reduced.clone());
+        sb.tick(Duration::from_millis(16));
+        // The HMI toggle alone snaps the morph — no OS pref needed.
+        hmi_reduced.set(true);
+        locked.set(true);
+        sb.tick(Duration::from_millis(16));
+        assert!(
+            !sb.lock_icon.is_animating(),
+            "model reduced-motion must snap the morph"
+        );
+        // So does the platform push on its own (arena-driven
+        // `set_reduced_motion`), with the model toggle back off.
+        hmi_reduced.set(false);
+        locked.set(false);
+        sb.tick(Duration::from_millis(16));
+        settle_icon(&mut sb);
+        sb.set_reduced_motion(true);
+        locked.set(true);
+        sb.tick(Duration::from_millis(16));
+        assert!(
+            !sb.lock_icon.is_animating(),
+            "platform reduced-motion push must snap the morph"
+        );
     }
 
     #[test]
