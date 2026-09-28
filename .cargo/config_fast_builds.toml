@@ -1,25 +1,24 @@
-# --- Linux Host (x86_64) ---
-# Use Clang with LLD for fast, reliable linking without requiring external `mold`.
+# Fast build configuration template for developers with `mold` installed on Linux.
+# Copy or merge into `.cargo/config.toml` (or `~/.cargo/config.toml` for user-global speed).
+#
+# Prerequisites on Linux:
+#   Debian/Ubuntu: sudo apt-get install mold clang
+#   Arch/CachyOS:  sudo pacman -S mold clang
+#   Fedora:        sudo dnf install mold clang
+
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
-# --- Windows MSVC (x86_64) ---
-# Use the bundled LLD linker shipped directly with Rust on Windows.
-# Replaces the invalid `-fuse-ld=lld` flag which MSVC's link.exe rejects.
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
 
-# --- macOS Darwin (Intel & Apple Silicon) ---
-# Unpacked debuginfo accelerates local dyld linking on macOS.
 [target.x86_64-apple-darwin]
 rustflags = ["-C", "split-debuginfo=unpacked"]
 
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "split-debuginfo=unpacked"]
 
-# --- Android Targets ---
-# Scoped specifically to Android NDK Clang cross-compilation triples.
 [target.aarch64-linux-android]
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 

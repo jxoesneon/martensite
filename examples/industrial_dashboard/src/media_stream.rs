@@ -91,7 +91,9 @@ pub fn platform_decoder(clip: &ClipStream) -> Option<Box<dyn VideoDecoder>> {
             return Some(Box::new(dec));
         }
     }
-    #[cfg(target_os = "linux")]
+    // The `vaapi` example feature is opt-in: building it requires the
+    // `libva-dev` system headers, which aren't universally installed.
+    #[cfg(all(target_os = "linux", feature = "vaapi"))]
     {
         use martensite::media::decoder::vaapi::VaapiDecoder;
         if let Ok(dec) = VaapiDecoder::init(config.clone()) {
