@@ -47,6 +47,9 @@ web-sys = { workspace = true, features = [
     "HtmlElement",
     "HtmlInputElement",
     "InputEvent",
+    # `Window::match_media("(prefers-reduced-motion: reduce)")` for the
+    # arena reduced-motion consult (`prefs::apply_platform_preferences`).
+    "MediaQueryList",
     "Node",
     "Window",
 ] }

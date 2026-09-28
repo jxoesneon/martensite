@@ -68,6 +68,7 @@ pub mod hit_test;
 pub mod ime;
 pub mod lifecycle;
 pub mod manager;
+pub mod prefs;
 pub mod quiescent;
 pub mod stylus;
 /// Web (`wasm32-unknown-unknown`) canvas backend: canvas binding,
@@ -93,6 +94,7 @@ pub use event::{
 pub use hit_test::{AffineTransform, ClipShape, HitTestResult, HitTester, RoundedRect};
 pub use lifecycle::{surface_lifecycle, SurfaceLifecycle};
 pub use manager::{WindowEntry, WindowEventOutcome, WindowKey, WindowManager};
+pub use prefs::apply_platform_preferences;
 pub use quiescent::{Quiescence, QuiescentApp};
 pub use window_attributes::{MacOSWindowAttributes, WindowsWindowAttributes};
 

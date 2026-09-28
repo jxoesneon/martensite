@@ -41,6 +41,7 @@
 use accesskit::{Node as AccessKitNode, Toggled};
 use glam::Vec2;
 use kurbo::BezPath;
+use martensite_core::loading::{paint_skeleton, SkeletonShape};
 use martensite_core::shape::Shape;
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
@@ -935,6 +936,9 @@ pub struct PropertyGrid {
     /// [`columns`](Self::columns); clamped into a sane range at
     /// layout/mirror time.
     pub name_fraction: f32,
+    /// Whether the grid's content is pending — paints placeholder
+    /// name|value rows instead of the entries (ADR-0040).
+    loading: bool,
     /// Insertion order of sections and ungrouped rows.
     order: Vec<GridItem>,
     /// The sections, in creation order.
@@ -985,6 +989,7 @@ impl PropertyGrid {
             enabled: true,
             label: None,
             name_fraction: DEFAULT_NAME_FRAC,
+            loading: false,
             order: Vec::new(),
             sections: Vec::new(),
             rows: Vec::new(),
@@ -1135,6 +1140,53 @@ impl PropertyGrid {
             self.name_fraction = name_fraction.clamp(0.1, 0.9);
         }
         self
+    }
+
+    /// Sets the loading flag — while set, the widget paints
+    /// placeholder name|value rows instead of the entries and the
+    /// framework suppresses input/a11y for the subtree (ADR-0040).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::PropertyGrid;
+    ///
+    /// assert!(PropertyGrid::new().loading(true).is_loading());
+    /// ```
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets the loading flag (mutating form).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::PropertyGrid;
+    ///
+    /// let mut g = PropertyGrid::new();
+    /// g.set_loading(true);
+    /// assert!(g.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the grid's content is pending.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::PropertyGrid;
+    ///
+    /// assert!(!PropertyGrid::new().is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_loading(&self) -> bool {
+        self.loading
     }
 
     /// Shares a [`crate::text_paint::TextPainter`] so labels emit real
@@ -1836,6 +1888,17 @@ impl Widget for PropertyGrid {
         self.poll_pending();
     }
 
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // A pending inspector reads as name|value row pairs.
+        let row_px = cx.pt(ROW_PT).max(1.0);
+        let rows = ((cx.bounds.height() / row_px).floor() as usize).clamp(1, 32);
+        paint_skeleton(cx, cx.bounds, SkeletonShape::Grid { cols: 2, rows }, phase);
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         if !self.enabled {
             return EventResponse::Ignored;
@@ -2100,6 +2163,30 @@ mod tests {
         assert_eq!(g.value("Visible"), Some("true"));
         assert_eq!(g.value("Mode"), Some("a"));
         assert_eq!(g.value(9), None);
+    }
+
+    #[test]
+    fn loading_flag_and_placeholder() {
+        assert!(!PropertyGrid::new().is_loading());
+        assert!(PropertyGrid::new().loading(true).is_loading());
+        let mut g = PropertyGrid::new();
+        g.set_loading(true);
+        assert!(Widget::is_loading(&g));
+        let mut list = martensite_core::PaintList::new();
+        let theme = martensite_core::Theme::new("test");
+        g.paint_loading(
+            &mut PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 240.0, 200.0),
+                scale: 1.0,
+                theme: &theme,
+                text_painter: None,
+            },
+            None,
+        );
+        assert!(list.len() >= 3);
+        g.set_loading(false);
+        assert!(!g.is_loading());
     }
 
     #[test]

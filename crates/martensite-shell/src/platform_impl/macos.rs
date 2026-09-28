@@ -976,6 +976,49 @@ impl Drop for AppearanceObserver {
     }
 }
 
+/// Returns `true` when the user enabled macOS **Reduce Motion**
+/// (System Settings → Accessibility → Display), the signal behind
+/// `prefers-reduced-motion` (ADR-0040 phase 2).
+///
+/// Queries `NSWorkspace.sharedWorkspace
+/// .accessibilityDisplayShouldReduceMotion` (macOS 10.12+). Returns
+/// `false` when AppKit is not linked into the process (headless tools
+/// never claim the preference). Invoked by
+/// [`crate::prefs::prefers_reduced_motion`]; a one-shot startup consult
+/// — callers that want live tracking re-query on their own
+/// settings-change hooks.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_shell::platform_impl::macos::prefers_reduced_motion;
+///
+/// // `false` in headless contexts without AppKit.
+/// let _ = prefers_reduced_motion();
+/// ```
+#[must_use]
+pub fn prefers_reduced_motion() -> bool {
+    // SAFETY:
+    // Preconditions:
+    // - `NSWorkspace` class is looked up via runtime registry check.
+    // Invariants:
+    // - `sharedWorkspace` returns the process-wide workspace singleton.
+    // Postconditions:
+    // - `accessibilityDisplayShouldReduceMotion` returns a BOOL
+    //   (converted to `bool`) without mutating state.
+    unsafe {
+        let Some(cls) = class(c"NSWorkspace") else {
+            return false;
+        };
+        let workspace: Option<Retained<AnyObject>> = msg_send![cls, sharedWorkspace];
+        let Some(workspace) = workspace else {
+            return false;
+        };
+        let reduced: bool = msg_send![&workspace, accessibilityDisplayShouldReduceMotion];
+        reduced
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1049,6 +1092,13 @@ mod tests {
     #[test]
     fn reduce_transparency_enabled_returns_bool_without_panic() {
         let _ = MacosBackdropController::reduce_transparency_enabled();
+    }
+
+    #[test]
+    fn prefers_reduced_motion_returns_bool_without_panic() {
+        // `false` in headless contexts without AppKit; the OS setting's
+        // value cannot be asserted, only that the probe resolves.
+        let _ = prefers_reduced_motion();
     }
 
     #[test]

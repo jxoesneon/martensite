@@ -177,6 +177,9 @@ winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
+    # SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION) for the
+    # reduced-motion probe (martensite-shell::prefs).
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 # Utility libraries

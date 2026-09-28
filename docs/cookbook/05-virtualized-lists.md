@@ -396,6 +396,9 @@ Martensite employs **windowed emission**:
 - Visible child row nodes specify their absolute 1-based index via `node.set_position_in_set(record_idx + 1)` and `node.set_size_of_set(N)`.
 - The screen reader announces: *"Row 45,021 of 1,000,000"*, providing complete positional context without inflating system memory.
 
+> [!NOTE]
+> When rows are still in flight — initial load or infinite-scroll pagination — drive `set_loading(true)` or `pending_tail(n)` on `ListView`/`Table` rather than hand-rendering placeholder rows: pending slots never emit fabricated `posinset`/`setsize` values. See [ADR-0040](../adr/ADR-0040-native-loading-state.md) and [Cookbook 06 §3.6](06-async-data.md#6-rendering-the-loading-leg--native-skeleton-mode-adr-0040).
+
 ---
 
 ## 4. Common Pitfalls & Antipatterns

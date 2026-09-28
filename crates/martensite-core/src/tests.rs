@@ -1197,6 +1197,7 @@ mod suite {
 mod dispatch_paint {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
 
     use crate::node::{ColdNode, HotNode, NodeFlags, Rect};
     use crate::overlay::{OverlayAnchor, OverlayLayer};
@@ -1888,6 +1889,502 @@ mod dispatch_paint {
         // internal children have no engagement state).
         let _ = arena.dispatch_event(id, &event);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    // --- Native loading state (ADR-0040) ---
+
+    /// A marker-fill widget that can declare itself loading.
+    struct LoadingFill {
+        color: [u8; 4],
+        loading: bool,
+    }
+
+    impl Widget for LoadingFill {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn is_loading(&self) -> bool {
+            self.loading
+        }
+        fn paint(&self, cx: &mut PaintContext) {
+            cx.list.commands.push(PaintCommand::FillRect(
+                kurbo::Rect::new(0.0, 0.0, 1.0, 1.0),
+                self.color,
+            ));
+        }
+    }
+
+    /// An event-counting leaf that can declare itself loading.
+    struct LoadingProbe {
+        calls: Arc<AtomicUsize>,
+        loading: bool,
+    }
+
+    impl Widget for LoadingProbe {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn is_loading(&self) -> bool {
+            self.loading
+        }
+        fn event(&mut self, _cx: &mut EventContext) -> EventResponse {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            EventResponse::Handled
+        }
+    }
+
+    /// Composite that paints its own marker and hosts one internal
+    /// child — exercises both the internal-child walk and, with arena
+    /// children appended, the arena-children recursion.
+    struct LoadingComposite {
+        loading: bool,
+        child: LoadingFill,
+    }
+
+    impl Widget for LoadingComposite {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn is_loading(&self) -> bool {
+            self.loading
+        }
+        fn paint(&self, cx: &mut PaintContext) {
+            cx.list.commands.push(PaintCommand::FillRect(
+                kurbo::Rect::new(0.0, 0.0, 1.0, 1.0),
+                [1, 0, 0, 255],
+            ));
+        }
+        fn child_count(&self) -> usize {
+            1
+        }
+        fn child(&self, index: usize) -> Option<&dyn Widget> {
+            (index == 0).then_some(&self.child as &dyn Widget)
+        }
+        fn child_bounds(&self, index: usize) -> Option<Rect> {
+            (index == 0).then_some(Rect::new(0.0, 0.0, 5.0, 5.0))
+        }
+    }
+
+    fn fill_colors(list: &PaintList) -> Vec<[u8; 4]> {
+        list.commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::FillRect(_, color) => Some(*color),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn scope_count(list: &PaintList) -> usize {
+        list.commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::PushScope { .. }))
+            .count()
+    }
+
+    #[test]
+    fn loading_node_paints_placeholder_and_suppresses_children() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Box::new(LoadingComposite {
+                loading: false,
+                child: LoadingFill {
+                    color: [2, 0, 0, 255],
+                    loading: false,
+                },
+            }),
+        );
+        let sibling = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 50.0, 10.0, 10.0)),
+            Box::new(FillWidget([3, 0, 0, 255])),
+        );
+        arena.append_child(root, sibling).unwrap();
+
+        arena.set_loading(root, true);
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+        // The placeholder replaces the widget's body AND both child
+        // domains — no widget FillRect survives, and only the root's
+        // own provenance scope is emitted.
+        assert!(fill_colors(&list).is_empty());
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillPath(..))));
+        assert_eq!(scope_count(&list), 1);
+        let pops = list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::PopScope))
+            .count();
+        assert_eq!(pops, 1, "scope must balance");
+
+        // Clearing the flag restores the full subtree.
+        arena.set_loading(root, false);
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+        assert_eq!(
+            fill_colors(&list),
+            vec![[1, 0, 0, 255], [2, 0, 0, 255], [3, 0, 0, 255]]
+        );
+    }
+
+    #[test]
+    fn widget_declared_loading_needs_no_node_flag() {
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 50.0, 20.0)),
+            Box::new(LoadingFill {
+                color: [4, 4, 4, 255],
+                loading: true,
+            }),
+        );
+        // `effective_loading` = flag OR widget declaration.
+        assert!(arena.node_loading(id));
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        assert!(fill_colors(&list).is_empty());
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillPath(..))));
+    }
+
+    #[test]
+    fn set_loading_dirties_paint_and_a11y_on_transition_only() {
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 10.0, 10.0)),
+            Box::new(DummyWidget),
+        );
+        let clear_dirty = |arena: &mut WidgetArena| {
+            arena
+                .get_hot_mut(id)
+                .unwrap()
+                .flags
+                .remove(NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y);
+        };
+
+        clear_dirty(&mut arena);
+        arena.set_loading(id, true);
+        let flags = arena.get_hot(id).unwrap().flags;
+        assert!(flags.contains(NodeFlags::DIRTY_PAINT));
+        assert!(flags.contains(NodeFlags::DIRTY_A11Y));
+
+        // Repeating the same state is a no-op — no fresh dirty marks.
+        clear_dirty(&mut arena);
+        arena.set_loading(id, true);
+        let flags = arena.get_hot(id).unwrap().flags;
+        assert!(!flags.contains(NodeFlags::DIRTY_PAINT));
+        assert!(!flags.contains(NodeFlags::DIRTY_A11Y));
+
+        // The off transition marks again.
+        arena.set_loading(id, false);
+        let flags = arena.get_hot(id).unwrap().flags;
+        assert!(flags.contains(NodeFlags::DIRTY_PAINT));
+        assert!(flags.contains(NodeFlags::DIRTY_A11Y));
+
+        // Dead handles are ignored.
+        arena.remove(id);
+        arena.set_loading(id, true);
+        assert!(!arena.node_loading(id));
+    }
+
+    #[test]
+    fn mark_dirty_paint_sets_paint_only() {
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 10.0, 10.0)),
+            Box::new(DummyWidget),
+        );
+        arena
+            .get_hot_mut(id)
+            .unwrap()
+            .flags
+            .remove(NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y);
+        arena.mark_dirty_paint(id);
+        let flags = arena.get_hot(id).unwrap().flags;
+        assert!(flags.contains(NodeFlags::DIRTY_PAINT));
+        assert!(!flags.contains(NodeFlags::DIRTY_A11Y));
+
+        // `mark_dirty` still sets both.
+        arena
+            .get_hot_mut(id)
+            .unwrap()
+            .flags
+            .remove(NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y);
+        arena.mark_dirty(id);
+        let flags = arena.get_hot(id).unwrap().flags;
+        assert!(flags.contains(NodeFlags::DIRTY_PAINT));
+        assert!(flags.contains(NodeFlags::DIRTY_A11Y));
+    }
+
+    #[test]
+    fn tick_marks_loading_nodes_paint_only() {
+        let mut arena = WidgetArena::new();
+        let loading = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 50.0, 20.0)),
+            Box::new(LoadingFill {
+                color: [4, 4, 4, 255],
+                loading: true,
+            }),
+        );
+        let plain = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 30.0, 50.0, 20.0)),
+            Box::new(DummyWidget),
+        );
+        for id in [loading, plain] {
+            arena
+                .get_hot_mut(id)
+                .unwrap()
+                .flags
+                .remove(NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y);
+        }
+
+        arena.tick(Duration::from_millis(16));
+        let flags = arena.get_hot(loading).unwrap().flags;
+        assert!(flags.contains(NodeFlags::DIRTY_PAINT));
+        assert!(
+            !flags.contains(NodeFlags::DIRTY_A11Y),
+            "shimmer must not re-dirty a11y at frame rate"
+        );
+        // Non-loading nodes are untouched by the shimmer clock.
+        let flags = arena.get_hot(plain).unwrap().flags;
+        assert!(!flags.contains(NodeFlags::DIRTY_PAINT));
+        assert!(!flags.contains(NodeFlags::DIRTY_A11Y));
+
+        // Every tick re-marks while loading — still paint-only.
+        arena
+            .get_hot_mut(loading)
+            .unwrap()
+            .flags
+            .remove(NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y);
+        arena.tick(Duration::from_millis(16));
+        let flags = arena.get_hot(loading).unwrap().flags;
+        assert!(flags.contains(NodeFlags::DIRTY_PAINT));
+        assert!(!flags.contains(NodeFlags::DIRTY_A11Y));
+    }
+
+    #[test]
+    fn reduced_motion_paints_static_placeholder() {
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 40.0)),
+            Box::new(DummyWidget),
+        );
+        arena.set_loading(id, true);
+
+        // Animated by default: the shimmer band is a gradient fill.
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillLinearGradient(..))));
+
+        // Reduced motion: phase is None — static base only, no band.
+        arena.set_reduced_motion(true);
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillPath(..))));
+        assert!(!list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillLinearGradient(..))));
+    }
+
+    #[test]
+    fn loading_blocks_dispatch_to_node_and_subtree() {
+        let child_calls = Arc::new(AtomicUsize::new(0));
+        let parent_calls = Arc::new(AtomicUsize::new(0));
+        let mut arena = WidgetArena::new();
+        let parent = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Box::new(ProbeWidget::new(
+                parent_calls.clone(),
+                EventResponse::Handled,
+            )),
+        );
+        let child = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 40.0, 10.0)),
+            Box::new(ProbeWidget::new(
+                child_calls.clone(),
+                EventResponse::Handled,
+            )),
+        );
+        arena.append_child(parent, child).unwrap();
+        let event = WidgetEvent::PointerMoved {
+            position: Vec2::new(5.0, 5.0),
+        };
+
+        // The loading target is skipped — the event bubbles to parent.
+        arena.set_loading(child, true);
+        assert_eq!(arena.dispatch_event(child, &event), EventResponse::Handled);
+        assert_eq!(child_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(parent_calls.load(Ordering::SeqCst), 1);
+
+        // A loading ANCESTOR covers the whole subtree: dispatch to the
+        // focused descendant dies above the loading node — nothing in
+        // the subtree runs (focus/SemanticAction paths bypass
+        // hit-testing, so bubbling alone is not enough).
+        arena.set_loading(parent, true);
+        assert_eq!(arena.dispatch_event(child, &event), EventResponse::Ignored);
+        assert_eq!(child_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(parent_calls.load(Ordering::SeqCst), 1);
+
+        // Clearing restores delivery.
+        arena.set_loading(parent, false);
+        arena.set_loading(child, false);
+        assert_eq!(arena.dispatch_event(child, &event), EventResponse::Handled);
+        assert_eq!(child_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn loading_internal_child_paints_placeholder_and_gets_no_events() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        /// Composite hosting a loading internal probe child.
+        struct ProbeComposite {
+            child: LoadingProbe,
+        }
+        impl Widget for ProbeComposite {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn child_count(&self) -> usize {
+                1
+            }
+            fn child(&self, index: usize) -> Option<&dyn Widget> {
+                (index == 0).then_some(&self.child as &dyn Widget)
+            }
+            fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+                (index == 0).then_some(&mut self.child as &mut dyn Widget)
+            }
+            fn child_bounds(&self, index: usize) -> Option<Rect> {
+                (index == 0).then_some(Rect::new(0.0, 0.0, 50.0, 50.0))
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Box::new(ProbeComposite {
+                child: LoadingProbe {
+                    calls: calls.clone(),
+                    loading: true,
+                },
+            }),
+        );
+
+        // Paint: the internal child substitutes its placeholder.
+        let mut list = PaintList::new();
+        arena.build_paint_list(id, &mut list);
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillPath(..))));
+
+        // Events: the default forwarder skips the loading child.
+        let event = WidgetEvent::PointerMoved {
+            position: Vec2::new(25.0, 25.0),
+        };
+        assert_eq!(arena.dispatch_event(id, &event), EventResponse::Ignored);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn widget_event_early_outs_when_widget_is_loading() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        /// Composite that is itself loading — its internal child must
+        /// never see an event even when `event` is invoked directly
+        /// (the arena-level consult guards `dispatch_event`; this is
+        /// the widget-level half).
+        struct LoadingParent {
+            child: LoadingProbe,
+        }
+        impl Widget for LoadingParent {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn is_loading(&self) -> bool {
+                true
+            }
+            fn child_count(&self) -> usize {
+                1
+            }
+            fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+                (index == 0).then_some(&mut self.child as &mut dyn Widget)
+            }
+            fn child_bounds(&self, index: usize) -> Option<Rect> {
+                (index == 0).then_some(Rect::new(0.0, 0.0, 50.0, 50.0))
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            Box::new(LoadingParent {
+                child: LoadingProbe {
+                    calls: calls.clone(),
+                    loading: false,
+                },
+            }),
+        );
+        let event = WidgetEvent::PointerMoved {
+            position: Vec2::new(25.0, 25.0),
+        };
+        let mut cx = EventContext {
+            event: &event,
+            bounds: Rect::new(0.0, 0.0, 100.0, 100.0),
+            scale: 1.0,
+        };
+        let widget = arena.internal_widget_mut(id, &[]).expect("test invariant");
+        assert_eq!(widget.event(&mut cx), EventResponse::Ignored);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn sync_overlays_closes_loading_owners_popup() {
+        struct PopupOwner {
+            opened: bool,
+        }
+        impl Widget for PopupOwner {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::ZERO
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+            fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
+                if !self.opened {
+                    self.opened = true;
+                    overlay.open(
+                        Box::new(DummyWidget),
+                        OverlayAnchor::Bounds(Rect::new(0.0, 0.0, 10.0, 10.0)),
+                    );
+                }
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let id = arena.insert_with_widget(
+            hot_visible(Rect::new(0.0, 0.0, 100.0, 40.0)),
+            Box::new(PopupOwner { opened: false }),
+        );
+        arena.sync_overlays();
+        assert_eq!(arena.overlay().entries().len(), 1);
+
+        // A live popup floating over a shimmer is worse than either
+        // alone — entering loading closes it.
+        arena.set_loading(id, true);
+        arena.sync_overlays();
+        assert_eq!(arena.overlay().entries().len(), 0);
     }
 }
 

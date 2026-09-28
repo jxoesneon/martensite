@@ -532,6 +532,25 @@ fn point_in_path(point: Vec2, pts: &[Vec2]) -> bool {
     martensite_core::shape::point_in_polygon(pts, point)
 }
 
+/// `true` when `id` lies inside a loading subtree — the node itself or
+/// any ancestor resolves loading via
+/// [`WidgetArena::node_loading`](martensite_core::WidgetArena::node_loading)
+/// (the `NodeFlags::LOADING` override or `Widget::is_loading`,
+/// ADR-0040). A loading node's placeholder replaces its entire
+/// subtree, so dispatch paths that bypass hit-testing (pointer
+/// capture, keyboard focus, tracked hover) must consult this
+/// ancestor-inclusive form, not just the node's own state.
+pub(crate) fn loading_covered(arena: &WidgetArena, id: WidgetId) -> bool {
+    let mut current = Some(id);
+    while let Some(node) = current {
+        if arena.node_loading(node) {
+            return true;
+        }
+        current = arena.get_hot(node).and_then(|h| h.parent);
+    }
+    false
+}
+
 /// Hit-tester bound to a widget arena.
 ///
 /// Borrows the arena immutably and resolves which widget sits beneath a given
@@ -672,12 +691,17 @@ impl<'a> HitTester<'a> {
 
         // Underflow-covered subtrees (engaged Hide/Collapse/Scrim) are
         // unhittable — the policy's veil or invisibility covers the
-        // whole region.
-        if self
-            .arena
-            .get_cold(node)
-            .and_then(|c| c.underflow_policy())
-            .is_some_and(|p| p.covers_input())
+        // whole region. Loading subtrees (ADR-0040) are unhittable the
+        // same way: the placeholder replaces the node's content and
+        // children, so the prune must run at entry — the child
+        // recursion below would otherwise reach into the suppressed
+        // subtree first.
+        if self.arena.node_loading(node)
+            || self
+                .arena
+                .get_cold(node)
+                .and_then(|c| c.underflow_policy())
+                .is_some_and(|p| p.covers_input())
         {
             return None;
         }
@@ -836,6 +860,86 @@ mod tests {
         // A point inside the covered child falls through to the parent —
         // the whole subtree is unhittable.
         let hit = tester.hit_test(root, Vec2::new(20.0, 5.0));
+        assert_eq!(hit.map(|h| h.widget_id), Some(root));
+    }
+
+    /// A widget that declares itself loading via `Widget::is_loading`.
+    struct LoadingWidget;
+
+    impl martensite_core::Widget for LoadingWidget {
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::LayoutContext,
+            _constraints: martensite_core::LayoutConstraints,
+        ) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut martensite_core::LayoutContext, _bounds: Rect) {}
+        fn is_loading(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn loading_flag_subtree_is_unhittable() {
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 200.0, 200.0);
+        let loading = arena.insert(
+            HotNode {
+                bounds: Rect::new(0.0, 0.0, 40.0, 10.0),
+                flags: NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED | NodeFlags::LOADING,
+                ..HotNode::default()
+            },
+            ColdNode::default(),
+        );
+        let grandchild = insert(&mut arena, 0.0, 0.0, 20.0, 5.0);
+        arena.append_child(root, loading).unwrap();
+        arena.append_child(loading, grandchild).unwrap();
+
+        let tester = HitTester::new(&arena);
+        // The point sits inside the loading child AND its descendant —
+        // both are suppressed, so the hit falls through to the parent.
+        let hit = tester.hit_test(root, Vec2::new(20.0, 5.0));
+        assert_eq!(hit.map(|h| h.widget_id), Some(root));
+    }
+
+    #[test]
+    fn widget_is_loading_subtree_is_unhittable() {
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 200.0, 200.0);
+        let loading = arena.insert(
+            hot_node(0.0, 0.0, 40.0, 10.0),
+            ColdNode::new(Box::new(LoadingWidget)),
+        );
+        arena.append_child(root, loading).unwrap();
+
+        let tester = HitTester::new(&arena);
+        // The widget's own `is_loading` declaration suppresses the
+        // subtree exactly like the `NodeFlags::LOADING` override.
+        let hit = tester.hit_test(root, Vec2::new(20.0, 5.0));
+        assert_eq!(hit.map(|h| h.widget_id), Some(root));
+    }
+
+    #[test]
+    fn loading_ancestor_prunes_descendants() {
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 200.0, 200.0);
+        let loading = arena.insert(
+            HotNode {
+                bounds: Rect::new(0.0, 0.0, 100.0, 100.0),
+                flags: NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED | NodeFlags::LOADING,
+                ..HotNode::default()
+            },
+            ColdNode::default(),
+        );
+        // The grandchild is perfectly live — but unreachable while its
+        // ancestor shimmers.
+        let grandchild = insert(&mut arena, 10.0, 10.0, 50.0, 50.0);
+        arena.append_child(root, loading).unwrap();
+        arena.append_child(loading, grandchild).unwrap();
+
+        let tester = HitTester::new(&arena);
+        let hit = tester.hit_test(root, Vec2::new(30.0, 30.0));
         assert_eq!(hit.map(|h| h.widget_id), Some(root));
     }
 

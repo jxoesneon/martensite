@@ -296,6 +296,9 @@ struct PopupState {
     highlighted: Option<usize>,
     /// Set by a popup row when it is activated (click or AT Click).
     activated: Option<usize>,
+    /// Mirrored from the owner — the popup paints skeleton rows while
+    /// the command data is pending instead of closing.
+    loading: bool,
 }
 
 /// One result inside the popup listbox — a stateless view over the
@@ -560,6 +563,32 @@ impl PalettePopup {
             painted_shape: Mutex::new(Shape::RECT),
         }
     }
+
+    /// The popup's frame — surface fill, border, and the painted-shape
+    /// record `clip_shape`/`hit_shape` read. Shared by `paint` and
+    /// `paint_loading` so the pending surface keeps the same outline.
+    fn paint_chrome(&self, cx: &mut PaintContext) {
+        let b = cx.bounds;
+        let rect = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        );
+        let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        *self.painted_shape.lock() = popup_shape.clone();
+        cx.list.push_fill_shape(
+            rect,
+            &popup_shape,
+            cx.color(TokenKey::SurfaceColor, POPUP_BG),
+        );
+        cx.list.push_stroke_shape(
+            rect,
+            &popup_shape,
+            cx.pt(1.0),
+            cx.color(TokenKey::BorderColor, POPUP_BORDER),
+        );
+    }
 }
 
 impl Widget for PalettePopup {
@@ -583,6 +612,11 @@ impl Widget for PalettePopup {
             cx.pt(160.0).min(constraints.max_size.x.max(0.0)),
             constraints.max_size.x.max(0.0),
         );
+        // A pending list has no rows to measure — hold a skeleton's
+        // worth of height so the loading surface stays legible.
+        if self.is_loading() {
+            s.y = s.y.max(3.0 * cx.pt(ROW_H) + cx.pt(2.0));
+        }
         s
     }
 
@@ -597,6 +631,12 @@ impl Widget for PalettePopup {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        // Pending rows are a placeholder, not live results — swallow
+        // input at the surface level (the overlay layer already gates
+        // dispatch to a loading entry; this covers ownerless embeds).
+        if self.is_loading() {
+            return EventResponse::Handled;
+        }
         // Keyboard on the popup itself: move the highlight / activate.
         // Production keyboard input stays with the owning field — this
         // path covers ownerless-embedded popups, mirroring
@@ -640,25 +680,37 @@ impl Widget for PalettePopup {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
+        self.paint_chrome(cx);
+    }
+
+    fn is_loading(&self) -> bool {
+        self.shared.lock().loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // Same chrome as `paint` — the pending surface keeps its
+        // bordered outline while the result rows stand in as skeleton
+        // bars inside it.
+        self.paint_chrome(cx);
         let b = cx.bounds;
-        let rect = kurbo::Rect::new(
-            f64::from(b.min_x()),
-            f64::from(b.min_y()),
-            f64::from(b.max_x()),
-            f64::from(b.max_y()),
+        let pad = cx.pt(4.0);
+        let inner = Rect::new(
+            b.min_x() + pad,
+            b.min_y() + pad,
+            (b.width() - pad * 2.0).max(0.0),
+            (b.height() - pad * 2.0).max(0.0),
         );
-        let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
-        *self.painted_shape.lock() = popup_shape.clone();
-        cx.list.push_fill_shape(
-            rect,
-            &popup_shape,
-            cx.color(TokenKey::SurfaceColor, POPUP_BG),
-        );
-        cx.list.push_stroke_shape(
-            rect,
-            &popup_shape,
-            cx.pt(1.0),
-            cx.color(TokenKey::BorderColor, POPUP_BORDER),
+        let rows = self
+            .shared
+            .lock()
+            .items
+            .len()
+            .clamp(3, self.max_rows.max(3));
+        martensite_core::loading::paint_skeleton(
+            cx,
+            inner,
+            martensite_core::loading::SkeletonShape::Rows { count: rows },
+            phase,
         );
     }
 
@@ -761,6 +813,10 @@ pub struct CommandPalette {
     popup_id: Option<u64>,
     /// State shared with popup widgets.
     shared: Arc<Mutex<PopupState>>,
+    /// Whether the command data is pending (ADR-0040): while the
+    /// popup is open the pending state lives in its skeleton rows —
+    /// the field reports loading only once the popup is closed.
+    loading: bool,
     /// `take_activated` out-seam — the activated action's id.
     activated: Option<String>,
     /// Whether the widget holds keyboard focus.
@@ -814,7 +870,9 @@ impl CommandPalette {
                 items: Vec::new(),
                 highlighted: None,
                 activated: None,
+                loading: false,
             })),
+            loading: false,
             activated: None,
             focused: false,
             cached_bounds: Rect::default(),
@@ -1010,6 +1068,60 @@ impl CommandPalette {
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
+    }
+
+    /// Sets whether the command data is pending (builder version).
+    ///
+    /// While `loading` is set, an open popup shows skeleton rows
+    /// instead of results — an async command source holds the list
+    /// open while entries stream in.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CommandPalette;
+    ///
+    /// let pal = CommandPalette::new().loading(true);
+    /// assert!(pal.is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.set_loading(loading);
+        self
+    }
+
+    /// Sets whether the command data is pending (mutable version) —
+    /// the `Bound::push` seam for async command sources.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CommandPalette;
+    ///
+    /// let mut pal = CommandPalette::new();
+    /// pal.set_loading(true);
+    /// assert!(pal.is_loading());
+    /// pal.set_loading(false);
+    /// assert!(!pal.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+        self.shared.lock().loading = loading;
+    }
+
+    /// Whether the command data is pending.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CommandPalette;
+    ///
+    /// assert!(!CommandPalette::new().is_loading());
+    /// ```
+    #[inline]
+    pub fn is_loading(&self) -> bool {
+        self.loading
     }
 
     /// Shares a [`crate::text_paint::TextPainter`] so the field and
@@ -1333,6 +1445,7 @@ impl CommandPalette {
             })
             .collect();
         state.highlighted = self.highlighted;
+        state.loading = self.loading;
     }
 
     /// Applies state the popup wrote into the shared slot: an
@@ -1680,6 +1793,14 @@ impl Widget for CommandPalette {
             },
             _ => self.forward_then_edit(cx),
         }
+    }
+
+    fn is_loading(&self) -> bool {
+        // While the result list is open the pending state is carried
+        // by the popup's skeleton rows — the arena closes popups owned
+        // by a loading widget, so the field reports loading only once
+        // the popup is closed.
+        self.loading && !self.open
     }
 
     fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
@@ -2130,5 +2251,76 @@ mod tests {
         let mut node = AccessKitNode::new(accesskit::Role::Unknown);
         pal.accessibility(&mut node);
         assert!(node.is_disabled());
+    }
+
+    #[test]
+    fn loading_flag_round_trip() {
+        let mut pal = palette(&[("a", "Alpha")]);
+        assert!(!pal.is_loading());
+        assert!(!<CommandPalette as Widget>::is_loading(&pal));
+        pal.set_loading(true);
+        assert!(pal.is_loading());
+        assert!(<CommandPalette as Widget>::is_loading(&pal));
+        pal.set_loading(false);
+        assert!(!pal.is_loading());
+        assert!(!<CommandPalette as Widget>::is_loading(&pal));
+    }
+
+    #[test]
+    fn loading_keeps_popup_open_with_skeleton_rows() {
+        let mut pal = palette(&[("a", "Alpha"), ("b", "Beta")]);
+        laid_out(&mut pal);
+        pal.open();
+        let mut o = overlay();
+        pal.sync_overlay(&mut o);
+        o.layout_pass();
+        let id = pal.popup_id.unwrap();
+        assert!(!o.entry(id).unwrap().content().is_loading());
+
+        // The command source goes pending — the list stays mounted
+        // and its content reports loading; the field itself stays
+        // live (the arena would orphan-close a loading owner's popup).
+        pal.set_loading(true);
+        pal.sync_overlay(&mut o);
+        o.layout_pass();
+        assert_eq!(pal.popup_id, Some(id));
+        assert_eq!(o.len(), 1);
+        assert!(!<CommandPalette as Widget>::is_loading(&pal));
+        assert!(o.entry(id).unwrap().content().is_loading());
+
+        // A click inside the pending surface is swallowed — no pick.
+        let b = o.entry_bounds(id).unwrap();
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new((b.min_x() + b.max_x()) / 2.0, (b.min_y() + b.max_y()) / 2.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(o.dispatch_event(&press), EventResponse::Handled);
+        pal.sync_overlay(&mut o);
+        assert_eq!(pal.take_activated(), None);
+        assert!(pal.is_open());
+
+        // Data landing restores live rows in the same entry.
+        pal.set_loading(false);
+        pal.sync_overlay(&mut o);
+        o.layout_pass();
+        assert_eq!(pal.popup_id, Some(id));
+        assert!(!o.entry(id).unwrap().content().is_loading());
+    }
+
+    #[test]
+    fn loading_empty_popup_has_legible_height() {
+        // A pending palette with zero matches still mounts a skeleton
+        // surface instead of collapsing to a sliver.
+        let mut pal = palette(&[("a", "Alpha")]).with_query("zzz");
+        laid_out(&mut pal);
+        pal.open();
+        pal.set_loading(true);
+        let mut o = overlay();
+        pal.sync_overlay(&mut o);
+        o.layout_pass();
+        let id = pal.popup_id.unwrap();
+        assert!(o.entry(id).unwrap().content().is_loading());
+        assert!(o.entry_bounds(id).unwrap().height() >= 60.0);
     }
 }

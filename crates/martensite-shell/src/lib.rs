@@ -11,6 +11,9 @@
 //!   `WindowEventOutcome`s.
 //! - **[`snap`]**: Window snap-layout / tiling configuration
 //!   ([`SnapLayout`]).
+//! - **[`prefs`]**: one-shot OS user-preference probes
+//!   ([`prefers_reduced_motion`]) that the window layer installs onto
+//!   the widget arena at startup.
 //! - **status_notifier**: StatusNotifierItem D-Bus system tray
 //!   registration (Linux only, `wayland-backend` feature).
 //!
@@ -43,6 +46,7 @@
 pub mod backdrop;
 pub mod event;
 pub mod platform_impl;
+pub mod prefs;
 pub mod snap;
 pub mod status_notifier;
 
@@ -51,4 +55,5 @@ pub use backdrop::{
     BackdropMode, StubBackdropController, VibrancyMaterial, Window,
 };
 pub use event::{ShellEvent, ShellEventQueue};
+pub use prefs::{prefers_reduced_motion, REDUCED_MOTION_ENV};
 pub use snap::SnapLayout;

@@ -157,6 +157,38 @@ pub(crate) fn paint_status_glyph(
     }
 }
 
+/// Paints the "data unknown" mark centered at `center` — a hollow
+/// question-mark glyph in muted ink. This is the safety-widget
+/// loading treatment (ADR-0040): a pending status lamp must read
+/// *unknown*, never as a live value and never as generic shimmer —
+/// `paint_loading` callers pass this mark instead of the shared
+/// skeleton painter.
+pub(crate) fn paint_unknown_glyph(
+    list: &mut martensite_core::PaintList,
+    center: Vec2,
+    r: f32,
+    ink: [u8; 4],
+) {
+    let (x, y) = (f64::from(center.x), f64::from(center.y));
+    let r = f64::from(r);
+    let mut path = kurbo::BezPath::new();
+    // The hook: a small arc over the top, curling into the stem.
+    path.move_to((x - r * 0.42, y - r * 0.3));
+    path.quad_to((x - r * 0.35, y - r * 0.72), (x, y - r * 0.72));
+    path.quad_to((x + r * 0.42, y - r * 0.72), (x + r * 0.38, y - r * 0.28));
+    path.quad_to((x + r * 0.34, y - r * 0.02), (x, y + r * 0.12));
+    path.line_to((x, y + r * 0.3));
+    list.push_stroke_path(path, (r * 0.3).max(1.0) as f32, ink);
+    // The dot under the stem.
+    let dr = r * 0.2;
+    let dy = y + r * 0.58;
+    list.push_fill_shape(
+        kurbo::Rect::new(x - dr, dy - dr, x + dr, dy + dr),
+        &martensite_core::shape::Shape::circle(Vec2::new(x as f32, dy as f32), dr as f32),
+        ink,
+    );
+}
+
 /// Paints a small status lamp chip — the status-colored disc plus the
 /// per-status glyph — centered at `center` with device-px radius `r`.
 /// Shared by the icon widgets (`AppGrid`, `Dock`, `Filmstrip`) whose
@@ -205,6 +237,10 @@ pub struct StatusDot {
     /// Defaults to `true`.
     pub glyph: bool,
     status: Status,
+    /// Whether the status data is pending (ADR-0040). A pending lamp
+    /// renders the explicit *data unknown* treatment — a hollow ring
+    /// with a `?` mark — never generic shimmer.
+    loading: bool,
     bounds: Rect,
     scale: f32,
     text_painter: Option<crate::text_paint::SharedTextPainter>,
@@ -226,6 +262,7 @@ impl StatusDot {
             pulse: false,
             glyph: true,
             status: Status::Off,
+            loading: false,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
             text_painter: None,
@@ -288,6 +325,50 @@ impl StatusDot {
         self
     }
 
+    /// Sets whether the status data is pending (builder version).
+    ///
+    /// A pending lamp paints the explicit *data unknown* treatment —
+    /// a hollow ring with a `?` mark — and reports `unknown` to
+    /// assistive tech; it never shimmers like a content placeholder.
+    ///
+    /// ```
+    /// use martensite::widgets::status_dot::StatusDot;
+    ///
+    /// let d = StatusDot::new("L").loading(true);
+    /// assert!(d.is_loading());
+    /// ```
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets whether the status data is pending (mutable version) —
+    /// the `Bound::push` seam for a stale telemetry feed.
+    ///
+    /// ```
+    /// use martensite::widgets::status_dot::StatusDot;
+    ///
+    /// let mut d = StatusDot::new("L");
+    /// d.set_loading(true);
+    /// assert!(d.is_loading());
+    /// d.set_loading(false);
+    /// assert!(!d.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the status data is pending.
+    ///
+    /// ```
+    /// use martensite::widgets::status_dot::StatusDot;
+    ///
+    /// assert!(!StatusDot::new("L").is_loading());
+    /// ```
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
     /// Explicit painter override — see [`crate::text_paint`].
     ///
     /// ```
@@ -341,9 +422,50 @@ impl StatusDot {
     fn base_color(&self) -> [u8; 4] {
         self.status.fallback()
     }
+
+    /// Paints the label text right of the dot — shared by `paint` and
+    /// `paint_loading` so the lamp's name stays on screen while its
+    /// value is unknown.
+    fn paint_label(&self, cx: &mut PaintContext) {
+        if self.text.is_empty() {
+            return;
+        }
+        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+        let size = FONT_PT * cx.scale;
+        let d = cx.pt(DOT_PT);
+        let cy = self.bounds.min_y() + self.bounds.height() / 2.0;
+        let x = self.bounds.min_x() + d + cx.pt(GAP_PT);
+        let clip = Rect::new(
+            x,
+            self.bounds.min_y(),
+            (self.bounds.max_x() - x).max(0.0),
+            self.bounds.height(),
+        );
+        crate::text_paint::paint_label_clipped(
+            painter,
+            cx.list,
+            kurbo::Rect::new(
+                f64::from(clip.min_x()),
+                f64::from(clip.min_y()),
+                f64::from(clip.max_x()),
+                f64::from(clip.max_y()),
+            ),
+            kurbo::Point::new(f64::from(x), f64::from(cy - size / 2.0)),
+            &self.text,
+            size,
+            cx.color(TokenKey::TextColor, FG),
+        );
+    }
 }
 
 impl Widget for StatusDot {
+    /// The status lamp is the alarm channel by construction — `Error`
+    /// paints the reserved alarm hue deliberately. The `@alarm` name
+    /// marker records that semantics for the design-lint lineage walk.
+    fn debug_name(&self) -> &'static str {
+        "StatusDot@alarm"
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let text_w = if self.text.is_empty() {
             0.0
@@ -372,7 +494,13 @@ impl Widget for StatusDot {
         } else {
             self.text.clone()
         });
-        node.set_value(self.status.label());
+        // A pending lamp reports "unknown" — never a stale status —
+        // so the a11y channel matches the `?` mark on screen.
+        node.set_value(if self.loading {
+            "unknown"
+        } else {
+            self.status.label()
+        });
         if !self.enabled {
             node.set_disabled();
         }
@@ -380,6 +508,40 @@ impl Widget for StatusDot {
 
     fn event(&mut self, _cx: &mut EventContext) -> EventResponse {
         EventResponse::Ignored
+    }
+
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, _phase: Option<f32>) {
+        // "Data unknown", not shimmer: a pending status lamp keeps its
+        // labelled frame but the disc becomes a hollow ring with a `?`
+        // mark — distinct from every valid status (all of which fill
+        // the disc) and from a content placeholder. `_phase` is
+        // ignored deliberately; safety widgets never sweep.
+        let muted = cx.color(TokenKey::TextMutedColor, MUTED);
+        let d = cx.pt(DOT_PT);
+        let cy = self.bounds.min_y() + self.bounds.height() / 2.0;
+        let cxdot = self.bounds.min_x() + d / 2.0;
+        let center = Vec2::new(cxdot, cy);
+        let r = d / 2.0;
+        let dot_rect = kurbo::Rect::new(
+            f64::from(cxdot - r),
+            f64::from(cy - r),
+            f64::from(cxdot + r),
+            f64::from(cy + r),
+        );
+        cx.list.push_stroke_shape(
+            dot_rect,
+            &martensite_core::shape::Shape::circle(center, r),
+            cx.pt(1.5),
+            muted,
+        );
+        if self.glyph {
+            paint_unknown_glyph(cx.list, center, r * 0.66, muted);
+        }
+        self.paint_label(cx);
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -426,31 +588,7 @@ impl Widget for StatusDot {
             paint_status_glyph(cx.list, center, r * 0.62, self.status, ink);
         }
 
-        if !self.text.is_empty() {
-            let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-            let size = FONT_PT * cx.scale;
-            let x = self.bounds.min_x() + d + cx.pt(GAP_PT);
-            let clip = Rect::new(
-                x,
-                self.bounds.min_y(),
-                (self.bounds.max_x() - x).max(0.0),
-                self.bounds.height(),
-            );
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                kurbo::Rect::new(
-                    f64::from(clip.min_x()),
-                    f64::from(clip.min_y()),
-                    f64::from(clip.max_x()),
-                    f64::from(clip.max_y()),
-                ),
-                kurbo::Point::new(f64::from(x), f64::from(cy - size / 2.0)),
-                &self.text,
-                size,
-                cx.color(TokenKey::TextColor, FG),
-            );
-        }
+        self.paint_label(cx);
     }
 }
 
@@ -542,5 +680,96 @@ mod tests {
         }
         // The glyph mark adds the check stroke on top of the disc fill.
         assert!(paint(&on) > paint(&off));
+    }
+
+    fn painted_loading(d: &StatusDot, phase: Option<f32>) -> martensite_core::PaintList {
+        let theme = martensite_theme::Theme::new("test");
+        let mut list = martensite_core::PaintList::new();
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds: Rect::new(0.0, 0.0, 80.0, 18.0),
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        d.paint_loading(&mut cx, phase);
+        list
+    }
+
+    fn laid_out_dot(d: &mut StatusDot) {
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        d.layout(&mut cx, Rect::new(0.0, 0.0, 80.0, 18.0));
+    }
+
+    #[test]
+    fn loading_flag_round_trip() {
+        let mut d = StatusDot::new("Pump").status(Status::Ok);
+        assert!(!d.is_loading());
+        assert!(!<StatusDot as Widget>::is_loading(&d));
+        d.set_loading(true);
+        assert!(d.is_loading());
+        assert!(<StatusDot as Widget>::is_loading(&d));
+        d.set_loading(false);
+        assert!(!d.is_loading());
+    }
+
+    #[test]
+    fn loading_a11y_reports_unknown_not_stale_status() {
+        let d = StatusDot::new("Pump").status(Status::Error).loading(true);
+        let mut node = AccessKitNode::new(accesskit::Role::Unknown);
+        d.accessibility(&mut node);
+        // "unknown" — never the stale "error" the data had.
+        assert_eq!(node.value(), Some("unknown"));
+    }
+
+    #[test]
+    fn loading_paint_is_unknown_not_shimmer() {
+        use martensite_core::PaintCommand;
+        let mut d = StatusDot::new("Pump").status(Status::Error).loading(true);
+        laid_out_dot(&mut d);
+        // Even with an animated phase a safety lamp must never emit a
+        // shimmer band.
+        let list = painted_loading(&d, Some(0.5));
+        assert!(!list.commands.iter().any(|c| matches!(
+            c,
+            PaintCommand::FillLinearGradient(..) | PaintCommand::FillLinearGradientPath(..)
+        )));
+        // The disc must not borrow the stale status hue — no filled
+        // shape in `Error` red anywhere.
+        assert!(!list.commands.iter().any(|c| matches!(
+            c,
+            PaintCommand::FillRect(_, ERR) | PaintCommand::FillPath(_, ERR)
+        )));
+        // The label still paints — the lamp's name is known even when
+        // its value isn't.
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::DrawText(_, text, _, _) if text == "Pump")));
+    }
+
+    #[test]
+    fn loading_paint_without_glyph_is_ring_only() {
+        use martensite_core::PaintCommand;
+        // `glyph(false)` drops the `?` mark too — the hollow ring is
+        // the minimum unknown treatment.
+        let mut d = StatusDot::new("")
+            .status(Status::Ok)
+            .glyph(false)
+            .loading(true);
+        laid_out_dot(&mut d);
+        let list = painted_loading(&d, None);
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::StrokePath(..))));
+        assert!(!list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillLinearGradient(..))));
     }
 }

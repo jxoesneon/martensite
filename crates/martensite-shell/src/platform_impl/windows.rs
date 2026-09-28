@@ -610,6 +610,52 @@ impl Default for WindowsSnapLayout {
     }
 }
 
+/// Returns `true` when the user turned Windows client-area animations
+/// **off** (System → Accessibility → Visual effects → "Animation
+/// effects"), the signal behind `prefers-reduced-motion` (ADR-0040
+/// phase 2).
+///
+/// Reads `SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION)` — Windows
+/// exposes no dedicated reduce-motion boolean; the client-area
+/// animation flag is the documented equivalent (the accessibility
+/// toggle writes it). Returns `false` when the call fails. Invoked by
+/// [`crate::prefs::prefers_reduced_motion`]; a one-shot startup consult
+/// — callers that want live tracking re-query on their own
+/// settings-change hooks.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_shell::platform_impl::windows::prefers_reduced_motion;
+///
+/// let _ = prefers_reduced_motion();
+/// ```
+#[must_use]
+pub fn prefers_reduced_motion() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    };
+    // The pvParam out-pointer for SPI_GETCLIENTAREAANIMATION is a Win32
+    // `BOOL` (C int); a plain `i32` is layout-identical.
+    let mut enabled: i32 = 0;
+    // SAFETY:
+    // Preconditions:
+    // - `pvParam` points to a valid writable `BOOL` for the duration of
+    //   the call; `fWinIni = 0` performs a query only (no profile write,
+    //   no broadcast).
+    // Postconditions:
+    // - On success `enabled` holds the client's animation flag.
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some(&mut enabled as *mut i32 as *mut core::ffi::c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    }
+    .is_ok_and(|()| enabled == 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -695,5 +741,12 @@ mod tests {
         assert!(!snap.is_supported());
         assert_eq!(snap.max_zones(), 0);
         assert!(!snap.should_show_snap_flyout(true));
+    }
+
+    #[test]
+    fn prefers_reduced_motion_returns_bool_without_panic() {
+        // The OS setting's value cannot be asserted, only that the
+        // SystemParametersInfoW probe resolves to a bool.
+        let _ = prefers_reduced_motion();
     }
 }

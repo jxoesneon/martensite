@@ -25,6 +25,10 @@ pub mod arena;
 pub mod fence;
 /// Opaque, niche-optimized widget identifier type.
 pub mod id;
+/// Shared skeleton/shimmer painter for loading placeholders —
+/// the single paint path behind `Widget::is_loading`/
+/// `Widget::paint_loading` and the facade `Skeleton` widget.
+pub mod loading;
 /// Hot and cold node representations for cache-friendly scene graph storage.
 pub mod node;
 /// In-window overlay (popup) layer: z-ordered popups painted above

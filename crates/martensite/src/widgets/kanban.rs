@@ -24,6 +24,7 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use martensite_core::loading::{paint_skeleton, SkeletonShape};
 use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
@@ -76,6 +77,9 @@ struct Drag {
 pub struct Kanban {
     /// Accessibility label.
     pub label: String,
+    /// Whether the board is pending — paints placeholder lanes
+    /// instead of the cards (ADR-0040).
+    loading: bool,
     cols: Vec<Col>,
     drag: Option<Drag>,
     pressed: Option<(usize, usize, Vec2)>,
@@ -102,6 +106,7 @@ impl Kanban {
     pub fn new() -> Self {
         Self {
             label: "Kanban".to_string(),
+            loading: false,
             cols: Vec::new(),
             drag: None,
             pressed: None,
@@ -152,6 +157,48 @@ impl Kanban {
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = label.into();
         self
+    }
+
+    /// Sets the loading flag — while set, the widget paints
+    /// placeholder lanes instead of the cards and the framework
+    /// suppresses input/a11y for the subtree (ADR-0040).
+    ///
+    /// ```
+    /// use martensite::widgets::kanban::Kanban;
+    ///
+    /// assert!(Kanban::new().loading(true).is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets the loading flag (mutating form).
+    ///
+    /// ```
+    /// use martensite::widgets::kanban::Kanban;
+    ///
+    /// let mut k = Kanban::new();
+    /// k.set_loading(true);
+    /// assert!(k.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the board's content is pending.
+    ///
+    /// ```
+    /// use martensite::widgets::kanban::Kanban;
+    ///
+    /// assert!(!Kanban::new().is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_loading(&self) -> bool {
+        self.loading
     }
 
     /// Column count.
@@ -318,6 +365,33 @@ impl Widget for Kanban {
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Group);
         node.set_label(format!("{} — {} columns", self.label, self.cols.len()));
+    }
+
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // A pending board reads as lanes of card placeholders — one
+        // row stack per column keeps the column structure legible.
+        let b = cx.bounds;
+        let pad = cx.pt(PAD_PT);
+        let gap = cx.pt(GAP_PT);
+        let head = cx.pt(HEAD_PT);
+        let cols = self.cols.len().max(1);
+        let lane_w = (b.width() - 2.0 * pad - gap * (cols - 1) as f32) / cols as f32;
+        let slot_px = cx.pt(CARD_PT + CARD_GAP_PT).max(1.0);
+        let body_h = (b.height() - 2.0 * pad - head).max(0.0);
+        let rows = ((body_h / slot_px).floor() as usize).clamp(1, 32);
+        for c in 0..cols {
+            let lane = Rect::new(
+                b.min_x() + pad + c as f32 * (lane_w + gap),
+                b.min_y() + pad + head,
+                lane_w.max(0.0),
+                body_h,
+            );
+            paint_skeleton(cx, lane, SkeletonShape::Rows { count: rows }, phase);
+        }
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -556,6 +630,31 @@ mod tests {
         assert_eq!(k.card_count(0), 2);
         assert_eq!(k.card_title(0, 1), "B");
         assert_eq!(k.card_title(1, 0), "C");
+    }
+
+    #[test]
+    fn loading_flag_and_placeholder() {
+        assert!(!Kanban::new().is_loading());
+        assert!(Kanban::new().loading(true).is_loading());
+        let mut k = board();
+        k.set_loading(true);
+        assert!(Widget::is_loading(&k));
+        let mut list = martensite_core::PaintList::new();
+        let theme = martensite_theme::Theme::new("test");
+        k.paint_loading(
+            &mut PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 320.0, 180.0),
+                scale: 1.0,
+                theme: &theme,
+                text_painter: None,
+            },
+            None,
+        );
+        // Two lanes of placeholders → well over three commands.
+        assert!(list.len() >= 6);
+        k.set_loading(false);
+        assert!(!k.is_loading());
     }
 
     #[test]

@@ -116,6 +116,9 @@ struct TreeChannel {
     picked: Option<String>,
     /// The surface asked to close without picking (embedded `Escape`).
     close_requested: bool,
+    /// Mirrored from the owner — the popup paints skeleton rows while
+    /// the tree data is pending instead of closing.
+    loading: bool,
 }
 
 /// The popup surface for a [`TreeSelect`] — a bordered
@@ -207,6 +210,32 @@ impl TreePopup {
             None => {}
         }
     }
+
+    /// The popup's frame — surface fill, border, and the painted-shape
+    /// record `clip_shape`/`hit_shape` read. Shared by `paint` and
+    /// `paint_loading` so the pending surface keeps the same outline.
+    fn paint_chrome(&self, cx: &mut PaintContext) {
+        let b = cx.bounds;
+        let rect = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        );
+        let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        *self.painted_shape.lock().expect("popup shape poisoned") = popup_shape.clone();
+        cx.list.push_fill_shape(
+            rect,
+            &popup_shape,
+            cx.color(TokenKey::SurfaceColor, POPUP_BG),
+        );
+        cx.list.push_stroke_shape(
+            rect,
+            &popup_shape,
+            cx.pt(1.0),
+            cx.color(TokenKey::BorderColor, POPUP_BORDER),
+        );
+    }
 }
 
 impl Widget for TreePopup {
@@ -216,7 +245,12 @@ impl Widget for TreePopup {
             min_size: Vec2::ZERO,
             max_size: (constraints.max_size - Vec2::splat(edge * 2.0)).max(Vec2::ZERO),
         };
-        let s = self.tree.measure(cx, inner);
+        let mut s = self.tree.measure(cx, inner);
+        // A pending tree may have no rows yet — hold a skeleton's
+        // worth of height so the loading surface stays legible.
+        if self.is_loading() {
+            s.y = s.y.max(3.0 * cx.pt(24.0));
+        }
         (s + Vec2::splat(edge * 2.0)).min(constraints.max_size.max(Vec2::ZERO))
     }
 
@@ -245,6 +279,12 @@ impl Widget for TreePopup {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        // Pending rows are a placeholder, not a live tree — swallow
+        // input at the surface level (the overlay layer already gates
+        // dispatch to a loading entry; this covers ownerless embeds).
+        if self.is_loading() {
+            return EventResponse::Handled;
+        }
         // `Escape` while the layer isn't intercepting (ownerless
         // embedded use) asks the owner to close. In arena use the
         // OverlayLayer consumes `Escape` first.
@@ -268,25 +308,31 @@ impl Widget for TreePopup {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
+        self.paint_chrome(cx);
+    }
+
+    fn is_loading(&self) -> bool {
+        self.channel.lock().expect("tree channel poisoned").loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // Same chrome as `paint` — the pending surface keeps its
+        // bordered outline while tree rows stand in as skeleton bars
+        // inside it.
+        self.paint_chrome(cx);
         let b = cx.bounds;
-        let rect = kurbo::Rect::new(
-            f64::from(b.min_x()),
-            f64::from(b.min_y()),
-            f64::from(b.max_x()),
-            f64::from(b.max_y()),
+        let edge = cx.pt(POPUP_EDGE);
+        let inner = Rect::new(
+            b.min_x() + edge + cx.pt(4.0),
+            b.min_y() + edge + cx.pt(4.0),
+            (b.width() - (edge + cx.pt(4.0)) * 2.0).max(0.0),
+            (b.height() - (edge + cx.pt(4.0)) * 2.0).max(0.0),
         );
-        let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
-        *self.painted_shape.lock().expect("popup shape poisoned") = popup_shape.clone();
-        cx.list.push_fill_shape(
-            rect,
-            &popup_shape,
-            cx.color(TokenKey::SurfaceColor, POPUP_BG),
-        );
-        cx.list.push_stroke_shape(
-            rect,
-            &popup_shape,
-            cx.pt(1.0),
-            cx.color(TokenKey::BorderColor, POPUP_BORDER),
+        martensite_core::loading::paint_skeleton(
+            cx,
+            inner,
+            martensite_core::loading::SkeletonShape::Rows { count: 4 },
+            phase,
         );
     }
 
@@ -363,6 +409,10 @@ pub struct TreeSelect {
     popup_id: Option<u64>,
     /// Result channel shared with the live surface.
     channel: Arc<Mutex<TreeChannel>>,
+    /// Whether the option tree is pending (ADR-0040): while the popup
+    /// is open the pending state lives in its skeleton rows — the
+    /// face reports loading only once the popup is closed.
+    loading: bool,
     /// One-shot pick awaiting [`TreeSelect::take_selected`].
     selected_pending: Option<String>,
     /// Face bounds from the last layout pass.
@@ -400,6 +450,7 @@ impl TreeSelect {
             open: false,
             popup_id: None,
             channel: Arc::new(Mutex::new(TreeChannel::default())),
+            loading: false,
             selected_pending: None,
             cached_bounds: Rect::default(),
             last_anchor: None,
@@ -496,6 +547,66 @@ impl TreeSelect {
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
+    }
+
+    /// Sets whether the option tree is pending (builder version).
+    ///
+    /// While `loading` is set, an open popup shows skeleton rows
+    /// instead of the tree — an async node source holds the popup
+    /// open while children stream in (an empty pending tree can
+    /// still open).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TreeSelect;
+    ///
+    /// let ts = TreeSelect::new().loading(true);
+    /// assert!(ts.is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.set_loading(loading);
+        self
+    }
+
+    /// Sets whether the option tree is pending (mutable version) —
+    /// the `Bound::push` seam for async node sources.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TreeSelect;
+    ///
+    /// let mut ts = TreeSelect::new();
+    /// ts.set_loading(true);
+    /// assert!(ts.is_loading());
+    /// ts.set_loading(false);
+    /// assert!(!ts.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+        self.channel.lock().expect("tree channel poisoned").loading = loading;
+        // A pending-but-empty tree may still open; a non-pending
+        // empty tree must not.
+        if self.nodes.is_empty() && !loading {
+            self.open = false;
+        }
+    }
+
+    /// Whether the option tree is pending.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TreeSelect;
+    ///
+    /// assert!(!TreeSelect::new().is_loading());
+    /// ```
+    #[inline]
+    pub fn is_loading(&self) -> bool {
+        self.loading
     }
 
     /// Shares a [`crate::text_paint::TextPainter`] so `paint` emits
@@ -631,8 +742,10 @@ impl TreeSelect {
     }
 
     /// Opens the tree popup on the next
-    /// [`sync_overlay`](Self::sync_overlay). A no-op while disabled or
-    /// when the tree is empty (mirrors `Dropdown::open`).
+    /// [`sync_overlay`](Self::sync_overlay). A no-op while disabled;
+    /// an empty tree may open only while [`loading`](Self::loading)
+    /// is set, so the skeleton surface can stand in for pending nodes
+    /// (mirrors `Dropdown::open`).
     ///
     /// # Examples
     ///
@@ -644,7 +757,7 @@ impl TreeSelect {
     /// assert!(ts.is_open());
     /// ```
     pub fn open(&mut self) {
-        if !self.enabled || self.nodes.is_empty() {
+        if !self.enabled || (self.nodes.is_empty() && !self.loading) {
             return;
         }
         self.open = true;
@@ -734,6 +847,9 @@ impl TreeSelect {
     /// ```
     pub fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
         self.drain_channel();
+        // Keep the pending flag current — the surface reads it live
+        // out of the shared channel.
+        self.channel.lock().expect("tree channel poisoned").loading = self.loading;
         // The layer dismissed our popup (outside press / Escape).
         if let Some(id) = self.popup_id {
             if !overlay.is_open(id) {
@@ -955,6 +1071,14 @@ impl Widget for TreeSelect {
             },
             _ => EventResponse::Ignored,
         }
+    }
+
+    fn is_loading(&self) -> bool {
+        // While the tree popup is open the pending state is carried
+        // by its skeleton rows — the arena closes popups owned by a
+        // loading widget, so the face reports loading only once the
+        // popup is closed.
+        self.loading && !self.open
     }
 
     fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
@@ -1379,5 +1503,87 @@ mod tests {
         let mut node = AccessKitNode::new(accesskit::Role::Unknown);
         ts.accessibility(&mut node);
         assert!(node.is_disabled());
+    }
+
+    #[test]
+    fn loading_flag_round_trip() {
+        let mut ts = TreeSelect::new().tree(nodes());
+        assert!(!ts.is_loading());
+        assert!(!<TreeSelect as Widget>::is_loading(&ts));
+        ts.set_loading(true);
+        assert!(ts.is_loading());
+        assert!(<TreeSelect as Widget>::is_loading(&ts));
+        ts.set_loading(false);
+        assert!(!ts.is_loading());
+        assert!(!<TreeSelect as Widget>::is_loading(&ts));
+    }
+
+    #[test]
+    fn loading_keeps_popup_open_with_skeleton_rows() {
+        let mut ts = TreeSelect::new().tree(nodes());
+        laid_out(&mut ts);
+        let mut o = overlay();
+        let (id, _) = open_popup(&mut ts, &mut o);
+        assert!(!o.entry(id).unwrap().content().is_loading());
+
+        // The node source goes pending — the popup stays mounted and
+        // its content reports loading; the face itself stays live
+        // (the arena would orphan-close a loading owner's popup).
+        ts.set_loading(true);
+        ts.sync_overlay(&mut o);
+        o.layout_pass();
+        assert_eq!(ts.popup_id, Some(id));
+        assert_eq!(o.len(), 1);
+        assert!(!<TreeSelect as Widget>::is_loading(&ts));
+        assert!(o.entry(id).unwrap().content().is_loading());
+
+        // A click inside the pending surface is swallowed — no pick.
+        let b = o.entry_bounds(id).unwrap();
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new((b.min_x() + b.max_x()) / 2.0, (b.min_y() + b.max_y()) / 2.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(o.dispatch_event(&press), EventResponse::Handled);
+        ts.sync_overlay(&mut o);
+        assert_eq!(ts.take_selected(), None);
+        assert!(ts.is_open());
+
+        // Data landing restores the live tree in the same entry.
+        ts.set_loading(false);
+        ts.sync_overlay(&mut o);
+        o.layout_pass();
+        assert_eq!(ts.popup_id, Some(id));
+        assert!(!o.entry(id).unwrap().content().is_loading());
+    }
+
+    #[test]
+    fn loading_empty_tree_opens_skeleton_popup() {
+        // An empty tree normally refuses to open — while pending, the
+        // skeleton rows stand in so the popup is already mounted when
+        // the async nodes land.
+        let mut ts = TreeSelect::new().loading(true);
+        laid_out(&mut ts);
+        ts.open();
+        assert!(ts.is_open());
+        let mut o = overlay();
+        ts.sync_overlay(&mut o);
+        o.layout_pass();
+        assert_eq!(o.len(), 1);
+        let id = ts.popup_id.unwrap();
+        assert!(o.entry(id).unwrap().content().is_loading());
+        // The skeleton surface keeps a legible height (3-row floor).
+        assert!(o.entry_bounds(id).unwrap().height() >= 60.0);
+        // Clearing the pending flag on a still-empty tree closes the
+        // popup — there is nothing to show until nodes land.
+        ts.set_loading(false);
+        assert!(!ts.is_open());
+        ts.sync_overlay(&mut o);
+        assert_eq!(o.len(), 0);
+        // …and when nodes arrive the normal open path works again.
+        ts.set_tree(nodes());
+        ts.open();
+        ts.sync_overlay(&mut o);
+        assert_eq!(o.len(), 1);
     }
 }

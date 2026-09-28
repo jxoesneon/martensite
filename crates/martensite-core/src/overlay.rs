@@ -884,6 +884,23 @@ impl OverlayLayer {
         theme: &martensite_theme::Theme,
         text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
     ) {
+        // A standalone layer has no arena clock — loading placeholders
+        // paint statically, the reduced-motion/deterministic path.
+        self.paint_with_phase(list, theme, text_painter, None);
+    }
+
+    /// [`Self::paint`] driven by the arena's shared shimmer clock —
+    /// `phase` is handed to [`Widget::paint_loading`] so popup
+    /// skeletons sweep in lock-step with arena content (`None` paints
+    /// statically). Called by
+    /// [`WidgetArena::build_paint_list`](crate::WidgetArena::build_paint_list).
+    pub(crate) fn paint_with_phase(
+        &self,
+        list: &mut PaintList,
+        theme: &martensite_theme::Theme,
+        text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
+        phase: Option<f32>,
+    ) {
         // One parent scope around all popup content: the paint audit
         // treats "Overlay"-scoped fills/text as intentional occlusion,
         // so a popup covering page content is not flagged as a bug —
@@ -907,6 +924,7 @@ impl OverlayLayer {
                     self.scale_factor,
                     text_painter,
                     Some(self.viewport),
+                    phase,
                 );
             }
             list.pop_scope();
@@ -1012,18 +1030,23 @@ impl OverlayLayer {
                 }
             }
             if let Some(entry) = self.entries.last_mut() {
-                let owner = entry.owner;
-                let mut cx = EventContext {
-                    event,
-                    bounds: entry.resolved,
-                    scale: self.scale_factor,
-                };
-                let response = entry.content.event(&mut cx);
-                let id = entry.id;
-                self.apply_capture_response(id, response);
-                self.note_dirty_owner(owner);
-                if response != EventResponse::Ignored {
-                    return response;
+                // Loading popup content receives no keys — the event
+                // falls through to the focused owner, exactly like an
+                // `Ignored` response.
+                if !entry.content.is_loading() {
+                    let owner = entry.owner;
+                    let mut cx = EventContext {
+                        event,
+                        bounds: entry.resolved,
+                        scale: self.scale_factor,
+                    };
+                    let response = entry.content.event(&mut cx);
+                    let id = entry.id;
+                    self.apply_capture_response(id, response);
+                    self.note_dirty_owner(owner);
+                    if response != EventResponse::Ignored {
+                        return response;
+                    }
                 }
             }
             return EventResponse::Ignored;
@@ -1033,6 +1056,13 @@ impl OverlayLayer {
         // hit-testing.
         if let Some(captured) = self.capture {
             if let Some(index) = self.entries.iter().position(|e| e.id == captured) {
+                // A popup that entered loading cannot continue a
+                // capture — release it and swallow the event like any
+                // covered surface.
+                if self.entries[index].content.is_loading() {
+                    self.capture = None;
+                    return EventResponse::Handled;
+                }
                 let entry = &mut self.entries[index];
                 let owner = entry.owner;
                 let mut cx = EventContext {
@@ -1063,6 +1093,15 @@ impl OverlayLayer {
             for index in (floor..self.entries.len()).rev() {
                 if self.entries[index].resolved.contains(position) {
                     let entry = &mut self.entries[index];
+                    // Loading popup content is pending, not interactive
+                    // — it still occludes, so the event is swallowed;
+                    // a passthrough entry lets it continue down.
+                    if entry.content.is_loading() {
+                        if entry.options.passthrough {
+                            continue;
+                        }
+                        return EventResponse::Handled;
+                    }
                     let owner = entry.owner;
                     let mut cx = EventContext {
                         event,
@@ -1756,5 +1795,79 @@ mod tests {
         assert_eq!(tb, Rect::new(668.0, 528.0, 120.0, 60.0));
         let cb = layer.entry_bounds(c).unwrap();
         assert_eq!(cb, Rect::new(300.0, 250.0, 200.0, 100.0));
+    }
+
+    /// Loading popup content: paints its placeholder instead of its
+    /// body, swallows positional input, and lets keys fall through —
+    /// the `OverlayLayer` half of the loading chokepoints (popup
+    /// content bypasses `WidgetArena::paint_node` entirely).
+    struct LoadingPopup {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Widget for LoadingPopup {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::new(60.0, 40.0)
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+        fn is_loading(&self) -> bool {
+            true
+        }
+        fn paint(&self, cx: &mut crate::PaintContext) {
+            cx.list
+                .push_fill_rect(kurbo::Rect::new(0.0, 0.0, 1.0, 1.0), [7, 7, 7, 255]);
+        }
+        fn event(&mut self, _cx: &mut EventContext) -> EventResponse {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            EventResponse::Handled
+        }
+    }
+
+    #[test]
+    fn loading_popup_paints_placeholder_and_swallows_events() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut layer = layer();
+        let id = layer.open(
+            Box::new(LoadingPopup {
+                calls: calls.clone(),
+            }),
+            OverlayAnchor::Pointer(Vec2::new(10.0, 10.0)),
+        );
+        layer.layout_pass();
+
+        // Paint: the shared placeholder replaces the popup body — the
+        // skeleton base path appears, the marker fill does not.
+        let mut list = PaintList::new();
+        layer.paint(&mut list, &martensite_theme::Theme::new("fallback"), None);
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillPath(..))));
+        assert!(!list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillRect(_, [7, 7, 7, 255]))));
+
+        // Positional input is swallowed — the popup still occludes.
+        let b = layer.entry_bounds(id).unwrap();
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(b.min_x() + 1.0, b.min_y() + 1.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(layer.dispatch_event(&press), EventResponse::Handled);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        // Keys fall through to the owner like an `Ignored` response.
+        let key = WidgetEvent::KeyPressed {
+            key: "a".to_string(),
+            repeat: false,
+        };
+        assert_eq!(layer.dispatch_event(&key), EventResponse::Ignored);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(layer.is_open(id));
     }
 }

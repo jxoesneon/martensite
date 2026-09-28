@@ -147,6 +147,11 @@ pub struct AlarmPanel {
     /// Alarms, newest first.
     alarms: Vec<Alarm>,
     acked: Option<usize>,
+    /// Whether the alarm data is pending (ADR-0040). A pending panel
+    /// renders the explicit *data unknown* treatment — muted rows
+    /// with `?` marks and no severity hues or ACK chips — never
+    /// generic shimmer.
+    loading: bool,
     scroll: f32,
     /// Blink phase for unacknowledged Error edges.
     blink: f32,
@@ -184,6 +189,7 @@ impl AlarmPanel {
             label: "Alarms".to_string(),
             alarms: Vec::new(),
             acked: None,
+            loading: false,
             scroll: 0.0,
             blink: 0.0,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
@@ -347,6 +353,51 @@ impl AlarmPanel {
         self.acked.take()
     }
 
+    /// Sets whether the alarm data is pending (builder version).
+    ///
+    /// A pending panel paints the explicit *data unknown* treatment —
+    /// each row keeps its slot but loses severity hue and its `ACK`
+    /// chip, carrying a `?` mark instead — and reports `status
+    /// unknown` to assistive tech; it never shimmers.
+    ///
+    /// ```
+    /// use martensite::widgets::alarm_panel::AlarmPanel;
+    ///
+    /// let p = AlarmPanel::new().loading(true);
+    /// assert!(p.is_loading());
+    /// ```
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets whether the alarm data is pending (mutable version) —
+    /// the `Bound::push` seam for a stale alarm feed.
+    ///
+    /// ```
+    /// use martensite::widgets::alarm_panel::AlarmPanel;
+    ///
+    /// let mut p = AlarmPanel::new();
+    /// p.set_loading(true);
+    /// assert!(p.is_loading());
+    /// p.set_loading(false);
+    /// assert!(!p.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the alarm data is pending.
+    ///
+    /// ```
+    /// use martensite::widgets::alarm_panel::AlarmPanel;
+    ///
+    /// assert!(!AlarmPanel::new().is_loading());
+    /// ```
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
     /// Content height.
     fn content_h(&self) -> f32 {
         let s = self.scale;
@@ -360,6 +411,12 @@ impl AlarmPanel {
 }
 
 impl Widget for AlarmPanel {
+    /// Alarm annunciator — reserved-hue paint is the alarm channel
+    /// here, declared via the `@alarm` marker for the lint lineage.
+    fn debug_name(&self) -> &'static str {
+        "AlarmPanel@alarm"
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(W_PT).min(constraints.max_size.x.max(0.0)),
@@ -379,10 +436,22 @@ impl Widget for AlarmPanel {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::List);
+        if self.loading {
+            // A pending panel reports "unknown" — never a stale
+            // unacked count — matching the `?` marks on screen.
+            node.set_label(format!("{} — status unknown", self.label));
+            return;
+        }
         node.set_label(format!("{} — {} active", self.label, self.unacked_count()));
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        // Pending rows are placeholders — swallow input so a stale
+        // `ack_hits` rect can't acknowledge an alarm whose state is
+        // unknown.
+        if self.loading {
+            return EventResponse::Handled;
+        }
         match cx.event {
             WidgetEvent::Scroll { position, delta } => {
                 if self.bounds.contains(*position) {
@@ -424,6 +493,93 @@ impl Widget for AlarmPanel {
         }
         self.blink = (self.blink + dt.as_secs_f32() * 1.4) % 1.0;
         true
+    }
+
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, _phase: Option<f32>) {
+        // "Data unknown", not shimmer: the list keeps its row slots,
+        // but every row is muted — no severity edge (the severity is
+        // unknown), no ACK chip (there is nothing safe to
+        // acknowledge) — and carries the `?` mark. `_phase` is
+        // ignored deliberately; safety widgets never sweep.
+        let krect = |r: Rect| {
+            kurbo::Rect::new(
+                f64::from(r.min_x()),
+                f64::from(r.min_y()),
+                f64::from(r.max_x()),
+                f64::from(r.max_y()),
+            )
+        };
+        cx.list.push_fill_shape(
+            krect(self.bounds),
+            &martensite_core::shape::Shape::RECT,
+            cx.color(TokenKey::SurfaceColor, FACE),
+        );
+        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+        let s = self.scale;
+        let pad = PAD_PT * s;
+        let row_h = ROW_PT * s;
+        let msg_sz = 12.0 * s;
+        let muted = cx.color(TokenKey::TextMutedColor, MUTED);
+        // A stale list keeps its shape; an empty pending list still
+        // shows three unknown rows so the panel reads "fetching",
+        // not "empty".
+        let rows = self.alarms.len().max(3);
+        self.ack_hits.lock().clear();
+        cx.list.push_clip(krect(self.bounds));
+        for i in 0..rows {
+            let y = self.bounds.min_y() + pad + i as f32 * (row_h + pad) - self.scroll;
+            if y + row_h < self.bounds.min_y() || y > self.bounds.max_y() {
+                continue;
+            }
+            let r = Rect::new(
+                self.bounds.min_x() + pad,
+                y,
+                self.bounds.width() - pad * 2.0,
+                row_h,
+            );
+            let kr = krect(r);
+            cx.list.push_fill_shape(
+                kr,
+                &martensite_core::shape::Shape::rounded(5.0 * s),
+                cx.color(TokenKey::BackgroundColor, ROW_ACKED),
+            );
+            // Muted edge — a pending row must never borrow a live
+            // severity hue.
+            let edge_r = Rect::new(r.min_x(), y, EDGE_PT * s, row_h);
+            cx.list.push_fill_shape(
+                krect(edge_r),
+                &martensite_core::shape::Shape::RECT,
+                cx.color(TokenKey::DividerColor, [110, 112, 120, 255]),
+            );
+            // The stale message still shows, dimmed — ISA-101
+            // questionable data is the last value *marked* unknown,
+            // not erased. Empty slots get an em-dash placeholder.
+            let tx = r.min_x() + EDGE_PT * s + 8.0 * s;
+            let msg = self
+                .alarms
+                .get(i)
+                .map(|a| a.message.as_str())
+                .unwrap_or("—");
+            crate::text_paint::paint_label_clipped(
+                painter,
+                cx.list,
+                kr,
+                kurbo::Point::new(f64::from(tx), f64::from(y + 5.0 * s)),
+                msg,
+                msg_sz,
+                muted,
+            );
+            // The `?` mark where the ACK chip would sit — the
+            // redundant non-color unknown channel.
+            let gr = cx.pt(7.0);
+            let center = Vec2::new(r.max_x() - 22.0 * s, y + row_h / 2.0);
+            crate::widgets::status_dot::paint_unknown_glyph(cx.list, center, gr, muted);
+        }
+        cx.list.pop_clip();
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -646,5 +802,133 @@ mod tests {
             scale: 1.0,
         });
         assert_eq!(p.scroll, p.max_scroll());
+    }
+
+    fn painted_loading(w: &AlarmPanel, phase: Option<f32>) -> PaintList {
+        let theme = martensite_theme::Theme::new("test");
+        let mut list = PaintList::new();
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds: w.bounds,
+            scale: 1.0,
+            theme: &theme,
+            text_painter: None,
+        };
+        w.paint_loading(&mut cx, phase);
+        list
+    }
+
+    #[test]
+    fn loading_flag_round_trip() {
+        let mut p = AlarmPanel::new();
+        p.push(Alarm::new(Severity::Error, "e"));
+        assert!(!p.is_loading());
+        assert!(!<AlarmPanel as Widget>::is_loading(&p));
+        p.set_loading(true);
+        assert!(p.is_loading());
+        assert!(<AlarmPanel as Widget>::is_loading(&p));
+        p.set_loading(false);
+        assert!(!p.is_loading());
+    }
+
+    #[test]
+    fn loading_a11y_reports_unknown_not_stale_count() {
+        let mut p = AlarmPanel::new().label("Line 2").loading(true);
+        p.push(Alarm::new(Severity::Error, "e"));
+        let mut node = AccessKitNode::new(accesskit::Role::Unknown);
+        p.accessibility(&mut node);
+        // "status unknown" — never a stale "1 active" reading.
+        assert_eq!(node.label(), Some("Line 2 — status unknown"));
+    }
+
+    #[test]
+    fn loading_paint_is_unknown_not_shimmer() {
+        use martensite_core::PaintCommand;
+        let mut p = AlarmPanel::new().loading(true);
+        p.push(Alarm::new(Severity::Error, "Tank 4 overpressure").source("PT-104"));
+        p.push(Alarm::new(Severity::Warning, "Filter ΔP high"));
+        laid_out(&mut p, 320.0, 240.0);
+        // Even with an animated phase a safety panel must never emit
+        // a shimmer band.
+        let list = painted_loading(&p, Some(0.5));
+        assert!(!list.commands.iter().any(|c| matches!(
+            c,
+            PaintCommand::FillLinearGradient(..) | PaintCommand::FillLinearGradientPath(..)
+        )));
+        // No row may borrow a live severity hue or the success green —
+        // pending data must never read as a real alarm state.
+        for hue in [INFO, WARN, ERR, [92, 200, 120, 255]] {
+            assert!(!list.commands.iter().any(|c| matches!(
+                c,
+                PaintCommand::FillRect(_, c) | PaintCommand::FillPath(_, c) if *c == hue
+            )));
+        }
+        // Stale messages still show, dimmed — questionable data keeps
+        // its shape (ISA-101).
+        let texts: Vec<&str> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::DrawText(_, t, _, _) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(texts.contains(&"Tank 4 overpressure"));
+        assert!(texts.contains(&"Filter ΔP high"));
+        // Each row carries the `?` stroke where the ACK chip sat —
+        // the two stale rows plus the third "fetching" slot.
+        let marks = list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count();
+        assert_eq!(marks, 3);
+        // No ack affordances while the data is unknown.
+        assert!(p.ack_hits.lock().is_empty());
+    }
+
+    #[test]
+    fn loading_empty_panel_shows_unknown_rows() {
+        use martensite_core::PaintCommand;
+        let mut p = AlarmPanel::new().loading(true);
+        laid_out(&mut p, 320.0, 240.0);
+        let list = painted_loading(&p, None);
+        // Three placeholder rows — "fetching", not "empty".
+        let marks = list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count();
+        assert_eq!(marks, 3);
+    }
+
+    #[test]
+    fn loading_swallows_ack_presses() {
+        let mut p = AlarmPanel::new().loading(true);
+        p.push(Alarm::new(Severity::Warning, "w"));
+        laid_out(&mut p, 320.0, 240.0);
+        // Seed stale chip rects as a non-loading frame would, then
+        // confirm a press cannot ack while the data is unknown.
+        painted(&p);
+        assert!(!p.ack_hits.lock().is_empty());
+        let chip = p.ack_hits.lock()[0].1;
+        let press = WidgetEvent::PointerPressed {
+            button: PointerButton::Primary,
+            position: Vec2::new(
+                (chip.min_x() + chip.max_x()) / 2.0,
+                (chip.min_y() + chip.max_y()) / 2.0,
+            ),
+            count: 1,
+        };
+        assert_eq!(
+            p.event(&mut EventContext {
+                event: &press,
+                bounds: p.bounds,
+                scale: 1.0,
+            }),
+            EventResponse::Handled
+        );
+        assert_eq!(p.alarm(0).unwrap().state, AlarmState::Active);
+        assert_eq!(p.take_acked(), None);
     }
 }

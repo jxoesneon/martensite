@@ -41,6 +41,7 @@
 
 pub mod config;
 mod fix;
+pub mod loading;
 mod report;
 mod rule;
 mod rules;
@@ -52,6 +53,7 @@ pub use config::{LintConfig, LintConfigError, PathAllow, RuleSetting};
 pub use fix::{
     autofix, AlignEdge, AppliedFix, FixIteration, FixOp, FixOptions, FixReport, FixSafety, LintFix,
 };
+pub use loading::LoadingTracker;
 pub use report::{Finding, LintReport};
 pub use rule::{Confidence, LintRule};
 pub use rules::all_rules;

@@ -369,12 +369,39 @@ When re-fetching active data (e.g. user clicks "Refresh" on a table), completely
 
 - **`stale_while_revalidate` Pattern**:
   Store the existing data inside `AsyncState::Loading { cached_previous: Some(data), .. }`.
-- The UI continues rendering the existing table or metrics card with an overlay spinner or muted opacity indicator until the fresh payload arrives, delivering a fluid user experience.
+- The UI continues rendering the existing table or metrics card while the refresh runs — for virtualized collections, `pending_tail(n)` paints only the incoming rows as placeholders (see §3.6), delivering a fluid user experience without a layout jump.
 
 ### 5. Event Loop Wakeup & Quiescent Loop Coordination
 When an application is idle, Martensite enters a low-power quiescent state (`QuiescentEventLoop`), parking the thread until OS events occur.
 - When background tasks complete, they must call `event_loop_proxy.wake_up()` (or platform event signal) to unpark the UI thread.
 - Upon wakeup, the event loop pumps the async channels, triggers reactive evaluations, and requests a repaint.
+
+### 6. Rendering the `Loading` Leg — Native Skeleton Mode (ADR-0040)
+Do not paint an empty surface or hand-compose an `EmptyState`/`Spinner` while a fetch is in flight — and prefer the loading flag over `Skeleton::wrap`, which cannot reach overlay-hosted option lists, cannot express partial loading, and collapses the wrapped subtree out of the a11y tree. [ADR-0040](../adr/ADR-0040-native-loading-state.md) gives the framework a **widget-declared, arena-enforced** loading state: the node keeps its role and bounds while the arena substitutes the shared shimmer placeholder, removes the subtree from hit-testing and focus, and reports `busy` to assistive technology.
+
+| Surface | API | Use when |
+|---|---|---|
+| Widget flag | `widget.set_loading(true)` / `.loading(true)` builder | The widget's own content is pending (`ListView`, `Table`, `TreeView`, `Dropdown`, `AutoComplete`, `CommandPalette`, and the other ADR-0040 adopters). |
+| Arena override | `arena.set_loading(id, true)` | Skeletonizing a `dyn Widget` node that never implemented the flag — third-party widgets included (`NodeFlags::LOADING`). |
+| Standalone placeholder | `Skeleton::rows(n)` / `::lines(n)` / `::grid(c, r)` | Composite regions and widgets without a native flag — the explicit escape hatch. |
+| Partial loading | `list_view.pending_tail(n)` / `table.pending_tail(n)` | "First page live, next page in flight" — trailing rows keep their indices and paint as placeholders without fabricated `posinset`/`setsize`. |
+
+```rust
+match resource.state.get() {
+    AsyncState::Loading { cached_previous: None, .. } => table.set_loading(true),
+    AsyncState::Loading { cached_previous: Some(_), .. } => {
+        // Stale rows stay live; shimmer only the incoming tail.
+        table.set_pending_tail(page_size);
+    }
+    AsyncState::Ready(_) | AsyncState::Error(_) => {
+        table.set_loading(false);
+        table.set_pending_tail(0);
+    }
+    AsyncState::Uninitialized => {}
+}
+```
+
+Two contracts come free: **accessibility** — a loading node emits AccessKit `busy` with a sanitized label and pruned descendants, so stale computed strings ("3 active alarms") cannot leak; and **reduced motion** — `arena.set_reduced_motion(true)` swaps the shimmer sweep for a static placeholder. `martensite_window::prefs::apply_platform_preferences(&mut arena)` installs the OS `prefers-reduced-motion` setting once at startup (override with `MARTENSITE_REDUCED_MOTION=1/0`). `measure` must never branch on the flag: the placeholder fills the already-allocated bounds, so reveal never pops layout.
 
 ---
 
@@ -387,6 +414,7 @@ When an application is idle, Martensite enters a low-power quiescent state (`Qui
 | **Thread Zombie Leaks** | Spawning unmonitored threads on every keystroke exhausts OS thread handles. | Use a shared worker thread pool, debounce rapid input signals, and check `CancellationToken`s. |
 | **High-Frequency Channel Flooding** | Worker threads blasting 10,000 telemetry messages per second saturate the MPSC queue and starve UI rendering. | Batch or coalesce messages at the producer side (e.g. throttle to 60Hz) before sending to the UI channel. |
 | **Uncaught Worker Panics** | A background worker thread panicking on JSON parsing drops the sender channel, silently stranding the UI in `Loading` forever. | Wrap background tasks in `std::panic::catch_unwind` and send an explicit `AsyncState::Error` envelope on panic. |
+| **Ad-hoc Loading Surfaces** | Painting a blank rect or wrapping content in `Skeleton::wrap` while pending hides the subtree from paint, hit-test, and a11y at once — and cannot reach overlay-hosted lists or express partial loads. | Drive the `Loading` leg through `set_loading`/`loading(true)` (or `arena.set_loading` / `pending_tail`) per §3.6 — the arena substitutes the placeholder and keeps `busy` semantics correct. |
 
 ---
 

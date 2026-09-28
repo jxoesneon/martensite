@@ -203,6 +203,40 @@ impl LintRule for NontextContrast {
                     }
                     for fa in &a.fills {
                         for fb in &b.fills {
+                            // The visible boundary is where the *fills*
+                            // touch — two same-token fills in adjacent
+                            // siblings (row hairlines, repeated chips)
+                            // that never meet are not a boundary at
+                            // all.
+                            // Subpixel epsilon only — a real hairline
+                            // keyline between the faces *is* the
+                            // boundary; it breaks fill adjacency.
+                            let fx = (fa.rect.x1 - fb.rect.x0).abs() < 0.75
+                                || (fb.rect.x1 - fa.rect.x0).abs() < 0.75;
+                            let fy = (fa.rect.y1 - fb.rect.y0).abs() < 0.75
+                                || (fb.rect.y1 - fa.rect.y0).abs() < 0.75;
+                            let fox = fa.rect.x1.min(fb.rect.x1) - fa.rect.x0.max(fb.rect.x0);
+                            let foy = fa.rect.y1.min(fb.rect.y1) - fa.rect.y0.max(fb.rect.y0);
+                            if !((fx && foy > 0.0) || (fy && fox > 0.0)) {
+                                continue;
+                            }
+                            // Two identical colors define no boundary to
+                            // identify — "doesn't contrast with itself"
+                            // is never a violation (and a same-token
+                            // hairline T-junction is one boundary
+                            // system, not two merged components).
+                            if fa.color == fb.color {
+                                continue;
+                            }
+                            // Hairlines painted as fills are the
+                            // boundary markers themselves (dividers,
+                            // keylines) — 1.4.11 governs component
+                            // *faces*, not the stroke-equivalents that
+                            // draw their edges.
+                            let hairline = |r: &kurbo::Rect| (r.x1 - r.x0).min(r.y1 - r.y0) <= 2.5;
+                            if hairline(&fa.rect) || hairline(&fb.rect) {
+                                continue;
+                            }
                             let ratio = contrast_ratio(fa.color, fb.color);
                             if ratio < min
                                 && reported
@@ -822,6 +856,32 @@ mod tests {
         list.commands.push(PaintCommand::FillRect(
             Rect::new(200.0, 0.0, 400.0, 100.0),
             [200, 200, 205, 255],
+        ));
+        list.pop_scope();
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(findings_for(&report, "nontext-contrast").is_empty());
+    }
+
+    #[test]
+    fn nontext_contrast_ignores_fills_that_never_touch() {
+        // Edge-sharing *siblings* whose same-token fills sit far apart
+        // (each row's own bottom hairline) describe no boundary — the
+        // rule must compare fill rects, not just sibling bounds.
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 400.0, 60.0));
+        list.push_scope(None, "RowA", Rect::new(0.0, 0.0, 400.0, 30.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 29.0, 400.0, 30.0),
+            [140, 140, 140, 255],
+        ));
+        list.pop_scope();
+        list.push_scope(None, "RowB", Rect::new(0.0, 30.0, 400.0, 60.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 59.0, 400.0, 60.0),
+            [140, 140, 140, 255],
         ));
         list.pop_scope();
         list.pop_scope();

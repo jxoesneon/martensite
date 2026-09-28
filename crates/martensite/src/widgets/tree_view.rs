@@ -50,6 +50,7 @@ use std::sync::{Arc, Mutex};
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use martensite_core::loading::{paint_skeleton, SkeletonShape};
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
@@ -444,6 +445,10 @@ pub struct TreeView {
     has_focus: bool,
     /// Hovered visible-row index.
     hovered: Option<usize>,
+    /// Whether the whole tree is pending — the arena substitutes
+    /// [`paint_loading`](Widget::paint_loading) and suppresses the
+    /// subtree's paint/input/a11y (ADR-0040).
+    loading: bool,
     /// Vertical scroll offset in device pixels.
     scroll_y: f32,
     /// Pooled visible-window row children.
@@ -493,6 +498,7 @@ impl TreeView {
             focused: 0,
             has_focus: false,
             hovered: None,
+            loading: false,
             scroll_y: 0.0,
             rows: Vec::new(),
             vbar: VScrollBar::new(),
@@ -865,6 +871,54 @@ impl TreeView {
         self.enabled = enabled;
         self.sync_rows();
         self
+    }
+
+    /// Sets the loading flag — while set, the widget paints a row
+    /// placeholder stack instead of the flattened tree and the
+    /// framework suppresses input/a11y for the subtree (ADR-0040).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TreeView;
+    ///
+    /// assert!(TreeView::new().loading(true).is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets the loading flag (mutating form).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TreeView;
+    ///
+    /// let mut t = TreeView::new();
+    /// t.set_loading(true);
+    /// assert!(t.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the tree's content is pending.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TreeView;
+    ///
+    /// assert!(!TreeView::new().is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_loading(&self) -> bool {
+        self.loading
     }
 
     /// Shares a [`crate::text_paint::TextPainter`] so row labels emit
@@ -1568,6 +1622,19 @@ impl Widget for TreeView {
         self.poll_pending();
     }
 
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // A pending tree paints a row placeholder stack on the same
+        // row pitch the flattened projection would use.
+        let b = cx.bounds;
+        let row_px = cx.pt(self.row_height).max(1.0);
+        let count = ((b.height() / row_px).ceil() as usize).clamp(1, 64);
+        paint_skeleton(cx, b, SkeletonShape::Rows { count }, phase);
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         if !self.enabled {
             return EventResponse::Ignored;
@@ -2085,5 +2152,38 @@ mod tests {
             count: 1,
         };
         assert_eq!(event(&mut t, &press), EventResponse::Ignored);
+    }
+
+    #[test]
+    fn loading_flag_and_placeholder() {
+        use martensite_core::PaintCommand;
+
+        assert!(!TreeView::new().is_loading());
+        assert!(TreeView::new().loading(true).is_loading());
+        let mut t = sample();
+        laid_out(&mut t, 240.0, 200.0);
+        t.set_loading(true);
+        assert!(Widget::is_loading(&t));
+        let mut list = martensite_core::PaintList::new();
+        let theme = martensite_theme::Theme::new("test");
+        t.paint_loading(
+            &mut PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 240.0, 200.0),
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            },
+            None,
+        );
+        // Row placeholders emit path+clip+pop triples, not one block.
+        let paths = list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::FillPath(..)))
+            .count();
+        assert!(paths >= 3);
+        t.set_loading(false);
+        assert!(!t.is_loading());
     }
 }

@@ -68,6 +68,8 @@ pub struct BarChart {
     pub labels: bool,
     /// Accessibility label.
     pub label: Option<String>,
+    /// Whether the series data is pending (ADR-0040).
+    loading: bool,
     /// Shared shaped-text painter.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
@@ -89,6 +91,7 @@ impl BarChart {
             axis: true,
             labels: true,
             label: None,
+            loading: false,
             text_painter: None,
         }
     }
@@ -169,6 +172,60 @@ impl BarChart {
         self
     }
 
+    /// Sets whether the series data is pending (builder version).
+    ///
+    /// While `loading` is set the chart keeps its structural chrome —
+    /// the baseline axis and category labels — and skeletonizes only
+    /// the plot area, so a refreshing chart never collapses into a
+    /// featureless block.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::bar_chart::BarChart;
+    ///
+    /// let c = BarChart::new().loading(true);
+    /// assert!(c.is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets whether the series data is pending (mutable version) —
+    /// the `Bound::push` seam for async chart data.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::bar_chart::BarChart;
+    ///
+    /// let mut c = BarChart::new();
+    /// c.set_loading(true);
+    /// assert!(c.is_loading());
+    /// c.set_loading(false);
+    /// assert!(!c.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the series data is pending.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::bar_chart::BarChart;
+    ///
+    /// assert!(!BarChart::new().is_loading());
+    /// ```
+    #[inline]
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
     /// Overrides the shaped-text painter (tests and tooling).
     ///
     /// # Examples
@@ -231,6 +288,63 @@ impl std::fmt::Debug for BarChart {
     }
 }
 
+impl BarChart {
+    /// The structural frame a chart keeps while its data is pending —
+    /// category labels under each slot and the baseline axis. Shared
+    /// by `paint` and `paint_loading` so the pending chart never
+    /// loses its labelled frame (ADR-0040).
+    fn paint_chrome(
+        &self,
+        cx: &mut PaintContext,
+        painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+        baseline_y: f32,
+        axis_h: f32,
+    ) {
+        let b = cx.bounds;
+        let n = self.bars.len();
+        if self.labels && n > 0 {
+            let slot = b.width() / n as f32;
+            for (i, bar) in self.bars.iter().enumerate() {
+                if let Some(lbl) = &bar.label {
+                    let size = cx.pt(LABEL_PT);
+                    let w = painter
+                        .and_then(|p| p.measure_text(lbl, size))
+                        .unwrap_or(size * lbl.len() as f32 * 0.55)
+                        .min(slot);
+                    crate::text_paint::paint_label_clipped(
+                        painter,
+                        cx.list,
+                        kurbo::Rect::new(
+                            f64::from(b.min_x() + i as f32 * slot),
+                            f64::from(baseline_y + axis_h),
+                            f64::from(b.min_x() + (i + 1) as f32 * slot),
+                            f64::from(b.max_y()),
+                        ),
+                        kurbo::Point::new(
+                            f64::from(b.min_x() + i as f32 * slot + (slot - w) / 2.0),
+                            f64::from(baseline_y + axis_h + cx.pt(2.0)),
+                        ),
+                        lbl,
+                        size,
+                        cx.color(LABEL, [110, 114, 123, 255]),
+                    );
+                }
+            }
+        }
+        if self.axis {
+            cx.list.push_fill_rect(
+                kurbo::Rect::new(
+                    f64::from(b.min_x()),
+                    f64::from(baseline_y),
+                    f64::from(b.max_x()),
+                    f64::from(baseline_y + axis_h),
+                ),
+                cx.color(AXIS, FALLBACK_AXIS),
+            );
+        }
+    }
+}
+
 impl Widget for BarChart {
     fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(160.0, 80.0)
@@ -276,44 +390,57 @@ impl Widget for BarChart {
                 &martensite_core::shape::Shape::rounded(cx.pt(2.0)),
                 bar.color.unwrap_or(bar_ink),
             );
-            if self.labels {
-                if let Some(lbl) = &bar.label {
-                    let size = cx.pt(LABEL_PT);
-                    let w = painter
-                        .and_then(|p| p.measure_text(lbl, size))
-                        .unwrap_or(size * lbl.len() as f32 * 0.55)
-                        .min(slot);
-                    crate::text_paint::paint_label_clipped(
-                        painter,
-                        cx.list,
-                        kurbo::Rect::new(
-                            f64::from(b.min_x() + i as f32 * slot),
-                            f64::from(baseline_y + axis_h),
-                            f64::from(b.min_x() + (i + 1) as f32 * slot),
-                            f64::from(b.max_y()),
-                        ),
-                        kurbo::Point::new(
-                            f64::from(b.min_x() + i as f32 * slot + (slot - w) / 2.0),
-                            f64::from(baseline_y + axis_h + cx.pt(2.0)),
-                        ),
-                        lbl,
-                        size,
-                        cx.color(LABEL, [110, 114, 123, 255]),
-                    );
-                }
-            }
         }
-        if self.axis {
-            cx.list.push_fill_rect(
-                kurbo::Rect::new(
-                    f64::from(b.min_x()),
-                    f64::from(baseline_y),
-                    f64::from(b.max_x()),
-                    f64::from(baseline_y + axis_h),
-                ),
-                cx.color(AXIS, FALLBACK_AXIS),
+        self.paint_chrome(cx, painter, baseline_y, axis_h);
+    }
+
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        let b = cx.bounds;
+        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+        // Same chrome geometry as `paint` — the plot area reserves
+        // `chart_h`, labels and the axis keep painting below it.
+        let label_h = if self.labels && self.bars.iter().any(|b| b.label.is_some()) {
+            cx.pt(LABEL_PT) + cx.pt(4.0)
+        } else {
+            0.0
+        };
+        let axis_h = if self.axis { cx.pt(1.0) } else { 0.0 };
+        let chart_h = (b.height() - label_h - axis_h).max(0.0);
+        let baseline_y = b.min_y() + chart_h;
+
+        // Only the plot skeletonizes: one placeholder column per
+        // slot, anchored at the baseline, with a deterministic
+        // stagger so the pending series reads as bars rather than a
+        // flat block. A series that hasn't arrived yet (no bars)
+        // still shows a plausible four-column skeleton; a stale
+        // series keeps its exact slot count.
+        let n = if self.bars.is_empty() {
+            4
+        } else {
+            self.bars.len()
+        };
+        let slot = b.width() / n as f32;
+        let gap = slot * GAP_FRAC;
+        let bar_w = (slot - gap).max(1.0);
+        const STAGGER: [f32; 4] = [0.55, 0.85, 0.35, 0.7];
+        for i in 0..n {
+            let h = (chart_h * STAGGER[i % STAGGER.len()]).min(chart_h).max(0.0);
+            if h <= 0.0 {
+                continue;
+            }
+            let x = b.min_x() + i as f32 * slot + gap / 2.0;
+            martensite_core::loading::paint_placeholder(
+                cx,
+                Rect::new(x, baseline_y - h, bar_w, h),
+                false,
+                phase,
             );
         }
+        self.paint_chrome(cx, painter, baseline_y, axis_h);
     }
 
     fn event(&mut self, _cx: &mut EventContext) -> EventResponse {
@@ -388,5 +515,120 @@ mod tests {
             },
         );
         assert!(s.x > 0.0 && s.y > 0.0);
+    }
+
+    fn paint_loading_list(c: &BarChart, bounds: Rect) -> martensite_core::PaintList {
+        let theme = martensite_theme::Theme::new("test");
+        let mut list = martensite_core::PaintList::new();
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        c.paint_loading(&mut cx, None);
+        list
+    }
+
+    #[test]
+    fn loading_flag_round_trip() {
+        let mut c = BarChart::new().bar("a", 3.0);
+        assert!(!c.is_loading());
+        assert!(!<BarChart as Widget>::is_loading(&c));
+        c.set_loading(true);
+        assert!(c.is_loading());
+        assert!(<BarChart as Widget>::is_loading(&c));
+        c.set_loading(false);
+        assert!(!c.is_loading());
+        assert!(!<BarChart as Widget>::is_loading(&c));
+    }
+
+    #[test]
+    fn loading_paint_keeps_chrome_skeletonizes_plot() {
+        use martensite_core::PaintCommand;
+        let c = BarChart::new()
+            .bars([("a", 3.0), ("b", 9.0), ("c", 6.0)])
+            .loading(true);
+        let bounds = Rect::new(0.0, 0.0, 160.0, 80.0);
+        // label_h = 9 + 4, axis_h = 1 → plot ends at y = 66, axis at
+        // y = 66..67, labels below.
+        let list = paint_loading_list(&c, bounds);
+
+        // Skeleton bars: one clipped path per slot, all inside the
+        // plot area — none may reach into the label/axis band.
+        let mut skeleton_slots = 0usize;
+        for cmd in &list.commands {
+            if let PaintCommand::FillPath(path, _) = cmd {
+                use kurbo::Shape as _;
+                let bb = path.bounding_box();
+                assert!(
+                    bb.y1 <= 66.5,
+                    "skeleton bar {bb:?} spilled below the baseline"
+                );
+                skeleton_slots += 1;
+            }
+        }
+        assert_eq!(skeleton_slots, 3);
+
+        // The axis still paints — a FillRect hugging the baseline.
+        let axis = list
+            .commands
+            .iter()
+            .filter_map(|cmd| match cmd {
+                PaintCommand::FillRect(r, _) => Some(*r),
+                _ => None,
+            })
+            .find(|r| r.y0 >= 65.5 && r.y1 <= 68.0);
+        assert!(axis.is_some(), "baseline axis must survive loading");
+
+        // Category labels still paint — three `DrawText` runs.
+        let labels = list
+            .commands
+            .iter()
+            .filter(|cmd| matches!(cmd, PaintCommand::DrawText(..)))
+            .count();
+        assert_eq!(labels, 3);
+
+        // Static placeholder at `phase: None` — no shimmer bands.
+        assert!(!list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillLinearGradient(..))));
+    }
+
+    #[test]
+    fn loading_paint_without_bars_shows_columns() {
+        use martensite_core::PaintCommand;
+        // A series that hasn't arrived yet still gets a plausible
+        // four-column skeleton.
+        let c = BarChart::new().loading(true);
+        let list = paint_loading_list(&c, Rect::new(0.0, 0.0, 160.0, 80.0));
+        let skeleton_slots = list
+            .commands
+            .iter()
+            .filter(|cmd| matches!(cmd, PaintCommand::FillPath(..)))
+            .count();
+        assert_eq!(skeleton_slots, 4);
+    }
+
+    #[test]
+    fn loading_paint_animated_adds_shimmer_band() {
+        use martensite_core::PaintCommand;
+        let c = BarChart::new().bar("a", 5.0).loading(true);
+        let theme = martensite_theme::Theme::new("test");
+        let mut list = martensite_core::PaintList::new();
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds: Rect::new(0.0, 0.0, 160.0, 80.0),
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        c.paint_loading(&mut cx, Some(0.5));
+        assert!(list
+            .commands
+            .iter()
+            .any(|cmd| matches!(cmd, PaintCommand::FillLinearGradient(..))));
     }
 }

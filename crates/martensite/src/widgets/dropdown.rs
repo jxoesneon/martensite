@@ -84,6 +84,9 @@ struct PopupState {
     selected: usize,
     /// Set by a popup option when it is activated (click or AT Click).
     committed: Option<usize>,
+    /// Mirrored from the owner — the popup paints skeleton rows while
+    /// the option data is pending instead of closing.
+    loading: bool,
 }
 
 /// One option inside the popup listbox — a stateless view over the
@@ -320,6 +323,32 @@ impl ListBoxPopup {
             painted_shape: Mutex::new(Shape::RECT),
         }
     }
+
+    /// The popup's frame — surface fill, border, and the painted-shape
+    /// record `clip_shape`/`hit_shape` read. Shared by `paint` and
+    /// `paint_loading` so the pending surface keeps the same outline.
+    fn paint_chrome(&self, cx: &mut PaintContext) {
+        let b = cx.bounds;
+        let rect = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        );
+        let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        *self.painted_shape.lock().expect("popup shape poisoned") = popup_shape.clone();
+        cx.list.push_fill_shape(
+            rect,
+            &popup_shape,
+            cx.color(TokenKey::SurfaceColor, POPUP_BG),
+        );
+        cx.list.push_stroke_shape(
+            rect,
+            &popup_shape,
+            cx.pt(1.0),
+            cx.color(TokenKey::BorderColor, POPUP_BORDER),
+        );
+    }
 }
 
 impl Widget for ListBoxPopup {
@@ -343,6 +372,11 @@ impl Widget for ListBoxPopup {
             cx.pt(120.0).min(constraints.max_size.x.max(0.0)),
             constraints.max_size.x.max(0.0),
         );
+        // A pending list has no rows to measure — hold a skeleton's
+        // worth of height so the loading surface stays legible.
+        if self.is_loading() {
+            s.y = s.y.max(3.0 * cx.pt(ROW_H) + cx.pt(2.0));
+        }
         s
     }
 
@@ -357,6 +391,12 @@ impl Widget for ListBoxPopup {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        // Pending rows are a placeholder, not live options — swallow
+        // input at the surface level (the overlay layer already gates
+        // dispatch to a loading entry; this covers ownerless embeds).
+        if self.is_loading() {
+            return EventResponse::Handled;
+        }
         // Keyboard on the popup itself: move the highlight / commit.
         if let WidgetEvent::KeyPressed { key, .. } = cx.event {
             let mut state = self.shared.lock().expect("popup state poisoned");
@@ -393,25 +433,38 @@ impl Widget for ListBoxPopup {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
+        self.paint_chrome(cx);
+    }
+
+    fn is_loading(&self) -> bool {
+        self.shared.lock().expect("popup state poisoned").loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // Same chrome as `paint` — the pending surface keeps its
+        // bordered outline while the option rows stand in as skeleton
+        // bars inside it.
+        self.paint_chrome(cx);
         let b = cx.bounds;
-        let rect = kurbo::Rect::new(
-            f64::from(b.min_x()),
-            f64::from(b.min_y()),
-            f64::from(b.max_x()),
-            f64::from(b.max_y()),
+        let pad = cx.pt(4.0);
+        let inner = Rect::new(
+            b.min_x() + pad,
+            b.min_y() + pad,
+            (b.width() - pad * 2.0).max(0.0),
+            (b.height() - pad * 2.0).max(0.0),
         );
-        let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
-        *self.painted_shape.lock().expect("popup shape poisoned") = popup_shape.clone();
-        cx.list.push_fill_shape(
-            rect,
-            &popup_shape,
-            cx.color(TokenKey::SurfaceColor, POPUP_BG),
-        );
-        cx.list.push_stroke_shape(
-            rect,
-            &popup_shape,
-            cx.pt(1.0),
-            cx.color(TokenKey::BorderColor, POPUP_BORDER),
+        let rows = self
+            .shared
+            .lock()
+            .expect("popup state poisoned")
+            .options
+            .len()
+            .clamp(3, MAX_VISIBLE_ROWS as usize);
+        martensite_core::loading::paint_skeleton(
+            cx,
+            inner,
+            martensite_core::loading::SkeletonShape::Rows { count: rows },
+            phase,
         );
     }
 
@@ -491,6 +544,10 @@ pub struct Dropdown {
     popup_id: Option<u64>,
     /// State shared with popup widgets.
     shared: Arc<Mutex<PopupState>>,
+    /// Whether the option data is pending (ADR-0040): while the list
+    /// is open the pending state lives in the popup's skeleton rows —
+    /// the face reports loading only once the popup is closed.
+    loading: bool,
     /// Typeahead buffer (printable characters typed while open).
     typeahead: String,
     /// Combobox bounds from the last layout pass.
@@ -524,6 +581,7 @@ impl Dropdown {
             highlighted: 0,
             selected: 0,
             committed: None,
+            loading: false,
         }));
         Self {
             label: None,
@@ -535,6 +593,7 @@ impl Dropdown {
             highlighted: 0,
             popup_id: None,
             shared,
+            loading: false,
             typeahead: String::new(),
             cached_bounds: Rect::default(),
             last_anchor: None,
@@ -600,6 +659,59 @@ impl Dropdown {
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
+    }
+
+    /// Sets whether the option data is pending (builder version).
+    ///
+    /// While `loading` is set, an open popup shows skeleton rows
+    /// instead of options; a closed face paints the default skeleton.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Dropdown;
+    ///
+    /// let dd = Dropdown::new(["A"]).loading(true);
+    /// assert!(dd.is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.set_loading(loading);
+        self
+    }
+
+    /// Sets whether the option data is pending (mutable version) —
+    /// the `Bound::push` seam for async option sources.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Dropdown;
+    ///
+    /// let mut dd = Dropdown::new(["A"]);
+    /// dd.set_loading(true);
+    /// assert!(dd.is_loading());
+    /// dd.set_loading(false);
+    /// assert!(!dd.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+        self.shared.lock().expect("popup state poisoned").loading = loading;
+    }
+
+    /// Whether the option data is pending.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Dropdown;
+    ///
+    /// assert!(!Dropdown::new(["A"]).is_loading());
+    /// ```
+    #[inline]
+    pub fn is_loading(&self) -> bool {
+        self.loading
     }
 
     /// Number of options.
@@ -694,11 +806,12 @@ impl Dropdown {
     /// assert_eq!(dd.highlighted(), dd.selected());
     /// ```
     pub fn open(&mut self) {
-        if self.options.is_empty() {
+        // A pending list still opens — the popup shows skeleton rows.
+        if self.options.is_empty() && !self.loading {
             return;
         }
         self.open = true;
-        self.highlighted = self.selected.min(self.options.len() - 1);
+        self.highlighted = self.selected.min(self.options.len().saturating_sub(1));
         self.typeahead.clear();
         self.push_shared();
     }
@@ -817,6 +930,10 @@ impl Dropdown {
     /// ```
     pub fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
         self.drain_shared_state();
+        // Keep the live popup's loading flag current — a pending
+        // option list paints skeleton rows in place rather than
+        // closing and reopening when the data lands.
+        self.shared.lock().expect("popup state poisoned").loading = self.loading;
         // The layer dismissed our popup (outside press / Escape).
         if let Some(id) = self.popup_id {
             if !overlay.is_open(id) {
@@ -854,6 +971,7 @@ impl Dropdown {
         state.options = self.options.clone();
         state.selected = self.selected;
         state.highlighted = self.highlighted;
+        state.loading = self.loading;
     }
 
     /// Applies state the popup wrote into the shared slot: a committed
@@ -979,6 +1097,14 @@ impl Widget for Dropdown {
         {
             this_node.set_active_descendant(option_id);
         }
+    }
+
+    fn is_loading(&self) -> bool {
+        // While the option list is open the pending state is carried
+        // by the popup's skeleton rows — the arena closes popups owned
+        // by a loading widget, so the face reports loading only once
+        // the popup is closed.
+        self.loading && !self.open
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -1385,5 +1511,129 @@ mod tests {
             &WidgetEvent::SemanticAction(SemanticAction::SetValue("Large".to_string())),
         );
         assert_eq!(dd.selected(), 2);
+    }
+
+    #[test]
+    fn loading_flag_round_trip() {
+        let mut dd = Dropdown::new(["A"]);
+        assert!(!dd.is_loading());
+        assert!(!<Dropdown as Widget>::is_loading(&dd));
+        dd.set_loading(true);
+        assert!(dd.is_loading());
+        assert!(<Dropdown as Widget>::is_loading(&dd));
+        dd.set_loading(false);
+        assert!(!dd.is_loading());
+        assert!(!<Dropdown as Widget>::is_loading(&dd));
+    }
+
+    #[test]
+    fn open_loading_popup_stays_and_skeletonizes() {
+        let mut dd = Dropdown::new(["A", "B", "C"]);
+        laid_out(&mut dd);
+        dd.open();
+        let mut o = overlay();
+        dd.sync_overlay(&mut o);
+        o.layout_pass();
+        let id = dd.popup_id.unwrap();
+        let entry = o.entry(id).unwrap();
+        assert!(!entry.content().is_loading());
+
+        // Data goes pending mid-open: the list stays mounted (no
+        // close/reopen) and its content reports loading. The face
+        // does not — the arena would orphan-close the live popup.
+        dd.set_loading(true);
+        dd.sync_overlay(&mut o);
+        o.layout_pass();
+        assert_eq!(dd.popup_id, Some(id));
+        assert_eq!(o.len(), 1);
+        assert!(!<Dropdown as Widget>::is_loading(&dd));
+        let entry = o.entry(id).unwrap();
+        assert!(entry.content().is_loading());
+
+        // Resolved data restores live rows in the same entry.
+        dd.set_loading(false);
+        dd.sync_overlay(&mut o);
+        o.layout_pass();
+        assert_eq!(dd.popup_id, Some(id));
+        assert!(!o.entry(id).unwrap().content().is_loading());
+    }
+
+    #[test]
+    fn loading_popup_swallows_clicks() {
+        let mut dd = Dropdown::new(["A", "B", "C"]);
+        laid_out(&mut dd);
+        dd.open();
+        dd.set_loading(true);
+        let mut o = overlay();
+        dd.sync_overlay(&mut o);
+        o.layout_pass();
+        let id = dd.popup_id.unwrap();
+        let b = o.entry_bounds(id).unwrap();
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new((b.min_x() + b.max_x()) / 2.0, (b.min_y() + b.max_y()) / 2.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        // Pending rows occlude like any popup but are not interactive.
+        assert_eq!(o.dispatch_event(&press), EventResponse::Handled);
+        dd.sync_overlay(&mut o);
+        assert_eq!(dd.selected(), 0);
+        assert!(dd.is_open());
+    }
+
+    #[test]
+    fn loading_opens_empty_list_as_skeleton() {
+        // An empty option list would refuse to open — while pending,
+        // the skeleton surface still shows so the field doesn't pop
+        // shut and back open when data lands.
+        let mut dd = Dropdown::new(Vec::<String>::new()).loading(true);
+        laid_out(&mut dd);
+        dd.open();
+        assert!(dd.is_open());
+        let mut o = overlay();
+        dd.sync_overlay(&mut o);
+        o.layout_pass();
+        assert_eq!(o.len(), 1);
+        let id = dd.popup_id.unwrap();
+        assert!(o.entry(id).unwrap().content().is_loading());
+        // The skeleton surface keeps a legible height (3-row floor).
+        assert!(o.entry_bounds(id).unwrap().height() >= 60.0);
+    }
+
+    #[test]
+    fn loading_popup_paints_skeleton_rows() {
+        use martensite_core::PaintCommand;
+        use martensite_core::PaintList;
+        let mut dd = Dropdown::new(["A", "B", "C"]).loading(true);
+        laid_out(&mut dd);
+        dd.open();
+        let mut o = overlay();
+        dd.sync_overlay(&mut o);
+        o.layout_pass();
+        let id = dd.popup_id.unwrap();
+        let bounds = o.entry_bounds(id).unwrap();
+        let content = o.entry_mut(id).unwrap().content_mut();
+        let theme = martensite_theme::Theme::new("test");
+        let mut list = PaintList::new();
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        content.paint_loading(&mut cx, None);
+        // Static placeholder: chrome fill+stroke plus one fill per
+        // skeleton row — no shimmer band at `phase: None`.
+        let fills = list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::FillPath(..) | PaintCommand::FillRect(..)))
+            .count();
+        assert!(fills >= 4, "expected chrome + >=3 row fills, got {fills}");
+        assert!(!list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillLinearGradient(..))),);
     }
 }

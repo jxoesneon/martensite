@@ -171,6 +171,16 @@ pub struct WidgetArena {
     /// installs one — widgets then fall back to `DrawText` placeholder
     /// boxes. `Arc` so widgets may also hold explicit clones.
     text_painter: Option<std::sync::Arc<dyn crate::paint::TextShaper + Send + Sync>>,
+    /// Ambient reduced-motion preference — while `true`, loading
+    /// placeholders paint statically (`phase = None`) instead of the
+    /// animated shimmer sweep. Installed via
+    /// [`set_reduced_motion`](Self::set_reduced_motion).
+    reduced_motion: bool,
+    /// Shared shimmer clock in seconds, advanced by
+    /// [`tick`](Self::tick) while any node is loading and fed to
+    /// [`Widget::paint_loading`] as the phase — all skeletons sweep in
+    /// lock-step on one clock instead of carrying per-widget phases.
+    loading_elapsed: f32,
 }
 
 impl std::fmt::Debug for WidgetArena {
@@ -230,6 +240,8 @@ impl WidgetArena {
             theme: martensite_theme::Theme::new("fallback"),
             scale_factor: 1.0,
             text_painter: None,
+            reduced_motion: false,
+            loading_elapsed: 0.0,
         }
     }
 
@@ -480,13 +492,15 @@ impl WidgetArena {
             if let Some(cold) = self.get_cold_mut(id) {
                 Self::sync_overlay_recursive(cold.widget.as_mut(), &mut overlay);
             }
-            // An owner whose underflow policy hides it can no longer
-            // project a popup — an invisible widget floating a live
-            // surface is worse than the cramped widget. Close it.
+            // An owner whose underflow policy hides it — or that
+            // entered loading — can no longer project a popup: an
+            // invisible or skeletonized widget floating a live surface
+            // is worse than either state alone. Close it.
             let orphan = self
                 .get_cold(id)
                 .and_then(|c| c.underflow_policy())
-                .is_some_and(|p| p.hides_from_a11y() || p.covers_input());
+                .is_some_and(|p| p.hides_from_a11y() || p.covers_input())
+                || self.effective_loading(id);
             if orphan {
                 overlay.close_owner(id);
             }
@@ -605,10 +619,13 @@ impl WidgetArena {
     /// Calls [`Widget::tick`] on every live arena widget and,
     /// recursively, on its internal children; widgets that returned
     /// `true` (animation in flight, delay countdown running) are marked
-    /// `DIRTY_PAINT | DIRTY_A11Y`. Then runs [`Self::sync_overlays`] so
-    /// effects the tick produced — a `Tooltip` finishing its hover
-    /// delay, a `ScrollView` animation completing — reconcile their
-    /// popups the same frame.
+    /// `DIRTY_PAINT | DIRTY_A11Y`. Loading nodes (see
+    /// [`Self::set_loading`]) are additionally marked `DIRTY_PAINT`
+    /// only every tick so their placeholders track the shared shimmer
+    /// clock without re-emitting accessibility state at frame rate.
+    /// Then runs [`Self::sync_overlays`] so effects the tick produced —
+    /// a `Tooltip` finishing its hover delay, a `ScrollView` animation
+    /// completing — reconcile their popups the same frame.
     ///
     /// Call once per frame from the application/windowing frame loop
     /// (`martensite-access`'s `MartensiteAccessBridge::tick` forwards
@@ -627,35 +644,62 @@ impl WidgetArena {
     /// ```
     pub fn tick(&mut self, dt: Duration) {
         let ids: Vec<WidgetId> = self.iter_depth_first().collect();
+        let mut any_loading = false;
         for id in ids {
-            let dirty = self
+            let (paint_dirty, semantic_dirty) = self
                 .get_cold_mut(id)
                 .map(|cold| Self::tick_recursive(cold.widget.as_mut(), dt))
-                .unwrap_or(false);
-            if dirty {
+                .unwrap_or((false, false));
+            if semantic_dirty {
                 self.mark_dirty(id);
+            } else if paint_dirty {
+                // `tick_paint_only` widgets advance purely visual
+                // animation — no semantic change means no a11y
+                // re-emission at frame rate.
+                self.mark_dirty_paint(id);
             }
+            // Loading placeholders repaint on the shared shimmer clock
+            // — paint-only: re-emitting accessibility state at frame
+            // rate for a purely visual sweep would swamp incremental
+            // `TreeUpdate`s.
+            if self.effective_loading(id) {
+                any_loading = true;
+                self.mark_dirty_paint(id);
+            }
+        }
+        // The clock only runs while a skeleton is on screen — otherwise
+        // every tick would accumulate time no placeholder consumes.
+        if any_loading {
+            self.loading_elapsed += dt.as_secs_f32();
         }
         self.sync_overlays();
     }
 
     /// Recursive helper for [`tick`](Self::tick): ticks `widget` then
-    /// its internal children, `true` if any returned `true`. Children
-    /// with no allocated bounds are skipped — the same "not presented"
-    /// signal the paint walk uses (`TabPanelChild` reports `None` for
-    /// hidden panels), so hidden views stop ticking and stop marking
-    /// the frame dirty.
-    fn tick_recursive(widget: &mut dyn Widget, dt: Duration) -> bool {
-        let mut dirty = widget.tick(dt);
+    /// its internal children. Returns `(paint_dirty, semantic_dirty)` —
+    /// a widget whose [`Widget::tick_paint_only`] is `true` contributes
+    /// to the former only. Children with no allocated bounds are
+    /// skipped — the same "not presented" signal the paint walk uses
+    /// (`TabPanelChild` reports `None` for hidden panels), so hidden
+    /// views stop ticking and stop marking the frame dirty.
+    fn tick_recursive(widget: &mut dyn Widget, dt: Duration) -> (bool, bool) {
+        let mut paint_dirty = false;
+        let mut semantic_dirty = false;
+        if widget.tick(dt) {
+            paint_dirty = true;
+            semantic_dirty = !widget.tick_paint_only();
+        }
         for i in 0..widget.child_count() {
             if widget.child_bounds(i).is_none() {
                 continue;
             }
             if let Some(child) = widget.child_mut(i) {
-                dirty |= Self::tick_recursive(child, dt);
+                let (p, s) = Self::tick_recursive(child, dt);
+                paint_dirty |= p;
+                semantic_dirty |= s;
             }
         }
-        dirty
+        (paint_dirty, semantic_dirty)
     }
 
     /// Recursive helper for [`sync_overlays`](Self::sync_overlays).
@@ -759,6 +803,168 @@ impl WidgetArena {
     pub fn mark_dirty(&mut self, id: WidgetId) {
         if let Some(h) = self.get_hot_mut(id) {
             h.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
+        }
+    }
+
+    /// Marks `id` `DIRTY_PAINT` only — the emitted appearance is stale
+    /// but its accessibility state is unchanged. Dead widgets are
+    /// ignored.
+    ///
+    /// This is the animation path: shimmering loading placeholders
+    /// (and any ticking widget) repaint every frame, and re-emitting
+    /// an AccessKit `TreeUpdate` at frame rate would swamp assistive
+    /// technology for a purely visual change. Use [`mark_dirty`](Self::mark_dirty)
+    /// when emitted a11y state may also have moved.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.mark_dirty_paint(id);
+    /// let flags = arena.get_hot(id).unwrap().flags;
+    /// assert!(flags.contains(NodeFlags::DIRTY_PAINT));
+    /// assert!(!flags.contains(NodeFlags::DIRTY_A11Y));
+    /// ```
+    pub fn mark_dirty_paint(&mut self, id: WidgetId) {
+        if let Some(h) = self.get_hot_mut(id) {
+            h.flags |= NodeFlags::DIRTY_PAINT;
+        }
+    }
+
+    /// The resolved loading state of `id` — the instance-level
+    /// [`NodeFlags::LOADING`] override OR'd with the widget's own
+    /// [`Widget::is_loading`] declaration,
+    /// mirroring `ColdNode::effective_render_minimum`'s
+    /// instance-plus-type resolution. Every enforcement chokepoint
+    /// consults this — never the raw flag or trait alone.
+    fn effective_loading(&self, id: WidgetId) -> bool {
+        self.get_both(id).is_some_and(|(hot, cold)| {
+            hot.flags.contains(NodeFlags::LOADING) || cold.widget.is_loading()
+        })
+    }
+
+    /// `true` while `id` is loading — either the instance-level
+    /// [`NodeFlags::LOADING`] override (see [`Self::set_loading`]) or
+    /// the widget's own [`Widget::is_loading`]
+    /// declaration. `false` for dead handles.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// assert!(!arena.node_loading(id));
+    /// arena.set_loading(id, true);
+    /// assert!(arena.node_loading(id));
+    /// ```
+    pub fn node_loading(&self, id: WidgetId) -> bool {
+        self.effective_loading(id)
+    }
+
+    /// Sets or clears the instance-level [`NodeFlags::LOADING`
+    /// override](crate::NodeFlags) on `id` — the arena-side half of
+    /// the loading protocol that skeletonizes *any* node, including
+    /// widgets that never implemented
+    /// [`Widget::is_loading`].
+    ///
+    /// While loading, the node paints its
+    /// [`Widget::paint_loading`]
+    /// placeholder instead of body and children, is skipped by event
+    /// dispatch (target and ancestors alike), and has any owned
+    /// overlay popups closed by [`Self::sync_overlays`]. The widget's
+    /// own `is_loading` still applies — clearing this flag does not
+    /// un-load a widget that declares itself pending.
+    ///
+    /// On transition the node is marked `DIRTY_PAINT | DIRTY_A11Y`
+    /// once (placeholder ↔ content swaps what the a11y tree must
+    /// show); repeating the same state is a no-op.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let id = arena.insert_with_widget(HotNode::default(), Box::new(DummyWidget));
+    /// arena.set_loading(id, true);
+    /// assert!(arena
+    ///     .get_hot(id)
+    ///     .unwrap()
+    ///     .flags
+    ///     .contains(NodeFlags::LOADING));
+    /// arena.set_loading(id, false);
+    /// assert!(!arena.node_loading(id));
+    /// ```
+    pub fn set_loading(&mut self, id: WidgetId, loading: bool) {
+        let Some((hot, cold)) = self.get_both_mut(id) else {
+            return;
+        };
+        let was = hot.flags.contains(NodeFlags::LOADING) || cold.widget.is_loading();
+        hot.flags.set(NodeFlags::LOADING, loading);
+        let now = hot.flags.contains(NodeFlags::LOADING) || cold.widget.is_loading();
+        if was != now {
+            hot.flags |= NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
+        }
+    }
+
+    /// `true` while the arena is in reduced-motion mode — loading
+    /// placeholders paint as static blocks (`phase = None`) instead of
+    /// the animated shimmer sweep. `false` until
+    /// [`set_reduced_motion`](Self::set_reduced_motion) installs the
+    /// preference.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::WidgetArena;
+    ///
+    /// let arena = WidgetArena::new();
+    /// assert!(!arena.reduced_motion());
+    /// ```
+    pub fn reduced_motion(&self) -> bool {
+        self.reduced_motion
+    }
+
+    /// Installs the ambient reduced-motion preference — a
+    /// framework-level flag (theme-token equivalent) consumed by the
+    /// shared loading painter: while set, every
+    /// [`Widget::paint_loading`] receives
+    /// `phase = None` and paints the static placeholder. Call when the
+    /// OS `prefers-reduced-motion` setting is known or changes;
+    /// loading nodes keep repainting on the next
+    /// [`tick`](Self::tick) and pick up the static treatment.
+    ///
+    /// Apps install the OS `prefers-reduced-motion` setting once at
+    /// startup via `martensite_window::prefs::apply_platform_preferences`
+    /// (env override: `MARTENSITE_REDUCED_MOTION`); per ADR-0040 the
+    /// consult is a snapshot — live-change listening is not wired.
+    ///
+    /// The flag is also *pushed* to every widget via
+    /// [`Widget::set_reduced_motion`] so widget-owned animation (a
+    /// morphing icon's spring, ADR-0041) can honor it outside the
+    /// paint path; widgets inserted while the flag holds are seeded
+    /// the same way at insert.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::WidgetArena;
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena.set_reduced_motion(true);
+    /// assert!(arena.reduced_motion());
+    /// ```
+    pub fn set_reduced_motion(&mut self, reduced: bool) {
+        self.reduced_motion = reduced;
+        for id in self.iter_depth_first().collect::<Vec<_>>() {
+            if let Some(cold) = self.get_cold_mut(id) {
+                cold.widget.set_reduced_motion(reduced);
+            }
         }
     }
 
@@ -898,6 +1104,13 @@ impl WidgetArena {
 
     /// Insert a new node into the arena, returning a generational handle.
     pub fn insert(&mut self, hot: HotNode, cold: ColdNode) -> WidgetId {
+        let mut cold = cold;
+        // A node born while reduced motion holds sees the preference
+        // immediately — same push `set_reduced_motion` delivers to
+        // existing widgets.
+        if self.reduced_motion {
+            cold.widget.set_reduced_motion(true);
+        }
         let dense_idx = self.hot_nodes.len() as u32;
         self.hot_nodes.push(hot);
         self.cold_nodes.push(cold);
@@ -1745,16 +1958,29 @@ impl WidgetArena {
         target: WidgetId,
         event: &WidgetEvent,
     ) -> Option<(WidgetId, EventResponse)> {
+        // A loading node covers its whole subtree, and keyboard focus /
+        // SemanticAction delivery reach targets without hit-testing —
+        // dispatch must begin above the topmost loading ancestor rather
+        // than trusting the bubble walk to skip it after intermediate
+        // descendants already ran.
         let mut current = Some(target);
+        let mut cursor = Some(target);
+        while let Some(id) = cursor {
+            let parent = self.get_hot(id).and_then(|h| h.parent);
+            if self.effective_loading(id) {
+                current = parent;
+            }
+            cursor = parent;
+        }
         while let Some(id) = current {
             let Some(hot) = self.get_hot(id) else {
                 break;
             };
             let bounds = hot.bounds;
             let parent = hot.parent;
-            // Inert, invisible, and input-covered (engaged Hide/
-            // Collapse/Scrim) nodes never receive events — the event
-            // bubbles to the parent instead.
+            // Inert, invisible, input-covered (engaged Hide/Collapse/
+            // Scrim), and loading nodes never receive events — the
+            // event bubbles to the parent instead.
             if hot.flags.contains(NodeFlags::INERT) || !hot.flags.contains(NodeFlags::VISIBLE) {
                 current = parent;
                 continue;
@@ -1762,7 +1988,8 @@ impl WidgetArena {
             let covered = self
                 .get_cold(id)
                 .and_then(|c| c.underflow_policy())
-                .is_some_and(|p| p.covers_input());
+                .is_some_and(|p| p.covers_input())
+                || self.effective_loading(id);
             if covered {
                 current = parent;
                 continue;
@@ -1906,9 +2133,25 @@ impl WidgetArena {
             .map(|h| h.bounds)
             .filter(|b| has_area(*b));
         self.paint_node(root, list, visible);
-        // In-window popups paint above everything else.
-        self.overlay
-            .paint(list, &self.theme, self.text_painter.as_deref());
+        // In-window popups paint above everything else, on the same
+        // shimmer clock as arena skeletons.
+        self.overlay.paint_with_phase(
+            list,
+            &self.theme,
+            self.text_painter.as_deref(),
+            self.loading_phase(),
+        );
+    }
+
+    /// The shimmer phase for this frame — `None` under reduced motion
+    /// (static placeholder), else the shared clock's position in the
+    /// sweep.
+    fn loading_phase(&self) -> Option<f32> {
+        if self.reduced_motion {
+            None
+        } else {
+            Some(crate::loading::sweep_phase(self.loading_elapsed))
+        }
     }
 
     /// Recursive helper for [`WidgetArena::build_paint_list`].
@@ -1977,6 +2220,24 @@ impl WidgetArena {
             return;
         }
 
+        // Loading enforcement — the placeholder replaces the widget's
+        // body AND suppresses both child domains (the internal-child
+        // walk inside `paint_widget_body` and the arena-children loop
+        // below). Underflow wins ordering: engaged Hide/Collapse never
+        // reach this arm, and Fallback handles itself above.
+        if self.effective_loading(id) {
+            let mut cx = PaintContext {
+                list,
+                bounds: hot.bounds,
+                theme: &self.theme,
+                scale: self.scale_factor,
+                text_painter: self.text_painter.as_deref(),
+            };
+            cold.widget.paint_loading(&mut cx, self.loading_phase());
+            list.pop_scope();
+            return;
+        }
+
         // `Clip` wraps the widget's chrome AND its entire subtree —
         // stricter than `CLIPS_CHILDREN`, which clips children only.
         if matches!(policy, Some(UnderflowPolicy::Clip)) {
@@ -1998,6 +2259,7 @@ impl WidgetArena {
             self.scale_factor,
             self.text_painter.as_deref(),
             body_visible,
+            self.loading_phase(),
         );
 
         // Arena children honour the node's `CLIPS_CHILDREN` flag: their
@@ -2135,7 +2397,10 @@ pub(crate) fn rect_to_kurbo(rect: crate::Rect) -> kurbo::Rect {
 /// `bounds`.
 ///
 /// `pub(crate)` so the [`OverlayLayer`](crate::overlay::OverlayLayer)
-/// can paint popup content through the same walk.
+/// can paint popup content through the same walk. `phase` is the
+/// shared shimmer phase handed to [`Widget::paint_loading`] — `None`
+/// paints static placeholders.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_widget_recursive(
     widget: &dyn crate::Widget,
     bounds: crate::Rect,
@@ -2144,6 +2409,7 @@ pub(crate) fn paint_widget_recursive(
     scale: f32,
     text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
     visible: Option<crate::Rect>,
+    phase: Option<f32>,
 ) {
     // Scope with no arena handle — callers of this entry point (overlay
     // content) have no `WidgetId` to report. Internal children recurse
@@ -2153,7 +2419,16 @@ pub(crate) fn paint_widget_recursive(
         widget.debug_name(),
         rect_to_kurbo(widget.paint_extent().unwrap_or(bounds)),
     );
-    paint_widget_body(widget, bounds, list, theme, scale, text_painter, visible);
+    paint_widget_body(
+        widget,
+        bounds,
+        list,
+        theme,
+        scale,
+        text_painter,
+        visible,
+        phase,
+    );
     list.pop_scope();
 }
 
@@ -2162,6 +2437,7 @@ pub(crate) fn paint_widget_recursive(
 /// cover arena children. [`Widget::clips_children`] wraps the internal
 /// children in a clip pair, matching the arena-level `CLIPS_CHILDREN`
 /// behaviour.
+#[allow(clippy::too_many_arguments)]
 fn paint_widget_body(
     widget: &dyn crate::Widget,
     bounds: crate::Rect,
@@ -2170,6 +2446,7 @@ fn paint_widget_body(
     scale: f32,
     text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
     visible: Option<crate::Rect>,
+    phase: Option<f32>,
 ) {
     let mut cx = PaintContext {
         list,
@@ -2178,6 +2455,14 @@ fn paint_widget_body(
         scale,
         text_painter,
     };
+    // A loading internal widget swaps its body AND descendants for the
+    // placeholder — this consult also covers overlay popup content,
+    // which reaches here through `paint_widget_recursive` and never
+    // passes `WidgetArena::paint_node`.
+    if widget.is_loading() {
+        widget.paint_loading(&mut cx, phase);
+        return;
+    }
     widget.paint(&mut cx);
     let clip = widget.clips_children();
     if clip {
@@ -2223,6 +2508,7 @@ fn paint_widget_body(
             scale,
             text_painter,
             child_visible,
+            phase,
         );
         if extra_clip.is_some() {
             cx.list.pop_clip();
@@ -2237,6 +2523,7 @@ fn paint_widget_body(
 /// underflow policy when the child's bounds underflow the declared
 /// minimum. Internal children have no `ColdNode`, so evaluation is
 /// threshold-only — no hysteresis state and no per-instance override.
+#[allow(clippy::too_many_arguments)]
 fn paint_underflowed_child(
     child: &dyn Widget,
     bounds: crate::Rect,
@@ -2245,6 +2532,7 @@ fn paint_underflowed_child(
     scale: f32,
     text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
     visible: Option<crate::Rect>,
+    phase: Option<f32>,
 ) {
     let min = child.min_render();
     let policy = if min.policy.enforces() && min.violated(bounds, scale) {
@@ -2276,15 +2564,34 @@ fn paint_underflowed_child(
                 scale,
                 text_painter,
                 narrow_visible(visible, bounds),
+                phase,
             );
             list.pop_clip();
         }
         Some(UnderflowPolicy::Scrim) => {
-            paint_widget_recursive(child, bounds, list, theme, scale, text_painter, visible);
+            paint_widget_recursive(
+                child,
+                bounds,
+                list,
+                theme,
+                scale,
+                text_painter,
+                visible,
+                phase,
+            );
             let (rect, radius, color) = scrim_veil(bounds, theme);
             list.push_blurred_rect(rect, radius, color);
         }
-        _ => paint_widget_recursive(child, bounds, list, theme, scale, text_painter, visible),
+        _ => paint_widget_recursive(
+            child,
+            bounds,
+            list,
+            theme,
+            scale,
+            text_painter,
+            visible,
+            phase,
+        ),
     }
 }
 

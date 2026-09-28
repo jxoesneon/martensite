@@ -287,19 +287,27 @@ impl AccessKitAdapter {
             let Some((hot, cold)) = arena.get_both(widget_id) else {
                 continue;
             };
+            // A loading node's placeholder replaces its internal
+            // children (ADR-0040) — emit none of them and skip the
+            // fixup hook so pending state cannot wire stale relations
+            // onto the node. Arena children are still listed; they are
+            // emitted as hidden via `ancestor_state`.
+            let loading = arena.node_loading(widget_id);
             let node_id = widget_id_to_node_id(widget_id);
             let mut node = self.build_node(widget_id, hot.bounds, cold, arena);
             // Internal children are "inside" the widget's own subtree and
             // precede arena children, matching paint order.
             let mut emitted = Vec::new();
             let mut children = Vec::new();
-            self.build_internal_children(
-                widget_id,
-                &*cold.widget,
-                &mut Vec::new(),
-                &mut emitted,
-                &mut children,
-            );
+            if !loading {
+                self.build_internal_children(
+                    widget_id,
+                    &*cold.widget,
+                    &mut Vec::new(),
+                    &mut emitted,
+                    &mut children,
+                );
+            }
             children.extend(arena.children(widget_id).map(widget_id_to_node_id));
             // Overlay popups are top-level surfaces: attach their roots
             // to the tree root, painted above everything else.
@@ -309,8 +317,10 @@ impl AccessKitAdapter {
             if !children.is_empty() {
                 node.set_children(children);
             }
-            cold.widget
-                .a11y_fixup(&mut emitted, &self.overlay_refs, &mut node);
+            if !loading {
+                cold.widget
+                    .a11y_fixup(&mut emitted, &self.overlay_refs, &mut node);
+            }
             nodes.extend(emitted.into_iter().map(|e| (e.id, e.node)));
             nodes.push((node_id, node));
         }
@@ -459,17 +469,25 @@ impl AccessKitAdapter {
             let Some((hot, cold)) = arena.get_both(widget_id) else {
                 continue;
             };
+            // A loading node's placeholder replaces its internal
+            // children (ADR-0040) — emit none of them and skip the
+            // fixup hook so pending state cannot wire stale relations
+            // onto the node. Arena children are still listed; they are
+            // emitted as hidden via `ancestor_state`.
+            let loading = arena.node_loading(widget_id);
             let node_id = widget_id_to_node_id(widget_id);
             let mut node = self.build_node(widget_id, hot.bounds, cold, arena);
             let mut emitted = Vec::new();
             let mut children = Vec::new();
-            self.build_internal_children(
-                widget_id,
-                &*cold.widget,
-                &mut Vec::new(),
-                &mut emitted,
-                &mut children,
-            );
+            if !loading {
+                self.build_internal_children(
+                    widget_id,
+                    &*cold.widget,
+                    &mut Vec::new(),
+                    &mut emitted,
+                    &mut children,
+                );
+            }
             children.extend(arena.children(widget_id).map(widget_id_to_node_id));
             // Overlay popups attach to the tree root — re-listing them
             // here is what opens/closes their subtree for the AT.
@@ -479,8 +497,10 @@ impl AccessKitAdapter {
             if !children.is_empty() {
                 node.set_children(children);
             }
-            cold.widget
-                .a11y_fixup(&mut emitted, &self.overlay_refs, &mut node);
+            if !loading {
+                cold.widget
+                    .a11y_fixup(&mut emitted, &self.overlay_refs, &mut node);
+            }
             nodes.extend(emitted.into_iter().map(|e| (e.id, e.node)));
             nodes.push((node_id, node));
         }
@@ -510,6 +530,20 @@ impl AccessKitAdapter {
 
     /// Builds a single [`accesskit::Node`] from hot/cold data and the
     /// widget's accessibility hook.
+    ///
+    /// A loading node (ADR-0040) is emitted **sanitized**: its role is
+    /// preserved but its label is the generic `"Loading"` plus `busy`,
+    /// and the widget's `accessibility` hook is skipped — a stale
+    /// computed label ("3 active alarms") must not leak while the
+    /// content is pending. Descendants are pruned through
+    /// [`ancestor_state`](Self::ancestor_state) and internal children
+    /// are not emitted at all.
+    ///
+    /// Contract for widget authors: virtualized collections must never
+    /// emit fabricated `posinset`/`setsize` metadata for pending rows —
+    /// real indices or nothing. The adapter suppresses whatever a
+    /// loading widget would have emitted, but only widgets that honour
+    /// this rule produce honest trees when *partially* loaded.
     fn build_node(
         &self,
         widget_id: WidgetId,
@@ -524,36 +558,53 @@ impl AccessKitAdapter {
             node.set_bounds(rect_to_accesskit(bounds));
         }
 
-        // Set accessible name from cold node.
-        if let Some(ref name) = cold.a11y_name {
-            if !name.is_empty() {
-                node.set_label(name.as_str());
-            }
-        }
-
-        // Set tooltip if present.
-        if let Some(ref tooltip) = cold.tooltip {
-            node.set_tooltip(tooltip.as_str());
-        }
-
-        // Read hot node flags for focusability/visibility state.
+        // Read hot node flags for focusability/visibility state — and
+        // the loading consult, which decides whether the widget's own
+        // accessibility hook (and its computed label) may contribute.
         let hot_flags = arena
             .get_hot(widget_id)
             .map(|h| h.flags)
             .unwrap_or(NodeFlags::empty());
+        let loading = hot_flags.contains(NodeFlags::LOADING) || cold.widget.is_loading();
+
+        if loading {
+            // Sanitized emission: the role is preserved, but the label
+            // is the generic "Loading" — the instance name and tooltip
+            // may describe stale content, and `accessibility()` would
+            // emit computed state that no longer exists.
+            node.set_label("Loading");
+            node.set_busy();
+        } else {
+            // Set accessible name from cold node.
+            if let Some(ref name) = cold.a11y_name {
+                if !name.is_empty() {
+                    node.set_label(name.as_str());
+                }
+            }
+
+            // Set tooltip if present.
+            if let Some(ref tooltip) = cold.tooltip {
+                node.set_tooltip(tooltip.as_str());
+            }
+        }
 
         // Hidden when not visible, when an engaged underflow policy
         // hides it (Hide/Collapse), or when any ancestor is hidden —
         // hidden state propagates down the tree so the emitted tree
         // stays internally consistent for ATs that prune subtrees.
         // Input coverage propagates the same way: a Scrim veil over an
-        // ancestor covers this node's region too.
+        // ancestor covers this node's region too, and so does a loading
+        // ancestor (the placeholder replaced the whole subtree).
         let underflow = cold.underflow_policy();
         let (ancestor_hidden, ancestor_covered) = self.ancestor_state(arena, widget_id);
         let hidden = !hot_flags.contains(NodeFlags::VISIBLE)
             || underflow.is_some_and(|p| p.hides_from_a11y())
             || ancestor_hidden;
-        let covered = underflow.is_some_and(|p| p.covers_input()) || ancestor_covered;
+        // The loading node itself is input-covered — the placeholder
+        // occupies real geometry but accepts no input — so it reports
+        // disabled and withholds the Focus action, while staying
+        // visible.
+        let covered = loading || underflow.is_some_and(|p| p.covers_input()) || ancestor_covered;
 
         // Add Focus action if the node is focusable and usable —
         // hidden or input-covered nodes must not advertise focus to
@@ -573,8 +624,12 @@ impl AccessKitAdapter {
             node.set_hidden();
         }
 
-        // Let the widget customize the node with role-specific properties.
-        cold.widget.accessibility(&mut node);
+        // Let the widget customize the node with role-specific
+        // properties — skipped while loading so pending state cannot
+        // leak stale labels, actions, or relations into the tree.
+        if !loading {
+            cold.widget.accessibility(&mut node);
+        }
 
         node
     }
@@ -584,7 +639,10 @@ impl AccessKitAdapter {
     /// node hidden; any underflow-covered ancestor covers its input.
     /// Both propagate so ATs see a consistent tree — a visible child of
     /// a hidden parent is still reported hidden, a live child under a
-    /// Scrim veil is still reported disabled.
+    /// Scrim veil is still reported disabled. A loading ancestor
+    /// (ADR-0040) marks both: its placeholder replaced the whole
+    /// subtree, so descendants are pruned (hidden) and unreachable
+    /// (covered) regardless of their own flags.
     fn ancestor_state(&self, arena: &WidgetArena, widget_id: WidgetId) -> (bool, bool) {
         let mut hidden = false;
         let mut covered = false;
@@ -596,9 +654,19 @@ impl AccessKitAdapter {
             if !hot.flags.contains(NodeFlags::VISIBLE) {
                 hidden = true;
             }
-            if let Some(policy) = arena.get_cold(id).and_then(|c| c.underflow_policy()) {
-                hidden |= policy.hides_from_a11y();
-                covered |= policy.covers_input();
+            if let Some(cold) = arena.get_cold(id) {
+                if cold.widget.is_loading() {
+                    hidden = true;
+                    covered = true;
+                }
+                if let Some(policy) = cold.underflow_policy() {
+                    hidden |= policy.hides_from_a11y();
+                    covered |= policy.covers_input();
+                }
+            }
+            if hot.flags.contains(NodeFlags::LOADING) {
+                hidden = true;
+                covered = true;
             }
             current = hot.parent;
         }
@@ -705,17 +773,30 @@ impl AccessKitAdapter {
         if b.width() > 0.0 && b.height() > 0.0 {
             node.set_bounds(rect_to_accesskit(b));
         }
-        entry.content().accessibility(&mut node);
+        // Popup content bypasses `build_node`, so the loading sanitize
+        // is applied directly (ADR-0040): while the popup's content is
+        // pending, emit `busy` + the generic label and skip the
+        // widget's own hook, its children, and the fixup — the same
+        // stale-state leaks apply through the overlay path.
+        let loading = entry.content().is_loading();
+        if loading {
+            node.set_label("Loading");
+            node.set_busy();
+        } else {
+            entry.content().accessibility(&mut node);
+        }
 
         let mut emitted = Vec::new();
         let mut children = Vec::new();
-        self.build_overlay_children(
-            entry_id,
-            entry.content(),
-            &mut Vec::new(),
-            &mut emitted,
-            &mut children,
-        );
+        if !loading {
+            self.build_overlay_children(
+                entry_id,
+                entry.content(),
+                &mut Vec::new(),
+                &mut emitted,
+                &mut children,
+            );
+        }
         if !children.is_empty() {
             node.set_children(children);
         }
@@ -726,9 +807,11 @@ impl AccessKitAdapter {
         });
         // Popup content gets the same post-emission fixup hook arena
         // widgets do, so it can wire relations onto its descendants.
-        entry
-            .content()
-            .a11y_fixup(&mut emitted, &self.overlay_refs, &mut node);
+        if !loading {
+            entry
+                .content()
+                .a11y_fixup(&mut emitted, &self.overlay_refs, &mut node);
+        }
         emitted.push(A11yEmittedNode {
             path: Vec::new(),
             id: root_id,
@@ -1199,6 +1282,197 @@ mod tests {
         assert!(!node.is_hidden());
         assert!(node.is_disabled());
         assert!(!node.supports_action(accesskit::Action::Focus));
+    }
+
+    // -----------------------------------------------------------------
+    // Loading (ADR-0040)
+    // -----------------------------------------------------------------
+
+    /// A widget with a stale computed label that must not leak while
+    /// loading.
+    struct AlarmPanelWidget;
+    impl Widget for AlarmPanelWidget {
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::LayoutContext,
+            _c: martensite_core::LayoutConstraints,
+        ) -> glam::Vec2 {
+            glam::Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut martensite_core::LayoutContext, _b: MartensiteRect) {}
+        fn accessibility(&self, node: &mut accesskit::Node) {
+            node.set_label("3 active alarms");
+            node.add_action(accesskit::Action::Click);
+        }
+    }
+
+    /// A widget that declares `is_loading` and still reports an
+    /// internal child — the adapter must not emit the child.
+    struct LoadingComposite {
+        child: martensite_core::DummyWidget,
+    }
+    impl Widget for LoadingComposite {
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::LayoutContext,
+            _c: martensite_core::LayoutConstraints,
+        ) -> glam::Vec2 {
+            glam::Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut martensite_core::LayoutContext, _b: MartensiteRect) {}
+        fn is_loading(&self) -> bool {
+            true
+        }
+        fn child_count(&self) -> usize {
+            1
+        }
+        fn child(&self, index: usize) -> Option<&dyn Widget> {
+            (index == 0).then_some(&self.child as &dyn Widget)
+        }
+        fn child_bounds(&self, index: usize) -> Option<MartensiteRect> {
+            (index == 0).then_some(MartensiteRect::new(0.0, 0.0, 10.0, 10.0))
+        }
+    }
+
+    #[test]
+    fn loading_node_is_busy_with_sanitized_label() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE | NodeFlags::FOCUSABLE | NodeFlags::LOADING,
+                ..HotNode::default()
+            },
+            ColdNode::new(Box::new(AlarmPanelWidget))
+                .with_role(accesskit::Role::Button)
+                .with_a11y_name("Alarm panel")
+                .with_tooltip("Alarms needing attention"),
+        );
+        let mut adapter = AccessKitAdapter::new(root);
+        let update = adapter.build_update(&mut arena);
+        let node = &update.nodes[0].1;
+
+        // Role preserved; label sanitized to the generic "Loading" —
+        // neither the instance name, the tooltip, nor the widget's
+        // computed "3 active alarms" leaks.
+        assert_eq!(node.role(), accesskit::Role::Button);
+        assert_eq!(node.label(), Some("Loading"));
+        assert!(node.is_busy());
+        assert_eq!(node.tooltip(), None);
+        // The widget's `accessibility` hook was skipped — no computed
+        // actions survive.
+        assert!(!node.supports_action(accesskit::Action::Click));
+        // The node stays visible but is input-covered: disabled and no
+        // advertised Focus action.
+        assert!(!node.is_hidden());
+        assert!(node.is_disabled());
+        assert!(!node.supports_action(accesskit::Action::Focus));
+    }
+
+    #[test]
+    fn widget_is_loading_emits_busy() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                ..HotNode::default()
+            },
+            ColdNode::new(Box::new(LoadingComposite {
+                child: martensite_core::DummyWidget,
+            })),
+        );
+        let mut adapter = AccessKitAdapter::new(root);
+        let update = adapter.build_update(&mut arena);
+        let node = &update.nodes[0].1;
+        // `Widget::is_loading` alone (no flag) triggers the same
+        // sanitized emission.
+        assert!(node.is_busy());
+        assert_eq!(node.label(), Some("Loading"));
+    }
+
+    #[test]
+    fn loading_ancestor_hides_and_covers_descendants() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                ..HotNode::default()
+            },
+            ColdNode::default(),
+        );
+        let loading = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE | NodeFlags::LOADING,
+                ..HotNode::default()
+            },
+            ColdNode::default(),
+        );
+        let child = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE | NodeFlags::FOCUSABLE,
+                ..HotNode::default()
+            },
+            ColdNode::default(),
+        );
+        arena.append_child(root, loading).unwrap();
+        arena.append_child(loading, child).unwrap();
+
+        let mut adapter = AccessKitAdapter::new(root);
+        let update = adapter.build_update(&mut arena);
+
+        let nid = widget_id_to_node_id(child);
+        let node = &update.nodes.iter().find(|(id, _)| *id == nid).unwrap().1;
+        // The descendant's own flags are clean, but a loading ancestor
+        // replaced its subtree: hidden and covered.
+        assert!(node.is_hidden());
+        assert!(node.is_disabled());
+        assert!(!node.supports_action(accesskit::Action::Focus));
+    }
+
+    #[test]
+    fn loading_widget_emits_no_internal_children() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                ..HotNode::default()
+            },
+            ColdNode::new(Box::new(LoadingComposite {
+                child: martensite_core::DummyWidget,
+            })),
+        );
+        let mut adapter = AccessKitAdapter::new(root);
+        let update = adapter.build_update(&mut arena);
+        // Only the arena node itself — the internal child is part of
+        // the suppressed subtree and is not emitted at all.
+        assert_eq!(update.nodes.len(), 1);
+        assert!(adapter.internal_ids.is_empty());
+    }
+
+    #[test]
+    fn loading_popup_content_is_sanitized() {
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(HotNode::default(), ColdNode::default());
+        // Open a popup whose content declares loading.
+        arena.overlay_mut().open(
+            Box::new(LoadingComposite {
+                child: martensite_core::DummyWidget,
+            }),
+            martensite_core::overlay::OverlayAnchor::Bounds(MartensiteRect::new(
+                0.0, 0.0, 50.0, 50.0,
+            )),
+        );
+
+        let mut adapter = AccessKitAdapter::new(root);
+        let update = adapter.build_update(&mut arena);
+        // Root + popup root — the popup's internal child is suppressed.
+        assert_eq!(update.nodes.len(), 2);
+        let popup = update
+            .nodes
+            .iter()
+            .map(|(_, n)| n)
+            .find(|n| n.is_busy())
+            .expect("popup root emitted busy");
+        assert_eq!(popup.label(), Some("Loading"));
     }
 
     #[test]

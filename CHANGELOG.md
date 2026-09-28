@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **OS `prefers-reduced-motion` detection (ADR-0040 phase 2)** —
+  `martensite_shell::prefs::prefers_reduced_motion` probes the platform
+  setting (GNOME/GTK `enable-animations` via `gsettings` and GTK
+  `settings.ini` on Linux, `NSWorkspace.accessibilityDisplayShouldReduceMotion`
+  on macOS under `macos-backend`, `SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION)`
+  on Windows under `windows-backend`, `matchMedia("prefers-reduced-motion")`
+  on wasm) with a `MARTENSITE_REDUCED_MOTION` env override.
+  `martensite_window::prefs::apply_platform_preferences` installs the
+  result onto `WidgetArena::set_reduced_motion` in one startup call,
+  after which loading placeholders paint statically.
+
 ## [0.20.1] - 2026-09-26
 
 ### Added — CI/CD Pipeline Hardening & Stability Refinements

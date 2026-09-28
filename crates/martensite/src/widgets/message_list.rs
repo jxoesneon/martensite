@@ -24,6 +24,7 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use martensite_core::loading::{paint_skeleton, SkeletonShape};
 use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect,
     RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
@@ -126,6 +127,9 @@ pub struct MessageList {
     pub messages: Vec<Message>,
     /// Follow the newest message when already at the bottom.
     pub follow: bool,
+    /// Whether the backlog is pending — paints a placeholder row
+    /// stack instead of the bubbles (ADR-0040).
+    loading: bool,
     scroll: f32,
     bounds: Rect,
     scale: f32,
@@ -160,6 +164,7 @@ impl MessageList {
             label: "Messages".to_string(),
             messages: Vec::new(),
             follow: true,
+            loading: false,
             scroll: 0.0,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
@@ -202,6 +207,48 @@ impl MessageList {
     pub fn with_text_painter(mut self, p: crate::text_paint::SharedTextPainter) -> Self {
         self.text_painter = Some(p);
         self
+    }
+
+    /// Sets the loading flag — while set, the widget paints a
+    /// placeholder row stack instead of the transcript and the
+    /// framework suppresses input/a11y for the subtree (ADR-0040).
+    ///
+    /// ```
+    /// use martensite::widgets::message_list::MessageList;
+    ///
+    /// assert!(MessageList::new().loading(true).is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets the loading flag (mutating form).
+    ///
+    /// ```
+    /// use martensite::widgets::message_list::MessageList;
+    ///
+    /// let mut l = MessageList::new();
+    /// l.set_loading(true);
+    /// assert!(l.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the transcript's content is pending.
+    ///
+    /// ```
+    /// use martensite::widgets::message_list::MessageList;
+    ///
+    /// assert!(!MessageList::new().is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_loading(&self) -> bool {
+        self.loading
     }
 
     /// Message count.
@@ -324,6 +371,17 @@ impl Widget for MessageList {
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::List);
         node.set_label(format!("{} — {} messages", self.label, self.messages.len()));
+    }
+
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // A one-line message is ~2.2 ROW_PT (bubble + meta line).
+        let row_px = (cx.pt(ROW_PT) * 2.2).max(1.0);
+        let count = ((cx.bounds.height() / row_px).floor() as usize).clamp(1, 64);
+        paint_skeleton(cx, cx.bounds, SkeletonShape::Rows { count }, phase);
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -481,6 +539,30 @@ mod tests {
         assert_eq!(l.len(), 2);
         assert!(l.message(1).unwrap().outgoing);
         assert_eq!(l.message(0).unwrap().sender, "Ann");
+    }
+
+    #[test]
+    fn loading_flag_and_placeholder() {
+        assert!(!MessageList::new().is_loading());
+        assert!(MessageList::new().loading(true).is_loading());
+        let mut l = MessageList::new();
+        l.set_loading(true);
+        assert!(Widget::is_loading(&l));
+        let mut list = martensite_core::PaintList::new();
+        let theme = martensite_theme::Theme::new("test");
+        l.paint_loading(
+            &mut PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 300.0, 260.0),
+                scale: 1.0,
+                theme: &theme,
+                text_painter: None,
+            },
+            None,
+        );
+        assert!(list.len() >= 3);
+        l.set_loading(false);
+        assert!(!l.is_loading());
     }
 
     #[test]

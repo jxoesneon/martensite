@@ -24,6 +24,7 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use martensite_core::loading::{paint_skeleton, SkeletonShape};
 use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
@@ -103,6 +104,9 @@ pub struct NotificationCenter {
     pub label: String,
     /// Cards, newest first.
     cards: Vec<Notification>,
+    /// Whether the stack is pending — paints a placeholder row
+    /// stack instead of the cards (ADR-0040).
+    loading: bool,
     dismissed: Option<usize>,
     cleared: bool,
     scroll: f32,
@@ -146,6 +150,7 @@ impl NotificationCenter {
         Self {
             label: "Notifications".to_string(),
             cards: Vec::new(),
+            loading: false,
             dismissed: None,
             cleared: false,
             scroll: 0.0,
@@ -178,6 +183,48 @@ impl NotificationCenter {
     pub fn with_text_painter(mut self, p: crate::text_paint::SharedTextPainter) -> Self {
         self.text_painter = Some(p);
         self
+    }
+
+    /// Sets the loading flag — while set, the widget paints a
+    /// placeholder card stack instead of the notifications and the
+    /// framework suppresses input/a11y for the subtree (ADR-0040).
+    ///
+    /// ```
+    /// use martensite::widgets::notification_center::NotificationCenter;
+    ///
+    /// assert!(NotificationCenter::new().loading(true).is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets the loading flag (mutating form).
+    ///
+    /// ```
+    /// use martensite::widgets::notification_center::NotificationCenter;
+    ///
+    /// let mut c = NotificationCenter::new();
+    /// c.set_loading(true);
+    /// assert!(c.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the stack's content is pending.
+    ///
+    /// ```
+    /// use martensite::widgets::notification_center::NotificationCenter;
+    ///
+    /// assert!(!NotificationCenter::new().is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_loading(&self) -> bool {
+        self.loading
     }
 
     /// Prepends a card (newest on top).
@@ -326,6 +373,16 @@ impl Widget for NotificationCenter {
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::List);
         node.set_label(format!("{} — {}", self.label, self.cards.len()));
+    }
+
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        let slot_px = (cx.pt(CARD_PT + GAP_PT)).max(1.0);
+        let count = ((cx.bounds.height() / slot_px).floor() as usize).clamp(1, 32);
+        paint_skeleton(cx, cx.bounds, SkeletonShape::Rows { count }, phase);
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -528,6 +585,30 @@ mod tests {
         c.push(Notification::new("two", "b"));
         assert_eq!(c.card(0).unwrap().title, "two");
         assert_eq!(c.card(1).unwrap().title, "one");
+    }
+
+    #[test]
+    fn loading_flag_and_placeholder() {
+        assert!(!NotificationCenter::new().is_loading());
+        assert!(NotificationCenter::new().loading(true).is_loading());
+        let mut c = NotificationCenter::new();
+        c.set_loading(true);
+        assert!(Widget::is_loading(&c));
+        let mut list = PaintList::new();
+        let theme = martensite_theme::Theme::new("test");
+        c.paint_loading(
+            &mut PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 300.0, 320.0),
+                scale: 1.0,
+                theme: &theme,
+                text_painter: None,
+            },
+            None,
+        );
+        assert!(list.len() >= 3);
+        c.set_loading(false);
+        assert!(!c.is_loading());
     }
 
     #[test]

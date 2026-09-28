@@ -226,6 +226,15 @@ pub(crate) fn paint_spec_pill(
     cx: &mut PaintContext<'_>,
     pill: kurbo::Rect,
 ) {
+    // Severity pills paint the reserved warn/error hues by design —
+    // mark the scope `@alarm` so the lint lineage knows the alarm
+    // channel is deliberate here. An explicit `color` stays unmarked:
+    // the app owns that choice and the lint still guards it.
+    let alarmed = spec.color.is_none()
+        && matches!(spec.severity, BadgeSeverity::Warning | BadgeSeverity::Error);
+    if alarmed {
+        cx.list.push_scope(None, "Badge@alarm", pill);
+    }
     cx.list.push_fill_shape(pill, &Shape::PILL, spec.fill(cx));
     let size_px = cx.pt(SPEC_TEXT_PT);
     let w = painter
@@ -243,6 +252,9 @@ pub(crate) fn paint_spec_pill(
         size_px,
         cx.color(TokenKey::TextInverseColor, INVERSE_INK),
     );
+    if alarmed {
+        cx.list.pop_scope();
+    }
 }
 
 /// A notification badge — a count pill, a `99+`-style capped count, or
@@ -571,6 +583,13 @@ impl Widget for Badge {
             || cx.color(self.severity.token(), self.severity.fallback()),
             |c| c.to_srgba8(),
         );
+        // Severity fills are the warn/error alarm channel — mark the
+        // scope `@alarm` (explicit `color_override` stays unmarked).
+        let alarmed = self.color_override.is_none()
+            && matches!(self.severity, BadgeSeverity::Warning | BadgeSeverity::Error);
+        if alarmed {
+            cx.list.push_scope(None, "Badge@alarm", rect);
+        }
         if self.is_dot() {
             cx.list.push_fill_shape(rect, &Shape::ELLIPSE, bg);
             cx.list.push_stroke_shape(
@@ -579,6 +598,9 @@ impl Widget for Badge {
                 cx.pt(1.0),
                 cx.color(TokenKey::SurfaceColor, SURFACE),
             );
+            if alarmed {
+                cx.list.pop_scope();
+            }
             return;
         }
         cx.list.push_fill_shape(rect, &Shape::PILL, bg);
@@ -608,6 +630,9 @@ impl Widget for Badge {
             size_px,
             cx.color(TokenKey::TextInverseColor, INVERSE_INK),
         );
+        if alarmed {
+            cx.list.pop_scope();
+        }
     }
 
     fn child_count(&self) -> usize {
@@ -752,9 +777,10 @@ mod tests {
             };
             b.paint(&mut cx);
         }
-        assert_eq!(list.len(), 2);
-        assert!(matches!(list.commands[0], PaintCommand::FillPath(..)));
-        assert!(matches!(list.commands[1], PaintCommand::StrokePath(..)));
+        // Default severity is alarm-marked: PushScope + fill + stroke + PopScope.
+        assert_eq!(list.len(), 4);
+        assert!(matches!(list.commands[1], PaintCommand::FillPath(..)));
+        assert!(matches!(list.commands[2], PaintCommand::StrokePath(..)));
     }
 
     #[test]
@@ -780,13 +806,13 @@ mod tests {
             };
             b.paint(&mut cx);
         }
-        // Pill fill + hairline + clipped label (clip, text, pop).
-        assert_eq!(list.len(), 5);
-        assert!(matches!(list.commands[0], PaintCommand::FillPath(..)));
-        assert!(matches!(list.commands[1], PaintCommand::StrokePath(..)));
-        assert!(matches!(list.commands[2], PaintCommand::ClipRect(_)));
-        assert!(matches!(list.commands[3], PaintCommand::DrawText(..)));
-        assert!(matches!(list.commands[4], PaintCommand::PopClip));
+        // Alarm scope + pill fill + hairline + clipped label (clip, text, pop) + scope pop.
+        assert_eq!(list.len(), 7);
+        assert!(matches!(list.commands[1], PaintCommand::FillPath(..)));
+        assert!(matches!(list.commands[2], PaintCommand::StrokePath(..)));
+        assert!(matches!(list.commands[3], PaintCommand::ClipRect(_)));
+        assert!(matches!(list.commands[4], PaintCommand::DrawText(..)));
+        assert!(matches!(list.commands[5], PaintCommand::PopClip));
     }
 
     #[test]

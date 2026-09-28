@@ -26,6 +26,25 @@ pub enum TabNavigation {
     Reverse,
 }
 
+/// `true` when `id` lies inside a loading subtree (ADR-0040): the node
+/// itself or any ancestor resolves loading via
+/// [`WidgetArena::node_loading`](martensite_core::WidgetArena::node_loading)
+/// — the `NodeFlags::LOADING` override or the widget's
+/// [`Widget::is_loading`](martensite_core::Widget::is_loading). A
+/// loading node's placeholder replaces its whole subtree, so the
+/// ancestor walk is required: the LOADING bit may sit above the
+/// candidate.
+fn loading_covered(arena: &WidgetArena, id: WidgetId) -> bool {
+    let mut current = Some(id);
+    while let Some(node) = current {
+        if arena.node_loading(node) {
+            return true;
+        }
+        current = arena.get_hot(node).and_then(|h| h.parent);
+    }
+    false
+}
+
 /// Tracks and manages the currently focused widget within the widget arena.
 ///
 /// The focus manager integrates with the widget arena's
@@ -373,6 +392,13 @@ impl FocusManager {
             .and_then(|c| c.underflow_policy())
             .is_some_and(|p| p.covers_input())
         {
+            return false;
+        }
+        // A loading node — or any node inside a loading subtree, where
+        // the LOADING bit or `is_loading` sits on an ancestor — cannot
+        // hold focus either (ADR-0040): the placeholder suppresses the
+        // subtree's input and semantics.
+        if loading_covered(arena, id) {
             return false;
         }
         if let Some(scope_root) = self.scopes.current_scope_root() {
@@ -890,6 +916,11 @@ impl FocusManager {
                         .get_cold(id)
                         .and_then(|c| c.underflow_policy())
                         .is_some_and(|p| p.covers_input())
+                    // Nodes inside a loading subtree are never tab
+                    // candidates (ADR-0040) — the ancestor walk in
+                    // `loading_covered` catches a LOADING bit placed
+                    // above the candidate.
+                    && !loading_covered(arena, id)
                 {
                     candidates.push(id);
                 }
@@ -1056,6 +1087,125 @@ mod tests {
         let next = manager.tab(&arena, TabNavigation::Forward);
         assert_eq!(next, Some(visible));
         assert_ne!(next, Some(covered));
+    }
+
+    // -----------------------------------------------------------------
+    // Loading (ADR-0040)
+    // -----------------------------------------------------------------
+
+    /// Inserts a focusable, visible node carrying the LOADING override.
+    fn make_loading(arena: &mut WidgetArena) -> WidgetId {
+        arena.insert(
+            HotNode {
+                flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE | NodeFlags::LOADING,
+                ..Default::default()
+            },
+            ColdNode::default(),
+        )
+    }
+
+    /// A widget declaring `is_loading` — no `NodeFlags` bit needed.
+    struct LoadingWidget;
+    impl martensite_core::Widget for LoadingWidget {
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::LayoutContext,
+            _c: martensite_core::LayoutConstraints,
+        ) -> glam::Vec2 {
+            glam::Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut martensite_core::LayoutContext, _b: Rect) {}
+        fn is_loading(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn set_focus_rejects_loading_node() {
+        let mut arena = WidgetArena::new();
+        let loading = make_loading(&mut arena);
+        let mut manager = FocusManager::new();
+        manager.set_focus(&mut arena, loading);
+        assert_eq!(manager.current_focus(), None);
+    }
+
+    #[test]
+    fn set_focus_rejects_widget_declared_loading() {
+        let mut arena = WidgetArena::new();
+        let loading = arena.insert(
+            HotNode {
+                flags: NodeFlags::FOCUSABLE | NodeFlags::VISIBLE,
+                ..Default::default()
+            },
+            ColdNode::new(Box::new(LoadingWidget)),
+        );
+        let mut manager = FocusManager::new();
+        manager.set_focus(&mut arena, loading);
+        assert_eq!(manager.current_focus(), None);
+    }
+
+    #[test]
+    fn set_focus_rejects_descendant_of_loading_ancestor() {
+        let mut arena = WidgetArena::new();
+        let parent = make_loading(&mut arena);
+        let child = make_focusable(&mut arena);
+        arena.append_child(parent, child).unwrap();
+        let mut manager = FocusManager::new();
+        // The child's own flags are clean, but focus must not enter a
+        // loading subtree.
+        manager.set_focus(&mut arena, child);
+        assert_eq!(manager.current_focus(), None);
+    }
+
+    #[test]
+    fn revalidate_relocates_focus_off_loading_node() {
+        let mut arena = WidgetArena::new();
+        let node = make_focusable(&mut arena);
+        let next = make_focusable_at(&mut arena, Rect::new(0.0, 0.0, 50.0, 50.0));
+        let mut manager = FocusManager::new();
+        manager.set_focus(&mut arena, node);
+        assert_eq!(manager.current_focus(), Some(node));
+
+        // The focused node enters loading — revalidate relocates to the
+        // first remaining valid candidate.
+        arena.get_hot_mut(node).unwrap().flags |= NodeFlags::LOADING;
+        manager.revalidate(&mut arena);
+        assert_eq!(manager.current_focus(), Some(next));
+    }
+
+    #[test]
+    fn revalidate_relocates_focus_when_ancestor_loads() {
+        let mut arena = WidgetArena::new();
+        let parent = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                ..Default::default()
+            },
+            ColdNode::default(),
+        );
+        let node = make_focusable(&mut arena);
+        arena.append_child(parent, node).unwrap();
+        let next = make_focusable_at(&mut arena, Rect::new(0.0, 0.0, 50.0, 50.0));
+        let mut manager = FocusManager::new();
+        manager.set_focus(&mut arena, node);
+        assert_eq!(manager.current_focus(), Some(node));
+
+        // Focus is held inside a subtree whose root enters loading —
+        // relocation must trigger on the ancestor flag, not the node's.
+        arena.get_hot_mut(parent).unwrap().flags |= NodeFlags::LOADING;
+        manager.revalidate(&mut arena);
+        assert_eq!(manager.current_focus(), Some(next));
+    }
+
+    #[test]
+    fn tab_skips_loading_candidates() {
+        let mut arena = WidgetArena::new();
+        let loading = make_loading(&mut arena);
+        let visible = make_focusable_at(&mut arena, Rect::new(0.0, 0.0, 50.0, 50.0));
+        let mut manager = FocusManager::new();
+        let next = manager.tab(&arena, TabNavigation::Forward);
+        assert_eq!(next, Some(visible));
+        assert_ne!(next, Some(loading));
     }
 
     #[test]

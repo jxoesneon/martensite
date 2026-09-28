@@ -137,6 +137,11 @@ bitflags::bitflags! {
         const PRESSED            = 1 << 8;
         /// Node is inert (ignores input).
         const INERT              = 1 << 9;
+        /// Node is loading — instance-level override forcing the
+        /// pending-content state regardless of the widget's own
+        /// `is_loading`. Set via `WidgetArena::set_loading`; consumed
+        /// by the paint, hit-test, dispatch, and a11y chokepoints.
+        const LOADING            = 1 << 10;
     }
 }
 

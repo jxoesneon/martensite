@@ -857,6 +857,11 @@ pub trait Widget: Send + Sync + 'static {
     /// `Ignored` if no child handled it. Leaf widgets override this to
     /// implement their own interaction.
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        // A loading widget's internal children are suppressed with its
+        // body — nothing inside receives events while the flag holds.
+        if self.is_loading() {
+            return EventResponse::Ignored;
+        }
         let n = self.child_count();
         for i in (0..n).rev() {
             let Some(child_bounds) = self.child_bounds(i) else {
@@ -872,9 +877,12 @@ pub trait Widget: Send + Sync + 'static {
             };
             // Underflowed internal children whose policy covers input
             // are skipped — they have no arena node, so the check is
-            // threshold-only (no hysteresis state).
+            // threshold-only (no hysteresis state). A loading child is
+            // likewise covered: pending content is not interactive.
             let min = child.min_render();
-            if min.policy.covers_input() && min.violated(child_bounds, cx.scale) {
+            if child.is_loading()
+                || (min.policy.covers_input() && min.violated(child_bounds, cx.scale))
+            {
                 continue;
             }
             let mut child_cx = EventContext {
@@ -967,6 +975,69 @@ pub trait Widget: Send + Sync + 'static {
     /// time-dependent).
     fn tick(&mut self, _dt: Duration) -> bool {
         false
+    }
+
+    /// Whether a `true` return from [`tick`](Self::tick) needs a
+    /// *paint-only* dirty rather than the full `DIRTY_PAINT |
+    /// DIRTY_A11Y` the arena applies by default.
+    ///
+    /// Animations whose frames carry no semantic change — a morphing
+    /// icon's mid-flight shape, a spinner's rotation — should return
+    /// `true` so ticking does not emit an AccessKit `TreeUpdate` at
+    /// frame rate. The same split the loading shimmer path uses
+    /// internally (ADR-0040): paint-only progress must never swamp
+    /// assistive-technology updates.
+    ///
+    /// Consulted only when [`tick`](Self::tick) returns `true` — the
+    /// value does not decide *whether* the widget ticks. Loading
+    /// placeholders do not need this; the arena already dirties them
+    /// paint-only on the shared shimmer clock.
+    ///
+    /// Default: `false` (a dirty tick is semantic as well as visual).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::Widget;
+    /// use martensite_core::widget::DummyWidget;
+    ///
+    /// assert!(!DummyWidget.tick_paint_only());
+    /// ```
+    fn tick_paint_only(&self) -> bool {
+        false
+    }
+
+    /// Pushed by the arena when the reduced-motion preference changes —
+    /// and once at insert if the arena already has it set — so widgets
+    /// that animate inside [`tick`](Self::tick) can honor it outside
+    /// the paint path (e.g. a morphing icon snaps to its target
+    /// instead of flying).
+    ///
+    /// The default implementation forwards the push to internal
+    /// children so container widgets propagate it automatically; leaf
+    /// widgets that animate should store the flag and stop the walk:
+    ///
+    /// ```
+    /// # use martensite_core::widget::Widget;
+    /// # use std::time::Duration;
+    /// struct Blinker { reduced: bool }
+    /// # impl Widget for Blinker {
+    /// fn set_reduced_motion(&mut self, reduced: bool) {
+    ///     self.reduced = reduced;
+    ///     // no internal children — do not forward
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// Compare [`WidgetArena::reduced_motion`](crate::WidgetArena::reduced_motion),
+    /// which the arena consults itself for framework-driven animation
+    /// (loading shimmer, ADR-0040).
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        for i in 0..self.child_count() {
+            if let Some(child) = self.child_mut(i) {
+                child.set_reduced_motion(reduced);
+            }
+        }
     }
 
     /// Whether this widget's internal children and arena children are
@@ -1101,6 +1172,59 @@ pub trait Widget: Send + Sync + 'static {
     /// Default: paints nothing. `cx.bounds` is the *allocated* rect —
     /// the fallback is defined for the space it actually has.
     fn paint_underflow(&self, _cx: &mut PaintContext) {}
+
+    /// Whether this widget's content is pending — the temporal twin
+    /// of the underflow protocol's spatial degradation.
+    ///
+    /// The declaration is *not* a probe: it must be cheap and stable —
+    /// a field set by a `set_loading` setter, matching the
+    /// [`Widget::min_render`] contract. The widget owns the flag
+    /// because only the widget knows when its data arrived; a per-node
+    /// [`NodeFlags::LOADING`](crate::NodeFlags) override (via
+    /// `WidgetArena::set_loading`) can also force the state.
+    ///
+    /// Loading is a paint + input + a11y state, **never a layout
+    /// state** — `measure` MUST NOT branch on it, and
+    /// [`Widget::paint_loading`] fills the allocated bounds, exactly
+    /// like `paint_underflow`. When a node is loading the framework
+    /// uniformly: paints `paint_loading` instead of the body and
+    /// suppresses the whole subtree (arena children and internal
+    /// children), removes the subtree from hit-testing and dispatch,
+    /// marks the a11y node `busy` with a sanitized label and prunes
+    /// descendants, relocates focus, and closes owned overlay popups.
+    ///
+    /// Note: "loading" here means "placeholder replaces content", not
+    /// "activity in progress" — cf. `WebView::loading()` which reports
+    /// navigation and must NOT answer `true` here.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, Widget};
+    ///
+    /// assert!(!DummyWidget.is_loading());
+    /// ```
+    fn is_loading(&self) -> bool {
+        false
+    }
+
+    /// Pending-content placeholder painted *instead of* this widget's
+    /// normal body and children while [`Widget::is_loading`] holds.
+    ///
+    /// Default: the shared shimmer block from
+    /// [`crate::loading::paint_skeleton`]. `cx.bounds` is the
+    /// *allocated* rect — the placeholder fills whatever space the
+    /// layout assigned. `phase` is `Some(t)` (`0.0..=1.0`) for an
+    /// animated sweep driven by the shared arena clock, or `None` for
+    /// a static placeholder (reduced motion, deterministic tests).
+    ///
+    /// Override only where shape accuracy pays — row stacks for
+    /// collections, preserved chrome (a pinned `Table` header), a
+    /// plot area for charts. Call `crate::loading::paint_skeleton`
+    /// for the pieces so the shimmer never drifts.
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        crate::loading::paint_skeleton(cx, cx.bounds, crate::loading::SkeletonShape::Block, phase);
+    }
 
     /// Human-meaningful identity for this widget in diagnostics —
     /// the paint walker's `PushScope` markers and any lint output that

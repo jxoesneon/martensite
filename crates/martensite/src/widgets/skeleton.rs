@@ -2,8 +2,14 @@
 //! (Ant `Skeleton`, SwiftUI `.redacted`, KDE `LoadingPlaceholder`).
 //!
 //! A `Skeleton` either paints its own placeholder shapes — a block,
-//! a circle, or a paragraph of text lines — or wraps a child widget
-//! and hides it behind the shimmer while `loading` is set.
+//! a circle, a paragraph of text lines, a row stack, or a cell
+//! grid — or wraps a child widget and hides it behind the shimmer
+//! while `loading` is set.
+//!
+//! All painting delegates to `martensite_core::loading`, the same
+//! shared painter behind the native `Widget::is_loading`/
+//! `Widget::paint_loading` protocol, so standalone skeletons and
+//! native loading placeholders can never drift visually.
 //!
 //! # Examples
 //!
@@ -16,51 +22,19 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
-use kurbo::Shape as _;
+use martensite_core::loading::{paint_skeleton, preferred_size, SWEEP_SECS};
 use martensite_core::widget::{LayoutConstraints, LayoutContext, PaintContext, Widget};
-use martensite_core::{GradientStop, GradientStops, Rect, TokenKey};
+use martensite_core::Rect;
 
-/// Base placeholder colour.
-const BASE: [u8; 4] = [222, 225, 231, 255];
-/// Shimmer highlight colour — translucent white band sweeping across.
-const SHIMMER: [u8; 4] = [255, 255, 255, 150];
-/// Width of the shimmer band as a fraction of the placeholder width.
-const BAND_FRAC: f32 = 0.45;
-/// Line height of a text-line placeholder, logical points.
-const LINE_PT: f32 = 12.0;
-/// Gap between text lines, logical points.
-const LINE_GAP_PT: f32 = 8.0;
-/// Corner radius for block/line placeholders, logical points.
-const RADIUS: f64 = 4.0;
-/// Seconds per shimmer sweep.
-const SWEEP_SECS: f32 = 1.4;
-
-/// Which placeholder geometry a [`Skeleton`] paints while loading.
-///
-/// # Examples
-///
-/// ```
-/// use martensite::widgets::skeleton::SkeletonShape;
-///
-/// assert_ne!(SkeletonShape::Block, SkeletonShape::Circle);
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SkeletonShape {
-    /// A single rounded block filling the bounds.
-    Block,
-    /// A circle centred in the bounds (avatar placeholders).
-    Circle,
-    /// A paragraph of `n` text lines; the last line is shorter,
-    /// matching real paragraph raggedness.
-    Lines(usize),
-}
+pub use martensite_core::loading::SkeletonShape;
 
 /// A loading placeholder that shimmers until `loading` clears.
 ///
 /// Two usage modes:
 ///
 /// - **Standalone**: `Skeleton::block()` / `Skeleton::circle()` /
-///   `Skeleton::lines(n)` paint a placeholder of that shape.
+///   `Skeleton::lines(n)` / `Skeleton::rows(n)` /
+///   `Skeleton::grid(c, r)` paint a placeholder of that shape.
 /// - **Wrapping**: `Skeleton::lines(3).child(widget)` hides the child
 ///   behind the shimmer while [`Skeleton::is_loading`] holds; when
 ///   `set_loading(false)` is called the child becomes visible and
@@ -140,6 +114,39 @@ impl Skeleton {
         Self::with_shape(SkeletonShape::Lines(n.max(1)))
     }
 
+    /// A row-stack placeholder of `n` rows — the shape of a pending
+    /// list, table body, or feed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::skeleton::Skeleton;
+    ///
+    /// let s = Skeleton::rows(5);
+    /// ```
+    #[must_use]
+    pub fn rows(n: usize) -> Self {
+        Self::with_shape(SkeletonShape::Rows { count: n.max(1) })
+    }
+
+    /// A `cols`×`rows` cell-grid placeholder — the shape of a pending
+    /// gallery or icon grid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::skeleton::Skeleton;
+    ///
+    /// let s = Skeleton::grid(3, 2);
+    /// ```
+    #[must_use]
+    pub fn grid(cols: usize, rows: usize) -> Self {
+        Self::with_shape(SkeletonShape::Grid {
+            cols: cols.max(1),
+            rows: rows.max(1),
+        })
+    }
+
     fn with_shape(shape: SkeletonShape) -> Self {
         Self {
             shape,
@@ -205,78 +212,23 @@ impl Skeleton {
     pub fn is_loading(&self) -> bool {
         self.loading
     }
-
-    /// Paints one placeholder rect (or circle) at `rect`, including
-    /// the shimmer band when animated.
-    fn paint_placeholder(&self, cx: &mut PaintContext, rect: Rect, circle: bool) {
-        let kr = kurbo::Rect::new(
-            f64::from(rect.min_x()),
-            f64::from(rect.min_y()),
-            f64::from(rect.max_x()),
-            f64::from(rect.max_y()),
-        );
-        let base = cx.color(TokenKey::SurfaceColor, BASE);
-        if circle {
-            let ellipse = kurbo::Ellipse::from_rect(kr).into_path(0.1);
-            cx.list.push_path(ellipse.clone(), base);
-            cx.list.push_clip_path(ellipse);
-        } else {
-            let rounded = kurbo::RoundedRect::from_rect(kr, cx.ptf(RADIUS)).into_path(0.1);
-            cx.list.push_path(rounded.clone(), base);
-            cx.list.push_clip_path(rounded);
-        }
-
-        if self.animated {
-            // A translucent light band sweeping left → right; it
-            // travels one band-width past each edge so the sweep fully
-            // clears the placeholder at both ends.
-            let band = rect.size.x * BAND_FRAC;
-            let x = rect.origin.x - band + self.phase * (rect.size.x + band);
-            let stops = GradientStops::from_slice(&[
-                GradientStop::new(0.0, [SHIMMER[0], SHIMMER[1], SHIMMER[2], 0]),
-                GradientStop::new(0.5, SHIMMER),
-                GradientStop::new(1.0, [SHIMMER[0], SHIMMER[1], SHIMMER[2], 0]),
-            ]);
-            cx.list.push_linear_gradient(
-                kurbo::Rect::new(
-                    f64::from(x),
-                    f64::from(rect.min_y()),
-                    f64::from(x + band),
-                    f64::from(rect.max_y()),
-                ),
-                stops,
-                [f64::from(x), f64::from(rect.origin.y)],
-                [f64::from(x + band), f64::from(rect.origin.y)],
-            );
-        }
-        cx.list.pop_clip();
-    }
 }
 
 impl Widget for Skeleton {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let preferred = match self.shape {
-            SkeletonShape::Block => Vec2::new(120.0, 24.0),
-            SkeletonShape::Circle => Vec2::new(40.0, 40.0),
-            SkeletonShape::Lines(n) => {
-                Vec2::new(200.0, n as f32 * (LINE_PT + LINE_GAP_PT) - LINE_GAP_PT)
-            }
-        };
-        let size = Vec2::new(
-            constraints
-                .max_size
-                .x
-                .min(constraints.max_size.x)
-                .max(cx.pt(preferred.x)),
-            cx.pt(preferred.y).min(constraints.max_size.y.max(0.0)),
-        );
-        // When not loading with a child, defer to the child's size.
-        if !self.loading {
-            if let Some(child) = &mut self.child {
-                return child.measure(cx, constraints);
-            }
+        // A wrapped child owns the size in both states — measuring
+        // the child while loading keeps the bounds stable so the
+        // reveal never pops layout.
+        if let Some(child) = &mut self.child {
+            return child.measure(cx, constraints);
         }
-        size
+        let (pw, ph) = preferred_size(self.shape);
+        Vec2::new(
+            cx.pt(pw)
+                .clamp(constraints.min_size.x, constraints.max_size.x),
+            cx.pt(ph)
+                .clamp(constraints.min_size.y, constraints.max_size.y),
+        )
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
@@ -295,45 +247,20 @@ impl Widget for Skeleton {
         }
     }
 
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        paint_skeleton(cx, cx.bounds, self.shape, phase);
+    }
+
     fn paint(&self, cx: &mut PaintContext) {
         if !self.loading {
             return; // the arena paints the child directly
         }
-        let b = cx.bounds;
-        if b.size.x <= 0.0 || b.size.y <= 0.0 {
-            return;
-        }
-        match self.shape {
-            SkeletonShape::Block => self.paint_placeholder(cx, b, false),
-            SkeletonShape::Circle => {
-                let side = b.size.x.min(b.size.y);
-                let r = Rect::new(
-                    b.origin.x + (b.size.x - side) / 2.0,
-                    b.origin.y + (b.size.y - side) / 2.0,
-                    side,
-                    side,
-                );
-                self.paint_placeholder(cx, r, true);
-            }
-            SkeletonShape::Lines(n) => {
-                let line_h = cx.pt(LINE_PT);
-                let gap = cx.pt(LINE_GAP_PT);
-                let mut y = b.origin.y;
-                for i in 0..n {
-                    if y + line_h > b.max_y() {
-                        break;
-                    }
-                    // Ragged paragraph edge — the last line runs short.
-                    let w = if i == n - 1 {
-                        b.size.x * 0.62
-                    } else {
-                        b.size.x
-                    };
-                    self.paint_placeholder(cx, Rect::new(b.origin.x, y, w, line_h), false);
-                    y += line_h + gap;
-                }
-            }
-        }
+        let phase = self.animated.then_some(self.phase);
+        paint_skeleton(cx, cx.bounds, self.shape, phase);
     }
 
     fn tick(&mut self, dt: std::time::Duration) -> bool {
@@ -402,9 +329,13 @@ mod tests {
         assert!(Skeleton::block().is_loading());
         assert!(Skeleton::circle().is_loading());
         assert!(Skeleton::lines(3).is_loading());
+        assert!(Skeleton::rows(4).is_loading());
+        assert!(Skeleton::grid(3, 2).is_loading());
         let mut s = Skeleton::block();
+        assert!(Widget::is_loading(&s));
         s.set_loading(false);
         assert!(!s.is_loading());
+        assert!(!Widget::is_loading(&s));
     }
 
     #[test]
@@ -421,6 +352,47 @@ mod tests {
         s.set_loading(false);
         assert_eq!(s.child_count(), 1);
         assert!(Widget::child(&s, 0).is_some());
+    }
+
+    #[test]
+    fn wrapped_measure_defers_to_child_while_loading() {
+        // Regression: loading measure must not return the
+        // placeholder's preferred size while a child is wrapped —
+        // that collapses bounds and pops layout on reveal.
+        let mut s = Skeleton::block().child(crate::widgets::Text::new("hello"));
+        let mut hot = HotNode::default();
+        let wrapped = s.measure(
+            &mut make_cx(&mut hot),
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(400.0, 400.0),
+            },
+        );
+        s.set_loading(false);
+        let revealed = s.measure(
+            &mut make_cx(&mut hot),
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(400.0, 400.0),
+            },
+        );
+        assert_eq!(wrapped, revealed);
+    }
+
+    #[test]
+    fn standalone_measure_respects_min_constraint() {
+        // Regression for the dead `max_size.x.min(max_size.x)` clamp:
+        // a minimum width larger than the preferred size must hold.
+        let mut s = Skeleton::block();
+        let mut hot = HotNode::default();
+        let size = s.measure(
+            &mut make_cx(&mut hot),
+            LayoutConstraints {
+                min_size: Vec2::new(300.0, 0.0),
+                max_size: Vec2::new(400.0, 400.0),
+            },
+        );
+        assert_eq!(size.x, 300.0);
     }
 
     #[test]

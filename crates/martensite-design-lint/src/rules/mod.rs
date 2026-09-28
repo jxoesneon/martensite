@@ -11,6 +11,7 @@ mod consistency_ext;
 mod frame;
 mod gestalt;
 mod hmi;
+mod loading;
 mod wcag;
 
 use crate::config::LintConfig;
@@ -311,6 +312,7 @@ pub fn all_rules() -> Vec<&'static dyn LintRule> {
     rules.extend(gestalt::rules());
     rules.extend(consistency_ext::rules());
     rules.extend(frame::rules());
+    rules.extend(loading::rules());
     rules
 }
 

@@ -67,6 +67,7 @@ use std::ops::Range;
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use kurbo::BezPath;
+use martensite_core::loading::{paint_placeholder, paint_skeleton, SkeletonShape};
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
@@ -529,6 +530,14 @@ pub struct Table {
     pub row_height: f32,
     /// Pinned header height in logical points.
     pub header_height: f32,
+    /// Whether the whole table is pending — the arena substitutes
+    /// [`paint_loading`](Widget::paint_loading) and suppresses the
+    /// subtree's paint/input/a11y (ADR-0040).
+    loading: bool,
+    /// How many trailing display rows render as pending
+    /// placeholders inside the normal row walk — the
+    /// partial-loading vocabulary for streamed content (ADR-0040).
+    pending_tail: usize,
     /// Column definitions.
     columns: Vec<TableColumn>,
     /// Row storage: each row is a cell vector indexed by column.
@@ -601,6 +610,8 @@ impl Table {
             sortable: true,
             row_height: ROW_H,
             header_height: HEADER_H,
+            loading: false,
+            pending_tail: 0,
             columns: Vec::new(),
             rows: Vec::new(),
             order: Vec::new(),
@@ -914,6 +925,93 @@ impl Table {
     pub fn header_height(mut self, height: f32) -> Self {
         self.header_height = height.max(0.0);
         self
+    }
+
+    /// Sets the loading flag — while set, the widget keeps painting
+    /// the real pinned header but replaces the body with row
+    /// placeholders, and the framework suppresses input/a11y for the
+    /// subtree (ADR-0040).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Table;
+    ///
+    /// assert!(Table::new().loading(true).is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets the loading flag (mutating form).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Table;
+    ///
+    /// let mut t = Table::new();
+    /// t.set_loading(true);
+    /// assert!(t.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the table's content is pending.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Table;
+    ///
+    /// assert!(!Table::new().is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    /// Marks the last `n` display rows as pending (builder form of
+    /// [`set_pending_tail`](Self::set_pending_tail)) — they keep
+    /// their row slots and indices but paint cell placeholders while
+    /// the rest of the table stays live (ADR-0040 partial loading).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Table;
+    ///
+    /// let t = Table::new().row(["a"]).row(["b"]).pending_tail(1);
+    /// assert_eq!(t.row_count(), 2);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn pending_tail(mut self, n: usize) -> Self {
+        self.pending_tail = n;
+        self
+    }
+
+    /// Sets how many trailing display rows render as pending
+    /// placeholders. `n` larger than the row count marks every row
+    /// pending; `0` restores normal painting. The host typically
+    /// appends stub rows for the tail and clears the flag when data
+    /// lands.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Table;
+    ///
+    /// let mut t = Table::new().row(["a", "b"]);
+    /// t.set_pending_tail(1);
+    /// ```
+    pub fn set_pending_tail(&mut self, n: usize) {
+        self.pending_tail = n;
     }
 
     /// Shares a [`crate::text_paint::TextPainter`] so cells emit real
@@ -1639,6 +1737,115 @@ impl Table {
         self.vbar.thumb = self.vbar_thumb();
         self.vbar.active = self.thumb_drag.is_some();
     }
+
+    /// Paints the pinned header band — face, underline, per-column
+    /// titles, sort indicators, and separators. Shared by `paint`
+    /// and `paint_loading` so a pending table keeps its real chrome
+    /// live while the body placeholders shimmer (ADR-0040).
+    fn paint_header(&self, cx: &mut PaintContext) {
+        let divider = cx.color(TokenKey::DividerColor, TRACK_COLOR);
+        let accent = cx.color(TokenKey::AccentColor, ACCENT);
+        let ink = if self.enabled {
+            cx.color(TokenKey::TextColor, INK)
+        } else {
+            cx.color(TokenKey::TextMutedColor, INK_DISABLED)
+        };
+        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+        let pad = f64::from(cx.pt(CELL_PAD));
+        let edges = self.col_edges();
+        let hr = kurbo::Rect::new(
+            f64::from(self.header_rect.min_x()),
+            f64::from(self.header_rect.min_y()),
+            f64::from(self.header_rect.max_x()),
+            f64::from(self.header_rect.max_y()),
+        );
+        cx.list
+            .push_fill_rect(hr, cx.color(TokenKey::SurfaceColor, HEADER_BG));
+        // Header underline separating it from the body.
+        cx.list.push_stroke_rect(
+            kurbo::Rect::new(hr.x0, hr.y1, hr.x1, hr.y1),
+            cx.pt(1.0),
+            divider,
+        );
+        let header_font = cx.pt(HEADER_FONT);
+        for (i, col) in self.columns.iter().enumerate() {
+            // Column widths can exceed the viewport — clip each header
+            // cell to the pinned header band so the last column's
+            // title cannot paint past the widget's edge.
+            let cell = kurbo::Rect::new(
+                f64::from(edges[i]),
+                f64::from(self.header_rect.min_y()),
+                f64::from(edges[i + 1]),
+                f64::from(self.header_rect.max_y()),
+            )
+            .intersect(hr);
+            if cell.is_zero_area() {
+                continue;
+            }
+            // Sort indicator: a small triangle at the trailing edge.
+            let sorted = self.sort_column == Some(i);
+            if sorted {
+                let w = f64::from(cx.pt(9.0));
+                let h = f64::from(cx.pt(5.0));
+                let mid_x = cell.x1 - f64::from(cx.pt(6.0)) - w / 2.0;
+                let mid_y = (cell.y0 + cell.y1) / 2.0;
+                let mut tri = BezPath::new();
+                match self.sort_dir {
+                    SortDir::Ascending => {
+                        tri.move_to((mid_x - w / 2.0, mid_y + h / 2.0));
+                        tri.line_to((mid_x, mid_y - h / 2.0));
+                        tri.line_to((mid_x + w / 2.0, mid_y + h / 2.0));
+                    }
+                    SortDir::Descending => {
+                        tri.move_to((mid_x - w / 2.0, mid_y - h / 2.0));
+                        tri.line_to((mid_x + w / 2.0, mid_y - h / 2.0));
+                        tri.line_to((mid_x + w / 2.0, mid_y + h / 2.0));
+                    }
+                }
+                tri.close_path();
+                cx.list.push_path(tri, accent);
+            }
+            // Reserve room for the arrow in the text clip.
+            let clip = if sorted {
+                kurbo::Rect::new(cell.x0, cell.y0, cell.x1 - f64::from(cx.pt(18.0)), cell.y1)
+            } else {
+                cell
+            };
+            let title_w = painter
+                .and_then(|p| p.measure_text(&col.title, header_font))
+                .unwrap_or_else(|| col.title.chars().count() as f32 * cx.pt(7.0))
+                .max(0.0);
+            let x0 = match col.align {
+                TableAlign::Start => cell.x0 + pad,
+                TableAlign::End => cell.x1 - pad - f64::from(title_w),
+                TableAlign::Center => cell.x0 + ((cell.x1 - cell.x0) - f64::from(title_w)) / 2.0,
+            };
+            crate::text_paint::paint_label_clipped(
+                painter,
+                cx.list,
+                clip,
+                kurbo::Point::new(
+                    x0,
+                    f64::from(self.header_rect.min_y())
+                        + (hr.height() - f64::from(header_font)) / 2.0,
+                ),
+                &col.title,
+                header_font,
+                ink,
+            );
+            // Column separator (skip the leftmost edge — the border
+            // already delimits it).
+            if i > 0 {
+                let sep = kurbo::Rect::new(cell.x0, cell.y0, cell.x0, cell.y1);
+                let color = if self.resize_drag.is_some_and(|d| d.column == i - 1) {
+                    accent
+                } else {
+                    divider
+                };
+                cx.list.push_stroke_rect(sep, cx.pt(1.0), color);
+            }
+        }
+    }
 }
 
 impl Default for Table {
@@ -1764,6 +1971,41 @@ impl Widget for Table {
 
     fn a11y_prepare(&mut self) {
         self.poll_pending();
+    }
+
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // Chrome stays live — the face, border, and the real pinned
+        // header keep painting; only the body degenerates to a row
+        // placeholder stack (ADR-0040 chrome preservation).
+        let b = cx.bounds;
+        let widget_rect = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        );
+        cx.list
+            .push_fill_rect(widget_rect, cx.color(TokenKey::SurfaceColor, SURFACE_BG));
+        let header_px = cx.pt(self.header_height).min(b.height());
+        let body_h = (b.height() - header_px).max(0.0);
+        let row_px = cx.pt(self.row_height).max(1.0);
+        let count = ((body_h / row_px).ceil() as usize).clamp(1, 64);
+        paint_skeleton(
+            cx,
+            Rect::new(b.min_x(), b.min_y() + header_px, b.width(), body_h),
+            SkeletonShape::Rows { count },
+            phase,
+        );
+        self.paint_header(cx);
+        cx.list.push_stroke_rect(
+            widget_rect,
+            cx.pt(1.0),
+            cx.color(TokenKey::BorderColor, BORDER),
+        );
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -1991,6 +2233,8 @@ impl Widget for Table {
         cx.list.push_clip(vp);
         let edges = self.col_edges();
         let ncols = self.columns.len();
+        // Display positions from here down are pending tail slots.
+        let pending_start = self.rows.len().saturating_sub(self.pending_tail);
         for d in self.visible_range() {
             let s = self.order[d];
             let r = self.row_rect(d);
@@ -2000,6 +2244,30 @@ impl Widget for Table {
                 f64::from(r.max_x()),
                 f64::from(r.max_y()),
             );
+            if d >= pending_start {
+                // A pending tail slot keeps the real row geometry
+                // and paints one placeholder pill per column through
+                // the shared shimmer path — no text, no selection.
+                let pad_f = cx.pt(CELL_PAD);
+                let inset = (r.height() - cx.pt(12.0)).max(0.0) / 2.0;
+                for i in 0..ncols.max(1) {
+                    let (x0, x1) = if i < ncols {
+                        (edges[i] + pad_f, edges[i + 1] - pad_f)
+                    } else {
+                        (r.min_x() + pad_f, r.max_x() - pad_f)
+                    };
+                    if x1 - x0 <= 0.0 {
+                        continue;
+                    }
+                    paint_placeholder(
+                        cx,
+                        Rect::new(x0, r.min_y() + inset, x1 - x0, r.height() - 2.0 * inset),
+                        false,
+                        None,
+                    );
+                }
+                continue;
+            }
             if self.selected == Some(s) {
                 cx.list
                     .push_fill_rect(rect, [accent[0], accent[1], accent[2], SELECTED_ALPHA]);
@@ -2070,104 +2338,12 @@ impl Widget for Table {
         cx.list.pop_clip();
 
         // --- Pinned header. ---
-        let hr = kurbo::Rect::new(
-            f64::from(self.header_rect.min_x()),
-            f64::from(self.header_rect.min_y()),
-            f64::from(self.header_rect.max_x()),
-            f64::from(self.header_rect.max_y()),
-        );
-        cx.list
-            .push_fill_rect(hr, cx.color(TokenKey::SurfaceColor, HEADER_BG));
-        // Header underline separating it from the body.
-        cx.list.push_stroke_rect(
-            kurbo::Rect::new(hr.x0, hr.y1, hr.x1, hr.y1),
-            cx.pt(1.0),
-            divider,
-        );
-        let header_font = cx.pt(HEADER_FONT);
-        for (i, col) in self.columns.iter().enumerate() {
-            // Column widths can exceed the viewport — clip each header
-            // cell to the pinned header band so the last column's
-            // title cannot paint past the widget's edge.
-            let cell = kurbo::Rect::new(
-                f64::from(edges[i]),
-                f64::from(self.header_rect.min_y()),
-                f64::from(edges[i + 1]),
-                f64::from(self.header_rect.max_y()),
-            )
-            .intersect(hr);
-            if cell.is_zero_area() {
-                continue;
-            }
-            // Sort indicator: a small triangle at the trailing edge.
-            let sorted = self.sort_column == Some(i);
-            if sorted {
-                let w = f64::from(cx.pt(9.0));
-                let h = f64::from(cx.pt(5.0));
-                let mid_x = cell.x1 - f64::from(cx.pt(6.0)) - w / 2.0;
-                let mid_y = (cell.y0 + cell.y1) / 2.0;
-                let mut tri = BezPath::new();
-                match self.sort_dir {
-                    SortDir::Ascending => {
-                        tri.move_to((mid_x - w / 2.0, mid_y + h / 2.0));
-                        tri.line_to((mid_x, mid_y - h / 2.0));
-                        tri.line_to((mid_x + w / 2.0, mid_y + h / 2.0));
-                    }
-                    SortDir::Descending => {
-                        tri.move_to((mid_x - w / 2.0, mid_y - h / 2.0));
-                        tri.line_to((mid_x, mid_y + h / 2.0));
-                        tri.line_to((mid_x + w / 2.0, mid_y - h / 2.0));
-                    }
-                }
-                tri.close_path();
-                cx.list.push_path(tri, accent);
-            }
-            // Reserve room for the arrow in the text clip.
-            let clip = if sorted {
-                kurbo::Rect::new(cell.x0, cell.y0, cell.x1 - f64::from(cx.pt(18.0)), cell.y1)
-            } else {
-                cell
-            };
-            let title_w = painter
-                .and_then(|p| p.measure_text(&col.title, header_font))
-                .unwrap_or_else(|| col.title.chars().count() as f32 * cx.pt(7.0))
-                .max(0.0);
-            let x0 = match col.align {
-                TableAlign::Start => cell.x0 + pad,
-                TableAlign::End => cell.x1 - pad - f64::from(title_w),
-                TableAlign::Center => cell.x0 + ((cell.x1 - cell.x0) - f64::from(title_w)) / 2.0,
-            };
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                clip,
-                kurbo::Point::new(
-                    x0,
-                    f64::from(self.header_rect.min_y())
-                        + (hr.height() - f64::from(header_font)) / 2.0,
-                ),
-                &col.title,
-                header_font,
-                ink,
-            );
-            // Column separator (skip the leftmost edge — the border
-            // already delimits it).
-            if i > 0 {
-                let sep = kurbo::Rect::new(cell.x0, cell.y0, cell.x0, cell.y1);
-                let color = if self.resize_drag.is_some_and(|d| d.column == i - 1) {
-                    accent
-                } else {
-                    divider
-                };
-                cx.list.push_stroke_rect(sep, cx.pt(1.0), color);
-            }
-        }
+        self.paint_header(cx);
 
         // Focus ring around the table when it holds focus and the
         // focused row is scrolled out (rows draw their own ring).
         cx.list.push_stroke_rect(widget_rect, cx.pt(1.0), border);
     }
-
     fn child_count(&self) -> usize {
         self.header_children.len() + self.row_children.len() + 1
     }
@@ -2249,7 +2425,7 @@ impl std::fmt::Debug for Table {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use martensite_core::HotNode;
+    use martensite_core::{HotNode, PaintCommand};
 
     fn laid_out(t: &mut Table, w: f32, h: f32) {
         let mut hot = HotNode::default();
@@ -2596,6 +2772,84 @@ mod tests {
         let mut bar = AccessKitNode::new(accesskit::Role::Unknown);
         last.accessibility(&mut bar);
         assert_eq!(bar.role(), accesskit::Role::ScrollBar);
+    }
+
+    #[test]
+    fn loading_flag_and_placeholder() {
+        assert!(!Table::new().is_loading());
+        assert!(Table::new().loading(true).is_loading());
+        let mut t = make_table(6, 300.0, 200.0);
+        t.set_loading(true);
+        assert!(Widget::is_loading(&t));
+        let mut list = martensite_core::PaintList::new();
+        let theme = martensite_theme::Theme::new("test");
+        t.paint_loading(
+            &mut PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 300.0, 200.0),
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            },
+            None,
+        );
+        // The real pinned header keeps painting — its titles emit
+        // text — while the body contributes row placeholders.
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::DrawText(..))));
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillPath(..))));
+        t.set_loading(false);
+        assert!(!t.is_loading());
+    }
+
+    #[test]
+    fn pending_tail_rows_paint_placeholders() {
+        let mut t = make_table(6, 300.0, 200.0).pending_tail(2);
+        let mut list = martensite_core::PaintList::new();
+        let theme = martensite_theme::Theme::new("test");
+        t.paint(&mut PaintContext {
+            list: &mut list,
+            bounds: Rect::new(0.0, 0.0, 300.0, 200.0),
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        });
+        // Two header titles + 4 loaded rows × 2 cells emit text;
+        // the last two display slots paint placeholders instead.
+        let texts = list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::DrawText(..)))
+            .count();
+        assert_eq!(texts, 2 + 4 * 2);
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillPath(..))));
+        // No fabricated children — still headers + pooled rows + bar.
+        assert_eq!(t.child_count(), 2 + 6 + 1);
+        // Clearing restores every row.
+        t.set_pending_tail(0);
+        let mut list = martensite_core::PaintList::new();
+        t.paint(&mut PaintContext {
+            list: &mut list,
+            bounds: Rect::new(0.0, 0.0, 300.0, 200.0),
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        });
+        assert_eq!(
+            list.commands
+                .iter()
+                .filter(|c| matches!(c, PaintCommand::DrawText(..)))
+                .count(),
+            2 + 6 * 2
+        );
     }
 
     #[test]

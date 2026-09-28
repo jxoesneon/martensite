@@ -34,7 +34,7 @@ use glam::Vec2;
 use martensite_core::{EventResponse, PointerButton, WidgetArena, WidgetEvent, WidgetId};
 
 use crate::dpi::DpiScale;
-use crate::hit_test::HitTester;
+use crate::hit_test::{loading_covered, HitTester};
 use crate::WindowEvent;
 use crate::WindowId;
 
@@ -917,11 +917,14 @@ impl EventRouter {
             // A captured widget that became underflow-covered mid-gesture
             // (engaged Hide/Collapse/Scrim) can no longer be the gesture's
             // referent — release the capture and resume hit-testing,
-            // same as a dead capture.
+            // same as a dead capture. Loading subtrees (ADR-0040) revoke
+            // capture identically: the ancestor-inclusive consult covers
+            // a LOADING bit set on any node above the capturer.
             let covered = arena
                 .get_cold(captured)
                 .and_then(|c| c.underflow_policy())
-                .is_some_and(|p| p.covers_input());
+                .is_some_and(|p| p.covers_input())
+                || loading_covered(arena, captured);
             if arena.is_alive(captured) && !covered {
                 Some(captured)
             } else {
@@ -1099,7 +1102,11 @@ impl EventRouter {
         let now_hovered = self.mouse.hovered_widget(window_id);
         if event.state == PointerState::Moved && prev_hovered != now_hovered {
             if let Some(old) = prev_hovered {
-                if arena.is_alive(old) {
+                // Tracked hover can go stale: a widget that entered
+                // loading since it was hovered is inside a suppressed
+                // subtree and must not be delivered `PointerLeave`
+                // (ADR-0040).
+                if arena.is_alive(old) && !loading_covered(arena, old) {
                     let _ = arena.dispatch_event(old, &WidgetEvent::PointerLeave);
                 }
             }
@@ -1285,6 +1292,11 @@ impl EventRouter {
             }
             return Some(overlay_response);
         }
+        // Keyboard routing consults focus, not hit-testing: a focused
+        // node inside a loading subtree (ADR-0040 — the node itself or
+        // any ancestor) cannot receive keys. `FocusManager::revalidate`
+        // relocates such focus, but routing is the delivery gate.
+        let focused = focused.filter(|id| !loading_covered(arena, *id));
         match self.route_keyboard_event(focused) {
             EventDispatchOutcome::Handled(id) => {
                 let response = arena.dispatch_event_ex(id, &event);
@@ -1368,7 +1380,19 @@ impl EventRouter {
             }
             return Some(overlay_response);
         }
-        match self.route_scroll_event(window_id, delta) {
+        // Scroll routing reads tracked hover directly — it bypasses
+        // hit-testing, so a hovered widget that entered loading since
+        // the last pointer event is a stale target. Drop it (and the
+        // stale hover) rather than deliver into a suppressed subtree
+        // (ADR-0040).
+        let outcome = match self.route_scroll_event(window_id, delta) {
+            EventDispatchOutcome::Handled(id) if loading_covered(arena, id) => {
+                self.mouse.set_hovered(window_id, None);
+                EventDispatchOutcome::Unhandled
+            }
+            other => other,
+        };
+        match outcome {
             EventDispatchOutcome::Handled(id) => {
                 let response =
                     arena.dispatch_event_ex(id, &WidgetEvent::Scroll { position, delta });
@@ -1457,6 +1481,9 @@ impl EventRouter {
                 cursor: *cursor,
             },
         };
+        // Same focus-side loading consult as `dispatch_keyboard_event`:
+        // IME delivery bypasses hit-testing (ADR-0040).
+        let focused = focused.filter(|id| !loading_covered(arena, *id));
         match self.route_keyboard_event(focused) {
             EventDispatchOutcome::Handled(id) => {
                 let response = arena.dispatch_event_ex(id, &widget_event);
@@ -1618,6 +1645,9 @@ fn diagnose_hit_rejection(
             .get_cold(current)
             .and_then(|c| c.underflow_policy())
             .is_some_and(|p| p.covers_input())
+            // A loading subtree rejects hits exactly like coverage —
+            // report the same reason (ADR-0040).
+            || arena.node_loading(current)
         {
             HitRejection::HitTestDisabled
         } else {
@@ -2395,6 +2425,260 @@ mod tests {
             EventDispatchOutcome::Handled(b)
         );
         assert!(router.capture.captured(PointerId::PRIMARY).is_none());
+    }
+
+    /// A widget recording every `WidgetEvent` it receives.
+    struct EventLog {
+        log: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    impl martensite_core::Widget for EventLog {
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::LayoutContext,
+            _constraints: martensite_core::LayoutConstraints,
+        ) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut martensite_core::LayoutContext, _bounds: Rect) {}
+        fn event(&mut self, cx: &mut martensite_core::EventContext) -> EventResponse {
+            let name = match cx.event {
+                WidgetEvent::KeyPressed { .. } => "key-pressed",
+                WidgetEvent::PointerLeave => "pointer-leave",
+                WidgetEvent::Scroll { .. } => "scroll",
+                WidgetEvent::ImeCommitted { .. } => "ime-commit",
+                _ => "other",
+            };
+            self.log.lock().unwrap().push(name);
+            EventResponse::Handled
+        }
+    }
+
+    #[test]
+    fn pointer_capture_released_when_target_loading() {
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 300.0, 300.0);
+        let a = arena.insert(hot_node(0.0, 0.0, 40.0, 10.0), ColdNode::default());
+        let b = insert(&mut arena, 200.0, 0.0, 100.0, 100.0);
+        arena.append_child(root, a).unwrap();
+        arena.append_child(root, b).unwrap();
+
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        router.capture_pointer_primary(a);
+
+        // The captured widget enters loading mid-gesture — capture is
+        // revoked and routing falls back to hit-testing (ADR-0040).
+        arena.get_hot_mut(a).unwrap().flags |= NodeFlags::LOADING;
+        let event = PointerEvent {
+            pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
+            position: Vec2::new(250.0, 50.0),
+            state: PointerState::Moved,
+            button: None,
+            modifiers: ModifierKeys::empty(),
+        };
+        assert_eq!(
+            router.route_pointer_event(&arena, root, win, &event),
+            EventDispatchOutcome::Handled(b)
+        );
+        assert!(router.capture.captured(PointerId::PRIMARY).is_none());
+    }
+
+    #[test]
+    fn pointer_capture_released_when_ancestor_loading() {
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 300.0, 300.0);
+        let parent = insert(&mut arena, 0.0, 0.0, 100.0, 100.0);
+        let a = insert(&mut arena, 0.0, 0.0, 40.0, 10.0);
+        let b = insert(&mut arena, 200.0, 0.0, 100.0, 100.0);
+        arena.append_child(root, parent).unwrap();
+        arena.append_child(parent, a).unwrap();
+        arena.append_child(root, b).unwrap();
+
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        router.capture_pointer_primary(a);
+
+        // The LOADING bit sits on an ancestor — the capturer is inside
+        // the suppressed subtree even though its own flags are clean.
+        arena.get_hot_mut(parent).unwrap().flags |= NodeFlags::LOADING;
+        let event = PointerEvent {
+            pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
+            position: Vec2::new(250.0, 50.0),
+            state: PointerState::Moved,
+            button: None,
+            modifiers: ModifierKeys::empty(),
+        };
+        assert_eq!(
+            router.route_pointer_event(&arena, root, win, &event),
+            EventDispatchOutcome::Handled(b)
+        );
+        assert!(router.capture.captured(PointerId::PRIMARY).is_none());
+    }
+
+    #[test]
+    fn keyboard_dispatch_skips_loading_focused() {
+        use std::sync::{Arc, Mutex};
+        let log: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                ..HotNode::default()
+            },
+            ColdNode::default(),
+        );
+        let focused = arena.insert_with_widget(
+            hot_node(0.0, 0.0, 40.0, 10.0),
+            Box::new(EventLog { log: log.clone() }),
+        );
+        arena.append_child(root, focused).unwrap();
+        let mut router = EventRouter::new();
+
+        // Focused and live: the key is delivered.
+        assert_eq!(
+            router.dispatch_keyboard_event(&mut arena, Some(focused), "Enter", true, false),
+            Some(EventResponse::Handled)
+        );
+        assert_eq!(*log.lock().unwrap(), vec!["key-pressed"]);
+
+        // Once the node enters loading, keys must not reach it.
+        arena.get_hot_mut(focused).unwrap().flags |= NodeFlags::LOADING;
+        assert_eq!(
+            router.dispatch_keyboard_event(&mut arena, Some(focused), "Enter", true, false),
+            None
+        );
+        assert_eq!(*log.lock().unwrap(), vec!["key-pressed"]);
+    }
+
+    #[test]
+    fn keyboard_dispatch_skips_loading_ancestor() {
+        use std::sync::{Arc, Mutex};
+        let log: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut arena = WidgetArena::new();
+        let root = arena.insert(
+            HotNode {
+                flags: NodeFlags::VISIBLE,
+                ..HotNode::default()
+            },
+            ColdNode::default(),
+        );
+        let parent = insert(&mut arena, 0.0, 0.0, 100.0, 100.0);
+        let focused = arena.insert_with_widget(
+            hot_node(0.0, 0.0, 40.0, 10.0),
+            Box::new(EventLog { log: log.clone() }),
+        );
+        arena.append_child(root, parent).unwrap();
+        arena.append_child(parent, focused).unwrap();
+        let mut router = EventRouter::new();
+
+        // An ancestor entering loading suppresses the focused
+        // descendant — the LOADING bit need not sit on the target.
+        arena.get_hot_mut(parent).unwrap().flags |= NodeFlags::LOADING;
+        assert_eq!(
+            router.dispatch_keyboard_event(&mut arena, Some(focused), "a", true, false),
+            None
+        );
+        assert!(log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ime_dispatch_skips_loading_focused() {
+        use std::sync::{Arc, Mutex};
+        let log: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut arena = WidgetArena::new();
+        let focused = arena.insert_with_widget(
+            HotNode {
+                bounds: Rect::new(0.0, 0.0, 40.0, 10.0),
+                flags: NodeFlags::VISIBLE | NodeFlags::LOADING,
+                ..HotNode::default()
+            },
+            Box::new(EventLog { log: log.clone() }),
+        );
+        let mut router = EventRouter::new();
+        assert!(router
+            .dispatch_ime_event(&mut arena, Some(focused), &ImeEvent::Committed("x".into()))
+            .is_none());
+        assert!(log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn scroll_dispatch_drops_stale_loading_hover() {
+        use std::sync::{Arc, Mutex};
+        let log: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 200.0, 200.0);
+        let child = arena.insert_with_widget(
+            hot_node(50.0, 50.0, 100.0, 100.0),
+            Box::new(EventLog { log: log.clone() }),
+        );
+        arena.append_child(root, child).unwrap();
+
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+
+        // Establish hover over the child, then it enters loading.
+        let over_child = PointerEvent {
+            pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
+            position: Vec2::new(75.0, 75.0),
+            state: PointerState::Moved,
+            button: None,
+            modifiers: ModifierKeys::empty(),
+        };
+        router.route_pointer_event(&arena, root, win, &over_child);
+        assert_eq!(
+            router.dispatch_scroll_event(&mut arena, win, Vec2::new(0.0, 10.0)),
+            Some(EventResponse::Handled)
+        );
+        assert_eq!(*log.lock().unwrap(), vec!["scroll"]);
+
+        // Tracked hover is stale now — the scroll must not reach the
+        // loading subtree and the stale hover is cleared.
+        arena.get_hot_mut(child).unwrap().flags |= NodeFlags::LOADING;
+        assert_eq!(
+            router.dispatch_scroll_event(&mut arena, win, Vec2::new(0.0, 10.0)),
+            None
+        );
+        assert_eq!(*log.lock().unwrap(), vec!["scroll"]);
+        assert_eq!(router.mouse.hovered_widget(win), None);
+    }
+
+    #[test]
+    fn pointer_leave_not_delivered_to_loading_widget() {
+        use std::sync::{Arc, Mutex};
+        let log: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 300.0, 300.0);
+        let a = arena.insert_with_widget(
+            hot_node(0.0, 0.0, 100.0, 100.0),
+            Box::new(EventLog { log: log.clone() }),
+        );
+        let b = insert(&mut arena, 200.0, 0.0, 100.0, 100.0);
+        arena.append_child(root, a).unwrap();
+        arena.append_child(root, b).unwrap();
+
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        let move_over = |pos: Vec2| PointerEvent {
+            pointer_id: PointerId::PRIMARY,
+            kind: PointerKind::Mouse,
+            position: pos,
+            state: PointerState::Moved,
+            button: None,
+            modifiers: ModifierKeys::empty(),
+        };
+
+        // Hover `a`, then it enters loading before the pointer moves on.
+        router.dispatch_pointer_event(&mut arena, root, win, &move_over(Vec2::new(50.0, 50.0)));
+        arena.get_hot_mut(a).unwrap().flags |= NodeFlags::LOADING;
+        router.dispatch_pointer_event(&mut arena, root, win, &move_over(Vec2::new(250.0, 50.0)));
+
+        // The loading widget never sees `PointerLeave` — the stale
+        // hover target is dropped at the boundary.
+        assert!(!log.lock().unwrap().contains(&"pointer-leave"));
     }
 
     #[test]

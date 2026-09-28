@@ -56,6 +56,7 @@ use std::sync::{Arc, Mutex};
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 pub use martensite_blessed::data_table::SelectionModel;
+use martensite_core::loading::{paint_placeholder, paint_skeleton, SkeletonShape};
 use martensite_core::shape::Shape;
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
@@ -73,6 +74,8 @@ const BAR: f32 = 10.0;
 const MIN_THUMB: f32 = 24.0;
 /// Track colour.
 const TRACK_COLOR: [u8; 4] = [235, 237, 240, 255];
+/// Scrollbar trough keyline — the fallback only; the token resolves.
+const HAIRLINE: [u8; 4] = [222, 225, 231, 255];
 /// Thumb colour.
 const THUMB_COLOR: [u8; 4] = [160, 166, 176, 255];
 /// Thumb colour while dragged.
@@ -216,8 +219,20 @@ impl Widget for VScrollBar {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        cx.list
-            .push_fill_rect(track, cx.color(TokenKey::DividerColor, TRACK_COLOR));
+        // The trough is a recessed fill — `InsetColor`, not the
+        // `DividerColor` *stroke* token (whose tonal step sits ~1:1
+        // against the thumb's `BorderColor`/`TextMutedColor` fill and
+        // would leave the thumb invisible — WCAG 1.4.11). The hairline
+        // keyline on the content-facing edge keeps the trough boundary
+        // identifiable where the inset meets the content face.
+        cx.list.push_fill_rect(
+            kurbo::Rect::new(track.x0, track.y0, track.x0 + cx.ptf(1.0), track.y1),
+            cx.color(TokenKey::DividerColor, HAIRLINE),
+        );
+        cx.list.push_fill_rect(
+            kurbo::Rect::new(track.x0 + cx.ptf(1.0), track.y0, track.x1, track.y1),
+            cx.color(TokenKey::InsetColor, TRACK_COLOR),
+        );
         if let Some(thumb) = self.thumb {
             let t = kurbo::Rect::new(
                 f64::from(thumb.min_x()),
@@ -263,6 +278,10 @@ struct ListItemRow {
     alternate: bool,
     /// Whether the owner is enabled.
     enabled: bool,
+    /// Whether the slot is part of the owner's pending tail — the
+    /// row keeps its real index and geometry but paints a
+    /// placeholder (ADR-0040 partial loading).
+    pending: bool,
     /// Parked `SemanticAction::Click` / pointer press for the owner.
     press_pending: bool,
     /// Parked `SemanticAction::Focus` for the owner.
@@ -282,6 +301,7 @@ impl ListItemRow {
             hovered: false,
             alternate: false,
             enabled: true,
+            pending: false,
             press_pending: false,
             focus_pending: false,
             text_painter: None,
@@ -342,6 +362,25 @@ impl Widget for ListItemRow {
 
     fn paint(&self, cx: &mut PaintContext) {
         let b = cx.bounds;
+        if self.pending {
+            // A pending tail slot keeps the real row geometry and
+            // paints a text-line placeholder where the label sits —
+            // the shared shimmer path, never a hand-rolled fill.
+            let pad_x = cx.pt(8.0);
+            let pad_y = (b.height() - cx.pt(12.0)).max(0.0) / 2.0;
+            paint_placeholder(
+                cx,
+                Rect::new(
+                    b.min_x() + pad_x,
+                    b.min_y() + pad_y,
+                    (b.width() - 2.0 * pad_x).max(0.0),
+                    (b.height() - 2.0 * pad_y).max(0.0),
+                ),
+                false,
+                None,
+            );
+            return;
+        }
         let rect = kurbo::Rect::new(
             f64::from(b.min_x()),
             f64::from(b.min_y()),
@@ -428,6 +467,14 @@ pub struct ListView {
     pub selection_mode: SelectionMode,
     /// The item labels.
     items: Vec<String>,
+    /// Whether the whole list is pending — the arena substitutes
+    /// [`paint_loading`](Widget::paint_loading) and suppresses the
+    /// subtree's paint/input/a11y (ADR-0040).
+    loading: bool,
+    /// How many trailing items render as pending placeholders inside
+    /// the normal row walk — the partial-loading vocabulary for
+    /// streamed content (ADR-0040).
+    pending_tail: usize,
     /// Row height in logical points. Prefer
     /// [`set_row_height`](Self::set_row_height) — it rescales the
     /// scroll offset so the top row is preserved; direct assignment
@@ -501,6 +548,8 @@ impl ListView {
             alternating_rows: false,
             selection_mode: SelectionMode::Single,
             items: Vec::new(),
+            loading: false,
+            pending_tail: 0,
             row_height: ROW_H,
             selection: SelectionModel::new(),
             focused: 0,
@@ -656,6 +705,92 @@ impl ListView {
         self.scroll_y = self.scroll_y.clamp(0.0, self.max_scroll());
         self.sync_rows();
         self.sync_bars();
+    }
+
+    /// Sets the loading flag — while set, the widget paints a row
+    /// placeholder stack instead of the items and the framework
+    /// suppresses input/a11y for the subtree (ADR-0040).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::ListView;
+    ///
+    /// assert!(ListView::new().loading(true).is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets the loading flag (mutating form).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::ListView;
+    ///
+    /// let mut l = ListView::new();
+    /// l.set_loading(true);
+    /// assert!(l.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the list's content is pending.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::ListView;
+    ///
+    /// assert!(!ListView::new().is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    /// Marks the last `n` items as pending (builder form of
+    /// [`set_pending_tail`](Self::set_pending_tail)) — they keep
+    /// their row slots and indices but paint as placeholders while
+    /// the rest of the list stays live (ADR-0040 partial loading).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::ListView;
+    ///
+    /// let l = ListView::new().items(["a", "b", "c"]).pending_tail(1);
+    /// assert_eq!(l.item_count(), 3);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn pending_tail(mut self, n: usize) -> Self {
+        self.set_pending_tail(n);
+        self
+    }
+
+    /// Sets how many trailing items render as pending placeholders.
+    /// `n` larger than the item count marks every row pending; `0`
+    /// restores normal painting. The host typically appends stub
+    /// entries for the tail and clears the flag when data lands.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::ListView;
+    ///
+    /// let mut l = ListView::new().items(["a", "b"]);
+    /// l.set_pending_tail(1);
+    /// ```
+    pub fn set_pending_tail(&mut self, n: usize) {
+        self.pending_tail = n;
+        self.sync_rows();
     }
 
     /// Sets the selection mode.
@@ -1320,6 +1455,7 @@ impl ListView {
             row.hovered = self.hovered == Some(i);
             row.alternate = self.alternating_rows && i % 2 == 1;
             row.enabled = self.enabled;
+            row.pending = i >= self.items.len().saturating_sub(self.pending_tail);
             row.text_painter = self.text_painter.clone();
         }
     }
@@ -1451,6 +1587,18 @@ impl Widget for ListView {
 
     fn a11y_prepare(&mut self) {
         self.poll_pending();
+    }
+
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // A pending list reads as a row stack, not a single block —
+        // the count tracks the allocated height at row pitch.
+        let row_px = cx.pt(self.row_height).max(1.0);
+        let count = ((cx.bounds.height() / row_px).floor() as usize).clamp(1, 64);
+        paint_skeleton(cx, cx.bounds, SkeletonShape::Rows { count }, phase);
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -2031,6 +2179,92 @@ mod tests {
             .collect();
         assert_eq!(focus.iter().filter(|f| **f).count(), 1);
         assert!(focus[2]);
+    }
+
+    #[test]
+    fn loading_flag_and_placeholder() {
+        use martensite_core::PaintCommand;
+
+        assert!(!ListView::new().is_loading());
+        assert!(ListView::new().loading(true).is_loading());
+        let mut l = make_view(10, 200.0, 96.0);
+        l.set_loading(true);
+        assert!(Widget::is_loading(&l));
+        let mut list = martensite_core::PaintList::new();
+        let theme = martensite_theme::Theme::new("test");
+        l.paint_loading(
+            &mut PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 200.0, 96.0),
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            },
+            None,
+        );
+        // Row placeholders emit path+clip+pop triples, not one block.
+        let paths = list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::FillPath(..)))
+            .count();
+        assert!(paths >= 3);
+        l.set_loading(false);
+        assert!(!l.is_loading());
+    }
+
+    #[test]
+    fn pending_tail_paints_placeholder_rows() {
+        use martensite_core::PaintCommand;
+
+        let l = make_view(5, 200.0, 200.0).pending_tail(2);
+        // The last two pooled rows are pending; they keep their real
+        // item indices and row geometry.
+        assert!(!l.rows[2].pending);
+        assert!(l.rows[3].pending);
+        assert!(l.rows[4].pending);
+        assert_eq!(l.rows[4].item_index, 4);
+        let theme = martensite_theme::Theme::new("test");
+        // A loaded row still paints its label text.
+        let mut list = martensite_core::PaintList::new();
+        let slot = l.child_bounds(0).unwrap();
+        l.child(0).unwrap().paint(&mut PaintContext {
+            list: &mut list,
+            bounds: slot,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        });
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::DrawText(..))));
+        // A pending row paints the shared placeholder — no text.
+        let mut list = martensite_core::PaintList::new();
+        let slot = l.child_bounds(4).unwrap();
+        l.child(4).unwrap().paint(&mut PaintContext {
+            list: &mut list,
+            bounds: slot,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        });
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::FillPath(..))));
+        assert!(!list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::DrawText(..))));
+        // Real indices only in the a11y walk — no fabricated rows.
+        let mut node = AccessKitNode::new(accesskit::Role::Unknown);
+        l.child(4).unwrap().accessibility(&mut node);
+        assert_eq!(node.position_in_set(), Some(4));
+        // Clearing restores normal painting.
+        let mut l = l;
+        l.set_pending_tail(0);
+        assert!(!l.rows[3].pending);
     }
 
     #[test]

@@ -21,6 +21,7 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use martensite_core::loading::{paint_skeleton, SkeletonShape};
 use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect,
     RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
@@ -137,6 +138,9 @@ pub struct Cascader {
     pub enabled: bool,
     /// Placeholder in the value strip when nothing is committed.
     pub placeholder: String,
+    /// Whether the option tree is pending — paints placeholder
+    /// columns instead of the option lists (ADR-0040).
+    loading: bool,
     root: Vec<CascaderOption>,
     /// Chosen option index per column — `path[0]` is the root pick.
     path: Vec<usize>,
@@ -165,6 +169,7 @@ impl Cascader {
             label: None,
             enabled: true,
             placeholder: "Select…".to_string(),
+            loading: false,
             root: Vec::new(),
             path: Vec::new(),
             committed: Vec::new(),
@@ -236,6 +241,53 @@ impl Cascader {
     pub fn enabled(mut self, flag: bool) -> Self {
         self.enabled = flag;
         self
+    }
+
+    /// Sets the loading flag — while set, the widget paints
+    /// placeholder columns instead of the option lists and the
+    /// framework suppresses input/a11y for the subtree (ADR-0040).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Cascader;
+    ///
+    /// assert!(Cascader::new().loading(true).is_loading());
+    /// ```
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets the loading flag (mutating form).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Cascader;
+    ///
+    /// let mut c = Cascader::new();
+    /// c.set_loading(true);
+    /// assert!(c.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the picker's content is pending.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Cascader;
+    ///
+    /// assert!(!Cascader::new().is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_loading(&self) -> bool {
+        self.loading
     }
 
     /// Shares a [`crate::text_paint::TextPainter`] for row text.
@@ -585,6 +637,18 @@ impl Widget for Cascader {
             node.set_value(self.committed.join(" / "));
         }
     }
+
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        // A pending cascader reads as columns of option rows.
+        let cols = self.column_count().max(1);
+        let row_px = cx.pt(ROW_PT).max(1.0);
+        let rows = ((cx.bounds.height() / row_px).floor() as usize).clamp(1, 32);
+        paint_skeleton(cx, cx.bounds, SkeletonShape::Grid { cols, rows }, phase);
+    }
 }
 
 #[cfg(test)]
@@ -630,6 +694,30 @@ mod tests {
             button: PointerButton::Primary,
         };
         ev(c, &rel);
+    }
+
+    #[test]
+    fn loading_flag_and_placeholder() {
+        assert!(!Cascader::new().is_loading());
+        assert!(Cascader::new().loading(true).is_loading());
+        let mut c = Cascader::new().options(tree());
+        c.set_loading(true);
+        assert!(Widget::is_loading(&c));
+        let mut list = martensite_core::PaintList::new();
+        let theme = martensite_theme::Theme::new("test");
+        c.paint_loading(
+            &mut PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 400.0, 208.0),
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            },
+            None,
+        );
+        assert!(list.len() >= 3);
+        c.set_loading(false);
+        assert!(!c.is_loading());
     }
 
     #[test]

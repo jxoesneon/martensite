@@ -21,6 +21,7 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use martensite_core::loading::{paint_skeleton, SkeletonShape};
 use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
@@ -129,6 +130,9 @@ pub struct CommentThread {
     pub label: String,
     /// Show the reply affordance under each body.
     pub show_reply: bool,
+    /// Whether the thread is pending — paints a placeholder row
+    /// stack instead of the comments (ADR-0040).
+    loading: bool,
     comments: Vec<Comment>,
     focused: Option<usize>,
     reply: Option<u64>,
@@ -166,6 +170,7 @@ impl CommentThread {
         Self {
             label: "Comments".to_string(),
             show_reply: true,
+            loading: false,
             comments: Vec::new(),
             focused: None,
             reply: None,
@@ -213,6 +218,48 @@ impl CommentThread {
     pub fn with_text_painter(mut self, painter: SharedTextPainter) -> Self {
         self.text_painter = Some(painter);
         self
+    }
+
+    /// Sets the loading flag — while set, the widget paints a
+    /// placeholder row stack instead of the thread and the
+    /// framework suppresses input/a11y for the subtree (ADR-0040).
+    ///
+    /// ```
+    /// use martensite::widgets::comment_thread::CommentThread;
+    ///
+    /// assert!(CommentThread::new().loading(true).is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets the loading flag (mutating form).
+    ///
+    /// ```
+    /// use martensite::widgets::comment_thread::CommentThread;
+    ///
+    /// let mut t = CommentThread::new();
+    /// t.set_loading(true);
+    /// assert!(t.is_loading());
+    /// ```
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+    }
+
+    /// Whether the thread's content is pending.
+    ///
+    /// ```
+    /// use martensite::widgets::comment_thread::CommentThread;
+    ///
+    /// assert!(!CommentThread::new().is_loading());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_loading(&self) -> bool {
+        self.loading
     }
 
     /// Comment count.
@@ -307,6 +354,16 @@ impl Widget for CommentThread {
         node.set_role(accesskit::Role::List);
         node.set_label(self.label.clone());
         node.set_value(format!("{} comments", self.comments.len()));
+    }
+
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn paint_loading(&self, cx: &mut PaintContext, phase: Option<f32>) {
+        let row_px = row_h(cx.scale).max(1.0);
+        let count = ((cx.bounds.height() / row_px).floor() as usize).clamp(1, 64);
+        paint_skeleton(cx, cx.bounds, SkeletonShape::Rows { count }, phase);
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -574,6 +631,30 @@ mod tests {
         );
         assert_eq!(t.focused(), Some(0));
         assert_eq!(t.take_activated(), Some(1));
+    }
+
+    #[test]
+    fn loading_flag_and_placeholder() {
+        assert!(!CommentThread::new().is_loading());
+        assert!(CommentThread::new().loading(true).is_loading());
+        let mut t = fixture();
+        t.set_loading(true);
+        assert!(Widget::is_loading(&t));
+        let mut list = martensite_core::PaintList::default();
+        let theme = martensite_theme::Theme::new("test");
+        t.paint_loading(
+            &mut PaintContext {
+                list: &mut list,
+                bounds: Rect::new(0.0, 0.0, 400.0, 300.0),
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            },
+            None,
+        );
+        assert!(list.len() >= 3);
+        t.set_loading(false);
+        assert!(!t.is_loading());
     }
 
     #[test]
