@@ -25,12 +25,10 @@ graph TD
     M15 --> M16["v0.16.0: Hardware Media Pipeline<br/>(Platform Decoders, Multi-Plane Import, 4K120 Gate)"]
     M16 --> M17["v0.17.0: Platform Expansion<br/>(Widget Breadth, Web/WASM, iOS/Android, Time-Travel Debug)"]
     M17 --> M18["v0.18.0: Production Hardening & Dogfooding<br/>(API Audit, SemVer Tooling, Verification Honesty, Baselines)"]
-    M18 --> M19["v0.19.0: Widget Breadth & DX<br/>(~250 Widgets, Service Crates, Design Lint)"]
-    M19 --> M20["v1.0.0-rc.N: Release Candidate<br/>(Full Gated Publish, Two-Week Soak, SemVer Gate)"]
-    M20 --> M21["v1.0.0: Production Stability<br/>(API Freeze, Crates.io GA)"]
-
-    M18 -.->|proposed, slot pending| DX["DX Initiative<br/>(Inspector, CLI, Scaffolding, Dev Lint)"]
-    DX -.-> M20
+    M18 --> M19["v0.19.0: Widget Breadth & Native Services<br/>(~250 Widgets, Service Crates, Design Lint)"]
+    M19 --> M20["v0.20.0: Unified DX, AI MCP & Distribution<br/>(Inspector, 22-Tool MCP, Native Installers)"]
+    M20 --> M21["v1.0.0-rc.N: Release Candidate<br/>(Full Gated Publish, Two-Week Soak, SemVer Gate)"]
+    M21 --> M22["v1.0.0: Production Stability<br/>(API Freeze, Crates.io GA)"]
 ```
 
 ---
@@ -58,7 +56,7 @@ graph TD
 | **v0.17.0** | [v0.17.0-platform-expansion.md](v0.17.0-platform-expansion.md) | `martensite` widgets, `martensite-wgpu`, `martensite-window`, `martensite-access`, `martensite-devtools` | Slider/radio/dropdown/scrollview/tabs/tooltip with ARIA APG contracts, overlay layer, wasm32 + iOS + Android targets, hybrid command-ledger time-travel debugger | Six widgets pass APG + AccessKit conformance; wasm render via WebGPU; iOS/Android example apps; deterministic journal+snapshot replay |
 | **v0.18.0** | [v0.18.0-production-hardening.md](v0.18.0-production-hardening.md) | Workspace-wide, `martensite-vello`, `examples/industrial_dashboard`, `benches/bench_suite` | API surface audit + `cargo-semver-checks`, verification-honesty pass, residual hardening, dogfooding + egui/iced baselines | SemVer gate active; every env-gated leg run or formally descoped; zero `todo!()` in shipping code |
 | **v0.19.0** | Widget Breadth & Developer Experience (release pending; CHANGELOG §0.19.0) | Facade widgets, `martensite-design-lint`, native service crates | ~250 facade widgets, persist/dialog/notify/print/share/webview/pdf crates, 51-rule design lint + autofix + CLI, contextual dashboard, DX spec suite | 47-crate gated publish on tag; ~14 first-time crates |
-| **v0.20.0** | [v0.19.0-distribution.md](v0.19.0-distribution.md) & [vNEXT-developer-experience.md](vNEXT-developer-experience.md) | `tools/cargo-martensite`, `martensite-devtools`, `examples/widget_catalog`, `packaging/` | Unified DX & Distribution: in-app inspector, CLI expansion, scaffolding, live tweaks, native installers (WiX .msi, macOS .dmg, Flatpak), Ed25519 manifests, SLSA Level 3 | Installers built in CI; Ed25519 update manifest verified; 10-min first-run funnel clean; zero dev symbols in release binary |
+| **v0.20.0** | [v0.19.0-distribution.md](v0.19.0-distribution.md) & [vNEXT-developer-experience.md](vNEXT-developer-experience.md) | `tools/cargo-martensite`, `crates/martensite-mcp`, `martensite-devtools`, `examples/widget_catalog`, `packaging/` | Unified DX, AI-Assisted MCP & Distribution: in-app inspector, first-party Model Context Protocol (MCP) server (28 semantic tools), CLI expansion (`mcp`, `new`, `doctor`), scaffolding, live tweaks, native installers (WiX .msi, macOS .dmg, Flatpak), Ed25519 manifests, SLSA Level 3 | 28 MCP tools pass integration suite; installers built in CI; Ed25519 update manifest verified; 10-min first-run funnel clean; zero dev symbols in release binary |
 | **v1.0.0-rc.N** | [v1.0.0-production-release.md](v1.0.0-production-release.md) §3 | Complete Workspace | Release-candidate line: full gated publish + ≥2-week soak; no API changes between rc.1 and stable | RC publishes through `publish.yml` with zero gate failures; `cargo-semver-checks` clean vs last `0.x` |
 | **v1.0.0** | [v1.0.0-production-release.md](v1.0.0-production-release.md) | Complete Workspace (32+ crates) | Public API freeze, 100% docs.rs coverage, security audit sign-off | Zero compiler warnings; cargo audit/vet/deny clean; Crates.io release |
 

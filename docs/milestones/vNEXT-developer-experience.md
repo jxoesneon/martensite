@@ -1,7 +1,7 @@
 # Milestone Specification: v0.20.0 — Developer Experience & Distribution Initiative
 
 **Status:** Ratified — **Assigned to v0.20.0.** The council formally
-unified the Developer Experience Initiative (Workstreams W1–W8) and
+unified the Developer Experience Initiative (Workstreams W1–W8, W10) and
 Distribution Packaging & Native Installers (Workstream W9; see
 `docs/milestones/v0.19.0-distribution.md`) under the `v0.20.0` milestone slot.
 
@@ -12,9 +12,11 @@ Close the DX gap identified by
 are ahead of the tooling surface. This milestone surfaces what exists
 (design lint, TimeMachine, hot reload) and adds what best-in-class
 toolchains have that we don't — a widget inspector, a real CLI,
-scaffolding, and event observability — while *avoiding the documented
-failure modes* of Flutter DevTools, Dioxus subsecond, Slint live
-preview, and cargo-generate templates (constraints D1–D8).
+scaffolding, event observability, and a first-party Model Context
+Protocol (MCP) server for autonomous AI-assisted development — while
+*avoiding the documented failure modes* of Flutter DevTools, Dioxus
+subsecond, Slint live preview, and cargo-generate templates
+(constraints D1–D9).
 
 Simultaneously, Workstream W9 delivers complete end-user distribution
 artifacts (native WiX .msi, macOS .dmg, Linux Flatpak, Ed25519-signed update
@@ -29,8 +31,11 @@ trustworthy rendered, reported, or packaged result.
 
 * Audit: `docs/research/DEVELOPER_EXPERIENCE_AUDIT.md` — competitive
   inventory, gap ranking, mistakes harvest, design constraints D1–D8.
+* AI Research: `docs/research/AI_ASSISTED_DEVELOPMENT_RESEARCH.md` — semantic
+  ground truth vs black-box vision, 10 Semantic Pillars of Agent Access,
+  constraint D9.
 * ADRs: ADR-0036 (in-app inspector), ADR-0037 (hot-reload contract),
-  ADR-0038 (dev-channel transport).
+  ADR-0038 (dev-channel transport), ADR-0039 (first-party MCP server).
 * Specs: `docs/dx/` — one per workstream, each bound to the D-
   constraints it defends.
 * Distribution Spec: `docs/milestones/v0.19.0-distribution.md` — native
@@ -38,7 +43,8 @@ trustworthy rendered, reported, or packaged result.
 
 ## 3. Target Crates & Modules
 
-- `tools/cargo-martensite` — CLI expansion (W2, W3, W9)
+- `tools/cargo-martensite` — CLI expansion (`mcp`, `new`, `init`, `lint`, `inspect`, `doctor`, `check`) (W2, W3, W9, W10)
+- `crates/martensite-mcp` — First-party Model Context Protocol server library (W10)
 - `martensite-devtools` — inspector, lint bridge, tweak registry,
   event ledger, error surface (W1, W4, W5, W6, W7)
 - `martensite-macros` — `#[tweak]` / source spans (W5)
@@ -47,7 +53,7 @@ trustworthy rendered, reported, or packaged result.
 - `martensite-layout` / `-render` — structured diagnostics (W7)
 - `martensite-host` — dev channel, reload contract (ADR-0037/38)
 - `examples/widget_catalog`, `docs/cookbook`, `docs/migration` (W8, W9)
-- `martensite-design-lint` — engine unchanged; bridge consumes it (W4)
+- `martensite-design-lint` — engine unchanged; bridge consumes it (W4, W10)
 - `packaging/windows/` (WiX MSI), `packaging/macos/` (DMG), `packaging/linux/flatpak/` (Flatpak) (W9)
 - `.github/workflows/release-distribution.yml` & `scripts/generate-update-manifest.py` (W9)
 
@@ -57,7 +63,7 @@ trustworthy rendered, reported, or packaged result.
   the stable surface the docs and scaffold will teach).
 - `v0.19.0` released (Widget Breadth & DX foundation established).
 - Version slot assigned and unified as `v0.20.0` by council.
-- ADRs 0036–0038 ratified.
+- ADRs 0036–0039 ratified.
 
 ## 5. Architectural Deliverables — Workstreams
 
@@ -72,6 +78,7 @@ trustworthy rendered, reported, or packaged result.
 | W7 | `docs/dx/ERROR_SURFACE.md` | Inline overflow tape + diagnostics overlay + structured dev panic | Forced overflow renders hatch+amount; dev panic shows node path + crash bundle |
 | W8 | `docs/dx/ONBOARDING.md` | Widget catalog, 12-recipe cookbook, 3+ migration guides, drift guards | Catalog lint-clean; all recipes CI-compiled; 10-min funnel runs in CI |
 | W9 | `docs/milestones/v0.19.0-distribution.md` | Distribution Packaging & Installers: Windows WiX `.msi`, macOS `.dmg`, Linux Flatpak, CI release workflow, Ed25519 manifests, SLSA Level 3 | All 3 desktop installers compile cleanly in CI; Ed25519 signed manifest verified; SLSA provenance generated |
+| W10 | `docs/dx/MCP.md` | First-Party MCP Server (`martensite-mcp` & `cargo martensite mcp`): 28 tools (tree, layout, signals, design lint, live tweaks, synthetic events, a11y actions, paint audit, runtime errors/logs, hot reload, scaffolding) + dynamic resources + offline mode | 28 tools pass automated integration suite; sub-millisecond layout query; live tweak updates UI in <1.0ms; full parity with Antigravity/Devin |
 
 ## 6. Sequencing
 
@@ -82,9 +89,9 @@ Dependency order (parallelizable within a tier):
   inspector renders.
 - **Tier 1 (surface):** W1 inspector panels, W2 CLI commands, W3
   scaffolding — can proceed in parallel once Tier 0 lands.
-- **Tier 2 (integration):** W5 tweaks (needs inspector panel + reload
+- **Tier 2 (integration & AI agent tooling):** W5 tweaks (needs inspector panel + reload
   contract), W7 error surface (needs W4 + W6), W8 onboarding (needs W3
-  scaffold for the funnel).
+  scaffold for the funnel), W10 MCP server (bridges Tier 0 dev channel and Tier 1 surfaces to AI agents).
 - **Packaging & Distribution (W9):** can proceed concurrently across
   tiers; exercises the build, packaging, and signing toolchains on `cargo-martensite`
   and `widget_catalog`.
@@ -109,10 +116,11 @@ Dependency order (parallelizable within a tier):
 6. **Verifiable provenance:** published distribution packages carry
   Ed25519-signed update manifests and cryptographically attestable SLSA
   Level 3 provenance.
+7. **Semantic Agent Parity (D9):** The MCP server exposes exact engine ground truth (Taffy layout constraints, reactive DAG, AccessKit tree, design lint violations) without heuristic approximation; mutations are audited and require explicit confirmation.
 
 ## 8. Exit Criteria & Verification Gates
 
-1. All nine workstream acceptance gates (spec docs) pass.
+1. All ten workstream acceptance gates (spec docs) pass.
 2. The 10-minute first-run funnel executes in CI end-to-end
   (scaffold_smoke extended).
 3. Standard local gates: fmt, clippy `-D warnings` both feature sets,
@@ -127,7 +135,7 @@ Dependency order (parallelizable within a tier):
 
 ## 9. Risks
 
-- **Scope breadth** — nine workstreams is a lot; Tier-0 sequencing +
+- **Scope breadth** — ten workstreams is a lot; Tier-0 sequencing +
   hotswappable subagent slots (the method used for the design-lint
   expansion) is the mitigation. Each WS is independently shippable —
   the milestone degrades gracefully without losing coherence.

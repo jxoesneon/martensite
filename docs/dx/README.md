@@ -2,7 +2,7 @@
 
 This directory contains the specifications for the DX workstreams
 identified by `docs/research/DEVELOPER_EXPERIENCE_AUDIT.md`. Every spec
-is bound to the audit's design constraints (D1–D8) — the distilled
+is bound to the audit's design constraints (D1–D9) — the distilled
 lessons from competitor failure modes. A spec that cannot name the
 constraints it satisfies is incomplete.
 
@@ -23,8 +23,13 @@ constraints it satisfies is incomplete.
    diagnostic, keeping the last-known-good UI live (D3, D4).
 6. **Node-level truth, no scores.** Findings always identify the
    widget; we never emit an aggregate quality score (D7).
+7. **Semantic honesty and agent parity (D9).** Autonomous AI agents
+   observe the exact same ground truth as human engineers—no
+   hallucinated UI bounds, no brittle pixel scraping when semantic
+   geometry exists, and no mutation without explicit audit confirmation.
 
 ## Spec index
+
 
 | Spec | Workstream | Primary constraints |
 | --- | --- | --- |
@@ -36,10 +41,21 @@ constraints it satisfies is incomplete.
 | [EVENT_DEBUGGING.md](EVENT_DEBUGGING.md) | Event/hit-test/focus observability | D2 |
 | [ERROR_SURFACE.md](ERROR_SURFACE.md) | Dev-mode in-app diagnostics | D2, D7 |
 | [ONBOARDING.md](ONBOARDING.md) | Widget catalog, cookbook, migration docs | D6 |
+| [MCP.md](MCP.md) | First-party MCP server for AI-assisted development | D1, D3, D5, D7, D8, D9 |
 
 ## Architecture in one diagram
 
 ```text
+┌────────────────────────── AI Agent (Host) ──────────────────────────┐
+│ Devin / Claude Code / Cursor / Windsurf                             │
+└──────────────────────────────────┬───────────────────────────────────┘
+                                   │ Standard MCP over stdio (JSON-RPC)
+┌──────────────────────────────────▼───────────────────────────────────┐
+│ cargo martensite mcp (martensite-mcp crate) (W10)                    │
+│ Tools: tree, layout, signals, lint, tweaks, events, a11y, scaffold   │
+└──────────────────────────────────┬───────────────────────────────────┘
+                                   │
+                                   │ ADR-0038 dev channel (unix socket)
 ┌────────────────────────── user application ─────────────────────────┐
 │  WidgetArena ──┐        ReactiveRuntime ──┐      AccessKit tree ──┐ │
 │                │                          │                     │ │
@@ -54,6 +70,7 @@ constraints it satisfies is incomplete.
 └───────────────────────────────────────────────────────────┼────────┘
                                                             │
 ┌─────────────────────────── CLI ───────────────────────────▼───────┐
-│ cargo martensite dev │ lint │ inspect │ doctor │ new │ init      │
-└────────────────────────────────────────────────────────────────────┘
+│ cargo martensite dev │ lint │ inspect │ doctor │ new │ init │ mcp │
+└───────────────────────────────────────────────────────────────────┘
 ```
+

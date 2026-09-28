@@ -225,10 +225,10 @@ fn test_scaffold_bare_template() {
     assert!(target.join("Cargo.toml").exists());
     assert!(target.join("src/main.rs").exists());
 
-    // Bare template must NOT create DX files
+    // Bare template must NOT create DX files beyond the toolchain config.
     assert!(!target.join("AGENTS.md").exists());
     assert!(!target.join("design-lint.toml").exists());
-    assert!(!target.join("martensite.toml").exists());
+    assert!(target.join("martensite.toml").exists());
     assert!(!target.join("llms.txt").exists());
 
     let main_rs = fs::read_to_string(target.join("src/main.rs")).unwrap();

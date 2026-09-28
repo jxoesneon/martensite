@@ -117,6 +117,7 @@ const APP_LLMS_TXT: &str = include_str!("../templates/app/llms.txt");
 // Embedded template contents: `bare`
 const BARE_CARGO_TOML: &str = include_str!("../templates/bare/Cargo.toml");
 const BARE_MAIN_RS: &str = include_str!("../templates/bare/src/main.rs");
+const BARE_MARTENSITE_TOML: &str = include_str!("../templates/bare/martensite.toml");
 
 // Embedded template contents: `dashboard`
 const DASHBOARD_CARGO_TOML: &str = include_str!("../templates/dashboard/Cargo.toml");
@@ -164,6 +165,10 @@ pub const BARE_FILES: &[TemplateFile] = &[
         path: "src/main.rs",
         content: BARE_MAIN_RS,
     },
+    TemplateFile {
+        path: "martensite.toml",
+        content: BARE_MARTENSITE_TOML,
+    },
 ];
 
 /// Static file definitions for the `dashboard` template.
@@ -202,7 +207,7 @@ pub const DASHBOARD_FILES: &[TemplateFile] = &[
 /// use cargo_martensite::scaffold::{get_template_files, TemplateKind};
 ///
 /// let files = get_template_files(TemplateKind::Bare);
-/// assert_eq!(files.len(), 2);
+/// assert_eq!(files.len(), 3);
 /// ```
 pub fn get_template_files(kind: TemplateKind) -> &'static [TemplateFile] {
     match kind {

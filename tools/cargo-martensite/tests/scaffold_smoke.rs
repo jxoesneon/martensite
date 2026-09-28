@@ -75,7 +75,7 @@ fn assert_generated_files_exist_and_non_empty(project_dir: &Path, template: Temp
             }
         }
         TemplateKind::Bare => {
-            for &filename in &["Cargo.toml", "src/main.rs"] {
+            for &filename in &["Cargo.toml", "src/main.rs", "martensite.toml"] {
                 let path = project_dir.join(filename);
                 assert!(
                     path.is_file(),
@@ -87,12 +87,7 @@ fn assert_generated_files_exist_and_non_empty(project_dir: &Path, template: Temp
                 );
             }
             // Bare template intentionally excludes extra DX files until init is executed
-            for &filename in &[
-                "AGENTS.md",
-                "design-lint.toml",
-                "martensite.toml",
-                "llms.txt",
-            ] {
+            for &filename in &["AGENTS.md", "design-lint.toml", "llms.txt"] {
                 assert!(
                     !project_dir.join(filename).exists(),
                     "Bare template must not generate DX file `{filename}`"
@@ -306,21 +301,32 @@ fn assert_init_idempotency_and_non_clobber(project_dir: &Path, template: Templat
             );
         }
         TemplateKind::Bare => {
-            // 1. Bare template init with Bare kind produces 0 changes
+            // 1. Bare template init with Bare kind creates nothing —
+            //    `martensite.toml` already ships with the scaffold.
             let bare_opts = InitOptions::new().with_template(TemplateKind::Bare);
             let statuses_bare = init_project(project_dir, &bare_opts)
                 .unwrap_or_else(|err| panic!("init_project with Bare options failed: {err}"));
-            assert!(statuses_bare.is_empty());
+            assert!(
+                statuses_bare
+                    .iter()
+                    .all(|s| matches!(s, FileInitStatus::Unchanged(_))),
+                "Bare init must report Unchanged, got {statuses_bare:?}"
+            );
 
             // 2. Initializing DX files into Bare project creates missing files
             let app_opts = InitOptions::new();
             let statuses_create = init_project(project_dir, &app_opts)
                 .unwrap_or_else(|err| panic!("init_project into Bare project failed: {err}"));
+            // `martensite.toml` already ships identical content in the Bare
+            // scaffold, so it reports Unchanged; the rest must be Created.
             assert!(
-                statuses_create
-                    .iter()
-                    .all(|s| matches!(s, FileInitStatus::Created(_))),
-                "Initial init into Bare project should report Created for all DX files"
+                statuses_create.iter().all(|s| match s {
+                    FileInitStatus::Created(_) => true,
+                    FileInitStatus::Unchanged(p) => p.ends_with("martensite.toml"),
+                    _ => false,
+                }),
+                "Initial init into Bare project must only report Created, \
+                 or Unchanged for the pre-seeded martensite.toml: {statuses_create:?}"
             );
 
             // 3. Second run must be idempotent (all Unchanged)

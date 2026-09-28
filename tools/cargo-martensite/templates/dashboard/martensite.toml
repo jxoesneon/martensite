@@ -3,6 +3,8 @@
 [dev]
 # Development server port for hot reload coordination.
 port = 8765
+# MARTENSITE_DEV_CHANNEL=1 auto-serves the dev channel for MCP tooling.
+channel = true
 
 [lint]
 # Path to design lint configuration.

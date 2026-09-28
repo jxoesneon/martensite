@@ -45,6 +45,8 @@ impl MartensiteApp {
 }
 
 fn main() {
+    // Dev channel: enable with MARTENSITE_DEV_CHANNEL=1 and the martensite
+    // "dev-channel" feature.
     let _config = App::build().build();
     let app = MartensiteApp::new();
     println!("{{project_name}} started; initial count: {}", app.count.get());

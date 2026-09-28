@@ -237,17 +237,24 @@
 **Exit Criteria:** SemVer gate active and clean; zero `todo!()` in shipping non-doc code; no silently-deferred verification gates; tagged and published through the gated pipeline.
 **Key Risks:** Hardware-bound legs can't be provisioned — formal descope with downgraded claims is the accepted path.
 
-## v0.19.0 — Distribution
-*Detailed Specification:* [docs/milestones/v0.19.0-distribution.md](milestones/v0.19.0-distribution.md)
-**Status:** TENTATIVELY SCOPED — may be descoped to post-1.0 by ADR.
-**Entry Criteria:** v0.18.0 released; scope confirmed by ADR.
+## v0.19.0 — Widget Breadth & Native Services
+*Detailed Specification:* `CHANGELOG.md` (§0.19.0)
+**Status:** SHIPPED / RELEASE PENDING (47 crates published).
 **Deliverables:**
-- Pre-built `cargo-martensite` binaries on GitHub Releases (macOS/Windows/Linux, x86_64 + aarch64).
-- WiX `.msi`, signed/notarized `.dmg`, Flatpak bundle.
-- Ed25519-signed update manifests + verification path.
-- SLSA-style build attestations.
-**Exit Criteria:** Installers built in CI on tag; signed-update manifest verified end-to-end; artifacts attached to the GitHub Release.
-**Key Risks:** Apple Developer account for notarization; scope may exceed the pre-RC window — descope path is explicitly allowed.
+- Complete breadth expansion: ~250 facade widgets, native dialog, notify, persist, webview, pdf, and print crates.
+- `martensite-design-lint`: 51 design rules across WCAG 2.2, ISA-101, ISA-18.2, Gestalt, Fitts, and Tufte with automated AST fixes.
+- Contextual industrial dashboard example and initial developer experience audit.
+
+## v0.20.0 — Unified Developer Experience, AI-Assisted MCP & Distribution
+*Detailed Specification:* [docs/milestones/vNEXT-developer-experience.md](milestones/vNEXT-developer-experience.md) & [docs/milestones/v0.19.0-distribution.md](milestones/v0.19.0-distribution.md)
+**Status:** RATIFIED & UNDER ACTIVE DEVELOPMENT.
+**Deliverables:**
+- **Workstream W10 (AI-Assisted Development via MCP):** First-party Model Context Protocol server (`crates/martensite-mcp` and `cargo martensite mcp`) exposing 28 semantic tools: generational arena tree inspection, Taffy layout & constraint diagnostics, reactive signal DAG introspection, live 51-rule design linting & autofix, AccessKit semantic tree inspection and action dispatch, event ledger tracing, runtime tweak mutation with source write-back, runtime error & log surfaces, coordinator-mediated hot reload, and headless component rendering.
+- **In-App Inspector (W1) & Event Ledger (W6):** F12 in-app overlay, Ctrl+Shift+C select mode, hit-test resolution, and layout chain explorer.
+- **CLI Breadth (W2) & Scaffolding (W3):** `cargo martensite` subcommands (`mcp`, `new`, `init`, `doctor`, `lint`, `inspect`, `dev`, `build`, `tweak`).
+- **Live Tweaks & Source Sync (W5):** `TweakRegistry` and source span synchronization.
+- **Native Distribution (W9):** Pre-built binaries on GitHub Releases, WiX `.msi` (Windows), signed/notarized `.dmg` (macOS), Flatpak (Linux), Ed25519-signed update manifests, and SLSA Level 3 build attestations.
+**Exit Criteria:** 28 MCP tools pass integration test suite; sub-millisecond layout query latency; zero dev/MCP symbols in release binaries; desktop installers compile cleanly in CI; Ed25519 update manifest verified.
 
 ## v1.0.0 — Production Stability
 *Detailed Specification:* [docs/milestones/v1.0.0-production-release.md](milestones/v1.0.0-production-release.md)

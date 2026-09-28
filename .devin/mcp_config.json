@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "martensite": {
+      "command": "cargo-martensite",
+      "args": ["mcp", "--workspace", "/home/eduardo/martensite"]
+    }
+  }
+}

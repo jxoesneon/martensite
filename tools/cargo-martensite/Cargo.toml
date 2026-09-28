@@ -19,6 +19,8 @@ pollster = { workspace = true }
 fontdb = { workspace = true, features = ["std", "fontconfig"] }
 martensite-design-lint = { workspace = true }
 martensite-devtools = { workspace = true }
+martensite-mcp = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["fast", "std", "rand_core"] }

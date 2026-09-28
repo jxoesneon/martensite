@@ -19,6 +19,7 @@ cargo martensite init [--agents] [--lint]     # add DX files to existing project
 cargo martensite dev [--port N] [--no-watch]  # existing: cdylib hot reload
 cargo martensite lint [--fix] [--force] [--standard K] [--format text|json]
 cargo martensite inspect                      # attach to running dev app
+cargo martensite mcp [--socket <path>]        # Model Context Protocol stdio server (W10)
 cargo martensite doctor [--fix]               # environment diagnosis
 cargo martensite check                        # fast: fmt+clippy+lint in one
 cargo martensite build [--release]            # existing: cdylib build
@@ -59,7 +60,43 @@ the in-app panel, for CI/SSH/agent use. `cargo martensite inspect
 --pick` waits for the user to click in the app and prints the resolved
 node.
 
+### `mcp` — see MCP.md
+
+Launches the first-party Model Context Protocol server over `stdio` for
+AI agent integration (Devin, Claude Code, Cursor, Windsurf). Exposes 28
+semantic tools (generational tree inspection, Taffy layout diagnostics,
+reactive signal DAG, 51-rule design linting, live tweak mutation with
+guarded source write-back, AccessKit semantic actions, runtime error and
+log surfaces, and coordinator-mediated hot reload). Attaches to the
+running dev app's local Unix socket (ADR-0038) or falls back to offline
+project analysis. Operates strictly over `stdio` with local IPC;
+exposes zero network listening ports.
+
+```
+cargo martensite mcp [--socket <path>] [--scene <path>]
+                     [--workspace <path>] [--allow-version-mismatch]
+                     [--offline]
+```
+
+- `--socket <path>` — pin a specific dev channel. Omitted: auto-discovery
+  scans `$XDG_RUNTIME_DIR/martensite/` (and `MARTENSITE_DEV_SOCKET`).
+- `--scene <path>` — offline scene dump for static lint/inspection.
+- `--workspace <path>` — workspace root for scaffolding and lint
+  source confinement.
+- `--allow-version-mismatch` — bypass the D1 handshake version check
+  (not recommended).
+- `--offline` — never attach to a dev session; live-only tools report
+  the offline hint (useful for hermetic test/CI runs).
+
+Live mode requires a dev app that opted in with
+`MARTENSITE_DEV_CHANNEL=1` (debug builds; see "App-Side Integration" in
+MCP.md). While `cargo martensite dev` is running it also polls each
+discovered socket's `<socket>.reload-request` marker — dev-channel
+clients (including `martensite_hot_reload`) trigger a rebuild+reload
+cycle by dropping that file.
+
 ### `doctor`
+
 
 Diagnoses the environment; every check prints ✓/✗ plus a remediation
 line (never just a failure):

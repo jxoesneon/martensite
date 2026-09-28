@@ -23,6 +23,8 @@ pub mod hot_reload;
 pub mod inspect;
 /// Design standard linting in offline and dev-channel attach modes.
 pub mod lint;
+/// Martensite MCP server hosting over stdio (ADR-0039).
+pub mod mcp;
 /// Project scaffolding and embedded templates.
 pub mod scaffold;
 /// Live property tweaks inspection and source patch application (W5).
@@ -50,6 +52,7 @@ pub use hot_reload::{
 };
 pub use inspect::{run_inspect, InspectError, InspectOptions};
 pub use lint::{load_scene_from_file, run_lint, LintError, LintOptions, LintSummary, OutputFormat};
+pub use mcp::run_mcp;
 pub use scaffold::{
     get_template_files, init_project, render_template, scaffold_project, validate_project_name,
     FileInitStatus, InitOptions, ScaffoldError, ScaffoldOptions, TemplateFile, TemplateKind,

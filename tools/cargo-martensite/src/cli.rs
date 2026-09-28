@@ -147,6 +147,19 @@ pub enum Command {
         /// Dry run mode for apply (preview changes without modifying files).
         dry_run: bool,
     },
+    /// `cargo martensite mcp` — serve the Martensite MCP server over stdio.
+    Mcp {
+        /// Socket path override for dev-channel IPC.
+        socket: Option<String>,
+        /// Offline scene dump to evaluate (`--scene <path>`).
+        scene: Option<String>,
+        /// Cargo workspace root override.
+        workspace: Option<String>,
+        /// Allow connecting when dev app version mismatches CLI.
+        allow_version_mismatch: bool,
+        /// Never attach to a dev session (`--offline`).
+        offline: bool,
+    },
     /// `cargo martensite help` — print usage information.
     Help,
     /// `cargo martensite --version` — print the toolchain version.
@@ -211,7 +224,7 @@ impl fmt::Display for CliError {
             CliError::MissingCommand => {
                 write!(
                     f,
-                    "no subcommand supplied (expected `dev`, `build`, `lint`, `inspect`, `doctor`, `check`, or `help`)"
+                    "no subcommand supplied (expected `dev`, `build`, `lint`, `inspect`, `mcp`, `doctor`, `check`, or `help`)"
                 )
             }
             CliError::ExecutionFailed(msg) => {
@@ -376,6 +389,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, CliError> {
         "dev" => parse_dev(rest),
         "build" => parse_build(rest),
         "tweak" | "tweaks" => parse_tweak(rest),
+        "mcp" => parse_mcp(rest),
         "self-update" | "update" => parse_self_update(rest),
         "help" | "--help" | "-h" => Ok(Command::Help),
         "--version" | "-V" | "version" => Ok(Command::Version),
@@ -963,6 +977,62 @@ fn parse_tweak(rest: &[&str]) -> Result<Command, CliError> {
     })
 }
 
+/// Parses flags for the `mcp` subcommand.
+fn parse_mcp(rest: &[&str]) -> Result<Command, CliError> {
+    let mut socket = None;
+    let mut scene = None;
+    let mut workspace = None;
+    let mut allow_version_mismatch = false;
+    let mut offline = false;
+
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--socket" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--socket".to_string(),
+                    reason: "missing socket path".to_string(),
+                })?;
+                socket = Some((*raw).to_string());
+            }
+            "--scene" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--scene".to_string(),
+                    reason: "missing scene path".to_string(),
+                })?;
+                scene = Some((*raw).to_string());
+            }
+            "--workspace" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--workspace".to_string(),
+                    reason: "missing workspace path".to_string(),
+                })?;
+                workspace = Some((*raw).to_string());
+            }
+            "--allow-version-mismatch" => allow_version_mismatch = true,
+            "--offline" => offline = true,
+            other => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unknown flag for `mcp`".to_string(),
+                });
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::Mcp {
+        socket,
+        scene,
+        workspace,
+        allow_version_mismatch,
+        offline,
+    })
+}
+
 /// Executes a parsed [`Command`], performing any side effects.
 ///
 /// Returns `Ok(())` on success or a [`CliError`] describing the failure. The
@@ -1067,6 +1137,19 @@ pub fn run_command(cmd: Command) -> Result<(), CliError> {
             file,
             dry_run,
         } => run_tweak_cmd(action, socket, allow_version_mismatch, file, dry_run),
+        Command::Mcp {
+            socket,
+            scene,
+            workspace,
+            allow_version_mismatch,
+            offline,
+        } => crate::mcp::run_mcp(
+            socket.map(std::path::PathBuf::from),
+            scene.map(std::path::PathBuf::from),
+            workspace.map(std::path::PathBuf::from),
+            allow_version_mismatch,
+            offline,
+        ),
     }
 }
 
@@ -1233,6 +1316,7 @@ fn print_help() {
          dev      Launch the hot-reload development loop [default: --watch]\n    \
          build    Compile the guest crate as a cdylib\n    \
          tweak    Dump active live tweaks or apply source patches back to files\n    \
+         mcp      Serve the Martensite MCP server over stdio\n    \
          self-update Update the cargo-martensite binary via signed manifests\n    \
          help     Print this message\n    \
          version  Print the toolchain version\n\
@@ -1251,15 +1335,16 @@ fn print_help() {
          --force                 Also apply risky autofixes / allow downgrade (lint, self-update)\n    \
          --no-recursive          Single-pass autofix (lint)\n    \
          --max-recursiveness <N> Maximum recursion passes for autofix (lint)\n    \
-         --scene <path>          Serialized scene or dump file for offline mode (lint)\n    \
+         --scene <path>          Serialized scene or dump file for offline mode (lint, mcp)\n    \
+         --workspace <path>      Cargo workspace root override (mcp)\n    \
          --standard <S>, -s <S>  Select design standard filter (lint)\n    \
          --severity <S>          Minimum severity threshold (lint)\n    \
          --filter <STR>          Path substring filter (lint)\n    \
          --follow, -f            Stream live widget tree updates (inspect)\n    \
          --pick, -p              Wait for click in app to inspect node (inspect)\n    \
          --format <F>            Output presentation format: text, json (lint, inspect)\n    \
-         --socket <P>            Dev channel socket path override (lint, inspect)\n    \
-         --allow-version-mismatch Allow connecting on version mismatch (lint, inspect)\n    \
+         --socket <P>            Dev channel socket path override (lint, inspect, mcp)\n    \
+         --allow-version-mismatch Allow connecting on version mismatch (lint, inspect, mcp)\n    \
          --all-features          Check with all feature flags enabled (check)\n    \
          --package <P>, -p <P>   Target a specific workspace package (dev, build, check)\n    \
          --watch / --no-watch    Toggle file watching (dev)\n    \
@@ -1330,7 +1415,26 @@ fn run_dev(watch: bool, port: u16, package: Option<String>) -> Result<(), CliErr
     println!("watching {} path(s) for changes", config.watch_paths.len());
 
     loop {
-        let changed = watcher.check_for_changes();
+        let mut changed = watcher.check_for_changes();
+        // Hot-reload markers: a running app's dev session drops
+        // `<socket>.reload-request` next to its socket when a dev-channel
+        // client asks for a rebuild (ADR-0038). Discovery failure is not
+        // fatal — the watch loop keeps polling.
+        if let Ok(sessions) = crate::dev_channel::discover_dev_sessions() {
+            for sock in sessions {
+                let marker = std::path::PathBuf::from(format!("{}.reload-request", sock.display()));
+                if marker.exists() {
+                    match std::fs::read_to_string(&marker) {
+                        Ok(reason) if !reason.trim().is_empty() => {
+                            println!("reload requested via dev channel: {}", reason.trim());
+                        }
+                        _ => println!("reload requested via dev channel"),
+                    }
+                    let _ = std::fs::remove_file(&marker);
+                    changed.push(sock);
+                }
+            }
+        }
         if !changed.is_empty() {
             for path in &changed {
                 println!("change detected: {}", path.display());
@@ -2049,6 +2153,78 @@ mod tests {
     fn parse_self_update_unknown_flag_errors() {
         let err = parse_args(&args(&["martensite", "self-update", "--bogus"])).unwrap_err();
         assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--bogus"));
+    }
+
+    #[test]
+    fn parse_mcp_defaults() {
+        let cmd = parse_args(&args(&["martensite", "mcp"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Mcp {
+                socket: None,
+                scene: None,
+                workspace: None,
+                allow_version_mismatch: false,
+                offline: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mcp_all_flags() {
+        let cmd = parse_args(&args(&[
+            "martensite",
+            "mcp",
+            "--socket",
+            "/tmp/app.sock",
+            "--scene",
+            "dump.bin",
+            "--workspace",
+            "apps/demo",
+            "--allow-version-mismatch",
+            "--offline",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cmd,
+            Command::Mcp {
+                socket: Some("/tmp/app.sock".to_string()),
+                scene: Some("dump.bin".to_string()),
+                workspace: Some("apps/demo".to_string()),
+                allow_version_mismatch: true,
+                offline: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mcp_missing_socket_value_errors() {
+        let err = parse_args(&args(&["martensite", "mcp", "--socket"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--socket"));
+    }
+
+    #[test]
+    fn parse_mcp_missing_scene_value_errors() {
+        let err = parse_args(&args(&["martensite", "mcp", "--scene"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--scene"));
+    }
+
+    #[test]
+    fn parse_mcp_missing_workspace_value_errors() {
+        let err = parse_args(&args(&["martensite", "mcp", "--workspace"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--workspace"));
+    }
+
+    #[test]
+    fn parse_mcp_unknown_flag_errors() {
+        let err = parse_args(&args(&["martensite", "mcp", "--bogus"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--bogus"));
+    }
+
+    #[test]
+    fn parse_mcp_positional_errors() {
+        let err = parse_args(&args(&["martensite", "mcp", "extra"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "extra"));
     }
 
     #[test]

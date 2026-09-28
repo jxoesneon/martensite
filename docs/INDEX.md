@@ -72,13 +72,14 @@ Each ADR records a binding architectural decision in MADR 3.0.0 format.
 - [ADR-0031](adr/ADR-0031-benchmark-baseline-policy.md) — Benchmark Baseline Policy
 - [ADR-0032](adr/ADR-0032-documentation-completeness.md) — Documentation Completeness
 
-### Milestone & DX Decisions (ADR 0033–0038)
+### Milestone & DX Decisions (ADR 0033–0039)
 - [ADR-0033](adr/ADR-0033-host-mode-external-surface-embedding.md) — Host-Mode External Surface Embedding
 - [ADR-0034](adr/ADR-0034-bevy-rendercreation-manual.md) — Bevy Host-Mode Device Injection via `RenderCreation::Manual`
 - [ADR-0035](adr/ADR-0035-godot-readback-honesty.md) — Godot Readback Honesty — Two Tiers, No Zero-Copy Claim
 - [ADR-0036](adr/ADR-0036-in-app-inspector.md) — In-App Inspector — DevTools Ships Inside the App Process
 - [ADR-0037](adr/ADR-0037-hot-reload-contract.md) — Hot-Reload Contract — cdylib Swap Only, No Code Patching
 - [ADR-0038](adr/ADR-0038-dev-channel.md) — Dev Channel — Narrow, Read-Only, Version-Handshook IPC
+- [ADR-0039](adr/ADR-0039-mcp-server-for-ai-assisted-development.md) — First-Party Model Context Protocol (MCP) Server for AI-Assisted Development
 
 ---
 
@@ -127,7 +128,9 @@ Each DDR specifies a crate's internal algorithms, data structures, and invariant
 - [SECURITY.md](SECURITY.md) — Threat model, supply chain, unsafe policy
 - [design-standards/](design-standards/README.md) — Design-lint rule docs: evidence, thresholds, and legitimate exceptions per rule and standard
 - [research/DEVELOPER_EXPERIENCE_AUDIT.md](research/DEVELOPER_EXPERIENCE_AUDIT.md) — Competitive DX audit + competitor-mistake harvest (constraints D1–D8)
-- [dx/](dx/README.md) — Developer Experience initiative specs: inspector, CLI, scaffolding, dev-lint, live tweaks, event debugging, error surface, onboarding
+- [research/AI_ASSISTED_DEVELOPMENT_RESEARCH.md](research/AI_ASSISTED_DEVELOPMENT_RESEARCH.md) — Comprehensive AI-assisted UI development via Model Context Protocol (constraint D9)
+- [dx/](dx/README.md) — Developer Experience initiative specs: inspector, CLI, scaffolding, dev-lint, live tweaks, event debugging, error surface, onboarding, MCP server for autonomous agents
+
 
 ---
 
@@ -201,7 +204,9 @@ Detailed per-milestone architectural specifications, entry/exit criteria, and ve
 - [milestones/v0.17.0-platform-expansion.md](milestones/v0.17.0-platform-expansion.md) — v0.17.0 Platform Expansion
 - [milestones/v0.18.0-production-hardening.md](milestones/v0.18.0-production-hardening.md) — v0.18.0 Production Hardening & Dogfooding
 - [milestones/v0.19.0-distribution.md](milestones/v0.19.0-distribution.md) — v0.19.0 Distribution
+- [milestones/vNEXT-developer-experience.md](milestones/vNEXT-developer-experience.md) — v0.20.0 Unified Developer Experience, AI-Assisted MCP & Distribution
 - [milestones/v1.0.0-production-release.md](milestones/v1.0.0-production-release.md) — v1.0.0 Production Stability (API Freeze, docs.rs, Crates.io)
+
 
 ---
 
