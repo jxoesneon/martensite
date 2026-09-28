@@ -12,7 +12,7 @@ drift-guarded), each recipe is structured around real-world developer goals:
 
 ## Cookbook Index
 
-The complete 12-recipe suite covers the full lifecycle of application development in Martensite, from basic layout and reactive state to advanced hardware integration, headless testing, and CI verification:
+The complete 13-recipe suite covers the full lifecycle of application development in Martensite, from basic layout and reactive state to advanced hardware integration, headless testing, and CI verification:
 
 | Recipe | Description | Difficulty | Primary Crates | Key APIs & Concepts |
 |---|---|:---:|---|---|
@@ -28,6 +28,7 @@ The complete 12-recipe suite covers the full lifecycle of application developmen
 | [**10. Headless Component Testing**](10-headless-testing.md) | Zero-jitter testing via VirtualClock, event routing, DSSIM golden diffing | Intermediate | `martensite-test`, `martensite-window` | `HeadlessHarness`, `VirtualClock`, `EventRouter`, `HotNode::bounds`, DSSIM perceptual diffing, `GoldenImages` |
 | [**11. Localization & BiDi Layout**](11-localization-bidi.md) | Fluent localization, UAX #9 BiDi mirroring, UAX #50 vertical text, font cascades | Advanced | `martensite-l10n`, `martensite-text`, `martensite-font-fallback` | `L10n`, `FluentArgs`, `ScriptDirection::Rtl`, `WritingMode::VerticalRl`, `PlatformCascadeResolver`, `DirectWriteFontFallback` |
 | [**12. Automated Design Linting in CI**](12-ci-design-lint.md) | Static UI design linting in CI, design-lint.toml, inline markers, autofix engine | Intermediate | `martensite-design-lint`, `cargo-martensite` | `lint_paint_list`, `design-lint.toml`, `@lint:` inline markers, `autofix` convergence, WCAG 2.2 and ISA-101 gates |
+| [**13. Morphing Stroke Icons**](13-icon-morphing.md) | `d`-string icons that morph under spring physics (ADR-0041) | Intermediate | `martensite`, `martensite-motion` | `MorphIcon`, `morph_to`, `seek`, `SpringConfig` presets, `decorative` a11y, reduced-motion snap, stroke-only contract |
 
 ---
 

@@ -141,7 +141,7 @@ Each DDR specifies a crate's internal algorithms, data structures, and invariant
 - [VENDORED_FORKS.md](VENDORED_FORKS.md) — Vendored-fork maintenance policy (vello, cosmic-text, accesskit-winit, naga dedup, Bevy pin)
 - [REPRODUCIBLE_BUILDS.md](REPRODUCIBLE_BUILDS.md) — Build determinism pins, variance sources, local verification
 - [tutorials/](tutorials/README.md) — End-to-end tutorials (setup, reactive state, custom widgets, accessibility validation)
-- [cookbook/](cookbook/README.md) — Task-oriented recipes (12-recipe suite covering core UI, input, subsystems, and verification):
+- [cookbook/](cookbook/README.md) — Task-oriented recipes (13-recipe suite covering core UI, input, subsystems, and verification):
   - [01. Responsive Layout & Underflow Policies](cookbook/01-responsive-layout.md)
   - [02. Reactive Data Binding](cookbook/02-data-binding.md)
   - [03. Custom Painting & Silhouettes](cookbook/03-custom-painting.md)
@@ -154,6 +154,7 @@ Each DDR specifies a crate's internal algorithms, data structures, and invariant
   - [10. Headless Component Testing](cookbook/10-headless-testing.md)
   - [11. Localization & BiDi Layout](cookbook/11-localization-bidi.md)
   - [12. Automated Design Linting in CI](cookbook/12-ci-design-lint.md)
+  - [13. Morphing Stroke Icons (`MorphIcon`)](cookbook/13-icon-morphing.md)
 - [migration/](migration/README.md) — Architectural migration guides (from egui, from Iced, from Slint, from React Web)
 
 ---

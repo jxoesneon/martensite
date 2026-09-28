@@ -25,7 +25,10 @@ use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
 };
+use martensite_motion::SpringConfig;
 use martensite_theme::TokenKey;
+
+use crate::widgets::morph_icon::{demo, MorphIcon};
 
 const ICON_PT: f32 = 20.0;
 const PAD_PT: f32 = 8.0;
@@ -38,6 +41,18 @@ const FILL: [u8; 4] = [96, 165, 250, 255];
 const FG: [u8; 4] = [200, 202, 210, 255];
 const DIM: [u8; 4] = [110, 112, 120, 255];
 const HANDLE: [u8; 4] = [240, 240, 245, 255];
+
+/// One-time probe for the ADR-0041 geometry engine: builds the
+/// canonical `VOLUME_ON` icon once per process and caches the result.
+/// A `MorphError` — or a caught panic, reachable while the engine port
+/// was still in flight — reports "not ready" and `Volume` paints the
+/// hand-drawn glyph instead of crashing. Never panics.
+fn engine_probe() -> bool {
+    static READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *READY.get_or_init(|| {
+        std::panic::catch_unwind(|| MorphIcon::icon(demo::VOLUME_ON).is_ok()).unwrap_or(false)
+    })
+}
 
 /// A speaker + rail volume control — see the module docs.
 ///
@@ -60,6 +75,16 @@ pub struct Volume {
     rail: Rect,
     bounds: Rect,
     scale: f32,
+    /// Embedded morphing speaker icon — an internal child occupying
+    /// `icon_rect`, morphing the ADR-0041 `VOLUME_ON`/`VOLUME_OFF`
+    /// pair on mute transitions. `icon_ok` flips to `false` on any
+    /// engine error so `paint` falls back to the hand-drawn glyph.
+    icon: MorphIcon,
+    icon_ok: bool,
+    /// `layout` has run — gates `child_bounds` per the internal-child
+    /// contract (`None` before first layout so tick/paint/a11y walks
+    /// skip the child).
+    icon_laid_out: bool,
 }
 
 impl std::fmt::Debug for Volume {
@@ -86,6 +111,13 @@ impl Volume {
     /// assert_eq!(Volume::new().gain_value(), 0.75);
     /// ```
     pub fn new() -> Self {
+        let icon_ok = engine_probe();
+        // Decorative: the Volume row owns the a11y name.
+        let icon = icon_ok
+            .then(|| MorphIcon::icon(demo::VOLUME_ON).ok())
+            .flatten()
+            .unwrap_or_default()
+            .decorative(true);
         Self {
             label: "Volume".to_string(),
             gain: 0.75,
@@ -98,6 +130,9 @@ impl Volume {
             rail: Rect::new(0.0, 0.0, 0.0, 0.0),
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            icon,
+            icon_ok,
+            icon_laid_out: false,
         }
     }
 
@@ -175,6 +210,7 @@ impl Volume {
         if self.muted {
             self.muted = false;
             self.muted_out = Some(false);
+            self.sync_icon(true);
         }
         self.changed = Some(self.gain);
     }
@@ -225,6 +261,7 @@ impl Volume {
         }
         self.muted = muted;
         self.muted_out = Some(muted);
+        self.sync_icon(true);
     }
 
     /// Muted builder.
@@ -236,6 +273,7 @@ impl Volume {
     /// ```
     pub fn muted(mut self, muted: bool) -> Self {
         self.muted = muted;
+        self.sync_icon(false);
         self
     }
 
@@ -276,7 +314,36 @@ impl Volume {
         self.muted_out.take()
     }
 
-    /// Speaker icon rect.
+    /// Drives the embedded [`MorphIcon`] to the state matching
+    /// `self.muted` — `morph_to` under [`SpringConfig::SNAPPY`] when
+    /// `animate`, a plain `set_icon` jump otherwise. Any engine error
+    /// retires the icon (`icon_ok = false`) and `paint` falls back to
+    /// the hand-drawn glyph; never panics.
+    fn sync_icon(&mut self, animate: bool) {
+        if !self.icon_ok {
+            return;
+        }
+        let d = if self.muted {
+            demo::VOLUME_OFF
+        } else {
+            demo::VOLUME_ON
+        };
+        // `Ok(Err)` is the contract error path; a caught panic —
+        // reachable while the ADR-0041 engine port is in flight —
+        // retires the icon the same way. Never propagates.
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if animate {
+                self.icon.morph_to(d, SpringConfig::SNAPPY)
+            } else {
+                self.icon.set_icon(d)
+            }
+        }));
+        if !matches!(r, Ok(Ok(()))) {
+            self.icon_ok = false;
+        }
+    }
+
+    /// Speaker icon rect — also the internal MorphIcon child's bounds.
     fn icon_rect(&self) -> Rect {
         let s = self.scale;
         Rect::new(
@@ -317,6 +384,10 @@ impl Widget for Volume {
             (bounds.max_x() - icon.max_x() - PAD_PT * s * 2.0).max(0.0),
             HANDLE_PT * s,
         );
+        // Allocate the internal MorphIcon child its glyph rect so the
+        // framework's tick/paint/a11y recursion reaches it.
+        self.icon.layout(cx, icon);
+        self.icon_laid_out = true;
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -398,6 +469,26 @@ impl Widget for Volume {
         }
     }
 
+    // Internal-child protocol — the embedded MorphIcon is child 0,
+    // occupying the glyph rect computed by `icon_rect`. Bounds stay
+    // `None` until `layout` runs (and while the icon is retired to the
+    // hand-drawn fallback) so tick/paint/a11y recursion skips it.
+    fn child_count(&self) -> usize {
+        1
+    }
+
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        (index == 0).then_some(&self.icon as &dyn Widget)
+    }
+
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        (index == 0).then_some(&mut self.icon as &mut dyn Widget)
+    }
+
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        (index == 0 && self.icon_laid_out && self.icon_ok).then(|| self.icon_rect())
+    }
+
     fn paint(&self, cx: &mut PaintContext) {
         let krect = |r: Rect| {
             kurbo::Rect::new(
@@ -409,47 +500,52 @@ impl Widget for Volume {
         };
         let pt = |p: Vec2| kurbo::Point::new(f64::from(p.x), f64::from(p.y));
         let s = self.scale;
-        let fg = cx.color(TokenKey::TextColor, if self.muted { DIM } else { FG });
 
-        // Speaker icon: box + wedge + wave arcs (hidden when muted).
-        let icon = self.icon_rect();
-        let ix = icon.min_x();
-        let iy = icon.min_y();
-        let iw = icon.width();
-        let ih = icon.height();
-        cx.list.push_fill_rect(
-            krect(Rect::new(ix, iy + ih * 0.32, iw * 0.25, ih * 0.36)),
-            fg,
-        );
-        let mut wedge = kurbo::BezPath::new();
-        wedge.move_to(pt(Vec2::new(ix + iw * 0.25, iy + ih * 0.35)));
-        wedge.line_to(pt(Vec2::new(ix + iw * 0.62, iy + ih * 0.1)));
-        wedge.line_to(pt(Vec2::new(ix + iw * 0.62, iy + ih * 0.9)));
-        wedge.line_to(pt(Vec2::new(ix + iw * 0.25, iy + ih * 0.65)));
-        wedge.close_path();
-        cx.list.push_path(wedge, fg);
-        if self.muted {
-            // ✕ over the speaker.
-            let mut x = kurbo::BezPath::new();
-            x.move_to(pt(Vec2::new(ix + iw * 0.62, iy + ih * 0.35)));
-            x.line_to(pt(Vec2::new(ix + iw * 0.95, iy + ih * 0.65)));
-            x.move_to(pt(Vec2::new(ix + iw * 0.95, iy + ih * 0.35)));
-            x.line_to(pt(Vec2::new(ix + iw * 0.62, iy + ih * 0.65)));
-            cx.list
-                .push_stroke_path(x, 1.6 * s, cx.color(TokenKey::ErrorColor, DIM));
-        } else {
-            // Wave arcs scale with gain.
-            let waves = (self.display_gain() / self.max * 3.0).ceil() as usize;
-            for i in 0..waves.min(3) {
-                let rr = iw * (0.18 + i as f32 * 0.14);
-                let cy = iy + ih / 2.0;
-                let ax = ix + iw * 0.62;
-                let mut arc = kurbo::BezPath::new();
-                arc.move_to(pt(Vec2::new(ax + rr * 0.3, cy - rr)));
-                arc.line_to(pt(Vec2::new(ax + rr, cy - rr * 0.5)));
-                arc.line_to(pt(Vec2::new(ax + rr, cy + rr * 0.5)));
-                arc.line_to(pt(Vec2::new(ax + rr * 0.3, cy + rr)));
-                cx.list.push_stroke_path(arc, 1.2 * s, fg);
+        // Speaker icon: the embedded MorphIcon child paints the
+        // VOLUME_ON ↔ VOLUME_OFF morph (ADR-0041) while `icon_ok`
+        // holds; on engine failure fall back to the hand-drawn glyph —
+        // box + wedge + wave arcs (hidden when muted).
+        if !self.icon_ok {
+            let fg = cx.color(TokenKey::TextColor, if self.muted { DIM } else { FG });
+            let icon = self.icon_rect();
+            let ix = icon.min_x();
+            let iy = icon.min_y();
+            let iw = icon.width();
+            let ih = icon.height();
+            cx.list.push_fill_rect(
+                krect(Rect::new(ix, iy + ih * 0.32, iw * 0.25, ih * 0.36)),
+                fg,
+            );
+            let mut wedge = kurbo::BezPath::new();
+            wedge.move_to(pt(Vec2::new(ix + iw * 0.25, iy + ih * 0.35)));
+            wedge.line_to(pt(Vec2::new(ix + iw * 0.62, iy + ih * 0.1)));
+            wedge.line_to(pt(Vec2::new(ix + iw * 0.62, iy + ih * 0.9)));
+            wedge.line_to(pt(Vec2::new(ix + iw * 0.25, iy + ih * 0.65)));
+            wedge.close_path();
+            cx.list.push_path(wedge, fg);
+            if self.muted {
+                // ✕ over the speaker.
+                let mut x = kurbo::BezPath::new();
+                x.move_to(pt(Vec2::new(ix + iw * 0.62, iy + ih * 0.35)));
+                x.line_to(pt(Vec2::new(ix + iw * 0.95, iy + ih * 0.65)));
+                x.move_to(pt(Vec2::new(ix + iw * 0.95, iy + ih * 0.35)));
+                x.line_to(pt(Vec2::new(ix + iw * 0.62, iy + ih * 0.65)));
+                cx.list
+                    .push_stroke_path(x, 1.6 * s, cx.color(TokenKey::ErrorColor, DIM));
+            } else {
+                // Wave arcs scale with gain.
+                let waves = (self.display_gain() / self.max * 3.0).ceil() as usize;
+                for i in 0..waves.min(3) {
+                    let rr = iw * (0.18 + i as f32 * 0.14);
+                    let cy = iy + ih / 2.0;
+                    let ax = ix + iw * 0.62;
+                    let mut arc = kurbo::BezPath::new();
+                    arc.move_to(pt(Vec2::new(ax + rr * 0.3, cy - rr)));
+                    arc.line_to(pt(Vec2::new(ax + rr, cy - rr * 0.5)));
+                    arc.line_to(pt(Vec2::new(ax + rr, cy + rr * 0.5)));
+                    arc.line_to(pt(Vec2::new(ax + rr * 0.3, cy + rr)));
+                    cx.list.push_stroke_path(arc, 1.2 * s, fg);
+                }
             }
         }
 
@@ -602,6 +698,76 @@ mod tests {
         );
         assert!(!v.is_muted());
         assert_eq!(v.take_muted(), Some(false));
+    }
+
+    #[test]
+    fn mute_drives_internal_icon() {
+        let mut v = Volume::new().gain(0.6);
+        laid_out(&mut v, 140.0, 24.0);
+
+        // Internal-child wiring: one MorphIcon child, present via the
+        // protocol whether or not the engine leg has landed.
+        assert_eq!(v.child_count(), 1);
+        assert_eq!(v.child(0).unwrap().debug_name(), "MorphIcon");
+        assert!(!v.icon.is_animating());
+
+        // Never panics — engine landed or not.
+        v.set_muted(true);
+        assert!(v.is_muted());
+        assert_eq!(v.take_muted(), Some(true));
+
+        // The demo `d` constants are canonical — the probe must pass.
+        assert!(v.icon_ok, "MorphIcon::icon(VOLUME_ON) failed");
+        // The toggle is mid-morph, allocated the glyph rect, and
+        // drivable through `child_mut` — exactly what the arena's tick
+        // recursion does per frame.
+        assert_eq!(v.child_bounds(0), Some(v.icon_rect()));
+        assert!(v.icon.is_animating());
+        assert!(v
+            .child_mut(0)
+            .unwrap()
+            .tick(std::time::Duration::from_millis(16)));
+
+        // Unmute re-morphs toward VOLUME_ON mid-flight.
+        v.set_muted(false);
+        assert!(v.icon.is_animating());
+
+        // The spring eventually settles.
+        for _ in 0..600 {
+            v.child_mut(0)
+                .unwrap()
+                .tick(std::time::Duration::from_millis(16));
+        }
+        assert!(!v.icon.is_animating());
+    }
+
+    #[test]
+    fn icon_child_hidden_until_layout() {
+        let v = Volume::new();
+        assert_eq!(v.child_count(), 1);
+        assert!(v.child(0).is_some());
+        assert_eq!(v.child_bounds(0), None);
+    }
+
+    #[test]
+    fn reduced_motion_snaps_icon() {
+        let mut v = Volume::new();
+        laid_out(&mut v, 140.0, 24.0);
+        // Default `set_reduced_motion` forwards to internal children.
+        v.set_reduced_motion(true);
+        v.set_muted(true);
+        assert!(!v.icon.is_animating());
+        assert_eq!(v.icon.progress(), 1.0);
+    }
+
+    #[test]
+    fn builder_muted_sets_icon_without_flight() {
+        let mut v = Volume::new().muted(true);
+        laid_out(&mut v, 140.0, 24.0);
+        assert!(!v.icon.is_animating());
+        // A later unmute morphs toward VOLUME_ON.
+        v.set_muted(false);
+        assert!(v.icon.is_animating());
     }
 
     #[test]

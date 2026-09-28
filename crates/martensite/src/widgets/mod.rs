@@ -2387,6 +2387,20 @@ pub mod minimap;
 /// ```
 pub mod mind_map;
 
+/// Stroke-icon widget that morphs between arbitrary `d`-string icons
+/// with spring physics — a native port of the morphicons core
+/// (ADR-0041). Resampled subpaths, Procrustes correspondence, polar
+/// interpolation, interruption-clean.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite::widgets::morph_icon::MorphIcon;
+///
+/// let icon = MorphIcon::icon("M4 7h16M4 12h16M4 17h16").unwrap();
+/// ```
+pub mod morph_icon;
+
 /// Vertical icon+label destination rail for app-level navigation
 /// (Material 3 `NavigationRail`, WinUI `NavigationView` rail mode).
 ///
@@ -4115,6 +4129,7 @@ pub use message_list::{Message, MessageList};
 pub use metronome::Metronome;
 pub use mind_map::MindMap;
 pub use minimap::Minimap;
+pub use morph_icon::{MorphError, MorphIcon};
 pub use nav_rail::{NavDestination, NavRail};
 pub use nav_stack::NavStack;
 pub use notification_center::{Notification, NotificationCenter};
