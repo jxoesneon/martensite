@@ -3664,6 +3664,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "morph_viewer"
+version = "0.20.1"
+dependencies = [
+ "accesskit",
+ "glam",
+ "kurbo",
+ "martensite",
+ "martensite-devtools",
+ "martensite-wgpu",
+ "pollster",
+ "serde",
+ "serde_json",
+ "tracing-subscriber",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "multiversion"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

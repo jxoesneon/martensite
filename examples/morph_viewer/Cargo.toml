@@ -1,0 +1,40 @@
+[package]
+name = "morph_viewer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Icon-morph showcase for Martensite — streams real icon packs (lucide/tabler/feather/heroicons/iconoir) through MorphIcon."
+publish = false
+
+[dependencies]
+martensite = { workspace = true, features = [
+    # Dev-channel socket server (ADR-0038) — opted in at runtime via
+    # `MARTENSITE_DEV_CHANNEL=1`; `martensite-mcp` attaches to it.
+    "dev-channel",
+    # Signal enumeration for `signals_list`/`signal_trigger`.
+    "devtools-timemachine",
+] }
+# `render` gives the dev-session probe the TinySkia raster path so
+# `capture_node` produces real PNGs under `--live-headless` too.
+martensite-devtools = { workspace = true, features = ["render"] }
+martensite-wgpu = { workspace = true, features = ["vello"] }
+accesskit = { workspace = true }
+glam = { workspace = true }
+kurbo = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# winit/wgpu pins mirror examples/industrial_dashboard — the vendored
+# accesskit_winit fork and the wgpu engine build against these.
+winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }
+wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12", "gles", "webgpu"] }
+pollster = "1.0"
+tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
+
+[lints]
+workspace = true
