@@ -42,6 +42,12 @@ const LABEL_GAP: f32 = 8.0;
 pub struct Switch {
     /// Accessible label shown beside the track.
     pub label: String,
+    /// Accessible name used when `label` is empty — set when the
+    /// switch's meaning is carried by a sibling (a settings row's
+    /// title), so the painted track stays bare while assistive tech
+    /// still gets a name. Painted nowhere; surfaced to AccessKit and
+    /// to design-lint via the `@labeled` scope marker.
+    pub a11y_label: String,
     /// Whether the switch is on.
     pub on: bool,
     /// Whether the switch is enabled.
@@ -66,11 +72,28 @@ impl Switch {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
+            a11y_label: String::new(),
             on: false,
             enabled: true,
             cached_bounds: Rect::default(),
             text_painter: None,
         }
+    }
+
+    /// Sets the accessible name reported when `label` is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Switch;
+    ///
+    /// let sw = Switch::new("").a11y_label("Line running");
+    /// assert_eq!(sw.a11y_label, "Line running");
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = label.into();
+        self
     }
 
     /// Sets the on state.
@@ -118,7 +141,9 @@ impl Widget for Switch {
         let w = cx.pt(TRACK_W + LABEL_GAP + 8.0 * self.label.chars().count() as f32);
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
-            cx.pt(TRACK_H).min(constraints.max_size.y.max(0.0)),
+            // The whole bounds are the pointer target — WCAG 2.5.8
+            // floors it at 24pt even though the track itself is 20pt.
+            cx.pt(24.0).min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -131,9 +156,25 @@ impl Widget for Switch {
         }
     }
 
+    /// `@labeled` declares the accessible name to design-lint's
+    /// `icon-only-control` rule — the paint list can't see the
+    /// AccessKit label, so the scope marker carries it.
+    fn debug_name(&self) -> &'static str {
+        if self.label.is_empty() && self.a11y_label.is_empty() {
+            "Switch"
+        } else {
+            "Switch@labeled"
+        }
+    }
+
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Switch);
-        node.set_label(self.label.as_str());
+        let name = if self.label.is_empty() {
+            self.a11y_label.as_str()
+        } else {
+            self.label.as_str()
+        };
+        node.set_label(name);
         node.add_action(accesskit::Action::Click);
         node.add_action(accesskit::Action::Focus);
         node.set_toggled(if self.on {
@@ -167,9 +208,9 @@ impl Widget for Switch {
 
     fn paint(&self, cx: &mut PaintContext) {
         let b = cx.bounds;
-        let tw = cx.pt(TRACK_W);
-        let th = cx.pt(TRACK_H);
-        let ty = b.origin.y + (b.size.y - th) / 2.0;
+        let tw = cx.pt(TRACK_W).min(b.size.x);
+        let th = cx.pt(TRACK_H).min(b.size.y);
+        let ty = b.origin.y + (b.size.y - th).max(0.0) / 2.0;
         let track = kurbo::Rect::new(
             f64::from(b.origin.x),
             f64::from(ty),

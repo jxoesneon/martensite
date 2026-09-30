@@ -3,7 +3,10 @@
 //!
 //! Bands are `0..=1` amplitudes pushed by the app (analyzer
 //! output); each paints as a column with a gradient intensity —
-//! green through the middle, amber near the top, red at the peak.
+//! green through the middle, amber near the top, hot orange at the
+//! peak. The peak tier deliberately stays off the alarm-red channel
+//! (ISA-101 `reserved-hue`): saturated red means *abnormal*, and a
+//! decorative analyzer must not spend it.
 //! An optional peak-hold marker (`peak_hold`) lingers at each
 //! band's recent maximum. Clicking a band parks its index in
 //! [`Spectrum::take_pressed`].
@@ -31,7 +34,10 @@ const HEIGHT_PT: f32 = 80.0;
 const TRACK: [u8; 4] = [48, 48, 52, 255];
 const LOW: [u8; 4] = [110, 180, 130, 255];
 const MID: [u8; 4] = [230, 170, 80, 255];
-const HIGH: [u8; 4] = [210, 110, 90, 255];
+// Peak tier is hot orange, not red — ISA-101 reserves the alarm-red
+// hue family (0–30°) for abnormal state; a decorative analyzer that
+// paints it trains operators to ignore real alarms.
+const HIGH: [u8; 4] = [235, 150, 55, 255];
 const PEAK: [u8; 4] = [230, 230, 235, 255];
 
 /// A frequency-band bar display — see the module docs.

@@ -188,6 +188,18 @@ impl Widget for TabItem {
 
     fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
 
+    /// `@labeled` declares the accessible name to design-lint's
+    /// `icon-only-control` rule — a tab scrolled to a sliver clips
+    /// its caption out of the paint list, but the AccessKit label
+    /// still names it.
+    fn debug_name(&self) -> &'static str {
+        if self.label.is_empty() {
+            "TabItem"
+        } else {
+            "TabItem@labeled"
+        }
+    }
+
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Tab);
         // A badge annunciates hidden-channel state — it belongs in
@@ -280,7 +292,16 @@ impl Widget for TabItem {
         );
         // Clip the label to the tab slot — a long title can't spill
         // into the neighbouring tab or under the close affordance.
+        // Ellide rather than hard-clip: a run past its clip edge is a
+        // paint-audit finding, `…` reads as an intentional truncation.
         let text_x = b.min_x() + cx.pt(12.0);
+        let label = crate::text_paint::elide_label(
+            painter,
+            cx.scale,
+            &self.label,
+            14.0,
+            label_right - text_x,
+        );
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
@@ -294,7 +315,7 @@ impl Widget for TabItem {
                 f64::from(text_x),
                 f64::from(b.min_y() + (b.height() - font_px) / 2.0),
             ),
-            &self.label,
+            &label,
             font_px,
             cx.color(TokenKey::TextColor, INK),
         );
@@ -306,7 +327,7 @@ impl Widget for TabItem {
                 kurbo::Rect::new(
                     f64::from(b.max_x() - close_w - cx.pt(4.0)),
                     f64::from(b.min_y()),
-                    f64::from(b.max_x() - cx.pt(4.0)),
+                    f64::from(b.max_x()),
                     f64::from(b.max_y()),
                 ),
                 kurbo::Point::new(
@@ -339,6 +360,9 @@ struct TabStrip {
     strip_bounds: Rect,
     /// Total natural tab width from the last layout pass.
     natural_w: f32,
+    /// Device-pixel scale from the last layout pass — converts the
+    /// minimum visible-sliver floor to px in [`scrolled_bounds`].
+    scale: f32,
 }
 
 impl TabStrip {
@@ -349,6 +373,7 @@ impl TabStrip {
             scroll_x: 0.0,
             strip_bounds: Rect::default(),
             natural_w: 0.0,
+            scale: 1.0,
         }
     }
 
@@ -383,7 +408,12 @@ impl TabStrip {
         let left = x.max(self.strip_bounds.min_x());
         let right = (x + r.width()).min(self.strip_bounds.max_x());
         let w = right - left;
-        if w <= 0.0 {
+        // A scroll clip that leaves under the 24pt WCAG target floor
+        // visible isn't a usable target — report the tab as not
+        // presented rather than a sliver hit box with a clipped label.
+        // A naturally narrow (unclipped) tab keeps its bounds: it is a
+        // real small target and lint should see it.
+        if w <= 0.0 || (w < 24.0 * self.scale && w < r.width()) {
             return None;
         }
         Some(Rect::new(left, r.min_y(), w, r.height()))
@@ -410,6 +440,7 @@ impl Widget for TabStrip {
         let n = self.tabs.len();
         self.tab_bounds.clear();
         self.strip_bounds = bounds;
+        self.scale = cx.scale;
         if n == 0 {
             self.natural_w = 0.0;
             return;

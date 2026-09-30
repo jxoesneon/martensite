@@ -420,6 +420,17 @@ impl Slider {
 }
 
 impl Widget for Slider {
+    /// `@labeled` tells design-lint's `icon-only-control` rule the
+    /// widget carries an accessible name — the paint list can't see
+    /// the AccessKit label, so the scope marker declares it.
+    fn debug_name(&self) -> &'static str {
+        if self.label.is_some() {
+            "Slider@labeled"
+        } else {
+            "Slider"
+        }
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let (w, h): (f32, f32) = match self.orientation {
             SliderOrientation::Horizontal => (160.0, 24.0),

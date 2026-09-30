@@ -231,6 +231,12 @@ impl HexView {
 }
 
 impl Widget for HexView {
+    fn debug_name(&self) -> &'static str {
+        // A hex dump is a document surface — its text is payload, so
+        // `packing-density`'s alphanumeric cap exempts it.
+        "HexView@prose"
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(WIDTH_PT).min(constraints.max_size.x.max(0.0)),

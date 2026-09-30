@@ -1130,6 +1130,12 @@ impl std::fmt::Debug for Markdown {
 }
 
 impl Widget for Markdown {
+    fn debug_name(&self) -> &'static str {
+        // Rendered markdown is a document surface — its text is
+        // payload, so `packing-density`'s alphanumeric cap exempts it.
+        "Markdown@prose"
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let w = if constraints.max_size.x.is_finite() {
             constraints.max_size.x

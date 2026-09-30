@@ -456,11 +456,22 @@ impl Widget for VideoGrid {
                 cr,
                 kurbo::Point::new(
                     f64::from(r.min_x() + 6.0 * s * fit),
-                    f64::from(r.max_y() - cap * 0.35),
+                    // Vertically center the label inside the caption
+                    // band — `origin` is the line box top, and the
+                    // glyph baseline lands ~0.9×font below it, so
+                    // anchoring on `r.max_y` spills the run below the
+                    // band onto the next tile.
+                    cr.y0 + f64::from((cap - FONT_PT * s) / 2.0),
                 ),
                 &p.name,
                 FONT_PT * s,
-                cx.color(TokenKey::TextColor, TEXT),
+                // The caption band is a fixed dark chip — the theme's
+                // text ink may itself be dark, so pick whichever reads.
+                crate::text_paint::better_ink(
+                    CAPTION_BG,
+                    cx.color(TokenKey::TextColor, TEXT),
+                    TEXT,
+                ),
             );
             // Muted badge — opaque chip so the glyph always has a
             // known backdrop on any tile color.
@@ -483,7 +494,7 @@ impl Widget for VideoGrid {
                     kurbo::Point::new(br.x0 + f64::from(d) * 0.28, br.y0 + f64::from(d) * 0.72),
                     "✕",
                     FONT_PT * s,
-                    TEXT,
+                    crate::text_paint::better_ink(BADGE, cx.color(TokenKey::TextColor, TEXT), TEXT),
                 );
             }
         }

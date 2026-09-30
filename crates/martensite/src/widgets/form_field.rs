@@ -282,24 +282,25 @@ impl Default for FormField {
 
 impl Widget for FormField {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let mut h = GAP; // spacing above the control
+        let gap = cx.pt(GAP);
+        let mut h = gap; // spacing above the control
         if !self.label.is_empty() && self.position == LabelPosition::Top {
-            h += LABEL_H + GAP;
+            h += cx.pt(LABEL_H) + gap;
         }
         // The control contributes its own desired height.
-        let mut control_h = 24.0;
+        let mut control_h = cx.pt(24.0);
         if let Some(c) = self.control.as_mut() {
             let want = c.measure(cx, constraints);
             control_h = want.y;
         }
         h += control_h;
         if self.message().is_some() {
-            h += GAP + MESSAGE_H;
+            h += gap + cx.pt(MESSAGE_H);
         }
         let w = if self.position == LabelPosition::Left {
-            self.label_width + GAP + 160.0
+            cx.pt(self.label_width + GAP + 160.0)
         } else {
-            200.0
+            cx.pt(200.0)
         };
         Vec2::new(w, h)
     }
@@ -439,6 +440,19 @@ impl Widget for FormField {
             }
         }
         EventResponse::Ignored
+    }
+
+    /// `@labeled` declares the field's accessible name to
+    /// design-lint's `icon-only-control` rule — the label's painted
+    /// text may be scrolled out of the viewport while the control
+    /// stays interactive, so the AccessKit name is the reliable
+    /// signal.
+    fn debug_name(&self) -> &'static str {
+        if self.label.is_empty() {
+            "FormField"
+        } else {
+            "FormField@labeled"
+        }
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {

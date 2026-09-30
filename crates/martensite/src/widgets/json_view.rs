@@ -442,6 +442,12 @@ impl JsonView {
 }
 
 impl Widget for JsonView {
+    fn debug_name(&self) -> &'static str {
+        // A JSON tree is a document surface — its text is payload, so
+        // `packing-density`'s alphanumeric cap exempts it.
+        "JsonView@prose"
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(W_PT).min(constraints.max_size.x.max(0.0)),

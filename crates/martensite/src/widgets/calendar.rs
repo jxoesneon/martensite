@@ -825,9 +825,12 @@ impl Widget for Calendar {
             let day_ink = if !self.enabled || !in_range {
                 muted
             } else if picked || endpoint {
-                // Selected cells are accent-filled — inverse ink reads
-                // on the chromatic face where white does not.
-                cx.color(TokenKey::TextInverseColor, [255, 255, 255, 255])
+                // Selected cells are accent-filled — pick the ink that
+                // contrasts the accent. Both extremes must be offered:
+                // in a dark theme `TextInverseColor` AND `TextColor`
+                // can both be light, leaving a light accent (e.g. a
+                // pink selection fill) no legible candidate.
+                crate::text_paint::better_ink(accent, [255, 255, 255, 255], [15, 15, 20, 255])
             } else if cell.in_month {
                 ink
             } else {

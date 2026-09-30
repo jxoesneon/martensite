@@ -583,6 +583,48 @@ pub(crate) fn measure_label(
 /// Layout-side sibling of [`paint_label_clipped`] — widgets whose
 /// measure is an estimate (tabs, buttons) share it so the estimate
 /// stays consistent everywhere. Callers add their own padding.
+/// Ellipsis-truncate `text` to `max_px` device pixels at `size_pt` —
+/// a hard clip would cut mid-glyph (the paint audit's text-past-clip
+/// finding); truncating with `…` keeps the run inside its bounds.
+/// Returns `text` unchanged when it already fits.
+pub(crate) fn elide_label(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    scale: f32,
+    text: &str,
+    size_pt: f32,
+    max_px: f32,
+) -> String {
+    let measure = |t: &str| -> f32 {
+        painter
+            .and_then(|p| p.measure_text(t, size_pt * scale))
+            .unwrap_or_else(|| estimate_label_width(t) * scale * size_pt / 14.0)
+    };
+    if max_px <= 0.0 {
+        return String::new();
+    }
+    if measure(text) <= max_px {
+        return text.to_string();
+    }
+    let ell_w = measure("…");
+    if ell_w > max_px {
+        return String::new();
+    }
+    let mut cut = 0;
+    for (i, _) in text.char_indices().skip(1) {
+        if measure(&text[..i]) + ell_w <= max_px {
+            cut = i;
+        } else {
+            break;
+        }
+    }
+    format!("{}…", &text[..cut])
+}
+
+/// Case-aware label width estimate (logical pt at the 14 pt UI font):
+/// uppercase letters and digits run ~9.6 pt, other chars ~7.6 pt.
+/// Layout-side sibling of [`paint_label_clipped`] — widgets whose
+/// measure is an estimate (tabs, buttons) share it so the estimate
+/// stays consistent everywhere. Callers add their own padding.
 pub(crate) fn estimate_label_width(label: &str) -> f32 {
     label
         .chars()

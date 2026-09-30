@@ -433,8 +433,9 @@ impl StatusDot {
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let size = FONT_PT * cx.scale;
         let d = cx.pt(DOT_PT);
+        let slot = if self.pulse { d * 1.8 } else { d };
         let cy = self.bounds.min_y() + self.bounds.height() / 2.0;
-        let x = self.bounds.min_x() + d + cx.pt(GAP_PT);
+        let x = self.bounds.min_x() + slot + cx.pt(GAP_PT);
         let clip = Rect::new(
             x,
             self.bounds.min_y(),
@@ -472,8 +473,9 @@ impl Widget for StatusDot {
         } else {
             self.text.chars().count() as f32 * FONT_PT * 0.55 * cx.scale + cx.pt(GAP_PT)
         };
+        let slot = if self.pulse { DOT_PT * 1.8 } else { DOT_PT };
         Vec2::new(
-            (cx.pt(DOT_PT) + text_w).min(constraints.max_size.x.max(0.0)),
+            (cx.pt(slot) + text_w).min(constraints.max_size.x.max(0.0)),
             cx.pt(HEIGHT_PT).min(constraints.max_size.y.max(0.0)),
         )
     }
@@ -520,8 +522,11 @@ impl Widget for StatusDot {
         // mark — distinct from every valid status (all of which fill
         // the disc) and from a content placeholder. `_phase` is
         // ignored deliberately; safety widgets never sweep.
+        if self.bounds.width() < 1.0 || self.bounds.height() < 1.0 {
+            return;
+        }
         let muted = cx.color(TokenKey::TextMutedColor, MUTED);
-        let d = cx.pt(DOT_PT);
+        let d = cx.pt(DOT_PT).min(self.bounds.height());
         let cy = self.bounds.min_y() + self.bounds.height() / 2.0;
         let cxdot = self.bounds.min_x() + d / 2.0;
         let center = Vec2::new(cxdot, cy);
@@ -551,9 +556,22 @@ impl Widget for StatusDot {
         } else {
             cx.color(TokenKey::TextMutedColor, MUTED)
         };
-        let d = cx.pt(DOT_PT);
+        if self.bounds.width() < 1.0 || self.bounds.height() < 1.0 {
+            // Collapsed allocation — nothing can render inside; the
+            // halo or dot would paint past the zero-height edge.
+            return;
+        }
+        // A squeezed allocation (a dense status strip is allowed to
+        // give us less than DOT_PT) shrinks the disc to fit instead of
+        // painting past the bounds — an out-of-bounds fill trips the
+        // paint audit's overflow-clip lint.
+        let d = cx.pt(DOT_PT).min(self.bounds.height());
+        // The pulse halo (1.8× the dot radius) is part of the widget's
+        // own footprint — the dot is inset so the halo stays inside
+        // `bounds` instead of overflowing into the parent clip.
+        let slot = (if self.pulse { d * 1.8 } else { d }).min(self.bounds.height());
         let cy = self.bounds.min_y() + self.bounds.height() / 2.0;
-        let cxdot = self.bounds.min_x() + d / 2.0;
+        let cxdot = self.bounds.min_x() + slot / 2.0;
         let center = Vec2::new(cxdot, cy);
         let r = d / 2.0;
         let dot_rect = kurbo::Rect::new(
@@ -563,7 +581,9 @@ impl Widget for StatusDot {
             f64::from(cy + r),
         );
         if self.pulse {
-            let halo_r = r * 1.8;
+            // `slot` may have been clamped by a short allocation —
+            // the halo follows the fitted slot, never exceeds it.
+            let halo_r = (slot / 2.0).max(r);
             let halo = [color[0], color[1], color[2], 70];
             cx.list.push_fill_shape(
                 kurbo::Rect::new(

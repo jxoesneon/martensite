@@ -10,10 +10,14 @@
 //!
 //! Footer buttons ride the shared [`Button`] activation seam:
 //! Prev, Next/Finish, and an optional Skip. Escape skips the tour
-//! (the universal dismiss affordance). Completion and dismissal are
-//! surfaced through [`Tour::take_finished`] and
-//! [`Tour::take_dismissed`] — the consumer decides what happens
-//! next, exactly like the wizard's finish/cancel contract.
+//! (the universal dismiss affordance), and a press on the dimmed
+//! backdrop outside the card dismisses it — the modal light-dismiss
+//! convention, handled in-widget because a hosted tour entry spans
+//! the whole viewport and the layer's scrim path never sees an
+//! "outside" press. Completion and dismissal are surfaced through
+//! [`Tour::take_finished`] and [`Tour::take_dismissed`] — the
+//! consumer decides what happens next, exactly like the wizard's
+//! finish/cancel contract.
 //!
 //! # Examples
 //!
@@ -378,6 +382,36 @@ impl Tour {
         self.dismissed = true;
     }
 
+    /// Re-points step `index`'s spotlight while the tour is live — for
+    /// hosted tours whose targets move underneath them (a tour can
+    /// open before the window's real scale/size lands, and resizes
+    /// shift chrome mid-tour). Returns `false` when `index` is out of
+    /// range or the rect is unchanged. The change takes effect at the
+    /// next layout pass — callers reaching through an
+    /// [`OverlayLayer`](martensite_core::overlay::OverlayLayer) entry
+    /// should invalidate it after updating.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::prelude::Rect;
+    /// use martensite::widgets::Tour;
+    ///
+    /// let mut t = Tour::new().step("a", "b", Some(Rect::new(0.0, 0.0, 4.0, 4.0)));
+    /// assert!(t.set_step_target(0, Some(Rect::new(8.0, 8.0, 4.0, 4.0))));
+    /// assert!(!t.set_step_target(9, None));
+    /// ```
+    pub fn set_step_target(&mut self, index: usize, target: Option<Rect>) -> bool {
+        let Some(step) = self.steps.get_mut(index) else {
+            return false;
+        };
+        if step.target == target {
+            return false;
+        }
+        step.target = target;
+        true
+    }
+
     /// Restarts from the first step.
     ///
     /// # Examples
@@ -460,6 +494,69 @@ impl Tour {
         }
     }
 
+    /// Computes the card and footer-button rects for the current step.
+    /// Split from [`Widget::layout`] so `event` can re-seat the card
+    /// when a footer press advances the step — an overlay entry is
+    /// laid out once at open, so without this the card would keep the
+    /// previous step's placement while the spotlight moved on.
+    fn layout_card(&mut self, cx: &mut LayoutContext) {
+        if !self.active || self.steps.is_empty() {
+            self.card_bounds = None;
+            self.prev_bounds = None;
+            self.next_bounds = None;
+            self.skip_bounds = None;
+            return;
+        }
+        let bounds = self.bounds;
+        let step = &self.steps[self.current.min(self.steps.len() - 1)];
+        let pad = cx.pt(PAD_PT);
+        let body_w = (CARD_W_PT.min(bounds.width()) - 2.0 * pad).max(1.0);
+        // No painter in `LayoutContext` — estimate wrapped lines with
+        // the sibling 0.5-em-per-char heuristic, clamped to a card
+        // that stays usable.
+        let chars_per_line = (body_w / (cx.pt(LINE_PT) * 0.45)).max(1.0) as usize;
+        let body_lines = (step.body.chars().count() / chars_per_line + 1).clamp(1, 8);
+        let body_h = cx.pt(LINE_PT) * body_lines as f32;
+        let title_h = cx.pt(LINE_PT + 2.0);
+        let footer_h = cx.pt(BUTTON_H_PT);
+        let card_h = pad + title_h + body_h + pad + footer_h + pad;
+        let card = self.card_rect(step.target, card_h);
+        self.card_bounds = Some(card);
+        // Footer: [Skip ..... Prev] [Next]
+        let bw = cx.pt(BUTTON_W_PT).min(card.width() / 3.0);
+        let bh = footer_h;
+        let by = card.max_y() - pad - bh;
+        let mut bx = card.max_x() - pad - bw;
+        let next_r = Rect::new(bx, by, bw, bh);
+        bx -= bw + cx.pt(BUTTON_GAP_PT);
+        let prev_r = Rect::new(bx, by, bw, bh);
+        let skip_r = Rect::new(card.min_x() + pad, by, bw, bh);
+        self.next_bounds = Some(next_r);
+        self.prev_bounds = Some(prev_r);
+        self.skip_bounds = self.skippable.then_some(skip_r);
+        cx.layout_child(&mut self.next_button, next_r);
+        cx.layout_child(&mut self.prev_button, prev_r);
+        if self.skippable {
+            cx.layout_child(&mut self.skip_button, skip_r);
+        }
+        self.sync_buttons();
+    }
+
+    /// Re-runs [`layout_card`](Self::layout_card) from an event context
+    /// so step advances and dismissals re-seat (or clear) the card
+    /// immediately instead of waiting for an entry layout pass that
+    /// may never come. Uses a scratch `HotNode`, exactly like
+    /// `OverlayLayer::layout_pass` does for entry content — the card
+    /// has no arena node to propagate into.
+    fn reseat_card(&mut self, cx: &mut EventContext) {
+        let mut hot = martensite_core::HotNode::default();
+        let mut lc = LayoutContext {
+            hot: &mut hot,
+            scale: cx.scale,
+        };
+        self.layout_card(&mut lc);
+    }
+
     /// Card placement: below the target when room, above otherwise,
     /// centered when there is no target.
     fn card_rect(&self, target: Option<Rect>, card_h: f32) -> Rect {
@@ -518,45 +615,7 @@ impl Widget for Tour {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
-        if !self.active || self.steps.is_empty() {
-            self.card_bounds = None;
-            self.prev_bounds = None;
-            self.next_bounds = None;
-            self.skip_bounds = None;
-            return;
-        }
-        let step = &self.steps[self.current.min(self.steps.len() - 1)];
-        let pad = cx.pt(PAD_PT);
-        let body_w = (CARD_W_PT.min(bounds.width()) - 2.0 * pad).max(1.0);
-        // No painter in `LayoutContext` — estimate wrapped lines with
-        // the sibling 0.5-em-per-char heuristic, clamped to a card
-        // that stays usable.
-        let chars_per_line = (body_w / (cx.pt(LINE_PT) * 0.45)).max(1.0) as usize;
-        let body_lines = (step.body.chars().count() / chars_per_line + 1).clamp(1, 8);
-        let body_h = cx.pt(LINE_PT) * body_lines as f32;
-        let title_h = cx.pt(LINE_PT + 2.0);
-        let footer_h = cx.pt(BUTTON_H_PT);
-        let card_h = pad + title_h + body_h + pad + footer_h + pad;
-        let card = self.card_rect(step.target, card_h);
-        self.card_bounds = Some(card);
-        // Footer: [Skip ..... Prev] [Next]
-        let bw = cx.pt(BUTTON_W_PT).min(card.width() / 3.0);
-        let bh = footer_h;
-        let by = card.max_y() - pad - bh;
-        let mut bx = card.max_x() - pad - bw;
-        let next_r = Rect::new(bx, by, bw, bh);
-        bx -= bw + cx.pt(BUTTON_GAP_PT);
-        let prev_r = Rect::new(bx, by, bw, bh);
-        let skip_r = Rect::new(card.min_x() + pad, by, bw, bh);
-        self.next_bounds = Some(next_r);
-        self.prev_bounds = Some(prev_r);
-        self.skip_bounds = self.skippable.then_some(skip_r);
-        cx.layout_child(&mut self.next_button, next_r);
-        cx.layout_child(&mut self.prev_button, prev_r);
-        if self.skippable {
-            cx.layout_child(&mut self.skip_button, skip_r);
-        }
-        self.sync_buttons();
+        self.layout_card(cx);
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -631,24 +690,8 @@ impl Widget for Tour {
         let title_h = cx.pt(LINE_PT + 2.0);
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let text_x = card.min_x() + pad;
-        let title_clip = Rect::new(
-            text_x,
-            card.min_y() + pad,
-            card.width() - 2.0 * pad,
-            title_h,
-        );
-        let title_size = 14.0 * cx.scale;
-        paint_label_clipped(
-            painter,
-            cx.list,
-            f(title_clip),
-            kurbo::Point::new(f64::from(text_x), f64::from(title_clip.min_y())),
-            &step.title,
-            title_size,
-            fg,
-        );
         let counter = format!("{} / {}", self.current + 1, self.steps.len());
-        let counter_size = 10.0 * cx.scale;
+        let counter_size = 12.0 * cx.scale;
         let counter_w = painter
             .and_then(|p| p.measure_text(&counter, counter_size))
             .unwrap_or(counter_size * counter.chars().count() as f32 * 0.5);
@@ -657,6 +700,33 @@ impl Widget for Tour {
             card.min_y() + pad,
             counter_w + cx.pt(4.0),
             title_h,
+        );
+        // The title's clip stops short of the counter so a long title
+        // clips mid-text instead of painting through the counter.
+        let title_clip = Rect::new(
+            text_x,
+            card.min_y() + pad,
+            (counter_clip.min_x() - cx.pt(4.0) - text_x).max(0.0),
+            title_h,
+        );
+        let title_size = 14.0 * cx.scale;
+        // Ellide, then clip: a run painted past its clip edge is a
+        // paint-audit finding, `…` reads as an intentional truncation.
+        let title = crate::text_paint::elide_label(
+            painter,
+            cx.scale,
+            &step.title,
+            14.0,
+            title_clip.width(),
+        );
+        paint_label_clipped(
+            painter,
+            cx.list,
+            f(title_clip),
+            kurbo::Point::new(f64::from(text_x), f64::from(title_clip.min_y())),
+            &title,
+            title_size,
+            fg,
         );
         paint_label_clipped(
             painter,
@@ -670,7 +740,8 @@ impl Widget for Tour {
             counter_size,
             muted,
         );
-        // Body.
+        // Body — word-wrapped to the card width; a single clipped run
+        // would paint past the clip edge for long copy.
         let body_size = 12.0 * cx.scale;
         let body_clip = Rect::new(
             text_x,
@@ -681,15 +752,68 @@ impl Widget for Tour {
                 .unwrap_or(card.height() - 2.0 * pad - title_h)
                 .max(0.0),
         );
-        paint_label_clipped(
-            painter,
-            cx.list,
-            f(body_clip),
-            kurbo::Point::new(f64::from(text_x), f64::from(body_clip.min_y())),
-            &step.body,
-            body_size,
-            fg,
-        );
+        let line_h = body_size * 1.3;
+        let measure = |t: &str| -> f32 {
+            painter
+                .and_then(|p| p.measure_text(t, body_size))
+                .unwrap_or(body_size * t.chars().count() as f32 * 0.5)
+        };
+        let space_w = measure(" ");
+        let mut line_y = body_clip.min_y();
+        let mut line = String::new();
+        let mut line_w = 0.0f32;
+        for word in step.body.split_whitespace() {
+            // A single word wider than the card can't wrap — elide it
+            // instead of painting past the clip.
+            let elided;
+            let word = if measure(word) > body_clip.width() {
+                elided = crate::text_paint::elide_label(
+                    painter,
+                    cx.scale,
+                    word,
+                    12.0,
+                    body_clip.width(),
+                );
+                elided.as_str()
+            } else {
+                word
+            };
+            let word_w = measure(word);
+            if !line.is_empty() && line_w + space_w + word_w > body_clip.width() {
+                if line_y + line_h > body_clip.max_y() {
+                    break;
+                }
+                paint_label_clipped(
+                    painter,
+                    cx.list,
+                    f(body_clip),
+                    kurbo::Point::new(f64::from(text_x), f64::from(line_y)),
+                    &line,
+                    body_size,
+                    fg,
+                );
+                line_y += line_h;
+                line.clear();
+                line_w = 0.0;
+            }
+            if !line.is_empty() {
+                line.push(' ');
+                line_w += space_w;
+            }
+            line.push_str(word);
+            line_w += word_w;
+        }
+        if !line.is_empty() && line_y + line_h <= body_clip.max_y() {
+            paint_label_clipped(
+                painter,
+                cx.list,
+                f(body_clip),
+                kurbo::Point::new(f64::from(text_x), f64::from(line_y)),
+                &line,
+                body_size,
+                fg,
+            );
+        }
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -697,6 +821,7 @@ impl Widget for Tour {
             return EventResponse::Ignored;
         }
         self.poll_buttons();
+        self.reseat_card(cx);
         if let WidgetEvent::KeyPressed { key, .. } = cx.event {
             if key == "Escape" {
                 self.dismiss();
@@ -713,6 +838,16 @@ impl Widget for Tour {
         | WidgetEvent::Scroll { position, .. } = cx.event
         {
             let pos = *position;
+            // Coach-mark dismissal: a press on the dimmed backdrop
+            // (outside the card) ends the tour — the light-dismiss
+            // convention the `OverlayLayer` applies to scrims, done
+            // in-widget because the entry spans the whole viewport.
+            if matches!(cx.event, WidgetEvent::PointerPressed { .. })
+                && self.card_bounds.is_some_and(|card| !card.contains(pos))
+            {
+                self.dismiss();
+                return EventResponse::Handled;
+            }
             for i in (0..self.child_count()).rev() {
                 let Some(cb) = self.child_bounds(i) else {
                     continue;
@@ -731,6 +866,7 @@ impl Widget for Tour {
                 break;
             }
             self.poll_buttons();
+            self.reseat_card(cx);
             return if response == EventResponse::Ignored {
                 EventResponse::Handled
             } else {
@@ -738,6 +874,7 @@ impl Widget for Tour {
             };
         }
         self.poll_buttons();
+        self.reseat_card(cx);
         response
     }
 
@@ -907,7 +1044,10 @@ mod tests {
     }
 
     #[test]
-    fn backdrop_swallows_clicks() {
+    fn backdrop_press_dismisses() {
+        // The coach-mark light-dismiss contract: a press on the
+        // dimmed backdrop outside the card ends the tour (Handled,
+        // so nothing bleeds through to the dimmed UI).
         let mut t = Tour::new().step("a", "b", None);
         laid_out(&mut t, 400.0, 300.0);
         let down = WidgetEvent::PointerPressed {
@@ -915,7 +1055,24 @@ mod tests {
             button: martensite_core::PointerButton::Primary,
             count: 1,
         };
-        // Outside the card and all buttons — still Handled (modal).
+        assert_eq!(ev(&mut t, &down), EventResponse::Handled);
+        assert!(t.take_dismissed());
+        assert!(!t.active());
+    }
+
+    #[test]
+    fn press_inside_card_still_swallows() {
+        // Inside the card but off every button — still Handled
+        // (modal), and the tour stays up.
+        let mut t = Tour::new().step("a", "b", None);
+        laid_out(&mut t, 400.0, 300.0);
+        let card = t.card_bounds.unwrap();
+        let mid = Vec2::new(card.min_x() + card.width() / 2.0, card.min_y() + 8.0);
+        let down = WidgetEvent::PointerPressed {
+            position: mid,
+            button: martensite_core::PointerButton::Primary,
+            count: 1,
+        };
         assert_eq!(ev(&mut t, &down), EventResponse::Handled);
         assert!(!t.take_dismissed());
         assert_eq!(t.current(), 0);

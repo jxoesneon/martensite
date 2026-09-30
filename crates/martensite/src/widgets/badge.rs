@@ -44,9 +44,9 @@ const DOT_D: f32 = 8.0;
 const TEXT_PT: f32 = 12.0;
 /// Pill height for the inline annotation form ([`BadgeSpec`]) used by
 /// tabs and segments — a step smaller than the standalone pill.
-const SPEC_PILL_H: f32 = 15.0;
+const SPEC_PILL_H: f32 = 17.0;
 /// Text size inside a [`BadgeSpec`] pill, logical points.
-const SPEC_TEXT_PT: f32 = 10.0;
+const SPEC_TEXT_PT: f32 = 12.0;
 
 /// Severity tone for a [`Badge`] or [`BadgeSpec`] fill — maps onto the
 /// theme's semantic color tokens at paint time so severity colors
@@ -237,9 +237,18 @@ pub(crate) fn paint_spec_pill(
     }
     cx.list.push_fill_shape(pill, &Shape::PILL, spec.fill(cx));
     let size_px = cx.pt(SPEC_TEXT_PT);
+    // The pill width is a per-char estimate — a real font can run
+    // wider, so the caption elides to the pill instead of spilling.
+    let text = crate::text_paint::elide_label(
+        painter,
+        cx.scale,
+        &spec.text,
+        SPEC_TEXT_PT,
+        (pill.width() - f64::from(cx.pt(2.0))) as f32,
+    );
     let w = painter
-        .and_then(|p| p.measure_text(&spec.text, size_px))
-        .unwrap_or_else(|| spec.text.chars().count() as f32 * size_px * 0.65);
+        .and_then(|p| p.measure_text(&text, size_px))
+        .unwrap_or_else(|| text.chars().count() as f32 * size_px * 0.65);
     crate::text_paint::paint_label_clipped(
         painter,
         cx.list,
@@ -248,7 +257,7 @@ pub(crate) fn paint_spec_pill(
             pill.x0 + (pill.width() - f64::from(w)).max(0.0) * 0.5,
             pill.y0 + (pill.height() - f64::from(size_px)) * 0.5,
         ),
-        &spec.text,
+        &text,
         size_px,
         cx.color(TokenKey::TextInverseColor, INVERSE_INK),
     );

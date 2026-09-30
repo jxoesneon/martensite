@@ -644,22 +644,39 @@ impl Widget for AlarmPanel {
             } else {
                 cx.color(TokenKey::TextColor, TEXT)
             };
+            // Elide, then clip: a run painted past its clip edge is a
+            // paint-audit finding, `…` reads as an intentional
+            // truncation.
+            let msg = crate::text_paint::elide_label(
+                painter,
+                s,
+                &a.message,
+                msg_sz / s,
+                text_clip.width() as f32 - (tx - r.min_x()),
+            );
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
                 text_clip,
                 kurbo::Point::new(f64::from(tx), f64::from(y + 5.0 * s)),
-                &a.message,
+                &msg,
                 msg_sz,
                 tc,
             );
             if !a.source.is_empty() {
+                let src = crate::text_paint::elide_label(
+                    painter,
+                    s,
+                    &a.source,
+                    src_sz / s,
+                    text_clip.width() as f32 - (tx - r.min_x()),
+                );
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
                     text_clip,
                     kurbo::Point::new(f64::from(tx), f64::from(y + 5.0 * s + msg_sz * 1.5)),
-                    &a.source,
+                    &src,
                     src_sz,
                     cx.color(TokenKey::TextMutedColor, MUTED),
                 );

@@ -37,8 +37,11 @@ const TEXT: [u8; 4] = [220, 222, 228, 255];
 const MUTED: [u8; 4] = [139, 148, 158, 255];
 const SURFACE: [u8; 4] = [30, 31, 35, 255];
 const ONLINE: [u8; 4] = [39, 201, 63, 255];
-const AWAY: [u8; 4] = [255, 189, 46, 255];
-const BUSY: [u8; 4] = [255, 95, 86, 255];
+// Away is a muted hollow ring — the routine-state palette stays off
+// the reserved alarm-red family entirely (ISA-101); the ring shape,
+// not the hue, separates it from Offline's filled dot.
+const AWAY: [u8; 4] = OFFLINE;
+const BUSY: [u8; 4] = [200, 120, 200, 255];
 const OFFLINE: [u8; 4] = [120, 124, 132, 255];
 
 /// User availability state.
@@ -76,8 +79,15 @@ impl PresenceStatus {
     pub(crate) fn token(self) -> TokenKey {
         match self {
             Self::Online => TokenKey::SuccessColor,
-            Self::Away => TokenKey::WarningColor,
-            Self::Busy => TokenKey::ErrorColor,
+            // Away and Offline are routine states — muted, with the
+            // ring-vs-fill shape carrying the distinction rather than
+            // a hue on the reserved alarm-red family.
+            Self::Away => TokenKey::TextMutedColor,
+            // Busy is a routine presence state, not an abnormal one —
+            // the reserved alarm-red family stays on ErrorColor. The
+            // accent channel reads "do not disturb" without spending
+            // the alarm hue.
+            Self::Busy => TokenKey::AccentColor,
             Self::Offline => TokenKey::TextMutedColor,
         }
     }
@@ -268,6 +278,13 @@ impl Presence {
 }
 
 impl Widget for Presence {
+    /// The dot is a presence status lamp — a routine-state palette,
+    /// not the alarm channel, so no `@alarm` marker: nothing in this
+    /// widget paints the reserved alarm-red family.
+    fn debug_name(&self) -> &'static str {
+        "Presence"
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let disc = DISC_PT * s;
@@ -383,11 +400,22 @@ impl Widget for Presence {
             f64::from(dx + dd),
             f64::from(dy + dd),
         );
-        cx.list.push_fill_shape(
-            dot,
-            &martensite_core::shape::Shape::ELLIPSE,
-            cx.color(self.status.token(), self.status.color()),
-        );
+        if self.status == PresenceStatus::Away {
+            // Hollow ring — shape, not hue, is what separates Away
+            // from Offline's filled dot (both are muted).
+            cx.list.push_stroke_shape(
+                dot,
+                &martensite_core::shape::Shape::ELLIPSE,
+                1.5,
+                cx.color(self.status.token(), self.status.color()),
+            );
+        } else {
+            cx.list.push_fill_shape(
+                dot,
+                &martensite_core::shape::Shape::ELLIPSE,
+                cx.color(self.status.token(), self.status.color()),
+            );
+        }
         // Name + status line — clipped to the widget so a shallow
         // allocation cuts the sub-line cleanly rather than spilling.
         if self.show_text {

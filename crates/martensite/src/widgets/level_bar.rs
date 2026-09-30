@@ -223,6 +223,13 @@ impl Default for LevelBar {
 }
 
 impl Widget for LevelBar {
+    /// Zone inks are severity-encoded by construction — `Low`/`Warning`
+    /// zones deliberately paint the error/warning hues. The `@alarm`
+    /// marker declares that to the design-lint lineage walk.
+    fn debug_name(&self) -> &'static str {
+        "LevelBar@alarm"
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(WIDTH_PT).min(constraints.max_size.x.max(0.0)),

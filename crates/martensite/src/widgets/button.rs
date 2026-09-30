@@ -409,14 +409,13 @@ impl Widget for Button {
 
         let rounded = kurbo::RoundedRect::from_rect(rect, cx.ptf(CORNER_RADIUS)).into_path(0.1);
         cx.list.push_path(rounded.clone(), face);
-        // A filled primary face carries its own edge — stroking it
-        // with the border token would read as a second outline.
-        let edge = if self.primary && self.enabled {
-            face
-        } else {
-            cx.color(TokenKey::BorderColor, EDGE)
-        };
-        cx.list.push_stroke_path(rounded, cx.pt(1.0), edge);
+        // A filled primary face carries its own edge — a same-color
+        // stroke would be invisible dead paint, so only the neutral
+        // face gets the border outline.
+        if !(self.primary && self.enabled) {
+            let edge = cx.color(TokenKey::BorderColor, EDGE);
+            cx.list.push_stroke_path(rounded, cx.pt(1.0), edge);
+        }
 
         // The label is left-aligned inside the face and vertically
         // centred — `DrawText` positions by the text run's top edge, so

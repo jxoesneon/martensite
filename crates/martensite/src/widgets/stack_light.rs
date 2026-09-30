@@ -440,7 +440,7 @@ impl Widget for StackLight {
             // The etched label still rides the row in muted ink — the
             // slot's *name* is known even when its state isn't.
             if !l.label.is_empty() {
-                let size_px = cx.pt(9.0);
+                let size_px = cx.pt(12.0);
                 let kr = krect(r);
                 crate::text_paint::paint_label_clipped(
                     cx.text_painter,
@@ -525,7 +525,7 @@ impl Widget for StackLight {
                 } else {
                     cx.color(TokenKey::TextMutedColor, [120, 126, 140, 255])
                 };
-                let size_px = cx.pt(9.0);
+                let size_px = cx.pt(12.0);
                 let kr = krect(r);
                 crate::text_paint::paint_label_clipped(
                     cx.text_painter,

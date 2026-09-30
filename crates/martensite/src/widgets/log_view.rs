@@ -309,6 +309,12 @@ impl LogView {
 }
 
 impl Widget for LogView {
+    fn debug_name(&self) -> &'static str {
+        // A log stream is a document surface — its text is payload, so
+        // `packing-density`'s alphanumeric cap exempts it.
+        "LogView@prose"
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(240.0).min(constraints.max_size.x.max(0.0)),

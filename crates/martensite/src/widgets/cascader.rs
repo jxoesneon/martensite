@@ -501,6 +501,7 @@ impl Widget for Cascader {
             b.width()
         };
 
+        let mut painted_row = false;
         for col in 0..cols {
             let options = self.column_options(col);
             let col_x = b.min_x() + col as f32 * col_w;
@@ -527,6 +528,7 @@ impl Widget for Cascader {
                 if y + row_h > b.max_y() {
                     break;
                 }
+                painted_row = true;
                 let row_r = Rect::new(col_x, y, col_w, row_h);
                 let chosen = self.path.get(col) == Some(&row);
                 if chosen {
@@ -572,8 +574,11 @@ impl Widget for Cascader {
             }
         }
 
-        // Empty-state hint when the root is empty.
-        if self.root.is_empty() {
+        // Empty-state hint when the root is empty — and the same hint
+        // when the control is too short for even one row, so a
+        // squeezed control still names itself rather than painting
+        // as a bare frame.
+        if self.root.is_empty() || !painted_row {
             paint_label_clipped(
                 painter,
                 cx.list,

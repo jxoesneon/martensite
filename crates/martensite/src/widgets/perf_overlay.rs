@@ -228,6 +228,13 @@ impl Default for PerfOverlay {
 }
 
 impl Widget for PerfOverlay {
+    /// Frame-budget violations are the alarm channel by construction —
+    /// `BAD` paints the reserved alarm hue deliberately. The `@alarm`
+    /// marker declares that to the design-lint lineage walk.
+    fn debug_name(&self) -> &'static str {
+        "PerfOverlay@alarm"
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let h = PAD_PT * 2.0 + TEXT_PT + 4.0 + GRAPH_PT;

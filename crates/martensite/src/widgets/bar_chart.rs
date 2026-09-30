@@ -33,7 +33,7 @@ const AXIS: TokenKey = TokenKey::DividerColor;
 /// Label ink.
 const LABEL: TokenKey = TokenKey::TextMutedColor;
 /// Label font size (logical points).
-const LABEL_PT: f32 = 9.0;
+const LABEL_PT: f32 = 12.0;
 /// Bar gap fraction of the slot width.
 const GAP_FRAC: f32 = 0.35;
 /// Fallback bar ink.
@@ -551,8 +551,8 @@ mod tests {
             .bars([("a", 3.0), ("b", 9.0), ("c", 6.0)])
             .loading(true);
         let bounds = Rect::new(0.0, 0.0, 160.0, 80.0);
-        // label_h = 9 + 4, axis_h = 1 → plot ends at y = 66, axis at
-        // y = 66..67, labels below.
+        // label_h = 12 + 4, axis_h = 1 → plot ends at y = 63, axis at
+        // y = 63..64, labels below.
         let list = paint_loading_list(&c, bounds);
 
         // Skeleton bars: one clipped path per slot, all inside the
@@ -563,7 +563,7 @@ mod tests {
                 use kurbo::Shape as _;
                 let bb = path.bounding_box();
                 assert!(
-                    bb.y1 <= 66.5,
+                    bb.y1 <= 63.5,
                     "skeleton bar {bb:?} spilled below the baseline"
                 );
                 skeleton_slots += 1;
@@ -579,7 +579,7 @@ mod tests {
                 PaintCommand::FillRect(r, _) => Some(*r),
                 _ => None,
             })
-            .find(|r| r.y0 >= 65.5 && r.y1 <= 68.0);
+            .find(|r| r.y0 >= 62.5 && r.y1 <= 65.0);
         assert!(axis.is_some(), "baseline axis must survive loading");
 
         // Category labels still paint — three `DrawText` runs.

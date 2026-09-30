@@ -33,7 +33,7 @@ const TICK_PT: f32 = 6.0;
 
 const FACE: [u8; 4] = [36, 36, 42, 255];
 const EDGE: [u8; 4] = [70, 70, 76, 255];
-const FLUID: [u8; 4] = [210, 110, 90, 255];
+const FLUID: [u8; 4] = [90, 160, 190, 255];
 const WARN: [u8; 4] = [230, 170, 80, 255];
 const CRIT: [u8; 4] = [230, 80, 70, 255];
 const TICK: [u8; 4] = [140, 140, 150, 255];
@@ -336,7 +336,15 @@ impl Widget for Thermometer {
             edge,
         );
         // Fluid: always fills the bulb, rises up the tube by fraction.
+        // Warn/crit tints are threshold-driven severity — mark the fill
+        // `@alarm` so the lint lineage knows the hue is deliberate; the
+        // nominal teal stays unmarked.
         let fluid = self.fluid_color();
+        let alarmed = !matches!(fluid, FLUID);
+        if alarmed {
+            cx.list
+                .push_scope(None, "Thermometer@alarm", krect(self.bounds));
+        }
         cx.list.push_fill_shape(
             bulb,
             &martensite_core::shape::Shape::circle(bulb_center, bulb_r - cx.pt(1.0)),
@@ -353,7 +361,11 @@ impl Widget for Thermometer {
             cx.list
                 .push_fill_shape(krect(fill), &martensite_core::shape::Shape::RECT, fluid);
         }
+        if alarmed {
+            cx.list.pop_scope();
+        }
         // Scale ticks to the right of the tube.
+        let mut tick_right = tube_x + tube_w + cx.pt(2.0);
         if self.ticks > 0 {
             let tick_len = cx.pt(TICK_PT);
             for i in 0..=self.ticks {
@@ -367,7 +379,30 @@ impl Widget for Thermometer {
                 cx.list
                     .push_stroke_path(t, cx.pt(0.75), cx.color(TokenKey::TextMutedColor, TICK));
             }
+            tick_right += tick_len;
         }
+        // Numeric readout — the redundant channel WCAG 1.4.1 asks for:
+        // the column's fill hue carries ok/warn/crit, so the reading
+        // itself is also spelled out, right of the tick scale.
+        let readout = format!("{}{}", self.value.round() as i64, self.units);
+        // 12pt is the accessibility floor the paint audit enforces —
+        // the readout column is narrow, so clip rather than shrink.
+        let font_px = cx.pt(12.0);
+        let rx = tick_right + cx.pt(3.0);
+        crate::text_paint::paint_label_clipped(
+            crate::text_paint::resolve_painter(&None, cx.text_painter),
+            cx.list,
+            kurbo::Rect::new(
+                f64::from(rx),
+                f64::from(tube_top),
+                f64::from(self.bounds.max_x() - cx.pt(2.0)),
+                f64::from(self.bounds.max_y() - cx.pt(4.0)),
+            ),
+            kurbo::Point::new(f64::from(rx), f64::from(tube_top)),
+            &readout,
+            font_px,
+            cx.color(TokenKey::TextMutedColor, TICK),
+        );
     }
 }
 

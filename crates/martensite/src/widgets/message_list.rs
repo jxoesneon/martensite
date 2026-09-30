@@ -473,12 +473,23 @@ impl Widget for MessageList {
             // straddling the viewport edge emits only the part that can
             // render — the audit flags text a clip would erase anyway.
             let visible = krect(self.bounds);
+            // Ellide before clipping: a run painted past its clip edge
+            // is a paint-audit finding; `…` reads as an intentional
+            // truncation.
+            let body_clip = bubble.intersect(visible);
+            let body = crate::text_paint::elide_label(
+                painter,
+                cx.scale,
+                &m.body,
+                text_sz / cx.scale,
+                (body_clip.width() - f64::from(bubble_pad)) as f32,
+            );
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                bubble.intersect(visible),
+                body_clip,
                 kurbo::Point::new(f64::from(bx + bubble_pad), f64::from(y + bubble_pad * 0.7)),
-                &m.body,
+                &body,
                 text_sz,
                 body_ink,
             );
@@ -495,6 +506,13 @@ impl Widget for MessageList {
                 f64::from(y + row),
             )
             .intersect(visible);
+            let meta = crate::text_paint::elide_label(
+                painter,
+                cx.scale,
+                &meta,
+                meta_sz / cx.scale,
+                meta_rect.width() as f32,
+            );
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,

@@ -167,8 +167,17 @@ impl FontButton {
 impl Widget for FontButton {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let text_w = self.face_text().chars().count() as f32 * FONT_PT * 0.55 * cx.scale;
+        let max = constraints.max_size.x.max(0.0);
+        // Narrowest width that still paints a (clipped) face label —
+        // padding, the chevron slot, and a few glyph cells. Reported
+        // even under a tighter offer: collapsing to zero makes the
+        // button icon-only; overflowing into a scrollable row keeps
+        // the control legible.
+        let min_textable = cx.pt(2.0 * PAD_PT + 14.0 + 3.0 * FONT_PT * 0.55);
         Vec2::new(
-            (text_w + cx.pt(2.0 * PAD_PT + 18.0)).min(constraints.max_size.x.max(0.0)),
+            (text_w + cx.pt(2.0 * PAD_PT + 18.0))
+                .min(max)
+                .max(min_textable),
             cx.pt(HEIGHT_PT).min(constraints.max_size.y.max(0.0)),
         )
     }

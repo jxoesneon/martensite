@@ -704,7 +704,7 @@ impl Widget for CalendarSurface {
         );
 
         // Weekday header.
-        let small_px = cx.pt(10.0);
+        let small_px = cx.pt(12.0);
         let cell = cx.pt(CELL);
         let wk_y = b.min_y() + pad + cx.pt(HEADER_H) + (cx.pt(WEEK_ROW_H) - small_px) / 2.0;
         for col in 0..GRID_COLS {

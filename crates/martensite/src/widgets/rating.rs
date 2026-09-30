@@ -25,7 +25,9 @@ use martensite_core::widget::{
 use martensite_core::{Rect, TokenKey};
 
 /// Glyph cell size, logical points.
-const CELL_PT: f32 = 20.0;
+/// Each star is its own pointer target — WCAG 2.5.5's 24pt minimum,
+/// not the denser 20pt a star glyph could render at.
+const CELL_PT: f32 = 24.0;
 /// Gap between cells, logical points.
 const GAP_PT: f32 = 3.0;
 /// Glyph font size, logical points.

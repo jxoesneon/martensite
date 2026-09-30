@@ -372,6 +372,12 @@ impl AttendeeList {
 }
 
 impl Widget for AttendeeList {
+    /// Rows carry presence status lamps on the routine-state palette
+    /// — not the alarm channel, so no `@alarm` marker.
+    fn debug_name(&self) -> &'static str {
+        "AttendeeList"
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let rows = self.attendees.len().max(1) as f32;
@@ -474,11 +480,22 @@ impl Widget for AttendeeList {
                 f64::from(r.min_x() + 8.0 * s + d),
                 f64::from(r.min_y() + (r.height() + d) / 2.0),
             );
-            cx.list.push_fill_shape(
-                dr,
-                &martensite_core::shape::Shape::ELLIPSE,
-                cx.color(a.status.token(), a.status.color()),
-            );
+            if a.status == PresenceStatus::Away {
+                // Same shape-encoding as `Presence`: Away is a muted
+                // hollow ring, Offline a muted filled dot.
+                cx.list.push_stroke_shape(
+                    dr,
+                    &martensite_core::shape::Shape::ELLIPSE,
+                    1.5,
+                    cx.color(a.status.token(), a.status.color()),
+                );
+            } else {
+                cx.list.push_fill_shape(
+                    dr,
+                    &martensite_core::shape::Shape::ELLIPSE,
+                    cx.color(a.status.token(), a.status.color()),
+                );
+            }
             // Name.
             crate::text_paint::paint_label_clipped(
                 painter,
