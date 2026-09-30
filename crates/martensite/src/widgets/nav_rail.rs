@@ -28,8 +28,14 @@ use martensite_core::widget::{
 };
 use martensite_core::{Rect, TokenKey};
 
-/// Rail width, logical points.
-const WIDTH_PT: f32 = 72.0;
+/// Narrowest rail width, logical points — the icon + pill insets
+/// floor used when no destination label measures wider.
+const MIN_WIDTH_PT: f32 = 72.0;
+/// Widest rail width, logical points — a label longer than the clamp
+/// clips inside its pill rather than the rail eating the deck.
+const MAX_WIDTH_PT: f32 = 120.0;
+/// Breathing room added beside the measured label, logical points.
+const LABEL_PAD_PT: f32 = 8.0;
 /// Destination cell height, logical points.
 const CELL_PT: f32 = 56.0;
 /// Icon glyph size, logical points.
@@ -259,8 +265,24 @@ impl Default for NavRail {
 
 impl Widget for NavRail {
     fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
+        // The rail is the width authority for its band: the widest
+        // destination content (label or icon) measured through the
+        // same shaping pipeline the paint pass uses, plus the pill's
+        // horizontal inset on each side and a little padding — clamped
+        // so an extreme label clips inside its pill instead of
+        // swallowing the deck.
+        let mut w = cx.pt(MIN_WIDTH_PT);
+        for d in &self.destinations {
+            let lw = cx.measure_text(&d.label, LABEL_PT).unwrap_or_else(|| {
+                crate::text_paint::estimate_label_width(&d.label) * cx.scale * LABEL_PT / 14.0
+            });
+            let iw = cx
+                .measure_text(&d.icon, ICON_PT)
+                .unwrap_or_else(|| cx.pt(ICON_PT));
+            w = w.max(lw.max(iw) + cx.pt(PILL_INSET_PT * 2.0 + LABEL_PAD_PT));
+        }
         Vec2::new(
-            cx.pt(WIDTH_PT),
+            w.min(cx.pt(MAX_WIDTH_PT)),
             cx.pt(TOP_INSET_PT + CELL_PT * self.destinations.len().max(1) as f32),
         )
     }
@@ -273,7 +295,7 @@ impl Widget for NavRail {
             self.cell_rects.push(Rect::new(
                 bounds.origin.x,
                 bounds.origin.y + top + i as f32 * cell,
-                bounds.size.x.min(cx.pt(WIDTH_PT)),
+                bounds.size.x.min(cx.pt(MAX_WIDTH_PT)),
                 cell,
             ));
         }
@@ -357,32 +379,46 @@ impl Widget for NavRail {
         );
         let icon_size = cx.pt(ICON_PT);
         let label_size = cx.pt(LABEL_PT);
+        let accent = cx.color(TokenKey::AccentColor, [70, 110, 200, 255]);
         for (i, d) in self.destinations.iter().enumerate() {
             let r = self.cell_rects[i];
             let selected = self.selected == Some(i);
             let hovered = self.highlighted == Some(i) && !selected;
-            if selected || hovered {
+            // The selected/hover pill is the text's actual background —
+            // clip the icon and label to it so a wide label can't spill
+            // contrast-chosen ink past the pill onto the rail face.
+            let pill = if selected || hovered {
                 let inset = cx.pt(PILL_INSET_PT);
                 let vr = if selected { cx.pt(4.0) } else { cx.pt(6.0) };
-                cx.list.push_fill_shape(
-                    kurbo::Rect::new(
-                        f64::from(r.min_x() + inset),
-                        f64::from(r.min_y() + vr),
-                        f64::from(r.max_x() - inset),
-                        f64::from(r.max_y() - vr),
-                    ),
-                    &martensite_core::shape::Shape::rounded(cx.pt(10.0)),
-                    if selected {
-                        cx.color(TokenKey::AccentColor, [70, 110, 200, 255])
-                    } else {
-                        HOVER
-                    },
+                let pr = kurbo::Rect::new(
+                    f64::from(r.min_x() + inset),
+                    f64::from(r.min_y() + vr),
+                    f64::from(r.max_x() - inset),
+                    f64::from(r.max_y() - vr),
                 );
-            }
+                cx.list.push_fill_shape(
+                    pr,
+                    &martensite_core::shape::Shape::rounded(cx.pt(10.0)),
+                    if selected { accent } else { HOVER },
+                );
+                pr
+            } else {
+                kurbo::Rect::new(
+                    f64::from(r.min_x()),
+                    f64::from(r.min_y()),
+                    f64::from(r.max_x()),
+                    f64::from(r.max_y()),
+                )
+            };
             let ink = if selected {
-                // Selected pill is accent-filled — inverse ink reads
-                // on the chromatic face where white does not.
-                cx.color(TokenKey::TextInverseColor, [255, 255, 255, 255])
+                // Selected pill is accent-filled — pick the ink that
+                // actually contrasts the accent: a light accent makes
+                // inverse-white unreadable (1.1:1).
+                crate::text_paint::better_ink(
+                    accent,
+                    cx.color(TokenKey::TextInverseColor, [255, 255, 255, 255]),
+                    INK,
+                )
             } else if self.enabled {
                 cx.color(TokenKey::TextColor, INK)
             } else {
@@ -397,12 +433,7 @@ impl Widget for NavRail {
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kurbo::Rect::new(
-                    f64::from(r.min_x()),
-                    f64::from(r.min_y()),
-                    f64::from(r.max_x()),
-                    f64::from(r.max_y()),
-                ),
+                pill,
                 kurbo::Point::new(f64::from(ix), f64::from(iy)),
                 &d.icon,
                 icon_size,
@@ -413,16 +444,17 @@ impl Widget for NavRail {
                 .and_then(|p| p.measure_text(&d.label, label_size))
                 .unwrap_or(label_size * d.label.chars().count() as f32 * 0.55);
             let lx = r.origin.x + (r.size.x - lw) / 2.0;
+            // Centered past the pill edge the run's recorded origin
+            // (and its first glyphs) land on the rail face — clamp the
+            // start into the pill so text never sits dark-on-dark.
+            let lx = lx
+                .max(pill.x0 as f32)
+                .min((pill.x1 as f32 - lw).max(pill.x0 as f32));
             let ly = iy + icon_size + cx.pt(4.0);
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
-                kurbo::Rect::new(
-                    f64::from(r.min_x()),
-                    f64::from(ly),
-                    f64::from(r.max_x()),
-                    f64::from(r.max_y()),
-                ),
+                kurbo::Rect::new(pill.x0, f64::from(ly), pill.x1, pill.y1),
                 kurbo::Point::new(f64::from(lx), f64::from(ly)),
                 &d.label,
                 label_size,
@@ -475,6 +507,62 @@ mod tests {
     #[test]
     fn builder_counts() {
         assert_eq!(rail().destination_count(), 3);
+    }
+
+    /// Fixed-width measurer — every char advances `em` device px so the
+    /// measured rail width is a pure function of the longest label.
+    struct EmWide;
+    impl martensite_core::paint::TextShaper for EmWide {
+        fn paint_shaped_text(
+            &self,
+            _: &mut martensite_core::PaintList,
+            _: kurbo::Point,
+            _: &str,
+            _: f32,
+            _: [u8; 4],
+        ) {
+        }
+        fn measure_text(&self, text: &str, size_px: f32) -> Option<f32> {
+            Some(text.chars().count() as f32 * size_px)
+        }
+    }
+
+    fn constraints() -> LayoutConstraints {
+        LayoutConstraints {
+            min_size: Vec2::ZERO,
+            max_size: Vec2::new(f32::MAX, f32::MAX),
+        }
+    }
+
+    #[test]
+    fn measure_fits_widest_label() {
+        let _g = martensite_core::paint::install_ambient_measurer(std::sync::Arc::new(EmWide));
+        let mut hot = HotNode::default();
+        let mut cx = make_cx(&mut hot);
+        // Short labels stay at the 72 pt floor.
+        let mut r = NavRail::new().destination("a", "Ok");
+        let m = r.measure(&mut cx, constraints());
+        assert_eq!(m.x, MIN_WIDTH_PT);
+        // "TELEMETRY" — 9 chars × 12 pt = 108 + 2×8 insets + 8 pad =
+        // 132 → the 120 pt clamp engages; longer labels clip in-pill.
+        let mut r = NavRail::new().destination("a", "TELEMETRY");
+        let m = r.measure(&mut cx, constraints());
+        assert_eq!(m.x, MAX_WIDTH_PT);
+        // "EDITOR" — 6 × 12 = 72 + 24 = 96 pt, inside the clamp.
+        let mut r = NavRail::new().destination("a", "EDITOR");
+        let m = r.measure(&mut cx, constraints());
+        assert_eq!(m.x, 96.0);
+    }
+
+    #[test]
+    fn measure_estimate_fallback_without_measurer() {
+        // No ambient measurer — the case-aware estimate still widens
+        // past the 72 pt floor for a long cap-heavy label.
+        let mut hot = HotNode::default();
+        let mut cx = make_cx(&mut hot);
+        let mut r = NavRail::new().destination("a", "TELEMETRYEXTRA");
+        let m = r.measure(&mut cx, constraints());
+        assert!(m.x > MIN_WIDTH_PT && m.x <= MAX_WIDTH_PT);
     }
 
     #[test]

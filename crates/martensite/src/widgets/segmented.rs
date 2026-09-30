@@ -139,7 +139,9 @@ impl Segment {
     }
 
     /// The fill/stroke silhouette for this segment: stadium ends on
-    /// the outer caps, square on interior segments.
+    /// the outer caps; interior segments still paint their selected
+    /// fill as an inset pill — a square accent block inside the
+    /// rounded strip reads as a glitch.
     fn fill_shape(&self, bounds: Rect) -> Shape {
         let radius = if self.direction.is_row() {
             bounds.height() / 2.0
@@ -147,7 +149,7 @@ impl Segment {
             bounds.width() / 2.0
         };
         let radii = match (self.end, self.direction.is_row()) {
-            (SegmentEnd::Middle, _) => CornerRadii::ZERO,
+            (SegmentEnd::Middle, _) => CornerRadii::uniform(radius),
             (SegmentEnd::First, true) => CornerRadii::left(radius),
             (SegmentEnd::Last, true) => CornerRadii::right(radius),
             (SegmentEnd::Only, true) => CornerRadii::uniform(radius),
@@ -300,9 +302,13 @@ impl Widget for Segment {
             kurbo::Rect::new(x1 - pw, y0, x1, y0 + ph)
         });
         let label_right = pill.map_or_else(|| b.max_x() - cx.pt(4.0), |p| p.x0 as f32 - cx.pt(2.0));
+        // Ellide before centering — a run painted past its clip is a
+        // paint-audit finding, `…` reads as an intentional truncation.
+        let avail = label_right - (b.min_x() + cx.pt(4.0));
+        let label = crate::text_paint::elide_label(painter, cx.scale, &self.label, 14.0, avail);
         let text_w = painter
-            .and_then(|p| p.measure_text(&self.label, font_px))
-            .unwrap_or_else(|| 8.0 * self.label.chars().count() as f32 * cx.scale);
+            .and_then(|p| p.measure_text(&label, font_px))
+            .unwrap_or_else(|| 8.0 * label.chars().count() as f32 * cx.scale);
         let text_x = b.min_x() + (b.width() - text_w).max(0.0) / 2.0;
         let ink = if self.selected {
             cx.color(TokenKey::TextInverseColor, INK_SELECTED)
@@ -322,7 +328,7 @@ impl Widget for Segment {
                 f64::from(text_x.max(b.min_x() + cx.pt(4.0))),
                 f64::from(b.min_y() + (b.height() - font_px) / 2.0),
             ),
-            &self.label,
+            &label,
             font_px,
             ink,
         );

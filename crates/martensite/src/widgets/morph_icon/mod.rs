@@ -81,6 +81,8 @@ pub struct MorphIcon {
     ink: Option<[u8; 4]>,
     /// Pushed reduced-motion flag — `morph_to` snaps when set.
     reduced_motion: bool,
+    /// Playback multiplier applied to spring dt (`1.0` default).
+    speed: f32,
     bounds: Rect,
     scale: f32,
 }
@@ -104,6 +106,7 @@ impl MorphIcon {
             stroke_pt: STROKE_PT,
             ink: None,
             reduced_motion: false,
+            speed: 1.0,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
         }
@@ -143,15 +146,62 @@ impl MorphIcon {
     /// Square extent in logical points (default 24).
     #[must_use]
     pub fn size(mut self, size_pt: f32) -> Self {
-        self.size_pt = size_pt.max(0.0);
+        self.set_size(size_pt);
         self
+    }
+
+    /// Mutating form of [`size`](Self::size) — the zoom/resize seam
+    /// for consumers that re-render the same icon at another extent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::MorphIcon;
+    ///
+    /// let mut icon = MorphIcon::new();
+    /// icon.set_size(36.0);
+    /// ```
+    pub fn set_size(&mut self, size_pt: f32) {
+        self.size_pt = size_pt.max(0.0);
     }
 
     /// Stroke width in logical points (default 2).
     #[must_use]
     pub fn stroke_width(mut self, stroke_pt: f32) -> Self {
-        self.stroke_pt = stroke_pt.max(0.0);
+        self.set_stroke_width(stroke_pt);
         self
+    }
+
+    /// Mutating form of [`stroke_width`](Self::stroke_width) — the
+    /// optical-stroke seam for consumers that recompute the stroke as
+    /// the rendered size changes (zoom levels, resize).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::MorphIcon;
+    ///
+    /// let mut icon = MorphIcon::new();
+    /// icon.set_stroke_width(1.1);
+    /// ```
+    pub fn set_stroke_width(&mut self, stroke_pt: f32) {
+        self.stroke_pt = stroke_pt.max(0.0);
+    }
+
+    /// Playback speed multiplier for morph springs (`1.0` default) —
+    /// transport controls scale the dt the spring sees without
+    /// changing the spring config itself.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::MorphIcon;
+    ///
+    /// let mut icon = MorphIcon::new();
+    /// icon.set_speed(2.0);
+    /// ```
+    pub fn set_speed(&mut self, speed: f32) {
+        self.speed = speed.max(0.0);
     }
 
     /// Explicit ink override (else the theme foreground).
@@ -159,6 +209,21 @@ impl MorphIcon {
     pub fn ink(mut self, rgba: [u8; 4]) -> Self {
         self.ink = Some(rgba);
         self
+    }
+
+    /// Mutating form of [`ink`](Self::ink) — restyle in place (e.g. a
+    /// translucent feedforward ink on an already-laid-out icon).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::MorphIcon;
+    ///
+    /// let mut icon = MorphIcon::new();
+    /// icon.set_ink([122, 130, 150, 102]);
+    /// ```
+    pub fn set_ink(&mut self, rgba: [u8; 4]) {
+        self.ink = Some(rgba);
     }
 
     /// Jumps straight to `d` — no flight.
@@ -275,7 +340,7 @@ impl Widget for MorphIcon {
         if !self.is_animating() {
             return false;
         }
-        self.spring.advance(dt.as_secs_f32());
+        self.spring.advance(dt.as_secs_f32() * self.speed);
         if self.spring.settle_threshold() {
             // Settled: drop the plan and let the canonical rest shape
             // take over (exact endpoint fidelity).
