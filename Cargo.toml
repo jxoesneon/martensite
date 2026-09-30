@@ -278,3 +278,10 @@ codegen-units = 32
 
 [profile.ci.package."*"]
 opt-level = 2
+
+[patch.crates-io]
+# Upstream fix pending in chromeos/cros-libva#37 — the hand-written
+# VP9 encoder parameter literal predates libva ≥ 2.23 struct fields
+# (seg_id_block_size, va_reserved8); the vendored copy fills them via
+# `..Default::default()` so it builds against any header version.
+cros-libva = { path = "vendor/cros-libva" }
