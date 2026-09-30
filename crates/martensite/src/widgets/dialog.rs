@@ -40,7 +40,9 @@ const BUTTON_W: f32 = 88.0;
 const BUTTON_GAP: f32 = 8.0;
 
 /// A modal dialog card. Host it in the overlay layer at
-/// `OverlayAnchor::Center` with `OverlayOptions::modal()`; poll
+/// `OverlayAnchor::Center` with `OverlayOptions::modal()` — a scrim
+/// press dismisses the entry; `OverlayOptions::persistent()` keeps the
+/// scrim non-dismissing when a button must be required. Poll
 /// [`Dialog::take_response`] after dispatch to learn which button index
 /// was pressed, then close the overlay entry.
 ///

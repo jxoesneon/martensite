@@ -1018,10 +1018,16 @@ pub trait Widget: Send + Sync + 'static {
     /// widgets that animate should store the flag and stop the walk:
     ///
     /// ```
+    /// # use glam::Vec2;
     /// # use martensite_core::widget::Widget;
+    /// # use martensite_core::{LayoutConstraints, LayoutContext, Rect};
     /// # use std::time::Duration;
     /// struct Blinker { reduced: bool }
     /// # impl Widget for Blinker {
+    /// #     fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+    /// #         Vec2::ZERO
+    /// #     }
+    /// #     fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
     /// fn set_reduced_motion(&mut self, reduced: bool) {
     ///     self.reduced = reduced;
     ///     // no internal children — do not forward

@@ -14,8 +14,11 @@
 //! [`OverlayOptions::modal()`](crate::overlay::OverlayOptions::modal) change that contract: a scrim covers the
 //! viewport beneath the topmost modal entry, positional events outside
 //! it are consumed rather than forwarded, and popups below it are
-//! unreachable until it closes — the standard modal-dialog and
-//! modal-drawer behavior.
+//! unreachable until it closes. A press on the scrim dismisses the
+//! modal — the light-dismiss convention — unless the entry was opened
+//! with [`OverlayOptions::persistent()`](crate::overlay::OverlayOptions::persistent),
+//! the strict-modal opt-out for surfaces that must only close through
+//! their own affordances (lock screens, destructive confirmations).
 //!
 //! Pointer and scroll events are dispatched to popups topmost-first
 //! before the caller forwards them to the arena, so popup content
@@ -184,13 +187,14 @@ pub enum ViewportAlign {
 /// ```
 /// use martensite_core::overlay::OverlayOptions;
 ///
-/// // A modal dialog: scrim, input blocked, scrim-click does NOT
-/// // dismiss — an explicit button is required.
+/// // A modal dialog: scrim, input blocked — a press on the scrim
+/// // dismisses it (the light-dismiss convention).
 /// let modal = OverlayOptions::modal();
-/// assert!(modal.modal && modal.scrim && !modal.scrim_dismiss);
-/// // A modal drawer that closes when the scrim is tapped.
-/// let drawer = OverlayOptions::modal().light_dismiss();
-/// assert!(drawer.scrim_dismiss);
+/// assert!(modal.modal && modal.scrim && modal.scrim_dismiss);
+/// // A strict modal: the scrim swallows presses but never dismisses
+/// // — an explicit affordance is required.
+/// let lock = OverlayOptions::persistent();
+/// assert!(lock.modal && !lock.scrim_dismiss);
 /// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct OverlayOptions {
@@ -203,8 +207,9 @@ pub struct OverlayOptions {
     /// over the viewport before this entry. Implied by `modal`.
     pub scrim: bool,
     /// `true` lets a press on the scrim dismiss this modal entry —
-    /// the drawer/bottom-sheet convention (dialogs leave it `false`
-    /// so an accidental click can't discard a form).
+    /// the standard modal convention. [`Self::persistent`] clears it
+    /// for surfaces that must only close through their own
+    /// affordances.
     pub scrim_dismiss: bool,
     /// `true` marks the entry transparent to input: an event its
     /// content ignores falls through to lower popups and window
@@ -216,14 +221,51 @@ pub struct OverlayOptions {
 }
 
 impl OverlayOptions {
-    /// Options for a modal surface: scrim painted, input blocked,
-    /// scrim clicks consumed but not dismissing.
+    /// Options for a modal surface: scrim painted, input blocked, and
+    /// a press on the scrim dismisses the entry — the light-dismiss
+    /// convention (drawers, dialogs, sheets). For surfaces that must
+    /// never dismiss on a scrim press, use [`Self::persistent`]
+    /// instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::OverlayOptions;
+    ///
+    /// let o = OverlayOptions::modal();
+    /// assert!(o.modal && o.scrim && o.scrim_dismiss);
+    /// ```
     pub fn modal() -> Self {
         Self {
             modal: true,
             scrim: true,
-            scrim_dismiss: false,
+            scrim_dismiss: true,
             passthrough: false,
+        }
+    }
+
+    /// Options for a strict modal surface: scrim painted, input
+    /// blocked, and a press on the scrim is consumed *without*
+    /// dismissing — the entry only closes through its own affordances
+    /// or a layer `Escape`. The opt-out for genuinely blocking
+    /// surfaces (lock screens, destructive confirmations) where an
+    /// accidental scrim tap must not strand the user's task.
+    ///
+    /// `Escape` still dismisses the entry — it is the layer-level
+    /// cancel convention every popup honours.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::OverlayOptions;
+    ///
+    /// let o = OverlayOptions::persistent();
+    /// assert!(o.modal && o.scrim && !o.scrim_dismiss);
+    /// ```
+    pub fn persistent() -> Self {
+        Self {
+            scrim_dismiss: false,
+            ..Self::modal()
         }
     }
 
@@ -237,7 +279,19 @@ impl OverlayOptions {
         }
     }
 
-    /// Sets `scrim_dismiss` — builder-style.
+    /// Sets `scrim_dismiss` — builder-style. [`Self::modal`] already
+    /// implies it; the call survives for readability at sites that
+    /// build options field-by-field and to re-arm dismissal after
+    /// [`Self::persistent`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::OverlayOptions;
+    ///
+    /// assert!(OverlayOptions::persistent().light_dismiss().scrim_dismiss);
+    /// ```
+    #[must_use]
     pub fn light_dismiss(mut self) -> Self {
         self.scrim_dismiss = true;
         self
@@ -678,6 +732,35 @@ impl OverlayLayer {
         let owner = entry.owner;
         entry.anchor = anchor;
         entry.needs_layout = true;
+        self.note_dirty_owner(owner);
+        true
+    }
+
+    /// Re-marks an open entry for the next [`layout_pass`](Self::layout_pass)
+    /// without touching its anchor — for callers that mutated the entry's
+    /// layout-relevant state through [`widget_at_mut`](Self::widget_at_mut)
+    /// or a shared handle the widget reads in `layout`. Returns `false`
+    /// when `id` is not open.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::{OverlayAnchor, OverlayLayer};
+    /// use martensite_core::{DummyWidget, Rect};
+    ///
+    /// let mut layer = OverlayLayer::new();
+    /// layer.set_viewport(Rect::new(0.0, 0.0, 400.0, 300.0));
+    /// let id = layer.open(Box::new(DummyWidget), OverlayAnchor::Center);
+    /// layer.layout_pass();
+    /// assert!(layer.invalidate(id));
+    /// assert!(!layer.invalidate(u64::MAX));
+    /// ```
+    pub fn invalidate(&mut self, id: u64) -> bool {
+        let Some(entry) = self.entry_mut(id) else {
+            return false;
+        };
+        entry.needs_layout = true;
+        let owner = entry.owner;
         self.note_dirty_owner(owner);
         true
     }
@@ -1124,8 +1207,9 @@ impl OverlayLayer {
             }
             if let Some(m) = self.entries.iter().rposition(|e| e.options.modal) {
                 // On the scrim. A press light-dismisses the popups
-                // stacked above the modal, and the modal itself only
-                // when it opted into scrim dismissal.
+                // stacked above the modal, and the modal itself when
+                // `scrim_dismiss` is set — the `modal()` default;
+                // `persistent()` entries swallow the press instead.
                 if matches!(event, WidgetEvent::PointerPressed { .. }) {
                     let above: Vec<u64> = self.entries[m + 1..]
                         .iter()
@@ -1632,12 +1716,37 @@ mod tests {
     }
 
     #[test]
-    fn modal_blocks_outside_press_and_content() {
+    fn modal_dismisses_on_outside_press() {
+        // `modal()` light-dismisses by default: a scrim press closes
+        // the entry and reports it through the dismissed queue.
         let mut layer = layer();
         let id = layer.open_with(
             Box::new(DummyWidget),
             OverlayAnchor::Center,
             OverlayOptions::modal(),
+        );
+        layer.layout_pass();
+        assert!(layer.has_modal());
+
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(10.0, 10.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(layer.dispatch_event(&press), EventResponse::Handled);
+        assert!(!layer.is_open(id));
+        assert_eq!(layer.take_dismissed(), Some(id));
+    }
+
+    #[test]
+    fn persistent_modal_blocks_outside_press_and_content() {
+        // `persistent()` restores strict modality: the scrim swallows
+        // everything but never dismisses.
+        let mut layer = layer();
+        let id = layer.open_with(
+            Box::new(DummyWidget),
+            OverlayAnchor::Center,
+            OverlayOptions::persistent(),
         );
         layer.layout_pass();
         assert!(layer.has_modal());
@@ -1663,15 +1772,36 @@ mod tests {
         };
         assert_eq!(layer.dispatch_event(&esc), EventResponse::Handled);
         assert!(!layer.is_open(id));
+        assert_eq!(layer.take_dismissed(), Some(id));
     }
 
     #[test]
-    fn scrim_dismiss_modal_closes_on_outside_press() {
+    fn escape_dismisses_modal_and_persistent_alike() {
+        // The layer-level cancel convention is identical for both
+        // modal flavors — only scrim dismissal differs.
+        for options in [OverlayOptions::modal(), OverlayOptions::persistent()] {
+            let mut layer = layer();
+            let id = layer.open_with(Box::new(DummyWidget), OverlayAnchor::Center, options);
+            layer.layout_pass();
+            let esc = WidgetEvent::KeyPressed {
+                key: "Escape".into(),
+                repeat: false,
+            };
+            assert_eq!(layer.dispatch_event(&esc), EventResponse::Handled);
+            assert!(!layer.is_open(id));
+            assert_eq!(layer.take_dismissed(), Some(id));
+        }
+    }
+
+    #[test]
+    fn light_dismiss_rearms_scrim_dismiss() {
+        // `persistent().light_dismiss()` composes — the builder
+        // re-arms scrim dismissal on a strict-modal base.
         let mut layer = layer();
         let id = layer.open_with(
             Box::new(DummyWidget),
             OverlayAnchor::EdgeRight,
-            OverlayOptions::modal().light_dismiss(),
+            OverlayOptions::persistent().light_dismiss(),
         );
         layer.layout_pass();
         let press = WidgetEvent::PointerPressed {
@@ -1692,11 +1822,11 @@ mod tests {
             Box::new(DummyWidget),
             OverlayAnchor::Pointer(Vec2::new(10.0, 10.0)),
         );
-        // …then a modal dialog on top of it.
+        // …then a strict modal dialog on top of it.
         layer.open_with(
             Box::new(DummyWidget),
             OverlayAnchor::Center,
-            OverlayOptions::modal(),
+            OverlayOptions::persistent(),
         );
         layer.layout_pass();
         let mb = layer.entry_bounds(menu).unwrap();
@@ -1718,7 +1848,7 @@ mod tests {
         layer.open_with(
             Box::new(DummyWidget),
             OverlayAnchor::Center,
-            OverlayOptions::modal(),
+            OverlayOptions::persistent(),
         );
         let tip = layer.open(
             Box::new(DummyWidget),
@@ -1732,10 +1862,36 @@ mod tests {
         };
         assert_eq!(layer.dispatch_event(&press), EventResponse::Handled);
         // The non-modal popup above the modal light-dismissed; the
-        // modal (no scrim_dismiss) stayed.
+        // persistent modal (no scrim_dismiss) stayed.
         assert!(!layer.is_open(tip));
         assert_eq!(layer.len(), 1);
         assert!(layer.has_modal());
+    }
+
+    #[test]
+    fn scrim_press_dismisses_popups_above_and_modal() {
+        // With the default `modal()` the same scrim press closes the
+        // popups stacked above AND the modal itself.
+        let mut layer = layer();
+        let modal = layer.open_with(
+            Box::new(DummyWidget),
+            OverlayAnchor::Center,
+            OverlayOptions::modal(),
+        );
+        let tip = layer.open(
+            Box::new(DummyWidget),
+            OverlayAnchor::Pointer(Vec2::new(10.0, 10.0)),
+        );
+        layer.layout_pass();
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(400.0, 10.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(layer.dispatch_event(&press), EventResponse::Handled);
+        assert!(layer.is_empty());
+        assert_eq!(layer.take_dismissed(), Some(tip));
+        assert_eq!(layer.take_dismissed(), Some(modal));
     }
 
     #[test]
@@ -1773,7 +1929,7 @@ mod tests {
         let d = layer.open_with(
             Box::new(Sized(Vec2::new(300.0, 50.0))),
             OverlayAnchor::EdgeRight,
-            OverlayOptions::modal().light_dismiss(),
+            OverlayOptions::modal(),
         );
         let t = layer.open(
             Box::new(Sized(Vec2::new(120.0, 60.0))),

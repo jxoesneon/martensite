@@ -55,7 +55,7 @@ const MIN_DEPTH_PT: f32 = 120.0;
 /// the full offered height; the card occupies `fraction` of that entry
 /// measured from its bottom edge. Everything above the card inside the
 /// entry is a dismiss target (the modal scrim beneath shows through —
-/// pair with `OverlayOptions::modal().light_dismiss()`).
+/// `OverlayOptions::modal()` already light-dismisses on a scrim tap).
 ///
 /// Poll [`BottomSheet::take_close_requested`] after dispatch; the host
 /// then closes the overlay entry.

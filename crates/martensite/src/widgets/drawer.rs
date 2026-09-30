@@ -35,8 +35,8 @@ const CLOSE: f32 = 24.0;
 /// `EdgeLeft`/`EdgeTop`/`EdgeBottom`) — the anchor pins it to the edge
 /// and spans the viewport on the crossing axis; [`Drawer::width`] sets
 /// the measured depth on the other axis. Pair with
-/// `OverlayOptions::modal().light_dismiss()` for the standard
-/// scrim-tap-to-dismiss behavior.
+/// `OverlayOptions::modal()` for the standard scrim-tap-to-dismiss
+/// behavior.
 ///
 /// Poll [`Drawer::take_close_requested`] after dispatch; the host then
 /// closes the overlay entry.

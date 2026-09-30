@@ -2,9 +2,10 @@
 //! (NSAlert / `AlertDialog`).
 //!
 //! Host it in the [`OverlayLayer`] at `OverlayAnchor::Center` with
-//! `OverlayOptions::modal().light_dismiss()` — a scrim covers the
-//! window beneath the card, positional input outside it is consumed,
-//! and a press on the scrim dismisses the entry.
+//! `OverlayOptions::modal()` — a scrim covers the window beneath the
+//! card, positional input outside it is consumed, and a press on the
+//! scrim dismisses the entry (`OverlayOptions::persistent()` keeps the
+//! scrim non-dismissing for alerts that must require a button).
 //!
 //! [`OverlayLayer`]: martensite_core::overlay::OverlayLayer
 //! [`OverlayOptions::modal`]: martensite_core::overlay::OverlayOptions::modal
@@ -160,7 +161,7 @@ pub enum AlertResult {
 
 /// A modal alert card — severity icon, title, message, and a footer
 /// button row — hosted in the overlay layer at
-/// `OverlayAnchor::Center` with `OverlayOptions::modal().light_dismiss()`.
+/// `OverlayAnchor::Center` with `OverlayOptions::modal()`.
 ///
 /// Poll [`AlertDialog::take_result`] (embedded) or the
 /// [`AlertDialog::result_sink`] cell (hosted) after dispatch; the host

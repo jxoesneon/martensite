@@ -3,8 +3,9 @@
 //! tinted), and a separated cancel row (iOS `UIActionSheet`, Ant
 //! `ActionSheet`).
 //!
-//! Open with `OverlayAnchor::EdgeBottom` + `OverlayOptions::modal()
-//! .light_dismiss()`; poll [`ActionSheet::take_result`] after dispatch.
+//! Open with `OverlayAnchor::EdgeBottom` + `OverlayOptions::modal()` —
+//! a scrim press dismisses the sheet; poll
+//! [`ActionSheet::take_result`] after dispatch.
 //!
 //! # Examples
 //!
