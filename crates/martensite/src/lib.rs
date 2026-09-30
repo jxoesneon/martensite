@@ -62,6 +62,22 @@
 /// ```
 pub mod app;
 
+/// Native stroke-icon vocabulary: the [`BUILTIN`](icons::BUILTIN)
+/// icon pack, the [`IconPack`](icons::IconPack)/[`IconSet`](icons::IconSet)
+/// resolution chain, and the name constants — external packs plug in
+/// as overlays over the builtin fallback.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::icons::IconSet;
+///
+/// let set = IconSet::new();
+/// assert!(set.resolve("nav.menu").is_some());
+/// assert!(set.resolve("no.such.icon").is_none());
+/// ```
+pub mod icons;
+
 /// Foundational widgets (`Button`, `CheckBox`, `Container`, `Flex`, `MediaView`, `Stack`, `Text`, `TextInput`).
 ///
 /// # Examples

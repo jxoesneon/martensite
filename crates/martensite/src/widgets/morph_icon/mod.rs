@@ -23,6 +23,8 @@ pub use engine::MorphError;
 
 use std::time::Duration;
 
+use crate::icons::{IconError, IconSet};
+
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite_core::widget::{
@@ -42,9 +44,10 @@ const STROKE_PT: f32 = 2.0;
 /// Default square extent in logical points — the 24px icon grid.
 const SIZE_PT: f32 = 24.0;
 
-/// Canonical demo icon pairs — real `d` strings for doctests, the
-/// dashboard, and parity fixtures. Not a vendored icon set (ADR-0041):
-/// apps supply their own paths in production.
+/// Canonical demo icon pairs — real `d` strings for doctests and
+/// parity fixtures. Not a vendored icon set (ADR-0041): apps draw
+/// from the native pack ([`crate::icons::builtin`]) or supply their
+/// own paths in production.
 #[doc(hidden)]
 pub mod demo;
 
@@ -79,6 +82,10 @@ pub struct MorphIcon {
     stroke_pt: f32,
     /// Optional explicit ink override (else theme foreground).
     ink: Option<[u8; 4]>,
+    /// Fill token the ink is contrast-resolved against — for icons on
+    /// filled surfaces (accent pills, chips). `None` → `ink` then
+    /// `TextColor`.
+    ink_over: Option<TokenKey>,
     /// Pushed reduced-motion flag — `morph_to` snaps when set.
     reduced_motion: bool,
     /// Playback multiplier applied to spring dt (`1.0` default).
@@ -105,6 +112,7 @@ impl MorphIcon {
             size_pt: SIZE_PT,
             stroke_pt: STROKE_PT,
             ink: None,
+            ink_over: None,
             reduced_motion: false,
             speed: 1.0,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
@@ -119,6 +127,110 @@ impl MorphIcon {
         let mut s = Self::new();
         s.set_icon(d)?;
         Ok(s)
+    }
+
+    /// Builds an icon resting on the shape registered under `name` in
+    /// the native icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN))
+    /// — `"nav.menu"`, `"media.play"`, `"status.lock"`, …
+    ///
+    /// Unknown names return [`IconError::Unknown`] — never a panic.
+    /// Apps carrying external packs resolve through
+    /// [`named_in`](Self::named_in) with their [`IconSet`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::MorphIcon;
+    ///
+    /// let icon = MorphIcon::named("status.lock").unwrap();
+    /// assert!(MorphIcon::named("bogus").is_err());
+    /// ```
+    pub fn named(name: &str) -> Result<Self, IconError> {
+        Self::named_in(name, &IconSet::new())
+    }
+
+    /// Like [`named`](Self::named) but resolves `name` through an
+    /// explicit [`IconSet`] — overlay packs (external/app-private
+    /// icons) first, the builtin pack as fallback.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::icons::{IconPack, IconSet};
+    /// use martensite::widgets::MorphIcon;
+    ///
+    /// static ENTRIES: &[martensite::icons::IconEntry] =
+    ///     &[martensite::icons::IconEntry::new("nav.menu", "M2 5h20M2 19h20")];
+    /// let set = IconSet::new().with_pack(IconPack::new("app", ENTRIES));
+    /// let icon = MorphIcon::named_in("nav.menu", &set).unwrap();
+    /// ```
+    pub fn named_in(name: &str, set: &IconSet) -> Result<Self, IconError> {
+        let d = set
+            .resolve(name)
+            .ok_or_else(|| IconError::Unknown { name: name.into() })?;
+        Self::icon(d).map_err(|source| IconError::Invalid {
+            name: name.into(),
+            source,
+        })
+    }
+
+    /// The `set_icon` counterpart for pack names: jumps straight to
+    /// the shape `name` resolves to in `set` — no flight. A miss is a
+    /// clean [`IconError`] and leaves the current shape untouched.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::icons::IconSet;
+    /// use martensite::widgets::MorphIcon;
+    ///
+    /// let set = IconSet::new();
+    /// let mut icon = MorphIcon::new();
+    /// icon.set_named("media.play", &set).unwrap();
+    /// ```
+    pub fn set_named(&mut self, name: &str, set: &IconSet) -> Result<(), IconError> {
+        let d = set
+            .resolve(name)
+            .ok_or_else(|| IconError::Unknown { name: name.into() })?;
+        self.set_icon(d).map_err(|source| IconError::Invalid {
+            name: name.into(),
+            source,
+        })
+    }
+
+    /// The `morph_to` counterpart for pack names: flies toward the
+    /// shape `name` resolves to in `set` under `spring` — pair it
+    /// with [`IconSet::paired`](crate::icons::IconSet::paired) for
+    /// declared state alternates (lock ↔ lock-open, play ↔ pause).
+    /// Reduced motion snaps like `morph_to`; a miss is a clean
+    /// [`IconError`] and disturbs nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::icons::IconSet;
+    /// use martensite::motion::SpringConfig;
+    /// use martensite::widgets::MorphIcon;
+    ///
+    /// let set = IconSet::new();
+    /// let mut icon = MorphIcon::named("status.lock").unwrap();
+    /// icon.morph_to_named("status.lock-open", &set, SpringConfig::CRITICAL)
+    ///     .unwrap();
+    /// ```
+    pub fn morph_to_named(
+        &mut self,
+        name: &str,
+        set: &IconSet,
+        spring: SpringConfig,
+    ) -> Result<(), IconError> {
+        let d = set
+            .resolve(name)
+            .ok_or_else(|| IconError::Unknown { name: name.into() })?;
+        self.morph_to(d, spring)
+            .map_err(|source| IconError::Invalid {
+                name: name.into(),
+                source,
+            })
     }
 
     /// The semantic name announced for the current icon state
@@ -224,6 +336,48 @@ impl MorphIcon {
     /// ```
     pub fn set_ink(&mut self, rgba: [u8; 4]) {
         self.ink = Some(rgba);
+    }
+
+    /// Contrast-resolved ink over the surface `bg` resolves to — for
+    /// icons sitting on filled pills, chips, and selected rows (e.g.
+    /// `TokenKey::AccentColor` under a selected destination). At paint
+    /// time the icon picks whichever of `TextInverseColor`/`TextColor`
+    /// contrasts better against the resolved fill, so the icon stays
+    /// legible across theme swaps without a restyle pass. An explicit
+    /// [`ink`](Self::set_ink) override still wins.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::MorphIcon;
+    /// use martensite::theme::TokenKey;
+    ///
+    /// let icon = MorphIcon::icon("M4 7h16M4 12h16M4 17h16")
+    ///     .unwrap()
+    ///     .ink_over(TokenKey::AccentColor);
+    /// ```
+    #[must_use]
+    pub fn ink_over(mut self, bg: TokenKey) -> Self {
+        self.set_ink_over(Some(bg));
+        self
+    }
+
+    /// Mutating form of [`ink_over`](Self::ink_over) — `None` returns
+    /// to plain ink resolution (explicit [`ink`](Self::ink), then the
+    /// theme foreground).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::MorphIcon;
+    /// use martensite::theme::TokenKey;
+    ///
+    /// let mut icon = MorphIcon::new();
+    /// icon.set_ink_over(Some(TokenKey::AccentColor));
+    /// icon.set_ink_over(None);
+    /// ```
+    pub fn set_ink_over(&mut self, bg: Option<TokenKey>) {
+        self.ink_over = bg;
     }
 
     /// Jumps straight to `d` — no flight.
@@ -382,9 +536,21 @@ impl Widget for MorphIcon {
         // Icon space (the `d` coordinates, conventionally a 24px grid)
         // is scaled+translated to fill `bounds`; stroke width rides
         // the same scale so a 2pt-at-24 icon stays proportional.
-        let ink = self
-            .ink
-            .unwrap_or_else(|| cx.color(TokenKey::TextColor, [230, 230, 235, 255]));
+        let ink = self.ink.unwrap_or_else(|| {
+            if let Some(bg) = self.ink_over {
+                // On a filled surface, pick the theme ink that reads
+                // against it — same contrast choice labels on the
+                // same fill make.
+                let fill = cx.color(bg, [120, 120, 130, 255]);
+                crate::text_paint::better_ink(
+                    fill,
+                    cx.color(TokenKey::TextInverseColor, [30, 31, 36, 255]),
+                    cx.color(TokenKey::TextColor, [230, 230, 235, 255]),
+                )
+            } else {
+                cx.color(TokenKey::TextColor, [230, 230, 235, 255])
+            }
+        });
         let (bx, by, bw, bh) = (
             self.bounds.min_x(),
             self.bounds.min_y(),

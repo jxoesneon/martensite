@@ -9,6 +9,14 @@
 //! and activation are separate: the rail only *reports* activations,
 //! the app decides whether to change `selected`.
 //!
+//! A destination's icon is either a text glyph ([`NavRail::destination`])
+//! or a hosted [`MorphIcon`](crate::widgets::MorphIcon) stroke icon
+//! ([`NavRail::destination_icon`], [`NavRail::destination_named`]) —
+//! the latter is a real internal
+//! child: it ticks with the arena (so `morph_to` animates), stays
+//! decorative in the a11y tree (the destination's label carries the
+//! name), and picks pill-contrasting ink while selected.
+//!
 //! # Examples
 //!
 //! ```
@@ -27,6 +35,8 @@ use martensite_core::widget::{
     Widget, WidgetEvent,
 };
 use martensite_core::{Rect, TokenKey};
+
+use crate::widgets::morph_icon::MorphIcon;
 
 /// Narrowest rail width, logical points — the icon + pill insets
 /// floor used when no destination label measures wider.
@@ -69,13 +79,18 @@ const HOVER: [u8; 4] = [30, 31, 36, 12];
 #[derive(Clone, Debug)]
 pub struct NavDestination {
     /// Icon glyph (a short string — emoji or a single character).
+    /// Unused when `icon_d` carries a stroke icon.
     pub icon: String,
     /// The destination label.
     pub label: String,
+    /// Stroke-icon `d` on the 24-unit icon grid — when set, the rail
+    /// hosts a decorative [`MorphIcon`] child for this destination and
+    /// ignores `icon`. Kept as data so `NavDestination` stays `Clone`.
+    icon_d: Option<String>,
 }
 
 impl NavDestination {
-    /// Creates a destination.
+    /// Creates a destination with a text-glyph icon.
     ///
     /// # Examples
     ///
@@ -89,7 +104,75 @@ impl NavDestination {
         Self {
             icon: icon.into(),
             label: label.into(),
+            icon_d: None,
         }
+    }
+
+    /// Creates a destination whose icon is a stroke path (`d` data on
+    /// the 24-unit icon grid — the lucide/feather idiom; see
+    /// [`crate::icons::builtin`] for the native pack's constants).
+    /// The rail hosts it as a real `MorphIcon` internal child, so
+    /// `morph_to` animates; the icon is decorative in the a11y tree —
+    /// `label` carries the name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::icons::builtin;
+    /// use martensite::widgets::nav_rail::NavDestination;
+    ///
+    /// let d = NavDestination::icon(builtin::data::DATA_GRID, "Grid");
+    /// assert_eq!(d.icon_d(), Some(builtin::data::DATA_GRID));
+    /// ```
+    #[must_use]
+    pub fn icon(icon_d: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            icon: String::new(),
+            label: label.into(),
+            icon_d: Some(icon_d.into()),
+        }
+    }
+
+    /// Creates a destination whose icon is looked up by *name* in the
+    /// native icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// `"nav.menu"`, `"data.grid"`, `"media.play"`, … The resolved `d`
+    /// is stored, so the value stays plain data; an unknown name
+    /// yields an iconless destination (the rail tolerates it like a
+    /// rejected `d`). Overlay-pack names resolve through the app's
+    /// [`IconSet`](crate::icons::IconSet) — pass the resulting `d` to
+    /// [`icon`](Self::icon).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::icons::builtin;
+    /// use martensite::widgets::nav_rail::NavDestination;
+    ///
+    /// let d = NavDestination::named("nav.menu", "Menu");
+    /// assert_eq!(d.icon_d(), Some(builtin::nav::NAV_MENU));
+    /// assert!(NavDestination::named("bogus.name", "Nope").icon_d().is_none());
+    /// ```
+    #[must_use]
+    pub fn named(name: &str, label: impl Into<String>) -> Self {
+        Self {
+            icon: String::new(),
+            label: label.into(),
+            icon_d: crate::icons::BUILTIN.lookup(name).map(str::to_string),
+        }
+    }
+
+    /// The stroke-icon `d` this destination carries, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::nav_rail::NavDestination;
+    ///
+    /// assert_eq!(NavDestination::new("★", "Starred").icon_d(), None);
+    /// ```
+    #[must_use]
+    pub fn icon_d(&self) -> Option<&str> {
+        self.icon_d.as_deref()
     }
 }
 
@@ -106,6 +189,13 @@ impl NavDestination {
 pub struct NavRail {
     /// Destinations top-to-bottom.
     destinations: Vec<NavDestination>,
+    /// Stroke-icon widgets parallel to `destinations` — `Some` where
+    /// the destination carries `icon_d` (`None` where the destination
+    /// paints a text glyph, or the `d` failed to parse).
+    icons: Vec<Option<MorphIcon>>,
+    /// Per-destination icon rects resolved in `layout` (device px) —
+    /// `Some` only where an icon widget is hosted.
+    icon_rects: Vec<Option<Rect>>,
     /// Selected destination index.
     selected: Option<usize>,
     /// Hovered destination index.
@@ -135,6 +225,8 @@ impl NavRail {
     pub fn new() -> Self {
         Self {
             destinations: Vec::new(),
+            icons: Vec::new(),
+            icon_rects: Vec::new(),
             selected: None,
             highlighted: None,
             activated: None,
@@ -156,7 +248,148 @@ impl NavRail {
     #[must_use]
     pub fn destination(mut self, icon: impl Into<String>, label: impl Into<String>) -> Self {
         self.destinations.push(NavDestination::new(icon, label));
+        self.icons.push(None);
         self
+    }
+
+    /// Appends a destination whose icon is a hosted
+    /// [`MorphIcon`](crate::widgets::MorphIcon) stroke icon — `icon_d`
+    /// is SVG path data on the 24-unit icon grid (the lucide/feather
+    /// idiom; see [`crate::icons::builtin`] for the native pack's
+    /// constants). The icon is a real internal child: it ticks with
+    /// the arena (so `morph_to` animates), reports `Role::Image` as
+    /// decorative-hidden in the a11y tree, and picks pill-contrasting
+    /// ink while the destination is selected.
+    ///
+    /// Drive later shapes through
+    /// [`icon_widget_mut`](Self::icon_widget_mut) — e.g. morph to a
+    /// selected-variant `d` (see
+    /// [`icons::builtin::selected_pip`](crate::icons::builtin::selected_pip))
+    /// when `set_selected` moves the pill, or to a state shape
+    /// (`paused` → flatline) on signal edges.
+    ///
+    /// A `d` the icon engine rejects parses to no icon at all — the
+    /// destination keeps its label and behaves like an iconless cell
+    /// rather than failing the build.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::icons::builtin;
+    /// use martensite::widgets::nav_rail::NavRail;
+    ///
+    /// let r = NavRail::new().destination_icon(builtin::data::DATA_GRID, "Process");
+    /// assert!(r.icon_widget(0).is_some());
+    /// ```
+    #[must_use]
+    pub fn destination_icon(mut self, icon_d: impl Into<String>, label: impl Into<String>) -> Self {
+        let icon_d = icon_d.into();
+        self.destinations
+            .push(NavDestination::icon(icon_d.clone(), label));
+        self.icons.push(Self::build_icon(&icon_d, self.enabled));
+        self.sync_icon_inks();
+        self
+    }
+
+    /// Appends a destination whose icon resolves by *name* through the
+    /// native icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// `"nav.menu"`, `"data.grid"`, `"media.play"`, … The resolved
+    /// shape is hosted exactly like [`destination_icon`](Self::destination_icon)'s
+    /// (internal `MorphIcon` child, decorative a11y, pill-contrast
+    /// ink); an unknown name degrades to an iconless destination
+    /// rather than failing the build — same contract as a rejected `d`.
+    ///
+    /// Apps carrying overlay packs resolve names through their own
+    /// [`IconSet`](crate::icons::IconSet) and pass the `d` to
+    /// [`destination_icon`](Self::destination_icon).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::nav_rail::NavRail;
+    ///
+    /// let r = NavRail::new().destination_named("data.grid", "Process");
+    /// assert!(r.icon_widget(0).is_some());
+    /// // Unknown names degrade to an iconless destination.
+    /// assert!(NavRail::new()
+    ///     .destination_named("bogus.name", "Nope")
+    ///     .icon_widget(0)
+    ///     .is_none());
+    /// ```
+    #[must_use]
+    pub fn destination_named(mut self, name: &str, label: impl Into<String>) -> Self {
+        let d = NavDestination::named(name, label);
+        let icon = d.icon_d().and_then(|d| Self::build_icon(d, self.enabled));
+        self.destinations.push(d);
+        self.icons.push(icon);
+        self.sync_icon_inks();
+        self
+    }
+
+    /// Builds the hosted icon for a stroke `d` — `decorative` (the
+    /// destination's label owns the a11y name). A rejected `d` yields
+    /// `None`: the slot stays empty, the destination still works.
+    fn build_icon(icon_d: &str, enabled: bool) -> Option<MorphIcon> {
+        let mut icon = MorphIcon::icon(icon_d).ok()?.decorative(true);
+        if !enabled {
+            icon.set_ink(INK_DIM);
+        }
+        Some(icon)
+    }
+
+    /// Re-resolves hosted icon inks for the current selection —
+    /// selected destinations paint pill-contrasting ink
+    /// (`MorphIcon::ink_over` on the accent token), the rest theme ink.
+    fn sync_icon_inks(&mut self) {
+        for (i, icon) in self.icons.iter_mut().enumerate() {
+            if let Some(icon) = icon {
+                icon.set_ink_over(if self.enabled && self.selected == Some(i) {
+                    Some(TokenKey::AccentColor)
+                } else {
+                    None
+                });
+            }
+        }
+    }
+
+    /// The `MorphIcon` hosting destination `index`'s stroke icon —
+    /// `None` for glyph destinations, out-of-range indices, and `d`s
+    /// the icon engine rejected at build.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::nav_rail::NavRail;
+    ///
+    /// let r = NavRail::new()
+    ///     .destination_named("data.grid", "Grid")
+    ///     .destination("⚙", "Settings");
+    /// assert!(r.icon_widget(0).is_some());
+    /// assert!(r.icon_widget(1).is_none()); // glyph destination
+    /// ```
+    #[must_use]
+    pub fn icon_widget(&self, index: usize) -> Option<&MorphIcon> {
+        self.icons.get(index).and_then(Option::as_ref)
+    }
+
+    /// Mutable twin of [`icon_widget`](Self::icon_widget) — the seam
+    /// for `set_icon`/`morph_to` drives (selection variants, state
+    /// shapes) from binding code.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::icons::builtin;
+    /// use martensite::widgets::nav_rail::NavRail;
+    ///
+    /// let mut r = NavRail::new().destination_named("data.grid", "Grid");
+    /// r.icon_widget_mut(0)
+    ///     .expect("icon destination")
+    ///     .set_icon(&builtin::selected_pip(builtin::data::DATA_GRID))
+    ///     .unwrap();
+    /// ```
+    pub fn icon_widget_mut(&mut self, index: usize) -> Option<&mut MorphIcon> {
+        self.icons.get_mut(index).and_then(Option::as_mut)
     }
 
     /// Sets all destinations at once.
@@ -170,8 +403,13 @@ impl NavRail {
     /// ```
     #[must_use]
     pub fn destinations(mut self, destinations: Vec<NavDestination>) -> Self {
+        self.icons = destinations
+            .iter()
+            .map(|d| d.icon_d().and_then(|d| Self::build_icon(d, self.enabled)))
+            .collect();
         self.destinations = destinations;
         self.selected = self.selected.filter(|i| *i < self.destinations.len());
+        self.sync_icon_inks();
         self
     }
 
@@ -187,6 +425,7 @@ impl NavRail {
     #[must_use]
     pub fn selected(mut self, index: usize) -> Self {
         self.selected = Some(index.min(self.destinations.len().saturating_sub(1)));
+        self.sync_icon_inks();
         self
     }
 
@@ -202,6 +441,12 @@ impl NavRail {
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        if !enabled {
+            for icon in self.icons.iter_mut().flatten() {
+                icon.set_ink(INK_DIM);
+            }
+        }
+        self.sync_icon_inks();
         self
     }
 
@@ -232,6 +477,7 @@ impl NavRail {
     /// ```
     pub fn set_selected(&mut self, index: Option<usize>) {
         self.selected = index.filter(|i| *i < self.destinations.len());
+        self.sync_icon_inks();
     }
 
     /// Drains a destination activation — the index the user chose.
@@ -276,9 +522,15 @@ impl Widget for NavRail {
             let lw = cx.measure_text(&d.label, LABEL_PT).unwrap_or_else(|| {
                 crate::text_paint::estimate_label_width(&d.label) * cx.scale * LABEL_PT / 14.0
             });
-            let iw = cx
-                .measure_text(&d.icon, ICON_PT)
-                .unwrap_or_else(|| cx.pt(ICON_PT));
+            let iw = if d.icon_d().is_some() {
+                // A stroke icon is a known square — no glyph measure
+                // needed, and the (empty) fallback string has no
+                // measurable width anyway.
+                cx.pt(ICON_PT)
+            } else {
+                cx.measure_text(&d.icon, ICON_PT)
+                    .unwrap_or_else(|| cx.pt(ICON_PT))
+            };
             w = w.max(lw.max(iw) + cx.pt(PILL_INSET_PT * 2.0 + LABEL_PAD_PT));
         }
         Vec2::new(
@@ -289,15 +541,34 @@ impl Widget for NavRail {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cell_rects.clear();
+        self.icon_rects.clear();
         let cell = cx.pt(CELL_PT);
         let top = cx.pt(TOP_INSET_PT);
         for i in 0..self.destinations.len() {
-            self.cell_rects.push(Rect::new(
+            let r = Rect::new(
                 bounds.origin.x,
                 bounds.origin.y + top + i as f32 * cell,
                 bounds.size.x.min(cx.pt(MAX_WIDTH_PT)),
                 cell,
-            ));
+            );
+            self.cell_rects.push(r);
+            if let Some(icon) = self.icons.get_mut(i).and_then(Option::as_mut) {
+                // Same slot the glyph path paints into: centred in the
+                // cell, `6pt` below its top.
+                let size = cx.pt(ICON_PT);
+                let ir = Rect::new(
+                    r.origin.x + (r.size.x - size) / 2.0,
+                    r.origin.y + cx.pt(6.0),
+                    size,
+                    size,
+                );
+                // `layout_child` stamps the icon's own `bounds` and
+                // forwards the rail's focusability flags.
+                cx.layout_child(icon, ir);
+                self.icon_rects.push(Some(ir));
+            } else {
+                self.icon_rects.push(None);
+            }
         }
     }
 
@@ -307,6 +578,33 @@ impl Widget for NavRail {
         if !self.enabled {
             node.set_disabled();
         }
+    }
+
+    // Hosted stroke icons are internal children — the arena ticks
+    // them (morph springs), paints them after the rail's own pass,
+    // and emits their (hidden, decorative) a11y nodes.
+    fn child_count(&self) -> usize {
+        self.icons.iter().filter(|i| i.is_some()).count()
+    }
+
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        self.icons
+            .iter()
+            .flatten()
+            .nth(index)
+            .map(|i| i as &dyn Widget)
+    }
+
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        self.icons
+            .iter_mut()
+            .flatten()
+            .nth(index)
+            .map(|i| i as &mut dyn Widget)
+    }
+
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        self.icon_rects.iter().flatten().nth(index).copied()
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -424,21 +722,25 @@ impl Widget for NavRail {
             } else {
                 INK_DIM
             };
-            // Icon glyph centred horizontally.
-            let iw = painter
-                .and_then(|p| p.measure_text(&d.icon, icon_size))
-                .unwrap_or(icon_size);
-            let ix = r.origin.x + (r.size.x - iw) / 2.0;
+            // Icon: a hosted MorphIcon paints itself in the internal-
+            // child pass (into the rect `layout` gave it); glyph
+            // destinations paint `d.icon` here, centred horizontally.
             let iy = r.origin.y + cx.pt(6.0);
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                pill,
-                kurbo::Point::new(f64::from(ix), f64::from(iy)),
-                &d.icon,
-                icon_size,
-                ink,
-            );
+            if d.icon_d().is_none() {
+                let iw = painter
+                    .and_then(|p| p.measure_text(&d.icon, icon_size))
+                    .unwrap_or(icon_size);
+                let ix = r.origin.x + (r.size.x - iw) / 2.0;
+                crate::text_paint::paint_label_clipped(
+                    painter,
+                    cx.list,
+                    pill,
+                    kurbo::Point::new(f64::from(ix), f64::from(iy)),
+                    &d.icon,
+                    icon_size,
+                    ink,
+                );
+            }
             // Label under the icon.
             let lw = painter
                 .and_then(|p| p.measure_text(&d.label, label_size))
@@ -616,5 +918,95 @@ mod tests {
             count: 1,
         };
         assert_eq!(r.event(&mut ev(&press)), EventResponse::Ignored);
+    }
+
+    /// Mixed rail: stroke-icon destinations around a glyph one.
+    fn icon_rail() -> NavRail {
+        let mut r = NavRail::new()
+            .destination_named("data.grid", "Grid")
+            .destination("⚙", "Settings")
+            .destination_icon("M3 3h18v18H3z", "Box");
+        let mut hot = HotNode::default();
+        r.layout(&mut make_cx(&mut hot), Rect::new(0.0, 0.0, 72.0, 400.0));
+        r
+    }
+
+    #[test]
+    fn icon_destinations_host_internal_children() {
+        let r = icon_rail();
+        // Only the two stroke destinations contribute children; the
+        // glyph destination doesn't (empty slot, not a child).
+        assert_eq!(r.child_count(), 2);
+        assert!(r.icon_widget(0).is_some());
+        assert!(r.icon_widget(1).is_none());
+        assert!(r.icon_widget(2).is_some());
+        for i in 0..2 {
+            assert_eq!(r.child(i).expect("child").debug_name(), "MorphIcon");
+        }
+        // Child bounds follow the icon sequence, not raw indices —
+        // destination 2's icon sits in cell 2.
+        let b0 = r.child_bounds(0).expect("icon 0 bounds");
+        let b1 = r.child_bounds(1).expect("icon 1 bounds");
+        assert!(b0.width() > 0.0 && b0.height() > 0.0);
+        assert!(b1.min_y() > b0.min_y(), "icon order/bounds wrong");
+        assert!(r.child_bounds(2).is_none());
+    }
+
+    #[test]
+    fn icon_widgets_accept_seeds_and_morphs() {
+        use crate::icons::builtin;
+        let mut r = icon_rail();
+        let selected = builtin::selected_pip(builtin::data::DATA_GRID);
+        r.icon_widget_mut(0)
+            .expect("icon")
+            .morph_to(&selected, martensite_motion::SpringConfig::SNAPPY)
+            .expect("pack d parses");
+        assert!(r.icon_widget(0).expect("icon").is_animating());
+        r.icon_widget_mut(2)
+            .expect("icon")
+            .set_icon(&selected)
+            .expect("pack d parses");
+    }
+
+    #[test]
+    fn rejected_icon_d_leaves_a_working_destination() {
+        let mut r = NavRail::new().destination_icon("bogus d", "Bad");
+        assert_eq!(r.destination_count(), 1);
+        assert_eq!(r.child_count(), 0);
+        assert!(r.icon_widget(0).is_none());
+        let mut hot = HotNode::default();
+        r.layout(&mut make_cx(&mut hot), Rect::new(0.0, 0.0, 72.0, 400.0));
+        // The destination still activates — a bad icon must not take
+        // the cell down with it.
+        let cell = r.cell_rects[0];
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(cell.origin.x + 4.0, cell.origin.y + 4.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(r.event(&mut ev(&press)), EventResponse::Handled);
+        assert_eq!(r.take_activated(), Some(0));
+    }
+
+    #[test]
+    fn destinations_bulk_build_hosts_icons() {
+        let r = NavRail::new().destinations(vec![
+            NavDestination::named("data.activity", "Telem"),
+            NavDestination::new("★", "Favs"),
+        ]);
+        assert_eq!(r.child_count(), 1);
+        assert!(r.icon_widget(0).is_some());
+        assert!(r.icon_widget(1).is_none());
+    }
+
+    #[test]
+    fn selection_moves_icon_ink_without_panicking() {
+        let mut r = icon_rail().selected(0);
+        r.set_selected(Some(2));
+        assert_eq!(r.selected_index(), Some(2));
+        r.set_selected(None);
+        assert_eq!(r.selected_index(), None);
+        let r = r.enabled(false);
+        assert_eq!(r.destination_count(), 3);
     }
 }

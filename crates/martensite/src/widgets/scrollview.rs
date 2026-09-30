@@ -1099,14 +1099,14 @@ impl Widget for ScrollView {
                         return {
                             self.set_scroll_offset(Vec2::new(self.offset.x, 0.0));
                             EventResponse::RequestRepaint
-                        }
+                        };
                     }
                     "End" => {
                         return {
                             let max = self.max_offset();
                             self.set_scroll_offset(Vec2::new(self.offset.x, max.y));
                             EventResponse::RequestRepaint
-                        }
+                        };
                     }
                     _ => return EventResponse::Ignored,
                 };

@@ -2968,6 +2968,7 @@ dependencies = [
  "martensite-window",
  "parking_lot",
  "taffy",
+ "tiny-skia",
  "unicode-segmentation",
 ]
 

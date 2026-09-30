@@ -52,6 +52,7 @@ unicode-segmentation = { workspace = true }
 
 [dev-dependencies]
 martensite-test = { workspace = true }
+tiny-skia = { workspace = true }
 
 # `martensite-plugin` pulls wasmtime (the plugin host runtime), which
 # cannot build for wasm32-unknown-unknown — plugins are host-side.
