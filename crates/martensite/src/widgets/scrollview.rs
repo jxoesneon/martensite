@@ -1,5 +1,11 @@
 //! `ScrollView` widget: a scrollable viewport with smart scrollbars.
 //!
+//! Widgets that virtualize rows themselves (`ListView`, icon walls)
+//! should stand on
+//! [`VirtualRows`](crate::widgets::VirtualRows), the standard
+//! partial-row virtualization primitive, rather than re-deriving the
+//! visible-range math.
+//!
 //! - Scrollbars appear only when the content overflows the viewport
 //!   ("smart" scrollbars).
 //! - Wheel, keyboard, content-drag, and scrollbar-thumb scrolling.

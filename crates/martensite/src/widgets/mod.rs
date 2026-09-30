@@ -3752,6 +3752,21 @@ pub mod violin;
 /// ```
 pub mod virtual_keyboard;
 
+/// Shared pixel-precise row-grid virtualization math — which rows
+/// and items intersect the viewport, partial rows included, and how
+/// much of a scroll delta the wall consumed. The standard
+/// partial-row primitive behind `ListView`-style walls.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::virtualize::VirtualRows;
+///
+/// let mut v = VirtualRows::new(100, 4, 24.0, 200.0);
+/// assert_eq!(v.visible_rows(), 0..9);
+/// ```
+pub mod virtualize;
+
 /// Speaker icon + gain rail + mute toggle (system-tray / media
 /// volume idiom) — drag, scroll, or arrow through `0..=max` with
 /// optional boost range; icon click or `m` toggles mute.
@@ -4245,6 +4260,7 @@ pub use video_grid::{Participant, VideoGrid};
 pub use viewport::Viewport;
 pub use violin::Violin;
 pub use virtual_keyboard::VirtualKeyboard;
+pub use virtualize::VirtualRows;
 pub use volume::Volume;
 pub use vu_meter::VuMeter;
 pub use waiting_room::WaitingRoom;

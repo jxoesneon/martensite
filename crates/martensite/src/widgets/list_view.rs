@@ -12,7 +12,8 @@
 //!   widgets. `position_in_set`/`size_of_set` carry each item's real
 //!   index, so AT sees honest positions inside the windowed emission.
 //! - Scrolling is owned (wheel, keyboard, and a smart vertical
-//!   scrollbar child) the way `ScrollView` manages its internals —
+//!   scrollbar child) on top of [`VirtualRows`](crate::widgets::VirtualRows),
+//!   the standard partial-row virtualization primitive —
 //!   `ScrollView` itself cannot be reused here because its content
 //!   child is painted whole; row virtualization needs the offset at
 //!   paint time.
@@ -63,6 +64,8 @@ use martensite_core::widget::{
     SemanticAction, Widget, WidgetEvent,
 };
 use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
+
+use crate::widgets::virtualize::VirtualRows;
 
 /// Default row height in logical pixels.
 const ROW_H: f32 = 24.0;
@@ -1108,13 +1111,7 @@ impl ListView {
     /// assert_eq!(l.visible_range(), 0..0); // not laid out yet
     /// ```
     pub fn visible_range(&self) -> Range<usize> {
-        let row_px = self.row_px();
-        if row_px <= 0.0 || self.items.is_empty() || self.viewport.height() <= 0.0 {
-            return 0..0;
-        }
-        let start = self.first_visible();
-        let end = ((self.scroll_y + self.viewport.height()) / row_px).ceil() as usize;
-        start..end.min(self.items.len())
+        self.vrows().visible_items()
     }
 
     /// Returns the activated item index once, if any — the
@@ -1206,18 +1203,22 @@ impl ListView {
         self.items.len() as f32 * self.row_px()
     }
 
+    /// The shared row-wall math for the current geometry — a
+    /// single-column `VirtualRows` carrying `scroll_y` as its offset.
+    fn vrows(&self) -> VirtualRows {
+        let mut v = VirtualRows::new(self.items.len(), 1, self.row_px(), self.viewport.height());
+        v.set_offset(self.scroll_y);
+        v
+    }
+
     /// Maximum scroll offset.
     fn max_scroll(&self) -> f32 {
-        (self.content_height() - self.viewport.height()).max(0.0)
+        self.vrows().max_offset()
     }
 
     /// First fully-or-partially visible item index.
     fn first_visible(&self) -> usize {
-        let row_px = self.row_px();
-        if row_px <= 0.0 || self.items.is_empty() {
-            return 0;
-        }
-        ((self.scroll_y / row_px).floor() as usize).min(self.items.len() - 1)
+        self.vrows().visible_rows().start
     }
 
     /// How many pooled rows cover the viewport (plus one partial row).
@@ -1235,7 +1236,7 @@ impl ListView {
         let row_px = self.row_px();
         Rect::new(
             self.viewport.min_x(),
-            self.viewport.min_y() + index as f32 * row_px - self.scroll_y,
+            self.viewport.min_y() + self.vrows().row_origin(index),
             self.viewport.width(),
             row_px,
         )
@@ -1271,24 +1272,21 @@ impl ListView {
 
     /// Sets the scroll offset, clamped; mirrors state onto rows/bars.
     fn set_scroll(&mut self, offset: f32) {
-        let clamped = if offset.is_finite() { offset } else { 0.0 };
-        self.scroll_y = clamped.clamp(0.0, self.max_scroll());
+        let mut v = self.vrows();
+        v.set_offset(offset);
+        self.scroll_y = v.offset();
         self.sync_rows();
         self.sync_bars();
     }
 
     /// Scrolls the minimum amount that makes row `index` fully visible.
     fn ensure_visible(&mut self, index: usize) {
-        let row_px = self.row_px();
-        if row_px <= 0.0 {
-            return;
-        }
-        let top = index as f32 * row_px;
-        let bottom = top + row_px;
-        if top < self.scroll_y {
-            self.set_scroll(top);
-        } else if bottom > self.scroll_y + self.viewport.height() {
-            self.set_scroll(bottom - self.viewport.height());
+        let mut v = self.vrows();
+        v.ensure_row_visible(index);
+        if v.offset() != self.scroll_y {
+            self.scroll_y = v.offset();
+            self.sync_rows();
+            self.sync_bars();
         }
     }
 
