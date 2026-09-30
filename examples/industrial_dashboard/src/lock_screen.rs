@@ -416,6 +416,30 @@ const TOUR_RUNNING: u8 = 0;
 const TOUR_FINISHED: u8 = 1;
 const TOUR_DISMISSED: u8 = 2;
 
+/// Window-space (device px) rects the first-run tour spotlights —
+/// the tour entry is `OverlayAnchor::Center` and measures to the
+/// full viewport, so its `target` space is the layer's viewport
+/// space: device px, origin at the window's top-left. The tour can
+/// open before the compositor's real scale/size lands (the first
+/// layout pass runs on a transient geometry), so `GateOverlays` keeps
+/// publishing into the live cell and the open tour re-reads it on
+/// every layout — the spotlight tracks chrome instead of pinning
+/// stale open-time rects.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TourTargets {
+    /// The left `NavRail` band — destination switching.
+    pub nav_rail: Rect,
+    /// The deck's content region — the live zone surface.
+    pub content: Rect,
+    /// The active zone's tab strip — merged from
+    /// `PlantModel::zone_tabs` at open time (panel-published, not a
+    /// shell rect).
+    pub zone_tabs: Rect,
+    /// The toolbar band under the header — pause/theme/filter plus
+    /// the Shell menu.
+    pub toolbar: Rect,
+}
+
 /// The first-run [`Tour`] wrapped so its terminal edges surface to the
 /// owner as a `Signal<u8>` write — the layer entry holds the widget
 /// tree, so the tour's `take_*` channels can only be drained by a
@@ -425,34 +449,60 @@ pub struct TourOverlay {
     tour: Tour,
     /// `TOUR_RUNNING` → `TOUR_FINISHED`/`TOUR_DISMISSED`.
     done: Signal<u8>,
+    /// Live target cell `GateOverlays` keeps publishing while the tour
+    /// is open — read on every `layout` so spotlight rects track the
+    /// real geometry, including the transient pre-scale pass the tour
+    /// may have opened on.
+    live: Arc<std::sync::Mutex<TourTargets>>,
+}
+
+/// A rect that was never published (no layout pass yet) degrades to a
+/// centered card rather than a degenerate spotlight ring at the origin.
+fn tour_target(r: Rect) -> Option<Rect> {
+    (r.width() > 1.0 && r.height() > 1.0).then_some(r)
 }
 
 impl TourOverlay {
-    fn new(done: Signal<u8>) -> Self {
+    fn new(done: Signal<u8>, live: Arc<std::sync::Mutex<TourTargets>>) -> Self {
+        // Snapshot once — four `live.lock()` calls inside the builder
+        // expression would hold the first guard until end-of-statement
+        // and deadlock on the second acquire.
+        let t = *live.lock().unwrap();
         let tour = Tour::new()
             .label("workstation tour")
             .step(
-                "Line A workstation",
-                "Four docked panels share one plant model — every control writes a signal every view reads.",
-                None,
+                "Choose a view",
+                "The rail switches stations — PROCESS, TELEM, EDITOR, MEDIA.",
+                tour_target(t.nav_rail),
             )
             .step(
-                "Grid & telemetry",
-                "The process grid and telemetry charts read the same cells; the toolbar pause holds the whole plant.",
-                None,
+                "Operate the surface",
+                "The panel is live — every control writes the shared model.",
+                tour_target(t.content),
             )
             .step(
-                "Zone pages",
-                "Press the panel title (or ⌘K) for the domain pages under each panel — registry, orders, comms, chrome.",
-                None,
+                "Pick a zone page",
+                "Tabs name each panel's domains — ⌘K and the bell deep-link straight in.",
+                tour_target(t.zone_tabs),
             )
             .step(
-                "Console lock",
-                "APPEARANCE ▸ CONSOLE LOCK engages the operator lock — pattern, PIN, OTP, or password releases it.",
-                None,
+                "Run the console",
+                "Pause, theme, and filter live here — lock the console via Editor ▸ CONSOLE LOCK.",
+                tour_target(t.toolbar),
             )
             .skippable(true);
-        Self { tour, done }
+        Self { tour, done, live }
+    }
+
+    /// Re-reads the live cell into the step targets — called from
+    /// `layout`, which `GateOverlays` re-arms through
+    /// [`OverlayLayer::invalidate`] whenever the published rects move.
+    fn refresh_targets(&mut self) {
+        let t = *self.live.lock().unwrap();
+        self.tour.set_step_target(0, tour_target(t.nav_rail));
+        self.tour.set_step_target(1, tour_target(t.content));
+        self.tour.set_step_target(2, tour_target(t.zone_tabs));
+        self.tour.set_step_target(3, tour_target(t.toolbar));
     }
 }
 
@@ -466,6 +516,7 @@ impl Widget for TourOverlay {
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.refresh_targets();
         cx.layout_child(&mut self.tour, bounds);
     }
 
@@ -507,6 +558,20 @@ impl Widget for TourOverlay {
 /// never painted; everything it shows lives in the layer.
 pub struct GateOverlays {
     model: PlantModel,
+    /// The shell-geometry cell `App::apply_layout_at` publishes every
+    /// layout — the tour's spotlight rects ride it (same shared-cell
+    /// seam as `lock_entry`); the zone tab strip merges in from
+    /// `PlantModel::zone_tabs`.
+    tour_targets: Arc<std::sync::Mutex<TourTargets>>,
+    /// The merged cell the live [`TourOverlay`] re-reads on `layout` —
+    /// `sync_overlay` writes it (shell rects + active zone tab strip)
+    /// and invalidates the entry whenever the rect set moves, so the
+    /// spotlight survives the transient pre-scale first pass and
+    /// mid-tour resizes.
+    tour_live: Arc<std::sync::Mutex<TourTargets>>,
+    /// What `tour_live` last carried — a change while the tour is open
+    /// re-arms the entry's layout through `OverlayLayer::invalidate`.
+    tour_synced: TourTargets,
     /// Where the app publishes the live lock-entry id — the input
     /// gate reads it to route keys and IME into the card.
     pub(crate) lock_entry: Arc<std::sync::Mutex<Option<u64>>>,
@@ -528,9 +593,12 @@ pub struct GateOverlays {
 }
 
 impl GateOverlays {
-    pub fn new(model: &PlantModel) -> Self {
+    pub fn new(model: &PlantModel, tour_targets: Arc<std::sync::Mutex<TourTargets>>) -> Self {
         Self {
             model: model.clone(),
+            tour_targets,
+            tour_live: Arc::new(std::sync::Mutex::new(TourTargets::default())),
+            tour_synced: TourTargets::default(),
             lock_entry: Arc::new(std::sync::Mutex::new(None)),
             lock_id: None,
             tour_id: None,
@@ -539,6 +607,15 @@ impl GateOverlays {
             tour_snoozed: false,
             tour_seen_prev: model.tour_seen.get(),
         }
+    }
+
+    /// The tour's current spotlight set — published shell geometry
+    /// plus the active zone's tab strip (`nav_sel` selects which of
+    /// the four `ZonePanel`s is actually mounted).
+    fn merged_targets(&self) -> TourTargets {
+        let mut targets = *self.tour_targets.lock().unwrap();
+        targets.zone_tabs = self.model.zone_tabs[self.model.nav_sel.get().min(3)].get();
+        targets
     }
 }
 
@@ -589,7 +666,18 @@ impl Widget for GateOverlays {
                         self.model
                             .log(usize::MAX, "tour dismissed — shows on next launch");
                     }
-                    _ => {}
+                    _ => {
+                        // Still running — republish the merged target
+                        // set; the spotlight follows the real geometry
+                        // rather than whatever transient rect the
+                        // first layout pass had when the tour opened.
+                        let targets = self.merged_targets();
+                        if targets != self.tour_synced {
+                            *self.tour_live.lock().unwrap() = targets;
+                            self.tour_synced = targets;
+                            overlay.invalidate(id);
+                        }
+                    }
                 }
             }
         }
@@ -609,7 +697,9 @@ impl Widget for GateOverlays {
                 self.lock_id = Some(overlay.open_with(
                     Box::new(LockScreen::new(&self.model)),
                     OverlayAnchor::Center,
-                    OverlayOptions::modal(),
+                    // Strict modal — a scrim tap must never drop the
+                    // lock screen.
+                    OverlayOptions::persistent(),
                 ));
             }
         } else if let Some(id) = self.lock_id.take() {
@@ -623,13 +713,26 @@ impl Widget for GateOverlays {
         // First run (or a RESET edge): `!tour_seen`, never snoozed or
         // shown this session, and no lock up.
         if !locked && !seen && !self.tour_shown && !self.tour_snoozed && self.tour_id.is_none() {
-            self.tour_done = Signal::new(TOUR_RUNNING);
-            self.tour_id = Some(overlay.open_with(
-                Box::new(TourOverlay::new(self.tour_done.clone())),
-                OverlayAnchor::Center,
-                OverlayOptions::modal(),
-            ));
-            self.tour_shown = true;
+            let targets = self.merged_targets();
+            // Wait for one real layout pass — a tour opened before
+            // `apply_layout_at` publishes would center every card
+            // instead of spotlighting live chrome. A still-moving
+            // rect set is fine: `tour_live` keeps the open tour on
+            // the freshest geometry until it settles.
+            if targets.nav_rail.width() > 1.0 {
+                *self.tour_live.lock().unwrap() = targets;
+                self.tour_synced = targets;
+                self.tour_done = Signal::new(TOUR_RUNNING);
+                self.tour_id = Some(overlay.open_with(
+                    Box::new(TourOverlay::new(
+                        self.tour_done.clone(),
+                        Arc::clone(&self.tour_live),
+                    )),
+                    OverlayAnchor::Center,
+                    OverlayOptions::modal(),
+                ));
+                self.tour_shown = true;
+            }
         }
     }
 

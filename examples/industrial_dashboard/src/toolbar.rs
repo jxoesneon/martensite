@@ -43,11 +43,9 @@ const TICK: usize = 2;
 const THEME: usize = 3;
 const SEP: usize = 4;
 const ALERTS: usize = 5;
-const COMMANDS: usize = 6;
-const BELL: usize = 7;
-const SHELL: usize = 8;
-const FILTER: usize = 9;
-const N: usize = 10;
+const SHELL: usize = 6;
+const FILTER: usize = 7;
+const N: usize = 8;
 
 /// Shell-menu rows — the index in the `MenuButton` item list that maps
 /// to each request signal.
@@ -56,6 +54,8 @@ const SHELL_INSPECTOR: usize = 1;
 const SHELL_CONSOLE: usize = 2;
 const SHELL_SHARE: usize = 3;
 const SHELL_PRINT: usize = 4;
+const SHELL_COMMANDS: usize = 5;
+const SHELL_BELL: usize = 6;
 
 /// Outcome signals shared between the toolbar and the app — clones
 /// share the same cells, so both sides observe state without
@@ -76,11 +76,11 @@ pub struct ToolbarSignals {
     /// Row-alert strip toggle — `TelemetryPanel` shows its `Banner`
     /// while set; the switch writes, the banner's × clears.
     pub alerts_on: Signal<bool>,
-    /// "Commands" pressed — the app navigates to Editor ▸ CHROME
-    /// (the `CommandPalette` surface).
+    /// Shell ▸ "Commands" activated — the app navigates to Editor ▸
+    /// CHROME (the `CommandPalette` surface).
     pub commands_req: Signal<bool>,
-    /// "Alerts" pressed — the app navigates to Media ▸ COMMS (the
-    /// `NotificationCenter` announcements surface).
+    /// Shell ▸ "Alerts" activated — the app navigates to Media ▸ COMMS
+    /// (the `NotificationCenter` announcements surface).
     pub bell_req: Signal<bool>,
     /// "About" pressed — `ShellOverlays` opens the modal dialog.
     pub about_req: Signal<bool>,
@@ -110,10 +110,6 @@ pub struct Toolbar {
     /// Press armed inside the pause button — the Button facade keeps no
     /// pressed state, so the parent tracks the press/release pair.
     pause_armed: bool,
-    /// See `pause_armed` — release inside fires the commands request.
-    commands_armed: bool,
-    /// See `pause_armed` — release inside fires the bell request.
-    bell_armed: bool,
     /// Child currently holding a pointer press. While set, positional
     /// events forward to it regardless of hit position — captured
     /// drags (slider thumb, text-input drag-select) leave every child
@@ -125,12 +121,10 @@ pub struct Toolbar {
     theme: Dropdown,
     sep: Separator,
     alerts: Switch,
-    commands: Button,
-    bell: Button,
     /// The shell-layer verbs (dialog, drawer, window, OS services)
-    /// folded into one menu — they're window chrome, not ops
-    /// controls, so they don't compete with Pause/filter for strip
-    /// width.
+    /// plus the navigation shortcuts — they're chrome, not ops
+    /// controls, so they fold into one menu instead of competing with
+    /// Pause/filter for strip width (and for `choice-count` budget).
     shell: MenuButton,
     filter: TextInput,
     rects: [Rect; N],
@@ -150,9 +144,9 @@ pub struct Toolbar {
     /// Row-alert strip toggle — `TelemetryPanel` shows its `Banner`
     /// while set; the switch writes, the banner's × clears.
     alerts_on: Signal<bool>,
-    /// "Commands" pressed — navigate to the `CommandPalette` surface.
+    /// "Commands" activated — navigate to the `CommandPalette` surface.
     commands_req: Signal<bool>,
-    /// "Alerts" pressed — navigate to the `NotificationCenter` surface.
+    /// "Alerts" activated — navigate to the `NotificationCenter` surface.
     bell_req: Signal<bool>,
     /// "About" pressed — `ShellOverlays` opens the modal dialog.
     about_req: Signal<bool>,
@@ -200,8 +194,6 @@ impl Toolbar {
             focused: false,
             key_target: None,
             pause_armed: false,
-            commands_armed: false,
-            bell_armed: false,
             press_target: None,
             pause: Button::new("Pause").tooltip("pause telemetry (Space in Telemetry works too)"),
             glow: CheckBox::new("glow").checked(glow_on.get()),
@@ -216,10 +208,8 @@ impl Toolbar {
             },
             sep: Separator::vertical(),
             alerts: Switch::new("alerts").on(alerts_on.get()),
-            commands: Button::new("⌘ Commands").tooltip("command palette — Editor ▸ CHROME"),
-            bell: Button::new("Alerts").tooltip("announcements — Media ▸ COMMS"),
-            // The five shell verbs as one menu — order maps to the
-            // `SHELL_*` row indices drained in `tick`.
+            // The shell verbs and navigation shortcuts as one menu —
+            // order maps to the `SHELL_*` row indices drained in `tick`.
             shell: MenuButton::new(
                 "Shell",
                 vec![
@@ -228,6 +218,8 @@ impl Toolbar {
                     MenuItem::action("Console"),
                     MenuItem::action("Share"),
                     MenuItem::action("Print"),
+                    MenuItem::action("Commands…"),
+                    MenuItem::action("Alerts"),
                 ],
             ),
             filter: TextInput::new("filter grid")
@@ -299,8 +291,6 @@ impl Toolbar {
             THEME => Some(&mut self.theme),
             SEP => Some(&mut self.sep),
             ALERTS => Some(&mut self.alerts),
-            COMMANDS => Some(&mut self.commands),
-            BELL => Some(&mut self.bell),
             SHELL => Some(&mut self.shell),
             FILTER => Some(&mut self.filter),
             _ => None,
@@ -315,8 +305,6 @@ impl Toolbar {
             THEME => Some(&self.theme),
             SEP => Some(&self.sep),
             ALERTS => Some(&self.alerts),
-            COMMANDS => Some(&self.commands),
-            BELL => Some(&self.bell),
             SHELL => Some(&self.shell),
             FILTER => Some(&self.filter),
             _ => None,
@@ -367,18 +355,16 @@ impl Widget for Toolbar {
         let mut x = bounds.origin.x + pad;
         let right = bounds.max_x() - pad;
 
-        // Fixed slots for the nine controls; the filter input takes the
+        // Fixed slots for the seven controls; the filter input takes the
         // remainder (clamped — collapses to nothing under real pressure).
         // Rect is (x, y, width, height) — not min/max corners.
-        let slots: [(usize, f32); 9] = [
+        let slots: [(usize, f32); 7] = [
             (PAUSE, 84.0 * s),
             (GLOW, 76.0 * s),
             (TICK, 180.0 * s),
             (THEME, 120.0 * s),
             (SEP, 9.0 * s),
             (ALERTS, 104.0 * s),
-            (COMMANDS, 112.0 * s),
-            (BELL, 66.0 * s),
             (SHELL, 84.0 * s),
         ];
         // A slot renders only when it fits fully — a partially-shown
@@ -460,8 +446,6 @@ impl Widget for Toolbar {
                     self.key_target = Some(i);
                     self.press_target = Some(i);
                     self.pause_armed = i == PAUSE;
-                    self.commands_armed = i == COMMANDS;
-                    self.bell_armed = i == BELL;
                     let focus_ev = if i == FILTER {
                         WidgetEvent::FocusGained
                     } else {
@@ -509,20 +493,6 @@ impl Widget for Toolbar {
                     }
                     self.pause_armed = false;
                 }
-                // Stateless buttons — an armed press + release inside
-                // fires the overlay request once.
-                if i == COMMANDS && self.commands_armed && released {
-                    if self.rects[COMMANDS].contains(pos) {
-                        self.commands_req.set(true);
-                    }
-                    self.commands_armed = false;
-                }
-                if i == BELL && self.bell_armed && released {
-                    if self.rects[BELL].contains(pos) {
-                        self.bell_req.set(true);
-                    }
-                    self.bell_armed = false;
-                }
                 r
             }
             // Non-positional: internal focus decides.
@@ -549,6 +519,8 @@ impl Widget for Toolbar {
                 Some(&SHELL_CONSOLE) => self.console_req.set(true),
                 Some(&SHELL_SHARE) => self.share_req.set(true),
                 Some(&SHELL_PRINT) => self.print_req.set(true),
+                Some(&SHELL_COMMANDS) => self.commands_req.set(true),
+                Some(&SHELL_BELL) => self.bell_req.set(true),
                 _ => {}
             }
             dirty = true;
@@ -604,7 +576,7 @@ impl Widget for Toolbar {
             ),
             raised,
         );
-        // Bottom hairline separating the strip from the dock area.
+        // Bottom hairline separating the strip from the work area.
         let y = f64::from(b.max_y()) - 1.0;
         let mut path = BezPath::new();
         path.move_to((f64::from(b.min_x()), y));

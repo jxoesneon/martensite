@@ -2,7 +2,8 @@
 //! `dump_design_lints` test and the `design-lint` CLI bin.
 //!
 //! Sweeps every zone page inside a `ScrollView` across widths and
-//! scroll offsets plus one full-dock pass, running
+//! scroll offsets plus a real-app pass per top-level destination
+//! (the NavRail's `nav_sel` selects one zone per frame), running
 //! `martensite-design-lint` over each frame's `PaintList`. With
 //! [`SweepOptions::fix`] set, each frame's scene is run through
 //! `autofix` first and the reported findings describe the *post-fix*
@@ -332,6 +333,41 @@ pub fn run(cfg: &LintConfig, opts: &SweepOptions) -> SweepReport {
                         {
                             let _ = writeln!(log, "  scope {name} {bounds:?}");
                         }
+                        match cmd {
+                            martensite::core::PaintCommand::DrawText(pt, t, s, _) => {
+                                let _ = writeln!(log, "  text {t:?} @{pt:?} s={s}");
+                            }
+                            martensite::core::PaintCommand::DrawGlyphRun(run) => {
+                                if let Some(g) = run.glyphs.first() {
+                                    let _ = writeln!(
+                                        log,
+                                        "  glyphs {} @{:.0},{:.0} s={:.0} c={:?}",
+                                        run.glyphs.len(),
+                                        g.x,
+                                        g.y,
+                                        run.font_size,
+                                        run.color
+                                    );
+                                }
+                            }
+                            martensite::core::PaintCommand::ClipRect(r) => {
+                                let _ = writeln!(log, "  clip {r:?}");
+                            }
+                            martensite::core::PaintCommand::PopClip => {
+                                let _ = writeln!(log, "  popclip");
+                            }
+                            martensite::core::PaintCommand::FillRect(r, c) => {
+                                let _ = writeln!(log, "  fill {r:?} c={c:?}");
+                            }
+                            martensite::core::PaintCommand::FillPath(p, c) => {
+                                let _ = writeln!(
+                                    log,
+                                    "  fillpath {:?} c={c:?}",
+                                    kurbo::Shape::bounding_box(p)
+                                );
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 audit_frame(&tag, &list, cfg, opts, &mut acc, &mut log, &mut out.frames);
@@ -357,42 +393,59 @@ pub fn run(cfg: &LintConfig, opts: &SweepOptions) -> SweepReport {
         }
     }
 
-    // Full-app pass — the real dock tree at a laptop-class surface,
+    // Full-app pass — the real shell at two device-pixel surfaces,
     // painted at the same 2.0 scale the config declares (a
     // paint/audit scale mismatch halves every reported pt size).
+    // `model.nav_sel` steps through all four top-level destinations so
+    // each frame is what the app actually paints for that rail
+    // selection: the NavRail plus the deck's single mounted zone.
+    // 1600×1000 is the cramped laptop case; 2560×1600 mirrors the
+    // 1280×800-pt window the app actually runs at — width-sensitive
+    // findings (a tab strip only over budget when every tab paints)
+    // need the wide frame or they only ever fire live.
     // The page filter gates this pass like any tagged pass.
-    let app_tag = "app@1600x1000";
-    if opts.page_filter.is_empty() || app_tag.contains(&opts.page_filter) {
+    const ZONE_NAMES: [&str; 4] = ["process-grid", "telemetry", "editor", "media"];
+    const APP_SIZES: [(u32, u32); 2] = [(1600, 1000), (2560, 1600)];
+    {
         app.scale.set(2.0);
         app.build_arena();
-        app.apply_dock_layout_at(1600, 1000);
         let root = app.root.expect("root");
-        let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
-        // Same fixture swap as the per-zone arenas — overwrites the
-        // `shared_painter` `build_arena` installed.
-        if let Some(p) = &fixture {
-            arena.set_text_painter(p.clone());
-        }
-        if let Some(cold) = arena.get_cold_mut(root) {
-            tick_all(&mut *cold.widget, Duration::from_millis(16));
-        }
-        let mut list = PaintList::new();
-        arena.build_paint_list(root, &mut list);
-        audit_frame(
-            "app@1600x1000",
-            &list,
-            cfg,
-            opts,
-            &mut acc,
-            &mut log,
-            &mut out.frames,
-        );
-        if let Some(d) = &opts.dump_frames {
-            let d_out =
-                crate::frames::dump_frame(d, "app@1600x1000", 0.0, &list, 1600, 1000, &mut log);
-            out.frames_written += d_out.written;
-            out.frames_checked += d_out.checked;
-            out.frames_drifted += d_out.drifted;
+        for &(w, h) in &APP_SIZES {
+            app.apply_layout_at(w, h);
+            for (sel, zname) in ZONE_NAMES.iter().enumerate() {
+                let app_tag = format!("app@{w}x{h}/{zname}");
+                if !opts.page_filter.is_empty() && !app_tag.contains(&opts.page_filter) {
+                    continue;
+                }
+                app.model.nav_sel.set(sel);
+                let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
+                // Same fixture swap as the per-zone arenas — overwrites
+                // the `shared_painter` `build_arena` installed.
+                if let Some(p) = &fixture {
+                    arena.set_text_painter(p.clone());
+                }
+                // The real arena tick — `Swap` reads `nav_sel` here, so
+                // the deck's active view switches and the selected
+                // ZonePanel drains its page requests before painting.
+                arena.tick(Duration::from_millis(16));
+                let mut list = PaintList::new();
+                arena.build_paint_list(root, &mut list);
+                audit_frame(
+                    &app_tag,
+                    &list,
+                    cfg,
+                    opts,
+                    &mut acc,
+                    &mut log,
+                    &mut out.frames,
+                );
+                if let Some(d) = &opts.dump_frames {
+                    let d_out = crate::frames::dump_frame(d, &app_tag, 0.0, &list, w, h, &mut log);
+                    out.frames_written += d_out.written;
+                    out.frames_checked += d_out.checked;
+                    out.frames_drifted += d_out.drifted;
+                }
+            }
         }
     }
 

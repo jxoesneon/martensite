@@ -31,3 +31,14 @@ docs_base = "../../docs/design-standards"
 # suppresses and carries a justification. An allow that suppresses
 # nothing in ANY frame is stale — `dump_design_lints` fails on stale
 # allows, so keep this section pruned to live suppressions only.
+
+[[allow]]
+# Process Grid's secondary strip catalogues ten deep-linkable domain
+# pages (REGISTRY…HIERARCHY). Hick's budget says ≤7 flat choices, and
+# a grouped/overflow strip is the acknowledged redesign — but the
+# strip already scrolls horizontally when it overflows, every entry
+# is ⌘K-addressable, and splitting the catalogue would orphan the
+# `page::*` deep links. Accepted exception, scoped to exactly this
+# strip so the budget still binds every other surface.
+path = "**/Process Grid/Tabs/TabStrip"
+rules = ["tab-count", "choice-count"]

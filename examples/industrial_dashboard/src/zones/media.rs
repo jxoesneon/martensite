@@ -107,8 +107,8 @@ use parking_lot::Mutex;
 
 use crate::domain::{AssetKind, CrewMember, LogChannel, PlantModel, Presence, Room};
 use crate::zone::{
-    band, fill, framed, row, scroll, strip, Bound, Page, Swap, Variant, BAND_L, BAND_M, BAND_S,
-    ZONE_GAP, ZONE_STACK,
+    band, band_alarm, fill, framed, row, scroll, strip, Bound, Page, Swap, Variant, BAND_L, BAND_M,
+    BAND_S, ZONE_GAP, ZONE_STACK,
 };
 use martensite::core::widget::DummyWidget;
 
@@ -704,6 +704,7 @@ pub fn pages(model: &PlantModel) -> Vec<(&'static str, Page)> {
         ("CAMERAS", cameras_page(model)),
         ("TRANSPORT", transport_page(model, rate)),
         ("ACOUSTIC", acoustic_page(model, eq_trim)),
+        ("TONES", tones_page(model)),
     ]
 }
 
@@ -977,7 +978,10 @@ fn comms_page(model: &PlantModel) -> Page {
         // moved to the rail so the field never shares width with
         // controls it would crush at narrow zones.
         .child(strip().child_flex(composer, 1.0))
-        .child(strip().child(reactions).child_flex(DummyWidget, 1.0))
+        // The bar takes the row's full width — the chips are
+        // left-anchored inside it, so a narrow non-flex allocation
+        // would clip the trailing chip (overflow-clip).
+        .child(strip().child_flex(reactions, 1.0))
         // The picker is an intrinsic panel (never banded): it takes
         // the column's full width and the page scroll reaches it.
         .child(emoji)
@@ -1999,6 +2003,9 @@ fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Page {
 
     let primary = Flex::column()
         .gap(ZONE_STACK)
+        // Line-state readout first — a status header that also
+        // guarantees text paints in the panel's initial viewport.
+        .child(strip().child(line).child_flex(freq, 1.0))
         .child(
             row()
                 .child_flex(band(BAND_M, spectrum), 1.0)
@@ -2009,8 +2016,7 @@ fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Page {
                 .child_flex(band(BAND_M, meter), 1.0)
                 .child_flex(band(BAND_M, equalizer), 2.0)
                 .child(loudness),
-        )
-        .child(strip().child(line).child_flex(freq, 1.0));
+        );
     // Two meter bands + the status strip — scroll-mounted so a short
     // zone scrolls instead of crushing the strip.
     Page::new(
@@ -2026,8 +2032,15 @@ fn acoustic_page(model: &PlantModel, eq_trim: Signal<Vec<f64>>) -> Page {
 // the note, StepSequencer the pattern, Metronome the tempo,
 // Fretboard/Tuner the readouts.
 // ---------------------------------------------------------------------------
-/// The annunciator tone bench — mounted as SYSTEM's bounded
-/// secondary rail (Telemetry zone), not a standalone page.
+
+/// TONES — "what does the line sound like, and what's programmed?"
+/// Theater: the tone-programmer bench reads `acoustic`/`line_running`
+/// and writes note/pattern/bpm back into the model.
+fn tones_page(m: &PlantModel) -> Page {
+    Page::new(Variant::Theater, scroll(tones_bench(m)), &m.zone_width[3])
+}
+
+/// The annunciator tone bench — the TONES page's content.
 pub(crate) fn tones_bench(model: &PlantModel) -> Flex {
     // PianoKeys index 48 = C4 (MIDI 60) → note = index + 12. Four
     // octaves covers the annunciator's usable range (incl. seed A3).
@@ -2139,6 +2152,9 @@ pub(crate) fn tones_bench(model: &PlantModel) -> Flex {
 
     Flex::column()
         .gap(ZONE_STACK)
+        // Programmed-tone readout first — a status header that also
+        // guarantees text paints in the panel's initial viewport.
+        .child(strip().child_flex(program, 1.0))
         .child(
             row()
                 .child_flex(band(BAND_M, keys), 1.0)
@@ -2148,9 +2164,11 @@ pub(crate) fn tones_bench(model: &PlantModel) -> Flex {
             row()
                 .child_flex(band(BAND_M, fret), 1.0)
                 .child(metro)
-                .child_flex(band(BAND_M, tuner), 1.0),
+                // The tuner's red needle diagnoses deviation from the
+                // *programmed alarm note* — alarm-channel paint,
+                // declared via `@alarm` so the lint lineage knows.
+                .child_flex(band_alarm(BAND_M, tuner), 1.0),
         )
-        .child(strip().child_flex(program, 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -2285,7 +2303,14 @@ mod tests {
         let names: Vec<&str> = pgs.iter().map(|(n, _)| *n).collect();
         assert_eq!(
             names,
-            ["COMMS", "ROOMS", "CAMERAS", "TRANSPORT", "ACOUSTIC",]
+            [
+                "COMMS",
+                "ROOMS",
+                "CAMERAS",
+                "TRANSPORT",
+                "ACOUSTIC",
+                "TONES"
+            ]
         );
     }
 

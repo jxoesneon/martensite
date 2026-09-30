@@ -177,7 +177,7 @@ fn zone_default_tab(zone_index: usize, model: &PlantModel) -> Option<usize> {
 
 impl Widget for ZonePanel {
     fn debug_name(&self) -> &'static str {
-        "Zone Panel"
+        self.title
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> Vec2 {
@@ -207,8 +207,8 @@ impl Widget for ZonePanel {
         );
         cx.list.push_fill_rect(b, pal.surface);
         cx.list.push_stroke_rect(b, 1.0, pal.border);
-        // Named, like the sibling panel placeholders — a dock of
-        // collapsed panels must identify which one starved.
+        // Named — a shrunken page must still identify which panel
+        // starved.
         let msg = format!("{} — enlarge to restore", self.title.to_uppercase());
         let size = 12.0 * s;
         let tw = f64::from(text.measure(&msg, size));
@@ -266,6 +266,16 @@ impl Widget for ZonePanel {
         if (self.model.zone_width[self.zone_index].get() - w_pt).abs() > 0.5 {
             self.model.zone_width[self.zone_index].set(w_pt);
         }
+        // Publish the tab-strip rect (device px, window space) beside
+        // it — the first-run tour reads it for its zone-tabs coach
+        // mark. `Tabs` pins its strip to the top `STRIP_H` of its
+        // bounds; `TAB_STRIP_PT` is this crate's mirror of it.
+        self.model.zone_tabs[self.zone_index].set_if_changed(Rect::new(
+            self.zones_bounds.min_x(),
+            self.zones_bounds.min_y(),
+            self.zones_bounds.width(),
+            (TAB_STRIP_PT * s).min(self.zones_bounds.height()),
+        ));
         self.inner.layout(cx, self.inner_bounds);
         self.zones.layout(cx, self.zones_bounds);
     }
@@ -486,8 +496,8 @@ mod tests {
         );
     }
 
-    /// The collapsed-dock regression: a compositor-tiled window handed
-    /// the bottom-row panels ~315×175 logical pt (630×350px at scale
+    /// The collapsed-panel regression: a compositor-tiled window once
+    /// handed the panels ~315×175 logical pt (630×350px at scale
     /// 2) — under the old 320×240 floor both tombstoned on first
     /// launch. The declared floor must now sit under the allotment so
     /// the arena never engages `paint_underflow`, and `layout` must

@@ -38,7 +38,7 @@ use martensite::theme::TokenKey;
 use martensite::widgets::morph_icon::{demo as morph_icon_demo, MorphIcon};
 use martensite::widgets::{Dropdown, ProgressBar, Spinner};
 
-/// Width `apply_dock_layout` reserves for the widget at the right end
+/// Width `apply_layout` reserves for the widget at the right end
 /// of the status strip (logical pt) — `paint_chrome` keeps the hints
 /// text out of the same band.
 pub const STATUSBAR_W: f32 = 260.0;
@@ -166,7 +166,7 @@ pub struct StatusBar {
     scale: Signal<f32>,
     /// The dropdown face rect resolved in `layout` — hit-testing and
     /// the focus ring both target this rather than the strip segment
-    /// `apply_dock_layout` hands us.
+    /// `apply_layout` hands us.
     dd_rect: Rect,
     focused: bool,
     dropdown: Dropdown,
@@ -767,14 +767,14 @@ mod locale_probe_tests {
         let (p, _) = probe();
         // Static value, English and Spanish.
         assert!(p.is_translated(
-            "Tab focus · drag title to dock · click sort/select · F alerts · Space pause",
+            "Tab focus · rail switches views · click sort/select · F alerts · Space pause",
             None
         ));
         // A bare fragment of a templated line is not a value itself.
         assert!(!p.is_translated("Espacio pausa", None));
         // The full es line — not a fragment.
         assert!(p.is_translated(
-            "Tab foco · arrastra el título para anclar · clic ordenar/seleccionar · F alertas · Espacio pausa",
+            "Tab foco · raíl cambia vista · clic ordenar/seleccionar · F alertas · Espacio pausa",
             None
         ));
         // Templated pattern — `focus: { $name }` resolves per locale.
@@ -804,7 +804,7 @@ mod locale_probe_tests {
         let (p, _) = probe();
         // A `fit()`-ellipsized localized string stays localized.
         assert!(p.is_translated(
-            "Tab focus · drag title to dock · click sort/select · F alerts · Sp…",
+            "Tab focus · rail switches views · click sort/select · F alerts · S…",
             None
         ));
     }

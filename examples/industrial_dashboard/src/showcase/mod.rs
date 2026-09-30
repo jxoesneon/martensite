@@ -294,8 +294,8 @@ impl Widget for ShowcasePanel {
         );
         cx.list.push_fill_rect(b, pal.surface);
         cx.list.push_stroke_rect(b, 1.0, pal.border);
-        // Named, like the sibling panel placeholders — a dock of
-        // collapsed panels must identify which one starved.
+        // Named — a shrunken surface must still identify which panel
+        // starved.
         let msg = format!("{} — enlarge to restore", self.title.to_uppercase());
         // Sole-content placeholders stay ≥12pt — micro text under the
         // Caption floor fails legibility for the only thing shown.
@@ -410,7 +410,7 @@ mod tests {
     use super::*;
     use martensite::core::HotNode;
 
-    /// Every section group, in dock order — the showcase asserts
+    /// Every section group, in rail order — the showcase asserts
     /// coverage across all four panels, not one catalog.
     fn all_sections() -> Vec<(&'static str, Vec<Entry>)> {
         let mut v = grid_sections();
@@ -596,7 +596,7 @@ mod tests {
         }
     }
 
-    /// The collapsed-dock regression applies here too: at ~315×175
+    /// The collapsed-panel regression applies here too: at ~315×175
     /// logical pt the old 320×240 floor tombstoned the whole panel.
     /// Now the op view keeps its declared floor and the scroll region
     /// keeps a live slice — or owns the panel outright when the op

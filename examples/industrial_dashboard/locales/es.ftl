@@ -1,4 +1,4 @@
-sb-hints = Tab foco · arrastra el título para anclar · clic ordenar/seleccionar · F alertas · Espacio pausa
+sb-hints = Tab foco · raíl cambia vista · clic ordenar/seleccionar · F alertas · Espacio pausa
 sb-focus = foco: { $name }
 kpi-cpu = CPU
 kpi-mem = MEM

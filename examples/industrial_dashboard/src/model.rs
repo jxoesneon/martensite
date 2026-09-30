@@ -1,12 +1,11 @@
 //! Shared demo model: the process-metrics row type, deterministic row
-//! generation, the dock-tree topology, and the theme-token palette every
-//! painted surface resolves through.
+//! generation, and the theme-token palette every painted surface
+//! resolves through.
 //!
 //! Both the headless composition (`headless.rs`) and the windowed app
 //! (`app.rs` + `panels.rs`) build on these — the windowed path is a
 //! presentation layer over the same model the CI dogfood exercises.
 
-use martensite::blessed::{DockPanel, DockTree, SplitDirection};
 use martensite::prelude::*;
 use martensite::theme::tokens::{default_dark, default_light};
 
@@ -36,59 +35,6 @@ pub fn gen_rows(n: usize) -> Vec<MetricRow> {
 /// the header KPI doesn't scan a million rows per frame.
 pub fn alert_count(rows: &[MetricRow]) -> usize {
     rows.iter().filter(|r| r.alert).count()
-}
-
-/// Builds the BSP docking tree for the four workstation panels:
-///
-/// ```text
-/// ┌──────────────────┬───────────────┐
-/// │  PROCESS GRID    │  TELEMETRY    │
-/// ├──────────────────┼───────────────┤
-/// │  EDITOR          │  MEDIA        │
-/// └──────────────────┴───────────────┘
-/// ```
-///
-/// `Vertical` split → left/right children; `Horizontal` → top/bottom.
-/// The tree is the panel-geometry authority: `DockTree::panel_rects`
-/// maps each leaf to a physical rect the arena applies verbatim.
-///
-/// The bottom row spans the full window width — nesting Media as a
-/// corner of the right column (the old topology) left it ~16% of the
-/// window, so even the compact zone tiers could not give the media
-/// surface an honest slice. Zone panels declare a ~120×80pt tombstone
-/// floor now (compact tiers cover the range up to the ~320×240pt
-/// full-layout stack), but a ~100pt-wide column would still starve
-/// every tier.
-pub fn build_dock_tree(widget_ids: &[u64; 4]) -> DockTree {
-    let mut tree = DockTree::with_capacity(8);
-    let root = tree.insert_root(DockPanel::new(widget_ids[0], "Process Grid"));
-    let (_top, bottom) = tree
-        .split_leaf(
-            root,
-            SplitDirection::Horizontal,
-            0.55,
-            DockPanel::new(widget_ids[2], "Editor"),
-        )
-        .expect("split horizontal");
-    let (_grid, _telemetry) = tree
-        .split_leaf(
-            _top,
-            SplitDirection::Vertical,
-            0.58,
-            DockPanel::new(widget_ids[1], "Telemetry"),
-        )
-        .expect("split grid");
-    // Editor gets the wider share — code needs horizontal room; Media
-    // still lands ~38% of the full window width (≈575pt at 1512),
-    // above even the zone panels' full-layout floor.
-    tree.split_leaf(
-        bottom,
-        SplitDirection::Vertical,
-        0.62,
-        DockPanel::new(widget_ids[3], "Media"),
-    )
-    .expect("split media");
-    tree
 }
 
 /// The workstation palette — every painted surface resolves through
@@ -237,9 +183,9 @@ const EDITOR_SOURCE: &str = "\
 title = \"Industrial Workstation\"
 scale = 2.0            # physical px per logical pt
 
-[dock]
-grid = 0.58            # BSP ratio, left leaf
-telemetry = 0.55       # top of right column
+[pages]
+rail = \"left\"          # top-level navigation rail
+pages = 4              # one page per panel
 
 [telemetry]
 source = \"cpu_load\"    # Signal<f64> → LineSeries

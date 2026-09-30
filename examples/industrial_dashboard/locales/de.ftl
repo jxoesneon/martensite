@@ -1,4 +1,4 @@
-sb-hints = Tab Fokus · Titel ziehen zum Andocken · Klick sortieren/auswählen · F Meldungen · Leertaste Pause
+sb-hints = Tab Fokus · Leiste wechselt Ansicht · Klick sortieren/auswählen · F Meldungen · Leertaste Pause
 sb-focus = Fokus: { $name }
 kpi-cpu = CPU
 kpi-mem = MEM

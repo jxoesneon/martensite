@@ -1,8 +1,10 @@
 //! The windowed application shell: winit event loop → `EventRouter` →
-//! `WidgetArena` → `RenderOrchestrator`, with `DockTree` as the panel
-//! geometry authority, `FocusManager` keyboard traversal, a live
-//! AccessKit tree (real AT semantics — VoiceOver reads the panels), the
-//! advisory paint-compliance audit, and the feature-gated devtools HUD.
+//! `WidgetArena` → `RenderOrchestrator`. A left `NavRail` switches
+//! `model.nav_sel` and a `Swap` deck mounts exactly one `ZonePanel` —
+//! the four zones never share the screen. `FocusManager` keyboard
+//! traversal, a live AccessKit tree (real AT semantics — VoiceOver
+//! reads the panels), the advisory paint-compliance audit, and the
+//! feature-gated devtools HUD.
 //!
 //! This is deliberately the production assembly path, not a shortcut:
 //! `can_create_surfaces` wires exactly what `docs/tutorials` walks a
@@ -18,13 +20,9 @@ use parking_lot::Mutex;
 use glam::Vec2;
 use martensite::access::actions::dispatch_a11y_action;
 use martensite::access::adapter::AccessKitAdapter;
-use martensite::blessed::{
-    DockDragSession, DockDropZone, DockNode, DockPanel, NodeId, SplitDirection,
-};
-use martensite::core::shape::Shape;
 use martensite::core::{
-    ColdNode, EventContext, HotNode, LayoutContext, NodeFlags, Rect, TextStyle, WidgetArena,
-    WidgetEvent, WidgetId,
+    ColdNode, EventContext, HotNode, LayoutConstraints, LayoutContext, NodeFlags, Rect, TextStyle,
+    WidgetArena, WidgetEvent, WidgetId,
 };
 use martensite::focus::{FocusManager, TabNavigation};
 use martensite::motion::{AnimationDriver, AnimationId};
@@ -35,6 +33,7 @@ use martensite::wgpu::{
     BackdropMode, GpuContext, OrchestratorConfig, PresentModePreference, RecoveryMachine,
     RenderOrchestrator, SurfaceWrapper,
 };
+use martensite::widgets::nav_rail::NavRail;
 use martensite::window::event::{
     ime_event_for_winit, EventRouter, ModifierKeys, MouseButton as MButton, PointerEvent,
     PointerId, PointerKind, PointerState,
@@ -61,16 +60,15 @@ use martensite::devtools::dev_session::log_ring::LogRing;
 #[cfg(feature = "devtools")]
 use martensite::devtools::hud::{DiagnosticHud, FrameTiming};
 
-use crate::lock_screen::GateOverlays;
-use crate::model::{build_dock_tree, Palette};
+use crate::lock_screen::{GateOverlays, TourTargets};
+use crate::model::Palette;
 use crate::overlays::{push_toast, ShellOverlays, ToastInbox};
-use crate::panels::{
-    fmt_count, EditorPanel, EditorSignals, GridPanel, MediaPanel, TelemetryPanel, TITLE_H,
-};
+use crate::panels::{fmt_count, EditorPanel, EditorSignals, GridPanel, MediaPanel, TelemetryPanel};
 use crate::statusbar::{build_l10n, StatusBar, LOCALE_CODES, STATUSBAR_W};
 use crate::subwindow::SubWindow;
 use crate::text::{TextPainter, TITLE_WEIGHT};
 use crate::toolbar::{Toolbar, THEME_OPTIONS, TOOLBAR_H};
+use crate::zone::{Bound, Swap};
 
 /// Header strip height (logical pt × scale), status bar likewise.
 /// The header is sized for the B1 type scale: a 24 pt display-tier
@@ -138,27 +136,6 @@ pub enum ThemeChoice {
     Dark,
     Light,
     System,
-}
-
-/// An in-flight title-bar drag. Created as a *candidate* on press;
-/// `active` flips once the pointer leaves the dead-zone, at which
-/// point `session.target_zone` drives the translucent drop preview
-/// painted by `paint_chrome`. Releasing applies the rearrangement to
-/// the BSP tree — over no leaf (or over the source leaf) it cancels.
-struct DockDrag {
-    /// Leaf the drag started on. Stale after `apply_dock_drop`'s
-    /// `remove` — targets are re-resolved by widget id.
-    source: NodeId,
-    /// The panel being moved — inserted into the tree on drop.
-    panel: DockPanel,
-    /// Press position for the dead-zone test.
-    start: Vec2,
-    /// Latest pointer position — the ghost chip rides it.
-    pos: Vec2,
-    /// Framework-side drag state: floating panel + hit-tested target.
-    session: DockDragSession,
-    /// Past the dead-zone — a real rearrange gesture, not a click.
-    active: bool,
 }
 
 /// Hysteresis-gated telemetry alarm watch — each channel notifies
@@ -277,11 +254,11 @@ pub(crate) struct App {
     /// Dedup flag for persist-failure toasts — one per failure streak,
     /// re-armed on the next successful flush.
     persist_error_shown: bool,
-    /// The toolbar strip's arena node (not a dock panel — a fixed band
-    /// under the header).
+    /// The toolbar strip's arena node — a fixed band under the
+    /// header, not a page.
     toolbar: Option<WidgetId>,
     /// The status strip's arena node — a fixed band at the window
-    /// bottom, positioned by `apply_dock_layout` like the toolbar.
+    /// bottom, positioned by `apply_layout` like the toolbar.
     statusbar: Option<WidgetId>,
     /// The overlay owner's arena node — zero-bounds widget whose
     /// `sync_overlay` reconciles the dialog, drawer, and toast strip.
@@ -293,6 +270,10 @@ pub(crate) struct App {
     /// so the input gate can route keys/IME into the card while the
     /// console is locked (`None` while unlocked).
     lock_entry: Arc<std::sync::Mutex<Option<u64>>>,
+    /// Window-space chrome rects (device px) published by
+    /// `apply_layout_at` — `GateOverlays` reads them when it builds
+    /// the first-run tour's coach-mark targets.
+    tour_targets: Arc<std::sync::Mutex<TourTargets>>,
     /// Last autosave commit seen — the `autosave_seq` edge detector
     /// for the shift-log line.
     last_autosave_seq: u64,
@@ -306,11 +287,6 @@ pub(crate) struct App {
     theme_anim: AnimationDriver,
     theme_fade: Option<(AnimationId, ThemeDiff)>,
     installed_mode: ThemeMode,
-    dock: martensite::blessed::DockTree,
-    /// Title-bar drag-to-dock gesture — `Some` from a title-band press
-    /// until the primary button releases (a click that never leaves
-    /// the dead-zone stays `!active` and changes nothing).
-    dock_drag: Option<DockDrag>,
     /// arena is built in `can_create_surfaces` once the real scale
     /// factor is known (F18 — widgets get scale through the signal).
     /// Shared (std Mutex, not parking_lot — the dev-channel socket
@@ -328,7 +304,13 @@ pub(crate) struct App {
     /// `martensite_logs` reads it.
     log_ring: Arc<LogRing>,
     pub(crate) root: Option<WidgetId>,
-    panels: [Option<WidgetId>; 4],
+    /// The left navigation rail — top-level destination switch
+    /// (grid/telemetry/editor/media), Bound to `model.nav_sel`.
+    nav: Option<WidgetId>,
+    /// The single-slot deck hosting all four `ZonePanel`s — `Swap`
+    /// reports only the active view as a child, so hidden zones stay
+    /// out of paint, hit-testing, and the a11y tree.
+    deck: Option<WidgetId>,
     panel_names: [&'static str; 4],
     router: EventRouter,
     focus: Arc<std::sync::Mutex<FocusManager>>,
@@ -455,6 +437,7 @@ impl App {
             shell_overlays: None,
             gate_overlays: None,
             lock_entry: Arc::new(std::sync::Mutex::new(None)),
+            tour_targets: Arc::new(std::sync::Mutex::new(Default::default())),
             last_autosave_seq: 0,
             pal: Palette::dark(),
             themes: ThemeDictionary::new(),
@@ -462,14 +445,13 @@ impl App {
             theme_anim: AnimationDriver::new(),
             theme_fade: None,
             installed_mode: ThemeMode::Dark,
-            dock: martensite::blessed::DockTree::with_capacity(8),
-            dock_drag: None,
             arena: None,
             dev_server: None,
             dev_session: None,
             log_ring: Arc::new(LogRing::new(512)),
             root: None,
-            panels: [None, None, None, None],
+            nav: None,
+            deck: None,
             panel_names: ["Process Grid", "Telemetry", "Editor", "Media"],
             router: EventRouter::new(),
             focus: Arc::new(std::sync::Mutex::new(FocusManager::new())),
@@ -501,9 +483,9 @@ impl App {
         }
     }
 
-    /// Builds the arena: a transparent root plus the four panel widgets
-    /// as focusable arena children, then the BSP dock tree keyed by each
-    /// child's `WidgetId` (F4 — the u64 bridge is still manual).
+    /// Builds the arena: a transparent root plus the fixed chrome
+    /// (toolbar, nav rail, status bar), the single-zone `Swap` deck,
+    /// and the overlay owners as focusable arena children.
     pub(crate) fn build_arena(&mut self) {
         let mut arena = WidgetArena::new();
         // Every widget's paint resolves tokens through PaintContext::theme.
@@ -525,10 +507,10 @@ impl App {
         self.installed_mode = mode;
 
         // Transparent root — paints nothing itself; children get their
-        // bounds from the dock tree, not Taffy (the dock BSP is the
-        // panel-geometry authority this demo exists to exercise).
-        // VISIBLE is required: `build_paint_list` skips any subtree
-        // whose root lacks it, which would hide every panel.
+        // bounds from `apply_layout`, not Taffy (the manual shell
+        // geometry authority — Taffy's two-pass path is exercised only
+        // by `--headless`). VISIBLE is required: `build_paint_list`
+        // skips any subtree whose root lacks it, hiding every panel.
         let mut root_hot = HotNode::default();
         root_hot.flags |= NodeFlags::VISIBLE;
         let root = arena.insert_with_widget(root_hot, Box::new(Container::new()));
@@ -538,7 +520,7 @@ impl App {
 
         // The toolbar strip — first child so it precedes the panels in
         // Tab order and the paint walk; its geometry is a fixed band
-        // under the header, not a dock leaf.
+        // under the header, outside the work area.
         let scale = self.scale.clone();
         {
             let mut hot = HotNode::default();
@@ -567,93 +549,138 @@ impl App {
             self.toolbar = Some(id);
         }
 
-        let mut panels: [Option<WidgetId>; 4] = [None, None, None, None];
         // Each operational panel is wrapped in a ZonePanel: the
         // operational view on top, domain-named zone pages below —
-        // every zone widget is Bound to the shared PlantModel.
-        let widgets: [Box<dyn martensite::core::Widget>; 4] = [
-            Box::new(crate::zones::ZonePanel::new(
-                Box::new(GridPanel::new(
-                    scale.clone(),
-                    self.filter_text.clone(),
-                    self.clipboard_out.clone(),
-                    self.model.grid_rows.clone(),
-                )),
-                "Process Grid",
+        // every zone widget is Bound to the shared PlantModel. The
+        // four panels are built once and hung on the deck; the rail
+        // picks which one is mounted.
+        let grid_panel = crate::zones::ZonePanel::new(
+            Box::new(GridPanel::new(
                 scale.clone(),
-                &self.model,
-                0,
-                crate::zones::grid::pages(&self.model),
+                self.filter_text.clone(),
+                self.clipboard_out.clone(),
+                self.model.grid_rows.clone(),
             )),
-            Box::new(crate::zones::ZonePanel::new(
-                Box::new(TelemetryPanel::new(
-                    scale.clone(),
-                    self.cpu.clone(),
-                    self.mem.clone(),
-                    self.paused.clone(),
-                    self.glow.clone(),
-                    self.tick_ms.clone(),
-                    self.alerts_on.clone(),
-                )),
-                "Telemetry",
+            "Process Grid",
+            scale.clone(),
+            &self.model,
+            0,
+            crate::zones::grid::pages(&self.model),
+        );
+        let telemetry_panel = crate::zones::ZonePanel::new(
+            Box::new(TelemetryPanel::new(
                 scale.clone(),
-                &self.model,
-                1,
-                crate::zones::telemetry::pages(&self.model),
+                self.cpu.clone(),
+                self.mem.clone(),
+                self.paused.clone(),
+                self.glow.clone(),
+                self.tick_ms.clone(),
+                self.alerts_on.clone(),
             )),
-            Box::new(crate::zones::ZonePanel::new(
-                Box::new(EditorPanel::new(
-                    scale.clone(),
-                    EditorSignals {
-                        tab_sel: self.editor_tab.clone(),
-                        open_in: self.open_in.clone(),
-                        doc_out: self.doc_out.clone(),
-                        open_req: self.open_req.clone(),
-                        export_req: self.export_req.clone(),
-                        font_pt: self.model.editor_font_pt.clone(),
-                        accent: self.model.editor_accent.clone(),
-                        autosave: self.model.editor_autosave.clone(),
-                        autosave_seq: self.model.autosave_seq.clone(),
-                    },
-                )),
-                "Editor",
+            "Telemetry",
+            scale.clone(),
+            &self.model,
+            1,
+            crate::zones::telemetry::pages(&self.model),
+        );
+        let editor_panel = crate::zones::ZonePanel::new(
+            Box::new(EditorPanel::new(
                 scale.clone(),
-                &self.model,
-                2,
-                crate::zones::editor::pages(&self.model),
+                EditorSignals {
+                    tab_sel: self.editor_tab.clone(),
+                    open_in: self.open_in.clone(),
+                    doc_out: self.doc_out.clone(),
+                    open_req: self.open_req.clone(),
+                    export_req: self.export_req.clone(),
+                    font_pt: self.model.editor_font_pt.clone(),
+                    accent: self.model.editor_accent.clone(),
+                    autosave: self.model.editor_autosave.clone(),
+                    autosave_seq: self.model.autosave_seq.clone(),
+                },
             )),
-            Box::new(crate::zones::ZonePanel::new(
-                Box::new(MediaPanel::new(
-                    scale.clone(),
-                    self.model.media_playing.clone(),
-                    self.model.media_pos.clone(),
-                    self.model.media_vol.clone(),
-                )),
-                "Media",
+            "Editor",
+            scale.clone(),
+            &self.model,
+            2,
+            crate::zones::editor::pages(&self.model),
+        );
+        let media_panel = crate::zones::ZonePanel::new(
+            Box::new(MediaPanel::new(
                 scale.clone(),
-                &self.model,
-                3,
-                crate::zones::media::pages(&self.model),
+                self.model.media_playing.clone(),
+                self.model.media_pos.clone(),
+                self.model.media_vol.clone(),
             )),
-        ];
-        for (i, widget) in widgets.into_iter().enumerate() {
+            "Media",
+            scale.clone(),
+            &self.model,
+            3,
+            crate::zones::media::pages(&self.model),
+        );
+
+        // Top-level navigation — a left NavRail switching
+        // `model.nav_sel`. Pull drains click/key activations into the
+        // model; push reflects model-driven writes (deep links,
+        // dev-channel `nav_sel`) back onto the pill. Kept inside the
+        // arena so it is painted, hit-tested, focusable, and present
+        // in the inspect/a11y trees (role Navigation, label
+        // "Navigation"; arrows move, Enter/Space activates).
+        {
+            let rail = NavRail::new()
+                .destination("▦", "PROCESS")
+                .destination("◐", "TELEM")
+                .destination("Aa", "EDITOR")
+                .destination("🔊", "MEDIA")
+                .selected(self.model.nav_sel.get().min(3));
+            let nav = Bound::new(rail, &self.model)
+                .pull(|r, m| {
+                    if let Some(i) = r.take_activated() {
+                        m.nav_sel.set(i);
+                    }
+                })
+                .push(|r, m| {
+                    let sel = m.nav_sel.get().min(r.destination_count().saturating_sub(1));
+                    if r.selected_index() != Some(sel) {
+                        r.set_selected(Some(sel));
+                    }
+                });
+            let mut hot = HotNode::default();
+            hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
+            let mut cold = ColdNode::new(Box::new(nav));
+            cold.debug_name = Some("NavRail");
+            let id = arena.insert(hot, cold);
+            arena.append_child(root, id).expect("append nav rail");
+            self.nav = Some(id);
+        }
+
+        // The deck — a Swap mounting exactly one ZonePanel at a time,
+        // bound straight to `model.nav_sel` (tick/layout read the
+        // signal). `child_count` reports 1 (the active view), so
+        // hidden zones are unreachable from paint, hit-test, tick, and
+        // the a11y tree; their tabs/pages resume on reactivation.
+        {
+            let deck = Swap::new(&self.model.nav_sel)
+                .view(grid_panel)
+                .view(telemetry_panel)
+                .view(editor_panel)
+                .view(media_panel);
             let mut hot = HotNode::default();
             // F21 — hit-testing is opt-in: without HIT_TEST_ENABLED the
             // router reports every node Unhandled and pointer/scroll
             // input silently dies. Required for click-sort, row
             // selection, caret placement, and wheel scrolling.
             hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
-            let mut cold = ColdNode::new(widget);
-            cold.debug_name = Some(self.panel_names[i]);
+            let mut cold = ColdNode::new(Box::new(deck));
+            cold.debug_name = Some("ZoneDeck");
             let id = arena.insert(hot, cold);
-            arena.append_child(root, id).expect("append panel");
-            panels[i] = Some(id);
+            arena.append_child(root, id).expect("append zone deck");
+            self.deck = Some(id);
         }
 
         // The status strip — last child so it follows the panels in
         // Tab order and the paint walk; its geometry is a fixed band
-        // at the window bottom (the strip region `dock_area`'s bottom
-        // already reserves), positioned by `apply_dock_layout`.
+        // at the window bottom (the strip region `work_area`'s bottom
+        // already reserves), positioned by `apply_layout`.
         {
             let mut hot = HotNode::default();
             hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
@@ -697,7 +724,7 @@ impl App {
         // (`tour_seen`). Its `lock_entry` slot is the app's handle
         // for routing keys/IME into the lock card.
         {
-            let gate = GateOverlays::new(&self.model);
+            let gate = GateOverlays::new(&self.model, Arc::clone(&self.tour_targets));
             self.lock_entry = Arc::clone(&gate.lock_entry);
             let mut hot = HotNode::default();
             hot.flags |= NodeFlags::VISIBLE;
@@ -708,8 +735,6 @@ impl App {
             self.gate_overlays = Some(id);
         }
 
-        let ids: Vec<u64> = panels.iter().map(|p| p.unwrap().to_u64()).collect();
-        self.dock = build_dock_tree(&ids.try_into().expect("4 panels"));
         let arena = Arc::new(std::sync::Mutex::new(arena));
         // Opt-in dev channel: `MARTENSITE_DEV_CHANNEL=1` in a debug
         // build serves this arena over the session socket so
@@ -720,6 +745,20 @@ impl App {
                 session.set_log_ring(Arc::clone(&self.log_ring));
                 session.set_error_surface(martensite::devtools::error_surface::ErrorSurface::new());
                 session.attach_focus_manager(Arc::clone(&self.focus));
+                // The live lint surface must evaluate the same project
+                // rules the `dump_design_lints` sweep gates on — the
+                // toml's scale factor (device px → pt), the `[classify]`
+                // reclassification of this app's layout shells, and its
+                // docs base. The bridge defaults to `LintConfig::new()`
+                // (scale 1.0), which would measure device px as pt and
+                // flag sliver-sized viewports that the CI sweep
+                // legitimately skips under `min_surface_pt`.
+                session.lint.lock().unwrap().set_config(
+                    martensite_design_lint::LintConfig::from_toml(include_str!(
+                        "../design-lint.toml"
+                    ))
+                    .expect("design-lint.toml parses"),
+                );
                 // The app's live signals, name-keyed — `signals_list`
                 // reports values, `set_signal`/`trigger_signal` writes
                 // land in the same `Signal<T>` the widgets read.
@@ -746,6 +785,7 @@ impl App {
                     signal_adapter("editor_accent", self.model.editor_accent.clone()),
                     signal_adapter("grid_rows", self.model.grid_rows.clone()),
                     signal_adapter("autosave_seq", self.model.autosave_seq.clone()),
+                    signal_adapter("nav_sel", self.model.nav_sel.clone()),
                 ] {
                     session.register_signal_adapter(adapter);
                 }
@@ -757,40 +797,27 @@ impl App {
         }
         self.arena = Some(arena);
         self.root = Some(root);
-        self.panels = panels;
         *self.focus.lock().unwrap() = focus;
-        // Focus lands on the grid first — it is the hero panel.
-        // `apply_focus_request` (not `try_set_focus`) so FocusGained
-        // actually dispatches to the widget (F22). Lock order is
-        // arena → focus, matching the dev-session probe.
-        if let (Some(arena), Some(first)) = (self.arena.as_ref(), panels[0]) {
+        // Focus lands on the deck — its active view is the grid on
+        // first boot (nav_sel seeds 0). `apply_focus_request` (not
+        // `try_set_focus`) so FocusGained actually dispatches to the
+        // widget (F22). Lock order is arena → focus, matching the
+        // dev-session probe.
+        if let (Some(arena), Some(deck)) = (self.arena.as_ref(), self.deck) {
             let mut arena = arena.lock().unwrap();
             self.focus
                 .lock()
                 .unwrap()
-                .apply_focus_request(&mut arena, first);
+                .apply_focus_request(&mut arena, deck);
         }
     }
 
-    /// The rectangle the dock BSP subdivides — below the header +
-    /// toolbar bands, above the status bar, inside the window margin.
-    /// Shared by `apply_dock_layout` and every dock hit-test so the
-    /// pointer and the painted panels always agree. Device px (the
-    /// same space as `panel_rects` output); a degenerate 1×1 rect
-    /// without a window so headless callers degrade instead of
-    /// panicking.
-    fn dock_area(&self) -> martensite::blessed::Rect {
-        let size = self
-            .window
-            .as_ref()
-            .map(|w| w.surface_size())
-            .unwrap_or_default();
-        self.dock_area_at(size.width, size.height)
-    }
-
-    /// `dock_area` at an explicit surface size — see
-    /// [`Self::apply_dock_layout_at`].
-    fn dock_area_at(&self, width: u32, height: u32) -> martensite::blessed::Rect {
+    /// The working band the shell subdivides — below the header +
+    /// toolbar strips, above the status bar, inside the window
+    /// margin. The nav rail takes a measured slice on the left and
+    /// the deck fills the rest. Device px, at an explicit surface
+    /// size — see [`Self::apply_layout_at`].
+    fn work_area_at(&self, width: u32, height: u32) -> martensite::blessed::Rect {
         let s = self.scale.get();
         let (w, h) = (f64::from(width), f64::from(height));
         let m = f64::from(MARGIN_PT * s);
@@ -798,41 +825,33 @@ impl App {
         let top = m + f64::from(HEADER_PT * s) + gap;
         let bottom = h - m - f64::from(STATUS_PT * s) - gap;
         // Toolbar band under the header — same collapse rule as
-        // `apply_dock_layout`.
+        // `apply_layout`.
         let tb_h = f64::from(TOOLBAR_H * s).min((bottom - top).max(0.0));
         let top = top + tb_h + gap;
-        // blessed::Rect is (x, y, width, height) — the dock area's
+        // blessed::Rect is (x, y, width, height) — the work area's
         // height is `bottom - top`, not `bottom`.
         martensite::blessed::Rect::new(m, top, (w - 2.0 * m).max(1.0), (bottom - top).max(1.0))
     }
 
-    /// The leaf whose `panel_rects` rect contains `(x, y)` — device
-    /// px, same space as winit `PhysicalPosition`.
-    fn leaf_at(&self, x: f64, y: f64) -> Option<(NodeId, martensite::blessed::Rect)> {
-        let area = self.dock_area();
-        self.dock.panel_rects(area).find(|(_, r)| r.contains(x, y))
-    }
-
-    /// Applies the dock tree's panel rects to the arena — the docking
-    /// model is the sole geometry authority in windowed mode (header
-    /// and status strips are hand-painted chrome; Taffy's two-pass
-    /// path is exercised only by `--headless`).
-    fn apply_dock_layout(&mut self) {
+    /// Applies the shell geometry to the arena — the manual path is
+    /// the sole layout authority in windowed mode (header and status
+    /// strips are hand-painted chrome; Taffy's two-pass path is
+    /// exercised only by `--headless`).
+    fn apply_layout(&mut self) {
         let Some(window) = &self.window else {
             return;
         };
         let size = window.surface_size();
-        self.apply_dock_layout_at(size.width, size.height);
+        self.apply_layout_at(size.width, size.height);
     }
 
-    /// `apply_dock_layout` with an explicit surface size — the real
-    /// path derives `w`/`h` from the window; tests drive this directly
-    /// to exercise geometry without a display server.
-    pub(crate) fn apply_dock_layout_at(&mut self, width: u32, height: u32) {
-        // Computed before the arena borrow — `dock_area` is the shared
-        // authority for the rect the BSP subdivides (the pointer
-        // hit-tests use it too).
-        let area = self.dock_area_at(width, height);
+    /// `apply_layout` with an explicit surface size — the real path
+    /// derives `w`/`h` from the window; tests drive this directly to
+    /// exercise geometry without a display server.
+    pub(crate) fn apply_layout_at(&mut self, width: u32, height: u32) {
+        // Computed before the arena borrow — `work_area` is the shared
+        // authority for the band the rail and deck split.
+        let area = self.work_area_at(width, height);
         let Some(arena) = self.arena.as_ref() else {
             return;
         };
@@ -857,19 +876,24 @@ impl App {
         let top = m + f64::from(HEADER_PT * s) + gap;
         let bottom = h - m - f64::from(STATUS_PT * s) - gap;
 
+        // Tour spotlight rects ride a shared cell to `GateOverlays` —
+        // captured as each band is laid out, published once at the end.
+        let mut tour_targets = *self.tour_targets.lock().unwrap();
+
         // Toolbar band under the header — collapses to nothing when the
-        // window is too short rather than eating the dock area.
+        // window is too short rather than eating the work area.
         let tb_h = f64::from(TOOLBAR_H * s).min((bottom - top).max(0.0));
         if let Some(id) = self.toolbar {
             // Rect is (x, y, width, height) — not min/max corners.
             let r = Rect::new(m as f32, top as f32, (w - 2.0 * m) as f32, tb_h as f32);
+            tour_targets.toolbar = r;
             if let Some((hot, cold)) = arena.get_both_mut(id) {
                 hot.bounds = r;
                 cold.widget.layout(&mut LayoutContext { hot, scale: s }, r);
             }
         }
 
-        // Status strip at the window bottom — `dock_area`'s `bottom`
+        // Status strip at the window bottom — `work_area`'s `bottom`
         // already leaves it free, so the band is available for the
         // locale dropdown. Right-aligned inside the strip at full
         // strip height — the widget fills this segment itself (the
@@ -900,54 +924,62 @@ impl App {
             hot.bounds = Rect::new(0.0, 0.0, w as f32, h as f32);
         }
 
-        let rects: Vec<_> = self.dock.panel_rects(area).collect();
-        for (node_id, rect) in rects {
-            let Some(martensite::blessed::DockNode::Leaf { panel }) = self.dock.node(node_id)
-            else {
-                continue;
-            };
-            let Some(wid) = WidgetId::from_u64(panel.widget_id()) else {
-                continue;
-            };
-            // Inset each leaf by half the gutter on all sides — adjacent
-            // panels then share one `gap` between them symmetrically.
+        // The navigation rail takes a measured band on the left of
+        // the work area (`NavRail::measure` is the width authority);
+        // the deck fills what remains. A window narrower than twice
+        // the rail degrades the rail rather than inverting the
+        // content rect.
+        let mut content = area;
+        if let Some(id) = self.nav {
+            if let Some((hot, cold)) = arena.get_both_mut(id) {
+                let want = cold.widget.measure(
+                    &mut LayoutContext { hot, scale: s },
+                    LayoutConstraints {
+                        min_size: Vec2::ZERO,
+                        max_size: Vec2::new(f32::MAX, f32::MAX),
+                    },
+                );
+                let rw = f64::from(want.x).min(area.width * 0.5);
+                let r = Rect::new(area.x as f32, area.y as f32, rw as f32, area.height as f32);
+                tour_targets.nav_rail = r;
+                hot.bounds = r;
+                cold.widget.layout(&mut LayoutContext { hot, scale: s }, r);
+                content = martensite::blessed::Rect::new(
+                    area.x + rw + gap.min((area.width - rw).max(0.0)),
+                    area.y,
+                    (area.width - rw - gap).max(1.0),
+                    area.height,
+                );
+            }
+        }
+
+        // The deck fills the content region — the `Swap` inside it
+        // mounts exactly one `ZonePanel`, so one top-level page owns
+        // the whole band. Half-gutter inset keeps it off the rail
+        // and the window margin.
+        if let Some(wid) = self.deck {
             let gi = gap * 0.5;
             let r = Rect::new(
-                (rect.x + gi) as f32,
-                (rect.y + gi) as f32,
-                (rect.width - gap).max(1.0) as f32,
-                (rect.height - gap).max(1.0) as f32,
+                (content.x + gi) as f32,
+                (content.y + gi) as f32,
+                (content.width - gap).max(1.0) as f32,
+                (content.height - gap).max(1.0) as f32,
             );
+            tour_targets.content = r;
             if let Some((hot, cold)) = arena.get_both_mut(wid) {
                 hot.bounds = r;
                 cold.widget.layout(&mut LayoutContext { hot, scale: s }, r);
             }
         }
 
-        // The dock's manual path assigns bounds outside the layout
-        // engine — re-evaluate underflow engagement for every node
-        // (engage/release hysteresis lives inside), then relocate
-        // focus if the focused node just became covered.
+        *self.tour_targets.lock().unwrap() = tour_targets;
+
+        // This manual path assigns bounds outside the layout engine —
+        // re-evaluate underflow engagement for every node (engage/
+        // release hysteresis lives inside), then relocate focus if
+        // the focused node just became covered.
         arena.update_underflow_all();
         self.focus.lock().unwrap().revalidate(&mut arena);
-    }
-
-    /// The active drag's preview: `(drop-zone rect, pointer pos,
-    /// panel title)` — resolved before `paint_chrome` mutably borrows
-    /// `self.chrome`.
-    fn dock_drag_preview(&self) -> Option<(martensite::blessed::Rect, Vec2, String)> {
-        let drag = self.dock_drag.as_ref()?;
-        if !drag.active {
-            return None;
-        }
-        let (target, zone) = drag.session.target_zone?;
-        let area = self.dock_area();
-        let (_, rect) = self.dock.panel_rects(area).find(|(id, _)| *id == target)?;
-        Some((
-            drag.session.preview_rect(rect, zone),
-            drag.pos,
-            drag.panel.title().to_string(),
-        ))
     }
 
     /// Paints the app-level chrome: header strip with title + live KPI
@@ -958,15 +990,16 @@ impl App {
         let sd = f64::from(s);
         let m = MARGIN_PT as f64 * sd;
         let uptime = fmt_uptime(self.started.elapsed().as_secs());
-        let drag_preview = self.dock_drag_preview();
         // The focus readout names whichever arena node holds focus —
         // panels by title, the two chrome strips by role, `none`
         // otherwise (e.g. the transparent root).
         let focused_id = self.focus.lock().unwrap().current_focus();
         let focused_name = focused_id
             .map(|id| {
-                if let Some(i) = self.panels.iter().position(|p| *p == Some(id)) {
-                    self.panel_names[i]
+                if self.deck == Some(id) {
+                    self.panel_names[self.model.nav_sel.get().min(3)]
+                } else if self.nav == Some(id) {
+                    "nav rail"
                 } else if self.toolbar == Some(id) {
                     "toolbar"
                 } else if self.statusbar == Some(id) {
@@ -991,23 +1024,29 @@ impl App {
         let chip =
             |key: &str, fallback: &str| self.l10n.get(key).unwrap_or_else(|| fallback.to_string());
         let mut kpis = vec![
-            (chip("kpi-uptime", "UPTIME"), uptime, pal.text_muted),
+            (chip("kpi-uptime", "UPTIME"), uptime, pal.text_muted, false),
             // The grid publishes its real store size — not a literal
             // that would drift from the generated table.
             (
                 chip("kpi-procs", "PROCS"),
                 fmt_count(self.model.grid_rows.get()),
                 pal.text,
+                false,
             ),
+            // Readings stay neutral — ISA-101 gray canvas: saturation
+            // is spent on the abnormal-state channels, not on values
+            // that are always "on". Their hue was decoration.
             (
                 chip("kpi-mem", "MEM"),
                 format!("{:.0}%", self.mem.get() * 100.0),
-                pal.accent2,
+                pal.text,
+                false,
             ),
             (
                 chip("kpi-cpu", "CPU"),
                 format!("{:.0}%", self.cpu.get() * 100.0),
-                pal.accent,
+                pal.text,
+                false,
             ),
             // Plant status objects — last in the vec so they're the
             // last chips dropped under width pressure (they're the
@@ -1019,12 +1058,18 @@ impl App {
                 } else {
                     chip("kpi-line-held", "HELD")
                 },
+                // RUN is the normal state — neutral ink on the gray
+                // canvas. HELD is abnormal → the warning channel, so
+                // it declares `@alarm`.
                 if self.model.line_running.get() {
-                    pal.ok
+                    pal.text
                 } else {
                     pal.warn
                 },
+                !self.model.line_running.get(),
             ),
+            // The alarm count IS the alarm channel — red is correct
+            // here; the `@alarm` scope declares it to the lint lineage.
             (
                 chip("kpi-alarms", "ALARMS"),
                 format!("{}", self.model.active_alarms().len()),
@@ -1033,6 +1078,7 @@ impl App {
                 } else {
                     pal.error
                 },
+                true,
             ),
         ];
         // Least important first — pop until the title keeps ~180pt.
@@ -1040,7 +1086,7 @@ impl App {
         loop {
             let chips_w: f64 = kpis
                 .iter()
-                .map(|(label, value, _)| {
+                .map(|(label, value, _, _)| {
                     f64::from(
                         text.measure_styled(value, 24.0 * s, DISPLAY_STYLE)
                             .max(text.measure(label, 12.0 * s)),
@@ -1057,7 +1103,7 @@ impl App {
         kpis.reverse(); // back to CPU-first order for layout below
         let chips_w: f64 = kpis
             .iter()
-            .map(|(label, value, _)| {
+            .map(|(label, value, _, _)| {
                 f64::from(
                     text.measure_styled(value, 24.0 * s, DISPLAY_STYLE)
                         .max(text.measure(label, 12.0 * s)),
@@ -1088,7 +1134,7 @@ impl App {
         // Subtitle is secondary metadata — caption tier on the muted
         // token (spec B1: `text_muted` carries units/axis/secondary).
         let subtitle = text.fit(
-            "windowed dogfood — dock · grid · telemetry · editor · media",
+            "windowed dogfood — nav · grid · telemetry · editor · media",
             12.0 * s,
             text_w as f32,
         );
@@ -1105,15 +1151,17 @@ impl App {
         // display-tier numeral (24 pt semibold, spec B1). The header
         // grew to 64 pt so the pair keeps its 8 pt chip inset.
         let mut kx = w - m - 16.0 * sd;
-        for (label, value, color) in kpis.iter().rev() {
+        for (label, value, color, alarmed) in kpis.iter().rev() {
             let vw = text.measure_styled(value, 24.0 * s, DISPLAY_STYLE);
             let lw = text.measure(label, 12.0 * s);
             let chip_w = f64::from(vw.max(lw)) + 20.0 * sd;
             kx -= chip_w;
-            list.push_fill_rect(
-                kurbo::Rect::new(kx, m + 8.0 * sd, kx + chip_w, m + header_h - 8.0 * sd),
-                pal.surface,
-            );
+            let chip_rect =
+                kurbo::Rect::new(kx, m + 8.0 * sd, kx + chip_w, m + header_h - 8.0 * sd);
+            if *alarmed {
+                list.push_scope(None, "KpiAlarm@alarm", chip_rect);
+            }
+            list.push_fill_rect(chip_rect, pal.surface);
             let label_w = text.measure(label, 12.0 * s);
             text.push(
                 list,
@@ -1124,15 +1172,21 @@ impl App {
                 None,
             );
             let value_w = text.measure_styled(value, 24.0 * s, DISPLAY_STYLE);
+            // 24 pt at ~1.2em line height runs ~1.5 pt past the chip's
+            // bottom inset; origin at 25 pt keeps the whole line box
+            // inside the chip (label 10 pt, value 25 pt, chip 8..56).
             text.push_styled(
                 list,
-                Point::new(kx + (chip_w - f64::from(value_w)) / 2.0, m + 27.0 * sd),
+                Point::new(kx + (chip_w - f64::from(value_w)) / 2.0, m + 25.0 * sd),
                 value,
                 24.0 * s,
                 *color,
                 None,
                 DISPLAY_STYLE,
             );
+            if *alarmed {
+                list.pop_scope();
+            }
             kx -= 8.0 * sd;
         }
 
@@ -1156,7 +1210,7 @@ impl App {
         // strip follows the locale dropdown live; the English literals
         // stay as fallbacks when a bundle lacks the key.
         let hints = self.l10n.get("sb-hints").unwrap_or_else(|| {
-            "Tab focus · drag title to dock · click sort/select · F alerts · Space pause"
+            "Tab focus · rail switches views · click sort/select · F alerts · Space pause"
                 .to_string()
         });
         let focus_label = self
@@ -1203,48 +1257,6 @@ impl App {
                 &label,
                 12.0 * s,
                 pal.accent,
-                None,
-            );
-        }
-
-        // Dock-rearrange preview — a translucent drop-zone fill over
-        // the target leaf plus a ghost chip with the dragged panel's
-        // title riding the pointer. Paints last so it sits above all
-        // panel chrome.
-        if let Some((preview, pos, title)) = drag_preview {
-            let pr = kurbo::Rect::new(
-                preview.x,
-                preview.y,
-                preview.x + preview.width,
-                preview.y + preview.height,
-            );
-            let target = Shape::rounded(4.0 * s);
-            list.push_fill_shape(pr, &target, Palette::alpha(pal.accent, 50));
-            list.push_stroke_shape(pr, &target, (1.5 * s).max(1.0), pal.accent);
-            let label = text.fit(&title, 12.0 * s, (160.0 * sd) as f32);
-            let lw = f64::from(text.measure(&label, 12.0 * s));
-            let chip_w = lw + 20.0 * sd;
-            let chip_h = 22.0 * sd;
-            let cx = f64::from(pos.x) + 12.0 * sd;
-            let cy = f64::from(pos.y) + 10.0 * sd;
-            let chip = kurbo::Rect::new(cx, cy, cx + chip_w, cy + chip_h);
-            list.push_fill_shape(
-                chip,
-                &Shape::squircle((chip_h * 0.4) as f32),
-                Palette::alpha(pal.raised, 230),
-            );
-            list.push_stroke_shape(
-                chip,
-                &Shape::squircle((chip_h * 0.4) as f32),
-                s.max(1.0),
-                pal.accent,
-            );
-            text.push(
-                list,
-                Point::new(cx + 10.0 * sd, cy + 5.0 * sd),
-                &label,
-                12.0 * s,
-                pal.text,
                 None,
             );
         }
@@ -1757,9 +1769,9 @@ impl App {
         self.watch_alarms();
         self.persist_prefs();
 
-        // 2. Layout — dock rects into arena nodes.
+        // 2. Layout — shell chrome rects into arena nodes.
         if self.needs_layout {
-            self.apply_dock_layout();
+            self.apply_layout();
             self.needs_layout = false;
         }
 
@@ -1994,113 +2006,6 @@ fn fmt_uptime(secs: u64) -> String {
     }
 }
 
-/// Maps a pointer position inside a target leaf's rect to a drop zone:
-/// the outer quarter of each edge is a directional split, the interior
-/// is a Center swap. Left/right zones win at the corners.
-fn drop_zone(rect: martensite::blessed::Rect, pos: Vec2) -> DockDropZone {
-    const EDGE: f64 = 0.25;
-    let fx = (f64::from(pos.x) - rect.x) / rect.width.max(f64::EPSILON);
-    let fy = (f64::from(pos.y) - rect.y) / rect.height.max(f64::EPSILON);
-    if fx < EDGE {
-        DockDropZone::Left
-    } else if fx > 1.0 - EDGE {
-        DockDropZone::Right
-    } else if fy < EDGE {
-        DockDropZone::Top
-    } else if fy > 1.0 - EDGE {
-        DockDropZone::Bottom
-    } else {
-        DockDropZone::Center
-    }
-}
-
-/// Applies a completed drag to the BSP tree.
-///
-/// `Center`/`Tab` swap the two leaves' panels in place — no structural
-/// change. Directional zones remove the source leaf (collapsing its
-/// parent split) and re-split the target at 0.5. `DockTree::remove`
-/// promotes the sibling into the parent's slot, so the target id can
-/// go stale mid-operation — it is re-resolved by widget id afterward.
-/// `split_leaf` always lands the new panel on the right/bottom, so a
-/// `Left`/`Top` drop finishes by swapping the two new child leaves.
-fn apply_dock_drop(
-    dock: &mut martensite::blessed::DockTree,
-    source: NodeId,
-    target: NodeId,
-    zone: DockDropZone,
-    dragged: DockPanel,
-) {
-    // A directional drop onto the source leaf would `remove` it and
-    // then fail re-resolution — silently deleting the panel. Callers
-    // already exclude the source during hit-testing; this guards
-    // against misuse.
-    if source == target {
-        return;
-    }
-    match zone {
-        DockDropZone::Center | DockDropZone::Tab => {
-            let Some(DockNode::Leaf {
-                panel: target_panel,
-            }) = dock.node(target)
-            else {
-                return;
-            };
-            let target_panel = target_panel.clone();
-            // Validate the source leaf before either write — if the
-            // first `node_mut` landed and the second couldn't, the
-            // dragged panel would exist in two leaves.
-            let Some(DockNode::Leaf { .. }) = dock.node(source) else {
-                return;
-            };
-            if let Some(DockNode::Leaf { panel }) = dock.node_mut(target) {
-                *panel = dragged;
-            }
-            if let Some(DockNode::Leaf { panel }) = dock.node_mut(source) {
-                *panel = target_panel;
-            }
-        }
-        DockDropZone::Left | DockDropZone::Right | DockDropZone::Top | DockDropZone::Bottom => {
-            let Some(DockNode::Leaf {
-                panel: target_panel,
-            }) = dock.node(target)
-            else {
-                return;
-            };
-            let target_wid = target_panel.widget_id();
-            dock.remove(source);
-            // The sibling's slot moved during `remove` — re-find the
-            // target leaf by its widget id rather than trusting `target`.
-            let Some((target_id, _)) = dock.panels().find(|(_, p)| p.widget_id() == target_wid)
-            else {
-                return;
-            };
-            let direction = match zone {
-                DockDropZone::Left | DockDropZone::Right => SplitDirection::Vertical,
-                _ => SplitDirection::Horizontal,
-            };
-            let Ok((orig, new)) = dock.split_leaf(target_id, direction, 0.5, dragged) else {
-                return;
-            };
-            // The dragged panel landed on the right/bottom half; for a
-            // Left/Top drop swap the two children so it reads as the
-            // leading half.
-            if matches!(zone, DockDropZone::Left | DockDropZone::Top) {
-                let (Some(DockNode::Leaf { panel: a }), Some(DockNode::Leaf { panel: b })) =
-                    (dock.node(orig).cloned(), dock.node(new).cloned())
-                else {
-                    return;
-                };
-                if let Some(DockNode::Leaf { panel }) = dock.node_mut(orig) {
-                    *panel = b;
-                }
-                if let Some(DockNode::Leaf { panel }) = dock.node_mut(new) {
-                    *panel = a;
-                }
-            }
-        }
-    }
-}
-
 impl ApplicationHandler for App {
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         if self.window.is_some() {
@@ -2172,7 +2077,7 @@ impl ApplicationHandler for App {
 
         // Arena + first layout + initial a11y tree — all before show.
         self.build_arena();
-        self.apply_dock_layout();
+        self.apply_layout();
 
         let a11y = {
             let root = self.root.expect("arena built");
@@ -2526,27 +2431,6 @@ impl ApplicationHandler for App {
 }
 
 impl App {
-    /// `true` when `pos` lands inside an open overlay popup's resolved
-    /// bounds — such presses belong to the popup (menu item, dropdown
-    /// option), which hit-tests before window content, so they must
-    /// not seed a dock-drag candidate. Mirrors `dispatch_event`'s
-    /// resolve-before-hit-test so a popup opened this frame (synthetic
-    /// event streams can press before the next `tick`) still counts.
-    fn press_over_overlay(&mut self, pos: Vec2) -> bool {
-        let Some(arena) = self.arena.as_ref() else {
-            return false;
-        };
-        let mut arena = arena.lock().unwrap();
-        let hit = {
-            let overlay = arena.overlay_mut();
-            if overlay.viewport().width() > 0.0 && overlay.viewport().height() > 0.0 {
-                overlay.layout_pass();
-            }
-            overlay.entries().any(|e| e.bounds().contains(pos))
-        };
-        hit
-    }
-
     /// While `console_locked` holds, keyboard input belongs to the
     /// lock card alone — Tab traversal, HUD toggles, and chord
     /// synthesis must not run underneath it. The card still receives
@@ -2606,127 +2490,12 @@ impl App {
         }
     }
 
-    /// Left-press inside a leaf's title band seeds a drag candidate.
-    /// The band is the top `TITLE_H·scale` of the *inset* leaf rect —
-    /// the same inset `apply_dock_layout` applies, so the hit target
-    /// matches the painted title bar exactly.
-    fn dock_press_candidate(&self, pos: PhysicalPosition<f64>) -> Option<DockDrag> {
-        let s = self.scale.get();
-        let gi = f64::from(GAP_PT * s) * 0.5;
-        let title_h = f64::from(TITLE_H * s);
-        let (id, rect) = self.leaf_at(pos.x, pos.y)?;
-        let in_band = pos.y >= rect.y + gi
-            && pos.y < rect.y + gi + title_h
-            && pos.x >= rect.x + gi
-            && pos.x < rect.x + rect.width - gi;
-        if !in_band {
-            return None;
-        }
-        let Some(DockNode::Leaf { panel }) = self.dock.node(id) else {
-            return None;
-        };
-        let start = Vec2::new(pos.x as f32, pos.y as f32);
-        Some(DockDrag {
-            source: id,
-            panel: panel.clone(),
-            start,
-            pos: start,
-            session: DockDragSession::new(panel.clone()),
-            active: false,
-        })
-    }
-
-    /// The `(leaf, zone)` under `pos`, excluding `source` — dropping
-    /// back on the dragged leaf is a cancel, not a valid target.
-    /// Shared by the Moved path (preview) and the release path so a
-    /// drop is computed from the release position, not a stale cached
-    /// target.
-    fn dock_target_at(
-        &self,
-        pos: PhysicalPosition<f64>,
-        source: NodeId,
-    ) -> Option<(NodeId, DockDropZone)> {
-        let p = Vec2::new(pos.x as f32, pos.y as f32);
-        let (id, rect) = self.leaf_at(pos.x, pos.y)?;
-        (id != source).then(|| (id, drop_zone(rect, p)))
-    }
-
-    /// Moves the drag forward: activates past the dead-zone, then
-    /// hit-tests `pos` against the *other* leaves to maintain
-    /// `session.target_zone` for the preview.
-    fn update_dock_drag(&mut self, pos: PhysicalPosition<f64>) {
-        if self.dock_drag.is_none() {
-            return;
-        }
-        let p = Vec2::new(pos.x as f32, pos.y as f32);
-        let source = self.dock_drag.as_ref().expect("checked").source;
-        let target = self.dock_target_at(pos, source);
-        let dead = 4.0 * self.scale.get();
-        let drag = self.dock_drag.as_mut().expect("checked");
-        drag.pos = p;
-        if !drag.active && p.distance(drag.start) <= dead {
-            return;
-        }
-        drag.active = true;
-        match target {
-            Some((id, zone)) => drag.session.set_target(id, zone),
-            None => drag.session.clear_target(),
-        }
-    }
-
-    /// Ends the gesture: an active drag re-hit-tests the *release*
-    /// position (a release with no preceding move — window-edge
-    /// releases, synthetic events — must not apply a stale target);
-    /// anything else is a cancel. `dock_drag` clears regardless so a
-    /// stale candidate never survives a release.
-    fn finish_dock_drag(&mut self, pos: PhysicalPosition<f64>) {
-        let Some(drag) = self.dock_drag.take() else {
-            return;
-        };
-        if !drag.active {
-            return;
-        }
-        let target = self.dock_target_at(pos, drag.source);
-        if let Some((target, zone)) = target {
-            apply_dock_drop(&mut self.dock, drag.source, target, zone, drag.panel);
-            // Relayout now — `redraw` repaints every frame regardless.
-            self.apply_dock_layout();
-        }
-    }
-
     fn dispatch_pointer(
         &mut self,
         pos: PhysicalPosition<f64>,
         state: PointerState,
         button: Option<MButton>,
     ) {
-        // Dock-rearrange bookkeeping runs before arena dispatch: the
-        // press seeds a candidate while the widget still sees the
-        // event, so clicks that never leave the dead-zone behave
-        // exactly as before. Presses consumed by an open overlay popup
-        // (menus, dropdown lists — the overlay hit-tests first) never
-        // seed a candidate. While the console is locked the scrim eats
-        // every pointer event, so no drag state may be seeded, moved,
-        // or applied at all.
-        if self.model.console_locked.get() {
-            self.dock_drag = None;
-        } else {
-            match state {
-                PointerState::Pressed if button == Some(MButton::Left) => {
-                    let p = Vec2::new(pos.x as f32, pos.y as f32);
-                    self.dock_drag = if self.press_over_overlay(p) {
-                        None
-                    } else {
-                        self.dock_press_candidate(pos)
-                    };
-                }
-                PointerState::Moved => self.update_dock_drag(pos),
-                PointerState::Released if button == Some(MButton::Left) => {
-                    self.finish_dock_drag(pos);
-                }
-                _ => {}
-            }
-        }
         let mods = {
             let mut k = ModifierKeys::empty();
             if self.mods.shift_key() {
@@ -2843,9 +2612,12 @@ fn init_tracing(log_ring: &Arc<LogRing>) {
     use tracing_subscriber::Layer;
     martensite::devtools::error_surface::install_dev_panic_hook();
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
-        ))
+        .with(
+            tracing_subscriber::fmt::layer().with_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "warn,martensite::paint_audit=info".into()),
+            ),
+        )
         .with(
             // INFO floor: the log→tracing bridge floods TRACE with
             // per-glyph shaping records (cosmic_text), which would
@@ -2895,7 +2667,7 @@ pub fn run_live_headless(
     init_tracing(&app.log_ring);
     app.scale.set(1.0);
     app.build_arena();
-    app.apply_dock_layout_at(1600, 1000);
+    app.apply_layout_at(1600, 1000);
     if app.dev_server.is_some() {
         eprintln!(
             "live-headless: dev channel serving (pid {})",
@@ -2916,161 +2688,209 @@ pub fn run_live_headless(
 mod tests {
     use super::*;
 
-    fn area() -> martensite::blessed::Rect {
-        martensite::blessed::Rect::new(0.0, 0.0, 1000.0, 600.0)
-    }
-
-    /// Leaf id of the panel holding `wid` — the widget id is the only
-    /// stable key across `remove`/`split` (slab indices move).
-    fn leaf_id(dock: &martensite::blessed::DockTree, wid: u64) -> NodeId {
-        dock.panels()
-            .find(|(_, p)| p.widget_id() == wid)
-            .map(|(id, _)| id)
-            .expect("widget docked")
-    }
-
-    /// The `panel_rects` rect of the leaf holding `wid`.
-    fn rect_of(dock: &martensite::blessed::DockTree, wid: u64) -> martensite::blessed::Rect {
-        dock.panel_rects(area())
-            .find(|(id, _)| {
-                matches!(dock.node(*id), Some(DockNode::Leaf { panel }) if panel.widget_id() == wid)
-            })
-            .map(|(_, r)| r)
-            .expect("widget docked")
-    }
-
-    /// The panel stored in leaf `id` (what a press would capture).
-    fn panel_of(dock: &martensite::blessed::DockTree, id: NodeId) -> DockPanel {
-        match dock.node(id) {
-            Some(DockNode::Leaf { panel }) => panel.clone(),
-            _ => panic!("expected leaf"),
-        }
-    }
-
-    #[test]
-    fn drop_zone_edges_and_center() {
-        let r = martensite::blessed::Rect::new(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(drop_zone(r, Vec2::new(10.0, 50.0)), DockDropZone::Left);
-        assert_eq!(drop_zone(r, Vec2::new(90.0, 50.0)), DockDropZone::Right);
-        assert_eq!(drop_zone(r, Vec2::new(50.0, 10.0)), DockDropZone::Top);
-        assert_eq!(drop_zone(r, Vec2::new(50.0, 90.0)), DockDropZone::Bottom);
-        assert_eq!(drop_zone(r, Vec2::new(50.0, 50.0)), DockDropZone::Center);
-        // Corners resolve to the left/right zone first.
-        assert_eq!(drop_zone(r, Vec2::new(5.0, 5.0)), DockDropZone::Left);
-    }
-
-    #[test]
-    fn dock_drop_center_swaps_panels() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
-        let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
-        let dragged = panel_of(&dock, src);
-        apply_dock_drop(&mut dock, src, dst, DockDropZone::Center, dragged);
-        assert_eq!(dock.panel_count(), 4);
-        // Same leaves, exchanged payloads.
-        assert_eq!(panel_of(&dock, src).widget_id(), 2);
-        assert_eq!(panel_of(&dock, dst).widget_id(), 1);
-    }
-
-    #[test]
-    fn dock_drop_right_lands_right_half() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
-        let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
-        let dragged = panel_of(&dock, src);
-        apply_dock_drop(&mut dock, src, dst, DockDropZone::Right, dragged);
-        assert_eq!(dock.panel_count(), 4);
-        let (dragged, target) = (rect_of(&dock, 1), rect_of(&dock, 2));
-        // Same band, dragged on the right half of the target's old rect.
-        assert!((dragged.y - target.y).abs() < 1e-6);
-        assert!((dragged.height - target.height).abs() < 1e-6);
-        assert!(dragged.x >= target.x + target.width - 1e-6);
-    }
-
-    #[test]
-    fn dock_drop_left_lands_left_half() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
-        let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
-        let dragged = panel_of(&dock, src);
-        apply_dock_drop(&mut dock, src, dst, DockDropZone::Left, dragged);
-        let (dragged, target) = (rect_of(&dock, 1), rect_of(&dock, 2));
-        assert!((dragged.y - target.y).abs() < 1e-6);
-        assert!(dragged.x + dragged.width <= target.x + 1e-6);
-    }
-
-    #[test]
-    fn dock_drop_top_stacks_above() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
-        let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
-        let dragged = panel_of(&dock, src);
-        apply_dock_drop(&mut dock, src, dst, DockDropZone::Top, dragged);
-        let (dragged, target) = (rect_of(&dock, 1), rect_of(&dock, 2));
-        assert!((dragged.x - target.x).abs() < 1e-6);
-        assert!((dragged.width - target.width).abs() < 1e-6);
-        assert!(dragged.y + dragged.height <= target.y + 1e-6);
-    }
-
-    #[test]
-    fn dock_drop_bottom_stacks_below() {
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
-        let (src, dst) = (leaf_id(&dock, 1), leaf_id(&dock, 2));
-        let dragged = panel_of(&dock, src);
-        apply_dock_drop(&mut dock, src, dst, DockDropZone::Bottom, dragged);
-        let (dragged, target) = (rect_of(&dock, 1), rect_of(&dock, 2));
-        assert!((dragged.x - target.x).abs() < 1e-6);
-        assert!((dragged.width - target.width).abs() < 1e-6);
-        assert!(dragged.y >= target.y + target.height - 1e-6);
-    }
-
-    /// A press landing inside an open popup belongs to the popup —
-    /// `press_over_overlay` is the gate that keeps it from also
-    /// seeding a dock-drag candidate (menu commits AND a rearrange
-    /// would both fire otherwise).
-    #[test]
-    fn press_over_overlay_matches_popup_bounds() {
-        struct Sized;
-        impl martensite::core::Widget for Sized {
-            fn measure(
-                &mut self,
-                _cx: &mut LayoutContext,
-                _c: martensite::core::LayoutConstraints,
-            ) -> Vec2 {
-                Vec2::new(200.0, 100.0)
+    /// The tour's spotlight hole as emitted into the paint list — the
+    /// four dim slabs inside the "First-Run Tour" scope describe the
+    /// cutout. Returns `(min_x, min_y, max_x, max_y)` in device px.
+    fn tour_hole(list: &PaintList) -> Option<(f64, f64, f64, f64)> {
+        let mut in_tour = false;
+        let mut slabs = Vec::new();
+        for cmd in &list.commands {
+            match cmd {
+                martensite::core::PaintCommand::PushScope { name, .. } => {
+                    in_tour = name.contains("First-Run Tour");
+                }
+                martensite::core::PaintCommand::PopScope => in_tour = false,
+                martensite::core::PaintCommand::FillRect(r, [0, 0, 0, 120]) if in_tour => {
+                    slabs.push(*r);
+                }
+                _ => {}
             }
-            fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
         }
+        if slabs.len() != 4 {
+            return None;
+        }
+        // top, bottom, left, right — emission order in Tour::paint.
+        let (top, bottom, left, right) = (slabs[0], slabs[1], slabs[2], slabs[3]);
+        Some((left.x1, top.y1, right.x0, bottom.y0))
+    }
 
+    fn press(arena: &mut WidgetArena, x: f32, y: f32) {
+        let pos = Vec2::new(x, y);
+        arena
+            .overlay_mut()
+            .dispatch_event(&WidgetEvent::PointerPressed {
+                position: pos,
+                button: martensite::core::PointerButton::Primary,
+                count: 1,
+            });
+        arena
+            .overlay_mut()
+            .dispatch_event(&WidgetEvent::PointerReleased {
+                position: pos,
+                button: martensite::core::PointerButton::Primary,
+            });
+    }
+
+    /// First-run tour end-to-end through the real layer seam: opens on
+    /// first run with spotlight holes matching published geometry,
+    /// tracks a relayout, advances through all four steps on real
+    /// button presses, and finishes into `tour_seen`.
+    #[test]
+    fn first_run_tour_spotlight_and_finish() {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.model.warm_demo_state();
+        app.scale.set(2.0);
         app.build_arena();
-        {
-            let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
-            let overlay = arena.overlay_mut();
-            overlay.set_viewport(Rect::new(0.0, 0.0, 1000.0, 600.0));
-            overlay.open(
-                Box::new(Sized),
-                martensite::core::overlay::OverlayAnchor::Bounds(Rect::new(
-                    100.0, 100.0, 200.0, 20.0,
-                )),
+        app.apply_layout_at(2520, 1490);
+        let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
+        arena.tick(Duration::from_millis(16));
+        arena.tick(Duration::from_millis(16));
+
+        let entries: Vec<u64> = arena.overlay().entries().map(|e| e.id()).collect();
+        assert_eq!(entries.len(), 1, "tour should be the only open popup");
+        let tour_id = entries[0];
+
+        let targets = *app.tour_targets.lock().unwrap();
+        let mut list = PaintList::new();
+        arena.build_paint_list(app.root.expect("root"), &mut list);
+
+        // Step 1 — nav rail spotlight.
+        let hole = tour_hole(&list).expect("step 1 spotlight hole");
+        let expect = |r: Rect| {
+            (
+                f64::from(r.min_x()),
+                f64::from(r.min_y()),
+                f64::from(r.max_x()),
+                f64::from(r.max_y()),
+            )
+        };
+        assert_eq!(hole, expect(targets.nav_rail), "step 1 hole vs rail");
+
+        // Live-refresh regression: a relayout must move the spotlight —
+        // the tour often opens on the transient pre-scale first pass.
+        drop(arena);
+        app.apply_layout_at(1600, 1000);
+        let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
+        arena.tick(Duration::from_millis(16));
+        let moved = *app.tour_targets.lock().unwrap();
+        let mut list = PaintList::new();
+        arena.build_paint_list(app.root.expect("root"), &mut list);
+        assert_eq!(
+            tour_hole(&list).expect("hole after relayout"),
+            expect(moved.nav_rail),
+            "spotlight must track the fresh rail rect, not the open-time snapshot"
+        );
+
+        // Walk the rest of the tour with real presses on Next. The
+        // button rect lives inside the entry's widget tree — reachable
+        // via the layer's internal-child seam (path [0] = the Tour).
+        let click_next = |arena: &mut WidgetArena, id: u64| {
+            let b = arena
+                .overlay_mut()
+                .widget_at_mut(id, &[0])
+                .and_then(|t| t.child_bounds(1))
+                .expect("next button rect");
+            press(
+                arena,
+                b.min_x() + b.width() / 2.0,
+                b.min_y() + b.height() / 2.0,
+            );
+        };
+        // Second tick at the new size for `zone_tabs` to republish.
+        arena.tick(Duration::from_millis(16));
+        let zone_tabs = app.model.zone_tabs[0].get();
+        for (step, want) in [(2usize, moved.content), (3, zone_tabs), (4, moved.toolbar)] {
+            click_next(&mut arena, tour_id);
+            arena.tick(Duration::from_millis(16));
+            let mut list = PaintList::new();
+            arena.build_paint_list(app.root.expect("root"), &mut list);
+            assert!(
+                want.width() > 1.0 && want.height() > 1.0,
+                "step {step} target was never published"
+            );
+            assert_eq!(
+                tour_hole(&list).expect("spotlight hole"),
+                expect(want),
+                "step {step} hole"
             );
         }
-        // The popup resolves below its anchor → x∈[100,300],
-        // y∈[120,220]. Inside counts as an overlay press; outside
-        // doesn't.
-        assert!(app.press_over_overlay(Vec2::new(150.0, 150.0)));
-        assert!(!app.press_over_overlay(Vec2::new(400.0, 400.0)));
+
+        // Final "Done" press finishes the tour → `tour_seen` latches.
+        click_next(&mut arena, tour_id);
+        arena.tick(Duration::from_millis(16));
+        assert!(arena.overlay().is_empty(), "tour should close on Done");
+        assert!(app.model.tour_seen.get(), "finish sets tour_seen");
     }
 
-    /// Tab must visit every chrome element AND every panel — the
+    /// Outside-card dismissal is the snooze path: the tour closes,
+    /// `tour_seen` stays `false`, and the tour does not re-present this
+    /// session (remind-me-later), then the lock screen rejects a scrim
+    /// press (`persistent()` opt-out).
+    #[test]
+    fn tour_dismiss_and_lock_persistent() {
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.model.warm_demo_state();
+        app.scale.set(2.0);
+        app.build_arena();
+        app.apply_layout_at(2520, 1490);
+        let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
+        arena.tick(Duration::from_millis(16));
+        arena.tick(Duration::from_millis(16));
+        assert!(
+            arena.overlay().entries().next().is_some(),
+            "tour should be open"
+        );
+
+        // Press on the dimmed backdrop — inside the full-viewport
+        // entry but outside the card — dismisses via Tour::event.
+        press(&mut arena, 2400.0, 100.0);
+        arena.tick(Duration::from_millis(16));
+        assert!(arena.overlay().is_empty(), "scrim press dismisses the tour");
+        assert!(
+            !app.model.tour_seen.get(),
+            "dismissal must snooze, not mark seen"
+        );
+        arena.tick(Duration::from_millis(16));
+        arena.tick(Duration::from_millis(16));
+        assert!(
+            arena.overlay().is_empty(),
+            "snoozed tour must not re-present this session"
+        );
+
+        // Console lock: persistent — a scrim press is swallowed.
+        app.model.console_locked.set(true);
+        arena.tick(Duration::from_millis(16));
+        let lock_id = arena
+            .overlay()
+            .entries()
+            .next()
+            .expect("lock screen open")
+            .id();
+        press(&mut arena, 100.0, 100.0);
+        assert!(
+            arena.overlay().is_open(lock_id),
+            "persistent lock must survive an outside press"
+        );
+        app.model.console_locked.set(false);
+        arena.tick(Duration::from_millis(16));
+        assert!(!arena.overlay().is_open(lock_id), "unlock closes the lock");
+    }
+
+    /// Tab must visit every chrome element AND the deck — the
     /// `tab` + `apply_focus_request` pairing left `FocusGained`
     /// undispatched, so focus *visually* never left the chin bar
-    /// even though `current_focus` advanced.
+    /// even though `current_focus` advanced. The zones are one arena
+    /// node (the Swap deck); their internals get Tab/arrow routing
+    /// through the widget's own event path.
     #[test]
     fn tab_traversal_visits_panels_and_chrome() {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.build_arena();
         let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
         let mut visited = std::collections::HashSet::new();
-        // One full cycle — six FOCUSABLE nodes: toolbar, four
-        // panels, status bar.
-        for _ in 0..6 {
+        // One full cycle — four FOCUSABLE arena nodes: toolbar, nav
+        // rail, zone deck, status bar.
+        for _ in 0..4 {
             if let Some(id) = app
                 .focus
                 .lock()
@@ -3080,15 +2900,17 @@ mod tests {
                 visited.insert(id.to_u64());
             }
         }
-        for p in app.panels.iter().flatten() {
-            assert!(
-                visited.contains(&p.to_u64()),
-                "panel never received Tab focus"
-            );
-        }
+        assert!(
+            visited.contains(&app.deck.expect("deck").to_u64()),
+            "deck never received Tab focus"
+        );
+        assert!(
+            visited.contains(&app.nav.expect("nav").to_u64()),
+            "nav rail never received Tab focus"
+        );
         assert!(visited.contains(&app.toolbar.expect("toolbar").to_u64()));
         assert!(visited.contains(&app.statusbar.expect("statusbar").to_u64()));
-        assert_eq!(visited.len(), 6);
+        assert_eq!(visited.len(), 4);
     }
 
     /// Scratch: for every OccludedText lint, identify the covering
@@ -3239,7 +3061,9 @@ mod tests {
 
     /// The toolbar's chrome launchers translate into zone page
     /// requests: Commands → Editor ▸ CHROME (2,3), Bell → Media ▸
-    /// COMMS (3,0). The ZonePanel tick then activates the tab.
+    /// COMMS (3,0). The ZonePanel tick then activates the tab. Each
+    /// request also moves `nav_sel` — a deep link into a hidden zone
+    /// surfaces its panel (same-tick writes are last-wins).
     #[test]
     fn chrome_launchers_navigate() {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
@@ -3249,8 +3073,53 @@ mod tests {
         let req = app.model.page_request.get();
         assert_eq!(req[2], Some(3), "commands → editor CHROME");
         assert_eq!(req[3], Some(0), "bell → media COMMS");
+        assert_eq!(
+            app.model.nav_sel.get(),
+            3,
+            "last deep link wins the top-level selection"
+        );
         assert!(!app.commands_req.get());
         assert!(!app.bell_req.get());
+    }
+
+    /// The deck mounts exactly one zone at a time — the nav
+    /// selection moves the Swap's single visible child, the rail's
+    /// push reflects it back, and hidden zones stay out of the paint
+    /// walk (their widget names never enter the command stream).
+    #[test]
+    fn nav_selection_mounts_one_zone() {
+        let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.model.warm_demo_state();
+        app.scale.set(1.0);
+        app.build_arena();
+        app.apply_layout_at(2400, 1600);
+        for (sel, want, absent) in [
+            (0usize, "Process Grid", "Telemetry"),
+            (1, "Telemetry", "Process Grid"),
+            (2, "Editor", "Media"),
+            (3, "Media", "Editor"),
+        ] {
+            app.model.nav_sel.set(sel);
+            let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
+            arena.tick(Duration::from_millis(16));
+            let mut list = PaintList::new();
+            arena.build_paint_list(app.root.expect("root"), &mut list);
+            let mut scopes = String::new();
+            for cmd in &list.commands {
+                if let martensite::core::PaintCommand::PushScope { name, .. } = cmd {
+                    scopes.push_str(name);
+                    scopes.push('\n');
+                }
+            }
+            assert!(
+                scopes.contains(want),
+                "nav_sel={sel}: {want} missing from paint scopes"
+            );
+            assert!(
+                !scopes.contains(absent),
+                "nav_sel={sel}: {absent} leaked into the paint walk"
+            );
+        }
     }
 
     /// Scratch: dump every audit lint at a given scale/size.
@@ -3261,7 +3130,7 @@ mod tests {
         app.model.warm_demo_state();
         app.scale.set(1.0);
         app.build_arena();
-        app.apply_dock_layout_at(3200, 2100);
+        app.apply_layout_at(3200, 2100);
         let arena = app.arena.as_ref().expect("arena").lock().unwrap();
         let mut list = PaintList::new();
         arena.build_paint_list(app.root.expect("root"), &mut list);
@@ -3442,7 +3311,8 @@ mod tests {
 
     /// Scratch: run the `martensite-design-lint` catalog over the same
     /// surfaces `dump_zone_lints` paints — each zone page in a
-    /// `ScrollView` across widths, plus one full-app dock pass — with
+    /// `ScrollView` across widths, plus one full-app pass per rail
+    /// destination — with
     /// `design-lint.toml` supplying the scale factor, name
     /// reclassification, and path allows. Findings dedupe on
     /// (rule, message); `PAGE_FILTER` narrows the zone loop and
@@ -3519,7 +3389,7 @@ mod tests {
     }
 
     /// Reproduces the windowed paint audit headless: drive the real
-    /// dock layout at a fixed surface size, build the paint list,
+    /// shell layout at a fixed surface size, build the paint list,
     /// and audit — no widget may emit text fully outside its clip
     /// (invisible output = wasted work or a positioning bug).
     #[test]
@@ -3529,7 +3399,7 @@ mod tests {
         app.model.warm_demo_state();
         app.build_arena();
         eprintln!("arena built");
-        app.apply_dock_layout_at(1600, 1000);
+        app.apply_layout_at(1600, 1000);
         eprintln!("layout done");
         let arena = app.arena.as_ref().expect("arena").lock().unwrap();
         let mut list = PaintList::new();
@@ -3550,54 +3420,68 @@ mod tests {
         );
     }
 
-    #[test]
-    fn dock_drop_onto_sibling_re_resolves_target() {
-        // Editor (3) and Media (4) are siblings — removing 3 promotes
-        // 4 into the parent slot, invalidating its NodeId mid-drop.
-        let mut dock = build_dock_tree(&[1, 2, 3, 4]);
-        let (src, dst) = (leaf_id(&dock, 3), leaf_id(&dock, 4));
-        let dragged = panel_of(&dock, src);
-        apply_dock_drop(&mut dock, src, dst, DockDropZone::Right, dragged);
-        assert_eq!(dock.panel_count(), 4);
-        let (dragged, target) = (rect_of(&dock, 3), rect_of(&dock, 4));
-        assert!((dragged.y - target.y).abs() < 1e-6);
-        assert!(dragged.x >= target.x + target.width - 1e-6);
-    }
-
-    /// The semantic tree VoiceOver consumes: panels expose real roles
-    /// and live labels, chrome is named, and the editor publishes its
-    /// buffer as its value — the content path, headlessly.
+    /// The semantic tree VoiceOver consumes: the nav rail is a named
+    /// `Navigation` landmark, the deck mounts exactly one zone, and
+    /// each selection exposes that zone's roles/labels — hidden zones
+    /// emit no a11y nodes at all. The editor publishes its buffer as
+    /// its value — the content path, headlessly.
     #[test]
     fn a11y_tree_exposes_roles_labels_and_values() {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
+        app.model.warm_demo_state();
         app.build_arena();
+        app.apply_layout_at(2400, 1600);
         let mut arena = app.arena.as_ref().expect("arena").lock().unwrap();
         let mut adapter = AccessKitAdapter::new(app.root.expect("root"));
-        let update = adapter.build_update(&mut arena);
 
-        let roles: Vec<accesskit::Role> = update.nodes.iter().map(|(_, n)| n.role()).collect();
-        for want in [
-            accesskit::Role::Table,              // Process Grid
-            accesskit::Role::Image,              // Telemetry
-            accesskit::Role::MultilineTextInput, // Editor
+        for (sel, label, role) in [
+            (0usize, "Process Grid", Some(accesskit::Role::Table)),
+            (1, "Telemetry", Some(accesskit::Role::Image)),
+            (2, "Editor", Some(accesskit::Role::MultilineTextInput)),
+            (3, "Media", None),
         ] {
-            assert!(roles.contains(&want), "missing role {want:?}");
-        }
+            app.model.nav_sel.set(sel);
+            arena.tick(Duration::from_millis(16));
+            let update = adapter.build_update(&mut arena);
 
-        let labels: Vec<&str> = update.nodes.iter().filter_map(|(_, n)| n.label()).collect();
-        for want in ["Process Grid", "Telemetry", "Editor"] {
+            let roles: Vec<accesskit::Role> = update.nodes.iter().map(|(_, n)| n.role()).collect();
             assert!(
-                labels.iter().any(|l| l.contains(want)),
-                "missing label {want}"
+                roles.contains(&accesskit::Role::Navigation),
+                "nav_sel={sel}: rail missing from the a11y tree"
             );
+            if let Some(role) = role {
+                assert!(
+                    roles.contains(&role),
+                    "nav_sel={sel}: missing role {role:?}"
+                );
+            }
+
+            let labels: Vec<&str> = update.nodes.iter().filter_map(|(_, n)| n.label()).collect();
+            assert!(
+                labels.iter().any(|l| l.contains(label)),
+                "nav_sel={sel}: missing label {label}"
+            );
+            // The hidden zones' labels must be absent — the deck
+            // reports only the active view, so the tree can't leak
+            // a sibling panel.
+            for other in ["Process Grid", "Telemetry", "Editor", "Media"] {
+                if other != label {
+                    assert!(
+                        !labels.iter().any(|l| l.contains(other)),
+                        "nav_sel={sel}: hidden zone {other} leaked into the tree"
+                    );
+                }
+            }
+            if sel == 2 {
+                assert!(
+                    update
+                        .nodes
+                        .iter()
+                        .any(|(_, n)| n.value().is_some_and(|v| !v.is_empty())),
+                    "editor publishes no value"
+                );
+            }
         }
-        assert!(
-            update
-                .nodes
-                .iter()
-                .any(|(_, n)| n.value().is_some_and(|v| !v.is_empty())),
-            "editor publishes no value"
-        );
     }
 
     /// Prints the full widget tree — arena nodes and widget-internal
@@ -3613,7 +3497,7 @@ mod tests {
         // data (history rings, acoustic bands) like a live session.
         app.model.warm_demo_state();
         app.build_arena();
-        app.apply_dock_layout_at(1680, 980);
+        app.apply_layout_at(1680, 980);
         // Parent-first + bounds-gated, mirroring
         // `WidgetArena::tick_recursive` (see `tick_all` above).
         fn tick_deep(w: &mut dyn martensite::core::Widget, dt: Duration) {
@@ -3650,7 +3534,7 @@ mod tests {
         let mut app = App::new(Some(ThemeChoice::Dark), false);
         app.model.warm_demo_state();
         app.build_arena();
-        app.apply_dock_layout_at(3024, 1694);
+        app.apply_layout_at(3024, 1694);
         let w = 3024.0f64;
         let h = 1694.0f64;
         let mut list = PaintList::new();

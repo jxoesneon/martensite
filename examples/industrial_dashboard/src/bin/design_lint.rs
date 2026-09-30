@@ -2,8 +2,9 @@
 //! dashboard.
 //!
 //! Sweeps every zone page in a `ScrollView` across widths and scroll
-//! offsets plus the full dock, running `martensite-design-lint` over
-//! each frame — the same surfaces as the `dump_design_lints` test.
+//! offsets plus one full-app frame per rail destination, running
+//! `martensite-design-lint` over each frame — the same surfaces as
+//! the `dump_design_lints` test.
 //!
 //! ```text
 //! cargo run -p industrial_dashboard --bin design_lint -- [FLAGS]

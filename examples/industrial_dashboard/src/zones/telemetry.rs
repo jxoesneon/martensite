@@ -1,7 +1,9 @@
 //! Telemetry zone — the live-process panel's functional pages.
 //!
 //! Seven domain-named tabs per the Design Council's bind-or-cut
-//! verdict (docket `20260921`): every mounted widget reads
+//! verdict (docket `20260921`) — the annunciator tone bench moved to
+//! MEDIA ▸ TONES so this strip stays inside the scanning budget:
+//! every mounted widget reads
 //! [`PlantModel`] state (`push`) or publishes operator interaction
 //! back into it (`pull`). Series charts share the `cpu_hist`/
 //! `mem_hist` rings — no per-widget buffers.
@@ -109,8 +111,8 @@ use crate::domain::{
 };
 use crate::model::Palette;
 use crate::zone::{
-    band, framed, row, strip, Bound, Page, Swap, Variant, BAND_L, BAND_M, BAND_S, ZONE_GAP,
-    ZONE_STACK,
+    band, band_alarm, framed, row, strip, Bound, Page, Swap, Variant, BAND_L, BAND_M, BAND_S,
+    ZONE_GAP, ZONE_STACK,
 };
 use martensite::core::widget::DummyWidget;
 
@@ -1170,25 +1172,38 @@ fn alarm_board(m: &PlantModel) -> Page {
                             }),
                         )
                         .child(
+                            // Line-state dot — the stack light already
+                            // annunciates FAULT/WARN, so this lamp tracks
+                            // only whether the line is running. Mirroring
+                            // alarm severity here would paint a second
+                            // alarm-red surface alongside the lit FAULT
+                            // lamp and push the page past ISA-18.2's
+                            // simultaneous-alert cap.
                             Bound::new(StatusDot::new("LINE").status(Status::Ok), m).push(
                                 |d: &mut StatusDot, m| {
-                                    let (_, warn, crit) = m.alarm_distribution();
-                                    let st = if crit > 0 {
-                                        Status::Error
-                                    } else if warn > 0 {
-                                        Status::Warning
-                                    } else if !m.line_running.get() {
-                                        Status::Off
-                                    } else {
+                                    d.set_status(if m.line_running.get() {
                                         Status::Ok
-                                    };
-                                    d.set_status(st);
+                                    } else {
+                                        Status::Off
+                                    });
                                 },
                             ),
                         )
                         .child(
-                            Bound::new(Badge::wrap(Text::new("ACTIVE ALARMS")).with_count(0), m)
-                                .push(|b: &mut Badge, m| b.count = active_count(m) as u32),
+                            // Count chip — the panel and stack light
+                            // already carry the alarm channel; the
+                            // tally itself is informational, so it
+                            // paints a muted slate instead of spending
+                            // a saturated hue (also keeps the
+                            // simultaneous-signal count under ISA-101's
+                            // triage cap).
+                            Bound::new(
+                                Badge::wrap(Text::new("ACTIVE ALARMS"))
+                                    .with_count(0)
+                                    .color(martensite::theme::Oklab::from_srgb(0.32, 0.36, 0.42)),
+                                m,
+                            )
+                            .push(|b: &mut Badge, m| b.count = active_count(m) as u32),
                         ),
                     1.0,
                 ),
@@ -1666,7 +1681,7 @@ fn distributions(m: &PlantModel) -> Page {
     let g0 = Flex::column().gap(ZONE_GAP).child(
         row()
             .child_flex(
-                band(
+                band_alarm(
                     BAND_M,
                     framed(
                         1.0,
@@ -2653,8 +2668,18 @@ fn system(m: &PlantModel) -> Page {
                         }),
                 ),
         )
-        .child(group_label("CONTROLS — WRITE BACK TO THE MODEL"))
-        .child(
+        // One section header for both strips — the meters + lamps +
+        // switches sit under the 8-element packing floor only while
+        // the sections share a caption (see the packing-density
+        // `max_elements` rule); the tone bench lives under MEDIA ▸
+        // TONES — the annunciator programmer is an audio surface.
+        .child(group_label(
+            "CONTROLS & LINE STATE — WRITE BACK TO THE MODEL",
+        ))
+        // The four write-back switches don't compress — at a narrow
+        // zone the strip scrolls horizontally rather than clipping a
+        // control mid-fill (the `overflow-clip` finding).
+        .child(martensite::widgets::scrollview::ScrollView::horizontal(
             strip()
                 .child(
                     Bound::new(Switch::new("LINE RUNNING").on(m.line_running.get()), m)
@@ -2701,8 +2726,7 @@ fn system(m: &PlantModel) -> Page {
                         }),
                 )
                 .child_flex(DummyWidget, 1.0),
-        )
-        .child(group_label("LAMPS — GLOBAL STATE"))
+        ))
         .child(
             strip()
                 .child(
@@ -2741,11 +2765,10 @@ fn system(m: &PlantModel) -> Page {
                 .child_flex(DummyWidget, 1.0),
         );
     Page::new(
-        Variant::MasterDetail,
+        Variant::Theater,
         crate::zone::fill(primary),
         &m.zone_width[1],
     )
-    .rail("Tones", crate::zones::media::tones_bench(m))
 }
 
 // ---------------------------------------------------------------------------
@@ -2772,7 +2795,7 @@ mod tests {
     fn pages_are_domain_named() {
         let m = seeded();
         let pages = pages(&m);
-        assert!((4..=8).contains(&pages.len()));
+        assert!((4..=7).contains(&pages.len()));
         let labels: Vec<&str> = pages.iter().map(|(l, _)| *l).collect();
         assert_eq!(
             labels,

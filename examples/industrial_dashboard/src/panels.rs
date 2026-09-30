@@ -25,7 +25,7 @@
 //!      shaping is a real consumer need — a shared painter in
 //!      `PaintContext` is a pre-freeze API candidate.
 //! F20. `blessed::Rect` is (x, y, width, height) while `core::Rect`/
-//!      `kurbo::Rect` are (x0, y0, x1, y1) — passing a dock rect's
+//!      `kurbo::Rect` are (x0, y0, x1, y1) — passing a `blessed` rect's
 //!      `bottom` as `height` silently doubled every panel's extent
 //!      under the status bar. The two conventions existing side by side
 //!      is a real trap for consumers mixing the layers.
@@ -89,8 +89,7 @@ use crate::text::{SpanColor, TextPainter};
 use crate::zone::Bound;
 
 /// Title-bar height in logical pt — one constant for the chrome paint
-/// and every hit-zone/layout computation that subtracts it (including
-/// the app's title-bar drag-to-dock hit test).
+/// and every hit-zone/layout computation that subtracts it.
 pub(crate) const TITLE_H: f32 = 28.0;
 /// Quiet-chrome head height in logical pt — top padding + caption
 /// line + breathing room before content. The quiet analogue of
@@ -118,17 +117,17 @@ pub(crate) fn krect(x: f64, y: f64, w: f64, h: f64) -> martensite::render::Rect 
 /// Panel-chrome rank (spec B6). "Hero" was retired — the name
 /// collided with the removed `HeroHeader` precedent.
 ///
-/// The tiers apply to **dock-level panels** — surfaces mounted in the
-/// docking tree. In-page surfaces inside zones use the quiet chrome
-/// idiom instead (`group_label` caption + band + well/fill fill); the
-/// layout-grammar doc keeps the two chrome levels distinct.
+/// The tiers apply to **page-level panels** — the surfaces the nav
+/// rail pages between. In-page surfaces inside zones use the quiet
+/// chrome idiom instead (`group_label` caption + band + well/fill
+/// fill); the layout-grammar doc keeps the two chrome levels distinct.
 ///
 /// # Examples
 ///
 /// ```
 /// use industrial_dashboard::panels::ChromeTier;
 ///
-/// // `Standard` is the shipped dock-panel chrome; `Primary`/`Quiet`
+/// // `Standard` is the shipped page-panel chrome; `Primary`/`Quiet`
 /// // mount as the zone rework consumes them.
 /// assert_eq!(ChromeTier::default(), ChromeTier::Standard);
 /// assert_ne!(ChromeTier::Primary, ChromeTier::Quiet);
@@ -142,7 +141,7 @@ pub enum ChromeTier {
     /// keyline** — accent stays reserved for focus/interaction. The
     /// title names the task, never the zone tab.
     Primary,
-    /// The shipped dock-panel chrome: 6px rounded surface + raised
+    /// The shipped page-panel chrome: 6px rounded surface + raised
     /// `TITLE_H` band + 12pt title + hairline.
     #[default]
     Standard,
@@ -296,7 +295,7 @@ pub(crate) fn panel_chrome(
         _ => None,
     };
     let badge_slot = badge.map_or(0.0, |badge| {
-        f64::from(painter.measure(badge, 11.0 * scale)) + 20.0 * s
+        f64::from(painter.measure(badge, 12.0 * scale)) + 20.0 * s
     });
     // Below ~120pt the right label is dropped — two ellipsized strings
     // butted together read worse than one clean title.
@@ -320,7 +319,7 @@ pub(crate) fn panel_chrome(
         // ISA-101 level chip — a recessed (surface-fill) lozenge with a
         // hairline edge, caption-tier muted text.
         let title_w = f64::from(painter.measure(&title_fit, title_fs));
-        let text_w = f64::from(painter.measure(badge, 11.0 * scale));
+        let text_w = f64::from(painter.measure(badge, 12.0 * scale));
         let bw = text_w + 12.0 * s;
         let bh = 16.0 * s;
         let bx = title_x + title_w + 8.0 * s;
@@ -333,7 +332,7 @@ pub(crate) fn panel_chrome(
             list,
             Point::new(bx + 6.0 * s, by + 2.0 * s),
             badge,
-            11.0 * scale,
+            12.0 * scale,
             pal.text_muted,
             None,
         );
@@ -1162,7 +1161,7 @@ impl Widget for GridPanel {
         );
         // Primary chrome (spec B6): the grid is the workstation's
         // primary-task surface — it hosts the operator's register,
-        // holds initial focus (app.rs), and sits at the dock root.
+        // holds initial focus (app.rs), and leads the rail order.
         // "L1" = the ISA-101 overview level a fleet-wide monitoring
         // register occupies; no accent keyline (accent stays = focus).
         let mount = panel_chrome(
@@ -1295,26 +1294,18 @@ impl Widget for GridPanel {
             let mem = fmt_mem(row.mem_kib);
             let cells: [(usize, String, [u8; 4]); 3] = [
                 (0, pid, if selected { pal.text } else { pal.text_muted }),
-                (
-                    1,
-                    cpu,
-                    if row.alert {
-                        pal.error
-                    } else if row.cpu_milli > 70_000 {
-                        pal.warn
-                    } else {
-                        pal.text
-                    },
-                ),
+                (1, cpu, if row.alert { pal.error } else { pal.text }),
                 (2, mem, pal.text),
             ];
             for (ci, value, color) in cells {
                 let Some(&(x0, w)) = cols.get(ci) else {
                     continue;
                 };
-                // Alarm-conditioned ink — warn/error hues on an
-                // alerting row are the alarm channel, not decoration.
-                let alarmed = ci == 1 && (row.alert || row.cpu_milli > 70_000);
+                // Alarm-conditioned ink — the error hue on an
+                // alerting row is the alarm channel, not decoration.
+                // A hot-but-unalarmed reading stays warn-amber:
+                // colour-coding utilization isn't an alarm signal.
+                let alarmed = ci == 1 && row.alert;
                 if alarmed {
                     cx.list.push_scope(
                         None,
@@ -1579,11 +1570,12 @@ impl Widget for TelemetryPanel {
         // `tick_recursive` would skip the Bound and its push reflect
         // would stop reflecting `simulate_latency`.
         let strip_h = (Self::LINK_STRIP_H * s).min((bounds.size.y * 0.3).max(1.0));
+        let top = (bounds.origin.y + bounds.size.y - strip_h - 6.0 * s).max(bounds.origin.y);
         self.link_rect = Rect::new(
             bounds.origin.x + 10.0 * s,
-            bounds.origin.y + bounds.size.y - strip_h - 6.0 * s,
+            top,
             (bounds.size.x - 20.0 * s).max(1.0),
-            strip_h,
+            strip_h.min(bounds.max_y() - top).max(0.0),
         );
         cx.layout_child(&mut self.link, self.link_rect);
     }
@@ -1719,6 +1711,12 @@ impl Widget for TelemetryPanel {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
+        // A collapsed dock pane (zero-height bounds) has no room even
+        // for chrome — its title separator would land outside the
+        // scope and trip the paint audit's overflow rule.
+        if self.bounds.height() < 8.0 || self.bounds.width() < 8.0 {
+            return;
+        }
         let pal = Palette::from_theme(cx.theme);
         let pal = &pal;
         let s = self.s();
@@ -1761,6 +1759,12 @@ impl Widget for TelemetryPanel {
         // Reserve the uplink strip + its caption band at the panel's
         // bottom — `layout` allocates the same space as `link_rect`.
         let link_reserve = (f64::from(Self::LINK_STRIP_H) + 22.0) * sd;
+        // A collapsed dock pane (zero-height bounds) paints chrome
+        // only — content would land outside the scope.
+        if inner.height() < legend_h + link_reserve + pad {
+            panel_border(cx.list, self.bounds, pal, s, self.focused);
+            return;
+        }
         let plot = krect(
             inner.x0 + label_w,
             inner.y0 + pad * 0.6,
@@ -2021,7 +2025,7 @@ impl Widget for TelemetryPanel {
                 inner.y1 - (f64::from(Self::LINK_STRIP_H) + 18.0) * sd,
             ),
             "UPLINK · L simulates latency",
-            10.0 * s,
+            12.0 * s,
             pal.text_muted,
             None,
         );
@@ -2937,6 +2941,22 @@ impl Widget for EditorPanel {
         // machine" read for a code editor. The gutter's translucent
         // raised band then lands on top of the well, so it still reads
         // as a lane within it rather than floating on `surface`.
+        // The code viewport is a data display — syntax hues are a
+        // token-kind encoding channel, the same class as a chart's
+        // series colors, so the lint lineage sees it as `CodeEditor`.
+        // Its body text is document payload, not readout ink, so the
+        // scope carries `@prose`: the packing-density alphanumeric cap
+        // exempts it while `text-density` still measures coverage.
+        cx.list.push_scope(
+            None,
+            "CodeEditor@prose",
+            krect(
+                inner.x0,
+                content_top - pad,
+                inner.width(),
+                inner.y1 - content_top + pad,
+            ),
+        );
         cx.list.push_fill_rect(
             krect(
                 inner.x0,
@@ -3020,12 +3040,16 @@ impl Widget for EditorPanel {
                     }
                 }
             }
-            // No wrap — code lines clip at the panel edge like a real
-            // editor (horizontal scroll is out of scope for the demo).
+            // No wrap — code lines ellide at the panel edge like a real
+            // editor (horizontal scroll is out of scope for the demo);
+            // a run painted past the clip is a paint-audit finding.
+            // Span byte offsets stay valid for the shared prefix.
+            let code_x = inner.x0 + gutter_w + 8.0 * sd;
+            let line_fit = text.fit(line, font, (inner.x1 - code_x) as f32);
             text.push_colored(
                 cx.list,
-                Point::new(inner.x0 + gutter_w + 8.0 * sd, y),
-                line,
+                Point::new(code_x, y),
+                &line_fit,
                 font,
                 pal.text,
                 &spans,
@@ -3043,6 +3067,7 @@ impl Widget for EditorPanel {
             y += line_h;
         }
         cx.list.pop_clip();
+        cx.list.pop_scope(); // CodeEditor
         panel_border(cx.list, self.bounds, pal, s, self.focused);
     }
 }
@@ -3219,7 +3244,7 @@ impl Widget for MediaPanel {
     }
 
     fn min_render(&self) -> RenderMinimum {
-        // The dock's manual layout cannot honor `display:none`
+        // The shell's manual layout cannot honor `display:none`
         // semantics, so Collapse degrades to hide-like behavior here —
         // the slot is retained and the panel simply stops painting.
         // 96pt is the honest floor: TITLE_H plus a contain-fit video
@@ -4066,8 +4091,8 @@ mod decoder_tests {
         }
     }
 
-    /// The dock panels declare their render floors with the intended
-    /// degradation policies — the contract `apply_dock_layout`'s
+    /// The page panels declare their render floors with the intended
+    /// degradation policies — the contract `apply_layout`'s
     /// `update_underflow_all` consumes.
     #[test]
     fn panels_declare_min_render_policies() {

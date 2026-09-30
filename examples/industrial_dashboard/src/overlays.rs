@@ -5,10 +5,10 @@
 //! the grid's context menu use):
 //!
 //! - **About dialog** — `Dialog` at `OverlayAnchor::Center` with
-//!   `OverlayOptions::modal()`: scrim painted, input blocked, scrim
-//!   clicks consumed but not dismissing — a real modal.
+//!   `OverlayOptions::modal()`: scrim painted, input blocked, a scrim
+//!   tap dismisses (the modal default).
 //! - **Inspector drawer** — `Drawer` at `OverlayAnchor::EdgeRight` with
-//!   `modal().light_dismiss()`: scrim tap or the header's × closes it.
+//!   `modal()`: scrim tap or the header's × closes it.
 //!   Its content is rebuilt from live `PlantModel` reads and re-seated
 //!   via `replace_content` whenever the model-derived signature moves —
 //!   overlay entries never tick, so `Bound` pull/push can't run inside
@@ -116,7 +116,7 @@ impl ShellOverlays {
     /// Builds the About dialog card fresh on each open.
     fn about_dialog(&self) -> Dialog {
         Dialog::new("Martensite Workstation")
-            .body("A dogfood build of the Martensite widget toolkit — dockable panels, shaped rendering, real accessibility, and this modal dialog all run on the same arena.")
+            .body("A dogfood build of the Martensite widget toolkit — paged panels behind a nav rail, shaped rendering, real accessibility, and this modal dialog all run on the same arena.")
             .buttons(&["Close"])
             .response_sink(Arc::clone(&self.dialog_resp))
             .with_text_painter(martensite::text_paint::shared_painter())
@@ -773,7 +773,7 @@ impl Widget for ShellOverlays {
             self.drawer_id = Some(overlay.open_with(
                 Box::new(self.inspector_drawer()),
                 OverlayAnchor::EdgeRight,
-                OverlayOptions::modal().light_dismiss(),
+                OverlayOptions::modal(),
             ));
         }
     }

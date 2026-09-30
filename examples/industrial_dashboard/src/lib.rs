@@ -6,9 +6,9 @@
 //!   `RenderOrchestrator`, four real `Widget` panels over the blessed
 //!   models (virtualized 1M-row `DataTable`, `Signal`-driven `Chart`,
 //!   `CodeEditor` with live highlighting, `MediaView` over a mock NV12
-//!   surface), `DockTree` geometry, `FocusManager` traversal, a live
-//!   AccessKit tree, and the advisory paint-compliance audit running
-//!   against its own output.
+//!   surface), `NavRail` page navigation over a single-zone `Swap`
+//!   deck, `FocusManager` traversal, a live AccessKit tree, and the
+//!   advisory paint-compliance audit running against its own output.
 //! - **`--headless`**: the original v0.18.0 CI composition — every
 //!   subsystem exercised through model APIs with no display server,
 //!   printing a verification report. Kept byte-for-byte behavior so the

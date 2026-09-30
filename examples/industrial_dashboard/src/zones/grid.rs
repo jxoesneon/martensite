@@ -18,8 +18,11 @@
 //!   grid, live inspector, identity codes, operator note, alarms.
 //! - **WORK ORDERS** — the WO pipeline: kanban moves, register table,
 //!   status stepper, checklist/crew ops, intake wizard.
-//! - **MAINTENANCE** — the two-week plan: gantt/week grid, task-window
+//! - **MAINTENANCE** — the two-week plan: gantt board, task-window
 //!   pickers writing `MaintTask.start_day`/`days`, milestone rail.
+//! - **BOOKING** — the week booking grid: click a slot to book a
+//!   block, click an event to select its task (split out of
+//!   MAINTENANCE — one surface per operator task).
 //! - **DOCUMENTS** — the plant record's documents: registry JSON,
 //!   firmware blob, alarm journal, recipe revisions, shift log, files.
 //! - **DIAGNOSTICS** — the operator console: a real command
@@ -112,7 +115,6 @@ use martensite::widgets::property_grid::{PropertyGrid, PropertyRow};
 use martensite::widgets::pull_to_refresh::PullToRefresh;
 use martensite::widgets::qr_code::QrCode;
 use martensite::widgets::rating::Rating;
-use martensite::widgets::resize_handle::ResizeHandle;
 use martensite::widgets::sankey::Sankey;
 use martensite::widgets::scroll_indicator::ScrollIndicator;
 use martensite::widgets::scrollview::ScrollView;
@@ -121,7 +123,6 @@ use martensite::widgets::segmented::Segmented;
 use martensite::widgets::separator::Separator;
 use martensite::widgets::settings_row::{SettingsGroup, SettingsRow};
 use martensite::widgets::slider::Slider;
-use martensite::widgets::split_view::SplitView;
 use martensite::widgets::stack::{Stack, StackAlignment};
 use martensite::widgets::status_dot::{Status, StatusDot};
 use martensite::widgets::steps::Steps;
@@ -149,7 +150,8 @@ use crate::domain::{
     WorkOrder,
 };
 use crate::zone::{
-    band, fill, framed, row, strip, Bound, Page, Swap, Variant, BAND_M, ZONE_GAP, ZONE_STACK,
+    band, fill, framed, row, scroll, strip, Bound, Page, Swap, Variant, BAND_M, ZONE_GAP,
+    ZONE_STACK,
 };
 use martensite::core::widget::DummyWidget;
 use martensite::core::Widget;
@@ -203,14 +205,24 @@ pub(crate) mod page {
     /// table stays complete.)
     #[allow(dead_code)]
     pub const MAINTENANCE: u8 = 4;
-    /// Plant record documents.
-    pub const DOCUMENTS: u8 = 5;
+    /// Week booking grid (split out of MAINTENANCE — the plan board
+    /// and the booking surface crowded one strip past the density
+    /// cap; each is its own operator task). (No deep-link consumer
+    /// yet — kept so the index table stays complete.)
+    #[allow(dead_code)]
+    pub const BOOKING: u8 = 5;
+    /// Plant record documents (the `m.docs` store's artifacts).
+    pub const DOCUMENTS: u8 = 6;
+    /// Generated records — registry JSON, alarm journal, asset
+    /// revisions, shift log, attached files (flattened out of
+    /// DOCUMENTS: the record surfaces are their own task).
+    pub const RECORDS: u8 = 7;
     /// Operator console.
-    pub const DIAGNOSTICS: u8 = 6;
+    pub const DIAGNOSTICS: u8 = 8;
     /// Relational views.
-    pub const HIERARCHY: u8 = 7;
+    pub const HIERARCHY: u8 = 9;
     /// Page count — the zone tab strip's upper bound.
-    pub const COUNT: u8 = 8;
+    pub const COUNT: u8 = 10;
 }
 
 /// Domain-named zone pages for the Process Grid panel — tab labels
@@ -220,14 +232,18 @@ pub(crate) mod page {
 /// locator channels (Cascader/TreeSelect/TreeView/NavRail/NavStack/
 /// launchers) split across REGISTRY (persistent register + selection
 /// rail) and LOCATE (the locator surfaces, one Swap view at a time).
-/// Grid page set — eight domain pages. The ≈7-page guideline is a
+/// DOCUMENTS carries the `m.docs` store's artifacts; the generated
+/// record views (registry JSON, alarm journal, revisions, shift log,
+/// files) are their own task on RECORDS.
+/// Grid page set — ten domain pages. The ≈7-page guideline is a
 /// chunking heuristic; this is a deliberate exception, documented per
 /// the grammar's "document or fold" rule: every page is a distinct
 /// operator task (register, locate, inspect, work, maintain, read,
-/// diagnose, navigate), collapsing any pair would fuse unrelated
-/// tasks into one label — worse for findability than one extra tab.
-/// The `choice-count` linter finding on the full-app frame is the
-/// accepted cost; each page's interior still honours the budget.
+/// review records, diagnose, navigate), collapsing any pair would
+/// fuse unrelated tasks into one label — worse for findability than
+/// the extra tabs. The `choice-count` linter finding on the full-app
+/// frame is the accepted cost; each page's interior still honours
+/// the budget.
 pub fn pages(model: &PlantModel) -> Vec<(&'static str, Page)> {
     vec![
         ("REGISTRY", registry(model)),
@@ -235,7 +251,9 @@ pub fn pages(model: &PlantModel) -> Vec<(&'static str, Page)> {
         ("DETAIL", detail(model)),
         ("WORK ORDERS", work_orders(model)),
         ("MAINTENANCE", maintenance(model)),
+        ("BOOKING", booking(model)),
         ("DOCUMENTS", documents(model)),
+        ("RECORDS", records(model)),
         ("DIAGNOSTICS", diagnostics(model)),
         ("HIERARCHY", hierarchy(model)),
     ]
@@ -290,11 +308,25 @@ pub(crate) fn alarm_badge(m: &PlantModel, scope: Option<u32>) -> Option<BadgeSpe
         worst = worst.max(a.severity);
     }
     (n > 0).then(|| {
-        BadgeSpec::count(n).severity(match worst {
-            AlarmSeverity::Info => BadgeSeverity::Info,
-            AlarmSeverity::Warning => BadgeSeverity::Warning,
-            AlarmSeverity::Critical => BadgeSeverity::Error,
-        })
+        let spec = BadgeSpec::count(n);
+        match worst {
+            AlarmSeverity::Info => spec.severity(BadgeSeverity::Info),
+            // ISA-101 keeps the alarm-red channel for actionable
+            // faults; a warning is an advisory. The theme's
+            // WarningColor resolves inside the lint's alarm-red hue
+            // family, so badges take the plant's amber lamp tone
+            // explicitly — the tab still annunciates, without
+            // spending a red signal on a non-urgent state.
+            AlarmSeverity::Warning => {
+                spec.severity(BadgeSeverity::Warning)
+                    .color(martensite::theme::Oklab::from_srgb(
+                        250.0 / 255.0,
+                        190.0 / 255.0,
+                        60.0 / 255.0,
+                    ))
+            }
+            AlarmSeverity::Critical => spec.severity(BadgeSeverity::Error),
+        }
     })
 }
 
@@ -302,7 +334,7 @@ pub(crate) fn alarm_badge(m: &PlantModel, scope: Option<u32>) -> Option<BadgeSpe
 /// channels:
 ///
 /// - DETAIL — the selected asset's alarm list + its ack verb.
-/// - DOCUMENTS — the alarm journal artifact.
+/// - RECORDS — the alarm journal artifact.
 /// - DIAGNOSTICS — the console's `alarms`/`ack` channel + ack verb.
 /// - HIERARCHY — the alarm root-cause board.
 ///
@@ -315,7 +347,7 @@ pub(crate) fn tab_badge(m: &PlantModel, tab: u8) -> Option<BadgeSpec> {
             .selected_asset
             .get()
             .and_then(|id| alarm_badge(m, Some(id))),
-        page::DOCUMENTS | page::DIAGNOSTICS | page::HIERARCHY => alarm_badge(m, None),
+        page::RECORDS | page::DIAGNOSTICS | page::HIERARCHY => alarm_badge(m, None),
         _ => None,
     }
 }
@@ -795,9 +827,9 @@ fn registry(m: &PlantModel) -> Page {
     // this page).
     let kind_sel = Signal::new(0usize);
     let page_sel = Signal::new(0usize);
-    let split = Signal::new(0.42f32);
-    // Primary surface swap — Register (split tree+table) | List |
-    // Launchers (grid/dock quick-jump). A page-scoped presentation
+    // Primary surface swap — Register (the paged table) | List (the
+    // pull-to-refresh view). The hierarchy tree is a locator — it
+    // lives on LOCATE's view swap. A page-scoped presentation
     // selection, like `channel_sel`/`active_chrome`.
     let view_sel = Signal::new(0usize);
 
@@ -1007,51 +1039,7 @@ fn registry(m: &PlantModel) -> Page {
         })
     };
 
-    // --- main surface: hierarchy | register ------------------------------
-    let tree = Bound::new(
-        TreeView::new()
-            .roots(asset_tree(m, None))
-            .label("plant hierarchy"),
-        m,
-    )
-    .pull({
-        // Widget-side tracking — selection changes write
-        // `selected_asset`; a reselect of the same path is a no-op.
-        let mut last_path: Option<Vec<usize>> = None;
-        move |w: &mut TreeView, m| {
-            w.take_activated(); // activation == selection here; drain
-            let cur = w.selected_path().map(|p| p.to_vec());
-            if cur != last_path {
-                last_path = cur.clone();
-                m.selected_asset
-                    .set_if_changed(cur.as_deref().and_then(|p| path_asset(m, p)));
-            }
-        }
-    })
-    .push({
-        // Model-side tracking — external selection mirrors back;
-        // asset edits (name/status) re-seat the roots.
-        let mut last_sel = m.selected_asset.get();
-        let mut last_sig = assets_sig(m);
-        move |w: &mut TreeView, m| {
-            let sel = m.selected_asset.get();
-            let s = assets_sig(m);
-            if s != last_sig {
-                last_sig = s;
-                w.set_roots(asset_tree(m, None));
-                if let Some(p) = sel.and_then(|id| asset_path(m, id)) {
-                    w.select_path(&p);
-                }
-            } else if sel != last_sel {
-                match sel.and_then(|id| asset_path(m, id)) {
-                    Some(p) => w.select_path(&p),
-                    None => w.clear_selection(),
-                }
-            }
-            last_sel = sel;
-        }
-    });
-
+    // --- main surface: the paged register ------------------------------
     let table = {
         let ks = kind_sel.clone();
         let ps = page_sel.clone();
@@ -1109,50 +1097,6 @@ fn registry(m: &PlantModel) -> Page {
                     }
                 }
             })
-    };
-
-    let split_view = {
-        let sig = split.clone();
-        let sig2 = split.clone();
-        Bound::new(
-            SplitView::horizontal()
-                // Both panes are fixed-geometry surfaces narrower
-                // than their content on small widths: the tree's
-                // measure under-reports (per-char estimate), the
-                // table's declared columns are honest but wide.
-                // Scroll-mounted so the pane edge is a scrollport
-                // cut, not a mid-label clip.
-                .first(ScrollView::horizontal(MinW::new(240.0, tree)))
-                .second(ScrollView::horizontal(table))
-                .ratio(split.get()),
-            m,
-        )
-        .pull(move |w: &mut SplitView, _m| {
-            if let Some(r) = w.take_moved() {
-                sig.set_if_changed(r.clamp(0.15, 0.85));
-            }
-        })
-        .push(move |w: &mut SplitView, _m| {
-            let r = sig2.get();
-            if (w.get_ratio() - r).abs() > 1e-3 {
-                w.set_ratio(r);
-            }
-        })
-    };
-
-    let handle = {
-        let sig = split.clone();
-        Bound::new(ResizeHandle::horizontal().label("resize split"), m).pull(
-            move |w: &mut ResizeHandle, _m| {
-                if let Some(dx) = w.take_moved() {
-                    // px delta → ratio nudge against a nominal lane.
-                    sig.set((sig.get() + dx / 640.0).clamp(0.15, 0.85));
-                }
-                if w.take_reset() {
-                    sig.set(0.42);
-                }
-            },
-        )
     };
 
     // --- secondary presentation: the register as a plain list ------
@@ -1348,20 +1292,12 @@ fn registry(m: &PlantModel) -> Page {
         );
 
     // --- primary: the register, two presentations of one dataset ---
-    // The standalone sash is a *vertical* bar for a horizontal split —
-    // it belongs in a row, at the split's right edge (also the
-    // keyboard-focusable splitter: SplitView's embedded sash is not
-    // reachable by keyboard). Stacked in a column it would measure
-    // (thick, full-height) and starve the weighted split.
+    // The table's declared columns are honest but wider than the
+    // register lane at narrow widths — scroll-mounted so the lane
+    // edge is a scrollport cut, not a mid-label clip.
     let register = Flex::column()
         .gap(ZONE_GAP)
-        .child_flex(
-            Flex::row()
-                .gap(ZONE_GAP)
-                .child_flex(split_view, 1.0)
-                .child(handle),
-            1.0,
-        )
+        .child_flex(ScrollView::horizontal(table), 1.0)
         // Pager foots the register — a strip child, it would eat the
         // scope controls' width.
         .child(strip().child_flex(DummyWidget, 1.0).child(pager));
@@ -1642,7 +1578,8 @@ impl Widget for MinW {
 
 fn locate(m: &PlantModel) -> Page {
     // In-page presentation swap — Path (columns browser) | Stations
-    // (cell launchers) | Lines (line dock + site rail). The
+    // (cell launchers) | Lines (line dock + site rail) | Tree
+    // (hierarchy browser, moved off the REGISTRY split). The
     // established Swap+Segmented idiom: one locator surface at a
     // time, never nested Tabs.
     let view_sel = Signal::new(0usize);
@@ -1872,13 +1809,61 @@ fn locate(m: &PlantModel) -> Page {
             })
     };
 
+    // Hierarchy browser — the plant tree as a locator (moved off the
+    // REGISTRY split: a fourth simultaneous surface crowded the
+    // register past the alphanumeric cap; here it gets its own view
+    // and still writes `selected_asset`).
+    let tree = Bound::new(
+        TreeView::new()
+            .roots(asset_tree(m, None))
+            .label("plant hierarchy"),
+        m,
+    )
+    .pull({
+        // Widget-side tracking — selection changes write
+        // `selected_asset`; a reselect of the same path is a no-op.
+        let mut last_path: Option<Vec<usize>> = None;
+        move |w: &mut TreeView, m| {
+            w.take_activated(); // activation == selection here; drain
+            let cur = w.selected_path().map(|p| p.to_vec());
+            if cur != last_path {
+                last_path = cur.clone();
+                m.selected_asset
+                    .set_if_changed(cur.as_deref().and_then(|p| path_asset(m, p)));
+            }
+        }
+    })
+    .push({
+        // Model-side tracking — external selection mirrors back;
+        // asset edits (name/status) re-seat the roots.
+        let mut last_sel = m.selected_asset.get();
+        let mut last_sig = assets_sig(m);
+        move |w: &mut TreeView, m| {
+            let sel = m.selected_asset.get();
+            let s = assets_sig(m);
+            if s != last_sig {
+                last_sig = s;
+                w.set_roots(asset_tree(m, None));
+                if let Some(p) = sel.and_then(|id| asset_path(m, id)) {
+                    w.select_path(&p);
+                }
+            } else if sel != last_sel {
+                match sel.and_then(|id| asset_path(m, id)) {
+                    Some(p) => w.select_path(&p),
+                    None => w.clear_selection(),
+                }
+            }
+            last_sel = sel;
+        }
+    });
+
     // Locator view selector — the Swap's index; also drains this
     // zone's deep-link sub for LOCATE (C6).
     let view = {
         let sig = view_sel.clone();
         Bound::new(
             Segmented::new()
-                .options(["Path", "Stations", "Lines"])
+                .options(["Path", "Stations", "Lines", "Tree"])
                 .selected(0)
                 .label("locator view"),
             m,
@@ -1933,7 +1918,11 @@ fn locate(m: &PlantModel) -> Page {
     let primary = Swap::new(&view_sel)
         .view(cascade)
         .view(stations)
-        .view(lines);
+        .view(lines)
+        // The tree's per-char measure under-reports its real width —
+        // scroll-mounted so the view edge is a scrollport cut, not a
+        // mid-label clip.
+        .view(ScrollView::horizontal(MinW::new(240.0, tree)));
 
     // C7 breakpoint contract — Theater variant: no rail, so the
     // 560/380pt rules don't apply; the strip scrolls horizontally
@@ -3485,9 +3474,10 @@ fn work_orders(m: &PlantModel) -> Page {
 
 /// MAINTENANCE — "what's overdue, and where do I rebook this task?"
 /// master-detail | strip: task picker + overdue filter | primary:
-/// Gantt (dominant, mutation) + WeekView booking grid (secondary
-/// ≤40%) | selection: `selected_task` | rail: REBOOK (window pickers
-/// + progress) + PLAN (milestone timeline).
+/// Gantt (dominant, mutation) | selection: `selected_task` | rail:
+/// REBOOK (window pickers + progress) + PLAN (milestone timeline).
+/// The week booking grid lives on its own BOOKING page — two stacked
+/// schedule surfaces in one fill band squeezed both into slivers.
 fn maintenance(m: &PlantModel) -> Page {
     // The page's selection signal is the model's `selected_task` —
     // SCHEDULE reads it too (cross-page shared selection).
@@ -3541,56 +3531,9 @@ fn maintenance(m: &PlantModel) -> Page {
             })
     };
 
-    // Week grid — click a task to select it (and its asset); click an
-    // empty slot to book a one-day block.
-    let week = {
-        let build = |m: &PlantModel| {
-            let mut v = WeekView::new().label("week grid");
-            for t in m.schedule.get() {
-                let day = (t.start_day % 7) as usize;
-                let (s, e) = (8.0, (8.0 + f32::from(t.days) * 2.0).min(18.0));
-                // Block width is the day column (~66pt of lane at the
-                // widget's 560pt content width) — pre-fit the title so
-                // a narrow block never shows a mid-glyph sliver.
-                v = v.event(WeekEvent::new(elide_to(t.title, 66.0, 12.0), day, s, e));
-            }
-            v
-        };
-        let mut last = sched_sig(m);
-        let ts = task_sel.clone();
-        Bound::new(build(m), m)
-            .pull(move |w: &mut WeekView, m| {
-                if let Some((day, _hour)) = w.take_slot() {
-                    let mut s = m.schedule.get();
-                    let id = s.iter().map(|t| t.id).max().unwrap_or(0) + 1;
-                    s.push(MaintTask {
-                        id,
-                        title: "Operator block",
-                        asset: m.selected_asset.get().unwrap_or(3),
-                        start_day: day.min(13) as u8,
-                        days: 1,
-                        done: false,
-                        crew: 0,
-                        progress: 0.0,
-                    });
-                    m.schedule.set(s);
-                }
-                if let Some(i) = w.take_clicked() {
-                    if let Some(t) = m.schedule.get().get(i) {
-                        ts.set_if_changed(t.id);
-                        m.selected_task.set_if_changed(Some(t.id));
-                        m.selected_asset.set_if_changed(Some(t.asset));
-                    }
-                }
-            })
-            .push(move |w: &mut WeekView, m| {
-                let s = sched_sig(m);
-                if s != last {
-                    last = s;
-                    *w = build(m);
-                }
-            })
-    };
+    // The week booking grid moved to BOOKING — stacked under the
+    // Gantt it rendered as a sliver, and the pair crowded the fill
+    // band past the alphanumeric-density cap.
 
     // Task window pickers — the month calendar and the range picker
     // edit the same `start_day`/`days` of `task_sel`, so they stay in
@@ -3777,14 +3720,8 @@ fn maintenance(m: &PlantModel) -> Page {
         })
     };
 
-    // --- primary: plan board + booking grid (secondary ≤40%) -------
-    let primary = Flex::column()
-        .gap(ZONE_GAP)
-        .child_flex(gantt, 3.0)
-        // The week grid is a fixed-geometry surface (7 day columns +
-        // hour gutter ≈ 560pt): narrower allocations scroll the week
-        // rather than squeezing day cells into slivers.
-        .child_flex(ScrollView::horizontal(week), 2.0);
+    // --- primary: the plan board -----------------------------------
+    let primary = gantt;
 
     // --- rail: detail-of-`selected_task` -----------------------------
     let rail_col = Flex::column()
@@ -3818,16 +3755,448 @@ fn maintenance(m: &PlantModel) -> Page {
 }
 
 // ---------------------------------------------------------------------------
-// DOCUMENTS — the plant record's documents. Big viewers sit behind a
-// Tabs selector (one surface at a time); files + the shift log below.
+// BOOKING — the week grid. Split out of MAINTENANCE: the plan board
+// and the booking surface stacked in one fill band, squeezing both
+// into slivers past the density cap. Same `selected_task` signal, so
+// booking an event and rebooking it on MAINTENANCE stay in step.
 // ---------------------------------------------------------------------------
 
-/// DOCUMENTS — "show me the record for this." MasterLeft: the
-/// chooser lists `m.docs` (files on the record) plus generated
-/// record views; selection drives the artifact on the right.
-/// `selected_doc` names the file selection; record views key off
-/// `selected_asset`/`selected_wo` like before.
+/// BOOKING — "where does this task land in the week?" Primary:
+/// WeekView booking grid (click a slot to book a one-day block,
+/// click an event to select it) | strip: task picker | rail: TASK
+/// (selected-task progress + summary).
+fn booking(m: &PlantModel) -> Page {
+    // Same shared-selection shim as MAINTENANCE — `task_sel` mirrors
+    // `m.selected_task` both ways so widget writes and model writes
+    // meet in the middle.
+    let task_sel = Signal::new(m.selected_task.get().unwrap_or(0));
+
+    // Week grid — click a task to select it (and its asset); click an
+    // empty slot to book a one-day block.
+    let week = {
+        let build = |m: &PlantModel| {
+            let mut v = WeekView::new().label("week grid");
+            for t in m.schedule.get() {
+                let day = (t.start_day % 7) as usize;
+                let (s, e) = (8.0, (8.0 + f32::from(t.days) * 2.0).min(18.0));
+                // Block width is the day column (~66pt of lane at the
+                // widget's 560pt content width) — pre-fit the title so
+                // a narrow block never shows a mid-glyph sliver.
+                v = v.event(WeekEvent::new(elide_to(t.title, 66.0, 12.0), day, s, e));
+            }
+            v
+        };
+        let mut last = sched_sig(m);
+        let ts = task_sel.clone();
+        Bound::new(build(m), m)
+            .pull(move |w: &mut WeekView, m| {
+                if let Some((day, _hour)) = w.take_slot() {
+                    let mut s = m.schedule.get();
+                    let id = s.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+                    s.push(MaintTask {
+                        id,
+                        title: "Operator block",
+                        asset: m.selected_asset.get().unwrap_or(3),
+                        start_day: day.min(13) as u8,
+                        days: 1,
+                        done: false,
+                        crew: 0,
+                        progress: 0.0,
+                    });
+                    m.schedule.set(s);
+                }
+                if let Some(i) = w.take_clicked() {
+                    if let Some(t) = m.schedule.get().get(i) {
+                        ts.set_if_changed(t.id);
+                        m.selected_task.set_if_changed(Some(t.id));
+                        m.selected_asset.set_if_changed(Some(t.asset));
+                    }
+                }
+            })
+            .push(move |w: &mut WeekView, m| {
+                let s = sched_sig(m);
+                if s != last {
+                    last = s;
+                    *w = build(m);
+                }
+            })
+    };
+
+    // Task picker — selects which task a booked block edits; writes
+    // the shared `selected_task`.
+    let task_pick = {
+        let ts = task_sel.clone();
+        let names: Vec<String> = m
+            .schedule
+            .get()
+            .iter()
+            .map(|t| t.title.to_string())
+            .collect();
+        let mut d = Dropdown::new(names).label("task");
+        let cur = m
+            .schedule
+            .get()
+            .iter()
+            .position(|t| t.id == task_sel.get())
+            .unwrap_or(0);
+        d.commit(cur);
+        let mut last_i = cur;
+        Bound::new(d, m).pull(move |w: &mut Dropdown, m| {
+            let i = w.selected();
+            if i != last_i {
+                last_i = i;
+                if let Some(t) = m.schedule.get().get(i) {
+                    ts.set_if_changed(t.id);
+                    m.selected_task.set_if_changed(Some(t.id));
+                }
+            }
+        })
+    };
+
+    // Plan progress — identical readout to MAINTENANCE's, re-seated
+    // on the done/total bit-pattern.
+    let progress = Bound::new(ProgressBar::new().value(0.0), m).push({
+        let mut last = 0.0f32.to_bits();
+        move |w: &mut ProgressBar, m| {
+            let s = m.schedule.get();
+            let done = s.iter().filter(|t| t.done).count() as f32;
+            let v = if s.is_empty() {
+                0.0
+            } else {
+                done / s.len() as f32
+            };
+            if v.to_bits() != last {
+                last = v.to_bits();
+                *w = ProgressBar::new().value(v);
+            }
+        }
+    });
+
+    let summary = Bound::new(Text::new("—").font_size(12.0), m).push({
+        let ts = task_sel.clone();
+        move |w: &mut Text, m| {
+            let s = m.schedule.get();
+            let done = s.iter().filter(|t| t.done).count();
+            let sel = s.iter().find(|t| t.id == ts.get());
+            w.set_content(format!(
+                "{} of {} tasks done — booking: {}",
+                done,
+                s.len(),
+                sel.map(|t| t.title).unwrap_or("—")
+            ));
+        }
+    });
+
+    // The week grid is a fixed-geometry surface (7 day columns + hour
+    // gutter ≈ 560pt): narrower allocations scroll the week rather
+    // than squeezing day cells into slivers.
+    let primary = ScrollView::horizontal(week);
+
+    let rail_col = Flex::column().gap(ZONE_STACK).child(
+        GroupBox::new("TASK").child(Flex::column().gap(ZONE_GAP).child(progress).child(summary)),
+    );
+
+    // Same C7 breakpoint contract as MAINTENANCE — rail beside the
+    // grid ≥560pt, stacked below it <560pt, a Disclosure <380pt.
+    Page::new(Variant::MasterDetail, fill(primary), &m.zone_width[0])
+        .strip(strip().child(task_pick).child_flex(DummyWidget, 1.0))
+        .rail("Task", ScrollView::new(rail_col))
+}
+
+// ---------------------------------------------------------------------------
+// DOCUMENTS — the `m.docs` store's artifacts. The chooser lists the
+// documents on the record; selection drives the kind-mapped artifact
+// on the right. Generated record views live on RECORDS (packing
+// split — the union crowded the chooser rail past the text cap).
+// ---------------------------------------------------------------------------
+
+/// DOCUMENTS — "show me the document for this." MasterLeft: the
+/// chooser lists `m.docs` entries; selection drives the artifact on
+/// the right via `selected_doc` + the page-scoped `art_sel`.
 fn documents(m: &PlantModel) -> Page {
+    // The generated record surfaces (registry JSON, alarm journal,
+    // asset revisions/merge/PLC/procedure/portal, shift log, attached
+    // files) live on RECORDS — the `m.docs` store and the plant's
+    // derived records are separate operator tasks, and the union
+    // crowded the chooser rail past the alphanumeric cap.
+
+    // --- artifact selection -----------------------------------------
+    // One index into the Swap: 0..=3 = the selected DocEntry's
+    // kind-mapped viewer; 4.. forwards to the RECORDS page's views
+    // (the generated records moved there). The chooser rows write it
+    // alongside `selected_doc`.
+    let art_sel = Signal::new(0usize);
+    // C5 — expansion state lives in a page-scoped signal, NOT the
+    // Disclosure widgets: `Bound` re-seats construct-once children on
+    // signature changes and a widget-local `open` would reset with
+    // the rebuild. The signal survives re-seats; each row's push
+    // mirrors it back. Keys: doc ids for `m.docs` rows,
+    // `u32::MAX - i` for the generated record views.
+    let doc_open = Signal::new(Vec::<u32>::new());
+
+    // Kind-mapped artifacts — the real DocEntry payload.
+    let doc_markdown = {
+        let build = |m: &PlantModel| {
+            let d = sel_doc(m);
+            // The H1 runs ~22.5pt at this view's `base_size` — in the
+            // narrowest artifact lane (~330pt) a long title mid-clips
+            // at the page wall, so the title is pre-fit to the lane
+            // (the full title also heads the chooser row that opened
+            // this view).
+            let title = d
+                .as_ref()
+                .map(|d| elide_to(d.title, 300.0, 26.5))
+                .unwrap_or_else(|| "document".to_string());
+            let owner = d
+                .as_ref()
+                .and_then(|d| d.asset)
+                .map(|id| m.asset_name(id).to_string())
+                .unwrap_or_else(|| "site-wide".into());
+            // Code blocks don't wrap — a one-line JSON body (~700pt
+            // shaped) would mid-glyph clip at the panel edge in a
+            // narrow view. Pretty-print when it parses, hard-fold
+            // otherwise; every byte still reads.
+            let body = d
+                .as_ref()
+                .map(|d| fold_code_body(d.body))
+                .unwrap_or_default();
+            // A document reads at document size — the default base
+            // puts the H1 at presentation scale (~26.5pt) and the
+            // code block at reading size, which over-packs the
+            // narrowest artifact lane. Headings still scale off the
+            // smaller base.
+            Markdown::new(format!(
+                "# {title}\n\n**Asset:** {owner}\n\n```\n{body}\n```"
+            ))
+            .base_size(12.0)
+            .label("document body")
+        };
+        let mut last = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
+        Bound::new(build(m), m).push(move |w: &mut Markdown, m| {
+            let k = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
+            if k != last {
+                last = k;
+                *w = build(m);
+            }
+        })
+    };
+    let doc_json = {
+        let build = |m: &PlantModel| {
+            let d = sel_doc(m);
+            let title = d.as_ref().map(|d| d.title).unwrap_or("doc");
+            let root = d
+                .and_then(|d| serde_json::from_str::<serde_json::Value>(d.body).ok())
+                .map(|v| json_to_node(title, &v))
+                .unwrap_or_else(|| JsonNode::string("doc", "unparseable"));
+            JsonView::new(root).label("document json")
+        };
+        let mut last = (m.selected_doc.get(), docs_sig(m));
+        Bound::new(build(m), m).push(move |w: &mut JsonView, m| {
+            let k = (m.selected_doc.get(), docs_sig(m));
+            if k != last {
+                last = k;
+                *w = build(m);
+            }
+        })
+    };
+    let doc_hex = {
+        let build = |m: &PlantModel| {
+            // A firmware image is a function of its owning asset —
+            // synthesize it from the asset's serial; other doc kinds
+            // carry their raw payload in `DocEntry::bytes`.
+            let bytes = match sel_doc(m) {
+                Some(d) if d.kind == DocKind::Firmware => fw_blob(
+                    d.asset
+                        .and_then(|id| m.asset(id))
+                        .map(|a| a.serial)
+                        .unwrap_or("MSFW"),
+                ),
+                Some(d) => d.bytes.to_vec(),
+                None => Vec::new(),
+            };
+            HexView::new().bytes(bytes).label("document bytes")
+        };
+        let mut last = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
+        Bound::new(build(m), m).push(move |w: &mut HexView, m| {
+            let k = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
+            if k != last {
+                last = k;
+                *w = build(m);
+            }
+        })
+    };
+    let doc_log = {
+        let fill = |w: &mut LogView, m: &PlantModel| {
+            w.clear();
+            if let Some(d) = sel_doc(m) {
+                for line in String::from_utf8_lossy(d.bytes).lines() {
+                    w.push(LogSeverity::Info, line.to_string());
+                }
+            }
+        };
+        let mut lv = LogView::new().max_lines(200);
+        fill(&mut lv, m);
+        let mut last = (m.selected_doc.get(), docs_sig(m));
+        Bound::new(lv, m).push(move |w: &mut LogView, m| {
+            let k = (m.selected_doc.get(), docs_sig(m));
+            if k != last {
+                last = k;
+                fill(w, m);
+            }
+        })
+    };
+
+    let artifact = Swap::new(&art_sel)
+        .view(doc_markdown) // Manual
+        .view(doc_json) // Report
+        .view(doc_hex) // Firmware
+        .view(doc_log); // Log
+                        // Deep-link drain (C6) on the always-mounted primary: a
+                        // `request_page_deep` to DOCUMENTS lands on the named artifact
+                        // view; subs ≥4 were the generated record views — those live on
+                        // RECORDS now, so the request forwards. This must NOT live inside
+                        // the chooser rail — at <RAIL_DISCLOSE_W the rail's Disclosure
+                        // starts closed, a closed Disclosure reports no children, and
+                        // unticked Bounds never pull, so the sub would sit pending until
+                        // the user re-opened the rail.
+    let artifact = {
+        let asel = art_sel.clone();
+        Bound::new(artifact, m).pull(move |_w: &mut Swap, m| {
+            if let Some(sub) = m.take_page_sub(0, page::DOCUMENTS) {
+                if sub < 4 {
+                    asel.set_if_changed(sub as usize);
+                } else {
+                    m.request_page_deep(0, page::RECORDS, sub - 4);
+                }
+            }
+        })
+    };
+
+    // --- master: the chooser -----------------------------------------
+    // C5 — expandable rows, one per `m.docs` entry. A collapsed row
+    // keeps the summary fields readable — kind · title · owning
+    // asset — and the Disclosure chevron is the explicit expand
+    // affordance; the open body shows a preview plus the row's
+    // next-step verbs (Open ▸ selects the artifact; Asset ▸
+    // deep-links to the owning asset's DETAIL page — a real
+    // `request_page_deep`).
+    let chooser = {
+        let mut col = Flex::column().gap(ZONE_GAP);
+        for d in m.docs.get() {
+            let id = d.id;
+            let art = match d.kind {
+                DocKind::Manual => 0,
+                DocKind::Report => 1,
+                DocKind::Firmware => 2,
+                DocKind::Log => 3,
+            };
+            // The disclosure title lane in the chooser is ~110pt at
+            // 14pt — the full "kind · title · owner" triple mid-clips
+            // at the rail edge. Kind + title elided; the owner reads
+            // in the row's Asset ▸ verb.
+            let title = elide_to(
+                &format!("{} · {}", d.kind.label().to_lowercase(), d.title),
+                110.0,
+                14.0,
+            );
+            let preview: String = {
+                let first = d
+                    .body
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("—");
+                first.chars().take(140).collect()
+            };
+            let asel = art_sel.clone();
+            let open = Bound::new(Button::new("Open ▸"), m).pull(move |w: &mut Button, m| {
+                if w.take_activated() {
+                    m.selected_doc.set_if_changed(Some(id));
+                    asel.set_if_changed(art);
+                }
+            });
+            let mut verbs = strip().child(open);
+            if let Some(aid) = d.asset {
+                verbs = verbs.child(Bound::new(Button::new("Asset ▸"), m).pull(
+                    move |w: &mut Button, m| {
+                        if w.take_activated() {
+                            m.selected_asset.set_if_changed(Some(aid));
+                            // Land on the Inspector dossier — it
+                            // surfaces the asset's active alarms.
+                            m.request_page_deep(0, page::DETAIL, 1);
+                        }
+                    },
+                ));
+            }
+            let body = Flex::column()
+                .gap(ZONE_GAP)
+                .child(Text::new(preview).font_size(12.0))
+                .child(verbs.child_flex(DummyWidget, 1.0));
+            col = col.child(doc_row(m, &doc_open, id, title, body));
+        }
+        col
+    };
+
+    // Quiet caption — the page's scope readout. The deep-link drain
+    // lives on `artifact` (the always-mounted primary), not here —
+    // this caption sits inside the collapsible rail.
+    let scope =
+        Bound::new(Text::new("—").font_size(12.0).color(muted_ink()), m).push(|w: &mut Text, m| {
+            w.set_content(format!("{} documents", m.docs.get().len()));
+        });
+
+    let master_col = Flex::column()
+        .gap(ZONE_GAP)
+        .child(scope)
+        .child_flex(chooser, 1.0);
+
+    // Artifact lens — the four kind-mapped views as a quick switcher,
+    // mirrored to `art_sel` (chooser "Open ▸" rows land on the same
+    // index). The strip also keeps a control surface at the page top:
+    // without it a short viewport opens straight onto the document
+    // text and the sliver reads past the alphanumeric cap.
+    let lens = Bound::new(
+        Segmented::new()
+            .options(["MANUAL", "REPORT", "FIRMWARE", "LOG"])
+            .selected(0)
+            .label("artifact view"),
+        m,
+    )
+    .pull({
+        let asel = art_sel.clone();
+        move |w: &mut Segmented, _m| {
+            if let Some(i) = w.take_selected() {
+                asel.set_if_changed(i);
+            }
+        }
+    })
+    .push({
+        let asel = art_sel.clone();
+        move |w: &mut Segmented, _m| sync_segmented(w, &asel)
+    });
+
+    // C7 breakpoint contract — MasterLeft: ≥560pt (`RAIL_STACK_W`)
+    // the "Documents" chooser sits left of the artifact; <560pt it
+    // stacks *above* the artifact it selects; <380pt
+    // (`RAIL_DISCLOSE_W`) it collapses into a Disclosure whose header
+    // keeps the "Documents" caption.
+    Page::new(Variant::MasterLeft, fill(artifact), &m.zone_width[0])
+        .strip(strip().child(lens).child_flex(DummyWidget, 1.0))
+        .rail("Documents", master_col)
+}
+
+// ---------------------------------------------------------------------------
+// RECORDS — the plant's generated records (flattened out of
+// DOCUMENTS): registry JSON, alarm journal, the asset-record viewer
+// set, the shift log, and the attached files. Same MasterLeft idiom —
+// a chooser rail drives one artifact at a time.
+// ---------------------------------------------------------------------------
+
+/// RECORDS — "show me the plant's generated records." MasterLeft: the
+/// chooser lists the five record surfaces; selection drives the
+/// artifact on the right. `selected_asset`/`selected_wo` feed the
+/// record viewers like before the split.
+fn records(m: &PlantModel) -> Page {
     let scroll_pos = Signal::new((0.0f32, 0.2f32));
 
     // Registry as JSON — a live document of the asset store.
@@ -3921,7 +4290,7 @@ fn documents(m: &PlantModel) -> Page {
         })
     };
 
-    // Viewer tabs — one document surface at a time.
+    // Viewer tabs — one record surface at a time.
     let diff = {
         let build = |m: &PlantModel| {
             let a = sel_asset(m);
@@ -4107,7 +4476,7 @@ fn documents(m: &PlantModel) -> Page {
         .tab("PLC SCRIPT", code)
         .tab("WO PROCEDURE", doc)
         .tab("MES PORTAL", portal)
-        .label("documents");
+        .label("asset record");
 
     // Shift log — the record, as a scrollable message list paired
     // with its scroll indicator.
@@ -4260,216 +4629,39 @@ fn documents(m: &PlantModel) -> Page {
             .label("files"),
     );
 
-    // --- artifact selection -----------------------------------------
-    // One index into the Swap: 0..=3 = the selected DocEntry's
-    // kind-mapped viewer; 4.. = generated record views. The chooser
-    // rows write it alongside `selected_doc`.
-    let art_sel = Signal::new(0usize);
-    // C5 — expansion state lives in a page-scoped signal, NOT the
-    // Disclosure widgets: `Bound` re-seats construct-once children on
-    // signature changes and a widget-local `open` would reset with
-    // the rebuild. The signal survives re-seats; each row's push
-    // mirrors it back. Keys: doc ids for `m.docs` rows,
-    // `u32::MAX - i` for the generated record views.
-    let doc_open = Signal::new(Vec::<u32>::new());
+    // --- record selection ---------------------------------------------
+    // One index into the Swap, one per record view. The chooser rows
+    // write it; deep links land on the same index.
+    let rec_sel = Signal::new(0usize);
+    // Same C5 expansion-state pattern as DOCUMENTS — the signal
+    // survives `Bound` re-seats; keys are `u32::MAX - i`.
+    let rec_open = Signal::new(Vec::<u32>::new());
 
-    // Kind-mapped artifacts — the real DocEntry payload.
-    let doc_markdown = {
-        let build = |m: &PlantModel| {
-            let d = sel_doc(m);
-            // The H1 runs ~26.5pt — in the narrowest artifact lane
-            // (~330pt) a long title mid-clips at the page wall, so the
-            // title is pre-fit to the lane (the full title also heads
-            // the chooser row that opened this view).
-            let title = d
-                .as_ref()
-                .map(|d| elide_to(d.title, 300.0, 26.5))
-                .unwrap_or_else(|| "document".to_string());
-            let owner = d
-                .as_ref()
-                .and_then(|d| d.asset)
-                .map(|id| m.asset_name(id).to_string())
-                .unwrap_or_else(|| "site-wide".into());
-            // Code blocks don't wrap — a one-line JSON body (~700pt
-            // shaped) would mid-glyph clip at the panel edge in a
-            // narrow view. Pretty-print when it parses, hard-fold
-            // otherwise; every byte still reads.
-            let body = d
-                .as_ref()
-                .map(|d| fold_code_body(d.body))
-                .unwrap_or_default();
-            Markdown::new(format!(
-                "# {title}\n\n**Asset:** {owner}\n\n```\n{body}\n```"
-            ))
-            .label("document body")
-        };
-        let mut last = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
-        Bound::new(build(m), m).push(move |w: &mut Markdown, m| {
-            let k = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
-            if k != last {
-                last = k;
-                *w = build(m);
-            }
-        })
-    };
-    let doc_json = {
-        let build = |m: &PlantModel| {
-            let d = sel_doc(m);
-            let title = d.as_ref().map(|d| d.title).unwrap_or("doc");
-            let root = d
-                .and_then(|d| serde_json::from_str::<serde_json::Value>(d.body).ok())
-                .map(|v| json_to_node(title, &v))
-                .unwrap_or_else(|| JsonNode::string("doc", "unparseable"));
-            JsonView::new(root).label("document json")
-        };
-        let mut last = (m.selected_doc.get(), docs_sig(m));
-        Bound::new(build(m), m).push(move |w: &mut JsonView, m| {
-            let k = (m.selected_doc.get(), docs_sig(m));
-            if k != last {
-                last = k;
-                *w = build(m);
-            }
-        })
-    };
-    let doc_hex = {
-        let build = |m: &PlantModel| {
-            // A firmware image is a function of its owning asset —
-            // synthesize it from the asset's serial; other doc kinds
-            // carry their raw payload in `DocEntry::bytes`.
-            let bytes = match sel_doc(m) {
-                Some(d) if d.kind == DocKind::Firmware => fw_blob(
-                    d.asset
-                        .and_then(|id| m.asset(id))
-                        .map(|a| a.serial)
-                        .unwrap_or("MSFW"),
-                ),
-                Some(d) => d.bytes.to_vec(),
-                None => Vec::new(),
-            };
-            HexView::new().bytes(bytes).label("document bytes")
-        };
-        let mut last = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
-        Bound::new(build(m), m).push(move |w: &mut HexView, m| {
-            let k = (m.selected_doc.get(), docs_sig(m), assets_sig(m));
-            if k != last {
-                last = k;
-                *w = build(m);
-            }
-        })
-    };
-    let doc_log = {
-        let fill = |w: &mut LogView, m: &PlantModel| {
-            w.clear();
-            if let Some(d) = sel_doc(m) {
-                for line in String::from_utf8_lossy(d.bytes).lines() {
-                    w.push(LogSeverity::Info, line.to_string());
-                }
-            }
-        };
-        let mut lv = LogView::new().max_lines(200);
-        fill(&mut lv, m);
-        let mut last = (m.selected_doc.get(), docs_sig(m));
-        Bound::new(lv, m).push(move |w: &mut LogView, m| {
-            let k = (m.selected_doc.get(), docs_sig(m));
-            if k != last {
-                last = k;
-                fill(w, m);
-            }
-        })
-    };
-
-    // Generated record views — the asset/WO-derived documents that
-    // used to sit behind a page-level Tabs; now chooser entries.
-    let record = viewers; // Tabs: REVISIONS|MERGE|PLC|PROCEDURE|PORTAL
     let shift_log_view = row().child_flex(scroller, 1.0).child(indicator);
 
-    let artifact = Swap::new(&art_sel)
-        .view(doc_markdown) // Manual
-        .view(doc_json) // Report
-        .view(doc_hex) // Firmware
-        .view(doc_log) // Log
+    let artifact = Swap::new(&rec_sel)
         .view(json) // plant registry (JSON)
         .view(journal) // alarm journal
-        .view(record) // asset-record viewer set
-        .view(shift_log_view); // shift log
-                               // Deep-link drain (C6) on the always-mounted primary: a
-                               // `request_page_deep` to DOCUMENTS lands on the named artifact
-                               // view. This must NOT live inside the chooser rail — at
-                               // <RAIL_DISCLOSE_W the rail's Disclosure starts closed, a closed
-                               // Disclosure reports no children, and unticked Bounds never pull,
-                               // so the sub would sit pending until the user re-opened the rail.
+        .view(viewers) // asset-record viewer set
+        .view(shift_log_view) // shift log
+        .view(scroll(files)); // attached files
+                              // Deep-link drain (C6) on the always-mounted primary — a
+                              // `request_page_deep` to RECORDS (or a forwarded DOCUMENTS sub)
+                              // lands on the named record view.
     let artifact = {
-        let asel = art_sel.clone();
+        let rsel = rec_sel.clone();
         Bound::new(artifact, m).pull(move |_w: &mut Swap, m| {
-            if let Some(sub) = m.take_page_sub(0, page::DOCUMENTS) {
-                asel.set_if_changed(sub as usize);
+            if let Some(sub) = m.take_page_sub(0, page::RECORDS) {
+                rsel.set_if_changed(sub as usize);
             }
         })
     };
 
     // --- master: the chooser -----------------------------------------
-    // C5 — expandable rows, one per `m.docs` entry plus the four
-    // generated record views. A collapsed row keeps the summary
-    // fields readable — kind · title · owning asset — and the
-    // Disclosure chevron is the explicit expand affordance; the open
-    // body shows a preview plus the row's next-step verbs (Open ▸
-    // selects the artifact; Asset ▸ deep-links to the owning asset's
-    // DETAIL page — a real `request_page_deep`).
+    // Expandable rows, one per record view — same C5 row pattern as
+    // DOCUMENTS; the open body describes the record and Open ▸
+    // selects it.
     let chooser = {
-        let mut col = Flex::column().gap(ZONE_GAP);
-        for d in m.docs.get() {
-            let id = d.id;
-            let art = match d.kind {
-                DocKind::Manual => 0,
-                DocKind::Report => 1,
-                DocKind::Firmware => 2,
-                DocKind::Log => 3,
-            };
-            // The disclosure title lane in the chooser is ~110pt at
-            // 14pt — the full "kind · title · owner" triple mid-clips
-            // at the rail edge. Kind + title elided; the owner reads
-            // in the row's Asset ▸ verb.
-            let title = elide_to(
-                &format!("{} · {}", d.kind.label().to_lowercase(), d.title),
-                110.0,
-                14.0,
-            );
-            let preview: String = {
-                let first = d
-                    .body
-                    .lines()
-                    .map(str::trim)
-                    .find(|l| !l.is_empty())
-                    .unwrap_or("—");
-                first.chars().take(140).collect()
-            };
-            let asel = art_sel.clone();
-            let open = Bound::new(Button::new("Open ▸"), m).pull(move |w: &mut Button, m| {
-                if w.take_activated() {
-                    m.selected_doc.set_if_changed(Some(id));
-                    asel.set_if_changed(art);
-                }
-            });
-            let mut verbs = strip().child(open);
-            if let Some(aid) = d.asset {
-                verbs = verbs.child(Bound::new(Button::new("Asset ▸"), m).pull(
-                    move |w: &mut Button, m| {
-                        if w.take_activated() {
-                            m.selected_asset.set_if_changed(Some(aid));
-                            // Land on the Inspector dossier — it
-                            // surfaces the asset's active alarms.
-                            m.request_page_deep(0, page::DETAIL, 1);
-                        }
-                    },
-                ));
-            }
-            let body = Flex::column()
-                .gap(ZONE_GAP)
-                .child(Text::new(preview).font_size(12.0))
-                .child(verbs.child_flex(DummyWidget, 1.0));
-            col = col.child(doc_row(m, &doc_open, id, title, body));
-        }
-        // Generated record views — keyed `u32::MAX - i` in `doc_open`.
         const GEN: &[(&str, &str)] = &[
             (
                 "record · plant registry",
@@ -4487,12 +4679,17 @@ fn documents(m: &PlantModel) -> Page {
                 "record · shift log",
                 "the operator's running narrative of the shift",
             ),
+            (
+                "record · files",
+                "shift report, firmware download, identifier clipboard",
+            ),
         ];
+        let mut col = Flex::column().gap(ZONE_GAP);
         for (i, (title, desc)) in GEN.iter().enumerate() {
-            let asel = art_sel.clone();
+            let rsel = rec_sel.clone();
             let open = Bound::new(Button::new("Open ▸"), m).pull(move |w: &mut Button, _m| {
                 if w.take_activated() {
-                    asel.set_if_changed(4 + i);
+                    rsel.set_if_changed(i);
                 }
             });
             let body = Flex::column()
@@ -4501,7 +4698,7 @@ fn documents(m: &PlantModel) -> Page {
                 .child(strip().child(open).child_flex(DummyWidget, 1.0));
             col = col.child(doc_row(
                 m,
-                &doc_open,
+                &rec_open,
                 u32::MAX - i as u32,
                 elide_to(&format!("{title} · generated"), 110.0, 14.0),
                 body,
@@ -4510,26 +4707,22 @@ fn documents(m: &PlantModel) -> Page {
         col
     };
 
-    // Quiet caption — the page's scope readout. The deep-link drain
-    // lives on `artifact` (the always-mounted primary), not here —
-    // this caption sits inside the collapsible rail.
     let scope =
         Bound::new(Text::new("—").font_size(12.0).color(muted_ink()), m).push(|w: &mut Text, m| {
-            w.set_content(format!("{} documents · 4 records", m.docs.get().len()));
+            w.set_content(format!("5 records · {} alarms", m.alarms.get().len()));
         });
 
     let master_col = Flex::column()
         .gap(ZONE_GAP)
         .child(scope)
-        .child_flex(chooser, 1.0)
-        .child(band(BAND_M + 40.0, files));
+        .child_flex(chooser, 1.0);
 
     // C7 breakpoint contract — MasterLeft: ≥560pt (`RAIL_STACK_W`)
-    // the "Documents" chooser sits left of the artifact; <560pt it
+    // the "Records" chooser sits left of the artifact; <560pt it
     // stacks *above* the artifact it selects; <380pt
     // (`RAIL_DISCLOSE_W`) it collapses into a Disclosure whose header
-    // keeps the "Documents" caption.
-    Page::new(Variant::MasterLeft, fill(artifact), &m.zone_width[0]).rail("Documents", master_col)
+    // keeps the "Records" caption.
+    Page::new(Variant::MasterLeft, fill(artifact), &m.zone_width[0]).rail("Records", master_col)
 }
 
 /// A DOCUMENTS chooser row (C5) — the `Disclosure` header is the
@@ -4763,7 +4956,10 @@ fn exec_console(t: &mut Terminal, cmd: &str, m: &PlantModel) {
 fn bound_switch(model: &PlantModel, label: &'static str, sig: Signal<bool>) -> Bound<Switch> {
     let mut last = sig.get();
     let sig_push = sig.clone();
-    Bound::new(Switch::new(label).on(last), model)
+    // Bare track — the row's own title names the setting, so the
+    // painted label stays empty; the switch still needs an accessible
+    // name, carried via `a11y_label`.
+    Bound::new(Switch::new("").a11y_label(label).on(last), model)
         .pull(move |w: &mut Switch, _m| {
             if w.on != last {
                 last = w.on;
@@ -4780,10 +4976,11 @@ fn bound_switch(model: &PlantModel, label: &'static str, sig: Signal<bool>) -> B
 }
 
 /// DIAGNOSTICS — "what is the console telling me, and what can I do
-/// about it?" Theater: Terminal is the dominant surface; the system
-/// channel of `shift_log` tails beneath it (secondary ≤35%); the
-/// palette + ack verb + command reference live in the strip; console
-/// settings/about/frame-timing are the rail.
+/// about it?" Master-detail: the primary swaps between the Terminal
+/// console and the `shift_log` system-channel tail (the strip's
+/// CONSOLE | SYS LOG selector — two dense line surfaces at once
+/// over-packed the page); the palette + ack verb live in the strip;
+/// console settings/about/frame-timing are the rail.
 fn diagnostics(m: &PlantModel) -> Page {
     // The console — echo + interpreter over the model.
     let term = {
@@ -4878,22 +5075,22 @@ fn diagnostics(m: &PlantModel) -> Page {
         .row(
             SettingsRow::new("Line running")
                 .subtitle("audio + beacon")
-                .trailing(bound_switch(m, "", m.line_running.clone())),
+                .trailing(bound_switch(m, "line running", m.line_running.clone())),
         )
         .row(
             SettingsRow::new("Console lock")
                 .subtitle("gates the HMI")
-                .trailing(bound_switch(m, "", m.console_locked.clone())),
+                .trailing(bound_switch(m, "console lock", m.console_locked.clone())),
         )
         .row(
             SettingsRow::new("Alert strip")
                 .subtitle("toolbar banner")
-                .trailing(bound_switch(m, "", m.alerts_on.clone())),
+                .trailing(bound_switch(m, "alert strip", m.alerts_on.clone())),
         )
         .row(
             SettingsRow::new("Reduced motion")
                 .subtitle("accessibility")
-                .trailing(bound_switch(m, "", m.reduced_motion.clone())),
+                .trailing(bound_switch(m, "reduced motion", m.reduced_motion.clone())),
         );
 
     // About — the HMI's identity; credits list the real crew roster.
@@ -4954,15 +5151,32 @@ fn diagnostics(m: &PlantModel) -> Page {
         })
     };
 
-    // Primary: terminal dominant, tail bounded at ~35%. Both are
+    // Channel swap — two text-dense line surfaces side by side
+    // over-packed the primary; a console reads its channels one at a
+    // time (the CONSOLE | SYS LOG strip selector). Both are
     // fixed-pitch line surfaces — LogView's 240pt measure
     // under-reports real lines (~340pt with insets), so the h-scroll
     // mounts carry a 360pt floor and the scrollport owns any cut at
     // the viewport edge.
-    let primary = Flex::column()
-        .gap(ZONE_GAP)
-        .child_flex(ScrollView::horizontal(MinW::new(360.0, term)), 13.0)
-        .child_flex(ScrollView::horizontal(MinW::new(360.0, sys_tail)), 7.0);
+    let chan_sel = Signal::new(0usize);
+    let chan = {
+        let sig = chan_sel.clone();
+        Bound::new(
+            Segmented::new()
+                .options(["Console", "Sys log"])
+                .selected(0)
+                .label("channel"),
+            m,
+        )
+        .pull(move |w: &mut Segmented, _m| {
+            if let Some(i) = w.take_selected() {
+                sig.set_if_changed(i);
+            }
+        })
+    };
+    let primary = Swap::new(&chan_sel)
+        .view(ScrollView::horizontal(MinW::new(360.0, term)))
+        .view(ScrollView::horizontal(MinW::new(360.0, sys_tail)));
 
     let rail_col = Flex::column()
         .gap(ZONE_STACK)
@@ -4979,7 +5193,13 @@ fn diagnostics(m: &PlantModel) -> Page {
         // The palette is the stretch field; the command reference is a
         // block-level collapsible (its measure echoes the offered
         // width), so it lives in the rail, not the strip.
-        .strip(strip().child(ack_all).child_flex(palette, 1.0))
+        .strip(
+            strip()
+                .child(ack_all)
+                .child(Separator::vertical())
+                .child(chan)
+                .child_flex(palette, 1.0),
+        )
         .rail("Console", rail_col)
 }
 
@@ -5383,7 +5603,7 @@ mod tests {
     fn pages_are_domain_named_and_bounded() {
         let m = seeded();
         let pages = pages(&m);
-        assert!((4..=8).contains(&pages.len()));
+        assert!((4..=12).contains(&pages.len()));
         const WIDGET_WORDS: &[&str] = &[
             "TREE", "TABLE", "LIST", "KANBAN", "GANTT", "TERMINAL", "GRID", "TABS", "CHART",
             "WIDGET", "PICKER",

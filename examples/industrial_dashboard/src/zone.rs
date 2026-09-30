@@ -122,6 +122,7 @@ pub struct Band {
     child: Box<dyn Widget>,
     height: f32,
     bounds: Rect,
+    alarm: bool,
 }
 
 /// Mount `w` in a [`Band`] at `height_pt` logical points.
@@ -130,12 +131,30 @@ pub fn band(height_pt: f32, w: impl Widget + 'static) -> Band {
         child: Box::new(w),
         height: height_pt,
         bounds: Rect::default(),
+        alarm: false,
+    }
+}
+
+/// A [`Band`] whose content deliberately paints the alarm channel —
+/// severity-encoded alarm surfaces (alarm-distribution charts,
+/// annunciator slices). The `@alarm` marker declares that intent to
+/// the design lint's reserved-hue lineage walk.
+pub fn band_alarm(height_pt: f32, w: impl Widget + 'static) -> Band {
+    Band {
+        child: Box::new(w),
+        height: height_pt,
+        bounds: Rect::default(),
+        alarm: true,
     }
 }
 
 impl Widget for Band {
     fn debug_name(&self) -> &'static str {
-        "Band"
+        if self.alarm {
+            "Band@alarm"
+        } else {
+            "Band"
+        }
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> glam::Vec2 {

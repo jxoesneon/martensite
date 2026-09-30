@@ -13,6 +13,7 @@
 //! `reconcile()` to drain widget interaction (`take_*`/getters) into
 //! signals, then `publish()` to push model state back into views.
 
+use martensite::core::Rect;
 use martensite::reactive::Signal;
 
 // ---------------------------------------------------------------------------
@@ -540,6 +541,18 @@ pub struct PlantModel {
     /// panels). `ZonePanel::layout` writes `zone_width[zone_index]`;
     /// `Page` reads its zone's slot for rail collapse breakpoints.
     pub zone_width: [Signal<f32>; 4],
+    /// Zone tab-strip rect in window space (device px) — one slot per
+    /// zone, written by `ZonePanel::layout` beside `zone_width`. The
+    /// first-run tour reads the active zone's slot for its coach-mark
+    /// spotlight.
+    pub zone_tabs: [Signal<Rect>; 4],
+    /// Top-level zone selection — which of the four `ZonePanel`s the
+    /// shell's swap deck shows (0=grid, 1=telemetry, 2=editor,
+    /// 3=media, same order as `page_request`). The left NavRail is the
+    /// primary writer; deep links (`request_page` to a hidden zone)
+    /// and the dev-channel `nav_sel` signal write land here too, so
+    /// programmatic nav and pointer nav share one cell.
+    pub nav_sel: Signal<usize>,
     /// Shell toast inbox — any zone enqueues a `Toast`; the
     /// `ShellOverlays` owner drains it into the viewport-anchored
     /// `ToastHost`. Toasts are chrome, not page layout.
@@ -630,6 +643,8 @@ impl PlantModel {
             page_request: Signal::new([None; 4]),
             page_request_sub: Signal::new([None; 4]),
             zone_width: std::array::from_fn(|_| Signal::new(960.0)),
+            zone_tabs: std::array::from_fn(|_| Signal::new(Rect::default())),
+            nav_sel: Signal::new(0),
             toast_inbox: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             channel_sel: Signal::new(0),
             active_chrome: Signal::new(0),
@@ -699,6 +714,9 @@ impl PlantModel {
     /// `ZonePanel::tick` drains the slot and activates the tab.
     /// A plain request lands on the page's default inner view, so a
     /// pending deep-link sub for the zone is cleared with it.
+    /// The write also moves `nav_sel` — only one zone is mounted at a
+    /// time, so a deep link into a hidden zone must surface its panel
+    /// or the operator never sees it land.
     pub fn request_page(&self, zone: usize, page: u8) {
         let mut req = self.page_request.get();
         req[zone] = Some(page);
@@ -707,12 +725,17 @@ impl PlantModel {
         if sub[zone].take().is_some() {
             self.page_request_sub.set(sub);
         }
+        if self.nav_sel.get() != zone {
+            self.nav_sel.set(zone);
+        }
     }
 
     /// Deep-link request — activate `page` and land on its inner
     /// `sub` view (the page's Swap/Segmented index). The page drains
     /// the sub via [`take_page_sub`](Self::take_page_sub) once it
-    /// ticks — i.e. after activation, while visible.
+    /// ticks — i.e. after activation, while visible. Like
+    /// [`request_page`](Self::request_page) the write moves `nav_sel`
+    /// so a request aimed at a hidden zone surfaces its panel.
     pub fn request_page_deep(&self, zone: usize, page: u8, sub: u8) {
         let mut req = self.page_request.get();
         req[zone] = Some(page);
@@ -720,6 +743,9 @@ impl PlantModel {
         let mut s = self.page_request_sub.get();
         s[zone] = Some((page, sub));
         self.page_request_sub.set(s);
+        if self.nav_sel.get() != zone {
+            self.nav_sel.set(zone);
+        }
     }
 
     /// Drain this zone's pending deep-link sub *for `page`*
@@ -1383,7 +1409,10 @@ fn seed_alarms() -> Vec<Alarm> {
             severity: Critical,
             message: "Compressor fault",
             active: true,
-            acked: false,
+            // Still active — the fault keeps the board's FAULT lamp
+            // lit — but already triaged by the prior shift, so it does
+            // not compete for the badge/panel alert channel.
+            acked: true,
             raised_min: 210,
         },
         Alarm {
@@ -1410,7 +1439,7 @@ fn seed_alarms() -> Vec<Alarm> {
             severity: Info,
             message: "AGV uplink weak",
             active: true,
-            acked: false,
+            acked: true,
             raised_min: 200,
         },
         Alarm {

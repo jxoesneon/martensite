@@ -1390,7 +1390,9 @@ fn appearance(model: &PlantModel) -> Page {
 
     Page::new(
         Variant::MasterLeft,
-        crate::zone::fill(primary),
+        // Sectioned column — scroll-mounted so a short zone scrolls
+        // rather than crushing the controls under the target floor.
+        crate::zone::fill(crate::zone::scroll(primary)),
         &model.zone_width[2],
     )
     .rail("Section", nav)
@@ -1837,7 +1839,9 @@ fn command_surface(model: &PlantModel) -> Page {
 
     Page::new(
         Variant::MasterDetail,
-        crate::zone::fill(primary),
+        // Swap of fixed strips — scroll-mounted so a short zone
+        // scrolls rather than crushing the control rows.
+        crate::zone::fill(crate::zone::scroll(primary)),
         &model.zone_width[2],
     )
     .strip(strip().child(chrome_view).child_flex(DummyWidget, 1.0))
@@ -2194,12 +2198,15 @@ fn annotation(model: &PlantModel) -> Page {
 
     let primary = Flex::column()
         .gap(ZONE_STACK)
-        .child(target)
+        // Canvas row first — a short zone's first viewport should show
+        // the markup surface, not a paragraph of caption text (the
+        // sliver reads ~26% alphanumeric otherwise).
         .child(
             row()
                 .child_flex(field("MARKUP", band(BAND_M, markup)), 1.0)
                 .child(undo_btn),
         )
+        .child(target)
         .child(
             row()
                 .child_flex(field("SIGN-OFF", band(BAND_M, signoff)), 3.0)
@@ -2207,7 +2214,7 @@ fn annotation(model: &PlantModel) -> Page {
         );
     Page::new(
         Variant::Centered,
-        crate::zone::fill(primary),
+        crate::zone::fill(crate::zone::scroll(primary)),
         &model.zone_width[2],
     )
 }

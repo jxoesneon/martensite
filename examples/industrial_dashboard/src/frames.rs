@@ -5,8 +5,8 @@
 //! Each swept [`PaintList`] is rendered by the CPU
 //! [`TinySkiaBackend`] and written to `<dir>/<zone>/<page>@<width>.png`
 //! (scrolled frames get a `+y<offset>` suffix so the top-of-scroll
-//! frame keeps the canonical name; the full-dock pass lands as
-//! `app@1600x1000.png`). Alongside every frame, a CVD post-pass emits
+//! frame keeps the canonical name; the full-app pass lands as
+//! `app@1600x1000/<destination>.png`). Alongside every frame, a CVD post-pass emits
 //! `<name>.deutan.png` and `<name>.protan.png` (spec A3 — sighted
 //! review cannot verify color-vision-deficiency safety, so the
 //! simulator makes the V4 gate real).
