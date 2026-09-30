@@ -14,7 +14,7 @@
 //! use cargo_martensite::mcp::run_mcp;
 //!
 //! // Blocks until the host agent closes the stdio transport.
-//! let _ = run_mcp(None, None, None, false);
+//! let _ = run_mcp(None, None, None, false, false);
 //! ```
 
 use std::path::PathBuf;
