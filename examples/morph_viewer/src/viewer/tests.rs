@@ -21,14 +21,14 @@ fn signals() -> ViewerSignals {
 fn every_bundled_icon_loads() {
     let mut icon = MorphIcon::new();
     let mut total = 0usize;
-    for pack in icons::PACKS {
+    for pack in icons::all_packs() {
         for def in pack.icons {
             icon.set_icon(def.d)
                 .unwrap_or_else(|e| panic!("{}/{} failed to load: {e}", pack.name, def.name));
             total += 1;
         }
     }
-    let bundled: usize = icons::PACKS.iter().map(|p| p.icons.len()).sum();
+    let bundled: usize = icons::all_packs().iter().map(|p| p.icons.len()).sum();
     assert_eq!(total, bundled);
 }
 
@@ -70,7 +70,7 @@ fn layout_fills_grid_and_hero() {
     assert_eq!(v.cells.len(), v.shown);
     assert_eq!(v.cell_rects.len(), v.shown);
     assert_eq!(v.icon_rects.len(), v.shown);
-    assert!(v.tab_rects.len() >= icons::PACKS.len());
+    assert!(v.tab_rects.len() >= icons::all_packs().len());
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn selection_pins_only_when_filtered_out() {
     assert_eq!(v.display[0], (0, 0));
     assert_eq!(v.display[3], (0, 3));
     // A filter that excludes the icon pins it to the front.
-    let name3 = icons::PACKS[0].icons[3].name;
+    let name3 = icons::all_packs()[0].icons[3].name;
     let miss = if name3.contains("arrow") {
         "zzz"
     } else {
@@ -238,19 +238,21 @@ fn selection_pins_only_when_filtered_out() {
 fn category_and_sort_signals_narrow_results() {
     let mut v = laid_out();
     v.tick(Duration::from_millis(16));
-    let pack_len = icons::PACKS[0].icons.len();
+    let pack_len = icons::all_packs()[0].icons.len();
     // category: only icons named `<cat>-*` remain
     v.signals.category.set("arrow".to_string());
     v.tick(Duration::from_millis(16));
     assert!(v.filtered_len() > 0 && v.filtered_len() < pack_len);
     for &i in &v.filtered {
-        assert!(icons::PACKS[0].icons[i as usize].name.starts_with("arrow-"));
+        assert!(icons::all_packs()[0].icons[i as usize]
+            .name
+            .starts_with("arrow-"));
     }
     // sort: a→z orders the matches lexicographically
     v.signals.sort.set("az".to_string());
     v.tick(Duration::from_millis(16));
     let mut sorted = v.filtered.clone();
-    sorted.sort_by_key(|&i| icons::PACKS[0].icons[i as usize].name);
+    sorted.sort_by_key(|&i| icons::all_packs()[0].icons[i as usize].name);
     assert_eq!(v.filtered, sorted);
 }
 
@@ -571,12 +573,12 @@ fn cross_pack_selection_loops() {
     assert_eq!(v.target_sel, Some((1, 7)));
     // Wells show their own icons: base lucide, target tabler.
     assert_eq!(v.well_base.tooltip(), {
-        let i = &icons::PACKS[0].icons[4];
-        Some(format!("{} · {}", i.name, icons::PACKS[0].name))
+        let i = &icons::all_packs()[0].icons[4];
+        Some(format!("{} · {}", i.name, icons::all_packs()[0].name))
     });
     assert_eq!(v.well_target.tooltip(), {
-        let i = &icons::PACKS[1].icons[7];
-        Some(format!("{} · {}", i.name, icons::PACKS[1].name))
+        let i = &icons::all_packs()[1].icons[7];
+        Some(format!("{} · {}", i.name, icons::all_packs()[1].name))
     });
     // The pair loops — hero alternates packs. (The arena ticks
     // internal children; in tests we tick the hero ourselves so its

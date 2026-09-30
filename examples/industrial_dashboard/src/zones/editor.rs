@@ -51,6 +51,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use martensite::core::Widget;
+use martensite::icons::builtin::names;
 use martensite::reactive::Signal;
 use martensite::widgets::alpha_slider::AlphaSlider;
 use martensite::widgets::barcode::Barcode;
@@ -1325,9 +1326,9 @@ fn appearance(model: &PlantModel) -> Page {
         let ss = sec_sel.clone();
         Bound::new(
             NavRail::new()
-                .destination("Aa", "Typography")
-                .destination("⚙", "Behavior")
-                .destination("◐", "Accent")
+                .destination_named(names::TYPE, "Typography")
+                .destination_named(names::SETTINGS, "Behavior")
+                .destination_named(names::CONTRAST, "Accent")
                 .selected(sec_sel.get()),
             model,
         )

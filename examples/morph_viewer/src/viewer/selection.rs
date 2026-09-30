@@ -257,7 +257,7 @@ impl MorphViewer {
         let bind = |sel: Option<Sel>| -> Option<(&IconDef, &'static str)> {
             let (p, i) = sel?;
             let icon = icon_at(p, i)?;
-            let pack = icons::PACKS.get(p as usize)?.name;
+            let pack = icons::all_packs().get(p as usize)?.name;
             Some((icon, pack))
         };
         self.well_base.set(bind(self.base_sel));
@@ -273,7 +273,9 @@ impl MorphViewer {
                     return None;
                 }
                 let icon = icon_at(c.pack, c.icon_idx)?;
-                let pack = icons::PACKS.get(c.pack as usize).map_or("?", |p| p.name);
+                let pack = icons::all_packs()
+                    .get(c.pack as usize)
+                    .map_or("?", |p| p.name);
                 // Cross-pack pinned icons say where they came from.
                 if c.pack != self.last_pack {
                     Some(format!("{} · {}", icon.name, pack))

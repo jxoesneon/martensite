@@ -24,11 +24,14 @@ use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, SemanticAction, Widget, WidgetEvent,
 };
+use martensite::icons::builtin;
+use martensite::motion::SpringConfig;
 use martensite::prelude::Signal;
 use martensite::render::BezPath;
 use martensite::theme::TokenKey;
 use martensite::widgets::menu::MenuItem;
 use martensite::widgets::menu_button::MenuButton;
+use martensite::widgets::morph_icon::MorphIcon;
 use martensite::widgets::{Button, CheckBox, Dropdown, Separator, Slider, Switch, TextInput};
 
 /// Strip height in logical pt.
@@ -46,6 +49,16 @@ const ALERTS: usize = 5;
 const SHELL: usize = 6;
 const FILTER: usize = 7;
 const N: usize = 8;
+/// Internal-child indices for the decorative `MorphIcon` siblings —
+/// they share their control's slot (carved off its leading edge in
+/// `layout`) rather than competing for strip width.
+const PAUSE_ICON: usize = N;
+const ALERTS_ICON: usize = N + 1;
+const CHILDREN: usize = N + 2;
+/// Leading icon lane carved out of the PAUSE/ALERTS slots (logical pt).
+const ICON_LANE: f32 = 22.0;
+/// Icon square edge (logical pt).
+const ICON_PT: f32 = 16.0;
 
 /// Shell-menu rows — the index in the `MenuButton` item list that maps
 /// to each request signal.
@@ -76,6 +89,10 @@ pub struct ToolbarSignals {
     /// Row-alert strip toggle — `TelemetryPanel` shows its `Banner`
     /// while set; the switch writes, the banner's × clears.
     pub alerts_on: Signal<bool>,
+    /// The HMI's reduced-motion toggle — OR'd with the platform flag
+    /// for the decorative morph icons (platform wins; the toggle is
+    /// the in-app path a dev-channel drive exercises).
+    pub reduced_motion: Signal<bool>,
     /// Shell ▸ "Commands" activated — the app navigates to Editor ▸
     /// CHROME (the `CommandPalette` surface).
     pub commands_req: Signal<bool>,
@@ -116,11 +133,18 @@ pub struct Toolbar {
     /// rect and would otherwise be dropped by the hit test.
     press_target: Option<usize>,
     pause: Button,
+    /// Decorative play/pause indicator leading the pause button —
+    /// driven off `paused` edges in `tick` (seeded via `set_icon`,
+    /// later edges `morph_to`).
+    pause_icon: MorphIcon,
     glow: CheckBox,
     tick: Slider,
     theme: Dropdown,
     sep: Separator,
     alerts: Switch,
+    /// Decorative bell/bell-off indicator leading the alerts switch —
+    /// driven off `alerts_on` edges in `tick`.
+    alerts_icon: MorphIcon,
     /// The shell-layer verbs (dialog, drawer, window, OS services)
     /// plus the navigation shortcuts — they're chrome, not ops
     /// controls, so they fold into one menu instead of competing with
@@ -144,6 +168,20 @@ pub struct Toolbar {
     /// Row-alert strip toggle — `TelemetryPanel` shows its `Banner`
     /// while set; the switch writes, the banner's × clears.
     alerts_on: Signal<bool>,
+    /// The HMI's reduced-motion toggle — unioned with the
+    /// arena-pushed platform flag for the morph icons.
+    reduced_motion: Signal<bool>,
+    /// The platform reduced-motion flag the arena pushed — remembered
+    /// so `tick` can keep the icons at `platform || model`.
+    platform_reduced: bool,
+    /// Edge detectors for the icon drives — `None` until the first
+    /// `tick` seeds the resting shapes via `set_icon` (no flight).
+    pause_icon_seen: Option<bool>,
+    alerts_icon_seen: Option<bool>,
+    /// Icon rects resolved in `layout` (device px) — carve-outs of the
+    /// PAUSE/ALERTS slots; cleared when the slot suspends.
+    pause_icon_rect: Rect,
+    alerts_icon_rect: Rect,
     /// "Commands" activated — navigate to the `CommandPalette` surface.
     commands_req: Signal<bool>,
     /// "Alerts" activated — navigate to the `NotificationCenter` surface.
@@ -175,6 +213,7 @@ impl Toolbar {
             theme_sel,
             filter_text,
             alerts_on,
+            reduced_motion,
             commands_req,
             bell_req,
             about_req,
@@ -196,6 +235,9 @@ impl Toolbar {
             pause_armed: false,
             press_target: None,
             pause: Button::new("Pause").tooltip("pause telemetry (Space in Telemetry works too)"),
+            // Decorative — the button's label carries the a11y name.
+            // Seeded empty; the first `tick` lands the resting shape.
+            pause_icon: MorphIcon::new().size(ICON_PT).decorative(true),
             glow: CheckBox::new("glow").checked(glow_on.get()),
             tick: Slider::new(20.0, 500.0)
                 .with_value(tick_ms.get())
@@ -208,6 +250,7 @@ impl Toolbar {
             },
             sep: Separator::vertical(),
             alerts: Switch::new("alerts").on(alerts_on.get()),
+            alerts_icon: MorphIcon::new().size(ICON_PT).decorative(true),
             // The shell verbs and navigation shortcuts as one menu —
             // order maps to the `SHELL_*` row indices drained in `tick`.
             shell: MenuButton::new(
@@ -232,6 +275,12 @@ impl Toolbar {
             theme_sel,
             filter_text,
             alerts_on,
+            reduced_motion,
+            platform_reduced: false,
+            pause_icon_seen: None,
+            alerts_icon_seen: None,
+            pause_icon_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
+            alerts_icon_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             commands_req,
             bell_req,
             about_req,
@@ -283,6 +332,32 @@ impl Toolbar {
         self.filter_text.set_if_changed(self.filter.value.clone());
     }
 
+    /// The icons' effective reduced-motion flag: the OS preference the
+    /// arena pushed OR the HMI's own toggle — either one snaps the
+    /// morph instead of springing it.
+    fn push_icon_motion_pref(&mut self) {
+        let reduced = self.platform_reduced || self.reduced_motion.get();
+        self.pause_icon.set_reduced_motion(reduced);
+        self.alerts_icon.set_reduced_motion(reduced);
+    }
+
+    /// Drive a decorative icon off a signal edge — first observation
+    /// seeds the resting shape (`set_icon`, no flight); later edges
+    /// morph through a snappy spring.
+    fn drive_icon(icon: &mut MorphIcon, seen: &mut Option<bool>, on: bool, d: &'static str) {
+        if *seen == Some(on) {
+            return;
+        }
+        let first = seen.is_none();
+        *seen = Some(on);
+        let res = if first {
+            icon.set_icon(d)
+        } else {
+            icon.morph_to(d, SpringConfig::SNAPPY)
+        };
+        debug_assert!(res.is_ok(), "pack icon path rejected: {res:?}");
+    }
+
     fn child_mut_at(&mut self, i: usize) -> Option<&mut dyn Widget> {
         match i {
             PAUSE => Some(&mut self.pause),
@@ -293,6 +368,8 @@ impl Toolbar {
             ALERTS => Some(&mut self.alerts),
             SHELL => Some(&mut self.shell),
             FILTER => Some(&mut self.filter),
+            PAUSE_ICON => Some(&mut self.pause_icon),
+            ALERTS_ICON => Some(&mut self.alerts_icon),
             _ => None,
         }
     }
@@ -307,6 +384,8 @@ impl Toolbar {
             ALERTS => Some(&self.alerts),
             SHELL => Some(&self.shell),
             FILTER => Some(&self.filter),
+            PAUSE_ICON => Some(&self.pause_icon),
+            ALERTS_ICON => Some(&self.alerts_icon),
             _ => None,
         }
     }
@@ -375,6 +454,12 @@ impl Widget for Toolbar {
         for (i, w) in slots {
             if right - x < w {
                 self.rects[i] = Rect::new(x, y, 0.0, h);
+                // The icon suspends with its control.
+                if i == PAUSE {
+                    self.pause_icon_rect = Rect::new(x, y, 0.0, h);
+                } else if i == ALERTS {
+                    self.alerts_icon_rect = Rect::new(x, y, 0.0, h);
+                }
                 if self.key_target == Some(i) {
                     self.key_target = None;
                 }
@@ -382,8 +467,26 @@ impl Widget for Toolbar {
             }
             let r = Rect::new(x, y, w, h);
             self.rects[i] = r;
+            // PAUSE/ALERTS host a decorative morph icon in a narrow
+            // leading lane — the control keeps the remainder.
+            let control = if matches!(i, PAUSE | ALERTS) {
+                let lane = ICON_LANE * s;
+                let size = ICON_PT * s;
+                let ir = Rect::new(x + (lane - size) * 0.5, y + (h - size) * 0.5, size, size);
+                let icon = if i == PAUSE {
+                    self.pause_icon_rect = ir;
+                    &mut self.pause_icon
+                } else {
+                    self.alerts_icon_rect = ir;
+                    &mut self.alerts_icon
+                };
+                cx.layout_child(icon, ir);
+                Rect::new(x + lane, y, (w - lane).max(0.0), h)
+            } else {
+                r
+            };
             if let Some(c) = self.child_mut_at(i) {
-                cx.layout_child(c, r);
+                cx.layout_child(c, control);
             }
             x = r.max_x() + gap;
         }
@@ -504,12 +607,38 @@ impl Widget for Toolbar {
 
     fn tick(&mut self, _dt: std::time::Duration) -> bool {
         let mut dirty = self.reconcile();
-        // Space-driven pause (Telemetry panel) re-syncs the label.
-        let want = if self.paused.get() { "Resume" } else { "Pause" };
+        // Reduced-motion pref must be current *before* `morph_to`
+        // consults it — model-toggle writes land between pushes.
+        self.push_icon_motion_pref();
+        let paused = self.paused.get();
+        // Space-driven pause (Telemetry panel) re-syncs the label —
+        // and the leading icon: paused → the "resume" verb is a play
+        // triangle, running → pause bars.
+        let want = if paused { "Resume" } else { "Pause" };
         if self.pause.label != want {
             self.pause.label = want.to_string();
             dirty = true;
         }
+        Self::drive_icon(
+            &mut self.pause_icon,
+            &mut self.pause_icon_seen,
+            paused,
+            if paused {
+                builtin::media::MEDIA_PLAY
+            } else {
+                builtin::media::MEDIA_PAUSE
+            },
+        );
+        Self::drive_icon(
+            &mut self.alerts_icon,
+            &mut self.alerts_icon_seen,
+            self.alerts_on.get(),
+            if self.alerts_on.get() {
+                builtin::status::STATUS_BELL
+            } else {
+                builtin::status::STATUS_BELL_OFF
+            },
+        );
         // Shell menu activations land via the overlay layer (shared
         // menu state), not the toolbar's event path — drain here.
         if let Some(path) = self.shell.take_activated() {
@@ -535,6 +664,20 @@ impl Widget for Toolbar {
         self.shell.sync_overlay(overlay);
     }
 
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        // The arena push (OS preference) forwards verbatim to the
+        // control children — the default impl's contract — while the
+        // icons take the union with the HMI toggle (`tick` re-applies
+        // it so a model-side flip needs no new push).
+        for i in 0..N {
+            if let Some(c) = self.child_mut_at(i) {
+                c.set_reduced_motion(reduced);
+            }
+        }
+        self.platform_reduced = reduced;
+        self.push_icon_motion_pref();
+    }
+
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Toolbar);
         node.set_label("workstation controls");
@@ -542,7 +685,7 @@ impl Widget for Toolbar {
     }
 
     fn child_count(&self) -> usize {
-        N
+        CHILDREN
     }
 
     fn child(&self, index: usize) -> Option<&dyn Widget> {
@@ -556,11 +699,16 @@ impl Widget for Toolbar {
     fn child_bounds(&self, index: usize) -> Option<Rect> {
         // Degenerate slots suspend their child — the paint walk, tick
         // walk, and default event forwarding all honour `None` as
-        // "not presented".
-        self.rects
-            .get(index)
-            .copied()
-            .filter(|r| r.width() >= MIN_SLOT_W)
+        // "not presented". The icons share their control's fate.
+        match index {
+            PAUSE_ICON => Some(self.pause_icon_rect).filter(|r| r.width() >= MIN_SLOT_W),
+            ALERTS_ICON => Some(self.alerts_icon_rect).filter(|r| r.width() >= MIN_SLOT_W),
+            _ => self
+                .rects
+                .get(index)
+                .copied()
+                .filter(|r| r.width() >= MIN_SLOT_W),
+        }
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -628,6 +776,7 @@ mod tests {
             theme_sel: Signal::new(0),
             filter_text: Signal::new(String::new()),
             alerts_on: Signal::new(true),
+            reduced_motion: Signal::new(false),
             about_req: Signal::new(false),
             inspector_req: Signal::new(false),
             console_req: Signal::new(false),
@@ -706,5 +855,69 @@ mod tests {
         tb.layout(&mut cx, Rect::new(0.0, 0.0, 1600.0, 40.0));
         let restored: Vec<usize> = (0..N).filter(|&i| tb.child_bounds(i).is_some()).collect();
         assert_eq!(restored.len(), N, "slots did not restore at full width");
+    }
+
+    #[test]
+    fn icons_follow_pause_and_alerts_signals() {
+        let sigs = signals();
+        let paused = sigs.paused.clone();
+        let alerts = sigs.alerts_on.clone();
+        let mut tb = Toolbar::new(Signal::new(1.0), sigs);
+        // First tick seeds the resting shapes — no flight.
+        tb.tick(std::time::Duration::from_millis(16));
+        assert!(!tb.pause_icon.is_animating());
+        assert!(!tb.alerts_icon.is_animating());
+        assert_eq!(tb.child_count(), CHILDREN);
+        // Edges morph the icons.
+        paused.set(true);
+        alerts.set(false);
+        tb.tick(std::time::Duration::from_millis(16));
+        assert!(tb.pause_icon.is_animating(), "paused edge didn't morph");
+        assert!(tb.alerts_icon.is_animating(), "alerts edge didn't morph");
+    }
+
+    #[test]
+    fn reduced_motion_snaps_icon_edges() {
+        let sigs = signals();
+        let paused = sigs.paused.clone();
+        let mut tb = Toolbar::new(Signal::new(1.0), sigs);
+        tb.tick(std::time::Duration::from_millis(16));
+        tb.set_reduced_motion(true);
+        paused.set(true);
+        tb.tick(std::time::Duration::from_millis(16));
+        assert!(
+            !tb.pause_icon.is_animating(),
+            "reduced motion left a morph in flight"
+        );
+    }
+
+    #[test]
+    fn icon_slots_suspend_with_their_controls() {
+        let mut tb = Toolbar::new(Signal::new(1.0), signals());
+        let mut hot = martensite::core::HotNode::default();
+        let mut cx = martensite::core::LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        // 350pt drops ALERTS (and its icon) but keeps PAUSE + icon.
+        tb.layout(&mut cx, Rect::new(0.0, 0.0, 350.0, 40.0));
+        assert!(tb.child_bounds(PAUSE_ICON).is_some());
+        assert!(tb.child_bounds(ALERTS_ICON).is_none());
+        // Wide: both icons present, leading their controls. The slot
+        // envelope (`child_bounds`) still spans the icon lane — taps
+        // on the icon activate the control — so the carve is checked
+        // against the children's real layout bounds.
+        tb.layout(&mut cx, Rect::new(0.0, 0.0, 1600.0, 40.0));
+        let pi = tb.child_bounds(PAUSE_ICON).expect("pause icon");
+        let ai = tb.child_bounds(ALERTS_ICON).expect("alerts icon");
+        // The button honours the carve (`Switch` exposes no bounds
+        // getter — its icon is checked against the slot's lane).
+        let pb = tb.pause.cached_bounds();
+        assert!(pi.max_x() <= pb.min_x() + 0.01, "icon overlaps button");
+        let ab = tb.child_bounds(ALERTS).expect("alerts slot");
+        assert!(
+            ai.min_x() >= ab.min_x() - 0.01 && ai.max_x() <= ab.min_x() + ICON_LANE + 0.01,
+            "alerts icon {ai:?} outside the slot's {ICON_LANE}pt leading lane {ab:?}"
+        );
     }
 }

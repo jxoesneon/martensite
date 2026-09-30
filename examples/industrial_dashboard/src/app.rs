@@ -25,6 +25,7 @@ use martensite::core::{
     WidgetArena, WidgetEvent, WidgetId,
 };
 use martensite::focus::{FocusManager, TabNavigation};
+use martensite::icons::builtin::{self, names};
 use martensite::motion::{AnimationDriver, AnimationId};
 use martensite::prelude::*;
 use martensite::render::{PaintList, Point};
@@ -534,6 +535,7 @@ impl App {
                     theme_sel: self.theme_sel.clone(),
                     filter_text: self.filter_text.clone(),
                     alerts_on: self.alerts_on.clone(),
+                    reduced_motion: self.model.reduced_motion.clone(),
                     commands_req: self.commands_req.clone(),
                     bell_req: self.bell_req.clone(),
                     about_req: self.about_req.clone(),
@@ -627,10 +629,10 @@ impl App {
         // "Navigation"; arrows move, Enter/Space activates).
         {
             let rail = NavRail::new()
-                .destination("▦", "PROCESS")
-                .destination("◐", "TELEM")
-                .destination("Aa", "EDITOR")
-                .destination("🔊", "MEDIA")
+                .destination_named(names::GRID, "PROCESS")
+                .destination_named(names::ACTIVITY, "TELEM")
+                .destination_named(names::PEN, "EDITOR")
+                .destination_named(names::PLAY, "MEDIA")
                 .selected(self.model.nav_sel.get().min(3));
             let nav = Bound::new(rail, &self.model)
                 .pull(|r, m| {
@@ -638,10 +640,54 @@ impl App {
                         m.nav_sel.set(i);
                     }
                 })
-                .push(|r, m| {
-                    let sel = m.nav_sel.get().min(r.destination_count().saturating_sub(1));
-                    if r.selected_index() != Some(sel) {
-                        r.set_selected(Some(sel));
+                .push({
+                    // (nav_sel, paused, media_playing) the icons were
+                    // last driven to — `None` seeds resting shapes via
+                    // `set_icon` (no flight); later edges `morph_to`.
+                    let mut icon_seen: Option<(usize, bool, bool)> = None;
+                    move |r, m| {
+                        let sel = m.nav_sel.get().min(r.destination_count().saturating_sub(1));
+                        if r.selected_index() != Some(sel) {
+                            r.set_selected(Some(sel));
+                        }
+                        let paused = m.paused.get();
+                        let playing = m.media_playing.get();
+                        let cur = (sel, paused, playing);
+                        if icon_seen == Some(cur) {
+                            return;
+                        }
+                        let first = icon_seen.is_none();
+                        icon_seen = Some(cur);
+                        let shapes = [
+                            rail_icon_d(builtin::data::DATA_GRID, sel == 0),
+                            rail_icon_d(
+                                if paused {
+                                    builtin::data::DATA_FLATLINE
+                                } else {
+                                    builtin::data::DATA_ACTIVITY
+                                },
+                                sel == 1,
+                            ),
+                            rail_icon_d(builtin::edit::EDIT_PEN, sel == 2),
+                            rail_icon_d(
+                                if playing {
+                                    builtin::media::MEDIA_PAUSE
+                                } else {
+                                    builtin::media::MEDIA_PLAY
+                                },
+                                sel == 3,
+                            ),
+                        ];
+                        for (i, d) in shapes.iter().enumerate() {
+                            if let Some(icon) = r.icon_widget_mut(i) {
+                                let res = if first {
+                                    icon.set_icon(d)
+                                } else {
+                                    icon.morph_to(d, martensite::motion::SpringConfig::SNAPPY)
+                                };
+                                debug_assert!(res.is_ok(), "nav icon path rejected: {res:?}");
+                            }
+                        }
                     }
                 });
             let mut hot = HotNode::default();
@@ -2003,6 +2049,18 @@ fn fmt_uptime(secs: u64) -> String {
         format!("{h}h{m:02}m")
     } else {
         format!("{m}:{s:02}")
+    }
+}
+
+/// A rail destination's resting `d`: the native-pack shape, plus the
+/// baseline pip subpath while its destination is selected
+/// (`icons::builtin::selected_pip` — the selected affordance rides the
+/// morph, no `*-selected` pack entries needed).
+fn rail_icon_d(d: &'static str, selected: bool) -> std::borrow::Cow<'static, str> {
+    if selected {
+        std::borrow::Cow::Owned(builtin::selected_pip(d))
+    } else {
+        std::borrow::Cow::Borrowed(d)
     }
 }
 

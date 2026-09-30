@@ -53,6 +53,7 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
+use martensite::icons::builtin::names;
 use martensite::reactive::Signal;
 use martensite::widgets::about::About;
 use martensite::widgets::accordion::Accordion;
@@ -1666,7 +1667,7 @@ fn locate(m: &PlantModel) -> Page {
         let build = |m: &PlantModel| {
             let mut r = NavRail::new();
             for a in m.assets.get().iter().filter(|a| a.kind == AssetKind::Site) {
-                r = r.destination("▦", a.name);
+                r = r.destination_named(names::GRID, a.name);
             }
             r
         };

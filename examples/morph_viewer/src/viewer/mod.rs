@@ -77,7 +77,7 @@ type Sel = (u32, u32);
 
 /// Flattened icon id across all packs: `pack_offset + icon index`.
 fn global_id(pack: u32, idx: u32) -> u32 {
-    icons::PACKS
+    icons::all_packs()
         .iter()
         .take(pack as usize)
         .map(|p| p.icons.len() as u32)
@@ -89,7 +89,7 @@ fn global_id(pack: u32, idx: u32) -> u32 {
 /// catalog.
 fn resolve_global(gid: u32) -> Option<Sel> {
     let mut rest = gid;
-    for (p, pack) in icons::PACKS.iter().enumerate() {
+    for (p, pack) in icons::all_packs().iter().enumerate() {
         let len = pack.icons.len() as u32;
         if rest < len {
             return Some((p as u32, rest));
@@ -100,7 +100,10 @@ fn resolve_global(gid: u32) -> Option<Sel> {
 }
 
 fn icon_at(pack: u32, idx: u32) -> Option<&'static IconDef> {
-    icons::PACKS.get(pack as usize)?.icons.get(idx as usize)
+    icons::all_packs()
+        .get(pack as usize)?
+        .icons
+        .get(idx as usize)
 }
 
 /// Bundled `d` strings are pre-validated at fetch time and by the
@@ -404,9 +407,9 @@ impl MorphViewer {
     }
 
     fn pack(&self) -> Option<&'static PackDef> {
-        icons::PACKS
+        icons::all_packs()
             .get(self.last_pack as usize)
-            .or_else(|| icons::PACKS.first())
+            .or_else(|| icons::all_packs().first())
     }
 }
 
@@ -472,8 +475,8 @@ impl Widget for MorphViewer {
         // through the ambient shaper; falls back to a rough advance) ---
         let cy = bounds.origin.y + header_h * 0.5;
         let mut tx = bounds.max_x() - m;
-        let mut tabs: Vec<Rect> = Vec::with_capacity(icons::PACKS.len());
-        for pack in icons::PACKS {
+        let mut tabs: Vec<Rect> = Vec::with_capacity(icons::all_packs().len());
+        for pack in icons::all_packs() {
             let tw = cx
                 .measure_text(pack.name, 12.5)
                 .unwrap_or(pack.name.len() as f32 * pt(6.5));
@@ -908,7 +911,7 @@ impl Widget for MorphViewer {
         let scroll_i = self.signals.scroll.get();
         if pack_i != self.last_pack || scroll_i != self.last_scroll || domain_changed {
             let pack_changed = pack_i != self.last_pack;
-            self.last_pack = pack_i.min(icons::PACKS.len().saturating_sub(1) as u32);
+            self.last_pack = pack_i.min(icons::all_packs().len().saturating_sub(1) as u32);
             if pack_changed {
                 // The filter domain is per-pack — re-resolve before
                 // the cascade walks it; the popover's category list
@@ -1388,12 +1391,12 @@ impl Widget for MorphViewer {
                 );
             }
             let color = if active { ink } else { dim };
-            let tw = text_w(cx, icons::PACKS[i].name, 12.5 * s);
+            let tw = text_w(cx, icons::all_packs()[i].name, 12.5 * s);
             text(
                 cx,
                 r.origin.x + (r.size.x - tw) * 0.5,
                 r.origin.y + pt(6.5),
-                icons::PACKS[i].name,
+                icons::all_packs()[i].name,
                 12.5 * s,
                 color,
             );
@@ -1417,9 +1420,9 @@ impl Widget for MorphViewer {
                         format!(
                             "{} ({}) → {} ({})",
                             self.sel_name(b),
-                            icons::PACKS[b.0 as usize].name,
+                            icons::all_packs()[b.0 as usize].name,
                             self.sel_name(t),
-                            icons::PACKS[t.0 as usize].name,
+                            icons::all_packs()[t.0 as usize].name,
                         )
                     } else {
                         format!("{} → {}", self.sel_name(b), self.sel_name(t))

@@ -3,7 +3,7 @@
 //! A minimal container `Widget` modeled on [`crate::toolbar::Toolbar`]
 //! holding internal children: a facade `Dropdown` of locales, the
 //! live-feed `Spinner`, a CPU `ProgressBar`, and a `MorphIcon` lock
-//! indicator that springs `LOCK ↔ LOCK_OPEN` on real `console_locked`
+//! indicator that springs `status.lock ↔ status.lock-open` on real `console_locked`
 //! edges (ADR-0041 dogfood — a model-driven transition, not a demo
 //! timer).
 //! `paint_chrome` hand-paints the strip's left segment (fill, hints,
@@ -32,10 +32,11 @@ use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect,
     SemanticAction, Widget, WidgetEvent,
 };
+use martensite::icons::builtin;
 use martensite::motion::SpringConfig;
 use martensite::prelude::Signal;
 use martensite::theme::TokenKey;
-use martensite::widgets::morph_icon::{demo as morph_icon_demo, MorphIcon};
+use martensite::widgets::morph_icon::MorphIcon;
 use martensite::widgets::{Dropdown, ProgressBar, Spinner};
 
 /// Width `apply_layout` reserves for the widget at the right end
@@ -404,9 +405,9 @@ impl Widget for StatusBar {
                 self.lock_icon
                     .morph_to(lock_icon_d(locked), LOCK_MORPH_SPRING)
             };
-            // The demo `d` constants are curated — a rejection is an
+            // The pack `d` constants are curated — a rejection is an
             // engine-side bug, not input the bar can recover.
-            debug_assert!(res.is_ok(), "morph_icon demo path rejected: {res:?}");
+            debug_assert!(res.is_ok(), "pack icon path rejected: {res:?}");
             self.lock_icon.set_label(if locked {
                 "console locked"
             } else {
@@ -527,12 +528,13 @@ impl Widget for StatusBar {
 }
 
 /// The lock icon's resting/target `d` for a `console_locked` value —
-/// the demo pair written for this seam (`morph_icon::demo`, ADR-0041).
+/// the declared native-pack pair (`status.lock ↔ status.lock-open`,
+/// ADR-0041).
 fn lock_icon_d(locked: bool) -> &'static str {
     if locked {
-        morph_icon_demo::LOCK
+        builtin::status::STATUS_LOCK
     } else {
-        morph_icon_demo::LOCK_OPEN
+        builtin::status::STATUS_LOCK_OPEN
     }
 }
 
@@ -622,8 +624,8 @@ mod tests {
     fn lock_icon_path_tracks_console_locked() {
         // The icon's target `d` is a pure function of the signal —
         // this half of the contract is engine-independent.
-        assert_eq!(lock_icon_d(true), morph_icon_demo::LOCK);
-        assert_eq!(lock_icon_d(false), morph_icon_demo::LOCK_OPEN);
+        assert_eq!(lock_icon_d(true), builtin::status::STATUS_LOCK);
+        assert_eq!(lock_icon_d(false), builtin::status::STATUS_LOCK_OPEN);
     }
 
     /// `true` once the morph geometry engine is live. While the port
@@ -631,7 +633,8 @@ mod tests {
     /// `unimplemented!()` — the morph behavioral tests probe this and
     /// skip with a printed reason (suite stays green in the interim).
     fn morph_engine_live() -> bool {
-        std::panic::catch_unwind(|| MorphIcon::icon(morph_icon_demo::LOCK).map(|_| ())).is_ok()
+        std::panic::catch_unwind(|| MorphIcon::icon(builtin::status::STATUS_LOCK).map(|_| ()))
+            .is_ok()
     }
 
     /// Drives internal children the way `WidgetArena::tick_recursive`

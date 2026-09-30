@@ -205,9 +205,9 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             "Nav Rail",
             Box::new(
                 NavRail::new()
-                    .destination("🏠", "Home")
-                    .destination("📊", "Reports")
-                    .destination("⚙", "Settings")
+                    .destination_named("nav.home", "Home")
+                    .destination_named("data.chart", "Reports")
+                    .destination_named("nav.settings", "Settings")
                     .selected(0),
             ),
         ),
