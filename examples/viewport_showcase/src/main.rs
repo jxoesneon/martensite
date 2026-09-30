@@ -891,7 +891,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // subscriber so findings are actually visible (RUST_LOG overrides).
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "warn,martensite::paint_audit=info".into()),
         )
         .init();
     let event_loop = EventLoop::new()?;

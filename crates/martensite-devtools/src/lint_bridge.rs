@@ -985,6 +985,9 @@ pub struct SerializedLintNode {
     pub path: String,
     /// Bounds `[x0, y0, x1, y1]` in device px.
     pub bounds: [f64; 4],
+    /// Clip stack active when the scope opened, `[x0, y0, x1, y1]`.
+    #[serde(default)]
+    pub clip: Option<[f64; 4]>,
     /// Optional arena widget id.
     pub widget_id: Option<u64>,
     /// Classified kind string ("Navigation", "Interactive", etc.).
@@ -1024,6 +1027,7 @@ impl SerializedLintNode {
                 self.bounds[2],
                 self.bounds[3],
             ),
+            clip: self.clip.map(|c| Rect::new(c[0], c[1], c[2], c[3])),
             widget_id: self.widget_id,
             kind: match self.kind.as_str() {
                 "Navigation" => NodeKind::Navigation,
@@ -1048,6 +1052,7 @@ impl SerializedLintNode {
                     color: t.color,
                     text: t.text.clone(),
                     width: t.width,
+                    clip: t.clip.map(|c| Rect::new(c[0], c[1], c[2], c[3])),
                 })
                 .collect(),
             fills: self
@@ -1072,6 +1077,7 @@ impl From<&LintNode> for SerializedLintNode {
             full_name: n.full_name.clone(),
             path: n.path.clone(),
             bounds: [n.bounds.x0, n.bounds.y0, n.bounds.x1, n.bounds.y1],
+            clip: n.clip.map(|c| [c.x0, c.y0, c.x1, c.y1]),
             widget_id: n.widget_id,
             kind: format!("{:?}", n.kind),
             allows: n.allows.clone(),
@@ -1089,6 +1095,7 @@ impl From<&LintNode> for SerializedLintNode {
                     color: t.color,
                     text: t.text.clone(),
                     width: t.width,
+                    clip: t.clip.map(|c| [c.x0, c.y0, c.x1, c.y1]),
                 })
                 .collect(),
             fills: n
@@ -1119,6 +1126,9 @@ pub struct SerializedTextStat {
     pub text: String,
     /// Advance width in px.
     pub width: Option<f64>,
+    /// Clip rect `[x0, y0, x1, y1]` if active.
+    #[serde(default)]
+    pub clip: Option<[f64; 4]>,
 }
 
 /// Serializable representation of a [`FillStat`].

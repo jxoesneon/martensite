@@ -13,10 +13,11 @@ use crate::fix::{FixOp, FixSafety, LintFix};
 use crate::report::Finding;
 use crate::rule::{param, Confidence, LintRule};
 use crate::rules::{
-    data_display_leaves, desaturate, interactive_leaves, is_alarm_red, marker_in_lineage,
-    rgb_saturation, text_cell_area, text_leaf_share, union_area,
+    data_display_leaves, desaturate, interactive_leaves, is_alarm_red, is_data_display, kind_of,
+    marker_in_lineage, rgb_saturation, text_cell_area, text_leaf_share, text_leaf_share_excluding,
+    union_area,
 };
-use crate::scene::{LintNode, LintScene};
+use crate::scene::{LintNode, LintScene, NodeKind};
 use crate::severity::Severity;
 use crate::standard::Standard;
 
@@ -288,11 +289,26 @@ impl LintRule for SaturatedAreaCap {
             * f64::from(scene.scale_factor).powi(2);
         let mut out = Vec::new();
         for n in scene.walk().filter(|n| n.area() >= min_area) {
+            if crate::rules::is_data_display(&n.name) {
+                continue;
+            }
             let area = n.area();
-            // Subtree coverage — a canvas painted saturated by ten
-            // child scopes is a saturated canvas.
+            // Data displays paint saturation as *payload* — chart
+            // slices, video tiles, status lamps — not canvas
+            // decoration, so their fills don't spend the surface's
+            // saturation budget.
+            let display_roots = crate::rules::data_display_paths(n);
             let sat_area: f64 = n
                 .walk()
+                .filter(|d| !crate::rules::inside_any_path(d.path.as_str(), &display_roots))
+                // Alarm-channel fills still spend the budget the cap
+                // protects — a surface flooded alarm-red destroys the
+                // pop the reservation exists for. The cap's documented
+                // exception is photo/video subtrees only.
+                // A control's own fill is affordance color (switch on,
+                // primary CTA) — the cap measures canvas decoration,
+                // not whether the controls read as controls.
+                .filter(|d| kind_of(d, cfg) != NodeKind::Interactive)
                 .flat_map(|d| d.fills.iter())
                 .filter(|f| rgb_saturation(f.color) >= min_sat && f.color[3] > 200)
                 .map(|f| {
@@ -354,13 +370,39 @@ impl LintRule for FloodCap {
         // every ancestor is one defect, not N.
         let mut flagged: Vec<&LintNode> = Vec::new();
         for n in scene.walk() {
-            let alerts = n
-                .walk()
-                .filter(|d| {
-                    d.fills.iter().any(|f| is_alarm_red(f.color))
-                        || d.texts.iter().any(|t| is_alarm_red(t.color))
-                })
-                .count();
+            // Count alert-painted descendants. A declared alarm
+            // element (`@alarm`) is exactly what this rule exists to
+            // count — ISA-18.2's flood is floods of *real* alarms.
+            // The one documented exception is the alarm summary
+            // surface itself: a node named AlarmList/AlarmPanel is
+            // the console's annunciator — it counts once and its rows
+            // are payload (their row count is the operator's queue,
+            // not N competing elements on this display).
+            fn alerts_in(d: &LintNode) -> usize {
+                let short = d.name.split('@').next().unwrap_or(&d.name);
+                if short == "AlarmList" || short == "AlarmPanel" {
+                    let painted = d.walk().any(|x| {
+                        x.fills.iter().any(|f| is_alarm_red(f.color))
+                            || x.texts.iter().any(|t| is_alarm_red(t.color))
+                    });
+                    return usize::from(painted);
+                }
+                let self_alert = d.fills.iter().any(|f| is_alarm_red(f.color))
+                    || d.texts.iter().any(|t| is_alarm_red(t.color));
+                usize::from(self_alert) + d.children.iter().map(alerts_in).sum::<usize>()
+            }
+            // The summary surface IS the exception too — an
+            // AlarmList/AlarmPanel measuring itself counts once, its
+            // rows are payload either way.
+            let n_short = n.name.split('@').next().unwrap_or(&n.name);
+            let alerts: usize = if n_short == "AlarmList" || n_short == "AlarmPanel" {
+                usize::from(n.walk().any(|x| {
+                    x.fills.iter().any(|f| is_alarm_red(f.color))
+                        || x.texts.iter().any(|t| is_alarm_red(t.color))
+                }))
+            } else {
+                n.children.iter().map(alerts_in).sum()
+            };
             if alerts > max {
                 flagged.push(n);
             }
@@ -545,10 +587,45 @@ impl LintRule for KpiContext {
 /// — here, any surface inside an `@level:1` lineage gets the
 /// `max_critical` cap.
 ///
-/// Measured as the union of leaf-scope bounds over the surface's own
-/// bounds — element real estate, not painted pixels, so a full-bleed
-/// background fill doesn't inflate the ratio. Reports the outermost
+/// For alphanumeric-dominant displays the numerator is *character
+/// space used* — [`text_cell_area`] (advance width × em box per run)
+/// summed over the subtree. For other displays it is the union of
+/// leaf-scope bounds, both clipped to the surface's own bounds so
+/// scrolled-off content never counts. Either way, controls don't
+/// count: interactive leaves and scrollbar chrome are governed by
+/// `choice-count`/`target-size`, not information density — a cluster
+/// of nothing but controls measures zero. Reports the outermost
 /// offender only.
+///
+/// The non-alphanumeric path additionally requires **many distinct
+/// elements** to compete before coverage can flag: NUREG-0700 relaxes
+/// packing for graphics-dominant displays, and its operative attention
+/// constraint is element count, not ink. One candidate leaf = one
+/// element, except that leaves sharing a single widget kind — a
+/// camera wall of `VideoTile`s, or one `VideoGrid`/`OrgChart` leaf
+/// that *is* the mosaic — read as a single configural element, so a
+/// homogeneous mosaic measures 1. Coverage over the cap on fewer than
+/// `max_elements` (default 8) elements is a few large elements filling
+/// a display, not packing. The alphanumeric path ignores element
+/// count entirely — dense text is dense at any element count.
+///
+/// A surface whose lineage carries the `@prose` marker declares its
+/// text runs as *document payload* — code editors, log/document
+/// viewers, manuals. NUREG-0700's alphanumeric cap targets at-a-glance
+/// readouts, not document surfaces, so that ink is exempt from both
+/// the alphanumeric-dominant classification and the character-space
+/// numerator (the surface's other leaves still classify and measure
+/// normally). Painting a document surface still counts toward
+/// `text-density`'s own character coverage when that display is
+/// prose-dominant.
+///
+/// Label ink inside *graphic* data displays is likewise annotation,
+/// not alphanumeric payload: a Gantt's row names or a week grid's
+/// event captions accompany bars and cells, so a surface built from
+/// charts is graphics-dominant even when its labels cover much of it.
+/// Text-payload displays — `table`/`datagrid`/`log`/`terminal`/
+/// `ticker`/`marquee`/`codeeditor`, trees, and lists — keep counting:
+/// a dense table IS an alphanumeric display.
 struct PackingDensity;
 impl LintRule for PackingDensity {
     fn id(&self) -> &'static str {
@@ -568,42 +645,123 @@ impl LintRule for PackingDensity {
     }
     fn citation(&self) -> &'static str {
         "NUREG-0700 §1.1 information display density: ≤50% packing, \
-         ≤25% alphanumeric-dominant, minimized for critical info; \
-         ISO 9241-125 §5.1.4"
+         ≤25% alphanumeric-dominant, minimized for critical info, \
+         relaxed for graphics-dominant displays; ISO 9241-125 §5.1.4"
     }
     fn check(&self, scene: &LintScene, cfg: &LintConfig) -> Vec<Finding> {
         let max = param(cfg, self.id(), "max", 0.50);
         let max_alnum = param(cfg, self.id(), "max_alphanumeric", 0.25);
         let max_critical = param(cfg, self.id(), "max_critical", 0.35);
         let alnum_share = param(cfg, self.id(), "alnum_share", 0.5);
+        let max_elements = param(cfg, self.id(), "max_elements", 8.0) as usize;
         let min_px = param(cfg, self.id(), "min_surface_pt", 20_000.0)
             * f64::from(scene.scale_factor).powi(2);
         let mut out = Vec::new();
 
+        #[allow(clippy::too_many_arguments)]
         fn visit(
             node: &LintNode,
+            scene: &LintScene,
             caps: (f64, f64, f64, f64),
+            max_elements: usize,
             min_px: f64,
             // `@level:1` inherited down the real ancestor chain — the
             // critical-overview lineage NUREG-0700 wants sparsest.
             in_l1: bool,
+            cfg: &LintConfig,
             out: &mut Vec<Finding>,
         ) {
             let (max, max_alnum, max_critical, alnum_share) = caps;
             let in_l1 = in_l1 || node.display_level == Some(1);
             let mut flagged = false;
             if node.children.len() >= 2 && node.area() >= min_px {
-                let leaves = node
-                    .walk()
-                    .skip(1)
-                    .filter(|d| d.children.is_empty())
-                    .map(|d| d.bounds);
-                let density = union_area(leaves, node.bounds) / node.area().max(1.0);
+                // `@prose`-declared document ink is exempt — a code
+                // editor or document viewer's body text is its payload,
+                // not the at-a-glance readouts the alphanumeric cap
+                // constrains (declared prose leaves still count toward
+                // the denominator — a page that is mostly prose is not
+                // an alphanumeric *display*). The same holds for label
+                // ink inside *graphic* data displays — a gantt's row
+                // names or a week grid's event captions annotate bars
+                // and cells; the alphanumeric cap targets displays
+                // whose payload IS text (tables, logs, terminals),
+                // which `is_text_display` keeps counting.
+                let graphic_roots: Vec<String> = crate::rules::data_display_leaves(node)
+                    .iter()
+                    .filter(|d| !crate::rules::is_text_display(&d.name))
+                    .map(|d| d.path.clone())
+                    .collect();
+                let payload_ink = |d: &LintNode| {
+                    marker_in_lineage(scene, d, "prose")
+                        || crate::rules::inside_any_path(d.path.as_str(), &graphic_roots)
+                };
+                let alnum = text_leaf_share_excluding(node, payload_ink) >= alnum_share;
+                // Controls and scrollbar chrome are not information —
+                // their footprint is governed by `choice-count`,
+                // `nav-depth`, and `target-size`, so they never spend
+                // packing budget. A leaf that paints nothing of its
+                // own — a bare Flex/Container shell left behind when
+                // the scrolled-out children were culled — is layout
+                // structure, not an element.
+                let info_leaf = |d: &&LintNode| {
+                    !matches!(
+                        kind_of(d, cfg),
+                        NodeKind::Interactive | NodeKind::Navigation | NodeKind::Container
+                    ) && (d.painted_area > 0.0 || !d.fills.is_empty() || !d.texts.is_empty())
+                        && !d
+                            .name
+                            .split('@')
+                            .next()
+                            .unwrap_or(&d.name)
+                            .to_ascii_lowercase()
+                            .contains("scrollbar")
+                };
+                let (density, elements) = if alnum {
+                    // Alphanumeric-dominant displays measure character
+                    // space, not widget chrome: full-bleed row bands
+                    // and panel headers are background, not text.
+                    // Control labels never count either — a tab's or
+                    // button's caption is the control, not information
+                    // elements (the same exclusion as the leaf union).
+                    let ink: f64 = node
+                        .walk()
+                        .skip(1)
+                        .filter(|d| {
+                            !matches!(
+                                kind_of(d, cfg),
+                                NodeKind::Interactive | NodeKind::Navigation
+                            )
+                        })
+                        .filter(|d| !payload_ink(d))
+                        .map(text_cell_area)
+                        .sum();
+                    // Element count gates only the bounds-coverage
+                    // path — dense text is dense at any element count.
+                    (ink / node.area().max(1.0), usize::MAX)
+                } else {
+                    let leaves: Vec<&LintNode> = node
+                        .walk()
+                        .skip(1)
+                        .filter(|d| d.children.is_empty())
+                        .filter(info_leaf)
+                        .collect();
+                    let coverage = union_area(leaves.iter().map(|d| d.bounds), node.bounds)
+                        / node.area().max(1.0);
+                    // Elements are painted candidate leaves — but a
+                    // mosaic whose leaves all share one widget kind
+                    // (a `VideoTile` wall, a tile field) is ONE
+                    // configural element, the graphics-dominant case
+                    // NUREG-0700's relaxation targets.
+                    let single_kind = leaves
+                        .first()
+                        .is_some_and(|first| leaves.iter().all(|d| d.name == first.name));
+                    (coverage, if single_kind { 1 } else { leaves.len() })
+                };
                 // Tightest applicable cap wins — an L1 log display is
                 // both critical-information AND alphanumeric.
                 let mut cap = max;
                 let mut tags = Vec::new();
-                if text_leaf_share(node) >= alnum_share {
+                if alnum {
                     cap = cap.min(max_alnum);
                     tags.push("alphanumeric-dominant");
                 }
@@ -616,16 +774,26 @@ impl LintRule for PackingDensity {
                 } else {
                     format!("{} display", tags.join(", "))
                 };
-                if density > cap {
+                let over = if alnum {
+                    density > cap
+                } else {
+                    density > cap && elements >= max_elements
+                };
+                if over {
                     out.push(
                         Finding::new(
                             "packing-density",
                             &node.path,
                             format!(
-                                "elements occupy {:.0}% of this {why} (max {:.0}%) — \
+                                "{} occupy {:.0}% of this {why} (max {:.0}%) — \
                                  split it into separate displays, move detail to \
                                  on-demand surfaces, or consolidate into fewer \
                                  integrated elements",
+                                if alnum {
+                                    "elements".to_string()
+                                } else {
+                                    format!("{elements} elements")
+                                },
                                 density * 100.0,
                                 cap * 100.0,
                             ),
@@ -639,15 +807,18 @@ impl LintRule for PackingDensity {
                 return; // outermost offender — don't cascade into it
             }
             for c in &node.children {
-                visit(c, caps, min_px, in_l1, out);
+                visit(c, scene, caps, max_elements, min_px, in_l1, cfg, out);
             }
         }
         for r in &scene.roots {
             visit(
                 r,
+                scene,
                 (max, max_alnum, max_critical, alnum_share),
+                max_elements,
                 min_px,
                 false,
+                cfg,
                 &mut out,
             );
         }
@@ -746,7 +917,13 @@ impl LintRule for TextDensity {
 /// gauges, sparklines, tables, media — one integrated display = one
 /// channel, so a DataTable's columns don't inflate the count) and
 /// reports the innermost scope still over budget — the crowded
-/// surface, not the window containing it.
+/// surface, not the window containing it. A display painted with zero
+/// area (a docked strip that collapses shut) isn't *visible*, so it
+/// isn't a channel. And the same partition test `choice-count` uses
+/// applies: when a scope's channels already live inside ≥2 child
+/// scopes, the node is a *container of surfaces* — a console of
+/// displays — and the sum across sibling panes is not one scan
+/// surface competing for attention.
 struct SimultaneousChannels;
 impl LintRule for SimultaneousChannels {
     fn id(&self) -> &'static str {
@@ -773,9 +950,17 @@ impl LintRule for SimultaneousChannels {
         let min_px = param(cfg, self.id(), "min_surface_pt", 20_000.0)
             * f64::from(scene.scale_factor).powi(2);
         let mut out = Vec::new();
+        // Concurrently *visible* channels only — a display scope with
+        // zero painted area presents nothing to triangulate.
+        fn channels(node: &LintNode) -> usize {
+            data_display_leaves(node)
+                .into_iter()
+                .filter(|d| d.area() > 0.0)
+                .count()
+        }
         fn visit(node: &LintNode, max: usize, min_px: f64, out: &mut Vec<Finding>) {
             let count = if node.area() >= min_px {
-                data_display_leaves(node).len()
+                channels(node)
             } else {
                 0
             };
@@ -787,8 +972,40 @@ impl LintRule for SimultaneousChannels {
                 && node
                     .walk()
                     .skip(1)
-                    .any(|d| d.area() >= min_px && data_display_leaves(d).len() > max);
-            if count > max && !deeper_over {
+                    .any(|d| d.area() >= min_px && channels(d) > max);
+            // The `choice-count` partition test, adapted for channels:
+            // when every counted display lives inside a child *pane* —
+            // a sub-surface carrying channels alongside its own chrome,
+            // or a composite display like a media panel — the node is
+            // a console of displays, and the sum across sibling panes
+            // is not a single channel load. A bare leaf display as a
+            // direct child (a flat chart wall) isn't a pane — it still
+            // competes on this surface.
+            let grouped = node.children.len() >= 2 && count > 0 && {
+                let leaves = data_display_leaves(node)
+                    .into_iter()
+                    .filter(|d| d.area() > 0.0)
+                    .collect::<Vec<_>>();
+                // Child is a display pane: a composite display
+                // (own sub-channels) or a scope that carries both
+                // channels and other content.
+                let pane = |c: &&LintNode| {
+                    (is_data_display(&c.name) && !c.children.is_empty())
+                        || (channels(c) > 0
+                            && c.children
+                                .iter()
+                                .any(|cc| !is_data_display(&cc.name) || !cc.children.is_empty()))
+                };
+                let bearing = node.children.iter().filter(pane).count();
+                bearing >= 2
+                    && leaves.iter().all(|d| {
+                        node.children.iter().any(|c| {
+                            (d.path == c.path && !c.children.is_empty())
+                                || d.path.starts_with(&format!("{}/", c.path))
+                        })
+                    })
+            };
+            if count > max && !deeper_over && !grouped {
                 out.push(
                     Finding::new(
                         "simultaneous-channels",
@@ -1021,6 +1238,88 @@ mod tests {
         assert!(findings_for(&report, "saturated-area-cap").is_empty());
     }
 
+    #[test]
+    fn saturated_area_quiet_on_control_chrome() {
+        // A Switch's on-state accent and a primary Button's fill are
+        // affordance color, not canvas decoration — interactive leaves
+        // don't spend the surface's saturation budget. The same fill
+        // owned by a plain `Widget` scope still counts.
+        for (name, want_flag) in [("Switch", false), ("Widget", true)] {
+            let mut list = app_list();
+            list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 400.0, 200.0));
+            list.push_scope(None, name, Rect::new(0.0, 0.0, 400.0, 180.0));
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(0.0, 0.0, 400.0, 180.0),
+                [240, 90, 170, 255],
+            ));
+            list.pop_scope();
+            list.pop_scope();
+            list.pop_scope();
+            let scene = LintScene::from_paint_list(&list);
+            let report = lint(&scene, &LintConfig::new());
+            assert_eq!(
+                !findings_for(&report, "saturated-area-cap").is_empty(),
+                want_flag,
+                "{name}: control chrome should not spend the cap"
+            );
+        }
+    }
+
+    #[test]
+    fn saturated_area_counts_alarm_channel_fills() {
+        // Alarm-red still spends the coverage budget — the cap's
+        // documented exception is photo/video subtrees, not declared
+        // alarm elements. A surface 90% alarm-red has destroyed the
+        // pop the reservation exists for.
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 400.0, 200.0));
+        // (not StackLight — stack lights are data displays, and
+        // their fills are payload, excluded by a different seam.)
+        list.push_scope(None, "AlarmChip@alarm", Rect::new(0.0, 0.0, 400.0, 180.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 0.0, 400.0, 180.0),
+            [230, 70, 60, 255],
+        ));
+        list.pop_scope();
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(!findings_for(&report, "saturated-area-cap").is_empty());
+    }
+
+    #[test]
+    fn saturated_area_excludes_data_display_payload() {
+        // A video wall covering most of the panel is data payload,
+        // not canvas decoration — its tiles don't spend the surface's
+        // saturation budget. Same geometry painted by a plain
+        // `Widget` scope still flags.
+        for name in ["VideoGrid", "Widget"] {
+            let mut list = app_list();
+            list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 400.0, 200.0));
+            list.push_scope(None, name, Rect::new(0.0, 0.0, 400.0, 180.0));
+            for i in 0..4 {
+                let x = i as f64 * 100.0;
+                list.commands.push(PaintCommand::FillRect(
+                    Rect::new(x, 0.0, x + 90.0, 170.0),
+                    [30, 120 + i as u8 * 20, 220, 255],
+                ));
+            }
+            list.pop_scope();
+            list.pop_scope();
+            list.pop_scope();
+            let scene = LintScene::from_paint_list(&list);
+            let report = lint(&scene, &LintConfig::new());
+            let hits = findings_for(&report, "saturated-area-cap");
+            assert_eq!(
+                hits.is_empty(),
+                name == "VideoGrid",
+                "{name}: expected {}saturated-area-cap findings, got {hits:?}",
+                if name == "VideoGrid" { "no " } else { "" }
+            );
+        }
+    }
+
     // ---------- flood-cap ----------
 
     #[test]
@@ -1041,6 +1340,61 @@ mod tests {
         let scene = LintScene::from_paint_list(&list);
         let report = lint(&scene, &LintConfig::new());
         assert!(!findings_for(&report, "flood-cap").is_empty());
+    }
+
+    /// Declared alarm elements are exactly what the cap counts — seven
+    /// `Badge@alarm` alarm-red elements is a flood, marked or not.
+    #[test]
+    fn flood_cap_counts_declared_alarm_elements() {
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 200.0));
+        for i in 0..7 {
+            let x = i as f64 * 110.0;
+            list.push_scope(None, "Badge@alarm", Rect::new(x, 10.0, x + 100.0, 50.0));
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(x, 10.0, x + 100.0, 50.0),
+                ALARM_RED,
+            ));
+            list.pop_scope();
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(!findings_for(&report, "flood-cap").is_empty());
+    }
+
+    /// The documented exception: the alarm summary surface itself —
+    /// an `AlarmList`/`AlarmPanel` container is ONE element no matter
+    /// how many red rows it holds. The same rows loose in a plain
+    /// container flag.
+    #[test]
+    fn flood_cap_alarm_panel_counts_once_rows_are_payload() {
+        for name in ["AlarmPanel", "Panel"] {
+            let mut list = app_list();
+            list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 400.0));
+            list.push_scope(None, name, Rect::new(0.0, 0.0, 400.0, 400.0));
+            for i in 0..7 {
+                let y = i as f64 * 50.0;
+                list.push_scope(None, "AlarmRow", Rect::new(0.0, y, 400.0, y + 44.0));
+                list.commands.push(PaintCommand::FillRect(
+                    Rect::new(0.0, y, 400.0, y + 44.0),
+                    ALARM_RED,
+                ));
+                list.pop_scope();
+            }
+            list.pop_scope();
+            list.pop_scope();
+            list.pop_scope();
+            let scene = LintScene::from_paint_list(&list);
+            let report = lint(&scene, &LintConfig::new());
+            let hits = findings_for(&report, "flood-cap");
+            assert_eq!(
+                hits.is_empty(),
+                name == "AlarmPanel",
+                "{name}: got {hits:?}"
+            );
+        }
     }
 
     #[test]
@@ -1172,15 +1526,27 @@ mod tests {
     // ---------- packing-density ----------
 
     /// A Panel (800×300 = 240k px² ≥ min_surface) holding `n` leaf
-    /// widgets, each `w`×`h` on a grid starting at (0,0).
-    fn packed_list(n: usize, w: f64, h: f64) -> martensite_core::PaintList {
+    /// widgets, each `w`×`h` on a grid starting at (0,0), cycling
+    /// `kinds` so a mosaic can be homogeneous or heterogeneous.
+    fn packed_list_kinds(
+        n: usize,
+        w: f64,
+        h: f64,
+        kinds: &[&'static str],
+    ) -> martensite_core::PaintList {
         let mut list = app_list();
         list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 300.0));
         let cols = (800.0 / w).floor().max(1.0) as usize;
         for i in 0..n {
             let x = (i % cols) as f64 * w;
             let y = (i / cols) as f64 * h;
-            list.push_scope(None, "Label", Rect::new(x, y, x + w, y + h));
+            list.push_scope(None, kinds[i % kinds.len()], Rect::new(x, y, x + w, y + h));
+            // Bare scopes are layout shells — a leaf only counts as an
+            // element while it paints something.
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(x, y, x + w, y + h),
+                [60, 60, 60, 255],
+            ));
             list.pop_scope();
         }
         list.pop_scope();
@@ -1188,12 +1554,87 @@ mod tests {
         list
     }
 
+    /// `packed_list` of identical `"Label"` leaves — a homogeneous
+    /// mosaic (one configural element under the element-count gate).
+    fn packed_list(n: usize, w: f64, h: f64) -> martensite_core::PaintList {
+        packed_list_kinds(n, w, h, &["Label"])
+    }
+
+    /// Ten distinct widget kinds — heterogeneous leaves so each counts
+    /// as its own element.
+    const TEN_KINDS: [&str; 10] = [
+        "Chart",
+        "Gauge",
+        "Label",
+        "Sparkline",
+        "Canvas",
+        "Meter",
+        "Diagram",
+        "Timeline",
+        "MapView",
+        "KpiChip",
+    ];
+
     #[test]
     fn packing_density_flags_full_display() {
-        // 4×200×300 leaves tile 800×300 → 100% coverage > 50% cap.
-        let scene = LintScene::from_paint_list(&packed_list(4, 200.0, 300.0));
+        // 10 heterogeneous 160×150 leaves tile 800×300 → 100% coverage
+        // > 50% cap AND ≥8 competing elements — both halves of the
+        // non-alphanumeric criterion.
+        let scene = LintScene::from_paint_list(&packed_list_kinds(10, 160.0, 150.0, &TEN_KINDS));
         let report = lint(&scene, &LintConfig::new());
         assert!(!findings_for(&report, "packing-density").is_empty());
+    }
+
+    #[test]
+    fn packing_density_quiet_on_single_leaf_mosaic() {
+        // One leaf IS the mosaic — a VideoGrid covering 90% of the
+        // surface. Coverage alone on one configural element isn't
+        // packing (NUREG-0700 relaxes graphics-dominant displays).
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 300.0));
+        list.push_scope(None, "VideoGrid", Rect::new(0.0, 0.0, 720.0, 300.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 0.0, 720.0, 300.0),
+            [60, 60, 60, 255],
+        ));
+        list.pop_scope();
+        // A control sibling keeps the scope a display (children ≥ 2)
+        // without adding an information element.
+        list.push_scope(None, "Button", Rect::new(730.0, 0.0, 800.0, 300.0));
+        list.pop_scope();
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "packing-density");
+        assert!(
+            hits.is_empty(),
+            "single-leaf mosaic is one element: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn packing_density_quiet_on_homogeneous_tile_wall() {
+        // Twenty same-kind tiles at ~100% coverage — the wall reads as
+        // ONE configural element, not twenty competing ones.
+        let scene =
+            LintScene::from_paint_list(&packed_list_kinds(20, 160.0, 150.0, &["VideoTile"]));
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "packing-density");
+        assert!(hits.is_empty(), "homogeneous wall is one element: {hits:?}");
+    }
+
+    #[test]
+    fn packing_density_quiet_under_element_floor() {
+        // Six `VideoTile` leaves + one `Gauge` — mixed kinds so each
+        // leaf counts, but 7 elements is under the 8-element floor:
+        // coverage alone on ≤7 elements is not packing.
+        let mut kinds = vec!["VideoTile"; 6];
+        kinds.push("Gauge");
+        let scene = LintScene::from_paint_list(&packed_list_kinds(7, 114.0, 300.0, &kinds));
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "packing-density");
+        assert!(hits.is_empty(), "7 elements < 8-element floor: {hits:?}");
     }
 
     #[test]
@@ -1205,11 +1646,164 @@ mod tests {
     }
 
     #[test]
+    fn packing_density_quiet_on_pure_control_cluster() {
+        // A Segmented control's segments tile its whole track — 100%
+        // coverage — but a cluster made only of controls is a control
+        // group, not an information display. Mixing in one content
+        // leaf re-arms the check.
+        let control_cluster = |leaves: &[&'static str]| {
+            let mut list = app_list();
+            list.push_scope(None, "Segmented", Rect::new(0.0, 0.0, 300.0, 100.0));
+            let w = 300.0 / leaves.len() as f64;
+            for (i, name) in leaves.iter().enumerate() {
+                let x = i as f64 * w;
+                list.push_scope(None, name, Rect::new(x, 0.0, x + w, 100.0));
+                list.pop_scope();
+            }
+            list.pop_scope();
+            list.pop_scope();
+            list
+        };
+        let scene =
+            LintScene::from_paint_list(&control_cluster(&["Segment", "Segment", "Segment"]));
+        let report = lint(&scene, &LintConfig::new());
+        assert!(
+            findings_for(&report, "packing-density").is_empty(),
+            "pure control cluster is not an information display"
+        );
+        // Content leaves covering the whole surface make it a display
+        // again → flags once ≥8 elements compete. (Controls are
+        // subtracted from the measure, so only the content leaves'
+        // footprint counts.)
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 100.0));
+        list.push_scope(None, "Segment", Rect::new(0.0, 0.0, 100.0, 100.0));
+        list.pop_scope();
+        list.push_scope(None, "Segment", Rect::new(100.0, 0.0, 200.0, 100.0));
+        list.pop_scope();
+        for (i, kind) in TEN_KINDS.iter().take(8).enumerate() {
+            let x = i as f64 * 100.0;
+            list.push_scope(None, kind, Rect::new(x, 0.0, x + 100.0, 100.0));
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(x, 0.0, x + 100.0, 100.0),
+                [60, 60, 60, 255],
+            ));
+            list.pop_scope();
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(!findings_for(&report, "packing-density").is_empty());
+    }
+
+    #[test]
+    fn packing_density_alnum_measures_character_space_not_row_bands() {
+        // An alphanumeric display whose full-width row bands tile the
+        // whole surface but whose actual text is sparse: the bands
+        // are background, not information — quiet. NUREG-0700's 25%
+        // alphanumeric cap counts character space used.
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 300.0));
+        for i in 0..5 {
+            let y = i as f64 * 60.0;
+            list.push_scope(None, "PropertyRow", Rect::new(0.0, y, 800.0, y + 58.0));
+            // Long enough that the row leaf classifies as an
+            // alphanumeric element (text cells ≥5% of its bounds),
+            // making the whole display alnum-dominant — sparse total
+            // ink stays quiet under the 25% cap.
+            list.commands.push(PaintCommand::DrawText(
+                Point::new(4.0, y + 16.0),
+                "speed 1500 rpm — setpoint maintained".to_string(),
+                12.0,
+                [230, 230, 230, 255],
+            ));
+            list.pop_scope();
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "packing-density");
+        assert!(hits.is_empty(), "sparse text in dense bands: {hits:?}");
+    }
+
+    #[test]
+    fn packing_density_alnum_ignores_control_labels() {
+        // A tab strip is ~30% character coverage — but every run is a
+        // control's own caption. Controls never spend packing budget,
+        // so an alnum display whose text all lives inside control
+        // scopes measures ~0. The same text on a content leaf re-arms
+        // the cap.
+        let strip = |label_name: &'static str| {
+            let mut list = app_list();
+            list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 100.0));
+            list.push_scope(None, "TabStrip", Rect::new(0.0, 0.0, 800.0, 100.0));
+            for i in 0..5 {
+                let x = i as f64 * 160.0;
+                list.push_scope(None, label_name, Rect::new(x, 0.0, x + 160.0, 100.0));
+                // ~29% character coverage when the runs count.
+                list.commands.push(PaintCommand::DrawText(
+                    Point::new(x + 6.0, 40.0),
+                    "MAINTENANCE ALARM PANEL".to_string(),
+                    18.0,
+                    [230, 230, 230, 255],
+                ));
+                list.commands.push(PaintCommand::DrawText(
+                    Point::new(x + 6.0, 80.0),
+                    "WORK ORDER SHIFT".to_string(),
+                    18.0,
+                    [230, 230, 230, 255],
+                ));
+                list.pop_scope();
+            }
+            list.pop_scope();
+            list.pop_scope();
+            list.pop_scope();
+            list
+        };
+        let scene = LintScene::from_paint_list(&strip("Tab"));
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "packing-density");
+        assert!(
+            hits.is_empty(),
+            "control captions are not text density: {hits:?}"
+        );
+        let scene = LintScene::from_paint_list(&strip("Label"));
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "packing-density");
+        assert!(!hits.is_empty(), "the same text as content counts");
+    }
+
+    #[test]
+    fn packing_density_quiet_on_compound_control_plus_scrollbars() {
+        // A graphics page dominated by a compound control (a Cascader
+        // spanning most of the viewport) plus scrollbar chrome: the
+        // control's footprint is governed by target-size, and
+        // scrollbars are chrome — neither is information.
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 300.0));
+        list.push_scope(None, "Cascader", Rect::new(0.0, 0.0, 700.0, 300.0));
+        list.pop_scope();
+        list.push_scope(None, "ScrollBarWidget", Rect::new(790.0, 0.0, 800.0, 300.0));
+        list.pop_scope();
+        list.push_scope(None, "VScrollBar", Rect::new(0.0, 290.0, 800.0, 300.0));
+        list.pop_scope();
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "packing-density");
+        assert!(hits.is_empty(), "control+chrome leaves excluded: {hits:?}");
+    }
+
+    #[test]
     fn packing_density_uses_alphanumeric_cap() {
-        // 35% coverage of a text-dominant display → over the 25%
-        // alphanumeric cap even though it's under the 50% general cap.
-        // Each Label carries enough runs that text covers ≥5% of its
-        // bounds — the leaf counts as an alphanumeric element.
+        // Character space covering ~65% of a text-dominant display →
+        // over the 25% alphanumeric cap even though a widget-bounds
+        // measure wouldn't be the thing being capped. Each Label
+        // carries enough runs that text covers ≥5% of its bounds —
+        // the leaf counts as an alphanumeric element.
         let mut list = app_list();
         list.push_scope(None, "LogPanel", Rect::new(0.0, 0.0, 800.0, 300.0));
         for i in 0..4 {
@@ -1218,8 +1812,8 @@ mod tests {
             for row in 0..8 {
                 list.commands.push(PaintCommand::DrawText(
                     Point::new(x + 4.0, 14.0 + row as f64 * 13.0),
-                    "some log line".to_string(),
-                    12.0,
+                    "2026-09-29T01:23:45Z WARN loop: pressure rising past".to_string(),
+                    14.0,
                     [230, 230, 230, 255],
                 ));
             }
@@ -1240,13 +1834,18 @@ mod tests {
 
     #[test]
     fn packing_density_tightens_inside_l1() {
-        // 40% coverage under an @level:1 lineage → over the 35%
-        // critical cap but under the 50% general cap.
+        // 40% coverage with ≥8 competing elements under an @level:1
+        // lineage → over the 35% critical cap but under the 50%
+        // general cap.
         let mut list = app_list();
         list.push_scope(None, "Overview@level:1", Rect::new(0.0, 0.0, 800.0, 300.0));
-        for i in 0..4 {
-            let x = i as f64 * 200.0;
-            list.push_scope(None, "Chart", Rect::new(x, 0.0, x + 200.0, 120.0));
+        for (i, kind) in TEN_KINDS.iter().take(8).enumerate() {
+            let x = i as f64 * 100.0;
+            list.push_scope(None, kind, Rect::new(x, 0.0, x + 100.0, 120.0));
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(x, 0.0, x + 100.0, 120.0),
+                [60, 60, 60, 255],
+            ));
             list.pop_scope();
         }
         list.pop_scope();
@@ -1270,12 +1869,31 @@ mod tests {
         let mut list = app_list();
         list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 300.0));
         list.push_scope(None, "SubPanel", Rect::new(0.0, 0.0, 800.0, 300.0));
-        for i in 0..4 {
-            let x = i as f64 * 200.0;
-            list.push_scope(None, "Label", Rect::new(x, 0.0, x + 200.0, 300.0));
+        for (i, kind) in TEN_KINDS.iter().take(8).enumerate() {
+            let x = i as f64 * 100.0;
+            list.push_scope(None, kind, Rect::new(x, 0.0, x + 100.0, 150.0));
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(x, 0.0, x + 100.0, 150.0),
+                [60, 60, 60, 255],
+            ));
+            list.pop_scope();
+            let y = 150.0;
+            list.push_scope(
+                None,
+                TEN_KINDS[i + 2],
+                Rect::new(x, y, x + 100.0, y + 150.0),
+            );
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(x, y, x + 100.0, y + 150.0),
+                [60, 60, 60, 255],
+            ));
             list.pop_scope();
         }
         list.push_scope(None, "Label", Rect::new(0.0, 300.0, 200.0, 300.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 300.0, 200.0, 300.0),
+            [60, 60, 60, 255],
+        ));
         list.pop_scope();
         list.pop_scope();
         list.pop_scope();
@@ -1285,6 +1903,109 @@ mod tests {
         let hits = findings_for(&report, "packing-density");
         assert_eq!(hits.len(), 1, "expected outermost finding only: {hits:?}");
         assert!(hits[0].path.ends_with("Panel"), "{:?}", hits[0].path);
+    }
+
+    #[test]
+    fn packing_density_exempts_prose_declared_document_ink() {
+        // The same character wall as the alphanumeric-cap test, but the
+        // leaf scopes declare `@prose`: a document surface's body text
+        // is payload, not readout ink, so it neither makes the display
+        // alphanumeric-dominant nor feeds the character-space
+        // numerator. Leaves cover 29% of the panel bounds — under the
+        // non-alnum cap — and four same-kind leaves are one configural
+        // element besides.
+        let doc_panel = |name: &'static str| {
+            let mut list = app_list();
+            list.push_scope(None, "DocPanel", Rect::new(0.0, 0.0, 800.0, 300.0));
+            for i in 0..4 {
+                let x = i as f64 * 175.0;
+                list.push_scope(None, name, Rect::new(x, 0.0, x + 175.0, 120.0));
+                for row in 0..8 {
+                    list.commands.push(PaintCommand::DrawText(
+                        Point::new(x + 4.0, 14.0 + row as f64 * 13.0),
+                        "2026-09-29T01:23:45Z WARN loop: pressure rising past".to_string(),
+                        14.0,
+                        [230, 230, 230, 255],
+                    ));
+                }
+                list.pop_scope();
+            }
+            list.pop_scope();
+            list.pop_scope();
+            list
+        };
+        let prose = doc_panel("Markdown@prose");
+        let scene = LintScene::from_paint_list(&prose);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(
+            findings_for(&report, "packing-density").is_empty(),
+            "prose-declared document ink should be exempt: {:?}",
+            report.findings
+        );
+        // The identical layout without the marker still flags —
+        // @prose is the difference, not the geometry.
+        let bare = doc_panel("Markdown");
+        let scene = LintScene::from_paint_list(&bare);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(
+            !findings_for(&report, "packing-density").is_empty(),
+            "undeclared character wall should still flag"
+        );
+    }
+
+    #[test]
+    fn packing_density_graphic_display_labels_are_not_alnum_ink() {
+        // A graphic display's label column — Gantt row names, week
+        // event captions — is annotation on bars and cells, not the
+        // alphanumeric payload the 25% cap exists for. The same
+        // character wall inside a Gantt+WeekView surface must not
+        // classify the surface as alphanumeric-dominant; the non-alnum
+        // path then needs ≥8 distinct elements, and two displays plus
+        // a filler leaf measure 3.
+        // Gantt + WeekView label columns flank `name` — the third
+        // display gets most of the leaf area so a *text-payload* kind
+        // (a dense table) pushes the scope past the 50% share that
+        // classifies alphanumeric-dominant, with >25% ink besides.
+        let graphic_panel = |name: &'static str| {
+            let mut list = app_list();
+            list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 300.0));
+            let widths = [("Gantt", 170.0), ("WeekView", 170.0), (name, 460.0)];
+            let mut x = 0.0;
+            for (kind, w) in widths {
+                list.push_scope(None, kind, Rect::new(x, 0.0, x + w, 300.0));
+                for row in 0..16 {
+                    list.commands.push(PaintCommand::DrawText(
+                        Point::new(x + 4.0, 22.0 + row as f64 * 18.0),
+                        "task VIB-1042 vibration analysis — bearing".to_string(),
+                        16.0,
+                        [230, 230, 230, 255],
+                    ));
+                }
+                list.pop_scope();
+                x += w;
+            }
+            list.pop_scope();
+            list.pop_scope();
+            list
+        };
+        // Gantt + WeekView + one more graphic display — label ink
+        // everywhere, but no alphanumeric payload.
+        let scene = LintScene::from_paint_list(&graphic_panel("TrendChart"));
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "packing-density");
+        assert!(
+            hits.is_empty(),
+            "graphic-display labels are annotation, not readout ink: {hits:?}"
+        );
+        // Swap the third display for a Table — a text-payload display
+        // whose cells ARE the alphanumeric payload — and the same
+        // geometry flags again.
+        let scene = LintScene::from_paint_list(&graphic_panel("DataTable"));
+        let report = lint(&scene, &LintConfig::new());
+        assert!(
+            !findings_for(&report, "packing-density").is_empty(),
+            "a dense table is an alphanumeric display and still flags"
+        );
     }
 
     // ---------- text-density ----------
@@ -1440,5 +2161,59 @@ mod tests {
         let scene = LintScene::from_paint_list(&list);
         let report = lint(&scene, &LintConfig::new());
         assert!(findings_for(&report, "simultaneous-channels").is_empty());
+    }
+
+    #[test]
+    fn simultaneous_channels_quiet_when_partitioned_into_panes() {
+        // A console of sibling panes: 8 displays total but partitioned
+        // into two zone panes that each carry channels alongside their
+        // own chrome — the window is a container of surfaces, not one
+        // scan surface, so the aggregate doesn't flag.
+        let mut list = app_list();
+        list.push_scope(None, "Console", Rect::new(0.0, 0.0, 800.0, 300.0));
+        for p in 0..2 {
+            let y = p as f64 * 150.0;
+            list.push_scope(None, "ZonePanel", Rect::new(0.0, y, 800.0, y + 150.0));
+            list.push_scope(None, "Label", Rect::new(0.0, y, 800.0, y + 20.0));
+            list.pop_scope();
+            for i in 0..4 {
+                let x = i as f64 * 200.0;
+                list.push_scope(None, "Gauge", Rect::new(x, y + 20.0, x + 200.0, y + 150.0));
+                list.pop_scope();
+            }
+            list.pop_scope();
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(
+            findings_for(&report, "simultaneous-channels").is_empty(),
+            "channels partitioned across panes aren't one surface: {:?}",
+            report.findings
+        );
+    }
+
+    #[test]
+    fn simultaneous_channels_still_flags_flat_display_row() {
+        // The pane partition must not become a loophole for the
+        // canonical violation: bare display leaves arranged flatly on
+        // one surface (no grouping chrome around them) still compete
+        // for the same attention channel.
+        let mut list = app_list();
+        list.push_scope(None, "Board", Rect::new(0.0, 0.0, 800.0, 300.0));
+        for i in 0..8 {
+            let x = i as f64 * 100.0;
+            list.push_scope(None, "Meter", Rect::new(x, 0.0, x + 100.0, 300.0));
+            list.pop_scope();
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(
+            !findings_for(&report, "simultaneous-channels").is_empty(),
+            "a flat 8-display wall should still flag"
+        );
     }
 }

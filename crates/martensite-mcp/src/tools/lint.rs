@@ -1090,6 +1090,7 @@ mod tests {
             full_name: path.rsplit('/').next().unwrap_or(path).to_string(),
             path: path.to_string(),
             bounds: Default::default(),
+            clip: None,
             widget_id: None,
             kind: NodeKind::Container,
             allows: Vec::new(),

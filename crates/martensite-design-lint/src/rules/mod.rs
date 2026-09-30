@@ -14,11 +14,13 @@ mod hmi;
 mod loading;
 mod wcag;
 
+use std::collections::BTreeMap;
+
 use crate::config::LintConfig;
 use crate::fix::{AlignEdge, FixOp, FixSafety, LintFix};
 use crate::report::Finding;
 use crate::rule::{param, Confidence, LintRule};
-use crate::scene::{LintNode, LintScene, NodeKind};
+use crate::scene::{visible_fill_area, LintNode, LintScene, NodeKind};
 use crate::severity::Severity;
 use crate::standard::Standard;
 
@@ -143,6 +145,17 @@ fn has_text_run(node: &LintNode) -> bool {
 /// alphanumeric element. Leaf bounds are clipped to the surface, the
 /// same convention `union_area` uses for the density numerator.
 pub(crate) fn text_leaf_share(node: &LintNode) -> f64 {
+    text_leaf_share_excluding(node, |_| false)
+}
+
+/// As [`text_leaf_share`], skipping any leaf for which `exclude` holds.
+/// Rules that exempt marker-declared payload ink (e.g. `@prose`
+/// document surfaces) pass a lineage test here so declared document
+/// leaves cannot make a surface read as alphanumeric-dominant.
+pub(crate) fn text_leaf_share_excluding(
+    node: &LintNode,
+    exclude: impl Fn(&LintNode) -> bool,
+) -> f64 {
     let mut text_area = 0.0;
     let mut total = 0.0;
     for d in node.walk().skip(1) {
@@ -154,7 +167,7 @@ pub(crate) fn text_leaf_share(node: &LintNode) -> f64 {
             (c.width() * c.height()).max(0.0)
         };
         total += a;
-        if a > 0.0 && has_text_run(d) && text_cell_area(d) >= 0.05 * a {
+        if a > 0.0 && !exclude(d) && has_text_run(d) && text_cell_area(d) >= 0.05 * a {
             text_area += a;
         }
     }
@@ -229,6 +242,8 @@ pub(crate) fn is_data_display(name: &str) -> bool {
         "kpi",
         "gantt",
         "treemap",
+        "sequencer",
+        "coverflow",
         "timeline",
         "fishbone",
         "terminal",
@@ -239,6 +254,14 @@ pub(crate) fn is_data_display(name: &str) -> bool {
         "spectrum",
         "waterfall",
         "marquee",
+        "calendar",
+        "log",
+        // A thermometer is a severity meter — same channel family as
+        // `gauge`/`dial`/`stacklight`.
+        "thermometer",
+        // A busy/activity spinner is an *indicator* — its painted arc
+        // is the payload, not decoration on the canvas.
+        "spinner",
     ];
     // Compounds that don't reduce to a single segment keyword —
     // `StackLight`, `SplitFlap`, `MapView`, `DataGrid`, `LedMatrix`.
@@ -254,6 +277,13 @@ pub(crate) fn is_data_display(name: &str) -> bool {
         "mindmap",
         "flowgraph",
         "nodegraph",
+        "weekview",
+        // A level bar's fill IS its value+severity encoding — the
+        // same channel family as `StackLight`.
+        "levelbar",
+        // Syntax highlighting spends hue as a token-kind encoding —
+        // the same channel semantics as a chart's series colors.
+        "codeeditor",
     ];
     if segs.iter().any(|s| SEGMENT_DISPLAYS.contains(&s.as_str())) {
         return true;
@@ -287,6 +317,59 @@ pub(crate) fn data_display_leaves(node: &LintNode) -> Vec<&LintNode> {
         collect(c, inside, &mut out);
     }
     out
+}
+
+/// True when a data display's payload *is* characters — a dense table,
+/// log, terminal, or code editor is exactly the alphanumeric display
+/// the HFDS/NUREG-0700 density cap exists for. The other displays are
+/// *graphic*: a chart's axis labels or a gantt's row names annotate
+/// bars and cells, so their ink must not make a surface read as an
+/// alphanumeric display.
+pub(crate) fn is_text_display(name: &str) -> bool {
+    let short = name.rsplit("::").next().unwrap_or(name);
+    let (short, _) = short.split_once('@').unwrap_or((short, ""));
+    let segs = name_segments(short.trim());
+    let compound = segs.concat();
+    const TEXT_PAYLOAD: &[&str] = &[
+        "table",
+        "datatable",
+        "datagrid",
+        "tabular",
+        "log",
+        "terminal",
+        "ticker",
+        "marquee",
+        "codeeditor",
+        // A tree's *rows* are the alphanumeric payload — expand/collapse
+        // glyphs don't make it a graphic display.
+        "tree",
+        "list",
+    ];
+    segs.iter().any(|s| TEXT_PAYLOAD.contains(&s.as_str()))
+        || TEXT_PAYLOAD.contains(&compound.as_str())
+}
+
+/// Paths of the topmost data-display scopes under `node`. Fills
+/// painted inside a data display are *payload* — chart slices, video
+/// tiles, treemap cells — not decorative or status color on the
+/// canvas, so the saturation-budget rules (`saturated-area-cap`,
+/// `color-budget`) exclude them rather than counting a treemap's
+/// cells against the alarm budget. Alert rules (`flood-cap`,
+/// `alert-saturation`) deliberately still look inside: a status
+/// tower's lamps are the point of those standards.
+pub(crate) fn data_display_paths(node: &LintNode) -> Vec<String> {
+    data_display_leaves(node)
+        .iter()
+        .map(|n| n.path.clone())
+        .collect()
+}
+
+/// True when `path` equals or descends from any path in `roots`.
+pub(crate) fn inside_any_path(path: &str, roots: &[String]) -> bool {
+    roots.iter().any(|r| {
+        path.strip_prefix(r.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
 }
 
 /// Every built-in rule, in stable report order.
@@ -434,7 +517,19 @@ impl LintRule for ChoiceCount {
                 .children
                 .iter()
                 .any(|c| interactive_leaves(c, cfg).len() > max);
-            if count > max && !deeper_over {
+            // Hick's law measures one choice set. When the node's
+            // actions are already partitioned among ≥2 child scopes,
+            // each within budget, the surface *has* the grouping the
+            // rule prescribes — the sum across groups is not a single
+            // decision surface.
+            let grouped = node.children.len() >= 2
+                && node
+                    .children
+                    .iter()
+                    .map(|c| interactive_leaves(c, cfg).len())
+                    .sum::<usize>()
+                    == count;
+            if count > max && !deeper_over && !grouped {
                 out.push(
                     Finding::new(
                         "choice-count",
@@ -463,6 +558,38 @@ impl LintRule for ChoiceCount {
 /// Sum of Navigation + Chrome child bounds over the surface's area.
 /// Tufte's data-ink ratio as a structural proxy: pixels spent on
 /// orientation furniture are pixels not spent on data.
+/// The furniture share of a nav/chrome subtree: the whole bounds
+/// when the subtree is pure furniture, otherwise only the parts that
+/// are — a `Tabs` host contributes its strip, not the tabbed content
+/// page it also contains.
+fn furniture_area(n: &LintNode, clip: kurbo::Rect, cfg: &LintConfig) -> f64 {
+    let own = {
+        let r = n.bounds.intersect(clip);
+        r.width().max(0.0) * r.height().max(0.0)
+    };
+    let mut furniture = 0.0;
+    let mut non_furniture = false;
+    for c in &n.children {
+        match kind_of(c, cfg) {
+            NodeKind::Navigation | NodeKind::Chrome => {
+                furniture += furniture_area(c, n.bounds, cfg);
+            }
+            // An interactive leaf inside a nav strip is itself
+            // furniture (a tab, a toolbar button).
+            NodeKind::Interactive => {
+                let r = c.bounds.intersect(n.bounds);
+                furniture += r.width().max(0.0) * r.height().max(0.0);
+            }
+            _ => non_furniture = true,
+        }
+    }
+    if non_furniture {
+        furniture
+    } else {
+        own
+    }
+}
+
 struct ChromeRatio;
 impl LintRule for ChromeRatio {
     fn id(&self) -> &'static str {
@@ -487,13 +614,36 @@ impl LintRule for ChromeRatio {
         let max = param(cfg, self.id(), "max", 0.45);
         let mut out = Vec::new();
         for n in surface_nodes(scene, cfg, self.id()) {
-            let chrome: f64 = n
-                .children
-                .iter()
-                .filter(|c| matches!(kind_of(c, cfg), NodeKind::Navigation | NodeKind::Chrome))
-                .map(|c| c.bounds.intersect(n.bounds))
-                .map(|r| (r.width() * r.height()).max(0.0))
-                .sum();
+            let mut any_content = false;
+            let mut chrome = 0.0;
+            for c in &n.children {
+                // Scrollbars stay classified Container elsewhere (they
+                // are interactive for target-size purposes), but for
+                // Tufte's ratio a scrollbar is unambiguously furniture.
+                let scrollbar = c
+                    .name
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(c.name.as_str())
+                    .to_ascii_lowercase()
+                    .contains("scrollbar");
+                match kind_of(c, cfg) {
+                    NodeKind::Navigation | NodeKind::Chrome => {
+                        chrome += furniture_area(c, n.bounds, cfg);
+                    }
+                    _ if scrollbar => {
+                        let r = c.bounds.intersect(n.bounds);
+                        chrome += r.width().max(0.0) * r.height().max(0.0);
+                    }
+                    _ => any_content = true,
+                }
+            }
+            // A surface whose every child is furniture is itself a
+            // nav pane — the ratio belongs to the parent that pairs
+            // it with content.
+            if !any_content {
+                continue;
+            }
             let ratio = chrome / n.area().max(1.0);
             if ratio > max {
                 out.push(
@@ -774,7 +924,11 @@ impl LintRule for InteractiveDensity {
 /// A surface where five saturated hues compete has spent its alarm
 /// budget on decoration — when something goes wrong, nothing stands
 /// out. Counts distinct hue buckets among opaque, saturated, mid-
-/// lightness colors in the subtree.
+/// lightness colors in the subtree. The same partition test
+/// `simultaneous-channels` uses applies: when every counted hue lives
+/// inside ≥2 child surfaces, the node is a *console of surfaces* and
+/// the aggregate census is not one display spending its alarm budget —
+/// each pane still gets its own census.
 struct ColorBudget;
 impl LintRule for ColorBudget {
     fn id(&self) -> &'static str {
@@ -800,19 +954,75 @@ impl LintRule for ColorBudget {
         let min_sat = param(cfg, self.id(), "min_saturation", 0.4);
         let mut out = Vec::new();
         for n in surface_nodes(scene, cfg, self.id()) {
+            if is_data_display(&n.name) {
+                continue;
+            }
+            // Data displays spend hue as payload — categorical color
+            // in a chart or treemap is an encoding channel, not
+            // decoration eating the alarm budget.
+            let display_roots = data_display_paths(n);
             let mut hues = std::collections::BTreeSet::new();
-            for c in n.subtree_colors() {
-                if let Some(h) = saturated_hue_bucket(c, min_sat) {
-                    hues.insert(h);
+            let mut contributors = Vec::new();
+            for d in n.walk() {
+                if inside_any_path(d.path.as_str(), &display_roots) {
+                    continue;
+                }
+                // `@alarm`-marked paint is the alarm channel itself —
+                // the budget exists to keep decoration from crowding
+                // it out, not to tax the channel.
+                if marker_in_lineage(scene, d, "alarm") {
+                    continue;
+                }
+                // A control's accent is the affordance channel —
+                // `saturated-area-cap` already carves it out on the
+                // same reasoning; a selected tab or on-switch isn't
+                // decoration competing with alarms.
+                if kind_of(d, cfg) == NodeKind::Interactive {
+                    continue;
+                }
+                let mut hit = false;
+                for c in &d.colors {
+                    if let Some(h) = saturated_hue_bucket(*c, min_sat) {
+                        hues.insert(h);
+                        hit = true;
+                    }
+                }
+                if hit {
+                    contributors.push(d.path.as_str());
                 }
             }
-            if hues.len() > max {
+            // The same partition test `simultaneous-channels` uses: when
+            // every saturated hue lives inside ≥2 child *panes* — child
+            // subtrees that themselves qualify as surfaces — this node is
+            // a console of surfaces, not one display spending a single
+            // alarm budget. Each pane still gets its own census.
+            let min_px = param(cfg, self.id(), "min_surface_pt", 20_000.0)
+                * f64::from(scene.scale_factor).powi(2);
+            let pane = |c: &&LintNode| {
+                c.area() >= min_px
+                    && c.children.len() >= 2
+                    && contributors
+                        .iter()
+                        .any(|p| inside_any_path(p, std::slice::from_ref(&c.path)))
+            };
+            let bearing = n.children.iter().filter(pane).count();
+            let grouped = bearing >= 2
+                && contributors.iter().all(|p| {
+                    n.children
+                        .iter()
+                        .filter(pane)
+                        .any(|c| inside_any_path(p, std::slice::from_ref(&c.path)))
+                });
+            if hues.len() > max && !grouped {
                 // Fix: desaturate the offending fills toward their own
                 // luminance — the ISA-101 "gray canvas" correction.
                 // One op per (node, saturated fill color); Risky
                 // because recoloring is a design decision.
                 let mut ops = Vec::new();
                 for d in n.walk() {
+                    if inside_any_path(d.path.as_str(), &display_roots) {
+                        continue;
+                    }
                     for f in &d.fills {
                         if saturated_hue_bucket(f.color, min_sat).is_some() {
                             ops.push(FixOp::RecolorFill {
@@ -876,9 +1086,28 @@ impl LintRule for AlertSaturation {
         let max = param(cfg, self.id(), "max", 3.0) as usize;
         let mut out = Vec::new();
         for n in surface_nodes(scene, cfg, self.id()) {
-            let mut alerts = 0usize;
-            for d in n.walk() {
-                let lower = d.name.to_ascii_lowercase();
+            // Count annunciators — the topmost alarming node of each
+            // subtree. An AlarmPanel is ONE alert surface; its rows are
+            // the alarms it shows (their count is `flood-cap`'s
+            // question), not separate surfaces competing for attention.
+            // Separately placed annunciators — a lit panel here, an
+            // alarm badge there — are competing signals even when all
+            // are declared `@alarm`; the marker declares intent, it
+            // does not merge them into one channel. But the marker
+            // declares *capability*, not a live alert — a `StatusDot`
+            // painted Ok-green is a dormant lamp, not a simultaneous
+            // signal, so marked nodes count only while they paint the
+            // alarm-red family.
+            fn signals(d: &LintNode) -> usize {
+                if d.has_marker("alarm") {
+                    let lit = d.walk().any(|x| {
+                        x.fills.iter().any(|f| is_alarm_red(f.color))
+                            || x.texts.iter().any(|t| is_alarm_red(t.color))
+                    });
+                    return usize::from(lit);
+                }
+                let short = d.name.split('@').next().unwrap_or(&d.name);
+                let lower = short.to_ascii_lowercase();
                 let named = lower.contains("alert")
                     || lower.contains("alarm")
                     || lower.contains("critical");
@@ -887,9 +1116,22 @@ impl LintRule for AlertSaturation {
                 let red_filled =
                     !named && d.children.is_empty() && d.colors.iter().any(|c| is_alarm_red(*c));
                 if named || red_filled {
-                    alerts += 1;
+                    return 1;
                 }
+                d.children.iter().map(signals).sum()
             }
+            // When the surface IS an annunciator (AlarmPanel), its
+            // rows are the alarms it displays — payload, not peer
+            // surfaces. The panel itself counts as the one signal.
+            let short = n.name.split('@').next().unwrap_or(&n.name);
+            let lower = short.to_ascii_lowercase();
+            let self_annunciator =
+                lower.contains("alert") || lower.contains("alarm") || lower.contains("critical");
+            let alerts: usize = if self_annunciator {
+                1
+            } else {
+                n.children.iter().map(signals).sum()
+            };
             if alerts > max {
                 out.push(
                     Finding::new(
@@ -1236,17 +1478,88 @@ impl LintRule for ColorOnlyInfo {
             if n.painted_area <= min_area {
                 continue;
             }
-            // The strongest saturated opaque-ish paint this scope owns.
-            let best = n
-                .colors
-                .iter()
-                .filter(|c| c[3] > 0)
-                .map(|c| (rgb_saturation(*c), c))
-                .filter(|(s, _)| *s > min_sat)
-                .max_by(|a, b| a.0.total_cmp(&b.0));
-            let Some((_, c)) = best else {
+            // The largest saturated *filled* patch this scope owns.
+            // Stroke-only colors can't be a color region — a thin
+            // accent ring around a neutral well is a border, not a
+            // patch — so only fill commands count, measured by the
+            // area they actually paint (as `painted_area` does).
+            let mut sat_area: BTreeMap<[u8; 4], f64> = BTreeMap::new();
+            let mut sat_rects: BTreeMap<[u8; 4], Vec<kurbo::Rect>> = BTreeMap::new();
+            for f in &n.fills {
+                if f.color[3] > 0 && rgb_saturation(f.color) > min_sat {
+                    *sat_area.entry(f.color).or_default() +=
+                        visible_fill_area(f.rect, n.bounds, &f.clip);
+                    sat_rects.entry(f.color).or_default().push(f.rect);
+                }
+            }
+            let Some((&c, &area)) = sat_area.iter().max_by(|a, b| a.1.total_cmp(b.1)) else {
                 continue;
             };
+            if area <= min_area {
+                continue;
+            }
+            // Spatial mosaic: the dominant hue painted as ≥2 disjoint
+            // patches (a lamp grid, sequencer cells, meter segments,
+            // treemap cells) already carries a redundant channel —
+            // each patch's position is its meaning. WCAG 1.4.1 is
+            // about color being the *only* channel, so a position-coded
+            // mosaic isn't a bare color flag.
+            let mosaic = sat_rects.get(&c).is_some_and(|rs| {
+                rs.iter()
+                    .enumerate()
+                    .filter(|(i, r)| {
+                        rs[..*i].iter().all(|o| {
+                            let isect = o.intersect(**r);
+                            isect.width() * isect.height() <= 1.0
+                        })
+                    })
+                    .count()
+                    >= 2
+            });
+            // Categorical chart: ≥3 saturated hues at meaningful area —
+            // pie slices, treemap cells, cover tiles — where position
+            // and extent, not hue, identify each datum.
+            let hues = sat_area.values().filter(|a| **a > min_area).count();
+            // Inside a data display, a mosaic is hue-agnostic: ≥2
+            // disjoint filled cells (saturated or muted, excluding the
+            // backdrop) already give each datum a position channel —
+            // a treemap's cells need no text to be told apart.
+            let mosaic_any = is_data_display(&n.name) && {
+                let rects: Vec<kurbo::Rect> = n
+                    .fills
+                    .iter()
+                    .filter(|f| f.color[3] > 0)
+                    .map(|f| f.rect)
+                    .filter(|r| {
+                        let i = r.intersect(n.bounds);
+                        i.width() * i.height() < 0.9 * n.area()
+                    })
+                    .collect();
+                rects
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, r)| {
+                        // Disjoint cells are distinct patches; cells
+                        // painted *under* later ones (coverflow fan,
+                        // stacked tiles) still are too when the paint
+                        // order leaves them a visible remnant — the
+                        // remnant's position is still its encoding.
+                        let disjoint = rects.iter().enumerate().all(|(j, o)| {
+                            j == *i || {
+                                let isect = o.intersect(**r);
+                                isect.width() * isect.height() <= 1.0
+                            }
+                        });
+                        let area = r.width() * r.height();
+                        let covered = union_area(rects[*i + 1..].iter().copied(), **r);
+                        disjoint || (area > 0.0 && covered < 0.98 * area)
+                    })
+                    .count()
+                    >= 2
+            };
+            if mosaic || hues >= 3 || mosaic_any {
+                continue;
+            }
             // Redundant-encoding check: no text anywhere in the
             // subtree, and no interactive descendant (a control
             // affords its own label/state channel).
@@ -1266,7 +1579,7 @@ impl LintRule for ColorOnlyInfo {
                         "saturated #{:02X}{:02X}{:02X} patch ({:.0}px²) with no text or \
                          control in its subtree — consider: pair the color with a label \
                          or icon; color alone can't carry meaning",
-                        c[0], c[1], c[2], n.painted_area
+                        c[0], c[1], c[2], area
                     ),
                 )
                 .at(n.bounds),
@@ -1741,6 +2054,289 @@ mod rules_tests {
         assert!(findings_for(&report, "color-only-info").is_empty());
     }
 
+    #[test]
+    fn color_only_info_ignores_saturated_stroke_ring() {
+        // A selection ring is a 1.5pt stroke around a neutral fill —
+        // a border, not a color patch. The scope's only saturated
+        // color comes from the stroke, so nothing to flag.
+        let mut list = app_list();
+        list.push_scope(None, "SlotWell", Rect::new(10.0, 10.0, 44.0, 44.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(10.0, 10.0, 44.0, 44.0),
+            [40, 40, 40, 255],
+        ));
+        list.commands.push(PaintCommand::StrokeRect(
+            Rect::new(10.0, 10.0, 44.0, 44.0),
+            1.5,
+            [9, 198, 69, 255],
+        ));
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(
+            findings_for(&report, "color-only-info").is_empty(),
+            "a saturated ring stroke is not a color patch"
+        );
+        // Same scope with the ring *filled* is a real patch → flags.
+        let mut list = app_list();
+        list.push_scope(None, "SlotWell", Rect::new(10.0, 10.0, 44.0, 44.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(10.0, 10.0, 44.0, 44.0),
+            [9, 198, 69, 255],
+        ));
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(!findings_for(&report, "color-only-info").is_empty());
+    }
+
+    #[test]
+    fn color_only_info_quiet_on_spatial_mosaic() {
+        // A lamp grid: the same saturated hue painted as disjoint
+        // cells — position is the redundant channel (WCAG 1.4.1 asks
+        // that color not be the *only* means). Quiet...
+        let mut list = app_list();
+        list.push_scope(None, "LampGrid", Rect::new(0.0, 0.0, 120.0, 120.0));
+        for i in 0..4 {
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(i as f64 * 30.0, 0.0, i as f64 * 30.0 + 20.0, 20.0),
+                [255, 0, 0, 255],
+            ));
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(findings_for(&report, "color-only-info").is_empty());
+        // ...but merge the cells into one contiguous blob and the
+        // same color flags — a single patch carries no position code.
+        let mut list = app_list();
+        list.push_scope(None, "LampGrid", Rect::new(0.0, 0.0, 120.0, 120.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 0.0, 110.0, 20.0),
+            [255, 0, 0, 255],
+        ));
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(!findings_for(&report, "color-only-info").is_empty());
+    }
+
+    #[test]
+    fn color_only_info_quiet_on_categorical_chart() {
+        // Three saturated hues at meaningful area — a pie/treemap —
+        // distinguish categories by position and extent; hue is a
+        // redundant legend channel, not the sole carrier.
+        let mut list = app_list();
+        list.push_scope(None, "Chart", Rect::new(0.0, 0.0, 120.0, 120.0));
+        for (i, c) in [[255, 0, 0, 255], [0, 200, 80, 255], [0, 120, 255, 255]]
+            .iter()
+            .enumerate()
+        {
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(i as f64 * 40.0, 0.0, i as f64 * 40.0 + 38.0, 40.0),
+                *c,
+            ));
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(findings_for(&report, "color-only-info").is_empty());
+    }
+
+    #[test]
+    fn color_only_info_quiet_on_data_display_mosaic() {
+        // A two-cell treemap: one saturated hue, one muted — position
+        // is the encoding, so the bare color isn't the sole channel.
+        let mut list = app_list();
+        list.push_scope(None, "Treemap", Rect::new(0.0, 0.0, 120.0, 120.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 0.0, 60.0, 50.0),
+            [65, 152, 131, 255],
+        ));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(62.0, 0.0, 120.0, 50.0),
+            [60, 60, 66, 255],
+        ));
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(findings_for(&report, "color-only-info").is_empty());
+        // Same two patches inside a plain Panel still flag — outside a
+        // data display, mixed-hue patches aren't a recognized mosaic.
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 120.0, 120.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 0.0, 60.0, 50.0),
+            [65, 152, 131, 255],
+        ));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(62.0, 0.0, 120.0, 50.0),
+            [60, 60, 66, 255],
+        ));
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(!findings_for(&report, "color-only-info").is_empty());
+    }
+
+    #[test]
+    fn color_only_info_quiet_on_overlapped_display_fan() {
+        // Coverflow-style overlap: each cover is partially occluded by
+        // the next paint, but its visible remnant still encodes a
+        // position. Not disjoint, yet still a mosaic.
+        let mut list = app_list();
+        list.push_scope(None, "Coverflow", Rect::new(0.0, 0.0, 200.0, 100.0));
+        for (i, c) in [[90, 140, 220, 255], [110, 180, 130, 255], [60, 60, 66, 255]]
+            .iter()
+            .enumerate()
+        {
+            let x = 60.0 + i as f64 * 30.0;
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(x, 0.0, x + 60.0, 60.0),
+                *c,
+            ));
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(findings_for(&report, "color-only-info").is_empty());
+        // A fill fully hidden by a later one is dead paint, not a
+        // mosaic member — the survivor alone can't carry position.
+        let mut list = app_list();
+        list.push_scope(None, "Coverflow", Rect::new(0.0, 0.0, 200.0, 100.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 0.0, 100.0, 60.0),
+            [60, 60, 66, 255],
+        ));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(0.0, 0.0, 100.0, 60.0),
+            [200, 40, 40, 255],
+        ));
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        // Only the top saturated patch is visible and there's just one
+        // of it — no position encoding, so it still flags.
+        assert!(!findings_for(&report, "color-only-info").is_empty());
+    }
+
+    #[test]
+    fn color_budget_excludes_data_display_payload() {
+        // Five saturated categorical hues inside a Treemap are the
+        // display's encoding, not decoration — the surface keeps its
+        // full alarm budget. The same hues painted by plain `Widget`
+        // scopes still flag.
+        for name in ["Treemap", "Widget"] {
+            let mut list = app_list();
+            list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 400.0, 200.0));
+            list.push_scope(None, name, Rect::new(0.0, 0.0, 400.0, 200.0));
+            for (i, c) in [
+                [200, 40, 40, 255],
+                [40, 160, 60, 255],
+                [40, 90, 200, 255],
+                [200, 160, 40, 255],
+                [160, 60, 200, 255],
+            ]
+            .iter()
+            .enumerate()
+            {
+                let x = i as f64 * 80.0;
+                list.commands.push(PaintCommand::FillRect(
+                    Rect::new(x, 0.0, x + 70.0, 40.0),
+                    *c,
+                ));
+            }
+            list.pop_scope();
+            // A second child — surfaces need ≥2 children to qualify.
+            list.push_scope(None, "Spacer", Rect::new(0.0, 180.0, 400.0, 200.0));
+            list.pop_scope();
+            list.pop_scope();
+            list.pop_scope();
+            let scene = LintScene::from_paint_list(&list);
+            let report = lint(&scene, &LintConfig::new());
+            let hits = findings_for(&report, "color-budget");
+            assert_eq!(hits.is_empty(), name == "Treemap", "{name}: got {hits:?}");
+        }
+    }
+
+    #[test]
+    fn color_budget_quiet_when_partitioned_into_panes() {
+        // A console of sibling zone surfaces: four saturated hues
+        // total, but each pane spends only two — the window is a
+        // container of surfaces, not one display emptying its alarm
+        // budget. Same partition test `simultaneous-channels` uses.
+        let mut list = app_list();
+        list.push_scope(None, "Console", Rect::new(0.0, 0.0, 800.0, 300.0));
+        let hues: [[&[u8; 4]; 2]; 2] = [
+            [&[200, 40, 40, 255], &[40, 160, 60, 255]],
+            [&[40, 90, 200, 255], &[200, 160, 40, 255]],
+        ];
+        for (p, cols) in hues.iter().enumerate() {
+            let y = p as f64 * 150.0;
+            list.push_scope(None, "ZonePanel", Rect::new(0.0, y, 800.0, y + 150.0));
+            list.push_scope(None, "Label", Rect::new(0.0, y, 800.0, y + 20.0));
+            list.pop_scope();
+            list.push_scope(None, "Body", Rect::new(0.0, y + 20.0, 800.0, y + 150.0));
+            for (i, c) in cols.iter().enumerate() {
+                let x = i as f64 * 200.0;
+                list.commands.push(PaintCommand::FillRect(
+                    Rect::new(x, y + 30.0, x + 60.0, y + 80.0),
+                    **c,
+                ));
+            }
+            list.pop_scope();
+            list.pop_scope();
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(
+            findings_for(&report, "color-budget").is_empty(),
+            "hues partitioned across panes aren't one surface's budget: {:?}",
+            report.findings
+        );
+    }
+
+    #[test]
+    fn color_budget_still_flags_unpartitioned_mix() {
+        // The same four hues painted directly on the surface — not
+        // inside child panes — is one busy display, not a console.
+        let mut list = app_list();
+        list.push_scope(None, "Console", Rect::new(0.0, 0.0, 800.0, 300.0));
+        for (i, c) in [
+            [200, 40, 40, 255],
+            [40, 160, 60, 255],
+            [40, 90, 200, 255],
+            [200, 160, 40, 255],
+        ]
+        .iter()
+        .enumerate()
+        {
+            let x = i as f64 * 200.0;
+            list.push_scope(None, "Patch", Rect::new(x, 0.0, x + 60.0, 60.0));
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(x, 0.0, x + 60.0, 60.0),
+                *c,
+            ));
+            list.pop_scope();
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(!findings_for(&report, "color-budget").is_empty());
+    }
+
     // ---------- progressive-disclosure ----------
 
     /// `App` (classified Chrome so the *container* is the surface
@@ -1918,6 +2514,14 @@ mod rules_tests {
             "Gauge3",
             "MyStackLight",
             "ZoneDataGrid",
+            "WeekView",
+            "Calendar",
+            "CodeEditor",
+            // Severity instruments — same channel family as Gauge/Dial.
+            "Thermometer",
+            "LevelBar",
+            // Activity indicator — same channel family as Indicator.
+            "Spinner",
         ] {
             assert!(is_data_display(name), "{name} should be a display");
         }
@@ -1930,7 +2534,6 @@ mod rules_tests {
             "Roundtable",
             "Sticker",
             "ImmediateMode",
-            "Thermometer",
             "Flowchart",
             "Label",
             "Button",
@@ -1944,5 +2547,108 @@ mod rules_tests {
     fn data_display_strips_markers_and_paths() {
         assert!(is_data_display("widgets::TrendChart@level:2"));
         assert!(!is_data_display("widgets::Dialog@modal"));
+    }
+
+    // ---------- alert-saturation ----------
+
+    /// An `AlarmPanel` and the alarm rows inside it are ONE alert
+    /// surface — the panel annunciates the set, the rows are the set.
+    /// Three independent annunciators still trip the cap; a single
+    /// panel with four rows does not count as four surfaces.
+    #[test]
+    fn alert_saturation_counts_annunciators_not_rows() {
+        const ALARM_RED: [u8; 4] = [220, 40, 40, 255];
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 400.0));
+        list.push_scope(None, "AlarmPanel", Rect::new(0.0, 0.0, 400.0, 400.0));
+        for i in 0..4 {
+            let y = i as f64 * 40.0;
+            list.push_scope(None, "AlarmCell", Rect::new(0.0, y, 400.0, y + 36.0));
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(0.0, y, 400.0, y + 36.0),
+                ALARM_RED,
+            ));
+            list.pop_scope();
+        }
+        list.pop_scope();
+        list.push_scope(None, "StatusDot", Rect::new(500.0, 0.0, 530.0, 30.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(500.0, 0.0, 530.0, 30.0),
+            ALARM_RED,
+        ));
+        list.pop_scope();
+        list.push_scope(None, "StackLight", Rect::new(560.0, 0.0, 590.0, 30.0));
+        list.commands.push(PaintCommand::FillRect(
+            Rect::new(560.0, 0.0, 590.0, 30.0),
+            ALARM_RED,
+        ));
+        list.pop_scope();
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "alert-saturation");
+        // AlarmPanel + StatusDot + StackLight = 3 surfaces — at cap.
+        assert!(hits.is_empty(), "unexpected findings: {hits:?}");
+    }
+
+    /// Separately placed annunciators compete for the same channel
+    /// even when every one is declared: `Badge@alarm` +
+    /// `AlarmPanel@alarm` + `StatusDot@alarm` is three signals (at
+    /// cap), and a fourth marked element trips it.
+    #[test]
+    fn alert_saturation_counts_separate_annunciators_separately() {
+        const ALARM_RED: [u8; 4] = [220, 40, 40, 255];
+        let scene = |names: &[&'static str]| {
+            let mut list = app_list();
+            list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 400.0));
+            for (i, name) in names.iter().enumerate() {
+                let x = i as f64 * 120.0;
+                list.push_scope(None, name, Rect::new(x, 0.0, x + 30.0, 30.0));
+                list.commands.push(PaintCommand::FillRect(
+                    Rect::new(x, 0.0, x + 30.0, 30.0),
+                    ALARM_RED,
+                ));
+                list.pop_scope();
+            }
+            list.pop_scope();
+            list.pop_scope();
+            LintScene::from_paint_list(&list)
+        };
+        let three = scene(&["Badge@alarm", "AlarmPanel@alarm", "StatusDot@alarm"]);
+        let report = lint(&three, &LintConfig::new());
+        let hits = findings_for(&report, "alert-saturation");
+        assert!(hits.is_empty(), "3 signals at cap: {hits:?}");
+
+        let four = scene(&[
+            "Badge@alarm",
+            "AlarmPanel@alarm",
+            "StatusDot@alarm",
+            "Badge@alarm",
+        ]);
+        let report = lint(&four, &LintConfig::new());
+        let hits = findings_for(&report, "alert-saturation");
+        assert_eq!(hits.len(), 1, "4 separate annunciators: {hits:?}");
+    }
+
+    #[test]
+    fn alert_saturation_flags_four_annunciators() {
+        const ALARM_RED: [u8; 4] = [220, 40, 40, 255];
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 800.0, 400.0));
+        for i in 0..4 {
+            let x = i as f64 * 120.0;
+            list.push_scope(None, "StatusDot", Rect::new(x, 0.0, x + 30.0, 30.0));
+            list.commands.push(PaintCommand::FillRect(
+                Rect::new(x, 0.0, x + 30.0, 30.0),
+                ALARM_RED,
+            ));
+            list.pop_scope();
+        }
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(!findings_for(&report, "alert-saturation").is_empty());
     }
 }

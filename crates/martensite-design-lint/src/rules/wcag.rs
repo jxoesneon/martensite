@@ -102,7 +102,20 @@ impl LintRule for TextContrast {
         let mut reported: BTreeSet<(String, String)> = BTreeSet::new();
         for n in scene.walk() {
             for t in &n.texts {
-                let Some(bg) = background_at(scene, n, t.origin) else {
+                // Sample where the ink actually is: the baseline
+                // origin sits at the glyph bottom — a descender-deep
+                // origin can fall into the *next* row's fill when a
+                // cell clip trims it. Probe the ink mid-height and
+                // clamp into the text's own clip.
+                let mut probe = kurbo::Point::new(t.origin.x, t.origin.y - f64::from(t.size) * 0.4);
+                if let Some(c) = t.clip {
+                    let (x0, y0) = (c.x0 + 0.5, c.y0 + 0.5);
+                    probe = kurbo::Point::new(
+                        probe.x.clamp(x0, (c.x1 - 0.5).max(x0)),
+                        probe.y.clamp(y0, (c.y1 - 0.5).max(y0)),
+                    );
+                }
+                let Some(bg) = background_at(scene, n, probe) else {
                     continue;
                 };
                 // WCAG "large" = 18pt = 24 CSS px (our pt unit is the
@@ -121,10 +134,12 @@ impl LintRule for TextContrast {
                             "text-contrast",
                             &n.path,
                             format!(
-                                "text {:.2}:1 against its background — {} text needs \
+                                "text {:.2}:1 against its background #{:02X}{:02X}{:02X} (ink #{:02X}{:02X}{:02X}) — {} text needs \
                                  {:.1}:1 minimum (low-vision and glare conditions multiply \
                                  the deficit)",
                                 ratio,
+                                bg[0], bg[1], bg[2],
+                                t.color[0], t.color[1], t.color[2],
                                 if large { "large" } else { "normal" },
                                 need
                             ),
@@ -548,6 +563,19 @@ impl LintRule for IconOnlyControl {
         let mut reported: BTreeSet<(String, i64, i64)> = BTreeSet::new();
         for n in surface_nodes(scene, cfg, self.id()) {
             for leaf in interactive_leaves(n, cfg) {
+                // A scroll-edge sliver — the leaf is mostly outside its
+                // inherited clip — can't be judged: its label may simply
+                // be clipped out for this scroll offset, not absent.
+                if leaf.visible_fraction() < 0.5 {
+                    continue;
+                }
+                // `@labeled` marks a control whose accessible name is
+                // declared (Widget::debug_name emits it when a label is
+                // set) — WCAG 4.1.2's name requirement is met; the rule
+                // targets *nameless* icon-only controls.
+                if leaf.has_marker("labeled") {
+                    continue;
+                }
                 let has_text = leaf.walk().any(|d| !d.texts.is_empty());
                 let key = (
                     leaf.path.clone(),
@@ -719,6 +747,7 @@ impl LintRule for OverflowClip {
         let mut out = Vec::new();
         for n in scene.walk() {
             let mut worst = 0.0f64;
+            let mut worst_rect = None;
             for f in &n.fills {
                 // Only the VISIBLE region can escape — a fill
                 // oversized under a scope-tight clip (progress fills,
@@ -738,17 +767,22 @@ impl LintRule for OverflowClip {
                 ]
                 .into_iter()
                 .fold(0.0, f64::max);
-                worst = worst.max(over);
+                if over > worst {
+                    worst = over;
+                    worst_rect = Some(f.rect);
+                }
             }
             if worst > tol {
+                let r = worst_rect.unwrap_or_default();
                 out.push(
                     Finding::new(
                         "overflow-clip",
                         &n.path,
                         format!(
                             "a fill extends {:.0}px outside this scope — overflow relies \
-                             on an ancestor clip to stay invisible",
-                            worst
+                             on an ancestor clip to stay invisible \
+                             (fill {r:.0?} vs scope {:?})",
+                            worst, n.bounds
                         ),
                     )
                     .at(n.bounds),
@@ -1012,6 +1046,60 @@ mod tests {
         let scene = text_on_fill([230, 230, 230, 255], [20, 20, 24, 255]);
         let report = lint(&scene, &LintConfig::new());
         assert!(findings_for(&report, "icon-only-control").is_empty());
+    }
+
+    #[test]
+    fn icon_only_quiet_on_scroll_edge_sliver() {
+        // A control scrolled mostly out of its scrollport: only a
+        // sliver is visible, and a text run whose ink fell fully
+        // outside the clip was culled — the remaining fragment can't
+        // be judged "icon-only" for paint the user never sees.
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 400.0, 200.0));
+        list.commands
+            .push(PaintCommand::ClipRect(Rect::new(0.0, 0.0, 400.0, 150.0)));
+        // Fully inside the clip, no text → still flags (negative leg).
+        list.push_scope(None, "IconButton", Rect::new(10.0, 10.0, 40.0, 40.0));
+        list.pop_scope();
+        // 300–390 crosses the clip's 150 edge → ~0% visible → sliver.
+        list.push_scope(None, "Slider", Rect::new(10.0, 300.0, 300.0, 390.0));
+        list.pop_scope();
+        list.commands.push(PaintCommand::PopClip);
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "icon-only-control");
+        assert_eq!(
+            hits.len(),
+            1,
+            "expected only the visible leaf, got {hits:?}"
+        );
+        assert!(hits[0].path.contains("IconButton"));
+    }
+
+    #[test]
+    fn icon_only_quiet_with_declared_accessible_name() {
+        // `@labeled` in the scope name declares the control's
+        // accessible name — the WCAG 4.1.2 name requirement the rule
+        // cites is met even with no painted text.
+        let mut list = app_list();
+        list.push_scope(None, "Panel", Rect::new(0.0, 0.0, 400.0, 200.0));
+        list.push_scope(None, "Slider@labeled", Rect::new(10.0, 10.0, 200.0, 40.0));
+        list.pop_scope();
+        list.push_scope(None, "Slider", Rect::new(10.0, 60.0, 200.0, 90.0));
+        list.pop_scope();
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "icon-only-control");
+        assert_eq!(
+            hits.len(),
+            1,
+            "expected only the unlabeled leaf, got {hits:?}"
+        );
+        assert_eq!(hits[0].path, "App/Panel/Slider");
     }
 
     // ---------- reading-order ----------

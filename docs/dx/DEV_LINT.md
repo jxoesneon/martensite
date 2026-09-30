@@ -84,6 +84,19 @@ serialized `LintScene` + `PaintList` on exit or on demand. Format:
 `cargo martensite lint --scene`, replayable in tests, and the substrate
 for future visual-diff tooling.
 
+## In-app paint-audit reporting
+
+The frame-level paint audit (`martensite_access::paint_audit`,
+`LintReporter`) reports findings through `tracing` on the
+`martensite::paint_audit` target — warnings via `warn!`,
+informational findings via `info!`. Applications that want info
+findings visible need a filter that admits them, e.g.
+`warn,martensite::paint_audit=info`. When no global tracing
+dispatcher is installed, each fresh finding is written to stderr as
+`martensite paint lint [warning|info]: <detail>` so findings are
+never silently dropped; fingerprint deduplication applies to both
+surfaces identically.
+
 ## What this deliberately is not
 
 - Not a CI gate replacement: attach mode is for the dev loop; CI still

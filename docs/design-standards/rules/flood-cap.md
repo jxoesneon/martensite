@@ -7,8 +7,12 @@
 ## What it measures
 
 Per surface, every descendant painting in the alarm-red
-family counts as one simultaneous alert. Over `max_simultaneous` =
-finding.
+family counts as one simultaneous alert — declared `@alarm`
+elements included: ISA-18.2's flood is a flood of *real* alarms.
+Over `max_simultaneous` = finding. One carve-out: an
+`AlarmList`/`AlarmPanel` container is the alarm console's
+annunciator — it counts as one element however many red rows it
+holds; the rows are its payload, not competing elements.
 
 ## The evidence
 
@@ -32,4 +36,5 @@ max_simultaneous = 5
 ## Legitimate exceptions
 
 - The alarm summary page itself legitimately shows many
-  alerts — allow `**/AlarmList`.
+  alerts — built in: `AlarmList`/`AlarmPanel` scopes count as a
+  single element (rows are payload).

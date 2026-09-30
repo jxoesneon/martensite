@@ -27,6 +27,19 @@ and chrome are not channels either. The finding lands on the
 **innermost** scope that exceeds the budget, so a packed sub-pane is
 flagged where it lives rather than propagating to the window root.
 
+Two scope details matter:
+
+- **Visible only** — a display painted with zero area (a collapsed or
+  docked strip that paints no pixels) presents nothing to triangulate,
+  so it isn't counted as a channel.
+- **Panes don't sum** — the same partition test `choice-count` uses:
+  when a scope's channels all live inside ≥2 child *panes* (a
+  sub-surface carrying channels alongside its own chrome, or a
+  composite display panel), the node is a **console of displays**, not
+  one scan surface, and the sibling sums are not added into a single
+  channel load. A bare leaf display as a direct child — a flat chart
+  wall — still competes on this surface and counts normally.
+
 ## The evidence
 
 - **FAA HFDS**: "minimal information density — present only

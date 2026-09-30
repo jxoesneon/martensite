@@ -83,6 +83,12 @@
 //! the paint level, so the large-text classification uses the 18pt
 //! regular-weight threshold only.
 //!
+//! Findings are reported by [`LintReporter`] through `tracing` on the
+//! `martensite::paint_audit` target; when no global tracing dispatcher
+//! is installed, each fresh finding is written to stderr as
+//! `martensite paint lint [warning|info]: <detail>` so findings are
+//! never silently dropped.
+//!
 //! # Examples
 //!
 //! ```
@@ -1719,7 +1725,12 @@ impl LintReporter {
 
     /// Emits each lint whose fingerprint has not been seen before.
     /// Returns the number of newly reported lints.
+    ///
+    /// Findings go to `tracing` under the `martensite::paint_audit`
+    /// target; when no global dispatcher is installed they are written
+    /// to stderr instead, so findings are never silently dropped.
     pub fn report(&mut self, lints: &[PaintLint]) -> usize {
+        let stderr = !tracing::dispatcher::has_been_set();
         let mut fresh = 0;
         for lint in lints {
             if self.seen.insert(lint.fingerprint()) {
@@ -1734,9 +1745,21 @@ impl LintReporter {
                         "paint lint: {}", lint.detail
                     ),
                 }
+                if stderr {
+                    Self::write_finding(lint, &mut std::io::stderr());
+                }
             }
         }
         fresh
+    }
+
+    /// One finding line: `martensite paint lint [warning|info]: <detail>`.
+    fn write_finding(lint: &PaintLint, w: &mut impl std::io::Write) {
+        let sev = match lint.severity {
+            LintSeverity::Warning => "warning",
+            LintSeverity::Info => "info",
+        };
+        let _ = writeln!(w, "martensite paint lint [{sev}]: {}", lint.detail);
     }
 
     /// Number of unique lints reported so far.
@@ -2129,6 +2152,29 @@ mod tests {
         assert_eq!(reporter.report(&lints), 0);
         reporter.reset();
         assert_eq!(reporter.report(&lints), lints.len());
+    }
+
+    #[test]
+    fn stderr_fallback_line_format() {
+        let mk = |severity| PaintLint {
+            kind: PaintLintKind::UndersizedText,
+            severity,
+            anchor: (1.0, 2.0),
+            measured: Some(9.0),
+            required: Some(12.0),
+            detail: "9.0pt text (min 12.0pt) in Panel @ (10, 20)".to_string(),
+            scope: Some("Panel"),
+            widget: None,
+        };
+        let mut buf = Vec::new();
+        LintReporter::write_finding(&mk(LintSeverity::Warning), &mut buf);
+        LintReporter::write_finding(&mk(LintSeverity::Info), &mut buf);
+        let out = String::from_utf8(buf).unwrap();
+        assert_eq!(
+            out,
+            "martensite paint lint [warning]: 9.0pt text (min 12.0pt) in Panel @ (10, 20)\n\
+             martensite paint lint [info]: 9.0pt text (min 12.0pt) in Panel @ (10, 20)\n"
+        );
     }
 
     #[test]

@@ -1005,6 +1005,7 @@ mod tests {
             full_name: "widgets::Tabs".into(),
             path: "App/Tabs".into(),
             bounds: Default::default(),
+            clip: None,
             widget_id: None,
             kind: martensite_design_lint::NodeKind::Navigation,
             allows: vec![],

@@ -103,6 +103,9 @@ impl NodeKind {
             "rating",
             "menuitem",
             "segmented",
+            // An individual `Segment` is the radio-like child of a
+            // `Segmented` strip — it is the control the user taps.
+            "segment",
             "cascader",
             "treeselect",
             "listbox",
@@ -111,9 +114,10 @@ impl NodeKind {
         ];
         if INTERACTIVE.iter().any(|s| has(s))
             // Collision-prone substrings need exclusions:
-            // `Table`/`Tabular` aren't tabs, `Blink` isn't a link,
+            // `Table`/`Tabular` aren't tabs, `TabPanel` is a
+            // container not a tab control, `Blink` isn't a link,
             // `Unselected` isn't a select.
-            || (has("tab") && !has("table") && !has("tabular"))
+            || (has("tab") && !has("table") && !has("tabular") && !has("tabpanel"))
             || (has("link") && !has("blink"))
             || (has("select") && !has("unselect"))
         {
@@ -180,6 +184,10 @@ pub struct TextStat {
     pub text: String,
     /// Advance width in device px — from glyph positions when known.
     pub width: Option<f64>,
+    /// The active clip rect when the text was painted, if any — a
+    /// baseline origin can sit below the clipped ink (row-boundary
+    /// descenders), so contrast probes must sample inside this clip.
+    pub clip: Option<Rect>,
 }
 
 /// A fill painted in a scope — the payload for contrast measurement,
@@ -209,6 +217,11 @@ pub struct LintNode {
     pub path: String,
     /// Layout bounds in device pixels (as painted).
     pub bounds: Rect,
+    /// The clip stack active when this scope opened — `Some` when an
+    /// ancestor clips it (scrollports, `push_clip`). `bounds ∩ clip`
+    /// is the visible region; a node mostly outside it is a
+    /// scroll-edge sliver that visibility rules can't judge.
+    pub clip: Option<Rect>,
     /// Arena handle of the emitting widget, when one exists.
     pub widget_id: Option<u64>,
     /// Classified kind — see [`NodeKind::from_widget_name`].
@@ -289,6 +302,7 @@ impl LintNode {
         for t in &mut self.texts {
             t.origin += d;
         }
+        self.clip = self.clip.map(|c| c + d);
         for c in &mut self.children {
             c.translate(d);
         }
@@ -297,6 +311,25 @@ impl LintNode {
     /// Area of `bounds` in square device pixels.
     pub fn area(&self) -> f64 {
         (self.bounds.width() * self.bounds.height()).max(0.0)
+    }
+
+    /// Share of `bounds` left visible by the inherited clip —
+    /// `1.0` for an unclipped node, ~`0.0` for a fully scrolled-out
+    /// sliver. Scroll-edge slivers are where visibility-based rules
+    /// (icon-only, target-size, contrast) would misjudge a control by
+    /// its clipped remainder instead of its real footprint.
+    pub fn visible_fraction(&self) -> f64 {
+        let area = self.area();
+        if area <= 0.0 {
+            return 0.0;
+        }
+        match self.clip {
+            Some(c) => {
+                let vis = self.bounds.intersect(c);
+                ((vis.width() * vis.height()).max(0.0) / area).clamp(0.0, 1.0)
+            }
+            None => 1.0,
+        }
     }
 
     /// Interactive descendants not nested inside another interactive
@@ -443,12 +476,14 @@ impl LintScene {
                         }
                         None => (short.clone(), own_allows.clone()),
                     };
+                    let inherited_clip = clip_rect(&clip);
                     stack.push(Acc {
                         node: LintNode {
                             name: short,
                             full_name: display.to_string(),
                             path,
                             bounds: *bounds,
+                            clip: inherited_clip,
                             widget_id: id.map(|w| w.to_u64()),
                             kind: NodeKind::from_widget_name(display),
                             allows,
@@ -517,6 +552,7 @@ impl LintScene {
                             color: *c,
                             text: t.clone(),
                             width: None,
+                            clip: clip_rect(&clip),
                         });
                     }
                 }
@@ -540,6 +576,7 @@ impl LintScene {
                                 color: run.color,
                                 text: String::new(),
                                 width: Some(f64::from(hi - lo).max(0.0)),
+                                clip: clip_rect(&clip),
                             });
                         }
                     }
@@ -737,7 +774,7 @@ fn push_unique_f32(v: &mut Vec<f32>, x: f32) {
 
 /// Fill-rect area after clipping to the scope bounds and the active
 /// clip stack — coverage outside either doesn't paint.
-fn visible_fill_area(fill: Rect, scope: Rect, clip: &Option<Rect>) -> f64 {
+pub(crate) fn visible_fill_area(fill: Rect, scope: Rect, clip: &Option<Rect>) -> f64 {
     let mut vis = fill.intersect(scope);
     if let Some(c) = clip {
         vis = vis.intersect(*c);
@@ -792,11 +829,13 @@ mod tests {
     #[test]
     fn collision_prone_names_classify_correctly() {
         // Regression: substring matching classified Table→tab,
-        // Blink→link, Unselected→select, ScrollView→content.
+        // Blink→link, Unselected→select, ScrollView→content,
+        // TabPanelChild→tab (a panel container, not a control).
         for (name, want) in [
             ("ScrollView", NodeKind::Container),
             ("Table", NodeKind::Unknown),
             ("TabularGrid", NodeKind::Container),
+            ("TabPanelChild", NodeKind::Container),
             ("Blink", NodeKind::Unknown),
             ("UnselectedChip", NodeKind::Unknown),
             ("Tab", NodeKind::Interactive),
