@@ -48,6 +48,9 @@ struct App {
     dev_session: Option<Arc<martensite::devtools::dev_session::DevSession>>,
     /// Held only for its `Drop` (stops the listener, unlinks the sock).
     _dev_server: Option<martensite::dev_channel::DevChannelServer>,
+    /// In-memory log ring attached to the dev session — powers
+    /// `martensite_logs` (paint-lint findings included).
+    log_ring: Arc<martensite::devtools::dev_session::log_ring::LogRing>,
     needs_layout: bool,
     last_frame: Instant,
 }
@@ -65,6 +68,8 @@ impl App {
                 filter: Signal::new(String::new()),
                 sort: Signal::new(String::new()),
                 category: Signal::new(String::new()),
+                zoom: Signal::new(1u32),
+                speed: Signal::new(1u32),
             },
             arena: None,
             root: None,
@@ -78,6 +83,9 @@ impl App {
             recovery: RecoveryMachine::new(),
             dev_session: None,
             _dev_server: None,
+            log_ring: Arc::new(martensite::devtools::dev_session::log_ring::LogRing::new(
+                512,
+            )),
             needs_layout: true,
             last_frame: Instant::now(),
         }
@@ -106,6 +114,7 @@ impl App {
         match martensite::dev_channel::serve_dev_session_from_env(Arc::clone(&arena)) {
             Ok(Some((server, session))) => {
                 session.attach_focus_manager(Arc::clone(&self.focus));
+                session.set_log_ring(Arc::clone(&self.log_ring));
                 for adapter in [
                     signal_adapter("pack", self.signals.pack.clone()),
                     signal_adapter("scroll", self.signals.scroll.clone()),
@@ -116,6 +125,8 @@ impl App {
                     signal_adapter("filter", self.signals.filter.clone()),
                     signal_adapter("sort", self.signals.sort.clone()),
                     signal_adapter("category", self.signals.category.clone()),
+                    signal_adapter("zoom", self.signals.zoom.clone()),
+                    signal_adapter("speed", self.signals.speed.clone()),
                 ] {
                     session.register_signal_adapter(adapter);
                 }
@@ -226,7 +237,7 @@ impl ApplicationHandler for App {
         let window: Arc<dyn Window> = event_loop
             .create_window(
                 WindowAttributes::default()
-                    .with_title("Martensite — morph viewer")
+                    .with_title("Martensite — Morph Viewer")
                     .with_surface_size(LogicalSize::new(1320.0, 860.0)),
             )
             .expect("create window")
@@ -295,6 +306,9 @@ impl ApplicationHandler for App {
                         if let Err(err) = surface.resize(&gpu.device, size.width, size.height) {
                             eprintln!("morph_viewer: surface resize failed: {err}");
                         }
+                    }
+                    if let Some(o) = &mut self.orchestrator {
+                        o.set_frame_size(size.width, size.height);
                     }
                     self.needs_layout = true;
                 }
@@ -453,13 +467,42 @@ where
     }
 }
 
+/// tracing init shared by `run`/`run_live_headless`: stderr fmt
+/// honors `RUST_LOG` (default `warn,martensite::paint_audit=info` so
+/// lint findings surface even when the subscriber exists); the
+/// dev-channel `LogRing` sees every INFO+ record so `martensite_logs`
+/// can slice by level/target. Also installs the dev panic hook so
+/// `martensite_runtime_errors` reports panics with node context.
+fn init_tracing(log_ring: &Arc<martensite::devtools::dev_session::log_ring::LogRing>) {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::Layer;
+    martensite::devtools::error_surface::install_dev_panic_hook();
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer().with_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "warn,martensite::paint_audit=info".into()),
+            ),
+        )
+        .with(
+            log_ring
+                .layer()
+                .with_filter(tracing_subscriber::filter::LevelFilter::INFO),
+        )
+        .try_init()
+        .ok();
+}
+
 /// Windowed entry — winit + Vello GPU rendering.
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new()?;
     // Poll keeps the spring cadence continuous; each RedrawRequested
     // re-arms the next and Fifo present paces the loop.
     event_loop.set_control_flow(ControlFlow::Poll);
-    event_loop.run_app(App::new())?;
+    let app = App::new();
+    init_tracing(&app.log_ring);
+    event_loop.run_app(app)?;
     Ok(())
 }
 
@@ -468,6 +511,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// rasterizes real PNGs via the devtools TinySkia backend.
 pub fn run_live_headless() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
+    init_tracing(&app.log_ring);
     app.build_arena(1.0);
     app.layout(1320, 860);
     let mut last = Instant::now();

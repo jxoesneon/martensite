@@ -76,21 +76,131 @@ impl MorphViewer {
         self.display.len()
     }
 
+    /// `(cell pitch, icon extent)` in logical pt for the active zoom
+    /// level. Pre-first-layout (`last_zoom == MAX`) falls back to
+    /// the default level.
+    pub(super) fn pitch_icon_pt(&self) -> (f32, f32) {
+        let z: usize = if self.last_zoom == u32::MAX {
+            DEFAULT_ZOOM as usize
+        } else {
+            self.last_zoom.min(ZOOM_LEVELS.len() as u32 - 1) as usize
+        };
+        ZOOM_LEVELS[z]
+    }
+
+    /// Recomputes cell + icon rects from the current scroll offset —
+    /// pixel-precise, partial rows included. Slots are
+    /// `item - visible.start` so the pooled cells, their rects, and
+    /// `cascade`'s bindings all agree.
+    pub(super) fn position_cells(&mut self, cx: &mut LayoutContext) {
+        let s = self.scale.max(0.01);
+        let (pitch_pt, icon_pt) = self.pitch_icon_pt();
+        let pitch = pitch_pt * s;
+        let icon_side = icon_pt * s;
+        let v = self.vrows();
+        let items = v.visible_items();
+        let first = items.start;
+        let wall = self.wall_rect;
+        let cols = self.cols;
+        let offset_px = v.offset() * s;
+        // Horizontally center the wall's columns inside the viewport.
+        let ox = wall.origin.x + (wall.size.x - cols as f32 * pitch).max(0.0) * 0.5;
+        self.cell_rects = vec![Rect::default(); self.cells.len()];
+        self.icon_rects = vec![Rect::default(); self.cells.len()];
+        for it in items {
+            let slot = it - first;
+            if slot >= self.cells.len() {
+                break;
+            }
+            let (col, row) = (it % cols, it / cols);
+            let cell = Rect::new(
+                ox + col as f32 * pitch,
+                wall.origin.y + row as f32 * pitch - offset_px,
+                pitch,
+                pitch,
+            );
+            let inset = (pitch - icon_side) * 0.5;
+            let icon_rect = Rect::new(
+                cell.origin.x + inset,
+                cell.origin.y + inset,
+                icon_side,
+                icon_side,
+            );
+            self.cell_rects[slot] = cell;
+            self.icon_rects[slot] = icon_rect;
+            cx.layout_child(&mut self.cells[slot].icon, icon_rect);
+        }
+    }
+
+    /// Wall viewport extent in logical pt.
+    pub(super) fn wall_h_pt(&self) -> f32 {
+        self.wall_rect.size.y / self.scale.max(0.01)
+    }
+
+    /// The wall's `VirtualRows` at the current geometry/offset.
+    pub(super) fn vrows(&self) -> VirtualRows {
+        let (pitch, _) = self.pitch_icon_pt();
+        let mut v = VirtualRows::new(
+            self.display_len(),
+            self.cols.max(1),
+            pitch.max(1.0),
+            self.wall_h_pt().max(0.0),
+        );
+        v.set_offset(self.scroll_pt);
+        v
+    }
+
     /// Maximum scroll in logical pt — the wall clamps here.
     pub(super) fn max_scroll_pt(&self) -> f32 {
-        let total_rows = self.display_len().div_ceil(self.cols.max(1));
-        (total_rows as f32 * CELL - self.grid_rect.size.y / self.scale.max(0.01)).max(0.0)
+        self.vrows().max_offset()
     }
 
     /// Clamps `scroll_pt` into `[0, max]` and syncs the `scroll`
     /// signal (integer top row).
     pub(super) fn clamp_scroll(&mut self) {
+        let (pitch, _) = self.pitch_icon_pt();
         self.scroll_pt = self.scroll_pt.clamp(0.0, self.max_scroll_pt());
-        let row = (self.scroll_pt / CELL).round().max(0.0) as u32;
+        let row = (self.scroll_pt / pitch.max(1.0)).floor().max(0.0) as u32;
         if row != self.last_scroll {
             self.last_scroll = row;
             self.signals.scroll.set(row);
         }
+    }
+
+    /// Scrolls by `delta_pt` logical pt and rebinds; returns whether
+    /// the offset actually moved (0 at either bound = chaining).
+    pub(super) fn scroll_keys(&mut self, delta_pt: f32) -> bool {
+        let mut v = self.vrows();
+        let consumed = v.scroll_by(delta_pt);
+        self.scroll_pt = v.offset();
+        self.clamp_scroll();
+        if consumed.abs() > f32::EPSILON {
+            self.reposition_and_cascade();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sets the pixel offset so `row` is the top row (scroll-signal
+    /// semantics), clamped.
+    pub(super) fn scroll_to_row(&mut self, row: u32) {
+        let (pitch, _) = self.pitch_icon_pt();
+        self.scroll_pt = row as f32 * pitch.max(1.0);
+        self.clamp_scroll();
+        self.reposition_and_cascade();
+    }
+
+    /// Repositions pooled cells from the pixel offset, then rebinds
+    /// the newly exposed items.
+    pub(super) fn reposition_and_cascade(&mut self) {
+        let mut hot = martensite::core::HotNode::default();
+        let mut lcx = LayoutContext {
+            hot: &mut hot,
+            scale: self.scale,
+        };
+        self.position_cells(&mut lcx);
+        self.cascade();
     }
 
     /// The `(pack, icon)` a grid slot shows at the current scroll —
@@ -99,15 +209,16 @@ impl MorphViewer {
         self.display.get(slot).copied()
     }
 
-    /// Rebinds every visible cell to its slot — statically, the grid
+    /// Rebinds every pooled cell to the item `VirtualRows` places
+    /// in its slot (`item - visible.start`). Statically, the grid
     /// never morphs: it shows icons in their original state.
     pub(super) fn cascade(&mut self) {
-        if self.display_len() == 0 {
+        let mut tmp = martensite::core::HotNode::default();
+        if self.display_len() == 0 || self.cells.is_empty() {
             // No entries — re-lay each icon into a zero rect: `paint`
             // honors `MorphIcon`'s stored bounds, so this is the only
             // way to keep stale glyphs out from under the message.
-            let mut tmp = martensite::core::HotNode::default();
-            for cell in self.cells.iter_mut().take(self.shown) {
+            for cell in &mut self.cells {
                 cell.filled = false;
                 let mut cx = LayoutContext {
                     hot: &mut tmp,
@@ -118,46 +229,25 @@ impl MorphViewer {
             self.semantic_dirty = true;
             return;
         }
-        // A just-cleared filter may find the icons still zero-laid —
-        // restore the inset rect each cascade (cheap, idempotent).
-        let icon_side = ICON_PT * self.scale;
-        let mut tmp = martensite::core::HotNode::default();
-        for (i, cell) in self.cells.iter_mut().enumerate().take(self.shown) {
-            let cr = self.cell_rects[i];
-            if self.icon_rects[i].size.x != icon_side {
-                let inset = (cr.size.x - icon_side) * 0.5;
-                self.icon_rects[i] = Rect::new(
-                    cr.origin.x + inset,
-                    cr.origin.y + inset,
-                    icon_side,
-                    icon_side,
-                );
-            }
-            let r = self.icon_rects[i];
-            let mut cx = LayoutContext {
-                hot: &mut tmp,
-                scale: self.scale,
-            };
-            cell.icon.layout(&mut cx, r);
-        }
-        // The wall scrolls in whole rows: slot i shows
-        // `display[top_row * cols + i]`; slots past the end are empty.
-        let top_row = self.last_scroll as usize;
-        let base = top_row * self.cols.max(1);
-        let targets: Vec<Option<Sel>> = (0..self.shown).map(|s| self.slot_icon(base + s)).collect();
-        for (cell, target) in self.cells.iter_mut().take(self.shown).zip(targets) {
+        let items = self.vrows().visible_items();
+        let first = items.start;
+        // `targets[slot]` is the display entry for slot `slot`.
+        let targets: Vec<Option<Sel>> = items.clone().map(|it| self.slot_icon(it)).collect();
+        for (slot, cell) in self.cells.iter_mut().enumerate() {
+            let target = targets.get(slot).copied().flatten();
             match target {
                 Some((p, i)) => {
                     cell.filled = true;
                     cell.pack = p;
                     cell.icon_idx = i;
+                    cell.item = first + slot;
                     if let Some(icon) = icon_at(p, i) {
                         set_icon_checked(&mut cell.icon, icon.d);
                     }
                 }
                 None => {
-                    // Empty slot — zero-lay the glyph and mark unfilled
-                    // so hover/picks ignore it.
+                    // Slot outside the visible range or past the end —
+                    // zero-lay the glyph so stale icons never linger.
                     cell.filled = false;
                     let mut cx = LayoutContext {
                         hot: &mut tmp,
