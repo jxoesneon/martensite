@@ -661,6 +661,7 @@ impl Widget for Flex {
             }
         }
 
+        eprintln!("FLEX layout dir={:?} bounds={:?}", cx.direction(), bounds);
         let children_main: f32 = self
             .child_sizes
             .iter()
@@ -711,6 +712,12 @@ impl Widget for Flex {
                 (child_cross, child_main)
             };
             let child_bounds = Rect::new(x, y, w, h);
+            // RTL mirrors every child's horizontal offset within the
+            // content box — for Row this reverses the main axis, and for
+            // Column it flips the cross axis so start alignment lands on
+            // the right edge.
+            let child_bounds =
+                martensite_core::intl::mirror_x(bounds, child_bounds, cx.direction());
             self.child_rects.push(child_bounds);
             cx.layout_child(child.as_mut(), child_bounds);
         }
@@ -1081,5 +1088,70 @@ mod tests {
         assert_eq!(f.flex_weight(0), 2.0);
         assert_eq!(f.flex_weight(1), 0.0);
         assert_eq!(f.flex_weight(2), 0.0);
+    }
+    #[test]
+    fn flex_row_rtl_mirrors_children() {
+        use martensite_core::intl::install_ambient_intl;
+        use martensite_core::{LayoutDirection, Locale};
+
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let bounds = Rect::new(10.0, 0.0, 300.0, 40.0);
+
+        // LTR baseline: three 50-wide children, gap 10 → x = 10, 70, 130.
+        let mut f = Flex::row()
+            .child(Fixed(Vec2::new(50.0, 20.0)))
+            .child(Fixed(Vec2::new(50.0, 20.0)))
+            .child(Fixed(Vec2::new(50.0, 20.0)))
+            .gap(10.0);
+        f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: bounds.size,
+            },
+        );
+        f.layout(&mut cx, bounds);
+        let ltr: Vec<f32> = (0..3).map(|i| f.child_bounds(i).unwrap().min_x()).collect();
+        assert_eq!(ltr, vec![10.0, 70.0, 130.0]);
+
+        // RTL: same children mirrored within the content box —
+        // x' = 10 + 300 - 10 - (x - 10) - 50... i.e. child i's x-offset
+        // from the left becomes its offset from the right.
+        let _guard = install_ambient_intl(LayoutDirection::Rtl, Locale::new("ar"));
+        f.layout(&mut cx, bounds);
+        let rtl: Vec<f32> = (0..3).map(|i| f.child_bounds(i).unwrap().min_x()).collect();
+        // offsets 0,60,120 mirror to offsets 250,190,130 → x 260,200,140.
+        assert_eq!(rtl, vec![260.0, 200.0, 140.0]);
+    }
+
+    #[test]
+    fn flex_column_rtl_right_aligns_start() {
+        use martensite_core::intl::install_ambient_intl;
+        use martensite_core::{LayoutDirection, Locale};
+
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let bounds = Rect::new(0.0, 0.0, 200.0, 100.0);
+
+        // Stretch (the default) fills the cross axis, which would make
+        // mirroring a no-op — Start is the meaningful case.
+        let mut f = Flex::column()
+            .child(Fixed(Vec2::new(50.0, 20.0)))
+            .cross_axis_alignment(CrossAxisAlignment::Start);
+        f.measure(
+            &mut cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: bounds.size,
+            },
+        );
+        f.layout(&mut cx, bounds);
+        assert_eq!(f.child_bounds(0).unwrap().min_x(), 0.0);
+
+        let _guard = install_ambient_intl(LayoutDirection::Rtl, Locale::new("he"));
+        f.layout(&mut cx, bounds);
+        // Start-aligned column child hugs the right edge under RTL.
+        assert_eq!(f.child_bounds(0).unwrap().min_x(), 150.0);
     }
 }

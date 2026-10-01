@@ -76,6 +76,11 @@ pub struct Text {
     pub color: Option<martensite_theme::Oklab>,
     /// Whether the text direction is RTL.
     pub rtl: bool,
+    /// The direction the last measure/layout pass shaped against —
+    /// `self.rtl` OR the ambient [`LayoutDirection`]. Tracked so a
+    /// direction change invalidates Tier-1 cache entries and the
+    /// retained shape instead of serving LTR results into an RTL pass.
+    effective_rtl: bool,
     /// Inline text cache for fast measurement probing (Tier 1).
     inline_cache: InlineTextCache,
     /// Global LRU shaping cache (Tier 2).
@@ -133,6 +138,7 @@ impl Text {
             letter_spacing: None,
             color: None,
             rtl: false,
+            effective_rtl: false,
             inline_cache: InlineTextCache::new(),
             shape_cache: TextShapeCache::with_default_budget(),
             font_manager: None,
@@ -648,7 +654,7 @@ impl Text {
 
         // Build shaping options from widget properties.
         let mut options = ShapingOptions::default();
-        if self.rtl {
+        if self.effective_rtl {
             options.direction = BidiDirection::Rtl;
         }
 
@@ -732,6 +738,12 @@ impl Widget for Text {
             self.scale = cx.scale;
             self.inline_cache.clear();
         }
+        let rtl = self.rtl || cx.is_rtl();
+        if rtl != self.effective_rtl {
+            self.effective_rtl = rtl;
+            self.inline_cache.clear();
+            self.last_shape = None;
+        }
         let available_width = constraints.max_size.x;
         let max_height = constraints.max_size.y;
 
@@ -782,6 +794,12 @@ impl Widget for Text {
         if self.scale != cx.scale {
             self.scale = cx.scale;
             self.inline_cache.clear();
+        }
+        let rtl = self.rtl || cx.is_rtl();
+        if rtl != self.effective_rtl {
+            self.effective_rtl = rtl;
+            self.inline_cache.clear();
+            self.last_shape = None;
         }
         // Re-shape at the final allocated width so `last_shape` carries
         // line breaks and glyph positions for the rect `paint()` draws
@@ -950,6 +968,7 @@ impl Clone for Text {
             letter_spacing: self.letter_spacing,
             color: self.color,
             rtl: self.rtl,
+            effective_rtl: self.effective_rtl,
             inline_cache: InlineTextCache::new(),
             shape_cache: TextShapeCache::with_default_budget(),
             font_manager: None,
@@ -970,6 +989,36 @@ mod tests {
 
     fn make_cx(hot: &mut HotNode) -> LayoutContext<'_> {
         LayoutContext { hot, scale: 1.0 }
+    }
+
+    #[test]
+    fn text_ambient_rtl_shapes_with_rtl_base_direction() {
+        use martensite_core::intl::install_ambient_intl;
+        use martensite_core::{LayoutDirection, Locale};
+
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = make_cx(&mut hot);
+        let c = LayoutConstraints {
+            min_size: Vec2::ZERO,
+            max_size: Vec2::new(200.0, 100.0),
+        };
+
+        let mut t = Text::new("abc");
+        t.measure(&mut cx, c);
+        let ltr = t.last_shape.as_ref().map(|s| s.base_bidi_level);
+        assert_eq!(ltr, Some(0), "LTR ambient shapes an even bidi level");
+
+        // Ambient RTL must invalidate the retained LTR shape — without
+        // the `effective_rtl` watch the Tier-1 cache would serve it.
+        let _guard = install_ambient_intl(LayoutDirection::Rtl, Locale::new("ar"));
+        t.measure(&mut cx, c);
+        let rtl = t.last_shape.as_ref().map(|s| s.base_bidi_level);
+        assert_eq!(rtl, Some(1), "RTL ambient shapes an odd bidi level");
+
+        // And back.
+        drop(_guard);
+        t.measure(&mut cx, c);
+        assert_eq!(t.last_shape.as_ref().map(|s| s.base_bidi_level), Some(0));
     }
 
     #[test]

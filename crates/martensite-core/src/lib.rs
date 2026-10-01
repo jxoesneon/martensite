@@ -25,6 +25,9 @@ pub mod arena;
 pub mod fence;
 /// Opaque, niche-optimized widget identifier type.
 pub mod id;
+/// Ambient layout direction and locale published to widgets during
+/// layout, paint, and event passes.
+pub mod intl;
 /// Shared skeleton/shimmer painter for loading placeholders —
 /// the single paint path behind `Widget::is_loading`/
 /// `Widget::paint_loading` and the facade `Skeleton` widget.
@@ -48,6 +51,7 @@ pub mod widget;
 pub use arena::{ArenaError, BreadthFirstIter, Children, DepthFirstIter, SubtreeIter, WidgetArena};
 pub use fence::{FrameFence, FrameGuard, DEFAULT_LEASE_TIMEOUT};
 pub use id::{SurfaceId, WidgetId};
+pub use intl::{LayoutDirection, Locale};
 pub use martensite_theme::{Theme, ThemeToken, TokenKey};
 pub use node::{ColdNode, HotNode, InlineTextCache, NodeFlags, Rect};
 pub use overlay::{OverlayAnchor, OverlayEntry, OverlayLayer};

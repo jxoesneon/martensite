@@ -734,6 +734,9 @@ impl LayoutEngine {
         let _measurer = arena
             .text_painter_shared()
             .map(martensite_core::paint::install_ambient_measurer);
+        // Publish the arena's layout direction and locale to
+        // `LayoutContext::direction`/`locale` for this pass.
+        let _intl = arena.install_ambient_intl();
 
         // Ensure the tree is synced
         self.sync_from_arena(arena, root);
@@ -1023,6 +1026,12 @@ impl LayoutEngine {
         container_size: GeomSize,
     ) {
         let scale = arena.scale_factor();
+        // Right-to-left mirrors every non-root node's horizontal offset
+        // within its parent's resolved box. Vertical writing modes flow
+        // inline along y, so physical-x mirroring applies only to
+        // horizontal-tb.
+        let mirror = arena.layout_direction().is_rtl()
+            && matches!(self.writing_mode, WritingMode::HorizontalTb);
         let mut queue = std::collections::VecDeque::new();
         queue.push_back((root, container_size));
 
@@ -1030,7 +1039,11 @@ impl LayoutEngine {
             let (bounds, bidi) = if let Some(node) = self.lookup_node(wid) {
                 if let Ok(layout) = self.tree.layout(node) {
                     let trans = FlowTransposition::new(self.writing_mode, container_size);
-                    let rect = logical_layout_to_rect(layout, self.writing_mode, container_size);
+                    let mut rect =
+                        logical_layout_to_rect(layout, self.writing_mode, container_size);
+                    if mirror && wid != root {
+                        rect.origin.x = container_size.width - rect.origin.x - rect.width();
+                    }
                     let bidi = taffy_layout_to_bidi_rect(layout, &trans);
                     (rect, bidi)
                 } else {
@@ -1107,6 +1120,10 @@ impl LayoutEngine {
         root: WidgetId,
         container_size: GeomSize,
     ) {
+        // Same right-to-left mirroring as `apply_layout_with_widgets` —
+        // see there for why horizontal-tb alone qualifies.
+        let mirror = arena.layout_direction().is_rtl()
+            && matches!(self.writing_mode, WritingMode::HorizontalTb);
         let mut queue = std::collections::VecDeque::new();
         queue.push_back((root, container_size));
 
@@ -1114,7 +1131,11 @@ impl LayoutEngine {
             let (bounds, bidi) = if let Some(node) = self.lookup_node(wid) {
                 if let Ok(layout) = self.tree.layout(node) {
                     let trans = FlowTransposition::new(self.writing_mode, container_size);
-                    let rect = logical_layout_to_rect(layout, self.writing_mode, container_size);
+                    let mut rect =
+                        logical_layout_to_rect(layout, self.writing_mode, container_size);
+                    if mirror && wid != root {
+                        rect.origin.x = container_size.width - rect.origin.x - rect.width();
+                    }
                     let bidi = taffy_layout_to_bidi_rect(layout, &trans);
                     (rect, bidi)
                 } else {
@@ -2141,5 +2162,199 @@ mod tests {
 
         assert!(!engine.has_diagnostics());
         assert!(engine.diagnostics().is_empty());
+    }
+
+    /// Fixed-size leaf for direction tests.
+    struct FixedLeaf(glam::Vec2);
+    impl martensite_core::widget::Widget for FixedLeaf {
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::widget::LayoutContext,
+            _constraints: martensite_core::widget::LayoutConstraints,
+        ) -> glam::Vec2 {
+            self.0
+        }
+        fn layout(
+            &mut self,
+            _cx: &mut martensite_core::widget::LayoutContext,
+            _bounds: martensite_core::Rect,
+        ) {
+        }
+    }
+
+    /// Builds a 300-wide row root (gap 10) holding three
+    /// 50×20 leaves; returns the leaf x-offsets after layout.
+    fn row_of_three(direction: martensite_core::LayoutDirection) -> Vec<f32> {
+        let mut arena = WidgetArena::new();
+        arena.set_layout_direction(direction);
+        let root = arena.insert(
+            HotNode::new(NodeId::new(1)),
+            ColdNode::new(Box::new(FixedLeaf(glam::Vec2::ZERO))),
+        );
+        let mut leaves = Vec::new();
+        for _ in 0..3 {
+            let c = arena.insert(
+                HotNode::new(NodeId::new(1)),
+                ColdNode::new(Box::new(FixedLeaf(glam::Vec2::new(50.0, 20.0)))),
+            );
+            arena.append_child(root, c).unwrap();
+            leaves.push(c);
+        }
+        let mut engine = LayoutEngine::new();
+        engine
+            .register_node(
+                root,
+                Style {
+                    size: Size {
+                        width: taffy::Dimension::length(300.0),
+                        height: taffy::Dimension::length(50.0),
+                    },
+                    gap: Size {
+                        width: taffy::LengthPercentage::length(10.0),
+                        height: taffy::LengthPercentage::length(0.0),
+                    },
+                    ..Style::default()
+                },
+            )
+            .unwrap();
+        engine
+            .compute_with_widgets(
+                &mut arena,
+                root,
+                Size {
+                    width: AvailableSpace::Definite(300.0),
+                    height: AvailableSpace::Definite(50.0),
+                },
+            )
+            .unwrap();
+        // Root is never mirrored.
+        assert_eq!(arena.get_hot(root).unwrap().bounds.origin.x, 0.0);
+        leaves
+            .iter()
+            .map(|c| {
+                let b = arena.get_hot(*c).unwrap().bounds;
+                assert_eq!(b.width(), 50.0);
+                b.origin.x
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rtl_row_lays_out_right_to_left_with_same_gaps() {
+        use martensite_core::LayoutDirection;
+        assert_eq!(row_of_three(LayoutDirection::Ltr), vec![0.0, 60.0, 120.0]);
+        assert_eq!(
+            row_of_three(LayoutDirection::Rtl),
+            vec![250.0, 190.0, 130.0]
+        );
+    }
+
+    #[test]
+    fn rtl_nested_parent_at_nonzero_origin_mirrors_within_parent() {
+        use martensite_core::LayoutDirection;
+
+        // root (400 wide, 20 left padding) → parent (content-sized row)
+        // → leaves 50 and 30 wide.
+        fn run(direction: LayoutDirection) -> (Rect, Rect, Rect) {
+            let mut arena = WidgetArena::new();
+            arena.set_layout_direction(direction);
+            let mk = |arena: &mut WidgetArena, size: glam::Vec2| {
+                arena.insert(
+                    HotNode::new(NodeId::new(1)),
+                    ColdNode::new(Box::new(FixedLeaf(size))),
+                )
+            };
+            let root = mk(&mut arena, glam::Vec2::ZERO);
+            let parent = mk(&mut arena, glam::Vec2::ZERO);
+            let a = mk(&mut arena, glam::Vec2::new(50.0, 20.0));
+            let b = mk(&mut arena, glam::Vec2::new(30.0, 20.0));
+            arena.append_child(root, parent).unwrap();
+            arena.append_child(parent, a).unwrap();
+            arena.append_child(parent, b).unwrap();
+            let mut engine = LayoutEngine::new();
+            engine
+                .register_node(
+                    root,
+                    Style {
+                        size: Size {
+                            width: taffy::Dimension::length(400.0),
+                            height: taffy::Dimension::length(100.0),
+                        },
+                        padding: taffy::Rect {
+                            left: taffy::LengthPercentage::length(20.0),
+                            right: taffy::LengthPercentage::length(0.0),
+                            top: taffy::LengthPercentage::length(0.0),
+                            bottom: taffy::LengthPercentage::length(0.0),
+                        },
+                        align_items: Some(taffy::AlignItems::START),
+                        ..Style::default()
+                    },
+                )
+                .unwrap();
+            engine
+                .compute_with_widgets(
+                    &mut arena,
+                    root,
+                    Size {
+                        width: AvailableSpace::Definite(400.0),
+                        height: AvailableSpace::Definite(100.0),
+                    },
+                )
+                .unwrap();
+            let get = |id| arena.get_hot(id).unwrap().bounds;
+            (get(parent), get(a), get(b))
+        }
+
+        let (p, a, b) = run(LayoutDirection::Ltr);
+        assert_eq!((p.origin.x, p.width()), (20.0, 80.0));
+        assert_eq!((a.origin.x, b.origin.x), (0.0, 50.0));
+        let (p, a, b) = run(LayoutDirection::Rtl);
+        // Parent: 400 - 20 - 80 = 300 within the root.
+        assert_eq!((p.origin.x, p.width()), (300.0, 80.0));
+        // Leaves mirror within the parent box: 80 - 0 - 50 = 30,
+        // 80 - 50 - 30 = 0.
+        assert_eq!((a.origin.x, b.origin.x), (30.0, 0.0));
+        assert_eq!((a.width(), b.width()), (50.0, 30.0));
+        assert_eq!((p.origin.y, a.origin.y, b.origin.y), (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn compute_with_widgets_installs_arena_direction() {
+        use martensite_core::LayoutDirection;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static SAW_RTL: AtomicBool = AtomicBool::new(false);
+        struct Probe;
+        impl martensite_core::widget::Widget for Probe {
+            fn measure(
+                &mut self,
+                _cx: &mut martensite_core::widget::LayoutContext,
+                _constraints: martensite_core::widget::LayoutConstraints,
+            ) -> glam::Vec2 {
+                glam::Vec2::ZERO
+            }
+            fn layout(
+                &mut self,
+                cx: &mut martensite_core::widget::LayoutContext,
+                _bounds: martensite_core::Rect,
+            ) {
+                SAW_RTL.store(cx.is_rtl(), Ordering::SeqCst);
+            }
+        }
+        let mut arena = WidgetArena::new();
+        arena.set_layout_direction(LayoutDirection::Rtl);
+        let root = arena.insert(HotNode::new(NodeId::new(1)), ColdNode::new(Box::new(Probe)));
+        let mut engine = LayoutEngine::new();
+        engine
+            .compute_with_widgets(
+                &mut arena,
+                root,
+                Size {
+                    width: AvailableSpace::Definite(10.0),
+                    height: AvailableSpace::Definite(10.0),
+                },
+            )
+            .unwrap();
+        assert!(SAW_RTL.load(Ordering::SeqCst));
+        assert!(!martensite_core::intl::ambient_direction().is_rtl());
     }
 }

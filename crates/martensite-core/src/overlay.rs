@@ -399,6 +399,13 @@ pub struct OverlayLayer {
     /// [`LayoutContext::scale`] during [`Self::layout_pass`]. Mirrors
     /// [`WidgetArena::scale_factor`]; `1.0` until set.
     scale_factor: f32,
+    /// Layout direction installed as ambient around popup layout,
+    /// paint, and event passes. Kept in sync with
+    /// [`WidgetArena::layout_direction`](crate::WidgetArena::layout_direction).
+    layout_direction: crate::LayoutDirection,
+    /// Locale installed as ambient around popup passes. Kept in sync
+    /// with [`WidgetArena::locale`](crate::WidgetArena::locale).
+    locale: crate::Locale,
 }
 
 impl Default for OverlayLayer {
@@ -430,6 +437,8 @@ impl OverlayLayer {
             current_owner: None,
             capture: None,
             scale_factor: 1.0,
+            layout_direction: crate::LayoutDirection::Ltr,
+            locale: crate::Locale::default(),
         }
     }
 
@@ -499,6 +508,55 @@ impl OverlayLayer {
         };
         self.scale_factor = scale;
         self.remark_all();
+    }
+
+    /// The layout direction and locale installed as ambient around
+    /// popup layout, paint, and event passes. `(Ltr, en-US)` until
+    /// [`Self::set_intl`] changes them.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::OverlayLayer;
+    /// use martensite_core::LayoutDirection;
+    ///
+    /// let layer = OverlayLayer::new();
+    /// assert_eq!(layer.intl().0, LayoutDirection::Ltr);
+    /// assert_eq!(layer.intl().1.as_str(), "en-US");
+    /// ```
+    pub fn intl(&self) -> (crate::LayoutDirection, &crate::Locale) {
+        (self.layout_direction, &self.locale)
+    }
+
+    /// Sets the layout direction and locale popup content sees through
+    /// the ambient channel. Re-marks open entries for layout when either
+    /// changes. `WidgetArena` calls this from
+    /// [`WidgetArena::set_layout_direction`](crate::WidgetArena::set_layout_direction)
+    /// and [`WidgetArena::set_locale`](crate::WidgetArena::set_locale).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::overlay::OverlayLayer;
+    /// use martensite_core::{LayoutDirection, Locale};
+    ///
+    /// let mut layer = OverlayLayer::new();
+    /// layer.set_intl(LayoutDirection::Rtl, Locale::new("ar"));
+    /// assert!(layer.intl().0.is_rtl());
+    /// ```
+    pub fn set_intl(&mut self, direction: crate::LayoutDirection, locale: crate::Locale) {
+        if self.layout_direction == direction && self.locale == locale {
+            return;
+        }
+        self.layout_direction = direction;
+        self.locale = locale;
+        self.remark_all();
+    }
+
+    /// Installs this layer's direction and locale as ambient for the
+    /// duration of a popup pass.
+    fn install_intl(&self) -> crate::intl::AmbientIntlGuard {
+        crate::intl::install_ambient_intl(self.layout_direction, self.locale.clone())
     }
 
     /// Re-marks every open entry for layout so the next
@@ -901,6 +959,7 @@ impl OverlayLayer {
     /// assert!(b.max_x() <= 200.0 && b.max_y() <= 100.0);
     /// ```
     pub fn layout_pass(&mut self) {
+        let _intl = self.install_intl();
         let viewport = self.viewport;
         for entry in &mut self.entries {
             if !entry.needs_layout {
@@ -984,6 +1043,7 @@ impl OverlayLayer {
         text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
         phase: Option<f32>,
     ) {
+        let _intl = self.install_intl();
         // One parent scope around all popup content: the paint audit
         // treats "Overlay"-scoped fills/text as intentional occlusion,
         // so a popup covering page content is not flagged as a bug —
@@ -1074,6 +1134,7 @@ impl OverlayLayer {
     /// assert!(layer.is_empty());
     /// ```
     pub fn dispatch_event(&mut self, event: &WidgetEvent) -> EventResponse {
+        let _intl = self.install_intl();
         // Entries opened since the last layout pass would hit-test
         // against a stale zero-size rect; resolve them first so a press
         // between `open` and the frame's `layout_pass` doesn't count as

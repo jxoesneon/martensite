@@ -181,6 +181,13 @@ pub struct WidgetArena {
     /// [`Widget::paint_loading`] as the phase — all skeletons sweep in
     /// lock-step on one clock instead of carrying per-widget phases.
     loading_elapsed: f32,
+    /// Ambient layout direction published to widgets during layout,
+    /// paint, and event passes. Installed via
+    /// [`set_layout_direction`](Self::set_layout_direction).
+    layout_direction: crate::LayoutDirection,
+    /// Ambient locale published to widgets during layout, paint, and
+    /// event passes. Installed via [`set_locale`](Self::set_locale).
+    locale: crate::Locale,
 }
 
 impl std::fmt::Debug for WidgetArena {
@@ -242,6 +249,8 @@ impl WidgetArena {
             text_painter: None,
             reduced_motion: false,
             loading_elapsed: 0.0,
+            layout_direction: crate::LayoutDirection::Ltr,
+            locale: crate::Locale::default(),
         }
     }
 
@@ -280,6 +289,122 @@ impl WidgetArena {
     /// ```
     pub fn set_theme(&mut self, theme: martensite_theme::Theme) {
         self.theme = theme;
+    }
+
+    /// Returns the ambient layout direction —
+    /// [`LayoutDirection::Ltr`](crate::LayoutDirection::Ltr) until
+    /// [`set_layout_direction`](Self::set_layout_direction) changes it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{LayoutDirection, WidgetArena};
+    ///
+    /// let arena = WidgetArena::new();
+    /// assert_eq!(arena.layout_direction(), LayoutDirection::Ltr);
+    /// ```
+    pub fn layout_direction(&self) -> crate::LayoutDirection {
+        self.layout_direction
+    }
+
+    /// Sets the ambient layout direction widgets observe through
+    /// [`LayoutContext::direction`](crate::LayoutContext::direction),
+    /// [`PaintContext::direction`](crate::PaintContext::direction), and
+    /// [`EventContext::direction`](crate::EventContext::direction).
+    /// A no-op when unchanged; otherwise every live node is marked
+    /// `DIRTY_LAYOUT | DIRTY_PAINT | DIRTY_A11Y` and the overlay layer
+    /// is re-synced so popups follow.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{LayoutDirection, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena.set_layout_direction(LayoutDirection::Rtl);
+    /// assert!(arena.layout_direction().is_rtl());
+    /// ```
+    pub fn set_layout_direction(&mut self, direction: crate::LayoutDirection) {
+        if self.layout_direction == direction {
+            return;
+        }
+        self.layout_direction = direction;
+        self.intl_changed();
+    }
+
+    /// Returns the ambient locale — `en-US` until
+    /// [`set_locale`](Self::set_locale) changes it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::WidgetArena;
+    ///
+    /// let arena = WidgetArena::new();
+    /// assert_eq!(arena.locale().as_str(), "en-US");
+    /// ```
+    pub fn locale(&self) -> &crate::Locale {
+        &self.locale
+    }
+
+    /// Sets the ambient locale widgets observe through
+    /// [`LayoutContext::locale`](crate::LayoutContext::locale) and
+    /// friends. Does **not** change the layout direction — call
+    /// [`set_layout_direction`](Self::set_layout_direction) with
+    /// [`LayoutDirection::for_locale`](crate::LayoutDirection::for_locale)
+    /// when both should follow. A no-op when unchanged; otherwise every
+    /// live node is marked `DIRTY_LAYOUT | DIRTY_PAINT | DIRTY_A11Y`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{LayoutDirection, Locale, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena.set_locale(Locale::new("ar-EG"));
+    /// assert_eq!(arena.locale().as_str(), "ar-EG");
+    /// assert_eq!(arena.layout_direction(), LayoutDirection::Ltr);
+    /// ```
+    pub fn set_locale(&mut self, locale: crate::Locale) {
+        if self.locale == locale {
+            return;
+        }
+        self.locale = locale;
+        self.intl_changed();
+    }
+
+    /// Installs this arena's layout direction and locale as the
+    /// thread's ambient values until the returned guard drops. The
+    /// arena does this itself around paint and event passes and
+    /// `LayoutEngine` around layout; call it for manual layout passes
+    /// (tests, harness sweeps) that drive `Widget::layout` directly.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::intl::ambient_direction;
+    /// use martensite_core::{LayoutDirection, WidgetArena};
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// arena.set_layout_direction(LayoutDirection::Rtl);
+    /// {
+    ///     let _guard = arena.install_ambient_intl();
+    ///     assert!(ambient_direction().is_rtl());
+    /// }
+    /// assert!(!ambient_direction().is_rtl());
+    /// ```
+    pub fn install_ambient_intl(&self) -> crate::intl::AmbientIntlGuard {
+        crate::intl::install_ambient_intl(self.layout_direction, self.locale.clone())
+    }
+
+    /// Dirty-marks every live node for layout, paint, and a11y and
+    /// re-syncs the overlay layer after a direction/locale change.
+    fn intl_changed(&mut self) {
+        for hot in &mut self.hot_nodes {
+            hot.flags |= NodeFlags::DIRTY_LAYOUT | NodeFlags::DIRTY_PAINT | NodeFlags::DIRTY_A11Y;
+        }
+        self.overlay
+            .set_intl(self.layout_direction, self.locale.clone());
     }
 
     /// Returns the display scale factor (physical px per logical pt).
@@ -1937,6 +2062,7 @@ impl WidgetArena {
     /// assert_eq!(arena.dispatch_event(root, &event), EventResponse::Ignored);
     /// ```
     pub fn dispatch_event(&mut self, target: WidgetId, event: &WidgetEvent) -> EventResponse {
+        let _intl = self.install_ambient_intl();
         self.dispatch_event_ex(target, event)
             .map(|(_, response)| response)
             .unwrap_or(EventResponse::Ignored)
@@ -1958,6 +2084,7 @@ impl WidgetArena {
         target: WidgetId,
         event: &WidgetEvent,
     ) -> Option<(WidgetId, EventResponse)> {
+        let _intl = self.install_ambient_intl();
         // A loading node covers its whole subtree, and keyboard focus /
         // SemanticAction delivery reach targets without hit-testing —
         // dispatch must begin above the topmost loading ancestor rather
@@ -2125,6 +2252,7 @@ impl WidgetArena {
     /// assert_eq!(list.commands.len(), 2);
     /// ```
     pub fn build_paint_list(&self, root: WidgetId, list: &mut PaintList) {
+        let _intl = self.install_ambient_intl();
         // `None` = no known viewport (an unlaid-out root has degenerate
         // bounds) — nothing is culled. `Some` = the surface rect, the
         // outermost region any paint can show through.
@@ -2132,7 +2260,7 @@ impl WidgetArena {
             .get_hot(root)
             .map(|h| h.bounds)
             .filter(|b| has_area(*b));
-        self.paint_node(root, list, visible);
+        self.paint_node(root, list, visible, &self.theme);
         // In-window popups paint above everything else, on the same
         // shimmer clock as arena skeletons.
         self.overlay.paint_with_phase(
@@ -2165,7 +2293,13 @@ impl WidgetArena {
     /// tree) and nothing is culled; a node with degenerate bounds is
     /// kept regardless — it may still emit commands the paint audit
     /// needs to see.
-    fn paint_node(&self, id: WidgetId, list: &mut PaintList, visible: Option<crate::Rect>) {
+    fn paint_node(
+        &self,
+        id: WidgetId,
+        list: &mut PaintList,
+        visible: Option<crate::Rect>,
+        inherited_theme: &martensite_theme::Theme,
+    ) {
         let Some(hot) = self.get_hot(id) else {
             return;
         };
@@ -2178,6 +2312,15 @@ impl WidgetArena {
         let Some(cold) = self.get_cold(id) else {
             return;
         };
+
+        // Per-widget subtree overrides — the ambient guard lives
+        // through this node's paint and the arena-children recursion;
+        // `theme` resolves for this node and flows to descendants.
+        let _intl = cold
+            .widget
+            .intl_override()
+            .map(|(d, l)| crate::intl::install_ambient_intl(d, l));
+        let theme = cold.widget.theme_override().unwrap_or(inherited_theme);
 
         // Underflow enforcement — `Hide`/`Collapse` keep the layout
         // slot but paint nothing (Android `INVISIBLE` semantics; the
@@ -2211,7 +2354,7 @@ impl WidgetArena {
             let mut cx = PaintContext {
                 list,
                 bounds: hot.bounds,
-                theme: &self.theme,
+                theme,
                 scale: self.scale_factor,
                 text_painter: self.text_painter.as_deref(),
             };
@@ -2229,7 +2372,7 @@ impl WidgetArena {
             let mut cx = PaintContext {
                 list,
                 bounds: hot.bounds,
-                theme: &self.theme,
+                theme,
                 scale: self.scale_factor,
                 text_painter: self.text_painter.as_deref(),
             };
@@ -2255,7 +2398,7 @@ impl WidgetArena {
             &*cold.widget,
             hot.bounds,
             list,
-            &self.theme,
+            theme,
             self.scale_factor,
             self.text_painter.as_deref(),
             body_visible,
@@ -2282,7 +2425,7 @@ impl WidgetArena {
         };
         let mut child = hot.first_child;
         while let Some(child_id) = child {
-            self.paint_node(child_id, list, child_visible);
+            self.paint_node(child_id, list, child_visible, theme);
             child = self.get_hot(child_id).and_then(|h| h.next_sibling);
         }
         if clip_children {
@@ -2296,7 +2439,7 @@ impl WidgetArena {
         // the bounds stay legible as *occupied*, the cramped content
         // underneath does not.
         if matches!(policy, Some(UnderflowPolicy::Scrim)) {
-            let (rect, radius, color) = scrim_veil(hot.bounds, &self.theme);
+            let (rect, radius, color) = scrim_veil(hot.bounds, theme);
             list.push_blurred_rect(rect, radius, color);
         }
         list.pop_scope();
@@ -2455,6 +2598,15 @@ fn paint_widget_body(
         scale,
         text_painter,
     };
+    // Internal-node subtree overrides — same contract as
+    // `WidgetArena::paint_node`: ambient direction/locale guard covers
+    // this widget's paint and every descendant, `theme` resolves for
+    // the subtree below.
+    let _intl = widget
+        .intl_override()
+        .map(|(d, l)| crate::intl::install_ambient_intl(d, l));
+    let theme = widget.theme_override().unwrap_or(theme);
+
     // A loading internal widget swaps its body AND descendants for the
     // placeholder — this consult also covers overlay popup content,
     // which reaches here through `paint_widget_recursive` and never
@@ -3125,5 +3277,116 @@ mod scope_tests {
         // Internal child: no arena handle, but still named.
         assert_eq!(scopes[1].0, None);
         assert!(scopes[1].1.contains("DummyWidget"));
+    }
+
+    #[test]
+    fn intl_and_theme_overrides_scope_to_subtree() {
+        use crate::intl::install_ambient_intl;
+        use crate::LayoutDirection;
+
+        struct Probe;
+        impl crate::Widget for Probe {
+            fn measure(
+                &mut self,
+                _cx: &mut crate::LayoutContext,
+                _c: crate::LayoutConstraints,
+            ) -> glam::Vec2 {
+                glam::Vec2::new(10.0, 10.0)
+            }
+            fn layout(&mut self, _cx: &mut crate::LayoutContext, _b: crate::Rect) {}
+            fn paint(&self, cx: &mut crate::PaintContext) {
+                // Probe records the ambient direction and a marker
+                // token's presence so the parent test can assert which
+                // theme/direction this subtree painted under.
+                let dir = cx.direction();
+                let has_marker = cx
+                    .theme
+                    .color(martensite_theme::TokenKey::AccentColor)
+                    .is_some();
+                cx.list.push_fill_rect(
+                    kurbo::Rect::new(0.0, 0.0, 1.0, 1.0),
+                    if dir.is_rtl() && has_marker {
+                        [255, 0, 0, 255]
+                    } else {
+                        [0, 0, 255, 255]
+                    },
+                );
+            }
+        }
+
+        struct Stage {
+            child: crate::widget::DummyWidget,
+            probe: Probe,
+            theme: martensite_theme::Theme,
+        }
+        impl crate::Widget for Stage {
+            fn measure(
+                &mut self,
+                _cx: &mut crate::LayoutContext,
+                _c: crate::LayoutConstraints,
+            ) -> glam::Vec2 {
+                glam::Vec2::new(10.0, 10.0)
+            }
+            fn layout(&mut self, cx: &mut crate::LayoutContext, b: crate::Rect) {
+                // Stage scopes layout for its children by installing the
+                // ambient values around layout_child — see
+                // `Widget::intl_override`.
+                let _g = install_ambient_intl(LayoutDirection::Rtl, crate::Locale::new("ar"));
+                cx.layout_child(&mut self.probe, b);
+                cx.layout_child(&mut self.child, b);
+            }
+            fn intl_override(&self) -> Option<(LayoutDirection, crate::Locale)> {
+                Some((LayoutDirection::Rtl, crate::Locale::new("ar")))
+            }
+            fn theme_override(&self) -> Option<&martensite_theme::Theme> {
+                Some(&self.theme)
+            }
+            fn child_count(&self) -> usize {
+                2
+            }
+            fn child(&self, i: usize) -> Option<&dyn crate::Widget> {
+                match i {
+                    0 => Some(&self.probe),
+                    _ => Some(&self.child),
+                }
+            }
+            fn child_bounds(&self, _i: usize) -> Option<crate::Rect> {
+                Some(crate::Rect::new(0.0, 0.0, 10.0, 10.0))
+            }
+        }
+
+        let mut arena = WidgetArena::new();
+        let stage = arena.insert(
+            HotNode::new(taffy::NodeId::new(1)),
+            crate::ColdNode::new(Box::new(Stage {
+                child: crate::widget::DummyWidget,
+                probe: Probe,
+                theme: martensite_theme::tokens::default_dark(),
+            })),
+        );
+        {
+            let hot = arena.get_hot_mut(stage).unwrap();
+            hot.bounds = crate::Rect::new(0.0, 0.0, 10.0, 10.0);
+            hot.flags |= NodeFlags::VISIBLE;
+        }
+
+        let mut list = crate::PaintList::new();
+        arena.build_paint_list(stage, &mut list);
+        // The internal Probe painted under the stage's Rtl + dark-theme
+        // override (red fill); a sibling probe outside the stage would
+        // see Ltr + the arena theme.
+        let fills: Vec<_> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                crate::PaintCommand::FillRect(_, color) => Some(*color),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            fills.contains(&[255, 0, 0, 255]),
+            "probe fill: {fills:?} all={:?}",
+            list.commands
+        );
     }
 }

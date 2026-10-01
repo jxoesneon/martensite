@@ -292,6 +292,59 @@ impl LayoutContext<'_> {
         crate::paint::ambient_measure_text(text, size_pt * self.scale)
     }
 
+    /// The ambient [`LayoutDirection`](crate::LayoutDirection) for this
+    /// pass — [`LayoutDirection::Ltr`](crate::LayoutDirection::Ltr)
+    /// unless the arena (or a manual
+    /// [`install_ambient_intl`](crate::intl::install_ambient_intl))
+    /// installed another.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{HotNode, LayoutContext};
+    ///
+    /// let mut hot = HotNode::default();
+    /// let cx = LayoutContext { hot: &mut hot, scale: 1.0 };
+    /// assert_eq!(cx.direction(), martensite_core::LayoutDirection::Ltr);
+    /// ```
+    pub fn direction(&self) -> crate::LayoutDirection {
+        crate::intl::ambient_direction()
+    }
+
+    /// `true` when [`Self::direction`] is right-to-left.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::intl::install_ambient_intl;
+    /// use martensite_core::{LayoutDirection, Locale};
+    /// use martensite_core::{HotNode, LayoutContext};
+    ///
+    /// let mut hot = HotNode::default();
+    /// let cx = LayoutContext { hot: &mut hot, scale: 1.0 };
+    /// let _guard = install_ambient_intl(LayoutDirection::Rtl, Locale::new("he"));
+    /// assert!(cx.is_rtl());
+    /// ```
+    pub fn is_rtl(&self) -> bool {
+        self.direction().is_rtl()
+    }
+
+    /// The ambient [`Locale`](crate::Locale) for this pass — `en-US`
+    /// unless another was installed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{HotNode, LayoutContext};
+    ///
+    /// let mut hot = HotNode::default();
+    /// let cx = LayoutContext { hot: &mut hot, scale: 1.0 };
+    /// assert_eq!(cx.locale().as_str(), "en-US");
+    /// ```
+    pub fn locale(&self) -> crate::Locale {
+        crate::intl::ambient_locale()
+    }
+
     /// Lays out an internal child widget, preserving this node's
     /// [`NodeFlags::FOCUSABLE`](crate::NodeFlags::FOCUSABLE) flag.
     ///
@@ -602,6 +655,73 @@ pub struct EventContext<'a> {
     pub scale: f32,
 }
 
+impl EventContext<'_> {
+    /// The ambient [`LayoutDirection`](crate::LayoutDirection) for this
+    /// pass — [`LayoutDirection::Ltr`](crate::LayoutDirection::Ltr)
+    /// unless the arena (or a manual
+    /// [`install_ambient_intl`](crate::intl::install_ambient_intl))
+    /// installed another.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{EventContext, Rect, WidgetEvent};
+    ///
+    /// let event = WidgetEvent::FocusGained;
+    /// let cx = EventContext {
+    ///     event: &event,
+    ///     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///     scale: 1.0,
+    /// };
+    /// assert_eq!(cx.direction(), martensite_core::LayoutDirection::Ltr);
+    /// ```
+    pub fn direction(&self) -> crate::LayoutDirection {
+        crate::intl::ambient_direction()
+    }
+
+    /// `true` when [`Self::direction`] is right-to-left.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::intl::install_ambient_intl;
+    /// use martensite_core::{LayoutDirection, Locale};
+    /// use martensite_core::{EventContext, Rect, WidgetEvent};
+    ///
+    /// let event = WidgetEvent::FocusGained;
+    /// let cx = EventContext {
+    ///     event: &event,
+    ///     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///     scale: 1.0,
+    /// };
+    /// let _guard = install_ambient_intl(LayoutDirection::Rtl, Locale::new("he"));
+    /// assert!(cx.is_rtl());
+    /// ```
+    pub fn is_rtl(&self) -> bool {
+        self.direction().is_rtl()
+    }
+
+    /// The ambient [`Locale`](crate::Locale) for this pass — `en-US`
+    /// unless another was installed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{EventContext, Rect, WidgetEvent};
+    ///
+    /// let event = WidgetEvent::FocusGained;
+    /// let cx = EventContext {
+    ///     event: &event,
+    ///     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///     scale: 1.0,
+    /// };
+    /// assert_eq!(cx.locale().as_str(), "en-US");
+    /// ```
+    pub fn locale(&self) -> crate::Locale {
+        crate::intl::ambient_locale()
+    }
+}
+
 /// Context provided to widgets during the paint pass.
 ///
 /// Widgets record drawing operations into [`PaintContext::list`]; the
@@ -688,6 +808,80 @@ impl PaintContext<'_> {
     /// ```
     pub fn pt(&self, v: f32) -> f32 {
         v * self.scale
+    }
+
+    /// The ambient [`LayoutDirection`](crate::LayoutDirection) for this
+    /// pass — [`LayoutDirection::Ltr`](crate::LayoutDirection::Ltr)
+    /// unless the arena (or a manual
+    /// [`install_ambient_intl`](crate::intl::install_ambient_intl))
+    /// installed another.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintContext, PaintList, Rect, Theme};
+    ///
+    /// let mut list = PaintList::new();
+    /// let theme = Theme::new("fallback");
+    /// let cx = PaintContext {
+    ///     list: &mut list,
+    ///     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///     theme: &theme,
+    ///     scale: 1.0,
+    ///     text_painter: None,
+    /// };
+    /// assert_eq!(cx.direction(), martensite_core::LayoutDirection::Ltr);
+    /// ```
+    pub fn direction(&self) -> crate::LayoutDirection {
+        crate::intl::ambient_direction()
+    }
+
+    /// `true` when [`Self::direction`] is right-to-left.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::intl::install_ambient_intl;
+    /// use martensite_core::{LayoutDirection, Locale};
+    /// use martensite_core::{PaintContext, PaintList, Rect, Theme};
+    ///
+    /// let mut list = PaintList::new();
+    /// let theme = Theme::new("fallback");
+    /// let cx = PaintContext {
+    ///     list: &mut list,
+    ///     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///     theme: &theme,
+    ///     scale: 1.0,
+    ///     text_painter: None,
+    /// };
+    /// let _guard = install_ambient_intl(LayoutDirection::Rtl, Locale::new("he"));
+    /// assert!(cx.is_rtl());
+    /// ```
+    pub fn is_rtl(&self) -> bool {
+        self.direction().is_rtl()
+    }
+
+    /// The ambient [`Locale`](crate::Locale) for this pass — `en-US`
+    /// unless another was installed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{PaintContext, PaintList, Rect, Theme};
+    ///
+    /// let mut list = PaintList::new();
+    /// let theme = Theme::new("fallback");
+    /// let cx = PaintContext {
+    ///     list: &mut list,
+    ///     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///     theme: &theme,
+    ///     scale: 1.0,
+    ///     text_painter: None,
+    /// };
+    /// assert_eq!(cx.locale().as_str(), "en-US");
+    /// ```
+    pub fn locale(&self) -> crate::Locale {
+        crate::intl::ambient_locale()
     }
 
     /// `f64` variant of [`PaintContext::pt`].
@@ -848,15 +1042,86 @@ pub trait Widget: Send + Sync + 'static {
     /// Position the widget within the given bounds.
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect);
 
+    /// Optional direction/locale override for this widget's subtree.
+    ///
+    /// When `Some((direction, locale))`, the framework installs those
+    /// values as the ambient direction/locale while painting this
+    /// widget and its descendants — see
+    /// [`install_ambient_intl`](crate::intl::install_ambient_intl).
+    /// To scope layout and event delivery the same way, install the
+    /// ambient values inside this widget's `layout`/`event`
+    /// implementations around the child calls
+    /// ([`LayoutContext::layout_child`],
+    /// [`Widget::forward_event_to_children`]).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::widget::DummyWidget;
+    /// use martensite_core::Widget;
+    ///
+    /// // Defaults inherit the ambient pass values.
+    /// assert!(DummyWidget.intl_override().is_none());
+    /// ```
+    fn intl_override(&self) -> Option<(crate::LayoutDirection, crate::Locale)> {
+        None
+    }
+
+    /// Optional theme override for this widget's paint subtree —
+    /// [`PaintContext::theme`] resolves to it for this widget and its
+    /// descendants. `None` inherits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::widget::DummyWidget;
+    /// use martensite_core::Widget;
+    ///
+    /// assert!(DummyWidget.theme_override().is_none());
+    /// ```
+    fn theme_override(&self) -> Option<&martensite_theme::Theme> {
+        None
+    }
+
     /// Process an input event.
     ///
     /// The default implementation forwards the event to internal children
-    /// (see [`Widget::child_count`]) in reverse order — topmost first —
-    /// gated on the child's bounds for positional events. It returns the
-    /// first non-[`Ignored`](EventResponse::Ignored) response, or
-    /// `Ignored` if no child handled it. Leaf widgets override this to
-    /// implement their own interaction.
+    /// via [`Widget::forward_event_to_children`]. Leaf widgets override
+    /// this to implement their own interaction; containers that need to
+    /// wrap child delivery (ambient direction overrides, event
+    /// translation) override `event` and call
+    /// `forward_event_to_children` inside.
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        self.forward_event_to_children(cx)
+    }
+
+    /// Forwards `cx.event` to internal children (see
+    /// [`Widget::child_count`]) in reverse order — topmost first —
+    /// gated on the child's bounds for positional events. Returns the
+    /// first non-[`Ignored`](EventResponse::Ignored) response, or
+    /// `Ignored` if no child handled it. This is the body of the
+    /// default [`Widget::event`]; overriding widgets call it to keep
+    /// the standard forwarding behaviour around their own handling.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::widget::{EventContext, EventResponse, Widget};
+    /// use martensite_core::{Rect, WidgetEvent};
+    ///
+    /// struct Shell;
+    /// impl Widget for Shell {
+    ///     fn measure(&mut self, _: &mut martensite_core::LayoutContext, _: martensite_core::LayoutConstraints) -> glam::Vec2 {
+    ///         glam::Vec2::ZERO
+    ///     }
+    ///     fn layout(&mut self, _: &mut martensite_core::LayoutContext, _: Rect) {}
+    ///     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+    ///         // Pre-process, then keep the default child forwarding.
+    ///         self.forward_event_to_children(cx)
+    ///     }
+    /// }
+    /// ```
+    fn forward_event_to_children(&mut self, cx: &mut EventContext) -> EventResponse {
         // A loading widget's internal children are suppressed with its
         // body — nothing inside receives events while the flag holds.
         if self.is_loading() {
