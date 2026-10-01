@@ -402,6 +402,11 @@ impl Button {
 }
 
 impl Widget for Button {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// `@labeled` declares the accessible name to design-lint's
     /// `icon-only-control` rule — an icon-only button paints no text,
     /// so the scope marker carries what the paint list can't see.

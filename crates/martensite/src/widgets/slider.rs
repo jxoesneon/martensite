@@ -420,6 +420,11 @@ impl Slider {
 }
 
 impl Widget for Slider {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// `@labeled` tells design-lint's `icon-only-control` rule the
     /// widget carries an accessible name — the paint list can't see
     /// the AccessKit label, so the scope marker declares it.

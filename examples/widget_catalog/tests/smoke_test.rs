@@ -1,184 +1,80 @@
-//! Smoke tests for Martensite Widget Catalog instantiation, states, and cross-framework search indexing.
+//! Smoke tests for the Widget Catalog: every registered page carries
+//! complete reference metadata, builds a live widget for its default
+//! props, and produces a non-empty snippet; the rail matcher honors
+//! canonical names, families, and cross-framework aliases; the
+//! composed view instantiates cleanly.
 
-use widget_catalog::{catalog_entries, CatalogModel, WidgetFamily, WidgetStateKind};
+use martensite::core::Widget;
+use widget_catalog::page::PropValues;
+use widget_catalog::{all_pages, CatalogView};
 
 #[test]
-fn catalog_instantiates_all_required_widgets_and_states() {
-    let entries = catalog_entries();
-    assert!(!entries.is_empty(), "Catalog must contain entries");
+fn catalog_instantiates_all_pages_cleanly() {
+    let pages = all_pages();
+    assert!(!pages.is_empty(), "catalog must contain pages");
 
-    // Required widget families
-    let families: std::collections::HashSet<_> = entries.iter().map(|e| e.family).collect();
-    assert!(
-        families.contains(&WidgetFamily::Controls),
-        "Must include Controls family"
-    );
-    assert!(
-        families.contains(&WidgetFamily::Containers),
-        "Must include Containers family"
-    );
-    assert!(
-        families.contains(&WidgetFamily::Data),
-        "Must include Data family"
-    );
-    assert!(
-        families.contains(&WidgetFamily::Overlays),
-        "Must include Overlays family"
-    );
-    assert!(
-        families.contains(&WidgetFamily::Navigation),
-        "Must include Navigation family"
-    );
-
-    // Required specific widgets
-    let names: std::collections::HashSet<_> = entries.iter().map(|e| e.name).collect();
-    let required = [
-        "Button",
-        "Slider",
-        "Toggle",
-        "TextInput",
-        "Checkbox",
-        "Flex",
-        "Stack",
-        "Container",
-        "ScrollView",
-        "DataGrid",
-        "Table",
-        "List",
-        "Tooltip",
-        "Popover",
-        "Popconfirm",
-        "Tabs",
-        "NavRail",
-    ];
-
-    for req in required {
+    for page in &pages {
+        let meta = page.meta();
+        assert!(!meta.name.is_empty(), "page name cannot be empty");
+        assert!(!meta.family.is_empty(), "family empty for {}", meta.name);
         assert!(
-            names.contains(req),
-            "Widget catalog missing required widget: '{req}'"
+            !meta.description.is_empty(),
+            "description empty for {}",
+            meta.name
         );
-    }
+        assert!(!meta.role.is_empty(), "role empty for {}", meta.name);
+        assert!(!meta.aliases.is_empty(), "aliases empty for {}", meta.name);
 
-    // Verify each entry has non-empty metadata and instantiates all 4 states cleanly
-    for entry in &entries {
-        assert!(!entry.name.is_empty(), "Entry name cannot be empty");
+        // Default props must build a widget and a snippet.
+        let props = PropValues::from_specs(page.props());
+        let widget = page.build(&props);
+        let _ = widget.child_count();
+        let snippet = page.snippet(&props);
         assert!(
-            !entry.description.is_empty(),
-            "Description cannot be empty for {}",
-            entry.name
+            snippet.contains(meta.name.split_whitespace().next().unwrap_or(meta.name))
+                || !snippet.is_empty(),
+            "snippet empty for {}",
+            meta.name
         );
-        assert!(
-            !entry.code_snippet.is_empty(),
-            "Snippet cannot be empty for {}",
-            entry.name
-        );
-        assert!(
-            !entry.aliases.is_empty(),
-            "Aliases cannot be empty for {}",
-            entry.name
-        );
-
-        for state in WidgetStateKind::ALL {
-            let widget = (entry.instantiate)(state);
-            let _ = widget.child_count();
-        }
+        assert!(!snippet.is_empty(), "snippet empty for {}", meta.name);
     }
 }
 
 #[test]
-fn catalog_search_by_canonical_name_and_cross_framework_aliases() {
-    let model = CatalogModel::new(catalog_entries());
+fn rail_matcher_finds_names_families_and_aliases() {
+    use widget_catalog::view::matches_query;
 
-    // 1. Search by canonical names
-    for canonical in [
-        "Button",
-        "Slider",
-        "Toggle",
-        "TextInput",
-        "Checkbox",
-        "Flex",
-        "Table",
-        "Tabs",
-    ] {
-        model.set_search_query(canonical);
-        let matches = model.filtered_entries();
+    let pages = all_pages();
+    let by_name = |name: &str| pages.iter().find(|p| p.meta().name == name).unwrap();
+
+    // Canonical names.
+    for p in &pages {
+        let meta = p.meta();
         assert!(
-            matches
-                .iter()
-                .any(|e| e.name.eq_ignore_ascii_case(canonical)),
-            "Query '{canonical}' should find '{canonical}'"
+            matches_query(&meta, &meta.name.to_lowercase()),
+            "name query failed for {}",
+            meta.name
         );
     }
 
-    // 2. Search by cross-framework aliases:
-    // Qt aliases
-    let qt_checks = [
-        ("QPushButton", "Button"),
-        ("QSlider", "Slider"),
-        ("QLineEdit", "TextInput"),
-        ("QTableView", "DataGrid"),
-        ("QTabWidget", "Tabs"),
-        ("QListView", "List"),
-        ("QToolTip", "Tooltip"),
-    ];
-    for (alias, expected) in qt_checks {
-        model.set_search_query(alias);
-        let matches = model.filtered_entries();
-        assert!(
-            matches.iter().any(|e| e.name == expected),
-            "Qt alias '{alias}' should find '{expected}'"
-        );
-    }
+    // Family names match their members.
+    let button = by_name("Button").meta();
+    assert!(matches_query(&button, "controls"));
 
-    // GTK aliases
-    let gtk_checks = [
-        ("GtkButton", "Button"),
-        ("GtkScale", "Slider"),
-        ("GtkSwitch", "Toggle"),
-        ("GtkEntry", "TextInput"),
-        ("GtkBox", "Flex"),
-        ("GtkNotebook", "Tabs"),
-    ];
-    for (alias, expected) in gtk_checks {
-        model.set_search_query(alias);
-        let matches = model.filtered_entries();
-        assert!(
-            matches.iter().any(|e| e.name == expected),
-            "GTK alias '{alias}' should find '{expected}'"
-        );
-    }
+    // Cross-framework aliases.
+    assert!(matches_query(&button, "qpushbutton"));
+    assert!(matches_query(&button, "gtkbutton"));
+    assert!(matches_query(&button, "swiftui"));
+    assert!(matches_query(&by_name("TextInput").meta(), "qlineedit"));
+    assert!(matches_query(&by_name("Slider").meta(), "gtkscale"));
 
-    // SwiftUI aliases
-    let swift_checks = [("HStack", "Flex"), ("ZStack", "Stack"), ("TabView", "Tabs")];
-    for (alias, expected) in swift_checks {
-        model.set_search_query(alias);
-        let matches = model.filtered_entries();
-        assert!(
-            matches.iter().any(|e| e.name == expected),
-            "SwiftUI alias '{alias}' should find '{expected}'"
-        );
-    }
-
-    // React aliases
-    let react_checks = [
-        ("<button>", "Button"),
-        ("<input type=\"range\">", "Slider"),
-        ("<input type=\"text\">", "TextInput"),
-        ("<table />", "DataGrid"),
-        ("<Tabs />", "Tabs"),
-    ];
-    for (alias, expected) in react_checks {
-        model.set_search_query(alias);
-        let matches = model.filtered_entries();
-        assert!(
-            matches.iter().any(|e| e.name == expected),
-            "React alias '{alias}' should find '{expected}'"
-        );
-    }
+    // No match.
+    assert!(!matches_query(&button, "zzzz-nothing"));
 }
 
 #[test]
-fn catalog_view_model_builds_ui_cleanly() {
-    let model = CatalogModel::new(catalog_entries());
-    let _ui = widget_catalog::build_catalog_view(&model);
+fn catalog_view_instantiates() {
+    let view = CatalogView::new(all_pages());
+    assert_eq!(view.selected_name(), "Button");
+    assert!(view.child_count() > 5, "view must expose panel children");
 }

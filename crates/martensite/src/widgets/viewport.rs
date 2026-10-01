@@ -117,6 +117,38 @@ impl Viewport {
         self
     }
 
+    /// Pre-boxed content — for call sites that already hold
+    /// `Box<dyn Widget>` (e.g. a runtime-selected widget tree).
+    ///
+    /// ```
+    /// use martensite::widgets::viewport::Viewport;
+    /// use martensite::widgets::Text;
+    ///
+    /// let v = Viewport::new().child_boxed(Box::new(Text::new("c")));
+    /// assert_eq!(v.zoom_value(), 1.0);
+    /// ```
+    pub fn child_boxed(mut self, content: Box<dyn Widget>) -> Self {
+        self.content = content;
+        self
+    }
+
+    /// Replaces the staged content, keeping zoom and pan.
+    ///
+    /// ```
+    /// use martensite::widgets::viewport::Viewport;
+    /// use martensite::widgets::Text;
+    ///
+    /// let mut v = Viewport::new();
+    /// v.set_child(Box::new(Text::new("b")));
+    /// assert!(v.child(0).is_some());
+    /// ```
+    pub fn set_child(&mut self, content: Box<dyn Widget>) {
+        self.content = content;
+        self.content_size = glam::Vec2::ZERO;
+        self.content_rect = None;
+        self.relayout_content();
+    }
+
     /// Accessibility label.
     ///
     /// ```

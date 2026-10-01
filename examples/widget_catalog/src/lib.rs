@@ -1,9 +1,16 @@
-//! Martensite Widget Catalog — interactive API reference and cross-framework migration map.
+//! Martensite Widget Catalog — interactive per-widget showcase and
+//! developer reference: searchable rail, live stage, bespoke props,
+//! event log, and dev-channel control.
 
-pub mod entries;
-pub mod model;
+pub mod app;
+pub mod dynamic_column;
+pub mod page;
+pub mod pages;
+pub mod stage;
 pub mod view;
 
-pub use entries::catalog_entries;
-pub use model::{CatalogModel, WidgetEntry, WidgetFamily, WidgetStateKind};
-pub use view::{build_catalog_view, build_widget_card};
+pub use app::{run, run_live_headless};
+pub use page::{Page, PageMeta, PropSpec, PropValue, PropValues};
+pub use pages::all_pages;
+pub use stage::{FramePreset, StageHost};
+pub use view::CatalogView;

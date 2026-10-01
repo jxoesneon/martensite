@@ -6970,9 +6970,18 @@ dependencies = [
  "martensite",
  "martensite-core",
  "martensite-design-lint",
+ "martensite-devtools",
  "martensite-layout",
  "martensite-reactive",
+ "martensite-render",
  "martensite-theme",
+ "martensite-wgpu",
+ "pollster",
+ "serde",
+ "serde_json",
+ "tracing-subscriber",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]

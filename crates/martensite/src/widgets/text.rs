@@ -731,6 +731,11 @@ impl Text {
 }
 
 impl Widget for Text {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A scale change invalidates every width-keyed Tier-1 entry —
         // measured metrics are device px and would be a factor off.

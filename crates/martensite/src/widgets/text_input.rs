@@ -1368,6 +1368,11 @@ impl TextInput {
 }
 
 impl Widget for TextInput {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A text input has a default minimum size of 120x24 logical pt;
         // a `validation_message` asks for the message strip's height on

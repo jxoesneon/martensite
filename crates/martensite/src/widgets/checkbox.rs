@@ -378,6 +378,11 @@ impl CheckBox {
 }
 
 impl Widget for CheckBox {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Box + gap + label, matching `RadioOption` — a box-only answer
         // lets a tight parent clip the label.

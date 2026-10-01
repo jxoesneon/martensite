@@ -788,6 +788,11 @@ impl Default for Segmented {
 }
 
 impl Widget for Segmented {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut total = Vec2::ZERO;
         for segment in &mut self.segments {

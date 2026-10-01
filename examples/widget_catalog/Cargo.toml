@@ -13,15 +13,34 @@ description = "Comprehensive widget catalog and developer reference for Martensi
 publish = false
 
 [dependencies]
-martensite = { workspace = true }
+martensite = { workspace = true, features = [
+    # Dev-channel socket server (ADR-0038) — opted in at runtime via
+    # `MARTENSITE_DEV_CHANNEL=1`; `martensite-mcp` attaches to it.
+    "dev-channel",
+    # Signal enumeration for `signals_list`/`signal_trigger`.
+    "devtools-timemachine",
+] }
 martensite-core = { workspace = true }
 martensite-reactive = { workspace = true }
 martensite-theme = { workspace = true }
 martensite-layout = { workspace = true }
+martensite-render = { workspace = true }
+# `render` gives the dev-session probe the TinySkia raster path so
+# `capture_node` produces real PNGs under `--live-headless` too.
+martensite-devtools = { workspace = true, features = ["render"] }
+martensite-wgpu = { workspace = true, features = ["vello"] }
 martensite-design-lint = { workspace = true }
 accesskit = { workspace = true }
 glam = { workspace = true }
 kurbo = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# winit/wgpu pins mirror examples/industrial_dashboard — the vendored
+# accesskit_winit fork and the wgpu engine build against these.
+winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }
+wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12", "gles", "webgpu"] }
+pollster = "1.0"
+tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 
 [lints]
 workspace = true
