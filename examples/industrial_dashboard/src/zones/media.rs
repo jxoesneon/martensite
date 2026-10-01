@@ -1539,19 +1539,21 @@ fn cameras_page(model: &PlantModel) -> Page {
     };
     // "Record clip" — files a new archive entry for the selected
     // camera (the sim's 30s manual clip).
-    let record = Bound::new(Button::new("● Record clip"), model).pull(|w: &mut Button, m| {
-        if w.take_activated() {
-            let cam = m.camera_sel.get();
-            let id = m.add_recording("manual clip", cam, 30);
-            m.selected_recording.set_if_changed(Some(id));
-            m.log_ch(
-                0,
-                format!("recording {id} started on camera {cam}"),
-                LogChannel::System,
-                None,
-            );
-        }
-    });
+    let record = Bound::new(Button::new("Record clip").icon_named("media.record"), model).pull(
+        |w: &mut Button, m| {
+            if w.take_activated() {
+                let cam = m.camera_sel.get();
+                let id = m.add_recording("manual clip", cam, 30);
+                m.selected_recording.set_if_changed(Some(id));
+                m.log_ch(
+                    0,
+                    format!("recording {id} started on camera {cam}"),
+                    LogChannel::System,
+                    None,
+                );
+            }
+        },
+    );
     let rail_col = Flex::column()
         .gap(ZONE_STACK)
         .child(GroupBox::new("PTZ").child(ptz))

@@ -481,13 +481,13 @@ impl ShellOverlays {
                     .with_text_painter(painter.clone()),
             ));
         }
-        let kpis = Flex::column().gap(4.0).children(kpi_children);
+        let kpis = Flex::column().gap(crate::zone::SP_1).children(kpi_children);
         // Acoustic condition monitor — `acoustic.bands` drives both
         // the trace and the spectrum; the dominant frequency reads
         // out as text. `enabled(false)` on the waveform: its click is
         // a seek affordance with no drain path here.
         let ac = m.acoustic.get();
-        let vibration = Flex::column().gap(4.0).children([
+        let vibration = Flex::column().gap(crate::zone::SP_1).children([
             Box::new(
                 Waveform::new()
                     .label("Spindle vibration")
@@ -507,7 +507,7 @@ impl ShellOverlays {
         // drain path inside an overlay, so it's a disabled readout —
         // honest position display, not a dead editor.
         let j = m.jog.get();
-        let jog = Flex::column().gap(4.0).children([
+        let jog = Flex::column().gap(crate::zone::SP_1).children([
             Box::new(
                 XYPad::new()
                     .labels("X jog", "Y jog")
@@ -525,7 +525,7 @@ impl ShellOverlays {
         ]);
         // Board load — the sim's cpu/mem gauges, labeled for what
         // they are (no cabinet-temperature or UPS-reserve fiction).
-        let environment = Flex::column().gap(4.0).children([
+        let environment = Flex::column().gap(crate::zone::SP_1).children([
             Box::new(
                 Thermometer::new()
                     .label("line load %")
@@ -553,7 +553,7 @@ impl ShellOverlays {
         // `running(false)`: the widget's own tick-advance never runs
         // in an overlay — the model drives the displayed time.
         let min = m.shift_minute.get();
-        let clock = Flex::column().gap(4.0).children([
+        let clock = Flex::column().gap(crate::zone::SP_1).children([
             Box::new(
                 DigitalClock::new()
                     .time(Time {
@@ -571,7 +571,7 @@ impl ShellOverlays {
         let mut pool = StripChart::new().label("memory pool").range(0.0, 1.0);
         pool.extend(m.mem_hist.get().iter().map(|v| *v as f32));
         let telemetry = Flex::column()
-            .gap(4.0)
+            .gap(crate::zone::SP_1)
             .children([Box::new(load) as Box<dyn Widget>, Box::new(pool)]);
         // Shift-log tail — the real entries, not a seeded scrollback.
         // Typed input still echoes locally (Terminal owns its own
@@ -589,7 +589,7 @@ impl ShellOverlays {
                 e.text
             ));
         }
-        let content = Flex::column().gap(8.0).children([
+        let content = Flex::column().gap(crate::zone::SP_2).children([
             Box::new(
                 Banner::new(sev, msg)
                     .dismissible(false)

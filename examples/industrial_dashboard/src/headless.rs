@@ -145,9 +145,9 @@ fn build_widget_tree() -> (WidgetArena, WidgetId, Vec<WidgetId>) {
     let root = arena.insert_with_widget(
         HotNode::default(),
         Box::new(
-            Flex::column().gap(8.0).child(
+            Flex::column().gap(crate::zone::SP_2).child(
                 Container::new()
-                    .padding_uniform(12.0)
+                    .padding_uniform(crate::zone::SP_3)
                     .background(bg)
                     .child(Text::new("INDUSTRIAL WORKSTATION").font_size(18.0)),
             ),

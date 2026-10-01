@@ -110,11 +110,11 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             "Control Center",
             Box::new(
                 ControlCenter::new()
-                    .tile("📶", "Wi-Fi", true)
-                    .tile("📡", "Radio link", true)
-                    .tile("🌙", "Do not disturb", false)
-                    .slider("☀", "Brightness", 0.8)
-                    .slider("🔊", "Alerts", 0.6)
+                    .tile_named("device.wifi", "Wi-Fi", true)
+                    .tile_named("media.radio", "Radio link", true)
+                    .tile_named("misc.moon", "Do not disturb", false)
+                    .slider_named("misc.sun", "Brightness", 0.8)
+                    .slider_named("media.volume", "Alerts", 0.6)
                     .label("Quick settings"),
             ),
         ),
@@ -257,9 +257,9 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
                 )
                 .avatar_color([90, 140, 220, 255])
                 .with_actions(vec![
-                    CardAction::new("♥", 14),
-                    CardAction::new("💬", 3),
-                    CardAction::new("↗", 2),
+                    CardAction::named("status.heart", 14),
+                    CardAction::named("comms.message-circle", 3),
+                    CardAction::named("arrow.share", 2),
                 ]),
             ),
         ),

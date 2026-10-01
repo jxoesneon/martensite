@@ -487,7 +487,7 @@ impl TourOverlay {
             )
             .step(
                 "Run the console",
-                "Pause, theme, and filter live here — lock the console via Editor ▸ CONSOLE LOCK.",
+                "Pause, theme, and filter live here — lock the console via Editor › CONSOLE LOCK.",
                 tour_target(t.toolbar),
             )
             .skippable(true);

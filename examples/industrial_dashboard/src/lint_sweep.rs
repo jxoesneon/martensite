@@ -532,6 +532,7 @@ mod tests {
                 dir: crate::frames::default_dir(),
                 baseline: std::env::var("FRAME_BASELINE").ok().map(Into::into),
             }),
+            dump_scopes: std::env::var("DUMP_SCOPES").is_ok(),
             quiet: true,
             ..Default::default()
         };

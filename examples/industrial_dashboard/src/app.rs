@@ -76,8 +76,8 @@ use crate::zone::{Bound, Swap};
 /// KPI numeral under a caption label needs ~64 pt, not the old 52.
 const HEADER_PT: f32 = 64.0;
 pub(crate) const STATUS_PT: f32 = 30.0;
-const MARGIN_PT: f32 = 12.0;
-const GAP_PT: f32 = 12.0;
+const MARGIN_PT: f32 = crate::zone::SP_4;
+const GAP_PT: f32 = crate::zone::SP_3;
 
 /// Title-tier chrome style (spec B1): semibold + 0.03 em tracking —
 /// the header wordmark's declared style. `TITLE_WEIGHT` is the

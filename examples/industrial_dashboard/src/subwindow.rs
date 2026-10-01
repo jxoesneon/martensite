@@ -322,7 +322,7 @@ impl SubWindow {
         let mirror_gate = Signal::new(true);
         // The console page — the fixed `Flex` column this window has
         // always hosted, now one page of the deck.
-        let console_page = Flex::column().gap(10.0).children([
+        let console_page = Flex::column().gap(crate::zone::ZONE_GAP).children([
             // Title-tier heading (spec B1): 15 pt semibold — the
             // console window's one heading gets the same tier as
             // the shell's title chrome.
@@ -380,7 +380,9 @@ impl SubWindow {
             strip_bounds: None,
             page_bounds: None,
         };
-        let content = Container::new().padding_uniform(16.0).child(deck);
+        let content = Container::new()
+            .padding_uniform(crate::zone::ZONE_PAD)
+            .child(deck);
         let mut hot = HotNode::default();
         hot.flags |= NodeFlags::FOCUSABLE | NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
         let mut cold = ColdNode::new(Box::new(content));

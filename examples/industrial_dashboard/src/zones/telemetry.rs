@@ -1100,11 +1100,11 @@ fn empty_state_of(m: &PlantModel) -> EmptyState {
     let active = m.active_alarms();
     if active.is_empty() {
         EmptyState::new("ALL CLEAR")
-            .icon("✓")
+            .icon_named("status.check")
             .description("all channels within limits")
     } else {
         EmptyState::new(format!("{} ACTIVE ALARMS", active.len()))
-            .icon("⚠")
+            .icon_named("status.warning")
             .description("acknowledge to clear the board")
             .action("ACK ALL")
     }

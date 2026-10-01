@@ -164,7 +164,7 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             "Empty State",
             Box::new(
                 EmptyState::new("No active alarms")
-                    .icon("✓")
+                    .icon_named("status.check")
                     .description("All channels within limits")
                     .action("View history"),
             ),

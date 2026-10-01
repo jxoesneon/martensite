@@ -1599,13 +1599,17 @@ fn command_surface(model: &PlantModel) -> Page {
         }
     });
 
-    let fab = Bound::new(FloatButton::new("+").label("new work order"), model).pull(
-        |w: &mut FloatButton, m| {
-            if w.take_activated() {
-                dispatch(m, Cmd::NewWo);
-            }
-        },
-    );
+    let fab = Bound::new(
+        FloatButton::new("+")
+            .icon_named("status.plus")
+            .label("new work order"),
+        model,
+    )
+    .pull(|w: &mut FloatButton, m| {
+        if w.take_activated() {
+            dispatch(m, Cmd::NewWo);
+        }
+    });
 
     let ribbon = Ribbon::new("LIVE").child(
         Bound::new(
@@ -2015,9 +2019,11 @@ fn console_lock(model: &PlantModel) -> Page {
         .child(
             strip()
                 .child(status)
-                .child(who)
-                .child(lock)
-                .child_flex(DummyWidget, 1.0),
+                // The hint text flexes — at narrow widths it clips
+                // rather than squeezing the LOCK button under the
+                // 24pt target-size floor.
+                .child_flex(who, 1.0)
+                .child(lock),
         )
         .child(hint(
             "any enrolled factor unlocks — pattern, PIN pad, OTP, or password",
@@ -2314,7 +2320,7 @@ pub(crate) fn scan_lookup(model: &PlantModel) -> Flex {
     let cascader = Bound::new(
         Cascader::new()
             .options(asset_options(model))
-            .placeholder("site ▸ line ▸ cell"),
+            .placeholder("site › line › cell"),
         model,
     )
     .pull(|w: &mut Cascader, m| {

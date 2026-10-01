@@ -130,7 +130,12 @@ fn showcase_column(sections: Vec<(&'static str, Vec<Entry>)>) -> Flex {
         for (name, widget) in entries {
             fb = fb.child(card(name, widget));
         }
-        col = col.child(Flex::column().gap(4.0).child(group_label(title)).child(fb));
+        col = col.child(
+            Flex::column()
+                .gap(crate::zone::SP_1)
+                .child(group_label(title))
+                .child(fb),
+        );
     }
     col
 }

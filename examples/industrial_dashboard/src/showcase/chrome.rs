@@ -106,14 +106,17 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
                     .buttons(&["Cancel", "Shut Down"]),
             ),
         ),
-        ("Float Button", Box::new(FloatButton::new("+"))),
+        (
+            "Float Button",
+            Box::new(FloatButton::new("+").icon_named("status.plus")),
+        ),
         (
             "Header Bar",
             Box::new(
                 HeaderBar::new("Line A — Overview")
                     .subtitle("Cell 3")
-                    .leading(Button::new("<"))
-                    .trailing(Button::new("+")),
+                    .leading(Button::icon_button("arrow.left", "Back"))
+                    .trailing(Button::icon_button("status.plus", "Add")),
             ),
         ),
         (

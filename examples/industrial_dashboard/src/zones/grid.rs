@@ -10,7 +10,7 @@
 //!   primary surface) + the selection rail (card, breadcrumb, nav
 //!   stack) — detail-of-`selected_asset` only.
 //! - **LOCATE** — "how do I reach this asset fast?" — the locator
-//!   surfaces that used to crowd REGISTRY: site▸line▸cell Cascader,
+//!   surfaces that used to crowd REGISTRY: site›line›cell Cascader,
 //!   jump-to-asset TreeSelect, site NavRail, cell/line launchers
 //!   (AppGrid/FlowBox/Dock). All write `selected_asset`; the page's
 //!   verb jumps the selection to DETAIL.
@@ -1571,7 +1571,7 @@ impl Widget for MinW {
 
 // ---------------------------------------------------------------------------
 // LOCATE — "how do I reach this asset fast?" Every locator surface that
-// used to crowd REGISTRY lives here: the site▸line▸cell Cascader, the
+// used to crowd REGISTRY lives here: the site›line›cell Cascader, the
 // jump-to-asset TreeSelect, the site NavRail, and the cell/line
 // launchers (AppGrid/FlowBox/Dock). All write `selected_asset`; the
 // page's verb jumps the selection to DETAIL (C1/C4).
@@ -1591,7 +1591,7 @@ fn locate(m: &PlantModel) -> Page {
         Bound::new(
             Cascader::new()
                 .options(cascader_opts(m, None))
-                .placeholder("site ▸ line ▸ cell")
+                .placeholder("site › line › cell")
                 .label("asset path"),
             m,
         )
@@ -1609,7 +1609,7 @@ fn locate(m: &PlantModel) -> Page {
                 last_sig = s;
                 *w = Cascader::new()
                     .options(cascader_opts(m, None))
-                    .placeholder("site ▸ line ▸ cell")
+                    .placeholder("site › line › cell")
                     .label("asset path");
             }
         })
@@ -2432,7 +2432,7 @@ fn detail(m: &PlantModel) -> Page {
             // ~30pt of it.
             ExpanderRow::new("Asset alarms")
                 .subtitle("dbl-click acks")
-                .icon("⚠")
+                .icon_named("status.warning")
                 .child(alarm_list),
             1.0,
         )
@@ -3355,15 +3355,17 @@ fn work_orders(m: &PlantModel) -> Page {
     // "Selected work order" at title size without a mid-glyph cut;
     // the selection context already reads from the EXECUTION caption.
     let sel_card = Card::outlined().title("Selected WO").child(sel_text);
-    let advance = Bound::new(Button::new("Advance ▸"), m).pull(|w: &mut Button, m| {
-        if w.take_activated() {
-            if let Some(wo) = sel_wo(m) {
-                let cols = WoStatus::columns();
-                let i = cols.iter().position(|s| *s == wo.status).unwrap_or(0);
-                m.move_wo(wo.id, cols[(i + 1).min(3)]);
+    let advance = Bound::new(Button::new("Advance").icon_named("arrow.right"), m).pull(
+        |w: &mut Button, m| {
+            if w.take_activated() {
+                if let Some(wo) = sel_wo(m) {
+                    let cols = WoStatus::columns();
+                    let i = cols.iter().position(|s| *s == wo.status).unwrap_or(0);
+                    m.move_wo(wo.id, cols[(i + 1).min(3)]);
+                }
             }
-        }
-    });
+        },
+    );
 
     // WO notes — the String field edits cleanly (no leak needed).
     let notes = {
@@ -4078,7 +4080,7 @@ fn documents(m: &PlantModel) -> Page {
     // keeps the summary fields readable — kind · title · owning
     // asset — and the Disclosure chevron is the explicit expand
     // affordance; the open body shows a preview plus the row's
-    // next-step verbs (Open ▸ selects the artifact; Asset ▸
+    // next-step verbs (Open › selects the artifact; Asset ›
     // deep-links to the owning asset's DETAIL page — a real
     // `request_page_deep`).
     let chooser = {
@@ -4094,7 +4096,7 @@ fn documents(m: &PlantModel) -> Page {
             // The disclosure title lane in the chooser is ~110pt at
             // 14pt — the full "kind · title · owner" triple mid-clips
             // at the rail edge. Kind + title elided; the owner reads
-            // in the row's Asset ▸ verb.
+            // in the row's Asset › verb.
             let title = elide_to(
                 &format!("{} · {}", d.kind.label().to_lowercase(), d.title),
                 110.0,
@@ -4110,7 +4112,7 @@ fn documents(m: &PlantModel) -> Page {
                 first.chars().take(140).collect()
             };
             let asel = art_sel.clone();
-            let open = Bound::new(Button::new("Open ▸"), m).pull(move |w: &mut Button, m| {
+            let open = Bound::new(Button::new("Open ›"), m).pull(move |w: &mut Button, m| {
                 if w.take_activated() {
                     m.selected_doc.set_if_changed(Some(id));
                     asel.set_if_changed(art);
@@ -4118,7 +4120,7 @@ fn documents(m: &PlantModel) -> Page {
             });
             let mut verbs = strip().child(open);
             if let Some(aid) = d.asset {
-                verbs = verbs.child(Bound::new(Button::new("Asset ▸"), m).pull(
+                verbs = verbs.child(Bound::new(Button::new("Asset ›"), m).pull(
                     move |w: &mut Button, m| {
                         if w.take_activated() {
                             m.selected_asset.set_if_changed(Some(aid));
@@ -4152,7 +4154,7 @@ fn documents(m: &PlantModel) -> Page {
         .child_flex(chooser, 1.0);
 
     // Artifact lens — the four kind-mapped views as a quick switcher,
-    // mirrored to `art_sel` (chooser "Open ▸" rows land on the same
+    // mirrored to `art_sel` (chooser "Open ›" rows land on the same
     // index). The strip also keeps a control surface at the page top:
     // without it a short viewport opens straight onto the document
     // text and the sliver reads past the alphanumeric cap.
@@ -4620,7 +4622,7 @@ fn records(m: &PlantModel) -> Page {
             })
     };
 
-    let files = Container::new().padding_uniform(4.0).child(
+    let files = Container::new().padding_uniform(crate::zone::SP_1).child(
         Masonry::new()
             .columns(2)
             .gap(ZONE_GAP)
@@ -4660,13 +4662,13 @@ fn records(m: &PlantModel) -> Page {
 
     // --- master: the chooser -----------------------------------------
     // Expandable rows, one per record view — same C5 row pattern as
-    // DOCUMENTS; the open body describes the record and Open ▸
+    // DOCUMENTS; the open body describes the record and Open ›
     // selects it.
     let chooser = {
         const GEN: &[(&str, &str)] = &[
             (
                 "record · plant registry",
-                "the live asset store as JSON — site ▸ line ▸ cell",
+                "the live asset store as JSON — site › line › cell",
             ),
             (
                 "record · alarm journal",
@@ -4688,7 +4690,7 @@ fn records(m: &PlantModel) -> Page {
         let mut col = Flex::column().gap(ZONE_GAP);
         for (i, (title, desc)) in GEN.iter().enumerate() {
             let rsel = rec_sel.clone();
-            let open = Bound::new(Button::new("Open ▸"), m).pull(move |w: &mut Button, _m| {
+            let open = Bound::new(Button::new("Open ›"), m).pull(move |w: &mut Button, _m| {
                 if w.take_activated() {
                     rsel.set_if_changed(i);
                 }
@@ -5541,7 +5543,7 @@ fn hierarchy(m: &PlantModel) -> Page {
     let rail_col = Flex::column().gap(ZONE_STACK).child_flex(
         GroupBox::new("ROOT CAUSE").child(
             Container::new()
-                .padding_uniform(4.0)
+                .padding_uniform(crate::zone::SP_1)
                 // The fishbone is fixed-geometry; the MinW floor
                 // spreads its three ribs over 440pt so each tip label
                 // gets ~80pt of lane, and at rail width the h-scroll

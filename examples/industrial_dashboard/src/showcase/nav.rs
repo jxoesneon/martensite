@@ -111,7 +111,7 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             "Container",
             Box::new(
                 Container::new()
-                    .padding_uniform(10.0)
+                    .padding_uniform(crate::zone::SP_3)
                     .child(Text::new("Inside container")),
             ),
         ),
@@ -149,7 +149,7 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             "Flex",
             Box::new(
                 Flex::row()
-                    .gap(8.0)
+                    .gap(crate::zone::SP_2)
                     .child(Text::new("First"))
                     .child(Text::new("Second"))
                     .child(Text::new("Third")),
@@ -159,7 +159,7 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             "Flow Box",
             Box::new(
                 FlowBox::new()
-                    .gap(6.0)
+                    .gap(crate::zone::SP_2)
                     .child(Text::new("one"))
                     .child(Text::new("two"))
                     .child(Text::new("three"))
@@ -171,7 +171,7 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             Box::new(
                 Grid::new()
                     .columns(12)
-                    .gap(6.0)
+                    .gap(crate::zone::SP_2)
                     .cell(GridCell::new(Text::new("half")).col_span(6))
                     .cell(GridCell::new(Text::new("half")).col_span(6))
                     .cell(GridCell::new(Text::new("full")).col_span(12)),
@@ -195,7 +195,7 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             Box::new(
                 Masonry::new()
                     .columns(3)
-                    .gap(6.0)
+                    .gap(crate::zone::SP_2)
                     .child(Text::new("a"))
                     .child(Text::new("b"))
                     .child(Text::new("c")),
@@ -250,7 +250,7 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             "Scroll View",
             Box::new(ScrollView::new(
                 Flex::column()
-                    .gap(4.0)
+                    .gap(crate::zone::SP_1)
                     .child(Text::new("row 1"))
                     .child(Text::new("row 2"))
                     .child(Text::new("row 3"))
@@ -261,7 +261,11 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
         ("Separator", Box::new(Separator::horizontal())),
         (
             "Settings Row",
-            Box::new(SettingsRow::new("Wi-Fi").subtitle("Connected").icon("📶")),
+            Box::new(
+                SettingsRow::new("Wi-Fi")
+                    .subtitle("Connected")
+                    .icon_named("device.wifi"),
+            ),
         ),
         (
             "Split View",

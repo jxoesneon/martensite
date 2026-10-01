@@ -41,19 +41,35 @@ use std::time::Duration;
 
 use crate::domain::PlantModel;
 
+/// The dashboard's spacing scale — every `.gap(...)`, `.padding_*`,
+/// margin, and strip inset resolves to one of these four-point steps.
+/// They are the app-wide default: an element overrides by passing a
+/// different scale constant (or one of the semantic aliases below);
+/// bare literals off the scale are a consistency bug.
+///
+/// Tight pairs — icon to label, chip internals.
+pub const SP_1: f32 = 4.0;
+/// Related controls sharing a row or compact stack.
+pub const SP_2: f32 = 8.0;
+/// The default gap and page-margin rhythm.
+pub const SP_3: f32 = 12.0;
+/// Stacked groups and zone padding.
+pub const SP_4: f32 = 16.0;
+/// Separates major page sections.
+pub const SP_5: f32 = 20.0;
+
 /// Spacing between elements inside a zone (logical pt).
-pub const ZONE_GAP: f32 = 10.0;
+pub const ZONE_GAP: f32 = SP_3;
 /// Spacing between rows in a page column (logical pt).
-pub const ZONE_STACK: f32 = 14.0;
+pub const ZONE_STACK: f32 = SP_4;
 /// Spacing between page sections (logical pt) — a section is a
 /// `group_label`-headed cluster of rows answering one sub-question.
 /// Use only between sections at the page-column level: never inside a
 /// band, never between a `group_label` and its row, never as a
-/// substitute for `ZONE_STACK` within a section. Spec B7 pins the
-/// 16–18 candidate range at 18 pending the 700px PNG check.
-pub const ZONE_SECTION: f32 = 18.0;
+/// substitute for `ZONE_STACK` within a section.
+pub const ZONE_SECTION: f32 = SP_5;
 /// Padding between a zone's chrome and its content (logical pt).
-pub const ZONE_PAD: f32 = 14.0;
+pub const ZONE_PAD: f32 = SP_4;
 /// Band height: sparklines, strips, progress, pickers (logical pt).
 pub const BAND_S: f32 = 120.0;
 /// Band height: charts, gauges, calendars, lists (logical pt).
