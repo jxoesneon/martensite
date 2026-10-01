@@ -56,6 +56,10 @@ pub struct PipsPager {
     hovered: Option<usize>,
     bounds: Rect,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Page"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl PipsPager {
@@ -78,6 +82,7 @@ impl PipsPager {
             hovered: None,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -150,6 +155,14 @@ impl PipsPager {
     fn dot_x(&self, slot: usize) -> f32 {
         let pitch = (DOT_PT + GAP_PT) * self.scale;
         let dots = self.visible_range().1 - self.visible_range().0;
+        // Under RTL the strip runs right-to-left — first dot anchors
+        // on the right. Mirroring inside `dot_x` keeps `paint` and
+        // `hit` consistent.
+        let slot = if martensite_core::intl::ambient_direction().is_rtl() {
+            dots.saturating_sub(1 + slot)
+        } else {
+            slot
+        };
         let strip_w = pitch * dots as f32 - GAP_PT * self.scale;
         self.bounds.origin.x
             + (self.bounds.size.x - strip_w) / 2.0
@@ -168,6 +181,26 @@ impl PipsPager {
             }
         }
         None
+    }
+}
+
+impl PipsPager {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Page"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::pips_pager::PipsPager;
+    ///
+    /// let w = PipsPager::new(5).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
     }
 }
 
@@ -193,7 +226,7 @@ impl Widget for PipsPager {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Slider);
-        node.set_label("Page");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Page"));
         node.set_value(format!("{} of {}", self.current + 1, self.count));
         node.add_action(accesskit::Action::Increment);
         node.add_action(accesskit::Action::Decrement);
@@ -250,7 +283,10 @@ impl Widget for PipsPager {
                 EventResponse::RequestRepaint
             }
             WidgetEvent::KeyPressed { key, .. } if key == "ArrowLeft" || key == "ArrowRight" => {
-                let next = if key == "ArrowRight" {
+                // Under RTL the pip strip mirrors — the left arrow
+                // advances.
+                let forward = (key == "ArrowRight") != cx.is_rtl();
+                let next = if forward {
                     (self.current + 1).min(self.count.saturating_sub(1))
                 } else {
                     self.current.saturating_sub(1)

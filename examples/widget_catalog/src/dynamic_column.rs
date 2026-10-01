@@ -12,6 +12,8 @@ pub struct DynamicColumn {
     children: Vec<Box<dyn Widget>>,
     rects: Vec<Rect>,
     gap: f32,
+    /// Scope name for the lint/a11y tree (`"Name@marker"` allowed).
+    name: &'static str,
     /// Uniform row height override — `Some(h)` ignores measured heights
     /// (log lines, rail items).
     row_height: Option<f32>,
@@ -30,8 +32,16 @@ impl DynamicColumn {
             children: Vec::new(),
             rects: Vec::new(),
             gap: 4.0,
+            name: "DynamicColumn",
             row_height: None,
         }
+    }
+
+    /// Builder: scope name for the lint/a11y tree — may carry
+    /// `@lint:`/`@prose`-style markers.
+    pub fn named(mut self, name: &'static str) -> Self {
+        self.name = name;
+        self
     }
 
     /// Builder: gap between rows.
@@ -116,6 +126,10 @@ impl Widget for DynamicColumn {
 
     fn paint(&self, _cx: &mut PaintContext) {}
 
+    fn debug_name(&self) -> &'static str {
+        self.name
+    }
+
     fn child_count(&self) -> usize {
         self.children.len()
     }
@@ -134,5 +148,65 @@ impl Widget for DynamicColumn {
 
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use martensite::core::HotNode;
+    use martensite::widgets::Text;
+
+    #[test]
+    fn stacks_children_at_measured_heights() {
+        let mut col = DynamicColumn::new().gap(3.0);
+        col.set_children(vec![
+            Box::new(Text::new("Button".to_string()).font_size(18.0)),
+            Box::new(Text::new("Role: button".to_string())),
+            Box::new(Text::new("Snippet:".to_string()).font_size(13.0)),
+        ]);
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        let c = LayoutConstraints {
+            min_size: Vec2::ZERO,
+            max_size: Vec2::new(300.0, 200.0),
+        };
+        let m = col.measure(&mut cx, c);
+        assert!(m.x > 0.0 && m.y > 0.0);
+        let mut hot2 = HotNode::default();
+        let mut cx2 = LayoutContext {
+            hot: &mut hot2,
+            scale: 1.0,
+        };
+        col.layout(&mut cx2, Rect::new(0.0, 0.0, 300.0, 200.0));
+        let mut prev_bottom = 0.0;
+        for i in 0..col.len() {
+            let r = col.child_bounds(i).expect("row rect");
+            assert!(r.min_y() >= prev_bottom);
+            assert_eq!(r.width(), 300.0);
+            prev_bottom = r.max_y();
+        }
+    }
+
+    #[test]
+    fn row_height_override_stacks_uniformly() {
+        let mut col = DynamicColumn::new().gap(2.0).row_height(10.0);
+        col.set_children(vec![
+            Box::new(Text::new("a".to_string())),
+            Box::new(Text::new("b".to_string())),
+        ]);
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        col.layout(&mut cx, Rect::new(0.0, 0.0, 100.0, 100.0));
+        let r0 = col.child_bounds(0).unwrap();
+        let r1 = col.child_bounds(1).unwrap();
+        assert_eq!(r0.height(), 10.0);
+        assert_eq!(r1.min_y(), 12.0);
     }
 }

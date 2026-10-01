@@ -77,6 +77,10 @@ pub struct LcdNumber {
     pub enabled: bool,
     bounds: Rect,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Display"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl LcdNumber {
@@ -96,6 +100,7 @@ impl LcdNumber {
             enabled: true,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -222,6 +227,26 @@ impl Default for LcdNumber {
     }
 }
 
+impl LcdNumber {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Display"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::lcd_number::LcdNumber;
+    ///
+    /// let w = LcdNumber::new().value(42.5).digits(5).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for LcdNumber {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let w = self.digits as f32 * DIGIT_W_PT + (self.digits - 1) as f32 * GAP_PT + PAD_PT * 2.0;
@@ -243,7 +268,7 @@ impl Widget for LcdNumber {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Label);
-        node.set_label("Display");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Display"));
         node.set_value(self.display_text().trim());
         if !self.enabled {
             node.set_disabled();

@@ -208,6 +208,10 @@ pub struct NavRail {
     enabled: bool,
     /// Shared shaped-text painter.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Navigation"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl NavRail {
@@ -233,6 +237,7 @@ impl NavRail {
             cell_rects: Vec::new(),
             enabled: true,
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -509,6 +514,26 @@ impl Default for NavRail {
     }
 }
 
+impl NavRail {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Navigation"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::nav_rail::NavRail;
+    ///
+    /// let w = NavRail::new().destination("🏠", "Home").selected(0).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for NavRail {
     fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         // The rail is the width authority for its band: the widest
@@ -574,7 +599,7 @@ impl Widget for NavRail {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Navigation);
-        node.set_label("Navigation");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Navigation"));
         if !self.enabled {
             node.set_disabled();
         }

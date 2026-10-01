@@ -194,6 +194,11 @@ impl Venn {
 }
 
 impl Widget for Venn {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.pt(SIZE_PT);
         Vec2::new(

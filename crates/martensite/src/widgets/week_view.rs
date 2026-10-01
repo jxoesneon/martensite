@@ -358,6 +358,11 @@ impl WeekView {
 }
 
 impl Widget for WeekView {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = HEADER_PT + ALLDAY_PT + (self.hours.1 - self.hours.0).min(10.0) * HOUR_PT;
         Vec2::new(

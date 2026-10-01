@@ -208,6 +208,11 @@ impl std::fmt::Debug for Masonry {
 }
 
 impl Widget for Masonry {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints
@@ -334,6 +339,11 @@ mod tests {
         size: Vec2,
     }
     impl Widget for Box2 {
+        #[cfg(feature = "devtools-timemachine")]
+        fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+            Some(self)
+        }
+
         fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
             self.size
         }

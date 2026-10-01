@@ -460,6 +460,11 @@ impl StatusDot {
 }
 
 impl Widget for StatusDot {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// The status lamp is the alarm channel by construction — `Error`
     /// paints the reserved alarm hue deliberately. The `@alarm` name
     /// marker records that semantics for the design-lint lineage walk.

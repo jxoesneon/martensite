@@ -450,6 +450,11 @@ impl std::fmt::Debug for Cascader {
 }
 
 impl Widget for Cascader {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = (cx.pt(ROW_PT) * 8.0).min(constraints.max_size.y.max(0.0));
         Vec2::new(
@@ -557,20 +562,26 @@ impl Widget for Cascader {
                 );
                 let _ = text_w;
                 // Disclosure chevron for expandable rows — native
-                // icon first, `›` as fallback.
+                // icon first, `›` as fallback. Under RTL it anchors
+                // to the leading edge and points left.
                 if option.expandable() {
+                    let rtl = cx.is_rtl();
+                    let chev_x = if rtl {
+                        col_x + pad / 2.0
+                    } else {
+                        col_x + col_w - chev + pad / 2.0
+                    };
                     let side = 10.0 * cx.scale;
                     let icon_ok = crate::icons::builtin()
-                        .lookup("nav.chevron-right")
+                        .lookup(if rtl {
+                            "nav.chevron-left"
+                        } else {
+                            "nav.chevron-right"
+                        })
                         .is_some_and(|d| {
                             crate::widgets::morph_icon::paint_icon_d(
                                 cx.list,
-                                Rect::new(
-                                    col_x + col_w - chev + pad / 2.0,
-                                    y + (row_h - side) / 2.0,
-                                    side,
-                                    side,
-                                ),
+                                Rect::new(chev_x, y + (row_h - side) / 2.0, side, side),
                                 d,
                                 cx.scale,
                                 muted,
@@ -582,10 +593,10 @@ impl Widget for Cascader {
                             cx.list,
                             clip,
                             kurbo::Point::new(
-                                f64::from(col_x + col_w - chev + pad / 2.0),
+                                f64::from(chev_x),
                                 f64::from(y + (row_h - 10.0 * cx.scale) / 2.0),
                             ),
-                            "›",
+                            if rtl { "‹" } else { "›" },
                             10.0 * cx.scale,
                             muted,
                         );

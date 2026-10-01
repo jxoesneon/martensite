@@ -239,6 +239,11 @@ impl PageHeader {
 }
 
 impl Widget for PageHeader {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut max_child_h = 0.0f32;
         for a in &mut self.actions {
@@ -264,10 +269,18 @@ impl Widget for PageHeader {
         let gap = cx.pt(ACTION_GAP_PT);
         let mid_y = bounds.min_y() + bounds.height() / 2.0;
 
+        // Under RTL the back affordance sits at the leading (right)
+        // edge — `back_rect` stays widget-local so paint/event
+        // translation is unchanged.
+        let rtl = cx.is_rtl();
         self.back_rect = if self.show_back {
             Rect::new(
-                bounds.min_x(),
-                bounds.min_y(),
+                if rtl {
+                    bounds.width() - cx.pt(BACK_PT)
+                } else {
+                    0.0
+                },
+                0.0,
                 cx.pt(BACK_PT),
                 bounds.height(),
             )
@@ -275,8 +288,11 @@ impl Widget for PageHeader {
             Rect::default()
         };
 
-        // Actions — right to left at natural size.
-        let mut x = bounds.max_x() - pad;
+        // Actions — trailing edge to leading at natural size (the
+        // left edge under RTL). Stored rects are widget-local —
+        // paint and event translate them by `bounds.min_x()`;
+        // `layout_child` still receives the absolute rect.
+        let mut x = if rtl { pad } else { bounds.width() - pad };
         self.action_rects = self
             .actions
             .iter_mut()
@@ -289,10 +305,14 @@ impl Widget for PageHeader {
                         max_size: bounds.size,
                     },
                 );
-                let r = Rect::new(x - s.x, mid_y - s.y / 2.0, s.x, s.y);
-                cx.layout_child(a.as_mut(), r);
-                x -= s.x + gap;
-                r
+                let local_x = if rtl { x } else { x - s.x };
+                let local = Rect::new(local_x, mid_y - bounds.min_y() - s.y / 2.0, s.x, s.y);
+                cx.layout_child(
+                    a.as_mut(),
+                    Rect::new(bounds.min_x() + local_x, mid_y - s.y / 2.0, s.x, s.y),
+                );
+                x += if rtl { s.x + gap } else { -(s.x + gap) };
+                local
             })
             .collect::<Vec<_>>()
             .into_iter()
@@ -307,6 +327,7 @@ impl Widget for PageHeader {
         let pad = cx.pt(PAD_PT);
 
         // Back chevron.
+        let rtl = cx.is_rtl();
         let mut x = b.min_x() + pad;
         if self.show_back {
             if self.back_armed || self.back_hover {
@@ -323,29 +344,64 @@ impl Widget for PageHeader {
                 );
             }
             let cy = f64::from(b.min_y() + b.height() / 2.0);
-            let tip = f64::from(x);
+            // Under RTL "back" points right and anchors the right
+            // edge — the stroke mirrors horizontally.
+            let tip = if rtl {
+                f64::from(b.min_x() + self.back_rect.min_x() + cx.pt(BACK_PT) - pad)
+            } else {
+                f64::from(x)
+            };
+            let dir = if rtl { -1.0 } else { 1.0 };
             let chev = kurbo::BezPath::from_vec(vec![
-                kurbo::PathEl::MoveTo(kurbo::Point::new(tip + cx.ptf(7.0), cy - cx.ptf(6.0))),
+                kurbo::PathEl::MoveTo(kurbo::Point::new(tip + dir * cx.ptf(7.0), cy - cx.ptf(6.0))),
                 kurbo::PathEl::LineTo(kurbo::Point::new(tip, cy)),
-                kurbo::PathEl::LineTo(kurbo::Point::new(tip + cx.ptf(7.0), cy + cx.ptf(6.0))),
+                kurbo::PathEl::LineTo(kurbo::Point::new(tip + dir * cx.ptf(7.0), cy + cx.ptf(6.0))),
             ]);
             cx.list.push_stroke_path(chev, cx.pt(1.8), ink);
-            x += cx.pt(BACK_PT);
+            if !rtl {
+                x += cx.pt(BACK_PT);
+            }
         }
 
-        // Title + subtitle, clipped left of the action slot.
+        // Title + subtitle, clipped against the action strip on the
+        // trailing side and the back zone on the leading side.
         let title_size = cx.pt(TITLE_PT);
-        let text_right = self
-            .action_rects
-            .first()
-            .map(|r| b.min_x() + r.min_x() - cx.pt(ACTION_GAP_PT))
-            .unwrap_or(b.max_x() - pad);
-        let clip = kurbo::Rect::new(
-            f64::from(x),
-            f64::from(b.min_y()),
-            f64::from(text_right),
-            f64::from(b.max_y()),
-        );
+        let gap = cx.pt(ACTION_GAP_PT);
+        let clip = if rtl {
+            let text_left = self
+                .action_rects
+                .first()
+                .map(|r| b.min_x() + r.max_x() + gap)
+                .unwrap_or(b.min_x() + pad);
+            let text_right = if self.show_back {
+                b.min_x() + self.back_rect.min_x() - gap
+            } else {
+                b.max_x() - pad
+            };
+            kurbo::Rect::new(
+                f64::from(text_left),
+                f64::from(b.min_y()),
+                f64::from(text_right),
+                f64::from(b.max_y()),
+            )
+        } else {
+            let text_right = self
+                .action_rects
+                .first()
+                .map(|r| b.min_x() + r.min_x() - gap)
+                .unwrap_or(b.max_x() - pad);
+            kurbo::Rect::new(
+                f64::from(x),
+                f64::from(b.min_y()),
+                f64::from(text_right),
+                f64::from(b.max_y()),
+            )
+        };
+        // Text paints at the clip's leading edge — the strip's right
+        // side under RTL.
+        if rtl {
+            x = clip.x0 as f32;
+        }
         if let Some(sub) = &self.subtitle {
             let sub_size = cx.pt(SUB_PT);
             let total = title_size + cx.pt(3.0) + sub_size;

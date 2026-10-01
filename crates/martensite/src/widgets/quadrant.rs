@@ -246,6 +246,11 @@ fn line_path(a: Vec2, b: Vec2) -> kurbo::BezPath {
 }
 
 impl Widget for Quadrant {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let side = 260.0 * s;

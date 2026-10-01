@@ -289,6 +289,11 @@ impl Default for Anchor {
 }
 
 impl Widget for Anchor {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(180.0, self.items.len() as f32 * ROW_H + 8.0)
     }

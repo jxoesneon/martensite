@@ -301,12 +301,18 @@ impl Dock {
     }
 
     /// Horizontal center of icon `i`'s base (un-magnified) slot.
+    /// Under RTL the strip mirrors — item 0 anchors on the right.
     fn icon_center_x(&self, i: usize) -> f32 {
         let s = self.scale;
         let slot = ICON_PT * s + GAP_PT * s;
         let strip_w = self.items.len() as f32 * slot - GAP_PT * s;
         let x0 = self.bounds.min_x() + (self.bounds.width() - strip_w) / 2.0;
-        x0 + i as f32 * slot + ICON_PT * s / 2.0
+        let slot_i = if martensite_core::intl::ambient_direction().is_rtl() {
+            self.items.len().saturating_sub(1 + i)
+        } else {
+            i
+        };
+        x0 + slot_i as f32 * slot + ICON_PT * s / 2.0
     }
 
     /// Icon index under `p`, if any.
@@ -325,6 +331,11 @@ impl Dock {
 }
 
 impl Widget for Dock {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let n = self.items.len().max(1) as f32;
         let w = n * ICON_PT + (n - 1.0).max(0.0) * GAP_PT + PAD_PT * 2.0;
@@ -397,7 +408,9 @@ impl Widget for Dock {
                 match key.as_str() {
                     "ArrowLeft" | "ArrowRight" if n > 0 => {
                         let cur = self.hovered.unwrap_or(0);
-                        let next = if key == "ArrowRight" {
+                        // Under RTL the icon strip mirrors — left
+                        // advances through the items.
+                        let next = if (key == "ArrowRight") != cx.is_rtl() {
                             (cur + 1).min(n - 1)
                         } else {
                             cur.saturating_sub(1)

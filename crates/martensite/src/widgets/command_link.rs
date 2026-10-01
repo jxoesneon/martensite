@@ -150,6 +150,11 @@ impl CommandLink {
 }
 
 impl Widget for CommandLink {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = PAD_Y_PT * 2.0
             + LABEL_FONT_PT
@@ -298,11 +303,18 @@ impl Widget for CommandLink {
         };
         let stack_h = label_h + note_h;
         let y0 = self.bounds.origin.y + (self.bounds.size.y - stack_h) / 2.0;
+        // Under RTL the chevron occupies the leading edge — shift the
+        // text stack past it so the two never overlap.
+        let text_x = if cx.is_rtl() {
+            self.bounds.min_x() + pad_x + cx.pt(8.0) + pad_x
+        } else {
+            self.bounds.min_x() + pad_x
+        };
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
             clip,
-            kurbo::Point::new(f64::from(self.bounds.min_x() + pad_x), f64::from(y0)),
+            kurbo::Point::new(f64::from(text_x), f64::from(y0)),
             &self.label,
             label_font,
             ink,
@@ -312,10 +324,7 @@ impl Widget for CommandLink {
                 painter,
                 cx.list,
                 clip,
-                kurbo::Point::new(
-                    f64::from(self.bounds.min_x() + pad_x),
-                    f64::from(y0 + label_h + cx.pt(GAP_Y_PT)),
-                ),
+                kurbo::Point::new(f64::from(text_x), f64::from(y0 + label_h + cx.pt(GAP_Y_PT))),
                 &self.note,
                 note_font,
                 muted,
@@ -323,11 +332,21 @@ impl Widget for CommandLink {
         }
 
         // Trailing chevron affordance — native icon, `›` fallback.
-        let chev_x = self.bounds.max_x() - pad_x - cx.pt(8.0);
+        // Under RTL the affordance sits at the leading (left) edge.
+        let rtl = cx.is_rtl();
+        let chev_x = if rtl {
+            self.bounds.min_x() + pad_x
+        } else {
+            self.bounds.max_x() - pad_x - cx.pt(8.0)
+        };
         let chev_y = self.bounds.origin.y + (self.bounds.size.y - label_font) / 2.0;
         let ink = cx.color(TokenKey::TextMutedColor, CHEV_INK);
         let icon_ok = crate::icons::builtin()
-            .lookup("nav.chevron-right")
+            .lookup(if rtl {
+                "nav.chevron-left"
+            } else {
+                "nav.chevron-right"
+            })
             .is_some_and(|d| {
                 crate::widgets::morph_icon::paint_icon_d(
                     cx.list,
@@ -342,7 +361,7 @@ impl Widget for CommandLink {
                 painter,
                 cx.list,
                 kurbo::Point::new(f64::from(chev_x), f64::from(chev_y)),
-                "›",
+                if rtl { "‹" } else { "›" },
                 label_font,
                 ink,
             );

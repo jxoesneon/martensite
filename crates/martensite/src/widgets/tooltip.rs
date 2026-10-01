@@ -139,6 +139,11 @@ impl TooltipBubble {
 }
 
 impl Widget for TooltipBubble {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let w =
             (self.text.chars().count() as f32 * cx.pt(7.0) + cx.pt(PAD * 2.0)).min(cx.pt(400.0));
@@ -531,6 +536,11 @@ impl Tooltip {
 }
 
 impl Widget for Tooltip {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         self.trigger.measure(cx, constraints)
     }

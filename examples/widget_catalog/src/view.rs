@@ -41,7 +41,15 @@ const PROP_LABEL_W: f32 = 110.0;
 /// Prop row height.
 const PROP_ROW_H: f32 = 34.0;
 /// Number of internal children.
-const N_CHILDREN: usize = 13;
+const N_CHILDREN: usize = 7;
+/// Tool-cluster child indices — the right-aligned toolbar group.
+const TOOL_THEME: usize = 0;
+const TOOL_DIR: usize = 1;
+const TOOL_LOCALE: usize = 2;
+const TOOL_FRAME: usize = 3;
+const TOOL_ZOOM_OUT: usize = 4;
+const TOOL_ZOOM_IN: usize = 5;
+const TOOL_RESET: usize = 6;
 
 /// Locales offered by the stage's locale dropdown — two RTL (ar-EG,
 /// he-IL), four LTR.
@@ -127,19 +135,16 @@ pub struct CatalogView {
     last_sig_zoom: f64,
 
     // ---- children (fixed order for the child_* protocol) ----
-    search: TextInput,        // 0
-    theme_seg: Segmented,     // 1
-    dir_seg: Segmented,       // 2
-    locale_dd: Dropdown,      // 3
-    frame_dd: Dropdown,       // 4
-    zoom_out: Button,         // 5
-    zoom_in: Button,          // 6
-    reset_view: Button,       // 7
-    rail: ListView,           // 8
-    stage: StageHost,         // 9
-    props_scroll: ScrollView, // 10
-    info: DynamicColumn,      // 11
-    log_list: ListView,       // 12
+    /// Left cluster — the rail filter field.
+    nav_cluster: Cluster, // 0
+    /// Right-aligned cluster — the stage tools (theme, direction,
+    /// locale, frame, zoom controls).
+    tools_cluster: Cluster, // 1
+    rail: ListView,           // 2
+    stage: StageHost,         // 3
+    props_scroll: ScrollView, // 4
+    info: DynamicColumn,      // 5
+    log_list: ListView,       // 6
 }
 
 impl CatalogView {
@@ -171,6 +176,21 @@ impl CatalogView {
             .icon_only(true);
         let reset_view = Button::new("Reset").tooltip("Reset zoom and pan");
 
+        let nav_cluster = Cluster::new("NavGroup", vec![Box::new(search)], false);
+        let tools_cluster = Cluster::new(
+            "ToolsGroup",
+            vec![
+                Box::new(theme_seg),
+                Box::new(dir_seg),
+                Box::new(locale_dd),
+                Box::new(frame_dd),
+                Box::new(zoom_out),
+                Box::new(zoom_in),
+                Box::new(reset_view),
+            ],
+            true,
+        );
+
         let mut view = Self {
             rail_map: Vec::new(),
             sel: 0,
@@ -195,18 +215,15 @@ impl CatalogView {
             last_sig_search: String::new(),
             last_sig_prop: String::new(),
             last_sig_zoom: 1.0,
-            search,
-            theme_seg,
-            dir_seg,
-            locale_dd,
-            frame_dd,
-            zoom_out,
-            zoom_in,
-            reset_view,
+            nav_cluster,
+            tools_cluster,
             rail: ListView::new().label("Widget rail"),
             stage,
             props_scroll: ScrollView::new(DynamicColumn::new().gap(6.0)),
-            info: DynamicColumn::new().gap(3.0),
+            // `@prose` declares the reference pane's text as document
+            // payload — NUREG-0700's packing cap targets at-a-glance
+            // readouts, not manuals/snippets.
+            info: DynamicColumn::new().gap(3.0).named("InfoPane@prose"),
             log_list: ListView::new().label("Event log"),
             pages,
         };
@@ -235,7 +252,7 @@ impl CatalogView {
     /// Rebuilds the rail rows for the current query — family header
     /// rows carry `None` in `rail_map`.
     fn rebuild_rail(&mut self) {
-        let query = self.search.value.to_lowercase();
+        let query = self.search_mut().value.to_lowercase();
         self.rail_map.clear();
         let mut items = Vec::new();
         let mut last_family = "";
@@ -259,6 +276,24 @@ impl CatalogView {
         }
     }
 
+    /// The search field (nav cluster's only child).
+    fn search_mut(&mut self) -> &mut TextInput {
+        self.nav_cluster
+            .child_mut(0)
+            .and_then(Widget::as_any_mut)
+            .and_then(|a| a.downcast_mut::<TextInput>())
+            .expect("nav cluster child 0 is the search TextInput")
+    }
+
+    /// A stage tool by [`TOOL_*`] index.
+    fn tool_mut<T: 'static>(&mut self, i: usize) -> &mut T {
+        self.tools_cluster
+            .child_mut(i)
+            .and_then(Widget::as_any_mut)
+            .and_then(|a| a.downcast_mut::<T>())
+            .expect("tools cluster child type")
+    }
+
     /// The props-panel host (the column inside the scroll view).
     fn props_host_mut(&mut self) -> Option<&mut DynamicColumn> {
         self.props_scroll
@@ -278,9 +313,10 @@ impl CatalogView {
                     let on = props
                         .get(spec.key())
                         .map_or(*default, |v| matches!(v, PropValue::Bool(b) if *b));
-                    // Empty label — the row's label column carries the
-                    // name; the switch paints only the track/thumb.
-                    Box::new(Switch::new("").on(on))
+                    // Empty visual label — the row's label column paints
+                    // it — but the control still carries the prop name
+                    // as its accessible name (`@labeled` for lint).
+                    Box::new(Switch::new("").a11y_label(spec.label()).on(on))
                 }
                 PropSpec::Float {
                     min,
@@ -297,7 +333,12 @@ impl CatalogView {
                         })
                         .unwrap_or(*default)
                         .clamp(*min, *max);
-                    Box::new(Slider::new(*min, *max).with_value(v).step(*step))
+                    Box::new(
+                        Slider::new(*min, *max)
+                            .label(spec.label())
+                            .with_value(v)
+                            .step(*step),
+                    )
                 }
                 PropSpec::Int {
                     min, max, default, ..
@@ -310,7 +351,12 @@ impl CatalogView {
                         })
                         .unwrap_or(*default as f64)
                         .clamp(*min as f64, *max as f64);
-                    Box::new(SpinBox::new().range(*min as f64, *max as f64).with_value(v))
+                    Box::new(
+                        SpinBox::new()
+                            .label(spec.label())
+                            .range(*min as f64, *max as f64)
+                            .with_value(v),
+                    )
                 }
                 PropSpec::Text { default, .. } => {
                     let v = props
@@ -336,6 +382,7 @@ impl CatalogView {
                     if options.len() <= 4 {
                         Box::new(
                             Segmented::new()
+                                .label(spec.label())
                                 .options(options.iter().copied())
                                 .selected(sel),
                         )
@@ -438,8 +485,8 @@ impl CatalogView {
         let sig_search = self.sig_search.get();
         if sig_search != self.last_sig_search {
             self.last_sig_search = sig_search.clone();
-            if sig_search != self.search.value {
-                self.search.set_value(sig_search);
+            if sig_search != self.search_mut().value {
+                self.search_mut().set_value(sig_search);
                 self.rebuild_rail();
             }
         }
@@ -487,9 +534,10 @@ impl CatalogView {
         }
 
         // ---- controls → state ----
-        if self.search.take_edited() {
-            self.sig_search.set(self.search.value.clone());
-            self.last_sig_search = self.search.value.clone();
+        if self.search_mut().take_edited() {
+            let v = self.search_mut().value.clone();
+            self.sig_search.set(v.clone());
+            self.last_sig_search = v;
             self.rebuild_rail();
         }
         if let Some(i) = self.rail.take_activated() {
@@ -504,17 +552,17 @@ impl CatalogView {
                 }
             }
         }
-        if let Some(i) = self.theme_seg.take_selected() {
+        if let Some(i) = self.tool_mut::<Segmented>(TOOL_THEME).take_selected() {
             self.set_stage_theme(match i {
                 1 => StageTheme::Dark,
                 2 => StageTheme::Light,
                 _ => StageTheme::Follow,
             });
         }
-        if let Some(i) = self.dir_seg.take_selected() {
+        if let Some(i) = self.tool_mut::<Segmented>(TOOL_DIR).take_selected() {
             self.set_rtl(i == 1);
         }
-        let locale_sel = self.locale_dd.selected();
+        let locale_sel = self.tool_mut::<Dropdown>(TOOL_LOCALE).selected();
         let new_idx = if locale_sel == 0 {
             None
         } else {
@@ -523,20 +571,20 @@ impl CatalogView {
         if new_idx != self.locale_idx {
             self.set_locale(new_idx);
         }
-        let frame_sel = self.frame_dd.selected();
+        let frame_sel = self.tool_mut::<Dropdown>(TOOL_FRAME).selected();
         if let Some(&f) = FramePreset::ALL.get(frame_sel) {
             if f != self.frame {
                 self.frame = f;
                 self.stage.set_frame(f);
             }
         }
-        if self.zoom_out.take_activated() {
+        if self.tool_mut::<Button>(TOOL_ZOOM_OUT).take_activated() {
             self.stage.set_zoom(self.stage.zoom() * 0.8);
         }
-        if self.zoom_in.take_activated() {
+        if self.tool_mut::<Button>(TOOL_ZOOM_IN).take_activated() {
             self.stage.set_zoom(self.stage.zoom() * 1.25);
         }
-        if self.reset_view.take_activated() {
+        if self.tool_mut::<Button>(TOOL_RESET).take_activated() {
             self.stage.reset_view();
         }
 
@@ -664,7 +712,7 @@ impl CatalogView {
         };
         self.sig_theme.set(idx);
         self.last_sig[1] = idx;
-        self.theme_seg.set_selected(idx);
+        self.tool_mut::<Segmented>(TOOL_THEME).set_selected(idx);
     }
 
     /// Sets the stage direction override.
@@ -674,7 +722,8 @@ impl CatalogView {
             .set_direction(rtl.then_some(martensite::core::LayoutDirection::Rtl));
         self.sig_rtl.set(rtl);
         self.last_sig[3] = usize::from(rtl);
-        self.dir_seg.set_selected(usize::from(rtl));
+        self.tool_mut::<Segmented>(TOOL_DIR)
+            .set_selected(usize::from(rtl));
     }
 
     /// Sets the stage locale override.
@@ -685,29 +734,22 @@ impl CatalogView {
         self.sig_locale.set(idx.unwrap_or(usize::MAX));
         self.last_sig[2] = self.sig_locale.get();
         let sel = idx.map_or(0, |i| i + 1);
-        self.locale_dd.commit(sel);
+        self.tool_mut::<Dropdown>(TOOL_LOCALE).commit(sel);
     }
 
-    /// Toolbar child rects — left: search; right-aligned group: theme,
-    /// direction, locale, frame, zoom controls.
-    fn toolbar_child_rects(&mut self, cx: &mut LayoutContext, strip: Rect) -> [Rect; 8] {
+    /// Toolbar child rects — the nav cluster pinned left, the tools
+    /// cluster filling the rest and right-aligning its own controls.
+    fn toolbar_child_rects(&self, strip: Rect) -> [Rect; 2] {
         let item_y = strip.min_y() + (strip.height() - TOOLBAR_ITEM_H) * 0.5;
-        let mut out = [Rect::default(); 8];
-        let c = LayoutConstraints {
-            min_size: Vec2::ZERO,
-            max_size: Vec2::new(strip.width(), TOOLBAR_ITEM_H),
-        };
-        out[0] = Rect::new(strip.min_x() + PAD, item_y, SEARCH_W, TOOLBAR_ITEM_H);
-        // Right-aligned: measure each control for its intrinsic width.
-        let mut x = strip.max_x() - PAD;
-        for child_idx in (1..8usize).rev() {
-            let size = self.child_mut(child_idx).unwrap().measure(cx, c);
-            let w = size.x.clamp(32.0, 220.0);
-            x -= w;
-            out[child_idx] = Rect::new(x, item_y, w, TOOLBAR_ITEM_H);
-            x -= PAD;
-        }
-        out
+        let nav = Rect::new(strip.min_x() + PAD, item_y, SEARCH_W, TOOLBAR_ITEM_H);
+        let tools_x = nav.max_x() + PAD;
+        let tools = Rect::new(
+            tools_x,
+            item_y,
+            (strip.max_x() - PAD - tools_x).max(0.0),
+            TOOLBAR_ITEM_H,
+        );
+        [nav, tools]
     }
 }
 
@@ -800,6 +842,109 @@ impl Widget for PropRow {
     }
 }
 
+/// A named horizontal cluster of controls — a semantic grouping scope
+/// (nav vs stage tools) so the toolbar reads as categories instead of
+/// one flat strip of actions. Child bounds come from the last
+/// [`Cluster::layout`]; `child_bounds` feeds event hit-testing.
+struct Cluster {
+    name: &'static str,
+    children: Vec<Box<dyn Widget>>,
+    rects: Vec<Rect>,
+    /// Right-pack children against the cluster's trailing edge.
+    align_end: bool,
+}
+
+impl Cluster {
+    fn new(name: &'static str, children: Vec<Box<dyn Widget>>, align_end: bool) -> Self {
+        Self {
+            name,
+            children,
+            rects: Vec::new(),
+            align_end,
+        }
+    }
+}
+
+impl Widget for Cluster {
+    fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> Vec2 {
+        let item = LayoutConstraints {
+            min_size: Vec2::ZERO,
+            max_size: Vec2::new(c.max_size.x, c.max_size.y),
+        };
+        let mut w = 0.0f32;
+        for (i, child) in self.children.iter_mut().enumerate() {
+            w += child.measure(cx, item).x.clamp(32.0, 220.0);
+            if i > 0 {
+                w += PAD;
+            }
+        }
+        Vec2::new(w.min(c.max_size.x), c.max_size.y.min(TOOLBAR_ITEM_H))
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        self.rects.clear();
+        self.rects.resize(self.children.len(), Rect::default());
+        let item = LayoutConstraints {
+            min_size: Vec2::ZERO,
+            max_size: Vec2::new(bounds.width(), bounds.height()),
+        };
+        // A lone child fills the cluster (the search field takes its
+        // fixed-width strip); multi-child clusters pack at measured
+        // widths, right-aligned when `align_end`.
+        let single = self.children.len() == 1;
+        let widths: Vec<f32> = self
+            .children
+            .iter_mut()
+            .map(|c| {
+                if single {
+                    bounds.width()
+                } else {
+                    c.measure(cx, item).x.clamp(32.0, 220.0)
+                }
+            })
+            .collect();
+        let mut x = if self.align_end {
+            let total = widths.iter().sum::<f32>() + PAD * widths.len().saturating_sub(1) as f32;
+            bounds.max_x() - total
+        } else {
+            bounds.min_x()
+        };
+        for (i, child) in self.children.iter_mut().enumerate() {
+            let w = widths[i];
+            let r = Rect::new(x, bounds.min_y(), w, bounds.height());
+            self.rects[i] = r;
+            cx.layout_child(child.as_mut(), r);
+            x += w + PAD;
+        }
+    }
+
+    fn paint(&self, _cx: &mut PaintContext) {}
+
+    fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        self.forward_event_to_children(cx)
+    }
+
+    fn child_count(&self) -> usize {
+        self.children.len()
+    }
+
+    fn child(&self, i: usize) -> Option<&dyn Widget> {
+        self.children.get(i).map(|c| &**c)
+    }
+
+    fn child_mut(&mut self, i: usize) -> Option<&mut dyn Widget> {
+        self.children.get_mut(i).map(|c| &mut **c)
+    }
+
+    fn child_bounds(&self, i: usize) -> Option<Rect> {
+        self.rects.get(i).copied()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        self.name
+    }
+}
+
 impl Widget for CatalogView {
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         constraints.max_size
@@ -811,9 +956,9 @@ impl Widget for CatalogView {
         let x0 = bounds.min_x();
         let y0 = bounds.min_y();
 
-        // Toolbar strip: search at left, controls right-aligned.
+        // Toolbar strip: nav cluster left, tools cluster right-aligned.
         let strip = Rect::new(x0, y0, w, TOOLBAR_H);
-        let tool_rects = self.toolbar_child_rects(cx, strip);
+        let tool_rects = self.toolbar_child_rects(strip);
         for (i, r) in tool_rects.iter().enumerate() {
             self.last_child_bounds[i] = *r;
             cx.layout_child(self.child_mut(i).unwrap(), *r);
@@ -852,11 +997,11 @@ impl Widget for CatalogView {
         );
 
         let big: [(usize, Rect); 5] = [
-            (8, rail),
-            (9, stage_rect),
-            (10, props),
-            (11, info_rect),
-            (12, log_rect),
+            (2, rail),
+            (3, stage_rect),
+            (4, props),
+            (5, info_rect),
+            (6, log_rect),
         ];
         for (i, r) in big {
             self.last_child_bounds[i] = r;
@@ -893,37 +1038,24 @@ impl Widget for CatalogView {
 
     fn child(&self, i: usize) -> Option<&dyn Widget> {
         Some(match i {
-            0 => &self.search,
-            1 => &self.theme_seg,
-            2 => &self.dir_seg,
-            3 => &self.locale_dd,
-            4 => &self.frame_dd,
-            5 => &self.zoom_out,
-            6 => &self.zoom_in,
-            7 => &self.reset_view,
-            8 => &self.rail,
-            9 => &self.stage,
-            10 => &self.props_scroll,
-            11 => &self.info,
-            12 => &self.log_list,
-            _ => return None,
+            0 => &self.nav_cluster,
+            1 => &self.tools_cluster,
+            2 => &self.rail,
+            3 => &self.stage,
+            4 => &self.props_scroll,
+            5 => &self.info,
+            _ => &self.log_list,
         })
     }
 
     fn child_mut(&mut self, i: usize) -> Option<&mut dyn Widget> {
         Some(match i {
-            0 => &mut self.search,
-            1 => &mut self.theme_seg,
-            2 => &mut self.dir_seg,
-            3 => &mut self.locale_dd,
-            4 => &mut self.frame_dd,
-            5 => &mut self.zoom_out,
-            6 => &mut self.zoom_in,
-            7 => &mut self.reset_view,
-            8 => &mut self.rail,
-            9 => &mut self.stage,
-            10 => &mut self.props_scroll,
-            11 => &mut self.info,
+            0 => &mut self.nav_cluster,
+            1 => &mut self.tools_cluster,
+            2 => &mut self.rail,
+            3 => &mut self.stage,
+            4 => &mut self.props_scroll,
+            5 => &mut self.info,
             _ => &mut self.log_list,
         })
     }

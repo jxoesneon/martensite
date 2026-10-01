@@ -54,6 +54,10 @@ pub struct SearchBar {
     close_requested: bool,
     bounds: Rect,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Search bar"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl SearchBar {
@@ -73,6 +77,7 @@ impl SearchBar {
             close_requested: false,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -185,6 +190,26 @@ impl Default for SearchBar {
     }
 }
 
+impl SearchBar {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Search bar"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::search_bar::SearchBar;
+    ///
+    /// let w = SearchBar::new().a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for SearchBar {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         if !self.search_mode {
@@ -220,7 +245,7 @@ impl Widget for SearchBar {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Group);
-        node.set_label("Search bar");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Search bar"));
         if !self.enabled {
             node.set_disabled();
         }

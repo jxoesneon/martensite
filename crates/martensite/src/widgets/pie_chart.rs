@@ -115,6 +115,10 @@ pub struct PieChart {
     hovered: Option<usize>,
     bounds: Rect,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Pie chart"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl PieChart {
@@ -136,6 +140,7 @@ impl PieChart {
             hovered: None,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -297,6 +302,26 @@ impl PieChart {
     }
 }
 
+impl PieChart {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Pie chart"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::pie_chart::PieChart;
+    ///
+    /// let w = PieChart::new(vec![]).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for PieChart {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let side = cx.pt(120.0);
@@ -334,7 +359,7 @@ impl Widget for PieChart {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        node.set_label("Pie chart");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Pie chart"));
         node.set_description(desc);
         if !self.enabled {
             node.set_disabled();

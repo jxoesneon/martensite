@@ -205,6 +205,11 @@ impl LedMatrix {
 }
 
 impl Widget for LedMatrix {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             (self.cols as f32 * cx.pt(CELL_PT)).min(constraints.max_size.x.max(0.0)),

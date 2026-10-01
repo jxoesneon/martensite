@@ -312,6 +312,11 @@ struct TableCellChild {
 }
 
 impl Widget for TableCellChild {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         constraints.max_size.max(Vec2::ZERO)
     }
@@ -346,6 +351,11 @@ struct TableHeaderChild {
 }
 
 impl Widget for TableHeaderChild {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         constraints.max_size.max(Vec2::ZERO)
     }
@@ -418,6 +428,11 @@ impl TableRowChild {
 }
 
 impl Widget for TableRowChild {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
@@ -1855,6 +1870,11 @@ impl Default for Table {
 }
 
 impl Widget for Table {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let row_px = cx.pt(self.row_height);
         let content_h = self.rows.len() as f32 * row_px;

@@ -372,6 +372,11 @@ impl AttendeeList {
 }
 
 impl Widget for AttendeeList {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// Rows carry presence status lamps on the routine-state palette
     /// — not the alarm channel, so no `@alarm` marker.
     fn debug_name(&self) -> &'static str {

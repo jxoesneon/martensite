@@ -249,6 +249,11 @@ impl VirtualKeyboard {
 }
 
 impl Widget for VirtualKeyboard {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let key = cx.pt(KEY_PT);
         let gap = cx.pt(GAP_PT);

@@ -266,6 +266,11 @@ impl Filmstrip {
 }
 
 impl Widget for Filmstrip {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(320.0).min(constraints.max_size.x.max(0.0)),
@@ -327,11 +332,13 @@ impl Widget for Filmstrip {
                 EventResponse::Handled
             }
             WidgetEvent::KeyPressed { key, .. } => {
+                // Under RTL the strip mirrors — left advances.
+                let fwd = (key == "ArrowRight") != cx.is_rtl();
                 let next = match key.as_str() {
-                    "ArrowRight" => self
+                    "ArrowRight" | "ArrowLeft" if fwd => self
                         .selected
                         .map_or(0, |s| (s + 1).min(self.thumbs.len().saturating_sub(1))),
-                    "ArrowLeft" => self.selected.map_or(0, |s| s.saturating_sub(1)),
+                    "ArrowRight" | "ArrowLeft" => self.selected.map_or(0, |s| s.saturating_sub(1)),
                     _ => return EventResponse::Ignored,
                 };
                 if !self.thumbs.is_empty() {
@@ -369,8 +376,15 @@ impl Widget for Filmstrip {
         let mut hits = self.hits.lock();
         hits.clear();
         cx.list.push_clip(krect(self.bounds));
+        // Under RTL the strip runs right-to-left: thumb 0 anchors on
+        // the right and scroll offsets flip sign.
+        let rtl = cx.is_rtl();
         for (i, t) in self.thumbs.iter().enumerate() {
-            let x = self.bounds.min_x() + pad + i as f32 * (tile + gap) - self.scroll;
+            let x = if rtl {
+                self.bounds.max_x() - pad - (i + 1) as f32 * (tile + gap) + gap + self.scroll
+            } else {
+                self.bounds.min_x() + pad + i as f32 * (tile + gap) - self.scroll
+            };
             if x + tile < self.bounds.min_x() || x > self.bounds.max_x() {
                 continue;
             }

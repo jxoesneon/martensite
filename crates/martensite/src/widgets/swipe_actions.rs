@@ -452,6 +452,11 @@ impl std::fmt::Debug for SwipeActions {
 }
 
 impl Widget for SwipeActions {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let inner = self.child.measure(cx, constraints);
         Vec2::new(

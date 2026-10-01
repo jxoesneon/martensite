@@ -290,6 +290,11 @@ impl ExpanderRow {
 }
 
 impl Widget for ExpanderRow {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let header = self.header.measure(cx, constraints);
         let mut w = header.x;
@@ -381,12 +386,24 @@ impl Widget for ExpanderRow {
         // Row-level treegrid keys.
         if let WidgetEvent::KeyPressed { key, .. } = cx.event {
             match key.as_str() {
-                "ArrowRight" if !self.expanded => {
+                // Treegrid convention: the "into" arrow expands —
+                // ArrowRight under LTR, ArrowLeft under RTL.
+                "ArrowRight" | "ArrowLeft"
+                    if {
+                        let expand = (key == "ArrowRight") != cx.is_rtl();
+                        expand && !self.expanded
+                    } =>
+                {
                     self.expanded = true;
                     self.toggled = true;
                     return EventResponse::RequestRepaint;
                 }
-                "ArrowLeft" if self.expanded => {
+                "ArrowRight" | "ArrowLeft"
+                    if {
+                        let expand = (key == "ArrowRight") != cx.is_rtl();
+                        !expand && self.expanded
+                    } =>
+                {
                     self.expanded = false;
                     self.toggled = true;
                     return EventResponse::RequestRepaint;
@@ -444,10 +461,16 @@ impl Widget for ExpanderRow {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        // Disclosure caret at the header's trailing edge — right when
-        // collapsed, down when expanded.
+        // Disclosure caret at the header's trailing edge — points
+        // "into" the row when collapsed (right under LTR, left under
+        // RTL), down when expanded.
         let cs = cx.pt(CARET_PT);
-        let x0 = f64::from(self.header_bounds.max_x() - cx.pt(14.0) - cs);
+        let rtl = cx.is_rtl();
+        let x0 = if rtl {
+            f64::from(self.header_bounds.min_x() + cx.pt(14.0))
+        } else {
+            f64::from(self.header_bounds.max_x() - cx.pt(14.0) - cs)
+        };
         let y0 = f64::from(self.header_bounds.min_y() + (self.header_bounds.height() - cs) / 2.0);
         let s = f64::from(cs);
         let mut caret = kurbo::BezPath::new();
@@ -455,6 +478,11 @@ impl Widget for ExpanderRow {
             caret.move_to((x0, y0 + s * 0.25));
             caret.line_to((x0 + s / 2.0, y0 + s * 0.75));
             caret.line_to((x0 + s, y0 + s * 0.25));
+        } else if rtl {
+            // ‹ — points left.
+            caret.move_to((x0 + s * 0.75, y0));
+            caret.line_to((x0 + s * 0.25, y0 + s / 2.0));
+            caret.line_to((x0 + s * 0.75, y0 + s));
         } else {
             caret.move_to((x0 + s * 0.25, y0));
             caret.line_to((x0 + s * 0.75, y0 + s / 2.0));

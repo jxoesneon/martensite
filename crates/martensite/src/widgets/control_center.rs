@@ -317,6 +317,11 @@ impl Default for ControlCenter {
 }
 
 impl Widget for ControlCenter {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let tiles = self

@@ -229,6 +229,11 @@ impl PageFlip {
 }
 
 impl Widget for PageFlip {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         constraints.max_size
     }
@@ -262,12 +267,21 @@ impl Widget for PageFlip {
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         match cx.event {
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
+                // Under RTL the page-turn direction mirrors.
                 "ArrowRight" | "PageDown" | " " => {
-                    self.turn(1);
+                    self.turn(if cx.is_rtl() && key == "ArrowRight" {
+                        -1
+                    } else {
+                        1
+                    });
                     EventResponse::RequestRepaint
                 }
                 "ArrowLeft" | "PageUp" => {
-                    self.turn(-1);
+                    self.turn(if cx.is_rtl() && key == "ArrowLeft" {
+                        1
+                    } else {
+                        -1
+                    });
                     EventResponse::RequestRepaint
                 }
                 "Home" => {

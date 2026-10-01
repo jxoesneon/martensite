@@ -313,7 +313,14 @@ impl TokenField {
         let chip_pad = CHIP_PAD_PT * scale;
         let remove_w = REMOVE_W_PT * scale;
         let gap = CHIP_GAP_PT * scale;
-        let mut x = self.bounds.origin.x + pad;
+        // Chips pack from the leading edge — left under LTR, right
+        // under RTL.
+        let rtl = martensite_core::intl::ambient_direction().is_rtl();
+        let mut x = if rtl {
+            self.bounds.max_x() - pad
+        } else {
+            self.bounds.origin.x + pad
+        };
         let y = self.bounds.origin.y + (self.bounds.size.y - chip_h) / 2.0;
         self.tokens
             .iter()
@@ -322,19 +329,26 @@ impl TokenField {
                     .and_then(|p| p.measure_text(token, font))
                     .unwrap_or(font * token.chars().count() as f32 * 0.55);
                 let w = label_w + chip_pad * 2.0 + remove_w;
-                let r = Rect::new(x, y, w, chip_h);
-                x += w + gap;
+                let cx0 = if rtl { x - w } else { x };
+                let r = Rect::new(cx0, y, w, chip_h);
+                x += if rtl { -w - gap } else { w + gap };
                 r
             })
             .collect()
     }
 
-    /// The `×` zone of chip `i` — the trailing square.
+    /// The `×` zone of chip `i` — the trailing square (left edge
+    /// under RTL).
     fn remove_zone(&self, i: usize, scale: f32) -> Option<Rect> {
         let rects = self.chip_rects.lock();
         let r = *rects.get(i)?;
         let w = scale * REMOVE_W_PT;
-        Some(Rect::new(r.max_x() - w, r.origin.y, w, r.size.y))
+        let x = if martensite_core::intl::ambient_direction().is_rtl() {
+            r.min_x()
+        } else {
+            r.max_x() - w
+        };
+        Some(Rect::new(x, r.origin.y, w, r.size.y))
     }
 }
 
@@ -345,6 +359,11 @@ impl Default for TokenField {
 }
 
 impl Widget for TokenField {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(200.0).min(constraints.max_size.x.max(0.0)),
@@ -360,18 +379,34 @@ impl Widget for TokenField {
                 .map(|p| p as &(dyn martensite_core::paint::TextShaper + Send + Sync)),
             cx.scale,
         );
-        // The input claims the remainder after the chips.
-        let input_x = self
-            .chip_rects
-            .lock()
-            .last()
-            .map(|r| r.max_x() + cx.pt(CHIP_GAP_PT))
-            .unwrap_or(bounds.origin.x + cx.pt(FIELD_PAD_PT));
-        let input_w = (bounds.max_x() - cx.pt(FIELD_PAD_PT) - input_x).max(cx.pt(MIN_INPUT_PT));
-        cx.layout_child(
-            &mut self.input,
-            Rect::new(input_x, bounds.origin.y, input_w, bounds.size.y),
-        );
+        // The input claims the remainder after the chips — under
+        // RTL chips anchor on the right, so the input fills the
+        // left remainder.
+        let input_rect = if cx.is_rtl() {
+            let right = self
+                .chip_rects
+                .lock()
+                .last()
+                .map(|r| r.min_x() - cx.pt(CHIP_GAP_PT))
+                .unwrap_or(bounds.max_x() - cx.pt(FIELD_PAD_PT));
+            let x0 = bounds.origin.x + cx.pt(FIELD_PAD_PT);
+            Rect::new(
+                x0,
+                bounds.origin.y,
+                (right - x0).max(cx.pt(MIN_INPUT_PT)),
+                bounds.size.y,
+            )
+        } else {
+            let input_x = self
+                .chip_rects
+                .lock()
+                .last()
+                .map(|r| r.max_x() + cx.pt(CHIP_GAP_PT))
+                .unwrap_or(bounds.origin.x + cx.pt(FIELD_PAD_PT));
+            let input_w = (bounds.max_x() - cx.pt(FIELD_PAD_PT) - input_x).max(cx.pt(MIN_INPUT_PT));
+            Rect::new(input_x, bounds.origin.y, input_w, bounds.size.y)
+        };
+        cx.layout_child(&mut self.input, input_rect);
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -473,16 +508,24 @@ impl Widget for TokenField {
                 cx.color(TokenKey::DividerColor, CHIP_FACE)
             };
             cx.list.push_fill_shape(kr, &shape, face);
-            // Label.
-            let lx = r.origin.x + pad;
+            // Label — under RTL the remove zone sits on the chip's
+            // left edge, so the label region mirrors.
+            let rtl = cx.is_rtl();
+            let lx = if rtl {
+                r.origin.x + remove_w + pad
+            } else {
+                r.origin.x + pad
+            };
+            let label_right = if rtl { r.max_x() } else { r.max_x() - remove_w };
+            let label_left = if rtl { r.min_x() + remove_w } else { r.min_x() };
             let ly = r.origin.y + (r.size.y - font) / 2.0;
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
-                    f64::from(r.min_x()),
+                    f64::from(label_left),
                     f64::from(r.min_y()),
-                    f64::from(r.max_x() - remove_w),
+                    f64::from(label_right),
                     f64::from(r.max_y()),
                 ),
                 kurbo::Point::new(f64::from(lx), f64::from(ly)),
@@ -491,7 +534,11 @@ impl Widget for TokenField {
                 cx.color(TokenKey::TextColor, CHIP_INK),
             );
             // Remove affordance — native close icon, `×` fallback.
-            let rx = r.max_x() - remove_w + cx.pt(2.0);
+            let rx = if rtl {
+                r.min_x() + cx.pt(2.0)
+            } else {
+                r.max_x() - remove_w + cx.pt(2.0)
+            };
             let ink = cx.color(TokenKey::TextMutedColor, REMOVE_INK);
             let icon_ok = crate::icons::builtin()
                 .lookup("status.close")
@@ -506,13 +553,14 @@ impl Widget for TokenField {
                     )
                 });
             if !icon_ok {
+                let zone = if rtl { r.min_x() } else { r.max_x() - remove_w };
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
                     kurbo::Rect::new(
-                        f64::from(r.max_x() - remove_w),
+                        f64::from(zone),
                         f64::from(r.min_y()),
-                        f64::from(r.max_x()),
+                        f64::from(zone + remove_w),
                         f64::from(r.max_y()),
                     ),
                     kurbo::Point::new(f64::from(rx), f64::from(ly)),

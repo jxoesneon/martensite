@@ -340,6 +340,11 @@ impl Default for SearchField {
 }
 
 impl Widget for SearchField {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A search field has the embedded input's 120x24 logical pt
         // floor; a `label` asks for the caption strip's height on top

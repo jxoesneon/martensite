@@ -240,6 +240,11 @@ impl CardDeck {
 }
 
 impl Widget for CardDeck {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(W_PT).min(constraints.max_size.x.max(0.0)),
@@ -316,12 +321,13 @@ impl Widget for CardDeck {
             }
             WidgetEvent::KeyPressed { key, .. } => {
                 match key.as_str() {
-                    "ArrowRight" => {
-                        self.cycle_next();
-                        return EventResponse::RequestRepaint;
-                    }
-                    "ArrowLeft" => {
-                        self.cycle_prev();
+                    // Under RTL the card fan mirrors — left advances.
+                    "ArrowRight" | "ArrowLeft" => {
+                        if (key == "ArrowRight") != cx.is_rtl() {
+                            self.cycle_next();
+                        } else {
+                            self.cycle_prev();
+                        }
                         return EventResponse::RequestRepaint;
                     }
                     _ => {}

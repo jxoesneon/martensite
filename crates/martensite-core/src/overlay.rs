@@ -1375,7 +1375,14 @@ fn place(anchor: &OverlayAnchor, desired: Vec2, viewport: Rect, scale: f32) -> R
                 // clamp pull it back on screen.
                 below_y
             };
-            Vec2::new(a.min_x(), y)
+            // Dropdown-style popups align to the anchor's leading
+            // edge — the right edge under RTL.
+            let x = if crate::intl::ambient_direction().is_rtl() {
+                a.max_x() - size.x
+            } else {
+                a.min_x()
+            };
+            Vec2::new(x, y)
         }
         OverlayAnchor::BoundsEdge { rect: a, edge } => {
             let below_y = a.max_y() + gap;
@@ -1433,7 +1440,16 @@ fn place(anchor: &OverlayAnchor, desired: Vec2, viewport: Rect, scale: f32) -> R
                 ),
             }
         }
-        OverlayAnchor::Pointer(p) => Vec2::new(p.x + offset, p.y + offset),
+        OverlayAnchor::Pointer(p) => {
+            // Under RTL the popup grows leftward — its top-right
+            // corner lands on the pointer instead of top-left, so
+            // context menus and submenus extend into the content.
+            if crate::intl::ambient_direction().is_rtl() {
+                Vec2::new(p.x - offset - size.x, p.y + offset)
+            } else {
+                Vec2::new(p.x + offset, p.y + offset)
+            }
+        }
         OverlayAnchor::Center => Vec2::new(
             viewport.min_x() + (viewport.width() - size.x) / 2.0,
             viewport.min_y() + (viewport.height() - size.y) / 2.0,
@@ -2012,6 +2028,45 @@ mod tests {
         assert_eq!(tb, Rect::new(668.0, 528.0, 120.0, 60.0));
         let cb = layer.entry_bounds(c).unwrap();
         assert_eq!(cb, Rect::new(300.0, 250.0, 200.0, 100.0));
+    }
+
+    #[test]
+    fn rtl_mirrors_pointer_and_bounds_anchors() {
+        struct Sized(Vec2);
+        impl Widget for Sized {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                self.0
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+        }
+        let mut layer = layer();
+
+        // Pointer anchor: LTR lands the popup top-left offset
+        // below-right of the point; RTL lands its top-right.
+        let p = layer.open(
+            Box::new(Sized(Vec2::new(100.0, 50.0))),
+            OverlayAnchor::Pointer(Vec2::new(200.0, 100.0)),
+        );
+        // Bounds anchor: below the rect, aligned to its leading edge.
+        let b = layer.open(
+            Box::new(Sized(Vec2::new(120.0, 40.0))),
+            OverlayAnchor::Bounds(Rect::new(100.0, 50.0, 200.0, 30.0)),
+        );
+        layer.layout_pass();
+        let p_ltr = layer.entry_bounds(p).unwrap();
+        let b_ltr = layer.entry_bounds(b).unwrap();
+        assert!(p_ltr.min_x() > 200.0);
+        assert_eq!(b_ltr.min_x(), 100.0);
+
+        layer.set_intl(crate::LayoutDirection::Rtl, crate::Locale::new("ar"));
+        layer.layout_pass();
+        let p_rtl = layer.entry_bounds(p).unwrap();
+        let b_rtl = layer.entry_bounds(b).unwrap();
+        // Top-right corner sits `POINTER_OFFSET` left of the point.
+        assert!(p_rtl.max_x() < 200.0);
+        assert_eq!(p_rtl.width(), p_ltr.width());
+        // Bounds popup right-aligns to the anchor's right edge.
+        assert_eq!(b_rtl.max_x(), 300.0);
     }
 
     /// Loading popup content: paints its placeholder instead of its

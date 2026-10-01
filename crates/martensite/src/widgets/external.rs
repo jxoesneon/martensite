@@ -993,6 +993,11 @@ impl std::fmt::Debug for ExternalEngines {
 }
 
 impl Widget for ExternalEngine {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A zero intrinsic size (no frame yet) yields a flexible zero so
         // the viewport can appear lazily without reserving space.

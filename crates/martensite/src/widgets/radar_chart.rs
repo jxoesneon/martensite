@@ -114,6 +114,10 @@ pub struct RadarChart {
     text_painter: Option<SharedTextPainter>,
     bounds: Rect,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Radar chart"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl Default for RadarChart {
@@ -140,6 +144,7 @@ impl RadarChart {
             text_painter: None,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -244,6 +249,26 @@ impl RadarChart {
     }
 }
 
+impl RadarChart {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Radar chart"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::radar_chart::RadarChart;
+    ///
+    /// let w = RadarChart::new().a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for RadarChart {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.pt(SIZE_PT);
@@ -264,7 +289,7 @@ impl Widget for RadarChart {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Image);
-        node.set_label("Radar chart");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Radar chart"));
         node.set_value(format!(
             "{} series, {} axes",
             self.series.len(),

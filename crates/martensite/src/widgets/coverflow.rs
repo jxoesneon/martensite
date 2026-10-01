@@ -241,6 +241,11 @@ impl Coverflow {
 }
 
 impl Widget for Coverflow {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = (COVER_PT + TITLE_PT + 12.0) * cx.scale;
         Vec2::new(
@@ -277,11 +282,17 @@ impl Widget for Coverflow {
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         match cx.event {
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
-                "ArrowLeft" | "ArrowUp" => {
+                "ArrowLeft" | "ArrowRight" => {
+                    // Under RTL the coverflow mirrors — left advances.
+                    let fwd = (key == "ArrowRight") != cx.is_rtl();
+                    self.step(if fwd { 1 } else { -1 });
+                    EventResponse::RequestRepaint
+                }
+                "ArrowUp" => {
                     self.step(-1);
                     EventResponse::RequestRepaint
                 }
-                "ArrowRight" | "ArrowDown" => {
+                "ArrowDown" => {
                     self.step(1);
                     EventResponse::RequestRepaint
                 }

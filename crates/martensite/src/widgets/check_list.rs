@@ -380,6 +380,11 @@ impl CheckList {
 }
 
 impl Widget for CheckList {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = self.items.len().clamp(3, 8) as f32 * ROW_PT + PAD_PT;
         Vec2::new(

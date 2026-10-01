@@ -73,6 +73,10 @@ const ROW_H: f32 = 24.0;
 const MAX_VISIBLE_ROWS: f32 = 12.0;
 /// Scrollbar thickness in logical pixels.
 const BAR: f32 = 10.0;
+/// Gap between the row viewport and the scrollbar, so row fills
+/// (selection accent, hover wash) never share an edge with the
+/// trough's keyline — WCAG 1.4.11 boundary contrast.
+const BAR_GAP: f32 = 2.0;
 /// Minimum scrollbar thumb length.
 const MIN_THUMB: f32 = 24.0;
 /// Track colour.
@@ -173,6 +177,11 @@ impl VScrollBar {
 }
 
 impl Widget for VScrollBar {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(cx.pt(BAR), 0.0).min(constraints.max_size.max(Vec2::ZERO))
     }
@@ -313,6 +322,11 @@ impl ListItemRow {
 }
 
 impl Widget for ListItemRow {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
@@ -1281,6 +1295,12 @@ impl ListView {
 
     /// Scrolls the minimum amount that makes row `index` fully visible.
     fn ensure_visible(&mut self, index: usize) {
+        // A zero-height viewport (selection before the first layout)
+        // defines no visible window — defer to the next layout pass,
+        // which re-clamps `scroll_y` against real geometry.
+        if self.viewport.height() <= 0.0 || self.row_px() <= 0.0 {
+            return;
+        }
         let mut v = self.vrows();
         v.ensure_row_visible(index);
         if v.offset() != self.scroll_y {
@@ -1521,15 +1541,25 @@ impl Widget for ListView {
             cx.hot.flags.remove(NodeFlags::FOCUSABLE);
         }
         self.poll_pending();
-        // Smart scrollbar: shown only when content overflows.
+        // Smart scrollbar: shown only when content overflows. Under
+        // RTL the strip anchors to the leading (left) edge.
         let bar = cx.pt(BAR);
+        let gap = cx.pt(BAR_GAP);
+        let rtl = cx.is_rtl();
         let show_v = self.content_height() > bounds.height();
         let mut viewport = bounds;
         self.vbar_rect = None;
         if show_v {
-            viewport.size.x = (viewport.width() - bar).max(0.0);
+            if rtl {
+                viewport.origin.x += bar + gap;
+            }
+            viewport.size.x = (viewport.width() - bar - gap).max(0.0);
             self.vbar_rect = Some(Rect::new(
-                bounds.max_x() - bar,
+                if rtl {
+                    bounds.min_x()
+                } else {
+                    bounds.max_x() - bar
+                },
                 bounds.min_y(),
                 bar,
                 bounds.height(),
@@ -2419,5 +2449,19 @@ mod tests {
         event(&mut l, &release_at(3.0 * 24.0 + 12.0));
         assert_eq!(l.take_moved(), None);
         assert_eq!(l.item(1), Some("Item 1"));
+    }
+
+    #[test]
+    fn selection_before_first_layout_keeps_zero_scroll() {
+        // Widget Catalog rail: items + selection are set before the
+        // first layout, when the viewport is still zero-height.
+        // `ensure_visible` must not scroll — a zero-height viewport
+        // defines no visible window.
+        let mut l = ListView::new().items((0..50).map(|i| format!("Item {i}")));
+        l.set_selected(1);
+        assert_eq!(l.scroll_offset(), 0.0);
+        laid_out(&mut l, 200.0, 240.0);
+        assert_eq!(l.scroll_offset(), 0.0);
+        assert_eq!(l.visible_range().start, 0);
     }
 }

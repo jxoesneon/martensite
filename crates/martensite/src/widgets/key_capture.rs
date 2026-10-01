@@ -81,6 +81,10 @@ pub struct KeyCapture {
     bounds: Rect,
     /// Shared shaped-text painter.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Keyboard shortcut"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl KeyCapture {
@@ -105,6 +109,7 @@ impl KeyCapture {
             enabled: true,
             bounds: Rect::default(),
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -247,6 +252,26 @@ impl Default for KeyCapture {
     }
 }
 
+impl KeyCapture {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Keyboard shortcut"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::key_capture::KeyCapture;
+    ///
+    /// let w = KeyCapture::new().placeholder("Press shortcut…").a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for KeyCapture {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
@@ -261,7 +286,7 @@ impl Widget for KeyCapture {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::TextInput);
-        node.set_label("Keyboard shortcut");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Keyboard shortcut"));
         if self.shortcut.is_empty() {
             node.set_value(self.placeholder.clone());
         } else {

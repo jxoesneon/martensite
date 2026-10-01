@@ -304,6 +304,13 @@ impl AppGrid {
             }
             let row = (slot / cols) as f32;
             let col = (slot % cols) as f32;
+            // Under RTL the grid row order mirrors — cell 0 anchors
+            // on the right.
+            let col = if martensite_core::intl::ambient_direction().is_rtl() {
+                (cols - 1) as f32 - col
+            } else {
+                col
+            };
             self.cells.push((
                 Rect::new(
                     bounds.min_x() + PAD_PT * s + col * (cell_w + GAP_PT * s),
@@ -318,6 +325,11 @@ impl AppGrid {
 }
 
 impl Widget for AppGrid {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let cell = ICON_PT + CAPTION_PT + GAP_PT;
@@ -386,8 +398,16 @@ impl Widget for AppGrid {
                 }
                 EventResponse::Ignored
             }
+            // Paged grid — under RTL the page axis mirrors: left
+            // advances to the next page.
             WidgetEvent::KeyPressed { key, .. } if key.as_str() == "ArrowRight" => {
-                if self.page + 1 < self.page_count() {
+                if cx.is_rtl() {
+                    if self.page > 0 {
+                        self.page -= 1;
+                        self.rebuild_cells();
+                        return EventResponse::RequestRepaint;
+                    }
+                } else if self.page + 1 < self.page_count() {
                     self.page += 1;
                     self.rebuild_cells();
                     return EventResponse::RequestRepaint;
@@ -395,7 +415,13 @@ impl Widget for AppGrid {
                 EventResponse::Ignored
             }
             WidgetEvent::KeyPressed { key, .. } if key.as_str() == "ArrowLeft" => {
-                if self.page > 0 {
+                if cx.is_rtl() {
+                    if self.page + 1 < self.page_count() {
+                        self.page += 1;
+                        self.rebuild_cells();
+                        return EventResponse::RequestRepaint;
+                    }
+                } else if self.page > 0 {
                     self.page -= 1;
                     self.rebuild_cells();
                     return EventResponse::RequestRepaint;

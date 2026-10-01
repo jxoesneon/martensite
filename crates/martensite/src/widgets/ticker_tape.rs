@@ -345,6 +345,11 @@ fn mark_width(
 }
 
 impl Widget for TickerTape {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = (FONT_PT + PAD_V_PT * 2.0) * cx.scale;
         Vec2::new(constraints.max_size.x.max(80.0 * cx.scale), h)

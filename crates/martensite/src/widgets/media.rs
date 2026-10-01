@@ -597,6 +597,11 @@ impl MediaView {
 }
 
 impl Widget for MediaView {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let aspect = self.effective_aspect_ratio();
         let max_w = constraints.max_size.x;

@@ -169,6 +169,11 @@ impl TabItem {
 }
 
 impl Widget for TabItem {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // `label_width` measures through the installed shaper when
         // one is ambient; the estimate fallback is case-aware —
@@ -451,6 +456,11 @@ impl TabStrip {
 }
 
 impl Widget for TabStrip {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
@@ -473,16 +483,19 @@ impl Widget for TabStrip {
             .map(|t| Self::natural_width(t, cx.scale))
             .sum();
         self.clamp_scroll();
+        // RTL: tab order runs right→left — tab 0 anchors the right
+        // edge in both the fit and overflow paths.
+        let rtl = cx.is_rtl();
         if self.natural_w <= bounds.width() {
             // Everything fits — equal-split fills the strip.
             let w = bounds.width() / n as f32;
             for (i, tab) in self.tabs.iter_mut().enumerate() {
-                let rect = Rect::new(
-                    bounds.min_x() + i as f32 * w,
-                    bounds.min_y(),
-                    w,
-                    bounds.height(),
-                );
+                let x = if rtl {
+                    bounds.max_x() - (i + 1) as f32 * w
+                } else {
+                    bounds.min_x() + i as f32 * w
+                };
+                let rect = Rect::new(x, bounds.min_y(), w, bounds.height());
                 self.tab_bounds.push(rect);
                 cx.layout_child(tab, rect);
             }
@@ -490,13 +503,22 @@ impl Widget for TabStrip {
             // Overflow — natural positions; the scroll offset applies
             // at `child_bounds` read time so wheel scrolling needs no
             // relayout pass.
-            let mut x = bounds.min_x();
+            let mut x = if rtl {
+                bounds.min_x() + self.natural_w
+            } else {
+                bounds.min_x()
+            };
             for tab in self.tabs.iter_mut() {
                 let w = Self::natural_width(tab, cx.scale);
+                if rtl {
+                    x -= w;
+                }
                 let rect = Rect::new(x, bounds.min_y(), w, bounds.height());
                 self.tab_bounds.push(rect);
                 cx.layout_child(tab, rect);
-                x += w;
+                if !rtl {
+                    x += w;
+                }
             }
         }
     }
@@ -541,6 +563,11 @@ struct TabPanelChild {
 }
 
 impl Widget for TabPanelChild {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         self.content.measure(cx, constraints)
     }
@@ -594,6 +621,11 @@ struct PanelSet {
 }
 
 impl Widget for PanelSet {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut size = Vec2::ZERO;
         for panel in &mut self.panels {
@@ -1209,6 +1241,11 @@ impl Default for Tabs {
 }
 
 impl Widget for Tabs {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let panels = self.panels.measure(cx, constraints);
         // Cap the preferred minimum at the available max — a
@@ -1423,12 +1460,14 @@ impl Widget for Tabs {
                 EventResponse::Ignored
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
+                // RTL strips run right→left — the horizontal arrows
+                // swap so "forward" tracks the leading direction.
                 "ArrowRight" => {
-                    self.move_focus(1);
+                    self.move_focus(if cx.is_rtl() { -1 } else { 1 });
                     EventResponse::RequestRepaint
                 }
                 "ArrowLeft" => {
-                    self.move_focus(-1);
+                    self.move_focus(if cx.is_rtl() { 1 } else { -1 });
                     EventResponse::RequestRepaint
                 }
                 "Home" => {

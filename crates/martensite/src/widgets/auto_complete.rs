@@ -133,6 +133,11 @@ struct SuggestionItem {
 }
 
 impl Widget for SuggestionItem {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Content width (label approx + gutters) — reporting
         // `max_size.x` here makes the ScrollView think the column
@@ -249,6 +254,11 @@ struct SuggestionColumn {
 }
 
 impl Widget for SuggestionColumn {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Widest item — `SuggestionItem::measure` reports content
         // width so the ScrollView does not see a phantom horizontal
@@ -374,6 +384,11 @@ impl SuggestionPopup {
 }
 
 impl Widget for SuggestionPopup {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut s = self.scroll.measure(cx, constraints);
         s.y = s.y.min(self.max_rows as f32 * cx.pt(ROW_H) + cx.pt(2.0));
@@ -1384,6 +1399,11 @@ impl Default for AutoComplete {
 }
 
 impl Widget for AutoComplete {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A one-line editable field — the same 160x24 logical pt
         // request a `TextInput`-family face makes.

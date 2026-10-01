@@ -310,6 +310,11 @@ impl std::fmt::Debug for FlowBox {
 }
 
 impl Widget for FlowBox {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let gap = cx.pt(self.gap);
         let min_cell = cx.pt(MIN_CELL_PT);
@@ -536,6 +541,11 @@ mod tests {
     }
 
     impl Widget for Cell {
+        #[cfg(feature = "devtools-timemachine")]
+        fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+            Some(self)
+        }
+
         fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
             Vec2::new(self.w, self.h)
         }
@@ -647,6 +657,11 @@ mod tests {
     struct FillCell;
 
     impl Widget for FillCell {
+        #[cfg(feature = "devtools-timemachine")]
+        fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+            Some(self)
+        }
+
         fn measure(&mut self, _cx: &mut LayoutContext, c: LayoutConstraints) -> Vec2 {
             c.max_size
         }

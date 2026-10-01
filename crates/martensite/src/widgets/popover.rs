@@ -253,6 +253,11 @@ impl Drop for PopoverSurface {
 }
 
 impl Widget for PopoverSurface {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let pad = cx.pt(PAD);
         let title_h = if self.title.is_empty() {
@@ -849,6 +854,11 @@ impl Default for Popover {
 }
 
 impl Widget for Popover {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         // A marker — no inline extent; position it inside a sized
         // cell (or set `anchor`) to control the anchor rect.

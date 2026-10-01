@@ -223,6 +223,11 @@ impl Default for LevelBar {
 }
 
 impl Widget for LevelBar {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// Zone inks are severity-encoded by construction — `Low`/`Warning`
     /// zones deliberately paint the error/warning hues. The `@alarm`
     /// marker declares that to the design-lint lineage walk.

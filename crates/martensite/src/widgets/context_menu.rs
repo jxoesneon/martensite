@@ -244,6 +244,11 @@ impl ContextMenu {
 }
 
 impl Widget for ContextMenu {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn debug_name(&self) -> &'static str {
         "Context Menu"
     }

@@ -302,6 +302,11 @@ impl VuMeter {
 }
 
 impl Widget for VuMeter {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let strip = cx.pt(CHANNEL_PT) * self.levels.len() as f32
             + cx.pt(GAP_PT) * self.levels.len().saturating_sub(1) as f32

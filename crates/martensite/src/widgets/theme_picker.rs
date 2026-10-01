@@ -229,6 +229,11 @@ impl ThemePicker {
 }
 
 impl Widget for ThemePicker {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let n = self.options.len().max(1) as f32;
@@ -299,15 +304,27 @@ impl Widget for ThemePicker {
                 }
                 EventResponse::Ignored
             }
+            // Swatch strip — horizontal order mirrors under RTL:
+            // ArrowLeft advances, ArrowRight retreats.
             WidgetEvent::KeyPressed { key, .. } if key.as_str() == "ArrowRight" => {
-                if self.selected + 1 < self.options.len() {
+                if cx.is_rtl() {
+                    if self.selected > 0 {
+                        self.selected -= 1;
+                        return EventResponse::RequestRepaint;
+                    }
+                } else if self.selected + 1 < self.options.len() {
                     self.selected += 1;
                     return EventResponse::RequestRepaint;
                 }
                 EventResponse::Ignored
             }
             WidgetEvent::KeyPressed { key, .. } if key.as_str() == "ArrowLeft" => {
-                if self.selected > 0 {
+                if cx.is_rtl() {
+                    if self.selected + 1 < self.options.len() {
+                        self.selected += 1;
+                        return EventResponse::RequestRepaint;
+                    }
+                } else if self.selected > 0 {
                     self.selected -= 1;
                     return EventResponse::RequestRepaint;
                 }

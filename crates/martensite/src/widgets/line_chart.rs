@@ -119,6 +119,10 @@ pub struct LineChart {
     bounds: Rect,
     text_painter: Option<SharedTextPainter>,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Line chart"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl LineChart {
@@ -140,6 +144,7 @@ impl LineChart {
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             text_painter: None,
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -290,6 +295,26 @@ impl Default for LineChart {
     }
 }
 
+impl LineChart {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Line chart"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::line_chart::LineChart;
+    ///
+    /// let w = LineChart::new().a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for LineChart {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
@@ -309,7 +334,7 @@ impl Widget for LineChart {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Image);
-        node.set_label("Line chart");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Line chart"));
         // Per-series summary — latest/min/max — so the trend is
         // legible without the pixels (D2: a chart's accessible
         // description must carry the data, not just the series names).

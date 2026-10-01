@@ -21,6 +21,7 @@ martensite = { workspace = true, features = [
     "devtools-timemachine",
 ] }
 martensite-core = { workspace = true }
+martensite-engine-bridge = { workspace = true }
 martensite-reactive = { workspace = true }
 martensite-theme = { workspace = true }
 martensite-layout = { workspace = true }

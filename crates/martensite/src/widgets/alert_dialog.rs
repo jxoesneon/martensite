@@ -427,6 +427,11 @@ impl Drop for AlertDialog {
 }
 
 impl Widget for AlertDialog {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let w = cx.pt(CARD_W).min(constraints.max_size.x.max(0.0));
         let pad = cx.pt(PAD);
@@ -451,17 +456,28 @@ impl Widget for AlertDialog {
         let pad = cx.pt(PAD);
         let title_h = cx.pt(TITLE_H);
         let button_h = cx.pt(BUTTON_H);
-        // Buttons sit right-aligned at the bottom, laid out in order.
+        // Buttons hug the trailing edge — right under LTR, left under
+        // RTL — laid out in reading order.
         self.button_rects.clear();
-        let mut bx = bounds.max_x() - pad;
+        let rtl = cx.is_rtl();
+        let mut bx = if rtl {
+            bounds.min_x() + pad
+        } else {
+            bounds.max_x() - pad
+        };
         let by = bounds.max_y() - pad - button_h;
         for (label, _) in &self.buttons {
             // Width follows the label with a sensible minimum — alert
             // buttons carry short verbs.
             let w = (label.chars().count() as f32 * cx.pt(7.5) + cx.pt(28.0)).max(cx.pt(72.0));
-            bx -= w;
-            self.button_rects.push(Rect::new(bx, by, w, button_h));
-            bx -= cx.pt(BUTTON_GAP);
+            if rtl {
+                self.button_rects.push(Rect::new(bx, by, w, button_h));
+                bx += w + cx.pt(BUTTON_GAP);
+            } else {
+                bx -= w;
+                self.button_rects.push(Rect::new(bx, by, w, button_h));
+                bx -= cx.pt(BUTTON_GAP);
+            }
         }
         let message_top = bounds.min_y() + title_h + pad * 0.75;
         self.message_rect = Rect::new(
@@ -525,12 +541,18 @@ impl Widget for AlertDialog {
                     self.set_result(result);
                     return EventResponse::Handled;
                 }
-                "ArrowRight" | "ArrowDown" if !self.buttons.is_empty() => {
-                    self.highlighted = (self.highlighted + 1).min(self.buttons.len() - 1);
-                    return EventResponse::RequestRepaint;
-                }
-                "ArrowLeft" | "ArrowUp" if !self.buttons.is_empty() => {
-                    self.highlighted = self.highlighted.saturating_sub(1);
+                // The button row is horizontal — Left/Right mirror
+                // under RTL, Up/Down don't.
+                "ArrowRight" | "ArrowDown" | "ArrowLeft" | "ArrowUp"
+                    if !self.buttons.is_empty() =>
+                {
+                    let fwd = matches!(key.as_str(), "ArrowRight" | "ArrowDown")
+                        != (cx.is_rtl() && matches!(key.as_str(), "ArrowRight" | "ArrowLeft"));
+                    if fwd {
+                        self.highlighted = (self.highlighted + 1).min(self.buttons.len() - 1);
+                    } else {
+                        self.highlighted = self.highlighted.saturating_sub(1);
+                    }
                     return EventResponse::RequestRepaint;
                 }
                 _ => {}

@@ -180,11 +180,22 @@ impl AlphaSlider {
     /// Alpha picked at rail x-position `x`.
     fn alpha_at(&self, x: f32) -> f32 {
         let w = self.rail.width().max(1.0);
-        ((x - self.rail.min_x()) / w).clamp(0.0, 1.0)
+        let f = ((x - self.rail.min_x()) / w).clamp(0.0, 1.0);
+        // Under RTL the alpha axis runs right-to-left.
+        if martensite_core::intl::ambient_direction().is_rtl() {
+            1.0 - f
+        } else {
+            f
+        }
     }
 }
 
 impl Widget for AlphaSlider {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(W_PT).min(constraints.max_size.x.max(0.0)),
@@ -247,13 +258,11 @@ impl Widget for AlphaSlider {
                 EventResponse::Ignored
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
-                "ArrowRight" | "ArrowUp" => {
-                    self.set_alpha(self.alpha + 0.01);
-                    self.changed = Some(self.alpha);
-                    EventResponse::RequestRepaint
-                }
-                "ArrowLeft" | "ArrowDown" => {
-                    self.set_alpha(self.alpha - 0.01);
+                "ArrowRight" | "ArrowUp" | "ArrowLeft" | "ArrowDown" => {
+                    // Under RTL the horizontal axis mirrors.
+                    let right = key == "ArrowRight" || key == "ArrowUp";
+                    let d = if right != cx.is_rtl() { 0.01 } else { -0.01 };
+                    self.set_alpha(self.alpha + d);
                     self.changed = Some(self.alpha);
                     EventResponse::RequestRepaint
                 }
@@ -307,8 +316,15 @@ impl Widget for AlphaSlider {
         // Transparent → opaque color ramp on top.
         let steps = (self.rail.width() / (s * 2.0).max(1.0)).ceil().max(1.0) as usize;
         let step_w = self.rail.width() / steps as f32;
+        let rtl = cx.is_rtl();
         for i in 0..steps {
-            let t = i as f32 / (steps.saturating_sub(1)).max(1) as f32;
+            // Under RTL the alpha ramp mirrors so it matches
+            // `alpha_at`'s mirrored mapping.
+            let t = if rtl {
+                1.0 - i as f32 / (steps.saturating_sub(1)).max(1) as f32
+            } else {
+                i as f32 / (steps.saturating_sub(1)).max(1) as f32
+            };
             cx.list.push_fill_rect(
                 krect(Rect::new(
                     self.rail.min_x() + i as f32 * step_w,
@@ -325,8 +341,9 @@ impl Widget for AlphaSlider {
             );
         }
         cx.list.pop_clip();
-        // Handle at the alpha position.
-        let hx = self.rail.min_x() + self.alpha * self.rail.width();
+        // Handle at the alpha position — mirrored under RTL.
+        let frac = if rtl { 1.0 - self.alpha } else { self.alpha };
+        let hx = self.rail.min_x() + frac * self.rail.width();
         let hy = (self.rail.min_y() + self.rail.max_y()) / 2.0;
         let r = self.rail.height() / 2.0 - 1.0 * s;
         let hr = krect(Rect::new(hx - r, hy - r, r * 2.0, r * 2.0));

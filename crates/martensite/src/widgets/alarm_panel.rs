@@ -411,6 +411,11 @@ impl AlarmPanel {
 }
 
 impl Widget for AlarmPanel {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// Alarm annunciator — reserved-hue paint is the alarm channel
     /// here, declared via the `@alarm` marker for the lint lineage.
     fn debug_name(&self) -> &'static str {

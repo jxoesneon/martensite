@@ -81,6 +81,10 @@ pub struct MediaControls {
     mute_rect: Rect,
     fs_rect: Rect,
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Media controls"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl Default for MediaControls {
@@ -122,6 +126,7 @@ impl MediaControls {
             fs_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -401,6 +406,26 @@ impl MediaControls {
     }
 }
 
+impl MediaControls {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Media controls"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::media_controls::MediaControls;
+    ///
+    /// let w = MediaControls::new().a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for MediaControls {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
@@ -467,7 +492,7 @@ impl Widget for MediaControls {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Group);
-        node.set_label("Media controls");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Media controls"));
         node.set_value(format!(
             "{} of {}, {}",
             Self::fmt_time(self.position),

@@ -313,6 +313,11 @@ struct CommandItem {
 }
 
 impl Widget for CommandItem {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Content width (title + subtitle approx + gutters) —
         // reporting `max_size.x` here makes the ScrollView think the
@@ -467,6 +472,11 @@ struct CommandColumn {
 }
 
 impl Widget for CommandColumn {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Widest item — `CommandItem::measure` reports content width
         // so the ScrollView does not see a phantom horizontal
@@ -592,6 +602,11 @@ impl PalettePopup {
 }
 
 impl Widget for PalettePopup {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut s = self.scroll.measure(cx, constraints);
         s.y = s.y.min(self.max_rows as f32 * cx.pt(ROW_H) + cx.pt(2.0));
@@ -1604,6 +1619,11 @@ impl Default for CommandPalette {
 }
 
 impl Widget for CommandPalette {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A one-line editable field — wider than a plain autocomplete
         // because a launcher is the window's primary surface.

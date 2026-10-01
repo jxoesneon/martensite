@@ -228,6 +228,11 @@ impl FileChooserButton {
 }
 
 impl Widget for FileChooserButton {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let text_w = self.face_text().chars().count() as f32 * FONT_PT * 0.55 * cx.scale;
         let w = text_w + cx.pt(2.0 * PAD_PT + GLYPH_PT + 6.0);

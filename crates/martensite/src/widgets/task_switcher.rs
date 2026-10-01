@@ -236,6 +236,11 @@ impl TaskSwitcher {
 }
 
 impl Widget for TaskSwitcher {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let n = self.items.len().max(1) as f32;
@@ -259,12 +264,15 @@ impl Widget for TaskSwitcher {
         let gap = GAP_PT * s;
         let n = self.items.len();
         let strip_w = n as f32 * (tile + gap) - if n > 0 { gap } else { 0.0 };
-        let mut x = bounds.min_x() + (bounds.width() - strip_w).max(0.0) / 2.0;
+        let x = bounds.min_x() + (bounds.width() - strip_w).max(0.0) / 2.0;
         let y = bounds.min_y() + (bounds.height() - tile - LABEL_PT * s).max(0.0) / 2.0;
         self.tiles.clear();
-        for _ in &self.items {
-            self.tiles.push(Rect::new(x, y, tile, tile));
-            x += tile + gap;
+        // Under RTL the strip mirrors — item 0 anchors on the right.
+        let rtl = cx.is_rtl();
+        for i in 0..n {
+            let slot = if rtl { n - 1 - i } else { i };
+            self.tiles
+                .push(Rect::new(x + slot as f32 * (tile + gap), y, tile, tile));
         }
     }
 
@@ -279,11 +287,18 @@ impl Widget for TaskSwitcher {
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         match cx.event {
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
-                "ArrowLeft" | "ArrowUp" => {
+                // Horizontal strip navigation — Left/Right mirror
+                // under RTL; Up/Down and Tab don't.
+                "ArrowLeft" | "ArrowRight" => {
+                    let fwd = (key == "ArrowRight") != cx.is_rtl();
+                    self.cycle(if fwd { 1 } else { -1 });
+                    EventResponse::RequestRepaint
+                }
+                "ArrowUp" => {
                     self.cycle(-1);
                     EventResponse::RequestRepaint
                 }
-                "ArrowRight" | "ArrowDown" | "Tab" => {
+                "ArrowDown" | "Tab" => {
                     self.cycle(1);
                     EventResponse::RequestRepaint
                 }

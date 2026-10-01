@@ -164,6 +164,11 @@ fn band_rect(a: Vec2, c: Vec2) -> Rect {
 }
 
 impl Widget for RubberBand {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         constraints.max_size
     }

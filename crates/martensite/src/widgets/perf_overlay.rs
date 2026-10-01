@@ -228,6 +228,11 @@ impl Default for PerfOverlay {
 }
 
 impl Widget for PerfOverlay {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// Frame-budget violations are the alarm channel by construction —
     /// `BAD` paints the reserved alarm hue deliberately. The `@alarm`
     /// marker declares that to the design-lint lineage walk.

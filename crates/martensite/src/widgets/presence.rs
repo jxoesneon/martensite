@@ -278,6 +278,11 @@ impl Presence {
 }
 
 impl Widget for Presence {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// The dot is a presence status lamp — a routine-state palette,
     /// not the alarm channel, so no `@alarm` marker: nothing in this
     /// widget paints the reserved alarm-red family.

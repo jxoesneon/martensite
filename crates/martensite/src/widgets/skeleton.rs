@@ -69,6 +69,10 @@ pub struct Skeleton {
     phase: f32,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Loading"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl Skeleton {
@@ -156,6 +160,7 @@ impl Skeleton {
             child_rect: Rect::default(),
             phase: 0.0,
             cached_bounds: Rect::default(),
+            a11y_label: None,
         }
     }
 
@@ -214,6 +219,26 @@ impl Skeleton {
     }
 }
 
+impl Skeleton {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Loading"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::skeleton::Skeleton;
+    ///
+    /// let w = Skeleton::lines(3).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for Skeleton {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A wrapped child owns the size in both states — measuring
@@ -242,7 +267,7 @@ impl Widget for Skeleton {
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::GenericContainer);
         if self.loading {
-            node.set_label("Loading");
+            node.set_label(self.a11y_label.as_deref().unwrap_or("Loading"));
             node.set_busy();
         }
     }

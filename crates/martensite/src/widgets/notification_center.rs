@@ -353,6 +353,11 @@ impl NotificationCenter {
 }
 
 impl Widget for NotificationCenter {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(W_PT).min(constraints.max_size.x.max(0.0)),
@@ -466,11 +471,16 @@ impl Widget for NotificationCenter {
                 &martensite_core::shape::Shape::rounded(6.0 * s),
                 cx.color(TokenKey::BackgroundColor, CARD),
             );
+            // Title/body anchor to the leading edge; the dismiss ✕
+            // and meta sit on the trailing edge — under RTL the
+            // trailing edge is the left.
+            let rtl = cx.is_rtl();
+            let text_x = r.min_x() + 8.0 * s;
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
                 kr,
-                kurbo::Point::new(f64::from(r.min_x() + 8.0 * s), f64::from(y + 7.0 * s)),
+                kurbo::Point::new(f64::from(text_x), f64::from(y + 7.0 * s)),
                 &n.title,
                 title_sz,
                 cx.color(TokenKey::TextColor, TITLE),
@@ -479,16 +489,17 @@ impl Widget for NotificationCenter {
                 painter,
                 cx.list,
                 kr,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + 8.0 * s),
-                    f64::from(y + 7.0 * s + title_sz * 1.5),
-                ),
+                kurbo::Point::new(f64::from(text_x), f64::from(y + 7.0 * s + title_sz * 1.5)),
                 &n.body,
                 body_sz,
                 cx.color(TokenKey::TextMutedColor, BODY),
             );
-            // Meta label at the card's top-right, ✕ beside it.
-            let close = Rect::new(r.max_x() - 20.0 * s, y + 6.0 * s, 16.0 * s, 16.0 * s);
+            // Meta label at the card's trailing edge, ✕ beside it.
+            let close = if rtl {
+                Rect::new(r.min_x() + 4.0 * s, y + 6.0 * s, 16.0 * s, 16.0 * s)
+            } else {
+                Rect::new(r.max_x() - 20.0 * s, y + 6.0 * s, 16.0 * s, 16.0 * s)
+            };
             let dismiss_ink = cx.color(TokenKey::TextMutedColor, DISMISS);
             let icon_ok = crate::icons::builtin()
                 .lookup("status.close")
@@ -511,13 +522,15 @@ impl Widget for NotificationCenter {
             hits.dismiss.push((i, close));
             if !n.meta.is_empty() {
                 let mw = n.meta.chars().count() as f32 * body_sz * 0.55;
+                let meta_x = if rtl {
+                    close.max_x() + 6.0 * s
+                } else {
+                    close.min_x() - mw - 6.0 * s
+                };
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,
-                    kurbo::Point::new(
-                        f64::from(close.min_x() - mw - 6.0 * s),
-                        f64::from(y + 8.0 * s),
-                    ),
+                    kurbo::Point::new(f64::from(meta_x), f64::from(y + 8.0 * s)),
                     &n.meta,
                     body_sz * 0.85,
                     cx.color(TokenKey::TextMutedColor, BODY),

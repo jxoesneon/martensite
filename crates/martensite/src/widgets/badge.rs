@@ -307,6 +307,10 @@ pub struct Badge {
     badge_rect: Rect,
     /// Shared shaped-text painter (count label).
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"unread"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl Badge {
@@ -332,6 +336,7 @@ impl Badge {
             child_rect: Rect::default(),
             badge_rect: Rect::default(),
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -521,6 +526,26 @@ impl Badge {
     }
 }
 
+impl Badge {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"unread"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::badge::Badge;
+    ///
+    /// let w = Badge::new(5).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for Badge {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         if let Some(child) = &mut self.child {
@@ -571,7 +596,7 @@ impl Widget for Badge {
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Status);
         if self.is_dot() {
-            node.set_label("unread");
+            node.set_label(self.a11y_label.as_deref().unwrap_or("unread"));
         } else {
             node.set_label(self.text());
         }

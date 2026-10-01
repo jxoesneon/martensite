@@ -331,6 +331,11 @@ impl SettingsRow {
 }
 
 impl Widget for SettingsRow {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = if self.subtitle.is_some() {
             ROW_PT
@@ -695,6 +700,11 @@ impl SettingsGroup {
 }
 
 impl Widget for SettingsGroup {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let header_h = if self.header.is_empty() {
             0.0

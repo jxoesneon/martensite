@@ -101,6 +101,11 @@ struct OptionItem {
 }
 
 impl Widget for OptionItem {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Content width (label approx + gutters) — reporting
         // `max_size.x` here makes the ScrollView think the column
@@ -194,17 +199,19 @@ impl Widget for OptionItem {
             // `✓` stays the fallback glyph.
             let ink = cx.color(TokenKey::AccentColor, CHECK);
             let side = font_px;
+            // The check hugs the leading edge — the right edge under
+            // RTL.
+            let check_x = if cx.is_rtl() {
+                b.max_x() - cx.pt(6.0) - side
+            } else {
+                b.min_x() + cx.pt(6.0)
+            };
             let icon_ok = crate::icons::builtin()
                 .lookup("status.check")
                 .is_some_and(|d| {
                     crate::widgets::morph_icon::paint_icon_d(
                         cx.list,
-                        Rect::new(
-                            b.min_x() + cx.pt(6.0),
-                            b.min_y() + (b.height() - side) / 2.0,
-                            side,
-                            side,
-                        ),
+                        Rect::new(check_x, b.min_y() + (b.height() - side) / 2.0, side, side),
                         d,
                         cx.scale,
                         ink,
@@ -215,7 +222,7 @@ impl Widget for OptionItem {
                     crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                     cx.list,
                     row_strip,
-                    f64::from(b.min_x() + cx.pt(6.0)),
+                    f64::from(check_x),
                     "✓",
                     font_px,
                     ink,
@@ -229,15 +236,30 @@ impl Widget for OptionItem {
         };
         if let Some(label) = state.options.get(self.index) {
             // Clip the option label to the row — a long option can't
-            // spill past the popup's right edge.
-            let text_x = b.min_x() + cx.pt(24.0);
+            // spill past the check zone on the leading edge.
+            let (text_min, text_max) = if cx.is_rtl() {
+                (b.min_x() + cx.pt(6.0), b.max_x() - cx.pt(24.0))
+            } else {
+                (b.min_x() + cx.pt(24.0), b.max_x() - cx.pt(6.0))
+            };
+            let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+            // Under RTL the label anchors on the right edge of its
+            // clip — measure to find the mirrored origin.
+            let text_x = if cx.is_rtl() {
+                let w = painter
+                    .and_then(|p| p.measure_text(label.as_str(), font_px))
+                    .unwrap_or(font_px * label.len() as f32 * 0.5);
+                text_max - w
+            } else {
+                text_min
+            };
             crate::text_paint::paint_label_vcenter(
-                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                painter,
                 cx.list,
                 kurbo::Rect::new(
-                    f64::from(text_x),
+                    f64::from(text_min),
                     f64::from(b.min_y()),
-                    f64::from(b.max_x() - cx.pt(6.0)),
+                    f64::from(text_max),
                     f64::from(b.max_y()),
                 ),
                 f64::from(text_x),
@@ -258,6 +280,11 @@ struct OptionColumn {
 }
 
 impl Widget for OptionColumn {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Widest item — `OptionItem::measure` reports content width so
         // the ScrollView does not see a phantom horizontal overflow.
@@ -377,6 +404,11 @@ impl ListBoxPopup {
 }
 
 impl Widget for ListBoxPopup {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut s = self.scroll.measure(cx, constraints);
         s.y = s.y.min(MAX_VISIBLE_ROWS * cx.pt(ROW_H) + cx.pt(2.0));
@@ -1067,6 +1099,17 @@ impl Widget for Dropdown {
         }
     }
 
+    /// `@labeled` declares the accessible name to design-lint's
+    /// `icon-only-control` rule — the paint list can't see the
+    /// AccessKit label, so the scope marker carries it.
+    fn debug_name(&self) -> &'static str {
+        if self.label.as_ref().is_some_and(|l| !l.is_empty()) {
+            "Dropdown@labeled"
+        } else {
+            "Dropdown"
+        }
+    }
+
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::ComboBox);
         if let Some(ref label) = self.label {
@@ -1282,15 +1325,30 @@ impl Widget for Dropdown {
             .to_string();
         let font_px = cx.pt(14.0);
         // Clip the selected label to the face minus the chevron zone —
-        // a long option can't spill past the field edge.
-        let text_x = b.min_x() + cx.pt(10.0);
+        // a long option can't spill past the field edge. Under RTL
+        // the chevron sits on the left and the label anchors right.
+        let rtl = cx.is_rtl();
+        let (text_min, text_max) = if rtl {
+            (b.min_x() + cx.pt(24.0), b.max_x() - cx.pt(10.0))
+        } else {
+            (b.min_x() + cx.pt(10.0), b.max_x() - cx.pt(24.0))
+        };
+        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+        let text_x = if rtl {
+            let w = painter
+                .and_then(|p| p.measure_text(&text, font_px))
+                .unwrap_or(font_px * text.len() as f32 * 0.5);
+            text_max - w
+        } else {
+            text_min
+        };
         crate::text_paint::paint_label_vcenter(
-            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+            painter,
             cx.list,
             kurbo::Rect::new(
-                f64::from(text_x),
+                f64::from(text_min),
                 f64::from(b.min_y()),
-                f64::from(b.max_x() - cx.pt(24.0)),
+                f64::from(text_max),
                 f64::from(b.max_y()),
             ),
             f64::from(text_x),
@@ -1298,8 +1356,12 @@ impl Widget for Dropdown {
             font_px,
             ink,
         );
-        // Disclosure triangle.
-        let cx_mid = f64::from(b.max_x() - cx.pt(16.0));
+        // Disclosure triangle on the trailing edge.
+        let cx_mid = if rtl {
+            f64::from(b.min_x() + cx.pt(16.0))
+        } else {
+            f64::from(b.max_x() - cx.pt(16.0))
+        };
         let cy = f64::from(b.min_y() + b.height() / 2.0);
         let tri = kurbo::BezPath::from_vec(vec![
             kurbo::PathEl::MoveTo(kurbo::Point::new(cx_mid - cx.ptf(5.0), cy - cx.ptf(2.5))),

@@ -277,6 +277,11 @@ impl ScrollIndicator {
 }
 
 impl Widget for ScrollIndicator {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Overlays fill the scrollable's bounds.
         let _ = cx;

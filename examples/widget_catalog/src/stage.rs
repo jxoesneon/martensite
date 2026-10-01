@@ -196,6 +196,27 @@ impl Widget for StageHost {
         let _g = self.ambient_guard();
         self.viewport_bounds = self.content_box(bounds);
         cx.layout_child(&mut self.viewport, self.viewport_bounds);
+        // Center content when it fits inside the viewport on an axis —
+        // keeps a lone widget visually centered while still allowing
+        // pan of oversized content.
+        let content = self.viewport.content_size() * self.viewport.zoom_value();
+        let pan = self.viewport.pan_offset();
+        let center = (self.viewport_bounds.size - content) * 0.5;
+        let new_pan = Vec2::new(
+            if content.x <= self.viewport_bounds.width() {
+                center.x
+            } else {
+                pan.x
+            },
+            if content.y <= self.viewport_bounds.height() {
+                center.y
+            } else {
+                pan.y
+            },
+        );
+        if new_pan != pan {
+            self.viewport.set_pan(new_pan);
+        }
     }
 
     fn paint(&self, cx: &mut PaintContext) {

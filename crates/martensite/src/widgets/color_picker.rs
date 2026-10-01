@@ -304,6 +304,9 @@ struct ColorSurface {
     painted_shape: Mutex<Shape>,
     /// Shared shaped-text painter from the owning `ColorPicker`.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label carried over from the `ColorPicker`'s
+    /// `label` override — unset uses `"Color picker"`.
+    a11y_label: Option<String>,
 }
 
 impl ColorSurface {
@@ -345,7 +348,9 @@ impl ColorSurface {
         self.note_edit();
     }
 
-    /// Keyboard nudge on the active zone.
+    /// Keyboard nudge on the active zone. The SV square keeps
+    /// absolute arrow semantics (physical surface); the horizontal
+    /// Hue/Alpha strips mirror left/right under RTL.
     fn nudge(&mut self, key: &str) -> bool {
         let signed = match key {
             "ArrowLeft" | "ArrowDown" => -1.0f32,
@@ -361,11 +366,22 @@ impl ColorSurface {
                     self.v = (self.v + signed * 0.04).clamp(0.0, 1.0);
                 }
             },
-            Zone::Hue => {
-                self.h = (self.h + signed * 6.0).rem_euclid(360.0);
-            }
-            Zone::Alpha => {
-                self.a = (self.a + signed * 0.05).clamp(0.0, 1.0);
+            Zone::Hue | Zone::Alpha => {
+                let signed = if martensite_core::intl::ambient_direction().is_rtl()
+                    && (key == "ArrowLeft" || key == "ArrowRight")
+                {
+                    -signed
+                } else {
+                    signed
+                };
+                match self.active {
+                    Zone::Hue => {
+                        self.h = (self.h + signed * 6.0).rem_euclid(360.0);
+                    }
+                    _ => {
+                        self.a = (self.a + signed * 0.05).clamp(0.0, 1.0);
+                    }
+                }
             }
         }
         self.note_edit();
@@ -374,6 +390,11 @@ impl ColorSurface {
 }
 
 impl Widget for ColorSurface {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut h = cx.pt(PAD) * 2.0
             + cx.pt(SV_H)
@@ -413,7 +434,7 @@ impl Widget for ColorSurface {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Dialog);
-        node.set_label("Color picker");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Color picker"));
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -1129,6 +1150,7 @@ impl ColorPicker {
                 channel: Arc::clone(&self.channel),
                 painted_shape: Mutex::new(Shape::RECT),
                 text_painter: self.text_painter.clone(),
+                a11y_label: self.label.clone(),
             };
             self.popup_id =
                 Some(overlay.open(Box::new(surface), OverlayAnchor::Bounds(self.cached_bounds)));
@@ -1156,6 +1178,11 @@ impl Default for ColorPicker {
 }
 
 impl Widget for ColorPicker {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(WELL_W).min(constraints.max_size.x.max(0.0)),

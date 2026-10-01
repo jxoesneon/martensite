@@ -182,6 +182,11 @@ impl Attachment {
 }
 
 impl Widget for Attachment {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let w = (PAD_PT + ICON_PT + GAP_PT + 120.0 + GAP_PT + CLOSE_PT + PAD_PT) * s;

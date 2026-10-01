@@ -258,6 +258,11 @@ impl Legend {
 }
 
 impl Widget for Legend {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // One row at natural height; entries wrap in `layout` when
         // narrower.
@@ -318,11 +323,22 @@ impl Widget for Legend {
                 EventResponse::Ignored
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
-                "ArrowLeft" | "ArrowUp" => {
+                // The flow row is horizontal — Left/Right mirror
+                // under RTL; Up/Down wrap rows vertically.
+                "ArrowLeft" | "ArrowRight" => {
+                    let fwd = (key == "ArrowRight") != cx.is_rtl();
+                    self.focus = if fwd {
+                        (self.focus + 1).min(self.entries.len().saturating_sub(1))
+                    } else {
+                        self.focus.saturating_sub(1)
+                    };
+                    EventResponse::RequestRepaint
+                }
+                "ArrowUp" => {
                     self.focus = self.focus.saturating_sub(1);
                     EventResponse::RequestRepaint
                 }
-                "ArrowRight" | "ArrowDown" => {
+                "ArrowDown" => {
                     self.focus = (self.focus + 1).min(self.entries.len().saturating_sub(1));
                     EventResponse::RequestRepaint
                 }

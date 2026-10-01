@@ -289,7 +289,14 @@ impl SplitView {
         let b = self.bounds;
         match self.orientation {
             SplitOrientation::Horizontal => {
-                let x = b.origin.x + b.size.x * self.ratio - d / 2.0;
+                // Under RTL the first pane anchors on the right — the
+                // divider's ratio axis mirrors.
+                let r = if martensite_core::intl::ambient_direction().is_rtl() {
+                    1.0 - self.ratio
+                } else {
+                    self.ratio
+                };
+                let x = b.origin.x + b.size.x * r - d / 2.0;
                 Rect::new(x, b.origin.y, d, b.size.y)
             }
             SplitOrientation::Vertical => {
@@ -307,6 +314,11 @@ impl Default for SplitView {
 }
 
 impl Widget for SplitView {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Two-pane minimums: both panes want their minimums side by
         // side (or stacked) plus the divider.
@@ -346,15 +358,19 @@ impl Widget for SplitView {
         let (a, b) = match self.orientation {
             SplitOrientation::Horizontal => {
                 let w = (bounds.size.x - d) * self.ratio;
-                (
-                    Rect::new(bounds.origin.x, bounds.origin.y, w.max(0.0), bounds.size.y),
-                    Rect::new(
-                        bounds.origin.x + w + d,
-                        bounds.origin.y,
-                        (bounds.size.x - w - d).max(0.0),
-                        bounds.size.y,
-                    ),
-                )
+                let first = Rect::new(bounds.origin.x, bounds.origin.y, w.max(0.0), bounds.size.y);
+                let second = Rect::new(
+                    bounds.origin.x + w + d,
+                    bounds.origin.y,
+                    (bounds.size.x - w - d).max(0.0),
+                    bounds.size.y,
+                );
+                // Under RTL the first pane anchors on the right.
+                if cx.is_rtl() {
+                    (second, first)
+                } else {
+                    (first, second)
+                }
             }
             SplitOrientation::Vertical => {
                 let h = (bounds.size.y - d) * self.ratio;
@@ -399,7 +415,7 @@ impl Widget for SplitView {
         match cx.event {
             WidgetEvent::PointerMoved { position } => {
                 if self.dragging {
-                    let frac = match self.orientation {
+                    let mut frac = match self.orientation {
                         SplitOrientation::Horizontal => {
                             (position.x - self.bounds.origin.x) / self.bounds.size.x
                         }
@@ -407,6 +423,11 @@ impl Widget for SplitView {
                             (position.y - self.bounds.origin.y) / self.bounds.size.y
                         }
                     };
+                    // Horizontal drags mirror under RTL — the ratio
+                    // still measures the first (now right-side) pane.
+                    if cx.is_rtl() && self.orientation == SplitOrientation::Horizontal {
+                        frac = 1.0 - frac;
+                    }
                     self.commit(frac);
                     return EventResponse::RequestRepaint;
                 }
@@ -450,11 +471,24 @@ impl Widget for SplitView {
                 let step = KEY_STEP;
                 match key.as_str() {
                     "ArrowLeft" | "ArrowUp" => {
-                        self.commit(self.ratio - step);
+                        // Under RTL the left arrow moves the divider
+                        // visually left — toward a *larger* first
+                        // (right-anchored) pane.
+                        let s = if cx.is_rtl() && self.orientation == SplitOrientation::Horizontal {
+                            step
+                        } else {
+                            -step
+                        };
+                        self.commit(self.ratio + s);
                         EventResponse::Handled
                     }
                     "ArrowRight" | "ArrowDown" => {
-                        self.commit(self.ratio + step);
+                        let s = if cx.is_rtl() && self.orientation == SplitOrientation::Horizontal {
+                            -step
+                        } else {
+                            step
+                        };
+                        self.commit(self.ratio + s);
                         EventResponse::Handled
                     }
                     "Home" => {

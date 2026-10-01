@@ -136,6 +136,11 @@ impl PopconfirmSurface {
 }
 
 impl Widget for PopconfirmSurface {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let pad = cx.pt(PAD);
         let question_w = self.question.chars().count() as f32 * cx.pt(7.0);
@@ -160,8 +165,17 @@ impl Widget for PopconfirmSurface {
         // convention puts the primary action last (rightmost).
         let confirm_w = Self::button_width(&self.confirm_label, |v| cx.pt(v));
         let cancel_w = Self::button_width(&self.cancel_label, |v| cx.pt(v));
-        let confirm_x = bounds.max_x() - pad - confirm_w;
-        let cancel_x = confirm_x - cx.pt(BUTTON_GAP) - cancel_w;
+        // The primary action hugs the trailing edge — the left edge
+        // under RTL.
+        let (confirm_x, cancel_x) = if cx.is_rtl() {
+            (
+                bounds.min_x() + pad,
+                bounds.min_x() + pad + confirm_w + cx.pt(BUTTON_GAP),
+            )
+        } else {
+            let c = bounds.max_x() - pad - confirm_w;
+            (c, c - cx.pt(BUTTON_GAP) - cancel_w)
+        };
         self.button_rects = [
             Rect::new(cancel_x, by, cancel_w, button_h),
             Rect::new(confirm_x, by, confirm_w, button_h),
@@ -732,6 +746,11 @@ impl Default for Popconfirm {
 }
 
 impl Widget for Popconfirm {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         // A marker — no inline extent; position it inside a sized
         // cell (or set `anchor`) to control the anchor rect.

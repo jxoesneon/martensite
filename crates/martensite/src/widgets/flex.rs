@@ -529,6 +529,11 @@ impl Flex {
 }
 
 impl Widget for Flex {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let n = self.children.len();
         if n == 0 {
@@ -771,6 +776,11 @@ mod tests {
     struct Fixed(Vec2);
 
     impl Widget for Fixed {
+        #[cfg(feature = "devtools-timemachine")]
+        fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+            Some(self)
+        }
+
         fn measure(&mut self, _cx: &mut LayoutContext, c: LayoutConstraints) -> Vec2 {
             self.0.clamp(Vec2::ZERO, c.max_size)
         }

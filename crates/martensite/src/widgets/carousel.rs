@@ -297,19 +297,37 @@ impl Carousel {
         self.pages.len()
     }
 
-    /// Which arrow zone `local` (widget-local point) hits.
-    fn arrow_hit(&self, local: Vec2, width: f32, arrow_w: f32) -> i8 {
+    /// Which arrow zone `local` (widget-local point) hits — the
+    /// return is the step sign (`-1` prev, `1` next), so under `rtl`
+    /// the edge zones map to the opposite step.
+    fn arrow_hit(&self, local: Vec2, width: f32, arrow_w: f32, rtl: bool) -> i8 {
         if local.x < arrow_w {
-            -1
+            if rtl {
+                1
+            } else {
+                -1
+            }
         } else if local.x > width - arrow_w {
-            1
+            if rtl {
+                -1
+            } else {
+                1
+            }
         } else {
             0
         }
     }
 
     /// Which dot `local` hits — dots are centered under the content.
-    fn dot_hit(&self, local: Vec2, width: f32, dots_h: f32, height: f32) -> Option<usize> {
+    /// Under `rtl` the strip runs right-to-left (page 0 on the right).
+    fn dot_hit(
+        &self,
+        local: Vec2,
+        width: f32,
+        dots_h: f32,
+        height: f32,
+        rtl: bool,
+    ) -> Option<usize> {
         if local.y < height - dots_h {
             return None;
         }
@@ -321,7 +339,7 @@ impl Carousel {
         for i in 0..n {
             let dx = x0 + i as f32 * (d + gap);
             if local.x >= dx && local.x <= dx + d {
-                return Some(i);
+                return Some(if rtl { n - 1 - i } else { i });
             }
         }
         None
@@ -335,6 +353,11 @@ impl Default for Carousel {
 }
 
 impl Widget for Carousel {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Widest/tallest page plus the dot strip.
         let mut size = Vec2::new(200.0, 140.0);
@@ -387,8 +410,12 @@ impl Widget for Carousel {
         let strip_w = n as f32 * d + (n - 1) as f32 * gap;
         let x0 = b.min_x() + (b.width() - strip_w) * 0.5;
         let cy = b.max_y() - dots_h * 0.5;
+        // Under RTL the dot strip runs right-to-left: page 0 anchors
+        // on the right, matching `dot_hit`'s mirrored indices.
+        let rtl = cx.is_rtl();
         for i in 0..n {
-            let dx = f64::from(x0 + i as f32 * (d + gap));
+            let slot = if rtl { n - 1 - i } else { i };
+            let dx = f64::from(x0 + slot as f32 * (d + gap));
             let r = kurbo::Rect::new(
                 dx,
                 f64::from(cy - d * 0.5),
@@ -411,13 +438,25 @@ impl Widget for Carousel {
         );
         let can_prev = self.wrap || self.current > 0;
         let can_next = self.wrap || self.current + 1 < n;
+        // Under RTL the edges swap roles: the leading edge (right)
+        // steps back, the trailing edge (left) steps forward.
+        let prev_x = if rtl {
+            b.width() - arrow_w * 0.5
+        } else {
+            arrow_w * 0.5
+        };
+        let next_x = if rtl {
+            arrow_w * 0.5
+        } else {
+            b.width() - arrow_w * 0.5
+        };
         if can_prev {
             let ink = if self.hover_arrow == -1 {
                 accent
             } else {
                 arrow_ink
             };
-            paint_chev(cx.list, strip, arrow_w * 0.5, true, ink);
+            paint_chev(cx.list, strip, prev_x, !rtl, ink);
         }
         if can_next {
             let ink = if self.hover_arrow == 1 {
@@ -425,7 +464,7 @@ impl Widget for Carousel {
             } else {
                 arrow_ink
             };
-            paint_chev(cx.list, strip, b.width() - arrow_w * 0.5, false, ink);
+            paint_chev(cx.list, strip, next_x, rtl, ink);
         }
     }
 
@@ -438,7 +477,7 @@ impl Widget for Carousel {
         match cx.event {
             WidgetEvent::PointerMoved { position } => {
                 let local = *position - cx.bounds.origin;
-                let arrow = self.arrow_hit(local, cx.bounds.width(), arrow_w);
+                let arrow = self.arrow_hit(local, cx.bounds.width(), arrow_w, cx.is_rtl());
                 if arrow != self.hover_arrow {
                     self.hover_arrow = arrow;
                     return EventResponse::RequestRepaint;
@@ -449,16 +488,20 @@ impl Widget for Carousel {
                 if *button == martensite_core::PointerButton::Primary =>
             {
                 let local = *position - cx.bounds.origin;
-                if let Some(dot) =
-                    self.dot_hit(local, cx.bounds.width(), dots_h, cx.bounds.height())
-                {
+                if let Some(dot) = self.dot_hit(
+                    local,
+                    cx.bounds.width(),
+                    dots_h,
+                    cx.bounds.height(),
+                    cx.is_rtl(),
+                ) {
                     if dot != self.current {
                         self.current = dot;
                         self.pending = Some(dot);
                     }
                     return EventResponse::RequestRepaint;
                 }
-                match self.arrow_hit(local, cx.bounds.width(), arrow_w) {
+                match self.arrow_hit(local, cx.bounds.width(), arrow_w, cx.is_rtl()) {
                     -1 if self.step(-1) => EventResponse::RequestRepaint,
                     1 if self.step(1) => EventResponse::RequestRepaint,
                     0 => EventResponse::Ignored,
@@ -470,10 +513,12 @@ impl Widget for Carousel {
                 if local.y > cx.bounds.height() - dots_h {
                     return EventResponse::Ignored;
                 }
-                if delta.x > 0.5 && self.step(-1) {
+                // Horizontal swipe direction mirrors under RTL.
+                let x_dir = if cx.is_rtl() { -1.0 } else { 1.0 };
+                if delta.x * x_dir > 0.5 && self.step(-1) {
                     return EventResponse::RequestRepaint;
                 }
-                if delta.x < -0.5 && self.step(1) {
+                if delta.x * x_dir < -0.5 && self.step(1) {
                     return EventResponse::RequestRepaint;
                 }
                 EventResponse::Handled
@@ -487,14 +532,17 @@ impl Widget for Carousel {
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
                 "ArrowLeft" | "PageUp" => {
-                    if self.step(-1) {
+                    // Under RTL the left arrow moves visually forward.
+                    let step = if cx.is_rtl() { 1 } else { -1 };
+                    if self.step(step) {
                         EventResponse::RequestRepaint
                     } else {
                         EventResponse::Ignored
                     }
                 }
                 "ArrowRight" | "PageDown" => {
-                    if self.step(1) {
+                    let step = if cx.is_rtl() { -1 } else { 1 };
+                    if self.step(step) {
                         EventResponse::RequestRepaint
                     } else {
                         EventResponse::Ignored
@@ -631,6 +679,17 @@ mod tests {
         assert!(!c.next_page());
         assert_eq!(c.current(), 1);
         assert_eq!(c.take_navigated(), Some(1));
+    }
+
+    #[test]
+    fn rtl_swaps_arrow_zone_steps() {
+        let c = car(3);
+        // LTR: left edge = prev (-1), right edge = next (+1).
+        assert_eq!(c.arrow_hit(Vec2::new(5.0, 50.0), 400.0, 40.0, false), -1);
+        assert_eq!(c.arrow_hit(Vec2::new(395.0, 50.0), 400.0, 40.0, false), 1);
+        // RTL: the edges carry the opposite step.
+        assert_eq!(c.arrow_hit(Vec2::new(5.0, 50.0), 400.0, 40.0, true), 1);
+        assert_eq!(c.arrow_hit(Vec2::new(395.0, 50.0), 400.0, 40.0, true), -1);
     }
 
     #[test]

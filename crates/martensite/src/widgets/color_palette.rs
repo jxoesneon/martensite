@@ -219,6 +219,11 @@ impl Default for ColorPalette {
 }
 
 impl Widget for ColorPalette {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         let rows = self.swatches.len().div_ceil(PER_ROW).max(1) as f32;
         Vec2::new(

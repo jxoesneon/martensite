@@ -269,7 +269,7 @@ fn add_months(year: i32, month: u32, delta: i64) -> (i32, u32) {
 /// the `{year}` / `{month}` / `{month:02}` / `{day}` / `{day:02}` /
 /// `{weekday}` tokens; everything else — including unknown
 /// `{tokens}` — passes through literally.
-fn format_into(out: &mut String, fmt: &str, date: Date) {
+fn format_into(out: &mut String, fmt: &str, date: Date, weekday_names: Option<&[String; 7]>) {
     let mut rest = fmt;
     while let Some(open) = rest.find('{') {
         out.push_str(&rest[..open]);
@@ -288,9 +288,9 @@ fn format_into(out: &mut String, fmt: &str, date: Date) {
             "day:02" => out.push_str(&format!("{:02}", date.day)),
             "weekday" => {
                 if date.is_valid() {
-                    out.push_str(
-                        WEEKDAY_SHORT[Date::weekday_of(date.year, date.month, date.day) as usize],
-                    );
+                    let wd = Date::weekday_of(date.year, date.month, date.day) as usize;
+                    let name = weekday_names.map_or(WEEKDAY_SHORT[wd], |n| n[wd].as_str());
+                    out.push_str(name);
                 }
             }
             // Unknown token — pass through verbatim.
@@ -366,6 +366,15 @@ struct CalendarSurface {
     painted_shape: Mutex<Shape>,
     /// Shared shaped-text painter from the owning `DatePicker`.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label carried over from the `DatePicker`'s `label`
+    /// override — unset uses `"Calendar"`.
+    a11y_label: Option<String>,
+    /// Localized weekday names (Sunday-first index 0) from the owning
+    /// `DatePicker` — English `WEEKDAY_SHORT` when unset.
+    weekday_names: Option<[String; 7]>,
+    /// Localized month names (`month - 1` index) — English
+    /// `MONTH_NAMES` when unset.
+    month_names: Option<[String; 12]>,
 }
 
 impl CalendarSurface {
@@ -424,8 +433,15 @@ impl CalendarSurface {
             return None;
         }
         let cell = CELL * scale;
+        // Under RTL the week runs right-to-left — mirror the column.
+        let col = self.column(date);
+        let col = if martensite_core::intl::ambient_direction().is_rtl() {
+            GRID_COLS - 1 - col
+        } else {
+            col
+        };
         Some(Rect::new(
-            self.grid_origin.x + self.column(date) as f32 * cell,
+            self.grid_origin.x + col as f32 * cell,
             self.grid_origin.y + week as f32 * cell,
             cell,
             cell,
@@ -491,6 +507,11 @@ impl CalendarSurface {
 }
 
 impl Widget for CalendarSurface {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             (GRID_COLS as f32 * cx.pt(CELL) + cx.pt(POPUP_PAD) * 2.0)
@@ -508,13 +529,19 @@ impl Widget for CalendarSurface {
         cx.hot.flags |= NodeFlags::FOCUSABLE;
         let pad = cx.pt(POPUP_PAD);
         let nav = cx.pt(NAV_W);
-        self.prev_rect = Rect::new(
+        // Under RTL the prev/next chevrons swap edges.
+        let (lead, trail) = if cx.is_rtl() {
+            (&mut self.next_rect, &mut self.prev_rect)
+        } else {
+            (&mut self.prev_rect, &mut self.next_rect)
+        };
+        *lead = Rect::new(
             bounds.min_x() + pad,
             bounds.min_y() + pad,
             nav,
             cx.pt(HEADER_H),
         );
-        self.next_rect = Rect::new(
+        *trail = Rect::new(
             bounds.max_x() - pad - nav,
             bounds.min_y() + pad,
             nav,
@@ -525,7 +552,7 @@ impl Widget for CalendarSurface {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Dialog);
-        node.set_label("Calendar");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Calendar"));
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -585,11 +612,13 @@ impl Widget for CalendarSurface {
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
                 "ArrowLeft" => {
-                    self.move_focus(-1);
+                    // Under RTL the left arrow moves focus later in
+                    // the week (visual left is "forward").
+                    self.move_focus(if cx.is_rtl() { 1 } else { -1 });
                     EventResponse::RequestRepaint
                 }
                 "ArrowRight" => {
-                    self.move_focus(1);
+                    self.move_focus(if cx.is_rtl() { -1 } else { 1 });
                     EventResponse::RequestRepaint
                 }
                 "ArrowUp" => {
@@ -659,8 +688,9 @@ impl Widget for CalendarSurface {
         let pad = cx.pt(POPUP_PAD);
 
         // « / » month buttons — painted hit targets matching
-        // `prev_rect`/`next_rect`.
-        for (rect, left) in [(self.prev_rect, true), (self.next_rect, false)] {
+        // `prev_rect`/`next_rect`. Under RTL the glyphs mirror.
+        let rtl = cx.is_rtl();
+        for (rect, left) in [(self.prev_rect, !rtl), (self.next_rect, rtl)] {
             let cy = f64::from(rect.min_y() + rect.height() / 2.0);
             let cxm = f64::from(rect.min_x() + rect.width() / 2.0);
             let s = cx.ptf(4.0);
@@ -678,11 +708,11 @@ impl Widget for CalendarSurface {
         }
 
         // "June 2024" title, centred between the nav buttons.
-        let title = format!(
-            "{} {}",
-            MONTH_NAMES[(self.view_month - 1) as usize],
-            self.view_year
+        let month_name = self.month_names.as_ref().map_or_else(
+            || MONTH_NAMES[(self.view_month - 1) as usize].to_string(),
+            |m| m[(self.view_month - 1) as usize].clone(),
         );
+        let title = format!("{} {}", month_name, self.view_year);
         let font_px = cx.pt(13.0);
         let title_y = b.min_y() + pad + (cx.pt(HEADER_H) - font_px) / 2.0;
         crate::text_paint::paint_label_clipped(
@@ -708,20 +738,26 @@ impl Widget for CalendarSurface {
         let cell = cx.pt(CELL);
         let wk_y = b.min_y() + pad + cx.pt(HEADER_H) + (cx.pt(WEEK_ROW_H) - small_px) / 2.0;
         for col in 0..GRID_COLS {
-            // Column index → weekday index (0 = Sunday).
+            // Column index → weekday index (0 = Sunday). Under RTL the
+            // header cells mirror with the day grid.
+            let draw_col = if rtl { GRID_COLS - 1 - col } else { col };
             let wd = if self.week_starts_monday {
                 (col + 1) % GRID_COLS
             } else {
                 col
             };
+            let name = self
+                .weekday_names
+                .as_ref()
+                .map_or(WEEKDAY_SHORT[wd], |n| n[wd].as_str());
             crate::text_paint::paint_label(
                 painter,
                 cx.list,
                 kurbo::Point::new(
-                    f64::from(self.grid_origin.x + col as f32 * cell + cell * 0.18),
+                    f64::from(self.grid_origin.x + draw_col as f32 * cell + cell * 0.18),
                     f64::from(wk_y),
                 ),
-                &WEEKDAY_SHORT[wd][..2],
+                name.get(..2).unwrap_or(name),
                 small_px,
                 cx.color(TokenKey::TextMutedColor, INK_MUTED),
             );
@@ -868,6 +904,13 @@ pub struct DatePicker {
     pub today: Option<Date>,
     /// `true` starts weeks on Monday; `false` on Sunday.
     pub week_starts_monday: bool,
+    /// Localized weekday names used by the `{weekday}` format token
+    /// and the popup's weekday header (short forms, Sunday-first index
+    /// 0); English `WEEKDAY_SHORT` when unset.
+    pub weekday_names: Option<[String; 7]>,
+    /// Localized month names for the popup caption (`month - 1`
+    /// index); English `MONTH_NAMES` when unset.
+    pub month_names: Option<[String; 12]>,
     /// The committed value.
     date: Option<Date>,
     /// Two-click range picking — `Ant RangePicker` semantics.
@@ -918,6 +961,8 @@ impl DatePicker {
             max_date: None,
             today: None,
             week_starts_monday: true,
+            weekday_names: None,
+            month_names: None,
             date: None,
             range_mode: false,
             range: None,
@@ -979,6 +1024,42 @@ impl DatePicker {
     #[must_use]
     pub fn format(mut self, fmt: impl Into<String>) -> Self {
         self.format = fmt.into();
+        self
+    }
+
+    /// Overrides the seven weekday names used by the `{weekday}`
+    /// format token and the popup header — Sunday-first index 0, so
+    /// `week_starts_monday` only shifts paint order. Defaults to
+    /// English short forms.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::DatePicker;
+    ///
+    /// let days: [String; 7] = std::array::from_fn(|i| format!("W{i}"));
+    /// let dp = DatePicker::new().weekday_names(days);
+    /// ```
+    #[must_use]
+    pub fn weekday_names(mut self, names: [String; 7]) -> Self {
+        self.weekday_names = Some(names);
+        self
+    }
+
+    /// Overrides the twelve month names used by the popup caption —
+    /// `month - 1` index. Defaults to English.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::DatePicker;
+    ///
+    /// let months: [String; 12] = std::array::from_fn(|i| format!("M{}", i + 1));
+    /// let dp = DatePicker::new().month_names(months);
+    /// ```
+    #[must_use]
+    pub fn month_names(mut self, names: [String; 12]) -> Self {
+        self.month_names = Some(names);
         self
     }
 
@@ -1229,8 +1310,8 @@ impl DatePicker {
             return match self.range {
                 Some((a, b)) => {
                     let (mut sa, mut sb) = (String::new(), String::new());
-                    format_into(&mut sa, &self.format, a);
-                    format_into(&mut sb, &self.format, b);
+                    format_into(&mut sa, &self.format, a, self.weekday_names.as_ref());
+                    format_into(&mut sb, &self.format, b, self.weekday_names.as_ref());
                     format!("{sa} – {sb}")
                 }
                 None => self.placeholder.clone(),
@@ -1239,7 +1320,7 @@ impl DatePicker {
         match self.date {
             Some(d) => {
                 let mut s = String::new();
-                format_into(&mut s, &self.format, d);
+                format_into(&mut s, &self.format, d, self.weekday_names.as_ref());
                 s
             }
             None => self.placeholder.clone(),
@@ -1444,6 +1525,9 @@ impl DatePicker {
                 channel: Arc::clone(&self.channel),
                 painted_shape: Mutex::new(Shape::RECT),
                 text_painter: self.text_painter.clone(),
+                a11y_label: self.label.clone(),
+                weekday_names: self.weekday_names.clone(),
+                month_names: self.month_names.clone(),
             };
             self.popup_id =
                 Some(overlay.open(Box::new(surface), OverlayAnchor::Bounds(self.cached_bounds)));
@@ -1471,6 +1555,11 @@ impl Default for DatePicker {
 }
 
 impl Widget for DatePicker {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Face width ~ the longer of formatted value / placeholder.
         let widest = self
@@ -1735,6 +1824,32 @@ mod tests {
     }
 
     #[test]
+    fn weekday_token_uses_localized_names() {
+        let mut out = String::new();
+        let date = Date {
+            year: 2024,
+            month: 6,
+            day: 15,
+        };
+        // June 15 2024 is a Saturday — English default (index 6).
+        format_into(&mut out, "{weekday} {day}", date, None);
+        assert_eq!(out, "Sat 15");
+        // An injected weekday table replaces the token.
+        let days: [String; 7] = [
+            "Sun".into(),
+            "Mon".into(),
+            "Tue".into(),
+            "Wed".into(),
+            "Thu".into(),
+            "Fri".into(),
+            "Samstag".into(),
+        ];
+        out.clear();
+        format_into(&mut out, "{weekday} {day}", date, Some(&days));
+        assert_eq!(out, "Samstag 15");
+    }
+
+    #[test]
     fn date_validity() {
         assert!(Date {
             year: 2024,
@@ -1821,13 +1936,13 @@ mod tests {
             day: 15,
         };
         let mut s = String::new();
-        format_into(&mut s, "{year}-{month:02}-{day:02}", d);
+        format_into(&mut s, "{year}-{month:02}-{day:02}", d, None);
         assert_eq!(s, "2024-06-15");
         s.clear();
-        format_into(&mut s, "{weekday}, {day}/{month}/{year}", d);
+        format_into(&mut s, "{weekday}, {day}/{month}/{year}", d, None);
         assert_eq!(s, "Sat, 15/6/2024");
         s.clear();
-        format_into(&mut s, "{bogus} stays", d);
+        format_into(&mut s, "{bogus} stays", d, None);
         assert_eq!(s, "{bogus} stays");
     }
 

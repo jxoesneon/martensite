@@ -261,6 +261,11 @@ impl TreeItemRow {
 }
 
 impl Widget for TreeItemRow {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
@@ -351,11 +356,19 @@ impl Widget for TreeItemRow {
         }
         let indent_px = cx.pt(INDENT) * self.depth as f32;
         let tri_px = cx.pt(TRI);
-        // Disclosure triangle: a small filled BezPath — right-pointing
+        // Under RTL the disclosure cluster anchors to the right edge
+        // and the collapsed triangle points left.
+        let rtl = cx.is_rtl();
+        let tri_min = if rtl {
+            b.max_x() - indent_px - tri_px
+        } else {
+            b.min_x() + indent_px
+        };
+        // Disclosure triangle: a small filled BezPath — forward-pointing
         // when collapsed, down-pointing when expanded. Leaves get an
         // empty triangle box so labels stay aligned.
         if self.has_children {
-            let cxm = f64::from(b.min_x() + indent_px + tri_px / 2.0);
+            let cxm = f64::from(tri_min + tri_px / 2.0);
             let cy = f64::from(b.min_y() + b.height() / 2.0);
             let s = f64::from(tri_px * 0.32);
             let mut path = kurbo::BezPath::new();
@@ -363,6 +376,10 @@ impl Widget for TreeItemRow {
                 path.move_to((cxm - s, cy - s * 0.6));
                 path.line_to((cxm + s, cy - s * 0.6));
                 path.line_to((cxm, cy + s * 0.8));
+            } else if rtl {
+                path.move_to((cxm + s * 0.6, cy - s));
+                path.line_to((cxm - s * 0.8, cy));
+                path.line_to((cxm + s * 0.6, cy + s));
             } else {
                 path.move_to((cxm - s * 0.6, cy - s));
                 path.line_to((cxm + s * 0.8, cy));
@@ -382,18 +399,34 @@ impl Widget for TreeItemRow {
         } else {
             cx.color(TokenKey::TextMutedColor, INK_DISABLED)
         };
-        let text_x = b.min_x() + indent_px + tri_px + cx.pt(TRI_GAP);
+        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+        // RTL rows grow from the right: the label region ends just
+        // before the disclosure box and the run right-aligns in it.
+        let (clip_min, clip_max, origin_x) = if rtl {
+            let hi = b.min_x() + (b.max_x() - indent_px - tri_px - cx.pt(TRI_GAP) - b.min_x());
+            let w = painter
+                .and_then(|p| p.measure_text(&self.label, font_px))
+                .unwrap_or(font_px * self.label.chars().count() as f32 * 0.55);
+            (
+                b.min_x() + cx.pt(8.0),
+                hi,
+                (hi - w).max(b.min_x() + cx.pt(8.0)),
+            )
+        } else {
+            let lo = b.min_x() + indent_px + tri_px + cx.pt(TRI_GAP);
+            (lo, b.max_x() - cx.pt(8.0), lo)
+        };
         crate::text_paint::paint_label_clipped(
-            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+            painter,
             cx.list,
             kurbo::Rect::new(
-                f64::from(text_x),
+                f64::from(clip_min),
                 f64::from(b.min_y()),
-                f64::from(b.max_x() - cx.pt(8.0)),
+                f64::from(clip_max),
                 f64::from(b.max_y()),
             ),
             kurbo::Point::new(
-                f64::from(text_x),
+                f64::from(origin_x),
                 f64::from(b.min_y() + (b.height() - font_px) / 2.0),
             ),
             &self.label,
@@ -1292,8 +1325,9 @@ impl TreeView {
     }
 
     /// The disclosure-triangle hit box of visible row `index` — only
-    /// meaningful when the row has children.
-    fn triangle_rect(&self, index: usize) -> Option<Rect> {
+    /// meaningful when the row has children. `rtl` mirrors the box to
+    /// the trailing edge, matching `TreeRow::paint`.
+    fn triangle_rect(&self, index: usize, rtl: bool) -> Option<Rect> {
         let row = self.flat.get(index)?;
         if !row.has_children {
             return None;
@@ -1301,8 +1335,13 @@ impl TreeView {
         let row_rect = self.row_rect(index);
         let indent_px = self.indent * self.scale * row.depth as f32;
         let tri_px = TRI * self.scale;
+        let x = if rtl {
+            row_rect.max_x() - indent_px - tri_px
+        } else {
+            row_rect.min_x() + indent_px
+        };
         Some(Rect::new(
-            row_rect.min_x() + indent_px,
+            x,
             row_rect.min_y() + (row_rect.height() - tri_px) / 2.0,
             tri_px,
             tri_px,
@@ -1510,6 +1549,11 @@ impl Default for TreeView {
 }
 
 impl Widget for TreeView {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let row_px = cx.pt(self.row_height);
         let content_h = self.flat.len() as f32 * row_px;
@@ -1653,7 +1697,11 @@ impl Widget for TreeView {
                 if let Some(i) = self.row_at(*position) {
                     // The disclosure triangle toggles without moving
                     // the selection — the platform-tree convention.
-                    if *count == 1 && self.triangle_rect(i).is_some_and(|r| r.contains(*position)) {
+                    if *count == 1
+                        && self
+                            .triangle_rect(i, cx.is_rtl())
+                            .is_some_and(|r| r.contains(*position))
+                    {
                         let path = self.flat[i].path.clone();
                         self.toggle(&path);
                         return EventResponse::CaptureFocus;
@@ -1717,22 +1765,23 @@ impl Widget for TreeView {
                     self.move_focus_to(self.focused.saturating_add(1));
                     EventResponse::RequestRepaint
                 }
-                "ArrowRight" => {
-                    if let Some(row) = self.flat.get(self.focused) {
-                        if row.has_children && !row.expanded {
-                            let path = row.path.clone();
-                            self.set_expanded(&path, true);
-                        } else if row.has_children {
-                            // Already expanded: descend to the first
-                            // child (the next visible row).
-                            self.move_focus_to(self.focused + 1);
+                // Under RTL the disclosure triangle sits on the right
+                // and points left — Left expands/descends ("into"),
+                // Right collapses/ascends ("out").
+                "ArrowRight" | "ArrowLeft" => {
+                    if (key.as_str() == "ArrowRight") != cx.is_rtl() {
+                        if let Some(row) = self.flat.get(self.focused) {
+                            if row.has_children && !row.expanded {
+                                let path = row.path.clone();
+                                self.set_expanded(&path, true);
+                            } else if row.has_children {
+                                // Already expanded: descend to the first
+                                // child (the next visible row).
+                                self.move_focus_to(self.focused + 1);
+                            }
+                            // APG: "into" on a leaf does nothing.
                         }
-                        // APG: Right on a leaf does nothing.
-                    }
-                    EventResponse::RequestRepaint
-                }
-                "ArrowLeft" => {
-                    if let Some(row) = self.flat.get(self.focused) {
+                    } else if let Some(row) = self.flat.get(self.focused) {
                         if row.has_children && row.expanded {
                             let path = row.path.clone();
                             self.set_expanded(&path, false);
@@ -2032,7 +2081,7 @@ mod tests {
         laid_out(&mut t, 240.0, 200.0);
         t.select_path(&[1]);
         // Row 0's triangle sits in the left gutter of the first row.
-        let tri = t.triangle_rect(0).expect("root0 has children");
+        let tri = t.triangle_rect(0, false).expect("root0 has children");
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(tri.min_x() + tri.width() / 2.0, tri.min_y() + 2.0),
             button: PointerButton::Primary,

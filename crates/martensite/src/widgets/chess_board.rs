@@ -640,6 +640,11 @@ impl ChessBoard {
 }
 
 impl Widget for ChessBoard {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let m = if self.coords { COORD_PT } else { 0.0 };
         let side = cx.pt(SQ_PT * 8.0 + m);

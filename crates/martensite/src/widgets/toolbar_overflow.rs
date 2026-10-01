@@ -202,6 +202,11 @@ impl ToolbarOverflow {
 }
 
 impl Widget for ToolbarOverflow {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         Vec2::new(
@@ -222,13 +227,20 @@ impl Widget for ToolbarOverflow {
         self.bounds = bounds;
         self.scale = cx.scale;
         let s = cx.scale;
-        let mut x = bounds.min_x() + PAD_PT * s;
         let y = bounds.min_y() + PAD_PT * s;
         let h = PILL_H_PT * s;
         let chevron_w = CHEVRON_PT * s;
         let limit = bounds.max_x() - PAD_PT * s;
         self.pill_rects.clear();
         self.visible = 0;
+        // Under RTL pills pack from the right edge and the overflow
+        // chevron lands on the left.
+        let rtl = cx.is_rtl();
+        let mut x = if rtl {
+            bounds.max_x() - PAD_PT * s
+        } else {
+            bounds.min_x() + PAD_PT * s
+        };
         for i in 0..self.items.len() {
             let w = self.pill_width(i, s);
             // Reserve room for the chevron unless this is the last item.
@@ -237,15 +249,21 @@ impl Widget for ToolbarOverflow {
             } else {
                 0.0
             };
-            if x + w + reserve > limit {
+            let (px, fits) = if rtl {
+                (x - w, x - w - reserve >= bounds.min_x() + PAD_PT * s)
+            } else {
+                (x, x + w + reserve <= limit)
+            };
+            if !fits {
                 break;
             }
-            self.pill_rects.push(Rect::new(x, y, w, h));
+            self.pill_rects.push(Rect::new(px, y, w, h));
             self.visible = i + 1;
-            x += w + GAP_PT * s;
+            x += if rtl { -w - GAP_PT * s } else { w + GAP_PT * s };
         }
         self.chevron_rect = if self.visible < self.items.len() {
-            Rect::new(x, y, chevron_w, h)
+            let cx0 = if rtl { x - chevron_w } else { x };
+            Rect::new(cx0, y, chevron_w, h)
         } else {
             Rect::new(0.0, 0.0, 0.0, 0.0)
         };

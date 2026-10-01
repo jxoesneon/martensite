@@ -269,6 +269,11 @@ impl ToggleButton {
 }
 
 impl Widget for ToggleButton {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Same default minimum as `Button`: 80x32 logical pt.
         let min_w = cx.pt(80.0).min(constraints.max_size.x.max(0.0));

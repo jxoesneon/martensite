@@ -123,6 +123,11 @@ impl Kbd {
 }
 
 impl Widget for Kbd {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         // No painter in LayoutContext — estimate at 0.6em/char (keycap
         // legends are short and mostly wide glyphs).

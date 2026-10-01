@@ -304,6 +304,11 @@ impl Default for Steps {
 }
 
 impl Widget for Steps {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(cx.pt(120.0)),
@@ -321,10 +326,14 @@ impl Widget for Steps {
         let node = cx.pt(NODE_PT);
         let y = bounds.origin.y + cx.pt(4.0);
         // Nodes distribute evenly across the width — first and last
-        // at the edges, intermediates evenly spaced.
+        // at the edges, intermediates evenly spaced. Under RTL the
+        // axis mirrors: step 0 anchors on the right.
+        let rtl = cx.is_rtl();
         for i in 0..n {
             let frac = if n == 1 {
                 0.5
+            } else if rtl {
+                1.0 - i as f32 / (n - 1) as f32
             } else {
                 i as f32 / (n - 1) as f32
             };
@@ -394,8 +403,12 @@ impl Widget for Steps {
                         .position(|t| Some(*t) == self.highlighted)
                         .map(|p| p as isize)
                         .unwrap_or(-1);
-                    let next = match key.as_str() {
-                        "ArrowRight" => (pos + 1).min(targets.len() as isize - 1),
+                    // Under RTL the step strip mirrors — the left
+                    // arrow advances toward the next step.
+                    let next = match (key.as_str(), cx.is_rtl()) {
+                        ("ArrowRight", false) | ("ArrowLeft", true) => {
+                            (pos + 1).min(targets.len() as isize - 1)
+                        }
                         _ => (pos - 1).max(0),
                     };
                     self.highlighted = Some(targets[next as usize]);

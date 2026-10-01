@@ -240,6 +240,11 @@ impl Lightbox {
 }
 
 impl Widget for Lightbox {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         constraints.max_size
     }
@@ -265,15 +270,26 @@ impl Widget for Lightbox {
         );
         let btn = BTN_PT * s;
         let cym = bounds.min_y() + bounds.height() / 2.0;
-        self.prev_rect = Rect::new(bounds.min_x() + PAD_PT * s, cym - btn / 2.0, btn, btn);
-        self.next_rect = Rect::new(bounds.max_x() - PAD_PT * s - btn, cym - btn / 2.0, btn, btn);
+        // Under RTL "previous" anchors the right edge and the close
+        // button mirrors to the top-left.
+        let rtl = cx.is_rtl();
+        let (prev_x, next_x, close_x) = if rtl {
+            (
+                bounds.max_x() - PAD_PT * s - btn,
+                bounds.min_x() + PAD_PT * s,
+                bounds.min_x() + PAD_PT * s,
+            )
+        } else {
+            (
+                bounds.min_x() + PAD_PT * s,
+                bounds.max_x() - PAD_PT * s - btn,
+                bounds.max_x() - PAD_PT * s - CLOSE_PT * s,
+            )
+        };
+        self.prev_rect = Rect::new(prev_x, cym - btn / 2.0, btn, btn);
+        self.next_rect = Rect::new(next_x, cym - btn / 2.0, btn, btn);
         let c = CLOSE_PT * s;
-        self.close_rect = Rect::new(
-            bounds.max_x() - PAD_PT * s - c,
-            bounds.min_y() + PAD_PT * s,
-            c,
-            c,
-        );
+        self.close_rect = Rect::new(close_x, bounds.min_y() + PAD_PT * s, c, c);
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
@@ -291,12 +307,10 @@ impl Widget for Lightbox {
                     self.closed = true;
                     EventResponse::Handled
                 }
-                "ArrowLeft" => {
-                    self.step(-1);
-                    EventResponse::RequestRepaint
-                }
-                "ArrowRight" => {
-                    self.step(1);
+                "ArrowLeft" | "ArrowRight" => {
+                    let forward = (key.as_str() == "ArrowRight")
+                        != martensite_core::intl::ambient_direction().is_rtl();
+                    self.step(if forward { 1 } else { -1 });
                     EventResponse::RequestRepaint
                 }
                 _ => EventResponse::Ignored,
@@ -383,9 +397,16 @@ impl Widget for Lightbox {
         // Nav + close buttons — native-pack icons first, glyphs as
         // the fallback.
         let shape = martensite_core::shape::Shape::ELLIPSE;
+        // Glyphs follow the mirrored rects: prev points right under
+        // RTL because it sits on the right edge.
+        let (prev_icon, next_icon, prev_glyph, next_glyph) = if cx.is_rtl() {
+            ("nav.chevron-right", "nav.chevron-left", "›", "‹")
+        } else {
+            ("nav.chevron-left", "nav.chevron-right", "‹", "›")
+        };
         for (rect, icon, glyph) in [
-            (self.prev_rect, "nav.chevron-left", "‹"),
-            (self.next_rect, "nav.chevron-right", "›"),
+            (self.prev_rect, prev_icon, prev_glyph),
+            (self.next_rect, next_icon, next_glyph),
             (self.close_rect, "status.close", "×"),
         ] {
             cx.list.push_fill_shape(krect(rect), &shape, BTN_FACE);

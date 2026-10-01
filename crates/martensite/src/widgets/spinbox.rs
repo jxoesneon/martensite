@@ -641,12 +641,28 @@ impl Widget for SpinBox {
         self.sync_input();
         let sw = cx.pt(STEP_W).min(bounds.width());
         let field_w = (bounds.width() - sw).max(0.0);
-        self.input_rect = Rect::new(bounds.min_x(), bounds.min_y(), field_w, bounds.height());
-        let bx = bounds.min_x() + field_w;
+        // Stepper column hugs the trailing edge — left under RTL.
+        let (input_x, bx) = if cx.is_rtl() {
+            (bounds.min_x() + sw, bounds.min_x())
+        } else {
+            (bounds.min_x(), bounds.min_x() + field_w)
+        };
+        self.input_rect = Rect::new(input_x, bounds.min_y(), field_w, bounds.height());
         let half = bounds.height() / 2.0;
         self.up_rect = Rect::new(bx, bounds.min_y(), sw, half);
         self.down_rect = Rect::new(bx, bounds.min_y() + half, sw, bounds.height() - half);
         cx.layout_child(&mut self.input, self.input_rect);
+    }
+
+    /// `@labeled` declares the accessible name to design-lint's
+    /// `icon-only-control` rule — the paint list can't see the
+    /// AccessKit label, so the scope marker carries it.
+    fn debug_name(&self) -> &'static str {
+        if self.label.as_ref().is_some_and(|l| !l.is_empty()) {
+            "SpinBox@labeled"
+        } else {
+            "SpinBox"
+        }
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {

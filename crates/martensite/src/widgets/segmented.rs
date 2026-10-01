@@ -162,6 +162,11 @@ impl Segment {
 }
 
 impl Widget for Segment {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Real glyph advance when a measurer is installed — the per-
         // grapheme estimate under-measures wide faces, and `Segmented`
@@ -869,6 +874,17 @@ impl Widget for Segmented {
         }
     }
 
+    /// `@labeled` declares the accessible name to design-lint's
+    /// `icon-only-control` rule — the paint list can't see the
+    /// AccessKit label, so the scope marker carries it.
+    fn debug_name(&self) -> &'static str {
+        if self.label.as_ref().is_some_and(|l| !l.is_empty()) {
+            "Segmented@labeled"
+        } else {
+            "Segmented"
+        }
+    }
+
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::RadioGroup);
         if let Some(ref label) = self.label {
@@ -930,9 +946,16 @@ impl Widget for Segmented {
                 response
             }
             WidgetEvent::KeyPressed { key, .. } => {
-                // APG: all four arrows cycle the strip in either layout.
-                let forward = key == "ArrowDown" || key == "ArrowRight";
-                let backward = key == "ArrowUp" || key == "ArrowLeft";
+                // APG: all four arrows cycle the strip in either
+                // layout. Under RTL the horizontal arrows swap —
+                // Left is the forward (leading) direction.
+                let rtl = cx.is_rtl();
+                let forward = key == "ArrowDown"
+                    || (key == "ArrowRight" && !rtl)
+                    || (key == "ArrowLeft" && rtl);
+                let backward = key == "ArrowUp"
+                    || (key == "ArrowLeft" && !rtl)
+                    || (key == "ArrowRight" && rtl);
                 if forward {
                     self.move_focus(1);
                     EventResponse::RequestRepaint

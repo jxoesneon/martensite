@@ -139,6 +139,11 @@ pub struct Calendar {
     view: (i32, u32),
     /// `true` when the weekday row starts on Monday.
     week_starts_monday: bool,
+    /// Localized month names (`month - 1` index); `MONTHS` when unset.
+    month_names: Option<[String; 12]>,
+    /// Localized weekday abbreviations; `WEEKDAYS_SUN`/`WEEKDAYS_MON`
+    /// when unset. The array is always in `week_starts_monday` order.
+    weekday_names: Option<[String; 7]>,
     /// Keyboard focus cell (a real date — arrows cross months freely).
     focus_date: Option<Date>,
     /// Parked selection for `take_selected`.
@@ -162,7 +167,7 @@ struct Cell {
 }
 
 /// Pointer hit targets.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Hit {
     /// Previous-month chevron.
     Prev,
@@ -199,6 +204,8 @@ impl Calendar {
             max: None,
             view: (2000, 1),
             week_starts_monday: false,
+            month_names: None,
+            weekday_names: None,
             focus_date: None,
             pending: None,
             hover: None,
@@ -282,6 +289,39 @@ impl Calendar {
     /// ```
     pub fn week_starts_monday(mut self, monday: bool) -> Self {
         self.week_starts_monday = monday;
+        self
+    }
+
+    /// Override the twelve month names used in the header caption
+    /// (indexed `month - 1`; default English). Apps sourcing strings
+    /// from `martensite-l10n` pass the resolved names here.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::calendar::Calendar;
+    ///
+    /// let months: [String; 12] = std::array::from_fn(|i| format!("M{}", i + 1));
+    /// let cal = Calendar::new().month_names(months);
+    /// ```
+    pub fn month_names(mut self, names: [String; 12]) -> Self {
+        self.month_names = Some(names);
+        self
+    }
+
+    /// Override the seven weekday abbreviations (already in
+    /// `week_starts_monday` order; default English two-letter forms).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::calendar::Calendar;
+    ///
+    /// let days: [String; 7] = std::array::from_fn(|i| format!("D{i}"));
+    /// let cal = Calendar::new().weekday_names(days);
+    /// ```
+    pub fn weekday_names(mut self, names: [String; 7]) -> Self {
+        self.weekday_names = Some(names);
         self
     }
 
@@ -579,14 +619,15 @@ impl Calendar {
     }
 
     /// Hit-test a widget-local point; `header_h`/`nav_w` are the
-    /// scale-adjusted header metrics.
-    fn hit_at(&self, local: Vec2, width: f32, header_h: f32, nav_w: f32) -> Option<Hit> {
+    /// scale-adjusted header metrics. Under `rtl` the prev/next
+    /// chevron zones swap edges to match the mirrored paint.
+    fn hit_at(&self, local: Vec2, width: f32, header_h: f32, nav_w: f32, rtl: bool) -> Option<Hit> {
         if local.y < header_h {
             if local.x < nav_w {
-                return Some(Hit::Prev);
+                return Some(if rtl { Hit::Next } else { Hit::Prev });
             }
             if local.x > width - nav_w {
-                return Some(Hit::Next);
+                return Some(if rtl { Hit::Prev } else { Hit::Next });
             }
             return None;
         }
@@ -601,7 +642,7 @@ impl Calendar {
     /// Keyboard navigation — arrows move `focus_date` (crossing a
     /// month boundary shifts the view), `PageUp`/`PageDown` step
     /// months, `Enter`/`Space` select.
-    fn key(&mut self, key: &str) -> EventResponse {
+    fn key(&mut self, key: &str, rtl: bool) -> EventResponse {
         let (vy, vm) = self.view;
         match key {
             "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" => {
@@ -611,8 +652,10 @@ impl Calendar {
                     day: 1,
                 });
                 let delta = match key {
-                    "ArrowLeft" => -1,
-                    "ArrowRight" => 1,
+                    // Under RTL the left arrow moves focus later in
+                    // the week (the visual left is "forward").
+                    "ArrowLeft" => i32::from(rtl) * 2 - 1,
+                    "ArrowRight" => 1 - i32::from(rtl) * 2,
                     "ArrowUp" => -7,
                     _ => 7,
                 };
@@ -688,6 +731,11 @@ fn offset_day(year: i32, month: u32, day_of_month: i32) -> Date {
 }
 
 impl Widget for Calendar {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(280.0, HEADER_H + WEEKDAY_H + 6.0 * 34.0)
     }
@@ -703,11 +751,14 @@ impl Widget for Calendar {
         // offsets by `bounds`' origin and `hit_at` compares against
         // the local point.
         let top = header_h + weekday_h;
+        // Under RTL the week runs right-to-left: the first day of the
+        // week anchors at the right edge.
+        let rtl = cx.is_rtl();
         self.cells = dates
             .iter()
             .enumerate()
             .map(|(i, date)| {
-                let col = (i % 7) as f32;
+                let col = if rtl { 6 - i % 7 } else { i % 7 } as f32;
                 let row = (i / 7) as f32;
                 Cell {
                     rect: Rect::new(col * cell_w, top + row * cell_h, cell_w, cell_h),
@@ -735,11 +786,18 @@ impl Widget for Calendar {
         let accent = cx.color(ACCENT, [50, 115, 230, 255]);
         let hover_wash = cx.color(HOVER, [120, 120, 130, 60]);
 
-        // Header: ‹ chevron, "Month YYYY", › chevron.
+        // Header: ‹ chevron, "Month YYYY", › chevron. Under RTL the
+        // chevron positions and directions mirror: the leading edge
+        // (right) goes back a month, the trailing edge (left) forward.
+        let rtl = cx.is_rtl();
         let chev_color = if self.enabled { ink } else { muted };
-        paint_chevron(cx.list, header, nav_w * 0.5, true, chev_color);
-        paint_chevron(cx.list, header, b.width() - nav_w * 0.5, false, chev_color);
-        let caption = format!("{} {}", MONTHS[(self.view.1 - 1) as usize], self.view.0);
+        paint_chevron(cx.list, header, nav_w * 0.5, !rtl, chev_color);
+        paint_chevron(cx.list, header, b.width() - nav_w * 0.5, rtl, chev_color);
+        let month_name = self.month_names.as_ref().map_or_else(
+            || MONTHS[(self.view.1 - 1) as usize].to_string(),
+            |m| m[(self.view.1 - 1) as usize].clone(),
+        );
+        let caption = format!("{} {}", month_name, self.view.0);
         let cap_size = 13.0 * cx.scale;
         let cap_w = painter
             .and_then(|p| p.measure_text(&caption, cap_size))
@@ -755,18 +813,24 @@ impl Widget for Calendar {
         );
 
         // Weekday row.
-        let names = if self.week_starts_monday {
-            WEEKDAYS_MON
-        } else {
-            WEEKDAYS_SUN
-        };
+        let names: Vec<String> = self.weekday_names.clone().map_or_else(
+            || {
+                if self.week_starts_monday {
+                    WEEKDAYS_MON.iter().map(ToString::to_string).collect()
+                } else {
+                    WEEKDAYS_SUN.iter().map(ToString::to_string).collect()
+                }
+            },
+            |n| n.to_vec(),
+        );
         let cell_w = b.width() / 7.0;
         let wd_size = 12.0 * cx.scale;
         for (i, name) in names.iter().enumerate() {
+            let wd_col = if rtl { 6 - i } else { i } as f32;
             let clip = kurbo::Rect::new(
-                f64::from(b.min_x() + i as f32 * cell_w),
+                f64::from(b.min_x() + wd_col * cell_w),
                 f64::from(b.min_y() + header_h),
-                f64::from(b.min_x() + (i + 1) as f32 * cell_w),
+                f64::from(b.min_x() + (wd_col + 1.0) * cell_w),
                 f64::from(b.min_y() + header_h + weekday_h),
             );
             let w = painter
@@ -864,6 +928,7 @@ impl Widget for Calendar {
                     cx.bounds.width(),
                     cx.scale * HEADER_H,
                     cx.scale * NAV_W,
+                    cx.is_rtl(),
                 );
                 if hit != self.hover {
                     self.hover = hit;
@@ -880,6 +945,7 @@ impl Widget for Calendar {
                     cx.bounds.width(),
                     cx.scale * HEADER_H,
                     cx.scale * NAV_W,
+                    cx.is_rtl(),
                 ) {
                     Some(Hit::Prev) => {
                         self.step_month(-1);
@@ -908,7 +974,7 @@ impl Widget for Calendar {
                     EventResponse::Ignored
                 }
             }
-            WidgetEvent::KeyPressed { key, .. } => self.key(key),
+            WidgetEvent::KeyPressed { key, .. } => self.key(key, cx.is_rtl()),
             _ => EventResponse::Ignored,
         }
     }
@@ -977,6 +1043,64 @@ mod tests {
         let mut cal = Calendar::new();
         lay(&mut cal, 280.0);
         assert_eq!(cal.cells.len(), 42);
+    }
+
+    #[test]
+    fn rtl_swaps_header_nav_zones() {
+        let cal = Calendar::new();
+        // Header row: x < nav_w is the left chevron, x > width-nav_w
+        // the right. LTR: left=Prev right=Next; RTL swaps them.
+        assert_eq!(
+            cal.hit_at(Vec2::new(4.0, 4.0), 280.0, 40.0, 36.0, false),
+            Some(Hit::Prev)
+        );
+        assert_eq!(
+            cal.hit_at(Vec2::new(276.0, 4.0), 280.0, 40.0, 36.0, false),
+            Some(Hit::Next)
+        );
+        assert_eq!(
+            cal.hit_at(Vec2::new(4.0, 4.0), 280.0, 40.0, 36.0, true),
+            Some(Hit::Next)
+        );
+        assert_eq!(
+            cal.hit_at(Vec2::new(276.0, 4.0), 280.0, 40.0, 36.0, true),
+            Some(Hit::Prev)
+        );
+    }
+
+    #[test]
+    fn rtl_swaps_horizontal_arrow_keys() {
+        let mut cal = Calendar::new();
+        cal.set_displayed_month(2024, 6);
+        cal.focus_date = Some(Date {
+            year: 2024,
+            month: 6,
+            day: 15,
+        });
+        // LTR: Right advances a day, Left retreats.
+        cal.key("ArrowRight", false);
+        assert_eq!(cal.focus_date.unwrap().day, 16);
+        cal.key("ArrowLeft", false);
+        assert_eq!(cal.focus_date.unwrap().day, 15);
+        // RTL: Left advances (visual left is "forward"), Right retreats.
+        cal.key("ArrowLeft", true);
+        assert_eq!(cal.focus_date.unwrap().day, 16);
+        cal.key("ArrowRight", true);
+        assert_eq!(cal.focus_date.unwrap().day, 15);
+    }
+
+    #[test]
+    fn localized_month_and_weekday_names_override() {
+        let months: [String; 12] = std::array::from_fn(|i| format!("Mois{:02}", i + 1));
+        let days: [String; 7] = std::array::from_fn(|i| format!("Jour{i}"));
+        let cal = Calendar::new()
+            .month_names(months.clone())
+            .weekday_names(days.clone());
+        assert_eq!(cal.month_names.as_ref().unwrap()[5], "Mois06");
+        assert_eq!(cal.weekday_names.as_ref().unwrap()[2], "Jour2");
+        // Unset keeps the English defaults.
+        let cal = Calendar::new();
+        assert!(cal.month_names.is_none() && cal.weekday_names.is_none());
     }
 
     #[test]

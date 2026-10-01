@@ -93,6 +93,10 @@ pub struct Breadcrumb {
     plan: parking_lot::Mutex<Plan>,
     /// Shared shaped-text painter. See [`crate::text_paint`].
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Breadcrumb"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl Breadcrumb {
@@ -115,6 +119,7 @@ impl Breadcrumb {
             ellipsis_activated: false,
             plan: parking_lot::Mutex::new(Plan::default()),
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -264,6 +269,26 @@ impl Default for Breadcrumb {
     }
 }
 
+impl Breadcrumb {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Breadcrumb"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::breadcrumb::Breadcrumb;
+    ///
+    /// let w = Breadcrumb::new().segments(["Home", "Docs", "API"]).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for Breadcrumb {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
@@ -279,7 +304,7 @@ impl Widget for Breadcrumb {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Navigation);
-        node.set_label("Breadcrumb");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Breadcrumb"));
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -449,10 +474,16 @@ impl Widget for Breadcrumb {
                 // clipped sliver at the edge reads worse than none.
                 if x + sep_w <= b.max_x() {
                     let ink = cx.color(TokenKey::TextMutedColor, SEP_INK);
-                    // Native chevron — the `›` glyph is the fallback.
+                    // Native chevron — the `›`/`‹` glyph is the
+                    // fallback; forward points left under RTL.
+                    let rtl = cx.is_rtl();
                     let side = size_px * 0.8;
                     let icon_ok = crate::icons::builtin()
-                        .lookup("nav.chevron-right")
+                        .lookup(if rtl {
+                            "nav.chevron-left"
+                        } else {
+                            "nav.chevron-right"
+                        })
                         .is_some_and(|d| {
                             crate::widgets::morph_icon::paint_icon_d(
                                 cx.list,
@@ -481,7 +512,7 @@ impl Widget for Breadcrumb {
                                 f64::from(x + sep_w / 2.0 - size_px * 0.3),
                                 f64::from(y),
                             ),
-                            "›",
+                            if rtl { "‹" } else { "›" },
                             size_px,
                             ink,
                         );

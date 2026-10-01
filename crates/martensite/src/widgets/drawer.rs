@@ -152,6 +152,11 @@ impl Drawer {
 }
 
 impl Widget for Drawer {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // The edge anchor overrides the spanning axis; the measured
         // axis carries our depth request.

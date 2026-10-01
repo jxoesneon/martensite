@@ -285,6 +285,11 @@ impl std::fmt::Debug for WheelPicker {
 }
 
 impl Widget for WheelPicker {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = cx.pt(self.row_height) * (VISIBLE_HALF * 2 + 1) as f32;
         Vec2::new(

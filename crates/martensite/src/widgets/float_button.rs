@@ -271,6 +271,11 @@ impl std::fmt::Debug for FloatButton {
 }
 
 impl Widget for FloatButton {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// `@labeled` declares the accessible name to design-lint's
     /// `icon-only-control` rule — only when `.label()` set an explicit
     /// name; a bare `"+"` glyph is a weak name the rule should catch.

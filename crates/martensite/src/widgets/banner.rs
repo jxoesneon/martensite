@@ -128,11 +128,17 @@ impl Banner {
         self
     }
 
-    /// The close-button rect (device px) from the last layout.
+    /// The close-button rect (device px) from the last layout —
+    /// trailing edge, which is the left edge under RTL.
     fn close_rect(&self, scale: f32) -> Rect {
         let side = CLOSE * scale;
+        let x = if martensite_core::intl::ambient_direction().is_rtl() {
+            self.cached_bounds.min_x() + 8.0 * scale
+        } else {
+            self.cached_bounds.max_x() - side - 8.0 * scale
+        };
         Rect::new(
-            self.cached_bounds.max_x() - side - 8.0 * scale,
+            x,
             self.cached_bounds.origin.y + (self.cached_bounds.size.y - side) / 2.0,
             side,
             side,
@@ -141,6 +147,11 @@ impl Banner {
 }
 
 impl Widget for Banner {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
@@ -189,15 +200,17 @@ impl Widget for Banner {
             &shape,
             cx.color(TokenKey::SurfaceColor, [70, 74, 82, 255]),
         );
-        // Severity accent bar on the leading edge.
         let accent = self.severity.accent();
+        // Leading accent bar + severity dot — both mirror to the
+        // right edge under RTL.
+        let rtl = cx.is_rtl();
         let bar_w = cx.pt(3.0);
         cx.list.push_clip_shape(rect, &shape);
         cx.list.push_fill_rect(
             kurbo::Rect::new(
-                f64::from(b.origin.x),
+                f64::from(if rtl { b.max_x() - bar_w } else { b.origin.x }),
                 f64::from(b.origin.y),
-                f64::from(b.origin.x + bar_w),
+                f64::from(if rtl { b.max_x() } else { b.origin.x + bar_w }),
                 f64::from(b.max_y()),
             ),
             accent,
@@ -206,11 +219,16 @@ impl Widget for Banner {
 
         let dot_d = cx.pt(8.0);
         let dot_y = b.origin.y + (b.size.y - dot_d) / 2.0;
+        let dot_x = if rtl {
+            b.max_x() - cx.pt(12.0) - dot_d
+        } else {
+            b.origin.x + cx.pt(12.0)
+        };
         cx.list.push_fill_shape(
             kurbo::Rect::new(
-                f64::from(b.origin.x + cx.pt(12.0)),
+                f64::from(dot_x),
                 f64::from(dot_y),
-                f64::from(b.origin.x + cx.pt(12.0) + dot_d),
+                f64::from(dot_x + dot_d),
                 f64::from(dot_y + dot_d),
             ),
             &Shape::ELLIPSE,
@@ -218,13 +236,22 @@ impl Widget for Banner {
         );
 
         // Clip the message between the leading dot and the close
-        // affordance (or the banner's right edge) — an over-long
+        // affordance (or the banner's trailing edge) — an over-long
         // message can't spill past the chrome.
-        let text_x = b.origin.x + cx.pt(28.0);
-        let text_right = if self.dismissible {
-            self.close_rect(cx.scale).origin.x - cx.pt(4.0)
+        let (text_x, text_right) = if rtl {
+            let left = if self.dismissible {
+                self.close_rect(cx.scale).max_x() + cx.pt(4.0)
+            } else {
+                b.min_x() + cx.pt(8.0)
+            };
+            (left, b.max_x() - cx.pt(28.0))
         } else {
-            b.max_x() - cx.pt(8.0)
+            let right = if self.dismissible {
+                self.close_rect(cx.scale).origin.x - cx.pt(4.0)
+            } else {
+                b.max_x() - cx.pt(8.0)
+            };
+            (b.origin.x + cx.pt(28.0), right)
         };
         crate::text_paint::paint_label_clipped(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),

@@ -57,6 +57,10 @@ pub struct FontButton {
     bounds: Rect,
     scale: f32,
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Font"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl FontButton {
@@ -80,6 +84,7 @@ impl FontButton {
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -164,6 +169,26 @@ impl FontButton {
     }
 }
 
+impl FontButton {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Font"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::font_button::FontButton;
+    ///
+    /// let w = FontButton::new("Inter", 13.0).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for FontButton {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let text_w = self.face_text().chars().count() as f32 * FONT_PT * 0.55 * cx.scale;
@@ -193,7 +218,7 @@ impl Widget for FontButton {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Button);
-        node.set_label("Font");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Font"));
         node.set_value(self.face_text());
         if self.enabled {
             node.add_action(accesskit::Action::Click);

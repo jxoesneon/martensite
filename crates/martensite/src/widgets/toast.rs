@@ -267,6 +267,11 @@ impl Default for ToastHost {
 }
 
 impl Widget for ToastHost {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         let n = self.len() as f32;
         let h = if n == 0.0 {
@@ -340,15 +345,22 @@ impl Widget for ToastHost {
                 cx.pt(1.0),
                 cx.color(TokenKey::BorderColor, [110, 115, 125, 255]),
             );
-            // Severity dot.
+            // Severity dot — leading edge under the ambient
+            // direction (left in LTR, right in RTL).
+            let rtl = cx.is_rtl();
             let accent = toast.severity.accent();
             let d = cx.pt(8.0);
             let dy = r.origin.y + (r.size.y - d) / 2.0;
+            let dx = if rtl {
+                r.max_x() - cx.pt(12.0) - d
+            } else {
+                r.origin.x + cx.pt(12.0)
+            };
             cx.list.push_fill_shape(
                 kurbo::Rect::new(
-                    f64::from(r.origin.x + cx.pt(12.0)),
+                    f64::from(dx),
                     f64::from(dy),
-                    f64::from(r.origin.x + cx.pt(12.0) + d),
+                    f64::from(dx + d),
                     f64::from(dy + d),
                 ),
                 &Shape::ELLIPSE,
@@ -357,14 +369,18 @@ impl Widget for ToastHost {
             // Clip the message to the card minus the leading dot and
             // trailing pad — an over-long message can't spill past
             // the card edge.
-            let text_x = r.origin.x + cx.pt(28.0);
+            let (text_x, text_right) = if rtl {
+                (r.origin.x + cx.pt(8.0), r.max_x() - cx.pt(28.0))
+            } else {
+                (r.origin.x + cx.pt(28.0), r.max_x() - cx.pt(8.0))
+            };
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(text_x),
                     f64::from(r.origin.y),
-                    f64::from(r.max_x() - cx.pt(8.0)),
+                    f64::from(text_right),
                     f64::from(r.max_y()),
                 ),
                 kurbo::Point::new(

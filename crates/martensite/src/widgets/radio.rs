@@ -97,6 +97,11 @@ impl RadioOption {
 }
 
 impl Widget for RadioOption {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Approximate label width — real text shaping lives in the
         // `martensite-text` pipeline; this is a coarse per-grapheme
@@ -466,6 +471,11 @@ impl RadioGroup {
 }
 
 impl Widget for RadioGroup {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut total = Vec2::ZERO;
         for (i, option) in self.options.iter_mut().enumerate() {
@@ -573,9 +583,11 @@ impl Widget for RadioGroup {
                 response
             }
             WidgetEvent::KeyPressed { key, .. } => {
-                // APG: all four arrows cycle the group in either layout.
-                let forward = key == "ArrowDown" || key == "ArrowRight";
-                let backward = key == "ArrowUp" || key == "ArrowLeft";
+                // APG: all four arrows cycle the group in either
+                // layout. Under RTL the horizontal pair mirrors.
+                let rtl = cx.is_rtl();
+                let forward = key == "ArrowDown" || (key == "ArrowRight") != rtl;
+                let backward = key == "ArrowUp" || (key == "ArrowLeft") != rtl;
                 if forward {
                     self.move_focus(1);
                     EventResponse::RequestRepaint

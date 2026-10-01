@@ -53,6 +53,10 @@ pub struct HeatMap {
     hovered: Option<(usize, usize)>,
     bounds: Rect,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Heat map"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl HeatMap {
@@ -74,6 +78,7 @@ impl HeatMap {
             hovered: None,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -197,6 +202,26 @@ impl HeatMap {
     }
 }
 
+impl HeatMap {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Heat map"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::heat_map::HeatMap;
+    ///
+    /// let w = HeatMap::new(3, 4).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for HeatMap {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
@@ -218,7 +243,7 @@ impl Widget for HeatMap {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Image);
-        node.set_label("Heat map");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Heat map"));
         node.set_value(format!("{} by {}", self.rows, self.cols));
         // A real value summary — dimensions, occupancy, min/max/mean —
         // so the grid's data is legible without the pixels (D2).

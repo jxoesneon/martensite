@@ -234,6 +234,11 @@ impl Link {
 }
 
 impl Widget for Link {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         let size = cx.pt(FONT_PT);
         let painter = crate::text_paint::resolve_painter(&self.text_painter, None);

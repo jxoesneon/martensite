@@ -72,6 +72,10 @@ pub struct Gauge {
     ticks: bool,
     /// Shared shaped-text painter.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Gauge"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl Gauge {
@@ -96,6 +100,7 @@ impl Gauge {
             crit_at: None,
             ticks: true,
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -250,6 +255,26 @@ fn arc_path(center: kurbo::Point, radius: f64, start_deg: f64, sweep_deg: f64) -
     path
 }
 
+impl Gauge {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Gauge"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::gauge::Gauge;
+    ///
+    /// let w = Gauge::new().range(0.0, 100.0).value(62.0).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for Gauge {
     fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         let s = cx.pt(SIZE_PT);
@@ -260,7 +285,7 @@ impl Widget for Gauge {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Meter);
-        node.set_label("Gauge");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Gauge"));
         node.set_numeric_value(self.value);
         node.set_min_numeric_value(self.min);
         node.set_max_numeric_value(self.max);

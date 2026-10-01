@@ -96,6 +96,10 @@ pub struct BottomSheet {
     cached_bounds: Rect,
     /// Shared shaped-text painter. See [`crate::text_paint`].
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Bottom sheet"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl BottomSheet {
@@ -124,6 +128,7 @@ impl BottomSheet {
             card_rect: Rect::default(),
             cached_bounds: Rect::default(),
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -270,6 +275,26 @@ impl Default for BottomSheet {
     }
 }
 
+impl BottomSheet {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Bottom sheet"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::bottom_sheet::BottomSheet;
+    ///
+    /// let w = BottomSheet::new().detents(&[0.35, 0.9]).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for BottomSheet {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Fill the offered edge strip — the card positions itself
@@ -301,7 +326,7 @@ impl Widget for BottomSheet {
         if let Some(title) = &self.title {
             node.set_label(title.as_str());
         } else {
-            node.set_label("Bottom sheet");
+            node.set_label(self.a11y_label.as_deref().unwrap_or("Bottom sheet"));
         }
     }
 

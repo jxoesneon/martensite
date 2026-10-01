@@ -283,6 +283,11 @@ impl std::fmt::Debug for Statistic {
 }
 
 impl Widget for Statistic {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut h = cx.pt(TITLE_PT + GAP_PT + VALUE_PT + GAP_PT);
         if self.trend.is_some() {

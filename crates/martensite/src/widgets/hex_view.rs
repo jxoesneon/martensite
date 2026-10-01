@@ -231,6 +231,11 @@ impl HexView {
 }
 
 impl Widget for HexView {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn debug_name(&self) -> &'static str {
         // A hex dump is a document surface — its text is payload, so
         // `packing-density`'s alphanumeric cap exempts it.

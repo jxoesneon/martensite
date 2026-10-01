@@ -132,6 +132,11 @@ impl ScrollBarWidget {
 }
 
 impl Widget for ScrollBarWidget {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let size = if self.vertical {
             Vec2::new(cx.pt(BAR), 0.0)
@@ -828,6 +833,11 @@ impl ScrollView {
 }
 
 impl Widget for ScrollView {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Measure the content against the given constraints to derive a
         // reasonable desired viewport (bounded so the view does not ask
@@ -902,10 +912,20 @@ impl Widget for ScrollView {
         let mut viewport = bounds;
         self.vbar_rect = None;
         self.hbar_rect = None;
+        // Under RTL the vertical strip anchors to the leading (left)
+        // edge and the viewport shifts right to clear it.
+        let rtl = cx.is_rtl();
         if show_v {
+            if rtl {
+                viewport.origin.x += bar;
+            }
             viewport.size.x = (viewport.width() - bar).max(0.0);
             self.vbar_rect = Some(Rect::new(
-                bounds.max_x() - bar,
+                if rtl {
+                    bounds.min_x()
+                } else {
+                    bounds.max_x() - bar
+                },
                 bounds.min_y(),
                 bar,
                 bounds.height() - if show_h { bar } else { 0.0 },
@@ -913,8 +933,9 @@ impl Widget for ScrollView {
         }
         if show_h {
             viewport.size.y = (viewport.height() - bar).max(0.0);
+            let h_x = bounds.min_x() + if rtl && show_v { bar } else { 0.0 };
             self.hbar_rect = Some(Rect::new(
-                bounds.min_x(),
+                h_x,
                 bounds.max_y() - bar,
                 bounds.width() - if show_v { bar } else { 0.0 },
                 bar,
@@ -1220,6 +1241,11 @@ mod tests {
     /// Fixed-size content stub.
     struct Fixed(Vec2);
     impl Widget for Fixed {
+        #[cfg(feature = "devtools-timemachine")]
+        fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+            Some(self)
+        }
+
         fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
             self.0
         }

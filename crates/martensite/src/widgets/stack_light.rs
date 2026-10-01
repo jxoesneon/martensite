@@ -310,6 +310,11 @@ impl StackLight {
 }
 
 impl Widget for StackLight {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// Andon tower — the red segment is the alarm channel by
     /// construction, declared via the `@alarm` marker for the lint
     /// lineage.

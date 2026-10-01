@@ -474,7 +474,13 @@ impl RangeSlider {
         match self.orientation {
             SliderOrientation::Horizontal => {
                 let usable = (b.width() - thumb).max(f32::EPSILON);
-                ((position.x - b.min_x() - thumb / 2.0) / usable).clamp(0.0, 1.0)
+                let f = ((position.x - b.min_x() - thumb / 2.0) / usable).clamp(0.0, 1.0);
+                // Under RTL the rail's low end anchors on the right.
+                if martensite_core::intl::ambient_direction().is_rtl() {
+                    1.0 - f
+                } else {
+                    f
+                }
             }
             SliderOrientation::Vertical => {
                 let usable = (b.height() - thumb).max(f32::EPSILON);
@@ -491,10 +497,18 @@ impl RangeSlider {
         let d = self.thumb_px();
         let t = self.fraction(thumb);
         match self.orientation {
-            SliderOrientation::Horizontal => Vec2::new(
-                b.min_x() + d / 2.0 + t * (b.width() - d).max(0.0),
-                b.min_y() + b.height() / 2.0,
-            ),
+            SliderOrientation::Horizontal => {
+                // Under RTL fraction 0 anchors on the right.
+                let t = if martensite_core::intl::ambient_direction().is_rtl() {
+                    1.0 - t
+                } else {
+                    t
+                };
+                Vec2::new(
+                    b.min_x() + d / 2.0 + t * (b.width() - d).max(0.0),
+                    b.min_y() + b.height() / 2.0,
+                )
+            }
             SliderOrientation::Vertical => Vec2::new(
                 b.min_x() + b.width() / 2.0,
                 b.max_y() - d / 2.0 - t * (b.height() - d).max(0.0),
@@ -536,9 +550,14 @@ impl RangeSlider {
 
     fn key_delta(&self, key: &str) -> Option<f64> {
         let step = self.step;
+        // Under RTL the horizontal arrows mirror — left increases.
+        let rtl_h = self.orientation == SliderOrientation::Horizontal
+            && martensite_core::intl::ambient_direction().is_rtl();
         match key {
-            "ArrowRight" | "ArrowUp" => Some(step),
-            "ArrowLeft" | "ArrowDown" => Some(-step),
+            "ArrowRight" => Some(if rtl_h { -step } else { step }),
+            "ArrowUp" => Some(step),
+            "ArrowLeft" => Some(if rtl_h { step } else { -step }),
+            "ArrowDown" => Some(-step),
             "PageUp" => Some(self.page_step()),
             "PageDown" => Some(-self.page_step()),
             _ => None,
@@ -547,6 +566,11 @@ impl RangeSlider {
 }
 
 impl Widget for RangeSlider {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let (w, h): (f32, f32) = match self.orientation {
             SliderOrientation::Horizontal => (160.0, 24.0),

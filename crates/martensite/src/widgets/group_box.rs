@@ -258,6 +258,11 @@ impl GroupBox {
 }
 
 impl Widget for GroupBox {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let title_h = cx.pt(TITLE_H);
         let inset = cx.pt(FRAME_INSET);

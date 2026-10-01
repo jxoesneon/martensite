@@ -386,6 +386,11 @@ impl Default for PdfView {
 }
 
 impl Widget for PdfView {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
@@ -420,8 +425,21 @@ impl Widget for PdfView {
             return EventResponse::Ignored;
         };
         match key.as_str() {
-            "PageDown" | "ArrowRight" | "ArrowDown" => self.next_page(),
-            "PageUp" | "ArrowLeft" | "ArrowUp" => self.prev_page(),
+            "PageDown" | "ArrowRight" | "ArrowDown" => {
+                // Under RTL the horizontal arrow mirrors.
+                if key == "ArrowRight" && cx.is_rtl() {
+                    self.prev_page()
+                } else {
+                    self.next_page()
+                }
+            }
+            "PageUp" | "ArrowLeft" | "ArrowUp" => {
+                if key == "ArrowLeft" && cx.is_rtl() {
+                    self.next_page()
+                } else {
+                    self.prev_page()
+                }
+            }
             "Home" => self.first_page(),
             "End" => self.last_page(),
             "+" | "=" => self.zoom_in(),

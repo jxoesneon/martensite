@@ -280,6 +280,11 @@ impl ToolPalette {
 }
 
 impl Widget for ToolPalette {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let cell_h = CELL_PT * s + if self.show_labels { LABEL_PT * s } else { 0.0 };
@@ -356,12 +361,13 @@ impl Widget for ToolPalette {
                 EventResponse::Ignored
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
+                // Grid row order mirrors under RTL.
                 "ArrowRight" => {
-                    self.step(1);
+                    self.step(if cx.is_rtl() { -1 } else { 1 });
                     EventResponse::RequestRepaint
                 }
                 "ArrowLeft" => {
-                    self.step(-1);
+                    self.step(if cx.is_rtl() { 1 } else { -1 });
                     EventResponse::RequestRepaint
                 }
                 "ArrowDown" => {

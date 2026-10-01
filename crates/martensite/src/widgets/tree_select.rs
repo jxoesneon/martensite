@@ -239,6 +239,11 @@ impl TreePopup {
 }
 
 impl Widget for TreePopup {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let edge = cx.pt(POPUP_EDGE);
         let inner = LayoutConstraints {
@@ -894,6 +899,11 @@ impl Default for TreeSelect {
 }
 
 impl Widget for TreeSelect {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Approximate face width — real shaping lives in the
         // `martensite-text` pipeline. The widest label anywhere in the

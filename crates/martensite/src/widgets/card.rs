@@ -322,6 +322,11 @@ impl Default for Card {
 }
 
 impl Widget for Card {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h_inset = self.padding.horizontal();
         let v_inset = self.padding.vertical();

@@ -212,6 +212,9 @@ impl Widget for ProgressBar {
         let accent = cx.color(TokenKey::AccentColor, ACCENT);
         let w = b.size.x;
         let fill = match self.value {
+            // Determinate fills grow from the leading edge — the
+            // right edge under RTL.
+            Some(v) if cx.is_rtl() => Some((w - v * w, v * w)),
             Some(v) => Some((0.0, v * w)),
             None => {
                 // A 30%-wide segment sweeping left→right with a small

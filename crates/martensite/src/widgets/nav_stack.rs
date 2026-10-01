@@ -269,6 +269,11 @@ impl NavStack {
 }
 
 impl Widget for NavStack {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let mut size = Vec2::new(240.0, 160.0);
         if let Some(top) = self.pages.last_mut() {
@@ -314,33 +319,53 @@ impl Widget for NavStack {
             hairline,
         );
 
-        // ‹ Back zone — only at depth ≥ 2.
+        // ‹ Back zone — only at depth ≥ 2. Under RTL it anchors on
+        // the right edge and the chevron points right.
         let deep = self.pages.len() > 1;
         if deep {
+            let rtl = cx.is_rtl();
             let back_ink = if self.hover_back { accent } else { ink };
-            let strip = kurbo::Rect::new(
-                f64::from(b.min_x()),
-                f64::from(b.min_y()),
-                f64::from(b.min_x() + cx.pt(BACK_W)),
-                f64::from(b.min_y() + header_h),
-            );
+            let strip = if rtl {
+                kurbo::Rect::new(
+                    f64::from(b.max_x() - cx.pt(BACK_W)),
+                    f64::from(b.min_y()),
+                    f64::from(b.max_x()),
+                    f64::from(b.min_y() + header_h),
+                )
+            } else {
+                kurbo::Rect::new(
+                    f64::from(b.min_x()),
+                    f64::from(b.min_y()),
+                    f64::from(b.min_x() + cx.pt(BACK_W)),
+                    f64::from(b.min_y() + header_h),
+                )
+            };
             let s = 4.0f64;
             let cy = strip.y0 + strip.height() * 0.5;
-            let cxp = strip.x0 + 10.0;
+            let cxp = if rtl {
+                strip.x1 - 10.0
+            } else {
+                strip.x0 + 10.0
+            };
             let mut path = kurbo::BezPath::new();
-            path.move_to(kurbo::Point::new(cxp + s, cy - s));
-            path.line_to(kurbo::Point::new(cxp - s, cy));
-            path.line_to(kurbo::Point::new(cxp + s, cy + s));
+            if rtl {
+                path.move_to(kurbo::Point::new(cxp - s, cy - s));
+                path.line_to(kurbo::Point::new(cxp + s, cy));
+                path.line_to(kurbo::Point::new(cxp - s, cy + s));
+            } else {
+                path.move_to(kurbo::Point::new(cxp + s, cy - s));
+                path.line_to(kurbo::Point::new(cxp - s, cy));
+                path.line_to(kurbo::Point::new(cxp + s, cy + s));
+            }
             cx.list.push_stroke_path(path, 1.6, back_ink);
             let size = 13.0 * cx.scale;
+            let label_x = if rtl {
+                strip.x0 + f64::from(cx.pt(6.0))
+            } else {
+                strip.x0 + f64::from(cx.pt(20.0))
+            };
             crate::text_paint::paint_label_vcenter(
-                painter,
-                cx.list,
-                strip,
-                strip.x0 + f64::from(cx.pt(20.0)),
-                "Back",
-                size,
-                back_ink,
+                painter, cx.list, strip, label_x, "Back", size, back_ink,
             );
         }
 
@@ -379,7 +404,12 @@ impl Widget for NavStack {
         match cx.event {
             WidgetEvent::PointerMoved { position } => {
                 let local = *position - cx.bounds.origin;
-                let over = deep && local.y < header_h && local.x < back_w;
+                let in_back = if cx.is_rtl() {
+                    local.x > cx.bounds.width() - back_w
+                } else {
+                    local.x < back_w
+                };
+                let over = deep && local.y < header_h && in_back;
                 if over != self.hover_back {
                     self.hover_back = over;
                     return EventResponse::RequestRepaint;
@@ -390,7 +420,12 @@ impl Widget for NavStack {
                 if *button == martensite_core::PointerButton::Primary =>
             {
                 let local = *position - cx.bounds.origin;
-                if deep && local.y < header_h && local.x < back_w {
+                let in_back = if cx.is_rtl() {
+                    local.x > cx.bounds.width() - back_w
+                } else {
+                    local.x < back_w
+                };
+                if deep && local.y < header_h && in_back {
                     self.pop();
                     return EventResponse::RequestRepaint;
                 }

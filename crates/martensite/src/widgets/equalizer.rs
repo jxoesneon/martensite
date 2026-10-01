@@ -217,6 +217,12 @@ impl Equalizer {
         let gap = GAP_PT * self.scale;
         let pitch = (self.bounds.width() - 2.0 * pad + gap) / self.gains.len().max(1) as f32;
         let i = ((p.x - self.bounds.min_x() - pad) / pitch) as usize;
+        // Under RTL band 0 anchors on the right.
+        let i = if martensite_core::intl::ambient_direction().is_rtl() {
+            self.gains.len().saturating_sub(1 + i)
+        } else {
+            i
+        };
         (i < self.gains.len()).then_some(i)
     }
 
@@ -226,6 +232,13 @@ impl Equalizer {
         let gap = GAP_PT * self.scale;
         let pitch = (self.bounds.width() - 2.0 * pad + gap) / self.gains.len().max(1) as f32;
         let w = (pitch - gap).min(BAND_W_PT * self.scale);
+        // Under RTL band 0 anchors on the right — `band_at` mirrors
+        // the same mapping.
+        let band = if martensite_core::intl::ambient_direction().is_rtl() {
+            self.gains.len().saturating_sub(1 + band)
+        } else {
+            band
+        };
         let x = self.bounds.min_x() + pad + band as f32 * pitch + (pitch - w) / 2.0;
         Rect::new(
             x,
@@ -244,6 +257,11 @@ impl Equalizer {
 }
 
 impl Widget for Equalizer {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let w = (self.gains.len() as f32 * (BAND_W_PT + GAP_PT) + 2.0 * PAD_PT).max(60.0);
         Vec2::new(
@@ -303,12 +321,15 @@ impl Widget for Equalizer {
                     return EventResponse::Ignored;
                 }
                 match key.as_str() {
-                    "ArrowLeft" => {
-                        self.focused = self.focused.saturating_sub(1);
-                        EventResponse::RequestRepaint
-                    }
-                    "ArrowRight" => {
-                        self.focused = (self.focused + 1).min(self.gains.len() - 1);
+                    // Band focus moves along the horizontal strip —
+                    // mirrors under RTL.
+                    "ArrowLeft" | "ArrowRight" => {
+                        let fwd = (key == "ArrowRight") != cx.is_rtl();
+                        self.focused = if fwd {
+                            (self.focused + 1).min(self.gains.len() - 1)
+                        } else {
+                            self.focused.saturating_sub(1)
+                        };
                         EventResponse::RequestRepaint
                     }
                     "ArrowUp" => {

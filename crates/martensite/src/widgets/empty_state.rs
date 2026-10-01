@@ -336,6 +336,11 @@ impl EmptyState {
 }
 
 impl Widget for EmptyState {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Fill whatever the parent offers; the stack centres itself.
         // A modest floor keeps the state readable under tight layout.

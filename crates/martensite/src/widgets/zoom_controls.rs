@@ -352,6 +352,11 @@ impl ZoomControls {
 }
 
 impl Widget for ZoomControls {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let btn = cx.pt(BTN_PT);
         if self.horizontal {

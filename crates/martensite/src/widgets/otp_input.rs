@@ -81,6 +81,10 @@ pub struct OtpInput {
     cell_rects: Vec<Rect>,
     /// Shared shaped-text painter.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"One-time code"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl OtpInput {
@@ -108,6 +112,7 @@ impl OtpInput {
             signaled: false,
             cell_rects: Vec::new(),
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -322,6 +327,26 @@ impl Default for OtpInput {
     }
 }
 
+impl OtpInput {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"One-time code"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::otp_input::OtpInput;
+    ///
+    /// let w = OtpInput::new().length(6).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for OtpInput {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let w = self.length as f32 * cx.pt(CELL_PT)
@@ -333,9 +358,12 @@ impl Widget for OtpInput {
         self.cell_rects.clear();
         let cell = cx.pt(CELL_PT);
         let gap = cx.pt(GAP_PT);
+        // Under RTL the digit cells run right-to-left.
+        let rtl = cx.is_rtl();
         for i in 0..self.length {
+            let slot = if rtl { self.length - 1 - i } else { i };
             self.cell_rects.push(Rect::new(
-                bounds.origin.x + i as f32 * (cell + gap),
+                bounds.origin.x + slot as f32 * (cell + gap),
                 bounds.origin.y,
                 cell,
                 cell,
@@ -345,7 +373,7 @@ impl Widget for OtpInput {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::TextInput);
-        node.set_label("One-time code");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("One-time code"));
         node.set_value(self.value.clone());
         if !self.enabled {
             node.set_disabled();
@@ -399,11 +427,21 @@ impl Widget for OtpInput {
                     }
                 }
                 "ArrowLeft" => {
-                    self.caret = self.caret.saturating_sub(1);
+                    // Under RTL the cell strip mirrors — left moves
+                    // the caret forward through the value.
+                    self.caret = if cx.is_rtl() {
+                        (self.caret + 1).min(self.value.chars().count())
+                    } else {
+                        self.caret.saturating_sub(1)
+                    };
                     EventResponse::RequestRepaint
                 }
                 "ArrowRight" => {
-                    self.caret = (self.caret + 1).min(self.value.chars().count());
+                    self.caret = if cx.is_rtl() {
+                        self.caret.saturating_sub(1)
+                    } else {
+                        (self.caret + 1).min(self.value.chars().count())
+                    };
                     EventResponse::RequestRepaint
                 }
                 "Home" => {

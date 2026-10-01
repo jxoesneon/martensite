@@ -269,6 +269,11 @@ impl DigitalClock {
 }
 
 impl Widget for DigitalClock {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // "HH:MM" (+":ss") (+" AM") — monospace-ish char estimate.
         let chars = self.text().chars().count() as f32;

@@ -343,11 +343,17 @@ impl Volume {
         }
     }
 
-    /// Speaker icon rect — also the internal MorphIcon child's bounds.
+    /// Speaker icon rect — also the internal MorphIcon child's
+    /// bounds. Under RTL it anchors on the leading (right) edge.
     fn icon_rect(&self) -> Rect {
         let s = self.scale;
+        let x = if martensite_core::intl::ambient_direction().is_rtl() {
+            self.bounds.max_x() - PAD_PT * s - ICON_PT * s
+        } else {
+            self.bounds.min_x() + PAD_PT * s
+        };
         Rect::new(
-            self.bounds.min_x() + PAD_PT * s,
+            x,
             self.bounds.min_y() + (self.bounds.height() - ICON_PT * s) / 2.0,
             ICON_PT * s,
             ICON_PT * s,
@@ -357,11 +363,22 @@ impl Volume {
     /// Gain from a rail x-coordinate.
     fn gain_at(&self, x: f32) -> f32 {
         let f = ((x - self.rail.min_x()) / self.rail.width().max(0.001)).clamp(0.0, 1.0);
+        // Under RTL the rail's zero end anchors on the right.
+        let f = if martensite_core::intl::ambient_direction().is_rtl() {
+            1.0 - f
+        } else {
+            f
+        };
         f * self.max
     }
 }
 
 impl Widget for Volume {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(140.0).min(constraints.max_size.x.max(0.0)),
@@ -378,10 +395,22 @@ impl Widget for Volume {
         self.scale = cx.scale;
         let s = cx.scale;
         let icon = self.icon_rect();
+        // Under RTL the rail sits left of the right-anchored icon.
+        let (rail_x, rail_w) = if cx.is_rtl() {
+            (
+                bounds.min_x() + PAD_PT * s,
+                (icon.min_x() - bounds.min_x() - PAD_PT * s * 2.0).max(0.0),
+            )
+        } else {
+            (
+                icon.max_x() + PAD_PT * s,
+                (bounds.max_x() - icon.max_x() - PAD_PT * s * 2.0).max(0.0),
+            )
+        };
         self.rail = Rect::new(
-            icon.max_x() + PAD_PT * s,
+            rail_x,
             bounds.min_y() + (bounds.height() - HANDLE_PT * s) / 2.0,
-            (bounds.max_x() - icon.max_x() - PAD_PT * s * 2.0).max(0.0),
+            rail_w,
             HANDLE_PT * s,
         );
         // Allocate the internal MorphIcon child its glyph rect so the
@@ -451,12 +480,11 @@ impl Widget for Volume {
                 EventResponse::Ignored
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
-                "ArrowLeft" | "ArrowDown" => {
-                    self.set_gain(self.gain - self.max * 0.05);
-                    EventResponse::RequestRepaint
-                }
-                "ArrowRight" | "ArrowUp" => {
-                    self.set_gain(self.gain + self.max * 0.05);
+                "ArrowLeft" | "ArrowDown" | "ArrowRight" | "ArrowUp" => {
+                    // Under RTL the horizontal arrows mirror.
+                    let inc = key == "ArrowRight" || key == "ArrowUp";
+                    let d = if inc != cx.is_rtl() { 0.05 } else { -0.05 };
+                    self.set_gain(self.gain + self.max * d);
                     EventResponse::RequestRepaint
                 }
                 "m" | "M" => {
@@ -557,14 +585,26 @@ impl Widget for Volume {
         cx.list
             .push_fill_shape(krect(track), shape, cx.color(TokenKey::DividerColor, TRACK));
         let frac = self.display_gain() / self.max;
+        // Under RTL the fill and handle anchor on the right.
         if frac > 0.0 {
-            cx.list.push_fill_shape(
-                krect(Rect::new(track.min_x(), ry, track.width() * frac, rail_h)),
-                shape,
-                cx.color(TokenKey::AccentColor, FILL),
-            );
+            let fill = if cx.is_rtl() {
+                Rect::new(
+                    track.max_x() - track.width() * frac,
+                    ry,
+                    track.width() * frac,
+                    rail_h,
+                )
+            } else {
+                Rect::new(track.min_x(), ry, track.width() * frac, rail_h)
+            };
+            cx.list
+                .push_fill_shape(krect(fill), shape, cx.color(TokenKey::AccentColor, FILL));
         }
-        let hx = self.rail.min_x() + self.rail.width() * frac;
+        let hx = if cx.is_rtl() {
+            self.rail.max_x() - self.rail.width() * frac
+        } else {
+            self.rail.min_x() + self.rail.width() * frac
+        };
         let hd = HANDLE_PT * s;
         cx.list.push_fill_shape(
             krect(Rect::new(

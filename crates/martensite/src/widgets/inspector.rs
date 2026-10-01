@@ -365,6 +365,11 @@ impl Inspector {
 }
 
 impl Widget for Inspector {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let mut rows = self.sections.len() as f32 * HEAD_PT;
@@ -473,22 +478,26 @@ impl Widget for Inspector {
             let head_clip = khr.intersect(kbounds);
             // Disclosure chevron — the native pack's icon under
             // `MorphIcon`'s paint conventions; the ▾/▸ glyph stays as
-            // the no-pack fallback.
+            // the no-pack fallback. Under RTL it sits on the leading
+            // (right) edge and points left.
+            let rtl = cx.is_rtl();
             let chevron = crate::icons::builtin().lookup(if sec.open {
                 "nav.chevron-down"
+            } else if rtl {
+                "nav.chevron-left"
             } else {
                 "nav.chevron-right"
             });
             let side = HEAD_FONT_PT * s * 0.9;
+            let chev_x = if rtl {
+                hr.max_x() - 6.0 * s - side
+            } else {
+                hr.min_x() + 6.0 * s
+            };
             let icon_ok = chevron.is_some_and(|d| {
                 crate::widgets::morph_icon::paint_icon_d(
                     cx.list,
-                    Rect::new(
-                        hr.min_x() + 6.0 * s,
-                        hr.min_y() + (hr.size.y - side) / 2.0,
-                        side,
-                        side,
-                    ),
+                    Rect::new(chev_x, hr.min_y() + (hr.size.y - side) / 2.0, side, side),
                     d,
                     s,
                     MUTED_FG,
@@ -499,17 +508,40 @@ impl Widget for Inspector {
                     painter,
                     cx.list,
                     head_clip,
-                    f64::from(hr.min_x() + 6.0 * s),
-                    if sec.open { "▾" } else { "▸" },
+                    f64::from(chev_x),
+                    if sec.open {
+                        "▾"
+                    } else if rtl {
+                        "◂"
+                    } else {
+                        "▸"
+                    },
                     HEAD_FONT_PT * s,
                     MUTED_FG,
                 );
             }
+            // Title sits after the chevron on the leading edge; under
+            // RTL its clip excludes the right-edge chevron box.
+            let title_clip = if rtl {
+                kurbo::Rect::new(
+                    head_clip.min_x(),
+                    head_clip.min_y(),
+                    head_clip.max_x().min(f64::from(chev_x)),
+                    head_clip.max_y(),
+                )
+            } else {
+                head_clip
+            };
+            let title_x = if rtl {
+                hr.min_x() + 6.0 * s
+            } else {
+                hr.min_x() + 18.0 * s
+            };
             crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                head_clip,
-                f64::from(hr.min_x() + 18.0 * s),
+                title_clip,
+                f64::from(title_x),
                 &sec.title,
                 HEAD_FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),

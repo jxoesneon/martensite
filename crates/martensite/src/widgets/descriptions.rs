@@ -92,6 +92,11 @@ impl DescriptionItem {
 }
 
 impl Widget for DescriptionItem {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(cx.pt(80.0), cx.pt(ROW_PT))
     }
@@ -337,6 +342,11 @@ impl std::fmt::Debug for Descriptions {
 }
 
 impl Widget for Descriptions {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let title_h = if self.title.is_some() {
             cx.pt(TITLE_PT)

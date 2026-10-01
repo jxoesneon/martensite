@@ -89,6 +89,10 @@ pub struct Pagination {
     cached_bounds: Rect,
     /// Shared shaped-text painter. See [`crate::text_paint`].
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Pagination"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl Pagination {
@@ -114,6 +118,7 @@ impl Pagination {
             rects: Vec::new(),
             cached_bounds: Rect::default(),
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -274,6 +279,26 @@ impl Default for Pagination {
     }
 }
 
+impl Pagination {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Pagination"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::pagination::Pagination;
+    ///
+    /// let w = Pagination::new().total_pages(20).current(7).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for Pagination {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let cells = self.build_cells().len() as f32;
@@ -291,8 +316,15 @@ impl Widget for Pagination {
         let cell = cx.pt(CELL_PT);
         let gap = cx.pt(GAP_PT);
         let total_w = self.cells.len() as f32 * cell + (self.cells.len() - 1) as f32 * gap;
-        let mut x = bounds.origin.x + (bounds.size.x - total_w).max(0.0) / 2.0;
+        let strip_x = bounds.origin.x + (bounds.size.x - total_w).max(0.0) / 2.0;
         let y = bounds.origin.y + (bounds.size.y - cell).max(0.0) / 2.0;
+        // RTL strips run right→left: Prev anchors the right edge.
+        let rtl = cx.is_rtl();
+        let mut x = if rtl {
+            strip_x + total_w - cell
+        } else {
+            strip_x
+        };
         for c in &self.cells {
             // Ellipses get a display slot but no hit target.
             let interactive = !matches!(c, Cell::Ellipsis);
@@ -301,13 +333,13 @@ impl Widget for Pagination {
             } else {
                 Rect::default()
             });
-            x += cell + gap;
+            x += if rtl { -(cell + gap) } else { cell + gap };
         }
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Navigation);
-        node.set_label("Pagination");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Pagination"));
         node.add_action(accesskit::Action::Focus);
         node.set_value(format!("Page {} of {}", self.current, self.total));
     }
@@ -428,9 +460,20 @@ impl Widget for Pagination {
             };
             // Prev/next/ellipsis paint as native-pack icons —
             // chevrons and the more mark; glyphs stay as fallback.
+            // Under RTL "previous" advances rightward, so the
+            // chevron pair swaps direction.
+            let rtl = cx.is_rtl();
             let icon_name = match cell {
-                Cell::Prev => Some("nav.chevron-left"),
-                Cell::Next => Some("nav.chevron-right"),
+                Cell::Prev => Some(if rtl {
+                    "nav.chevron-right"
+                } else {
+                    "nav.chevron-left"
+                }),
+                Cell::Next => Some(if rtl {
+                    "nav.chevron-left"
+                } else {
+                    "nav.chevron-right"
+                }),
                 Cell::Ellipsis => Some("nav.more-horizontal"),
                 Cell::Page(_) => None,
             };
@@ -455,8 +498,20 @@ impl Widget for Pagination {
                 }
             }
             let label = match cell {
-                Cell::Prev => "‹",
-                Cell::Next => "›",
+                Cell::Prev => {
+                    if rtl {
+                        "›"
+                    } else {
+                        "‹"
+                    }
+                }
+                Cell::Next => {
+                    if rtl {
+                        "‹"
+                    } else {
+                        "›"
+                    }
+                }
                 Cell::Ellipsis => "…",
                 Cell::Page(n) => {
                     let s = n.to_string();

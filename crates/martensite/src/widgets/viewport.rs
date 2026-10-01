@@ -396,6 +396,11 @@ impl Viewport {
 }
 
 impl Widget for Viewport {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Fill whatever the parent offers (canvas idiom).
         Vec2::new(
@@ -620,6 +625,11 @@ mod tests {
     struct Stub(Vec2);
 
     impl Widget for Stub {
+        #[cfg(feature = "devtools-timemachine")]
+        fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+            Some(self)
+        }
+
         fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
             self.0
         }

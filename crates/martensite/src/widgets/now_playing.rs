@@ -334,6 +334,11 @@ impl NowPlaying {
 }
 
 impl Widget for NowPlaying {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = (ART_PT + PAD_PT * 2.0 + RAIL_H_PT + 4.0) * cx.scale;
         // Natural content width: art + metadata column + elapsed/total.

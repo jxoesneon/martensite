@@ -273,12 +273,18 @@ impl Rating {
         (value / step).round().clamp(0.0, self.max as f32 / step) * step
     }
 
-    /// Maps a pointer x-position within cell `i` to a value.
+    /// Maps a pointer x-position within cell `i` to a value. Under
+    /// RTL the leading half of a cell is its right half.
     fn value_at(&self, index: usize, position: Vec2) -> f32 {
         if self.half_steps {
             let cell = self.cell_rects[index];
             let frac = ((position.x - cell.origin.x) / cell.size.x).clamp(0.0, 1.0);
-            index as f32 + if frac <= 0.5 { 0.5 } else { 1.0 }
+            let leading_half = if martensite_core::intl::ambient_direction().is_rtl() {
+                frac > 0.5
+            } else {
+                frac <= 0.5
+            };
+            index as f32 + if leading_half { 0.5 } else { 1.0 }
         } else {
             index as f32 + 1.0
         }
@@ -305,6 +311,11 @@ impl Default for Rating {
 }
 
 impl Widget for Rating {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let w =
             self.max as f32 * cx.pt(CELL_PT) + (self.max.saturating_sub(1)) as f32 * cx.pt(GAP_PT);
@@ -321,13 +332,17 @@ impl Widget for Rating {
             .min((bounds.width() - gap * self.max.saturating_sub(1) as f32) / self.max as f32)
             .max(0.0);
         let cell = cell.min(bounds.height());
+        // RTL: cell 0 (value 1) anchors the right edge — the strip
+        // fills leading-edge-first like every other RTL sequence.
+        let rtl = cx.is_rtl();
         for i in 0..self.max {
-            self.cell_rects.push(Rect::new(
-                bounds.origin.x + i as f32 * (cell + gap),
-                bounds.origin.y,
-                cell,
-                cell,
-            ));
+            let x = if rtl {
+                bounds.max_x() - cell - i as f32 * (cell + gap)
+            } else {
+                bounds.origin.x + i as f32 * (cell + gap)
+            };
+            self.cell_rects
+                .push(Rect::new(x, bounds.origin.y, cell, cell));
         }
     }
 

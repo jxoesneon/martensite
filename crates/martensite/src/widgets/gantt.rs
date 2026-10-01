@@ -246,6 +246,11 @@ impl Gantt {
 }
 
 impl Widget for Gantt {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let rows = (self.tasks.len() as f32 * ROW_PT + AXIS_PT).max(48.0);
         Vec2::new(

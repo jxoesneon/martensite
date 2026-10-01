@@ -752,22 +752,25 @@ impl MenuState {
                 self.highlight_edge(depth, false);
                 EventResponse::RequestRepaint
             }
-            "ArrowRight" => {
-                let submenu = self.highlighted(depth).is_some_and(|row| {
-                    self.items_at(depth)
-                        .and_then(|items| items.get(row))
-                        .is_some_and(MenuItem::is_submenu)
-                });
-                if submenu {
-                    let row = self.highlighted(depth).unwrap_or(0);
-                    self.open_submenu(depth, row, true);
-                    EventResponse::RequestRepaint
-                } else {
-                    EventResponse::Ignored
-                }
-            }
-            "ArrowLeft" => {
-                if depth > 0 && depth <= self.open_path.len() {
+            // "Into" (open submenu) and "out of" (back) arrows mirror
+            // under RTL — the leading direction flips.
+            "ArrowRight" | "ArrowLeft" => {
+                let into =
+                    (key == "ArrowRight") != martensite_core::intl::ambient_direction().is_rtl();
+                if into {
+                    let submenu = self.highlighted(depth).is_some_and(|row| {
+                        self.items_at(depth)
+                            .and_then(|items| items.get(row))
+                            .is_some_and(MenuItem::is_submenu)
+                    });
+                    if submenu {
+                        let row = self.highlighted(depth).unwrap_or(0);
+                        self.open_submenu(depth, row, true);
+                        EventResponse::RequestRepaint
+                    } else {
+                        EventResponse::Ignored
+                    }
+                } else if depth > 0 && depth <= self.open_path.len() {
                     self.back_out(depth);
                     EventResponse::RequestRepaint
                 } else {
@@ -874,6 +877,11 @@ impl MenuRow {
 }
 
 impl Widget for MenuRow {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
@@ -1059,11 +1067,16 @@ impl Widget for MenuRow {
         match &item {
             MenuItem::Separator => {
                 let y = f64::from(b.min_y() + b.height() / 2.0);
+                let (sx0, sx1) = if cx.is_rtl() {
+                    (b.min_x() + cx.pt(8.0), b.max_x() - cx.pt(GUTTER_W))
+                } else {
+                    (b.min_x() + cx.pt(GUTTER_W), b.max_x() - cx.pt(8.0))
+                };
                 cx.list.push_fill_rect(
                     kurbo::Rect::new(
-                        f64::from(b.min_x() + cx.pt(GUTTER_W)),
+                        f64::from(sx0),
                         y - cx.ptf(0.5),
-                        f64::from(b.max_x() - cx.pt(8.0)),
+                        f64::from(sx1),
                         y + cx.ptf(0.5),
                     ),
                     cx.color(TokenKey::DividerColor, SEPARATOR_INK),
@@ -1072,16 +1085,37 @@ impl Widget for MenuRow {
             }
             MenuItem::Heading { label } => {
                 let font_px = cx.pt(MUTED_PT);
-                let x = b.min_x() + cx.pt(8.0);
+                // Headings align to the leading edge — the right
+                // edge under RTL (right-anchored via the painter).
+                let rtl = cx.is_rtl();
+                let (x, clip) = if rtl {
+                    let hw = label.as_str().chars().count() as f32 * cx.pt(6.2);
+                    let rx = b.max_x() - cx.pt(8.0);
+                    (
+                        rx - hw.max(0.0),
+                        kurbo::Rect::new(
+                            f64::from(b.min_x() + cx.pt(6.0)),
+                            f64::from(b.min_y()),
+                            f64::from(rx),
+                            f64::from(b.max_y()),
+                        ),
+                    )
+                } else {
+                    let x = b.min_x() + cx.pt(8.0);
+                    (
+                        x,
+                        kurbo::Rect::new(
+                            f64::from(x),
+                            f64::from(b.min_y()),
+                            f64::from(b.max_x() - cx.pt(6.0)),
+                            f64::from(b.max_y()),
+                        ),
+                    )
+                };
                 crate::text_paint::paint_label_clipped(
                     crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                     cx.list,
-                    kurbo::Rect::new(
-                        f64::from(x),
-                        f64::from(b.min_y()),
-                        f64::from(b.max_x() - cx.pt(6.0)),
-                        f64::from(b.max_y()),
-                    ),
+                    clip,
                     kurbo::Point::new(
                         f64::from(x),
                         f64::from(b.min_y() + (b.height() - font_px) / 2.0),
@@ -1125,6 +1159,7 @@ impl Widget for MenuRow {
             MenuItem::Radio { checked: true, .. } => Some(("status.circle-dot", "•")),
             _ => None,
         };
+        let rtl = cx.is_rtl();
         if let Some((icon_name, glyph)) = mark {
             let glyph_ink = if highlighted {
                 ink
@@ -1132,15 +1167,15 @@ impl Widget for MenuRow {
                 cx.color(TokenKey::AccentColor, CHECK)
             };
             let side = cx.pt(12.0);
+            let mark_x = if rtl {
+                b.max_x() - cx.pt(6.0) - side
+            } else {
+                b.min_x() + cx.pt(6.0)
+            };
             let icon_ok = crate::icons::builtin().lookup(icon_name).is_some_and(|d| {
                 crate::widgets::morph_icon::paint_icon_d(
                     cx.list,
-                    Rect::new(
-                        b.min_x() + cx.pt(6.0),
-                        b.min_y() + (b.height() - side) / 2.0,
-                        side,
-                        side,
-                    ),
+                    Rect::new(mark_x, b.min_y() + (b.height() - side) / 2.0, side, side),
                     d,
                     cx.scale,
                     glyph_ink,
@@ -1150,16 +1185,24 @@ impl Widget for MenuRow {
                 crate::text_paint::paint_label(
                     crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                     cx.list,
-                    kurbo::Point::new(f64::from(b.min_x() + cx.pt(8.0)), f64::from(text_y)),
+                    kurbo::Point::new(
+                        f64::from(if rtl {
+                            b.max_x() - cx.pt(16.0)
+                        } else {
+                            b.min_x() + cx.pt(8.0)
+                        }),
+                        f64::from(text_y),
+                    ),
                     glyph,
                     font_px,
                     glyph_ink,
                 );
             }
         }
-        // Label, clipped before the suffix zone (shortcut + ▸).
+        // Label, clipped before the suffix zone (shortcut + ▸) —
+        // under RTL the check gutter is on the right and the suffix
+        // zone on the left, so the label region mirrors.
         let has_sub = item.is_submenu();
-        let label_x = b.min_x() + cx.pt(GUTTER_W);
         let suffix_w = if has_sub {
             cx.pt(SUBMENU_W)
         } else {
@@ -1169,7 +1212,25 @@ impl Widget for MenuRow {
             .shortcut()
             .map(|s| s.chars().count() as f32 * cx.pt(6.2) + cx.pt(SHORTCUT_GAP))
             .unwrap_or(0.0);
-        let label_right = b.max_x() - suffix_w - shortcut_w;
+        let (label_x, label_right) = if rtl {
+            (
+                b.min_x() + suffix_w + shortcut_w,
+                b.max_x() - cx.pt(GUTTER_W),
+            )
+        } else {
+            (
+                b.min_x() + cx.pt(GUTTER_W),
+                b.max_x() - suffix_w - shortcut_w,
+            )
+        };
+        // Under RTL the label right-anchors at `label_right` so the
+        // text hugs the leading edge of the row.
+        let label_ox = if rtl {
+            let lw = item.label().chars().count() as f32 * font_px * 0.55;
+            (label_right - lw).max(label_x)
+        } else {
+            label_x
+        };
         crate::text_paint::paint_label_clipped(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
@@ -1179,16 +1240,26 @@ impl Widget for MenuRow {
                 f64::from(label_right.max(label_x)),
                 f64::from(b.max_y()),
             ),
-            kurbo::Point::new(f64::from(label_x), f64::from(text_y)),
+            kurbo::Point::new(f64::from(label_ox), f64::from(text_y)),
             item.label(),
             font_px,
             ink,
         );
-        // Right-aligned muted shortcut.
+        // Trailing-edge muted shortcut (left-aligned under RTL).
         if let Some(shortcut) = item.shortcut() {
             let sc_px = cx.pt(MUTED_PT);
             let sc_w = shortcut.chars().count() as f32 * cx.pt(6.2);
-            let sc_x = (b.max_x() - suffix_w - sc_w).max(label_x);
+            let (sc_x, sc_right) = if rtl {
+                (
+                    b.min_x() + suffix_w,
+                    (b.min_x() + suffix_w + sc_w).max(label_x),
+                )
+            } else {
+                (
+                    (b.max_x() - suffix_w - sc_w).max(label_x),
+                    b.max_x() - suffix_w,
+                )
+            };
             let sc_ink = if highlighted {
                 ink
             } else {
@@ -1200,7 +1271,7 @@ impl Widget for MenuRow {
                 kurbo::Rect::new(
                     f64::from(sc_x),
                     f64::from(b.min_y()),
-                    f64::from(b.max_x() - suffix_w),
+                    f64::from(sc_right),
                     f64::from(b.max_y()),
                 ),
                 kurbo::Point::new(
@@ -1213,13 +1284,23 @@ impl Widget for MenuRow {
             );
         }
         // ▸ submenu mark in the reserved suffix strip — native
-        // chevron icon first, glyph fallback.
+        // chevron icon first, glyph fallback. Under RTL the mark
+        // anchors to the leading (left) edge and points left.
         if has_sub {
+            let rtl = cx.is_rtl();
             let sub_px = cx.pt(MUTED_PT);
-            let x = b.max_x() - cx.pt(SUBMENU_W - 6.0);
+            let x = if rtl {
+                b.min_x() + cx.pt(6.0)
+            } else {
+                b.max_x() - cx.pt(SUBMENU_W - 6.0)
+            };
             let side = sub_px;
             let icon_ok = crate::icons::builtin()
-                .lookup("nav.chevron-right")
+                .lookup(if rtl {
+                    "nav.chevron-left"
+                } else {
+                    "nav.chevron-right"
+                })
                 .is_some_and(|d| {
                     crate::widgets::morph_icon::paint_icon_d(
                         cx.list,
@@ -1237,7 +1318,7 @@ impl Widget for MenuRow {
                         f64::from(x),
                         f64::from(b.min_y() + (b.height() - sub_px) / 2.0),
                     ),
-                    "▸",
+                    if rtl { "◂" } else { "▸" },
                     sub_px,
                     ink,
                 );
@@ -1289,6 +1370,11 @@ impl MenuColumn {
 }
 
 impl Widget for MenuColumn {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         self.sync_rows();
         let mut h = cx.pt(POPUP_PAD_Y);
@@ -1315,11 +1401,17 @@ impl Widget for MenuColumn {
             let rect = Rect::new(bounds.min_x(), y, bounds.width(), h);
             self.row_bounds.push(rect);
             cx.layout_child(row, rect);
-            // A `Pointer` anchor lands `POINTER_OFFSET` pt below-right
-            // of its point — back the offset out so the submenu's
-            // top-left lands on the row's top-right corner.
+            // A `Pointer` anchor lands `POINTER_OFFSET` pt below the
+            // point, on the side matching the reading direction —
+            // back the offset out so the submenu's leading-top corner
+            // lands on the row's trailing-top corner.
+            let anchor_x = if cx.is_rtl() {
+                rect.min_x() + cx.pt(POINTER_OFFSET_PT)
+            } else {
+                rect.max_x() - cx.pt(POINTER_OFFSET_PT)
+            };
             anchors.push(OverlayAnchor::Pointer(Vec2::new(
-                rect.max_x() - cx.pt(POINTER_OFFSET_PT),
+                anchor_x,
                 rect.min_y() - cx.pt(POINTER_OFFSET_PT),
             )));
             y += h;
@@ -1487,6 +1579,11 @@ impl Menu {
 }
 
 impl Widget for Menu {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn debug_name(&self) -> &'static str {
         "Menu"
     }

@@ -564,6 +564,11 @@ impl Default for Toolbar {
 }
 
 impl Widget for Toolbar {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn debug_name(&self) -> &'static str {
         "Toolbar"
     }
@@ -675,7 +680,10 @@ impl Widget for Toolbar {
 
         // Placement pass: assign each visible entry its rect and lay
         // out its widget child; overflowed entries keep zeroed rects
-        // and stay out of the child protocol entirely.
+        // and stay out of the child protocol entirely. Under RTL the
+        // strip mirrors within `inner` — items pack right→left and
+        // the overflow affordance lands on the left edge.
+        let rtl = cx.direction().is_rtl();
         let mut cursor = inner.min_x();
         let mut placed = false;
         for (i, entry) in self.entries.iter_mut().enumerate().take(cut) {
@@ -687,7 +695,10 @@ impl Widget for Toolbar {
             } else {
                 self.item_sizes.get(i).copied().unwrap_or(Vec2::ZERO).x
             };
-            let rect = Rect::new(cursor, inner.min_y(), w.max(0.0), inner.size.y);
+            let mut rect = Rect::new(cursor, inner.min_y(), w.max(0.0), inner.size.y);
+            if rtl {
+                rect = martensite_core::intl::mirror_x(inner, rect, cx.direction());
+            }
             self.item_bounds[i] = rect;
             if let Some(widget) = entry.as_widget_mut() {
                 self.visible_children.push(i);
@@ -698,12 +709,16 @@ impl Widget for Toolbar {
         }
 
         if has_overflow {
-            self.overflow_rect = Rect::new(
+            let mut r = Rect::new(
                 inner.max_x() - overflow_w,
                 inner.min_y(),
                 overflow_w,
                 inner.size.y,
             );
+            if rtl {
+                r = martensite_core::intl::mirror_x(inner, r, cx.direction());
+            }
+            self.overflow_rect = r;
             cx.layout_child(&mut self.overflow, self.overflow_rect);
         }
     }

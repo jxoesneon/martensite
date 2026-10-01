@@ -114,6 +114,10 @@ pub struct LogView {
     text_painter: Option<SharedTextPainter>,
     bounds: Rect,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Log"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl Default for LogView {
@@ -141,6 +145,7 @@ impl LogView {
             text_painter: None,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -308,6 +313,26 @@ impl LogView {
     }
 }
 
+impl LogView {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Log"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::log_view::LogView;
+    ///
+    /// let w = LogView::new().a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for LogView {
     fn debug_name(&self) -> &'static str {
         // A log stream is a document surface — its text is payload, so
@@ -333,7 +358,7 @@ impl Widget for LogView {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Log);
-        node.set_label("Log");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Log"));
         node.set_value(format!("{} lines", self.lines.len()));
         if !self.enabled {
             node.set_disabled();

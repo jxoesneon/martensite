@@ -581,6 +581,11 @@ impl Default for TimePicker {
 }
 
 impl Widget for TimePicker {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let w = if self.use_24h { FACE_W_24 } else { FACE_W_12 };
         Vec2::new(
@@ -606,23 +611,23 @@ impl Widget for TimePicker {
         let inner_w = (bounds.width() - pad * 2.0).max(0.0);
         let n = self.segment_count() as f32;
         let slot = inner_w / n;
+        // Under RTL the segment order mirrors — hours anchor on the
+        // leading (right) edge.
+        let slot_x = |i: usize| -> f32 {
+            let i = if cx.is_rtl() {
+                self.segment_count() - 1 - i
+            } else {
+                i
+            };
+            bounds.min_x() + pad + slot * i as f32
+        };
         self.segment_rects = [
-            Rect::new(bounds.min_x() + pad, bounds.min_y(), slot, bounds.height()),
-            Rect::new(
-                bounds.min_x() + pad + slot,
-                bounds.min_y(),
-                slot,
-                bounds.height(),
-            ),
+            Rect::new(slot_x(0), bounds.min_y(), slot, bounds.height()),
+            Rect::new(slot_x(1), bounds.min_y(), slot, bounds.height()),
             if self.use_24h {
                 Rect::default()
             } else {
-                Rect::new(
-                    bounds.min_x() + pad + slot * 2.0,
-                    bounds.min_y(),
-                    slot,
-                    bounds.height(),
-                )
+                Rect::new(slot_x(2), bounds.min_y(), slot, bounds.height())
             },
         ];
     }
@@ -671,11 +676,13 @@ impl Widget for TimePicker {
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
                 "ArrowLeft" => {
-                    self.move_focus(-1);
+                    // Under RTL the left arrow moves focus rightward
+                    // through the column order.
+                    self.move_focus(if cx.is_rtl() { 1 } else { -1 });
                     EventResponse::RequestRepaint
                 }
                 "ArrowRight" => {
-                    self.move_focus(1);
+                    self.move_focus(if cx.is_rtl() { -1 } else { 1 });
                     EventResponse::RequestRepaint
                 }
                 "ArrowUp" => {

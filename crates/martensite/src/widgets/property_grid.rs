@@ -384,6 +384,11 @@ impl PropertyRow {
 }
 
 impl Widget for PropertyRow {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
@@ -633,6 +638,11 @@ impl SectionHeader {
 }
 
 impl Widget for SectionHeader {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
@@ -707,15 +717,25 @@ impl Widget for SectionHeader {
         let muted = cx.color(TokenKey::TextMutedColor, INK_MUTED);
 
         // Disclosure chevron — right-pointing when collapsed, down
-        // when expanded (the `Disclosure` geometry).
+        // when expanded (the `Disclosure` geometry). Under RTL it
+        // sits on the right edge and points left.
+        let rtl = cx.is_rtl();
         let cs = cx.pt(CHEVRON_PT);
         let cy = b.min_y() + (b.height() - cs) / 2.0;
-        let cxl = b.min_x() + cx.pt(8.0);
+        let cxl = if rtl {
+            b.max_x() - cx.pt(8.0) - cs
+        } else {
+            b.min_x() + cx.pt(8.0)
+        };
         let x0 = f64::from(cxl);
         let y0 = f64::from(cy);
         let s = f64::from(cs);
         let mut caret = BezPath::new();
-        if self.collapsed {
+        if self.collapsed && rtl {
+            caret.move_to((x0 + s * 0.75, y0));
+            caret.line_to((x0 + s * 0.25, y0 + s / 2.0));
+            caret.line_to((x0 + s * 0.75, y0 + s));
+        } else if self.collapsed {
             caret.move_to((x0 + s * 0.25, y0));
             caret.line_to((x0 + s * 0.75, y0 + s / 2.0));
             caret.line_to((x0 + s * 0.25, y0 + s));
@@ -726,16 +746,28 @@ impl Widget for SectionHeader {
         }
         cx.list.push_stroke_path(caret, cx.pt(1.5), muted);
 
-        // Title, clipped to the header band.
+        // Title, clipped to the header band — under RTL it sits at
+        // the leading (left-of-chevron... rather, the text starts at
+        // the widget's left edge since the chevron moved right).
         let font_px = cx.pt(HEADER_FONT_PT);
-        let title_x = cxl + cs + cx.pt(6.0);
+        let title_x = if rtl {
+            b.min_x() + cx.pt(8.0)
+        } else {
+            cxl + cs + cx.pt(6.0)
+        };
+        let title_right = if rtl {
+            // Exclude the right-edge chevron box under RTL.
+            (cxl - cx.pt(6.0)).max(title_x)
+        } else {
+            b.max_x() - cx.pt(4.0)
+        };
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
             kurbo::Rect::new(
                 f64::from(title_x),
                 f64::from(b.min_y()),
-                f64::from(b.max_x() - cx.pt(4.0)),
+                f64::from(title_right),
                 f64::from(b.max_y()),
             ),
             kurbo::Point::new(
@@ -1780,6 +1812,11 @@ impl std::fmt::Debug for PropertyGrid {
 }
 
 impl Widget for PropertyGrid {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let row_px = cx.pt(ROW_PT);
         let header_px = cx.pt(HEADER_PT);

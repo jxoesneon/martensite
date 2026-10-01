@@ -6971,6 +6971,7 @@ dependencies = [
  "martensite-core",
  "martensite-design-lint",
  "martensite-devtools",
+ "martensite-engine-bridge",
  "martensite-layout",
  "martensite-reactive",
  "martensite-render",

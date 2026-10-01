@@ -321,6 +321,19 @@ impl Transfer {
         self.to_left.enabled = self.enabled && self.target_sel.is_some();
     }
 
+    /// Rebinds the shuttle icons for the ambient direction: under RTL
+    /// "move to target" points left (the target pane sits on the
+    /// mirrored edge).
+    fn sync_button_icons(&mut self, rtl: bool) {
+        let (to, from) = if rtl {
+            ("arrow.left", "arrow.right")
+        } else {
+            ("arrow.right", "arrow.left")
+        };
+        self.to_right.set_icon_named(to);
+        self.to_left.set_icon_named(from);
+    }
+
     /// Row index under `position` within `pane` rect.
     fn row_at(&self, pane: Rect, position: Vec2, scale: f32) -> Option<usize> {
         if !pane.contains(position) {
@@ -380,6 +393,11 @@ impl std::fmt::Debug for Transfer {
 }
 
 impl Widget for Transfer {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints
@@ -401,15 +419,15 @@ impl Widget for Transfer {
         let btn_h = cx.pt(BTN_H_PT);
         let gap = cx.pt(BTN_GAP_PT);
         let pane_w = (bounds.width() - btn_w - 2.0 * gap).max(0.0) / 2.0;
-        let left = Rect::new(bounds.min_x(), bounds.min_y(), pane_w, bounds.height());
-        let right = Rect::new(
-            bounds.min_x() + pane_w + btn_w + 2.0 * gap,
-            bounds.min_y(),
-            pane_w,
-            bounds.height(),
-        );
-        self.source_bounds = Some(left);
-        self.target_bounds = Some(right);
+        // Under RTL the source pane anchors on the right — the
+        // "leading" side of the shuttle.
+        let (src_x, dst_x) = if cx.is_rtl() {
+            (bounds.min_x() + pane_w + btn_w + 2.0 * gap, bounds.min_x())
+        } else {
+            (bounds.min_x(), bounds.min_x() + pane_w + btn_w + 2.0 * gap)
+        };
+        self.source_bounds = Some(Rect::new(src_x, bounds.min_y(), pane_w, bounds.height()));
+        self.target_bounds = Some(Rect::new(dst_x, bounds.min_y(), pane_w, bounds.height()));
         // Buttons centered vertically in the middle column.
         let cx_mid = bounds.min_x() + pane_w + gap;
         let by = bounds.min_y() + bounds.height() / 2.0 - btn_h - gap / 2.0;
@@ -419,6 +437,7 @@ impl Widget for Transfer {
         self.left_btn_bounds = Some(left_r);
         cx.layout_child(&mut self.to_right, right_r);
         cx.layout_child(&mut self.to_left, left_r);
+        self.sync_button_icons(cx.is_rtl());
         self.sync_buttons();
     }
 

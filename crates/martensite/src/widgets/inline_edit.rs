@@ -64,6 +64,10 @@ pub struct InlineEdit {
     hovered: bool,
     text_painter: Option<SharedTextPainter>,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"inline edit"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl InlineEdit {
@@ -88,6 +92,7 @@ impl InlineEdit {
             hovered: false,
             text_painter: None,
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -246,6 +251,26 @@ impl InlineEdit {
     }
 }
 
+impl InlineEdit {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"inline edit"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::inline_edit::InlineEdit;
+    ///
+    /// let w = InlineEdit::new("Hello").a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for InlineEdit {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let _ = self.input.measure(cx, constraints);
@@ -274,7 +299,7 @@ impl Widget for InlineEdit {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::TextInput);
-        node.set_label("inline edit");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("inline edit"));
         node.set_value(self.value.as_str());
         node.add_action(accesskit::Action::Focus);
         node.add_action(accesskit::Action::Click);

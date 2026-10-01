@@ -149,6 +149,10 @@ pub struct KeyboardShortcuts {
     bounds: Rect,
     text_painter: Option<SharedTextPainter>,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Keyboard shortcuts"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl KeyboardShortcuts {
@@ -171,6 +175,7 @@ impl KeyboardShortcuts {
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             text_painter: None,
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -237,6 +242,26 @@ impl KeyboardShortcuts {
     }
 }
 
+impl KeyboardShortcuts {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Keyboard shortcuts"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::keyboard_shortcuts::KeyboardShortcuts;
+    ///
+    /// let w = KeyboardShortcuts::new(vec![ShortcutGroup::new("A")]).a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for KeyboardShortcuts {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = (self.tallest_column_pt() + PAD_PT * 2.0).max(1.0);
@@ -275,7 +300,7 @@ impl Widget for KeyboardShortcuts {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Group);
-        node.set_label("Keyboard shortcuts");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Keyboard shortcuts"));
         if !self.enabled {
             node.set_disabled();
         }

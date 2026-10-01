@@ -170,11 +170,23 @@ impl HueSlider {
     /// Hue picked at rail x-position `x`.
     fn hue_at(&self, x: f32) -> f32 {
         let w = self.rail.width().max(1.0);
-        ((x - self.rail.min_x()) / w).clamp(0.0, 1.0) * 360.0
+        let f = ((x - self.rail.min_x()) / w).clamp(0.0, 1.0);
+        // Under RTL the hue axis runs right-to-left.
+        let f = if martensite_core::intl::ambient_direction().is_rtl() {
+            1.0 - f
+        } else {
+            f
+        };
+        f * 360.0
     }
 }
 
 impl Widget for HueSlider {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(W_PT).min(constraints.max_size.x.max(0.0)),
@@ -237,13 +249,12 @@ impl Widget for HueSlider {
                 EventResponse::Ignored
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
-                "ArrowRight" | "ArrowUp" => {
-                    self.set_hue(self.hue + 1.0);
-                    self.changed = Some(self.hue);
-                    EventResponse::RequestRepaint
-                }
-                "ArrowLeft" | "ArrowDown" => {
-                    self.set_hue(self.hue - 1.0);
+                "ArrowRight" | "ArrowUp" | "ArrowLeft" | "ArrowDown" => {
+                    // Under RTL the horizontal axis mirrors — the
+                    // left arrow increases hue.
+                    let right = key == "ArrowRight" || key == "ArrowUp";
+                    let d = if right != cx.is_rtl() { 1.0 } else { -1.0 };
+                    self.set_hue(self.hue + d);
                     self.changed = Some(self.hue);
                     EventResponse::RequestRepaint
                 }
@@ -276,8 +287,15 @@ impl Widget for HueSlider {
             krect(self.rail),
             &martensite_core::shape::Shape::rounded(self.rail.height() / 2.0),
         );
+        let rtl = cx.is_rtl();
         for i in 0..cols {
-            let t = i as f32 / (cols.saturating_sub(1)).max(1) as f32;
+            // Under RTL the spectrum mirrors so the painted hue under
+            // the handle matches `hue_at`'s mirrored mapping.
+            let t = if rtl {
+                1.0 - i as f32 / (cols.saturating_sub(1)).max(1) as f32
+            } else {
+                i as f32 / (cols.saturating_sub(1)).max(1) as f32
+            };
             cx.list.push_fill_rect(
                 krect(Rect::new(
                     self.rail.min_x() + i as f32 * col_w,
@@ -290,7 +308,13 @@ impl Widget for HueSlider {
         }
         cx.list.pop_clip();
         // Handle — white ring at the hue position, tinted center.
-        let hx = self.rail.min_x() + (self.hue / 360.0) * self.rail.width();
+        // Under RTL the hue axis mirrors (hue 0 anchors right).
+        let frac = if cx.is_rtl() {
+            1.0 - self.hue / 360.0
+        } else {
+            self.hue / 360.0
+        };
+        let hx = self.rail.min_x() + frac * self.rail.width();
         let hy = (self.rail.min_y() + self.rail.max_y()) / 2.0;
         let r = self.rail.height() / 2.0 - 1.0 * self.scale;
         cx.list.push_fill_shape(

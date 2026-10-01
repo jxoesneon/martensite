@@ -361,13 +361,20 @@ impl Slider {
     }
 
     /// Maps a window-space point to a fraction along the rail.
+    /// Horizontal rails run right→left under RTL (value increases
+    /// toward the leading edge).
     fn point_fraction(&self, position: Vec2) -> f64 {
         let b = self.cached_bounds;
         let thumb = self.thumb_px();
         match self.orientation {
             SliderOrientation::Horizontal => {
                 let usable = (b.width() - thumb).max(f32::EPSILON);
-                ((position.x - b.min_x() - thumb / 2.0) / usable).clamp(0.0, 1.0)
+                let f = ((position.x - b.min_x() - thumb / 2.0) / usable).clamp(0.0, 1.0);
+                if martensite_core::intl::ambient_direction().is_rtl() {
+                    1.0 - f
+                } else {
+                    f
+                }
             }
             SliderOrientation::Vertical => {
                 let usable = (b.height() - thumb).max(f32::EPSILON);
@@ -385,16 +392,21 @@ impl Slider {
         self.set_value(self.min + f * (self.max - self.min));
     }
 
-    /// The thumb's centre in window coordinates.
+    /// The thumb's centre in window coordinates. Under RTL the
+    /// horizontal thumb tracks from the right edge.
     fn thumb_center(&self) -> Vec2 {
         let b = self.cached_bounds;
         let thumb = self.thumb_px();
         let t = self.fraction();
         match self.orientation {
-            SliderOrientation::Horizontal => Vec2::new(
-                b.min_x() + thumb / 2.0 + t * (b.width() - thumb).max(0.0),
-                b.min_y() + b.height() / 2.0,
-            ),
+            SliderOrientation::Horizontal => {
+                let x = if martensite_core::intl::ambient_direction().is_rtl() {
+                    b.max_x() - thumb / 2.0 - t * (b.width() - thumb).max(0.0)
+                } else {
+                    b.min_x() + thumb / 2.0 + t * (b.width() - thumb).max(0.0)
+                };
+                Vec2::new(x, b.min_y() + b.height() / 2.0)
+            }
             SliderOrientation::Vertical => Vec2::new(
                 b.min_x() + b.width() / 2.0,
                 b.max_y() - thumb / 2.0 - t * (b.height() - thumb).max(0.0),
@@ -409,9 +421,15 @@ impl Slider {
 
     fn key_delta(&self, key: &str) -> Option<f64> {
         let step = self.step;
+        // In RTL the horizontal rail runs right→left, so Left
+        // increments and Right decrements.
+        let rtl = self.orientation == SliderOrientation::Horizontal
+            && martensite_core::intl::ambient_direction().is_rtl();
         match (key, self.orientation) {
-            ("ArrowRight", _) | ("ArrowUp", _) => Some(step),
-            ("ArrowLeft", _) | ("ArrowDown", _) => Some(-step),
+            ("ArrowRight", _) => Some(if rtl { -step } else { step }),
+            ("ArrowUp", _) => Some(step),
+            ("ArrowLeft", _) => Some(if rtl { step } else { -step }),
+            ("ArrowDown", _) => Some(-step),
             ("PageUp", _) => Some(self.page_step()),
             ("PageDown", _) => Some(-self.page_step()),
             _ => None,
@@ -573,7 +591,12 @@ impl Widget for Slider {
                     cy + cx.ptf(f64::from(RAIL) / 2.0),
                 );
                 let tx = f64::from(self.thumb_center().x);
-                let fill = kurbo::Rect::new(rail.x0, rail.y0, tx, rail.y1);
+                // Fill runs leading-edge→thumb: right→left under RTL.
+                let fill = if cx.is_rtl() {
+                    kurbo::Rect::new(tx, rail.y0, rail.x1, rail.y1)
+                } else {
+                    kurbo::Rect::new(rail.x0, rail.y0, tx, rail.y1)
+                };
                 (rail, fill, self.thumb_center())
             }
             SliderOrientation::Vertical => {
@@ -663,6 +686,30 @@ mod tests {
         let s = Slider::new(10.0, -10.0);
         assert_eq!(s.min, -10.0);
         assert_eq!(s.max, 10.0);
+    }
+
+    #[test]
+    fn rtl_mirrors_thumb_and_keys() {
+        use martensite_core::intl::install_ambient_intl;
+        use martensite_core::{LayoutDirection, Locale};
+
+        let mut s = Slider::new(0.0, 100.0).with_value(50.0);
+        laid_out(&mut s, 200.0, 24.0);
+        let ltr_x = s.thumb_center().x;
+        assert_eq!(s.key_delta("ArrowRight"), Some(s.step));
+        assert_eq!(s.key_delta("ArrowLeft"), Some(-s.step));
+
+        {
+            let _g = install_ambient_intl(LayoutDirection::Rtl, Locale::new("ar"));
+            let rtl_x = s.thumb_center().x;
+            // Half-value thumb mirrors across the track midpoint.
+            assert!((ltr_x + rtl_x - 200.0).abs() < 0.01);
+            // ArrowLeft increments, ArrowRight decrements.
+            assert_eq!(s.key_delta("ArrowLeft"), Some(s.step));
+            assert_eq!(s.key_delta("ArrowRight"), Some(-s.step));
+        }
+        // Guard dropped — LTR semantics restored.
+        assert_eq!(s.key_delta("ArrowRight"), Some(s.step));
     }
 
     #[test]

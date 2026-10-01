@@ -1405,6 +1405,17 @@ impl Widget for TextInput {
         }
     }
 
+    /// `@labeled` declares the accessible name to design-lint's
+    /// `icon-only-control` rule — the paint list can't see the
+    /// AccessKit label, so the scope marker carries it.
+    fn debug_name(&self) -> &'static str {
+        if self.label.is_empty() {
+            "TextInput"
+        } else {
+            "TextInput@labeled"
+        }
+    }
+
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::TextInput);
         node.set_label(self.label.as_str());

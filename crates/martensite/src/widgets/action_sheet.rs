@@ -125,6 +125,10 @@ pub struct ActionSheet {
     cached_bounds: Rect,
     /// Shared shaped-text painter. See [`crate::text_paint`].
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Action sheet"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl ActionSheet {
@@ -152,6 +156,7 @@ impl ActionSheet {
             card_rect: Rect::default(),
             cached_bounds: Rect::default(),
             text_painter: None,
+            a11y_label: None,
         }
     }
 
@@ -314,6 +319,26 @@ impl Default for ActionSheet {
     }
 }
 
+impl ActionSheet {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Action sheet"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::action_sheet::ActionSheet;
+    ///
+    /// let w = ActionSheet::new().a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for ActionSheet {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
@@ -352,7 +377,7 @@ impl Widget for ActionSheet {
         if let Some(title) = &self.title {
             node.set_label(title.as_str());
         } else {
-            node.set_label("Action sheet");
+            node.set_label(self.a11y_label.as_deref().unwrap_or("Action sheet"));
         }
     }
 

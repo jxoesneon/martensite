@@ -284,6 +284,11 @@ impl Default for Accordion {
 }
 
 impl Widget for Accordion {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         self.section_sizes.clear();
         self.section_sizes.reserve(self.sections.len());

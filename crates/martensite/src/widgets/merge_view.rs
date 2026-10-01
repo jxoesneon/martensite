@@ -344,6 +344,11 @@ impl MergeView {
 }
 
 impl Widget for MergeView {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let h = (HEADER_PT + self.rows.len().max(1) as f32 * ROW_PT + PAD_PT) * s;
@@ -534,9 +539,14 @@ impl Widget for MergeView {
             // first, ‹/› glyphs as the fallback.
             if row.is_conflict() {
                 let (l, rr) = self.accept_rects[i];
-                for (rect, icon, glyph) in
-                    [(l, "nav.chevron-left", "‹"), (rr, "nav.chevron-right", "›")]
-                {
+                // Pane order mirrors under RTL — the chevrons that
+                // pull a side's change into the merge follow suit.
+                let (li, ri, lg, rg) = if cx.is_rtl() {
+                    ("nav.chevron-right", "nav.chevron-left", "›", "‹")
+                } else {
+                    ("nav.chevron-left", "nav.chevron-right", "‹", "›")
+                };
+                for (rect, icon, glyph) in [(l, li, lg), (rr, ri, rg)] {
                     cx.list.push_stroke_rect(
                         krect(rect),
                         s.max(1.0),

@@ -89,6 +89,11 @@ struct MenuBarButton {
 }
 
 impl Widget for MenuBarButton {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             (self.label.chars().count() as f32 * cx.pt(7.2) + cx.pt(2.0 * BUTTON_PAD_X))
@@ -412,6 +417,11 @@ impl MenuBar {
 }
 
 impl Widget for MenuBar {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn debug_name(&self) -> &'static str {
         "Menu Bar"
     }
@@ -432,14 +442,23 @@ impl Widget for MenuBar {
         self.cached_bounds = bounds;
         cx.hot.flags |= NodeFlags::FOCUSABLE;
         self.button_bounds.clear();
-        let mut x = bounds.min_x();
+        // Under RTL the menu strip anchors on the right and flows
+        // right-to-left.
+        let rtl = cx.is_rtl();
+        let mut x = if rtl { bounds.max_x() } else { bounds.min_x() };
         for (i, button) in self.buttons.iter_mut().enumerate() {
             let w =
                 self.menus[i].label.chars().count() as f32 * cx.pt(7.2) + cx.pt(2.0 * BUTTON_PAD_X);
-            let rect = Rect::new(x, bounds.min_y(), w, bounds.height());
+            let rect = if rtl {
+                x -= w;
+                Rect::new(x, bounds.min_y(), w, bounds.height())
+            } else {
+                let r = Rect::new(x, bounds.min_y(), w, bounds.height());
+                x += w;
+                r
+            };
             self.button_bounds.push(rect);
             cx.layout_child(button, rect);
-            x += w;
         }
     }
 
@@ -525,7 +544,13 @@ impl Widget for MenuBar {
                     if n == 0 {
                         return EventResponse::Ignored;
                     }
-                    let delta: i64 = if key == "ArrowRight" { 1 } else { -1 };
+                    // Under RTL the menu strip mirrors — ArrowLeft
+                    // advances through the menus.
+                    let delta: i64 = if (key == "ArrowRight") != cx.is_rtl() {
+                        1
+                    } else {
+                        -1
+                    };
                     if let Some(active) = self.active {
                         // While open, arrows switch menus (the popup
                         // consumed Up/Down/Enter; Left/Right only fall

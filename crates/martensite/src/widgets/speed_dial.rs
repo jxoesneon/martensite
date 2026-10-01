@@ -229,6 +229,11 @@ impl SpeedDial {
 }
 
 impl Widget for SpeedDial {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// `@labeled` declares the accessible name to design-lint's
     /// `icon-only-control` rule — the FAB mark is a native icon, so
     /// the scope marker carries what the paint list can't see.

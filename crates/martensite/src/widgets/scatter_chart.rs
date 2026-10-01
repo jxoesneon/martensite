@@ -135,6 +135,10 @@ pub struct ScatterChart {
     plot: Rect,
     text_painter: Option<SharedTextPainter>,
     scale: f32,
+    /// Accessible label override — unset falls back to the
+    /// built-in `"Scatter chart"` chrome string so the host app
+    /// can localize it.
+    pub a11y_label: Option<String>,
 }
 
 impl Default for ScatterChart {
@@ -164,6 +168,7 @@ impl ScatterChart {
             plot: Rect::new(0.0, 0.0, 0.0, 0.0),
             text_painter: None,
             scale: 1.0,
+            a11y_label: None,
         }
     }
 
@@ -310,6 +315,26 @@ impl ScatterChart {
     }
 }
 
+impl ScatterChart {
+    /// Sets the accessible label announced by assistive tech
+    /// (default `"Scatter chart"`). Host apps localize the chrome string
+    /// through this override.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::scatter_chart::ScatterChart;
+    ///
+    /// let w = ScatterChart::new().a11y_label("Custom name");
+    /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
+    /// ```
+    #[must_use]
+    pub fn a11y_label(mut self, label: impl Into<String>) -> Self {
+        self.a11y_label = Some(label.into());
+        self
+    }
+}
+
 impl Widget for ScatterChart {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
@@ -336,7 +361,7 @@ impl Widget for ScatterChart {
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Image);
-        node.set_label("Scatter chart");
+        node.set_label(self.a11y_label.as_deref().unwrap_or("Scatter chart"));
         let n: usize = self.series.iter().map(|s| s.points.len()).sum();
         node.set_value(format!("{} points in {} series", n, self.series.len()));
         if !self.enabled {

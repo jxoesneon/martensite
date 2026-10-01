@@ -240,6 +240,11 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [u8; 4] {
 }
 
 impl Widget for ColorWheel {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.pt(SIZE_PT);
         Vec2::new(

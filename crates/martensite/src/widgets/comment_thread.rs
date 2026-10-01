@@ -314,6 +314,11 @@ fn row_h(scale: f32) -> f32 {
 }
 
 impl Widget for CommentThread {
+    #[cfg(feature = "devtools-timemachine")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = self.comments.len() as f32 * row_h(cx.scale);
         Vec2::new(
