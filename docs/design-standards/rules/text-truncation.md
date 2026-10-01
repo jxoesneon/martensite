@@ -8,8 +8,16 @@
 
 Each text run's advance (measured glyph width, or
 `chars × size × char_width_ratio` when content width is unknown) is
-checked against its node's right edge. Overruns past `tolerance_px`
-flag.
+checked against its node's bounds **and the run's paint-time clip**
+(all four edges). Clip edges that lie interior to the node's visible
+region — cell label zones, control faces — flag on overrun; clip edges
+coincident with an inherited scrollport clip stay quiet, so
+half-scrolled rows don't report. Overruns past `tolerance_px` flag.
+
+A painted `…` whose advance fills ≥ `elide_fill_ratio` of its clip is
+also flagged: the run fits, so no edge check fires, but the label was
+elided by the widget itself — the text is still unread. A trailing
+ellipsis with slack (placeholders, "Save As…" menu items) stays quiet.
 
 ## The evidence
 
@@ -26,6 +34,7 @@ flag.
 severity = "info"
 tolerance_px = 2
 char_width_ratio = 0.55   # advance estimate when width is unknown
+elide_fill_ratio = 0.8    # `…` run filling this share of its clip flags
 ```
 
 ## How to fix

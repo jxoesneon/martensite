@@ -51,6 +51,9 @@ struct App {
     /// In-memory log ring attached to the dev session — powers
     /// `martensite_logs` (paint-lint findings included).
     log_ring: Arc<martensite::devtools::dev_session::log_ring::LogRing>,
+    /// Fallback viewport size when no window exists — set from
+    /// `MARTENSITE_HEADLESS_SIZE` in `run_live_headless`.
+    headless_size: (u32, u32),
     needs_layout: bool,
     last_frame: Instant,
 }
@@ -73,6 +76,7 @@ impl App {
             log_ring: Arc::new(martensite::devtools::dev_session::log_ring::LogRing::new(
                 512,
             )),
+            headless_size: (1280, 860),
             needs_layout: true,
             last_frame: Instant::now(),
         }
@@ -174,7 +178,7 @@ impl App {
                 let s = w.surface_size();
                 (s.width, s.height)
             })
-            .unwrap_or((1280, 860))
+            .unwrap_or(self.headless_size)
     }
 
     /// Lets the [`CatalogView`] drain its controls, signals, and
@@ -566,11 +570,28 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// `--live-headless`: the full widget tree + dev channel with no
 /// window/GPU — the MCP/dev-tooling path. `capture_node` still
 /// rasterizes real PNGs via the devtools TinySkia backend.
+///
+/// `MARTENSITE_HEADLESS_SCALE` (default 1.0) and
+/// `MARTENSITE_HEADLESS_SIZE` (`WxH`, default `1280x860`) let harnesses
+/// exercise HiDPI scale factors and arbitrary window sizes without a
+/// display — the W/H are device px, matching `App::layout`.
 pub fn run_live_headless() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
     init_tracing(&app.log_ring);
-    app.build_arena(1.0);
-    app.layout(1280, 860);
+    let scale: f32 = std::env::var("MARTENSITE_HEADLESS_SCALE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
+    let (w, h) = std::env::var("MARTENSITE_HEADLESS_SIZE")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+        .unwrap_or((1280u32, 860u32));
+    app.headless_size = (w, h);
+    app.build_arena(scale);
+    app.layout(w, h);
     if app.dev_session.is_some() {
         eprintln!(
             "widget_catalog: live-headless dev channel serving (pid {})",

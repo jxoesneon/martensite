@@ -27,8 +27,8 @@ use crate::dynamic_column::DynamicColumn;
 use crate::page::{Page, PropSpec, PropValue, PropValues};
 use crate::stage::{FramePreset, StageHost};
 
-const TOOLBAR_H: f32 = 40.0;
-const TOOLBAR_ITEM_H: f32 = 30.0;
+const TOOLBAR_H: f32 = 46.0;
+const TOOLBAR_ITEM_H: f32 = 34.0;
 const RAIL_W: f32 = 236.0;
 const PROPS_W: f32 = 340.0;
 const BOTTOM_H: f32 = 196.0;
@@ -739,15 +739,17 @@ impl CatalogView {
 
     /// Toolbar child rects — the nav cluster pinned left, the tools
     /// cluster filling the rest and right-aligning its own controls.
-    fn toolbar_child_rects(&self, strip: Rect) -> [Rect; 2] {
-        let item_y = strip.min_y() + (strip.height() - TOOLBAR_ITEM_H) * 0.5;
-        let nav = Rect::new(strip.min_x() + PAD, item_y, SEARCH_W, TOOLBAR_ITEM_H);
-        let tools_x = nav.max_x() + PAD;
+    fn toolbar_child_rects(&self, strip: Rect, scale: f32) -> [Rect; 2] {
+        let item_h = TOOLBAR_ITEM_H * scale;
+        let pad = PAD * scale;
+        let item_y = strip.min_y() + (strip.height() - item_h) * 0.5;
+        let nav = Rect::new(strip.min_x() + pad, item_y, SEARCH_W * scale, item_h);
+        let tools_x = nav.max_x() + pad;
         let tools = Rect::new(
             tools_x,
             item_y,
-            (strip.max_x() - PAD - tools_x).max(0.0),
-            TOOLBAR_ITEM_H,
+            (strip.max_x() - pad - tools_x).max(0.0),
+            item_h,
         );
         [nav, tools]
     }
@@ -776,7 +778,7 @@ impl PropRow {
 
 impl Widget for PropRow {
     fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> Vec2 {
-        let lw = PROP_LABEL_W.min(c.max_size.x * 0.45);
+        let lw = cx.pt(PROP_LABEL_W).min(c.max_size.x * 0.45);
         self.label.measure(
             cx,
             LayoutConstraints {
@@ -788,19 +790,19 @@ impl Widget for PropRow {
             cx,
             LayoutConstraints {
                 min_size: Vec2::ZERO,
-                max_size: Vec2::new((c.max_size.x - lw - PAD).max(0.0), c.max_size.y),
+                max_size: Vec2::new((c.max_size.x - lw - cx.pt(PAD)).max(0.0), c.max_size.y),
             },
         );
-        Vec2::new(c.max_size.x, cs.y.max(PROP_ROW_H * 0.8))
+        Vec2::new(c.max_size.x, cs.y.max(cx.pt(PROP_ROW_H * 0.8)))
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
-        let lw = PROP_LABEL_W.min(bounds.width() * 0.45);
+        let lw = cx.pt(PROP_LABEL_W).min(bounds.width() * 0.45);
         self.label_b = Rect::new(bounds.min_x(), bounds.min_y(), lw, bounds.height());
         self.ctrl_b = Rect::new(
-            bounds.min_x() + lw + PAD,
+            bounds.min_x() + lw + cx.pt(PAD),
             bounds.min_y(),
-            (bounds.width() - lw - PAD).max(0.0),
+            (bounds.width() - lw - cx.pt(PAD)).max(0.0),
             bounds.height(),
         );
         cx.layout_child(&mut self.label, self.label_b);
@@ -873,12 +875,12 @@ impl Widget for Cluster {
         };
         let mut w = 0.0f32;
         for (i, child) in self.children.iter_mut().enumerate() {
-            w += child.measure(cx, item).x.clamp(32.0, 220.0);
+            w += child.measure(cx, item).x.clamp(cx.pt(32.0), cx.pt(260.0));
             if i > 0 {
-                w += PAD;
+                w += cx.pt(PAD);
             }
         }
-        Vec2::new(w.min(c.max_size.x), c.max_size.y.min(TOOLBAR_ITEM_H))
+        Vec2::new(w.min(c.max_size.x), c.max_size.y.min(cx.pt(TOOLBAR_ITEM_H)))
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
@@ -899,12 +901,13 @@ impl Widget for Cluster {
                 if single {
                     bounds.width()
                 } else {
-                    c.measure(cx, item).x.clamp(32.0, 220.0)
+                    c.measure(cx, item).x.clamp(cx.pt(32.0), cx.pt(260.0))
                 }
             })
             .collect();
         let mut x = if self.align_end {
-            let total = widths.iter().sum::<f32>() + PAD * widths.len().saturating_sub(1) as f32;
+            let total =
+                widths.iter().sum::<f32>() + cx.pt(PAD) * widths.len().saturating_sub(1) as f32;
             bounds.max_x() - total
         } else {
             bounds.min_x()
@@ -914,7 +917,7 @@ impl Widget for Cluster {
             let r = Rect::new(x, bounds.min_y(), w, bounds.height());
             self.rects[i] = r;
             cx.layout_child(child.as_mut(), r);
-            x += w + PAD;
+            x += w + cx.pt(PAD);
         }
     }
 
@@ -957,42 +960,51 @@ impl Widget for CatalogView {
         let y0 = bounds.min_y();
 
         // Toolbar strip: nav cluster left, tools cluster right-aligned.
-        let strip = Rect::new(x0, y0, w, TOOLBAR_H);
-        let tool_rects = self.toolbar_child_rects(strip);
+        // All chrome dimensions are logical pt — `cx.pt` carries them
+        // to device px so HiDPI scale doesn't shrink the bar.
+        let th = cx.pt(TOOLBAR_H);
+        let pad = cx.pt(PAD);
+        let strip = Rect::new(x0, y0, w, th);
+        let tool_rects = self.toolbar_child_rects(strip, cx.scale);
         for (i, r) in tool_rects.iter().enumerate() {
             self.last_child_bounds[i] = *r;
             cx.layout_child(self.child_mut(i).unwrap(), *r);
         }
 
         // Columns below the toolbar.
-        let body_y = y0 + TOOLBAR_H + PAD;
-        let body_h = (h - TOOLBAR_H - PAD - PAD).max(0.0);
-        let rail = Rect::new(x0 + PAD, body_y, RAIL_W, body_h);
-        let props = Rect::new(x0 + w - PAD - PROPS_W, body_y, PROPS_W, body_h);
-        let center_x = rail.min_x() + rail.width() + PAD;
-        let center_w = (props.min_x() - PAD - center_x).max(0.0);
+        let body_y = y0 + th + pad;
+        let body_h = (h - th - pad - pad).max(0.0);
+        let rail = Rect::new(x0 + pad, body_y, cx.pt(RAIL_W), body_h);
+        let props = Rect::new(
+            x0 + w - pad - cx.pt(PROPS_W),
+            body_y,
+            cx.pt(PROPS_W),
+            body_h,
+        );
+        let center_x = rail.min_x() + rail.width() + pad;
+        let center_w = (props.min_x() - pad - center_x).max(0.0);
         let stage_rect = Rect::new(
             center_x,
             body_y,
             center_w,
-            (body_h - BOTTOM_H - PAD).max(0.0),
+            (body_h - cx.pt(BOTTOM_H) - pad).max(0.0),
         );
         let bottom = Rect::new(
             center_x,
-            body_y + stage_rect.height() + PAD,
+            body_y + stage_rect.height() + pad,
             center_w,
-            BOTTOM_H,
+            cx.pt(BOTTOM_H),
         );
         let info_rect = Rect::new(
             bottom.min_x(),
             bottom.min_y(),
-            (center_w - PAD) * 0.5,
+            (center_w - pad) * 0.5,
             bottom.height(),
         );
         let log_rect = Rect::new(
-            info_rect.min_x() + info_rect.width() + PAD,
+            info_rect.min_x() + info_rect.width() + pad,
             bottom.min_y(),
-            (center_w - PAD) * 0.5,
+            (center_w - pad) * 0.5,
             bottom.height(),
         );
 
@@ -1023,7 +1035,7 @@ impl Widget for CatalogView {
             f64::from(b.min_x()),
             f64::from(b.min_y()),
             f64::from(b.max_x()),
-            f64::from(b.min_y() + TOOLBAR_H),
+            f64::from(b.min_y() + cx.pt(TOOLBAR_H)),
         );
         cx.list.push_fill_rect(toolbar, bg);
     }

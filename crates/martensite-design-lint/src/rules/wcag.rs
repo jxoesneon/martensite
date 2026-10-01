@@ -370,7 +370,13 @@ impl LintRule for TextMinSize {
 ///
 /// A run whose measured or estimated advance crosses its node's edge
 /// is either clipped mid-glyph or painted over a sibling — both read
-/// as bugs to the user even when intentional.
+/// as bugs to the user even when intentional. A run staying inside its
+/// node but crossing a *sub-scope* clip (cell label zones, control
+/// faces) is cut just as permanently, so clip edges interior to the
+/// visible region are checked too — edges coincident with an inherited
+/// scrollport clip stay quiet (scroll slivers). Finally, a painted `…`
+/// that nearly fills its clip is an elided label: nothing overflows,
+/// but the text is still unread, so a fill-ratio heuristic flags it.
 struct TextTruncation;
 impl LintRule for TextTruncation {
     fn id(&self) -> &'static str {
@@ -394,9 +400,16 @@ impl LintRule for TextTruncation {
     fn check(&self, scene: &LintScene, cfg: &LintConfig) -> Vec<Finding> {
         let tol = param(cfg, self.id(), "tolerance_px", 2.0);
         let char_w = param(cfg, self.id(), "char_width_ratio", 0.55);
+        let elide_fill = param(cfg, self.id(), "elide_fill_ratio", 0.8);
         let mut out = Vec::new();
         for n in scene.walk() {
+            // The node's visible region — bounds minus any inherited
+            // (scrollport) clip. A cut at an edge *interior* to this
+            // region is permanent truncation; a cut at the inherited
+            // edge is a scroll sliver and stays quiet.
+            let eff = n.clip.map_or(n.bounds, |c| n.bounds.intersect(c));
             let mut worst = 0.0f64;
+            let mut elided = false;
             for t in &n.texts {
                 let w = t
                     .width
@@ -409,6 +422,35 @@ impl LintRule for TextTruncation {
                     .max(n.bounds.x0 - t.origin.x)
                     .max(n.bounds.y0 - (t.origin.y - f64::from(t.size)))
                     .max((t.origin.y + f64::from(t.size) * 0.2) - n.bounds.y1);
+                // A sub-scope clip (cell label zone, control face)
+                // tighter than the visible region on an edge cuts ink
+                // permanently — the bounds check above can't see it
+                // because the run stays inside `n.bounds`.
+                if let Some(c) = t.clip {
+                    if c.x1 < eff.x1 - tol {
+                        worst = worst.max((t.origin.x + w) - c.x1);
+                    }
+                    if c.x0 > eff.x0 + tol {
+                        worst = worst.max(c.x0 - t.origin.x);
+                    }
+                    if c.y0 > eff.y0 + tol {
+                        worst = worst.max(c.y0 - (t.origin.y - f64::from(t.size)));
+                    }
+                    if c.y1 < eff.y1 - tol {
+                        worst = worst.max((t.origin.y + f64::from(t.size) * 0.2) - c.y1);
+                    }
+                }
+                // A painted `…` filling its clip is an elided label —
+                // the run fits so edge checks stay silent, but the
+                // user still can't read the full text. A deliberate
+                // trailing ellipsis (placeholder, menu item) leaves
+                // slack and stays quiet.
+                if t.text.ends_with('…') {
+                    let avail = t.clip.map_or(n.bounds.width(), |c| c.x1 - c.x0);
+                    if avail > 0.0 && w >= avail * elide_fill {
+                        elided = true;
+                    }
+                }
             }
             if worst > tol {
                 out.push(
@@ -416,10 +458,20 @@ impl LintRule for TextTruncation {
                         "text-truncation",
                         &n.path,
                         format!(
-                            "text extends {:.0}px past the scope edge — likely clipped \
-                             mid-glyph or painted over a sibling",
+                            "text extends {:.0}px past its clip or scope edge — likely \
+                             clipped mid-glyph or painted over a sibling",
                             worst
                         ),
+                    )
+                    .at(n.bounds),
+                );
+            }
+            if elided {
+                out.push(
+                    Finding::new(
+                        "text-truncation",
+                        &n.path,
+                        "label elided to fit — the control is narrower than its text".to_string(),
                     )
                     .at(n.bounds),
                 );
@@ -976,6 +1028,113 @@ mod tests {
         let scene = text_on_fill([230, 230, 230, 255], [20, 20, 24, 255]);
         let report = lint(&scene, &LintConfig::new());
         assert!(findings_for(&report, "text-truncation").is_empty());
+    }
+
+    #[test]
+    fn text_truncation_flags_subscope_clip() {
+        // A label painted inside a cell-tight clip — the run stays
+        // inside the widget's bounds, so only the clip edge sees the
+        // cut. This is the Segmented-cell case the bounds check misses.
+        let mut list = app_list();
+        list.push_scope(None, "Segmented", Rect::new(10.0, 10.0, 200.0, 40.0));
+        list.commands
+            .push(PaintCommand::ClipRect(Rect::new(14.0, 12.0, 70.0, 38.0)));
+        // 10 chars × 12px × 0.55 ≈ 66px from x=16 → edge 82px, past
+        // the clip's x1=70 but inside the widget's bounds x1=200.
+        list.commands.push(PaintCommand::DrawText(
+            Point::new(16.0, 32.0),
+            "FollowDark".to_string(),
+            12.0,
+            [230, 230, 230, 255],
+        ));
+        list.commands.push(PaintCommand::PopClip);
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "text-truncation");
+        assert!(!hits.is_empty(), "clip-edge overflow should flag");
+    }
+
+    #[test]
+    fn text_truncation_quiet_at_scroll_edge() {
+        // A row half-scrolled out of a viewport: the text's clip edge
+        // IS the inherited clip edge, so the cut is a scroll sliver,
+        // not truncation.
+        let mut list = app_list();
+        list.push_scope(None, "ScrollView", Rect::new(0.0, 0.0, 200.0, 100.0));
+        list.commands
+            .push(PaintCommand::ClipRect(Rect::new(0.0, 0.0, 200.0, 100.0)));
+        list.push_scope(None, "ListItemRow", Rect::new(0.0, 80.0, 200.0, 120.0));
+        list.commands.push(PaintCommand::DrawText(
+            Point::new(8.0, 105.0),
+            "Row label".to_string(),
+            12.0,
+            [230, 230, 230, 255],
+        ));
+        list.pop_scope();
+        list.commands.push(PaintCommand::PopClip);
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "text-truncation");
+        assert!(
+            hits.is_empty(),
+            "scroll-edge sliver must not flag: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn text_truncation_flags_elided_label() {
+        // An `…` filling its clip is a label that ran out of room.
+        let mut list = app_list();
+        list.push_scope(None, "Segmented", Rect::new(10.0, 10.0, 200.0, 40.0));
+        list.commands
+            .push(PaintCommand::ClipRect(Rect::new(14.0, 12.0, 70.0, 38.0)));
+        // 8 chars × 12px × 0.55 ≈ 53px in a 56px clip (94% fill) —
+        // inside the clip so no edge fires, but the `…` is forced.
+        list.commands.push(PaintCommand::DrawText(
+            Point::new(16.0, 32.0),
+            "Followi…".to_string(),
+            12.0,
+            [230, 230, 230, 255],
+        ));
+        list.commands.push(PaintCommand::PopClip);
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "text-truncation");
+        assert!(
+            hits.iter().any(|f| f.message.contains("elided")),
+            "elided label should flag, got {hits:?}"
+        );
+    }
+
+    #[test]
+    fn text_truncation_quiet_for_slack_ellipsis() {
+        // A deliberate trailing ellipsis in a wide field — slack means
+        // the `…` is content, not compression.
+        let mut list = app_list();
+        list.push_scope(None, "TextInput", Rect::new(10.0, 10.0, 220.0, 40.0));
+        list.commands
+            .push(PaintCommand::ClipRect(Rect::new(14.0, 12.0, 216.0, 38.0)));
+        list.commands.push(PaintCommand::DrawText(
+            Point::new(16.0, 32.0),
+            "Filter widgets…".to_string(),
+            12.0,
+            [150, 150, 155, 255],
+        ));
+        list.commands.push(PaintCommand::PopClip);
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        assert!(
+            findings_for(&report, "text-truncation").is_empty(),
+            "placeholder ellipsis must not flag"
+        );
     }
 
     // ---------- target-spacing ----------

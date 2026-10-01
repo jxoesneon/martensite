@@ -238,13 +238,14 @@ impl Widget for StageHost {
             surface,
         );
         let step = f64::from(GRID_STEP * cx.scale);
+        let dot_px = f64::from(cx.scale * 1.5);
         let mut y = f64::from(b.min_y());
         while y <= f64::from(b.max_y()) {
             let mut x = f64::from(b.min_x());
             while x <= f64::from(b.max_x()) {
                 cx.list.push_fill_rect(
-                    kurbo::Rect::new(x, y, x + 1.5, y + 1.5),
-                    dot.map(|v| (f32::from(v) * 0.35) as u8),
+                    kurbo::Rect::new(x, y, x + dot_px, y + dot_px),
+                    dot.map(|v| (f32::from(v) * 0.14) as u8),
                 );
                 x += step;
             }

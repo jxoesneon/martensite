@@ -84,11 +84,11 @@ impl Widget for DynamicColumn {
         let mut w = 0.0f32;
         for (i, child) in self.children.iter_mut().enumerate() {
             let s = if let Some(rh) = self.row_height {
-                Vec2::new(constraints.max_size.x, rh)
+                Vec2::new(constraints.max_size.x, cx.pt(rh))
             } else {
                 child.measure(cx, constraints)
             };
-            h += s.y + f32::from(i > 0) * self.gap;
+            h += s.y + f32::from(i > 0) * cx.pt(self.gap);
             w = w.max(s.x);
         }
         Vec2::new(w.min(constraints.max_size.x), h.min(constraints.max_size.y))
@@ -97,8 +97,9 @@ impl Widget for DynamicColumn {
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.rects.clear();
         let mut y = bounds.min_y();
+        let gap = cx.pt(self.gap);
         for child in self.children.iter_mut() {
-            let h = self.row_height.unwrap_or_else(|| {
+            let h = self.row_height.map(|rh| cx.pt(rh)).unwrap_or_else(|| {
                 // Children already measured under the column's width
                 // constraint keep that height; unmeasured children
                 // (freshly pushed) measure against the real width now.
@@ -120,7 +121,7 @@ impl Widget for DynamicColumn {
             let rect = Rect::new(bounds.min_x(), y, bounds.width(), h);
             self.rects.push(rect);
             cx.layout_child(child.as_mut(), rect);
-            y += h + self.gap;
+            y += h + gap;
         }
     }
 
