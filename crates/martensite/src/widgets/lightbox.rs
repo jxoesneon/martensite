@@ -380,15 +380,35 @@ impl Widget for Lightbox {
                 );
             }
         }
-        // Nav + close buttons.
+        // Nav + close buttons — native-pack icons first, glyphs as
+        // the fallback.
         let shape = martensite_core::shape::Shape::ELLIPSE;
-        for (rect, glyph) in [
-            (self.prev_rect, "‹"),
-            (self.next_rect, "›"),
-            (self.close_rect, "×"),
+        for (rect, icon, glyph) in [
+            (self.prev_rect, "nav.chevron-left", "‹"),
+            (self.next_rect, "nav.chevron-right", "›"),
+            (self.close_rect, "status.close", "×"),
         ] {
             cx.list.push_fill_shape(krect(rect), &shape, BTN_FACE);
             let gsize = FONT_PT * 1.4 * s;
+            let ink = cx.color(TokenKey::TextColor, TEXT);
+            let side = gsize;
+            let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
+                crate::widgets::morph_icon::paint_icon_d(
+                    cx.list,
+                    Rect::new(
+                        rect.min_x() + (rect.width() - side) / 2.0,
+                        rect.min_y() + (rect.height() - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    d,
+                    s,
+                    ink,
+                )
+            });
+            if icon_ok {
+                continue;
+            }
             let gw = painter
                 .and_then(|p| p.measure_text(glyph, gsize))
                 .unwrap_or(gsize * 0.5);
@@ -396,14 +416,7 @@ impl Widget for Lightbox {
                 f64::from(rect.min_x() + (rect.width() - gw) / 2.0),
                 f64::from(rect.min_y() + rect.height() / 2.0),
             );
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                o,
-                glyph,
-                gsize,
-                cx.color(TokenKey::TextColor, TEXT),
-            );
+            crate::text_paint::paint_label(painter, cx.list, o, glyph, gsize, ink);
         }
     }
 }

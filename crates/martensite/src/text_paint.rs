@@ -759,6 +759,74 @@ pub(crate) fn paint_label_clipped_styled(
     list.pop_clip();
 }
 
+/// [`paint_label_clipped`] that vertically centers `text`'s line box
+/// inside `clip` — the canonical way to paint a single-line label
+/// inside a fixed-height strip (form fields, table cells, toolbar
+/// bands, chips).
+///
+/// `origin` semantics trip people up: [`paint_label`] takes the label's
+/// block top, not its baseline — the historical `y0 + h * 0.72` idiom
+/// computed a baseline-looking offset and fed it as a top, sinking the
+/// run ~`0.97·size` below the strip so descenders clipped. Center the
+/// line box (`size·1.25`, the painter's leading) instead: baseline then
+/// lands at the optical center a `0.72` heuristic was approximating,
+/// with descender room inside the strip at every size.
+pub(crate) fn paint_label_vcenter(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    list: &mut PaintList,
+    clip: kurbo::Rect,
+    x: f64,
+    text: &str,
+    size_px: f32,
+    color: [u8; 4],
+) {
+    paint_label_vcenter_styled(
+        painter,
+        list,
+        clip,
+        x,
+        text,
+        size_px,
+        color,
+        TextStyle::REGULAR,
+    );
+}
+
+/// Block-top `y` that vertically centers a `size_px` line box inside
+/// `strip` — the computation behind [`paint_label_vcenter`], exposed
+/// for call sites that compose extra offsets on top (staggered baselines,
+/// paired lines sharing a strip).
+pub(crate) fn vcenter_origin_y(strip: kurbo::Rect, size_px: f32) -> f64 {
+    let line_h = f64::from(size_px) * 1.25;
+    strip.y0 + (strip.height() - line_h).max(0.0) * 0.5
+}
+
+/// [`paint_label_vcenter`] with an explicit style axis — see
+/// [`paint_label_styled`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_label_vcenter_styled(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    list: &mut PaintList,
+    clip: kurbo::Rect,
+    x: f64,
+    text: &str,
+    size_px: f32,
+    color: [u8; 4],
+    style: TextStyle,
+) {
+    let y = vcenter_origin_y(clip, size_px);
+    paint_label_clipped_styled(
+        painter,
+        list,
+        clip,
+        Point::new(x, y),
+        text,
+        size_px,
+        color,
+        style,
+    );
+}
+
 /// `true` when `ink` can intersect the list's active clip — widgets
 /// that emit unclipped labels (node captions, annotations) use it to
 /// cull runs the enclosing clips would discard anyway. `true` when no

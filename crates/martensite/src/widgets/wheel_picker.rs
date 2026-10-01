@@ -24,7 +24,7 @@ use martensite_core::{
 };
 use martensite_theme::TokenKey;
 
-use crate::text_paint::paint_label_clipped;
+use crate::text_paint::paint_label_vcenter;
 
 /// Row height in points.
 const ROW_PT: f32 = 32.0;
@@ -359,11 +359,8 @@ impl Widget for WheelPicker {
             let w = painter
                 .and_then(|p| p.measure_text(item, size))
                 .unwrap_or(size * item.chars().count() as f32 * 0.5);
-            let origin = kurbo::Point::new(
-                f64::from(b.min_x() + (b.width() - w.min(b.width())) / 2.0),
-                f64::from(y + (rh - size) / 2.0),
-            );
-            paint_label_clipped(painter, cx.list, clip, origin, item, size, ink);
+            let x = f64::from(b.min_x() + (b.width() - w.min(b.width())) / 2.0);
+            paint_label_vcenter(painter, cx.list, clip, x, item, size, ink);
         }
     }
 

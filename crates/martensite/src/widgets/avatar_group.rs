@@ -298,14 +298,11 @@ impl Widget for AvatarGroup {
         let w = painter
             .and_then(|p| p.measure_text(&text, size_px))
             .unwrap_or(size_px * text.len() as f32 * 0.55);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             chip,
-            kurbo::Point::new(
-                chip.x0 + (chip.width() - f64::from(w)) * 0.5,
-                chip.y0 + chip.height() * 0.72,
-            ),
+            chip.x0 + (chip.width() - f64::from(w)) * 0.5,
             &text,
             size_px,
             if self.enabled { ink } else { fill },

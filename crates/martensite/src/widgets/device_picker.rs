@@ -72,6 +72,16 @@ impl DeviceKind {
         }
     }
 
+    /// The native-pack icon for this device kind — the preferred
+    /// renderer; [`glyph`](Self::glyph) is the fallback.
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            Self::Microphone => "media.mic",
+            Self::Speaker => "media.volume",
+            Self::Camera => "media.video",
+        }
+    }
+
     /// Section caption.
     ///
     /// ```
@@ -383,11 +393,38 @@ impl Widget for DevicePicker {
         let fs = FONT_PT * s;
         let mut y = b.min_y() + pad;
         for (si, sec) in self.sections.iter().enumerate() {
-            crate::text_paint::paint_label(
+            // Section header — native icon + caption; the glyph
+            // prefix stays as fallback.
+            let hx = b.min_x() + pad;
+            let icon_ok = crate::icons::builtin()
+                .lookup(sec.kind.icon_name())
+                .is_some_and(|d| {
+                    let side = fs;
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(hx, y + (HEADER_PT * s - side) / 2.0, side, side),
+                        d,
+                        s,
+                        MUTED_FG,
+                    )
+                });
+            let header = if icon_ok {
+                sec.kind.title().to_string()
+            } else {
+                format!("{} {}", sec.kind.glyph(), sec.kind.title())
+            };
+            let tx = hx + if icon_ok { fs + 6.0 * s } else { 0.0 };
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                kurbo::Point::new(f64::from(b.min_x() + pad), f64::from(y + fs * 0.9)),
-                &format!("{} {}", sec.kind.glyph(), sec.kind.title()),
+                kurbo::Rect::new(
+                    f64::from(tx),
+                    f64::from(y),
+                    f64::from(b.max_x() - pad),
+                    f64::from(y + HEADER_PT * s),
+                ),
+                f64::from(tx),
+                &header,
                 fs * 0.92,
                 MUTED_FG,
             );
@@ -406,22 +443,39 @@ impl Widget for DevicePicker {
                     );
                 }
                 if sec.active == Some(i) {
-                    // Check mark.
+                    // Check mark — native icon, hand-drawn tick as
+                    // fallback.
                     let cy = r.min_y() + r.height() / 2.0;
                     let ck = CHECK_PT * s;
-                    let mut p = kurbo::BezPath::new();
-                    p.move_to((f64::from(r.min_x()), f64::from(cy)));
-                    p.line_to((f64::from(r.min_x() + ck * 0.35), f64::from(cy + ck * 0.35)));
-                    p.line_to((f64::from(r.min_x() + ck), f64::from(cy - ck * 0.45)));
-                    cx.list.push_stroke_path(p, 1.6 * s, accent);
+                    let icon_ok = crate::icons::builtin()
+                        .lookup("status.check")
+                        .is_some_and(|d| {
+                            crate::widgets::morph_icon::paint_icon_d(
+                                cx.list,
+                                Rect::new(r.min_x(), cy - ck / 2.0, ck, ck),
+                                d,
+                                s,
+                                accent,
+                            )
+                        });
+                    if !icon_ok {
+                        let mut p = kurbo::BezPath::new();
+                        p.move_to((f64::from(r.min_x()), f64::from(cy)));
+                        p.line_to((f64::from(r.min_x() + ck * 0.35), f64::from(cy + ck * 0.35)));
+                        p.line_to((f64::from(r.min_x() + ck), f64::from(cy - ck * 0.45)));
+                        cx.list.push_stroke_path(p, 1.6 * s, accent);
+                    }
                 }
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    kurbo::Point::new(
+                    kurbo::Rect::new(
                         f64::from(r.min_x() + CHECK_PT * s + GAP_TEXT * s),
-                        f64::from(r.min_y() + r.height() / 2.0 + fs * 0.35),
+                        f64::from(r.min_y()),
+                        f64::from(r.max_x()),
+                        f64::from(r.max_y()),
                     ),
+                    f64::from(r.min_x() + CHECK_PT * s + GAP_TEXT * s),
                     item,
                     fs,
                     cx.color(TokenKey::TextColor, TEXT_FG),

@@ -42,6 +42,9 @@ const PRIMARY_FACE: [u8; 4] = [37, 99, 235, 255];
 const INK_INVERSE: [u8; 4] = [255, 255, 255, 255];
 /// Corner radius of the button face.
 const CORNER_RADIUS: f64 = 4.0;
+/// Stroke-icon side in the leading lane, logical points.
+const BUTTON_ICON_PT: f32 = 16.0;
+
 /// Horizontal padding between the border and the label.
 const TEXT_PAD_X: f32 = 10.0;
 
@@ -104,6 +107,14 @@ pub struct Button {
     /// `GlyphRun`s; without it the label falls back to `DrawText`
     /// placeholder boxes. See [`crate::text_paint`].
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Resolved `d` of the optional leading stroke icon — painted
+    /// through the shared
+    /// [`paint_icon_d`](crate::widgets::morph_icon::paint_icon_d) seam
+    /// in the label's ink.
+    icon_d: Option<String>,
+    /// `true` paints only the icon — `label` stays as the accessible
+    /// name and measure fallback (icon-only square button).
+    icon_only: bool,
 }
 
 impl Button {
@@ -129,7 +140,142 @@ impl Button {
             inside: false,
             activated: false,
             text_painter: None,
+            icon_d: None,
+            icon_only: false,
         }
+    }
+
+    /// An icon-only button: `label` is the accessible name (and the
+    /// measured fallback should `name` fail to resolve), `name` the
+    /// native-pack icon painted on the face
+    /// ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// `"arrow.left"`, `"status.plus"`, …
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// let btn = Button::icon_button("status.plus", "Add");
+    /// assert_eq!(btn.label, "Add");
+    /// ```
+    pub fn icon_button(name: &str, label: impl Into<String>) -> Self {
+        Self::new(label).icon_named(name).icon_only(true)
+    }
+
+    /// Adds a leading stroke icon painted from `d` (SVG path data on
+    /// the 24-unit icon grid) in the label's ink. A `d` the icon
+    /// engine rejects is dropped — the label stays the whole button.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::icons::builtin;
+    /// use martensite::widgets::Button;
+    ///
+    /// let d = builtin().lookup("status.check").unwrap();
+    /// let btn = Button::new("Apply").icon_d(d);
+    /// ```
+    #[must_use]
+    pub fn icon_d(mut self, d: &str) -> Self {
+        self.set_icon_d(d);
+        self
+    }
+
+    /// [`icon_d`](Self::icon_d) resolving `name` through the native
+    /// icon pack — `"status.check"`, `"edit.pen"`, … An unknown name
+    /// drops the icon; the label stays the whole button.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// assert!(Button::new("OK").icon_named("status.check").has_icon());
+    /// assert!(!Button::new("OK").icon_named("bogus.name").has_icon());
+    /// ```
+    #[must_use]
+    pub fn icon_named(mut self, name: &str) -> Self {
+        self.set_icon_named(name);
+        self
+    }
+
+    /// Mutating form of [`icon_d`](Self::icon_d) — swaps or clears
+    /// (`""`) the icon at runtime for state-driven buttons.
+    /// Returns `true` when the icon took (empty `d` also clears and
+    /// returns `true`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// let mut b = Button::new("Play");
+    /// assert!(b.set_icon_named("media.play"));
+    /// b.set_icon_d("");
+    /// assert!(!b.has_icon());
+    /// ```
+    pub fn set_icon_d(&mut self, d: &str) -> bool {
+        if d.is_empty() {
+            self.icon_d = None;
+            return true;
+        }
+        let ok = crate::widgets::morph_icon::MorphIcon::icon(d).is_ok();
+        if ok {
+            self.icon_d = Some(d.to_string());
+        }
+        ok
+    }
+
+    /// Mutating form of [`icon_named`](Self::icon_named).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// let mut b = Button::new("Play");
+    /// assert!(b.set_icon_named("media.play"));
+    /// assert!(!b.set_icon_named("bogus.name"));
+    /// ```
+    pub fn set_icon_named(&mut self, name: &str) -> bool {
+        match crate::icons::builtin().lookup(name) {
+            Some(d) => self.set_icon_d(d),
+            None => false,
+        }
+    }
+
+    /// Whether a stroke icon is installed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// assert!(Button::icon_button("status.plus", "Add").has_icon());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn has_icon(&self) -> bool {
+        self.icon_d.is_some()
+    }
+
+    /// `true` suppresses the label text — the icon carries the face
+    /// and `label` stays as the accessible name. Icon-only buttons
+    /// measure to a square.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Button;
+    ///
+    /// let btn = Button::new("Add").icon_named("status.plus").icon_only(true);
+    /// assert!(btn.has_icon());
+    /// ```
+    #[must_use]
+    pub fn icon_only(mut self, flag: bool) -> Self {
+        self.icon_only = flag;
+        self
     }
 
     /// Sets whether the button is enabled.
@@ -256,6 +402,17 @@ impl Button {
 }
 
 impl Widget for Button {
+    /// `@labeled` declares the accessible name to design-lint's
+    /// `icon-only-control` rule — an icon-only button paints no text,
+    /// so the scope marker carries what the paint list can't see.
+    fn debug_name(&self) -> &'static str {
+        if self.label.is_empty() {
+            "Button"
+        } else {
+            "Button@labeled"
+        }
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // A button has a default minimum size of 80x32 logical pt, but
         // grows to fit its label. Real glyph advance when a measurer
@@ -263,12 +420,26 @@ impl Widget for Button {
         // wider than the ~7.6 pt/char model, and a toolbar laying a
         // button out at an underestimated width clips the label
         // mid-glyph); the estimate stays as the no-painter fallback.
+        // An icon-only button is a 32pt square — the label is a11y
+        // only. A leading icon widens the label lane by icon + gap.
+        if self.icon_only && self.icon_d.is_some() {
+            let side = cx.pt(32.0);
+            return Vec2::new(
+                side.min(constraints.max_size.x.max(0.0)),
+                side.min(constraints.max_size.y.max(0.0)),
+            );
+        }
         let label_w = measure_label(&self.text_painter, cx.scale, &self.label, 14.0)
             .map(|w| w + cx.pt(2.0 * TEXT_PAD_X))
             .unwrap_or_else(|| cx.pt(estimate_label_width(&self.label) + 2.0 * TEXT_PAD_X));
+        let icon_w = if self.icon_d.is_some() {
+            cx.pt(BUTTON_ICON_PT + 6.0)
+        } else {
+            0.0
+        };
         let min_w = cx
             .pt(80.0)
-            .max(label_w)
+            .max(label_w + icon_w)
             .min(constraints.max_size.x.max(0.0));
         let min_h = cx.pt(32.0).min(constraints.max_size.y.max(0.0));
         Vec2::new(min_w, min_h)
@@ -418,27 +589,51 @@ impl Widget for Button {
         }
 
         // The label is left-aligned inside the face and vertically
-        // centred — `DrawText` positions by the text run's top edge, so
-        // centre the font box within the face. Clipped to the face
-        // interior — a long label can't spill past the rounded edge.
-        let text_x = b.origin.x + cx.pt(TEXT_PAD_X);
-        crate::text_paint::paint_label_clipped(
-            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
-            cx.list,
-            kurbo::Rect::new(
+        // centred — `paint_label_vcenter` centres the line box in the
+        // face. Clipped to the face interior — a long label can't spill
+        // past the rounded edge.
+        let mut text_x = b.origin.x + cx.pt(TEXT_PAD_X);
+        // A stroke icon paints in the label's ink — state-faithful
+        // (inverse on primary, muted when disabled) through the shared
+        // `paint_icon_d` seam. Icon-only centres it in the face.
+        let icon_ok = self.icon_d.as_deref().is_some_and(|d| {
+            let side = cx.pt(BUTTON_ICON_PT);
+            let slot = if self.icon_only {
+                Rect::new(
+                    b.min_x() + (b.width() - side) / 2.0,
+                    b.min_y() + (b.height() - side) / 2.0,
+                    side,
+                    side,
+                )
+            } else {
+                Rect::new(
+                    b.min_x() + cx.pt(TEXT_PAD_X),
+                    b.min_y() + (b.height() - side) / 2.0,
+                    side,
+                    side,
+                )
+            };
+            crate::widgets::morph_icon::paint_icon_d(cx.list, slot, d, cx.scale, ink)
+        });
+        if icon_ok {
+            text_x += cx.pt(BUTTON_ICON_PT + 6.0);
+        }
+        if !(self.icon_only && icon_ok) {
+            crate::text_paint::paint_label_vcenter(
+                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                cx.list,
+                kurbo::Rect::new(
+                    f64::from(text_x),
+                    f64::from(b.origin.y),
+                    f64::from(b.max_x() - cx.pt(TEXT_PAD_X)),
+                    f64::from(b.max_y()),
+                ),
                 f64::from(text_x),
-                f64::from(b.origin.y),
-                f64::from(b.max_x() - cx.pt(TEXT_PAD_X)),
-                f64::from(b.max_y()),
-            ),
-            kurbo::Point::new(
-                f64::from(text_x),
-                f64::from(b.origin.y + (b.size.y - cx.pt(14.0)) / 2.0),
-            ),
-            &self.label,
-            cx.pt(14.0),
-            ink,
-        );
+                &self.label,
+                cx.pt(14.0),
+                ink,
+            );
+        }
     }
 }
 

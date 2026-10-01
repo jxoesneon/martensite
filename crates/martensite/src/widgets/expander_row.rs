@@ -107,6 +107,42 @@ impl ExpanderRow {
         self
     }
 
+    /// Sets the header icon to a hosted
+    /// [`MorphIcon`](crate::widgets::MorphIcon) stroke icon resolved
+    /// from SVG path data — forwarded to the header
+    /// [`SettingsRow::icon_d`](crate::widgets::settings_row::SettingsRow::icon_d).
+    /// The icon is a real internal child: it ticks with the arena and
+    /// morphs; a rejected `d` leaves the header iconless.
+    ///
+    /// ```
+    /// use martensite::icons::builtin;
+    /// use martensite::widgets::expander_row::ExpanderRow;
+    ///
+    /// let d = builtin().lookup("status.warning").unwrap();
+    /// let row = ExpanderRow::new("Alarms").icon_d(d);
+    /// assert_eq!(row.title(), "Alarms");
+    /// ```
+    pub fn icon_d(mut self, d: &str) -> Self {
+        self.header = std::mem::replace(&mut self.header, SettingsRow::new("")).icon_d(d);
+        self
+    }
+
+    /// [`icon_d`](Self::icon_d) resolving `name` through the native
+    /// icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// `"status.warning"`, `"file.folder"`, … An unknown name leaves
+    /// the header iconless rather than failing the build.
+    ///
+    /// ```
+    /// use martensite::widgets::expander_row::ExpanderRow;
+    ///
+    /// let row = ExpanderRow::new("Alarms").icon_named("status.warning");
+    /// assert_eq!(row.title(), "Alarms");
+    /// ```
+    pub fn icon_named(mut self, name: &str) -> Self {
+        self.header = std::mem::replace(&mut self.header, SettingsRow::new("")).icon_named(name);
+        self
+    }
+
     /// Appends a nested child widget (revealed while expanded).
     ///
     /// ```

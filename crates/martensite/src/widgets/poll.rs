@@ -423,28 +423,53 @@ impl Widget for Poll {
             }
             cx.list
                 .push_stroke_shape(krect(rect), &shape, 1.0 * s, edge);
-            // Label (+ check for my vote).
-            let label = if self.my_vote == Some(i) {
-                format!("✓ {}", o.label)
-            } else {
-                o.label.clone()
-            };
-            let origin = kurbo::Point::new(
-                f64::from(rect.min_x() + PAD_PT * s * 0.8),
-                f64::from(rect.min_y() + rect.height() / 2.0),
+            // Label (+ check mark for my vote — a native icon lane
+            // when the pack resolves, a `✓` prefix otherwise).
+            let mut lx = rect.min_x() + PAD_PT * s * 0.8;
+            let mut label = o.label.clone();
+            if self.my_vote == Some(i) {
+                let side = size;
+                let icon_ok = crate::icons::builtin()
+                    .lookup("status.check")
+                    .is_some_and(|d| {
+                        crate::widgets::morph_icon::paint_icon_d(
+                            cx.list,
+                            Rect::new(lx, rect.min_y() + (rect.height() - side) / 2.0, side, side),
+                            d,
+                            s,
+                            text,
+                        )
+                    });
+                if icon_ok {
+                    lx += side + 4.0 * s;
+                } else {
+                    label = format!("✓ {label}");
+                }
+            }
+            crate::text_paint::paint_label_vcenter(
+                painter,
+                cx.list,
+                krect(rect),
+                f64::from(lx),
+                &label,
+                size,
+                text,
             );
-            crate::text_paint::paint_label(painter, cx.list, origin, &label, size, text);
             // Percentage / count on the right.
             if results {
                 let pct = format!("{:.0}%", o.votes as f32 / total * 100.0);
                 let w = painter
                     .and_then(|p| p.measure_text(&pct, size))
                     .unwrap_or(pct.len() as f32 * size * 0.6);
-                let po = kurbo::Point::new(
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    krect(rect),
                     f64::from(rect.max_x() - w - PAD_PT * s * 0.8),
-                    f64::from(rect.min_y() + rect.height() / 2.0),
+                    &pct,
+                    size,
+                    muted,
                 );
-                crate::text_paint::paint_label(painter, cx.list, po, &pct, size, muted);
             }
         }
     }

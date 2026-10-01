@@ -1594,11 +1594,19 @@ impl Widget for TextInput {
         };
         cx.list.push_stroke_shape(rect, &face, cx.pt(1.0), edge);
 
-        // `DrawText` positions by the text run's top edge — centre the
-        // 14 pt font box within the face.
+        // Vertically centre the font's line box within the face — the
+        // painter treats the origin as the block top, not a baseline.
         let font_px = cx.pt(FONT_PT);
         let pad = cx.pt(TEXT_PAD_X);
-        let text_y = b.origin.y + (face_h - font_px) / 2.0;
+        let text_y = crate::text_paint::vcenter_origin_y(
+            kurbo::Rect::new(
+                f64::from(b.origin.x),
+                f64::from(b.origin.y),
+                f64::from(b.origin.x + b.size.x),
+                f64::from(b.origin.y + face_h),
+            ),
+            font_px,
+        );
 
         // Interior layout: [pad][prefix][text run …][suffix][zones].
         // The suffix pins to the right edge of the text lane; the
@@ -1670,7 +1678,7 @@ impl Widget for TextInput {
             crate::text_paint::paint_label(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
-                kurbo::Point::new(f64::from(b.origin.x + pad), f64::from(text_y)),
+                kurbo::Point::new(f64::from(b.origin.x + pad), text_y),
                 prefix,
                 font_px,
                 muted,
@@ -1688,7 +1696,7 @@ impl Widget for TextInput {
             crate::text_paint::paint_label(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
-                kurbo::Point::new(f64::from(text_x), f64::from(text_y)),
+                kurbo::Point::new(f64::from(text_x), text_y),
                 &self.placeholder,
                 font_px,
                 cx.color(TokenKey::TextMutedColor, INK_PLACEHOLDER),
@@ -1697,7 +1705,7 @@ impl Widget for TextInput {
             crate::text_paint::paint_label(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
-                kurbo::Point::new(f64::from(text_x), f64::from(text_y)),
+                kurbo::Point::new(f64::from(text_x), text_y),
                 run,
                 font_px,
                 cx.color(TokenKey::TextColor, INK),
@@ -1709,7 +1717,7 @@ impl Widget for TextInput {
             crate::text_paint::paint_label(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
-                kurbo::Point::new(f64::from(sx), f64::from(text_y)),
+                kurbo::Point::new(f64::from(sx), text_y),
                 suffix,
                 font_px,
                 muted,
@@ -1741,7 +1749,7 @@ impl Widget for TextInput {
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,
-                    kurbo::Point::new(f64::from(px), f64::from(text_y)),
+                    kurbo::Point::new(f64::from(px), text_y),
                     pre,
                     font_px,
                     ink,

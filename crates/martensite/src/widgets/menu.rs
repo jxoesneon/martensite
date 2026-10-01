@@ -1117,26 +1117,45 @@ impl Widget for MenuRow {
         } else {
             cx.color(TokenKey::TextMutedColor, INK_DISABLED)
         };
-        // Gutter glyphs: ✓ for a checked item, • for a selected radio.
-        let glyph = match &item {
-            MenuItem::Checkable { checked: true, .. } => Some("✓"),
-            MenuItem::Radio { checked: true, .. } => Some("•"),
+        // Gutter marks: a check for a checked item, a dot for a
+        // selected radio — native-pack icons first, glyphs as the
+        // fallback.
+        let mark = match &item {
+            MenuItem::Checkable { checked: true, .. } => Some(("status.check", "✓")),
+            MenuItem::Radio { checked: true, .. } => Some(("status.circle-dot", "•")),
             _ => None,
         };
-        if let Some(glyph) = glyph {
+        if let Some((icon_name, glyph)) = mark {
             let glyph_ink = if highlighted {
                 ink
             } else {
                 cx.color(TokenKey::AccentColor, CHECK)
             };
-            crate::text_paint::paint_label(
-                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
-                cx.list,
-                kurbo::Point::new(f64::from(b.min_x() + cx.pt(8.0)), f64::from(text_y)),
-                glyph,
-                font_px,
-                glyph_ink,
-            );
+            let side = cx.pt(12.0);
+            let icon_ok = crate::icons::builtin().lookup(icon_name).is_some_and(|d| {
+                crate::widgets::morph_icon::paint_icon_d(
+                    cx.list,
+                    Rect::new(
+                        b.min_x() + cx.pt(6.0),
+                        b.min_y() + (b.height() - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    d,
+                    cx.scale,
+                    glyph_ink,
+                )
+            });
+            if !icon_ok {
+                crate::text_paint::paint_label(
+                    crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                    cx.list,
+                    kurbo::Point::new(f64::from(b.min_x() + cx.pt(8.0)), f64::from(text_y)),
+                    glyph,
+                    font_px,
+                    glyph_ink,
+                );
+            }
         }
         // Label, clipped before the suffix zone (shortcut + ▸).
         let has_sub = item.is_submenu();
@@ -1193,21 +1212,36 @@ impl Widget for MenuRow {
                 sc_ink,
             );
         }
-        // ▸ submenu glyph in the reserved suffix strip.
+        // ▸ submenu mark in the reserved suffix strip — native
+        // chevron icon first, glyph fallback.
         if has_sub {
             let sub_px = cx.pt(MUTED_PT);
             let x = b.max_x() - cx.pt(SUBMENU_W - 6.0);
-            crate::text_paint::paint_label(
-                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
-                cx.list,
-                kurbo::Point::new(
-                    f64::from(x),
-                    f64::from(b.min_y() + (b.height() - sub_px) / 2.0),
-                ),
-                "▸",
-                sub_px,
-                ink,
-            );
+            let side = sub_px;
+            let icon_ok = crate::icons::builtin()
+                .lookup("nav.chevron-right")
+                .is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(x, b.min_y() + (b.height() - side) / 2.0, side, side),
+                        d,
+                        cx.scale,
+                        ink,
+                    )
+                });
+            if !icon_ok {
+                crate::text_paint::paint_label(
+                    crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                    cx.list,
+                    kurbo::Point::new(
+                        f64::from(x),
+                        f64::from(b.min_y() + (b.height() - sub_px) / 2.0),
+                    ),
+                    "▸",
+                    sub_px,
+                    ink,
+                );
+            }
         }
     }
 }

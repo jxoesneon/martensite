@@ -511,45 +511,64 @@ impl Widget for MergeView {
             if self.focused == Some(i) {
                 cx.list.push_fill_rect(krect(r), FOCUS);
             }
-            let mid_y = r.min_y() + ROW_PT * 0.72 * s;
             for (ci, text) in [&row.ours, &row.result, &row.theirs].iter().enumerate() {
                 if !text.is_empty() {
-                    crate::text_paint::paint_label_clipped(
+                    let col_clip = krect(Rect::new(
+                        self.col_x[ci],
+                        r.min_y(),
+                        self.col_x[ci + 1] - self.col_x[ci],
+                        r.height(),
+                    ));
+                    crate::text_paint::paint_label_vcenter(
                         painter,
                         cx.list,
-                        krect(Rect::new(
-                            self.col_x[ci],
-                            r.min_y(),
-                            self.col_x[ci + 1] - self.col_x[ci],
-                            r.height(),
-                        )),
-                        kurbo::Point::new(f64::from(self.col_x[ci] + PAD_PT * s), f64::from(mid_y)),
+                        col_clip,
+                        f64::from(self.col_x[ci] + PAD_PT * s),
                         text,
                         FONT_PT * s,
                         cx.color(TokenKey::TextColor, TEXT),
                     );
                 }
             }
-            // Accept buttons on conflict rows.
+            // Accept buttons on conflict rows — native chevron icons
+            // first, ‹/› glyphs as the fallback.
             if row.is_conflict() {
                 let (l, rr) = self.accept_rects[i];
-                for (rect, glyph) in [(l, "‹"), (rr, "›")] {
+                for (rect, icon, glyph) in
+                    [(l, "nav.chevron-left", "‹"), (rr, "nav.chevron-right", "›")]
+                {
                     cx.list.push_stroke_rect(
                         krect(rect),
                         s.max(1.0),
                         cx.color(TokenKey::BorderColor, LINE),
                     );
-                    crate::text_paint::paint_label(
-                        painter,
-                        cx.list,
-                        kurbo::Point::new(
+                    let ink = cx.color(TokenKey::TextColor, TEXT);
+                    let side = FONT_PT * s;
+                    let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
+                        crate::widgets::morph_icon::paint_icon_d(
+                            cx.list,
+                            Rect::new(
+                                rect.min_x() + (rect.width() - side) / 2.0,
+                                rect.min_y() + (rect.height() - side) / 2.0,
+                                side,
+                                side,
+                            ),
+                            d,
+                            s,
+                            ink,
+                        )
+                    });
+                    if !icon_ok {
+                        crate::text_paint::paint_label_vcenter(
+                            painter,
+                            cx.list,
+                            krect(rect),
                             f64::from(rect.min_x() + rect.width() * 0.3),
-                            f64::from(rect.min_y() + rect.height() * 0.72),
-                        ),
-                        glyph,
-                        FONT_PT * s,
-                        cx.color(TokenKey::TextColor, TEXT),
-                    );
+                            glyph,
+                            FONT_PT * s,
+                            ink,
+                        );
+                    }
                 }
             }
         }

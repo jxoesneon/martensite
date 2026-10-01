@@ -47,6 +47,9 @@ enum Item {
 struct Entry {
     glyph: String,
     title: String,
+    /// Optional hosted stroke icon — a real internal child painted in
+    /// place of `glyph`.
+    icon: Option<crate::widgets::morph_icon::MorphIcon>,
     item: Item,
 }
 
@@ -66,6 +69,9 @@ pub struct ControlCenter {
     toggled: Option<usize>,
     adjusted: Option<(usize, f32)>,
     rects: Vec<Rect>,
+    /// Per-item stroke-icon bounds from the last layout (zeroed when
+    /// the entry has no hosted icon).
+    icon_rects: Vec<Rect>,
     text_painter: Option<SharedTextPainter>,
     bounds: Rect,
     scale: f32,
@@ -95,6 +101,7 @@ impl ControlCenter {
             toggled: None,
             adjusted: None,
             rects: Vec::new(),
+            icon_rects: Vec::new(),
             text_painter: None,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
@@ -112,6 +119,38 @@ impl ControlCenter {
         self.items.push(Entry {
             glyph: glyph.into(),
             title: title.into(),
+            icon: None,
+            item: Item::Tile { on },
+        });
+        self
+    }
+
+    /// A toggle tile with a hosted
+    /// [`MorphIcon`](crate::widgets::morph_icon::MorphIcon) stroke icon
+    /// resolved from the native icon pack
+    /// ([`icons::BUILTIN`](crate::icons::BUILTIN)) — `"device.wifi"`,
+    /// `"misc.moon"`, … The icon is a real internal child: it ticks
+    /// with the arena and morphs. Its ink contrast-resolves against
+    /// the accent tile face, so it stays legible in both on and off
+    /// states. An unknown name leaves the tile iconless rather than
+    /// failing the build.
+    ///
+    /// ```
+    /// use martensite::widgets::control_center::ControlCenter;
+    ///
+    /// assert!(ControlCenter::new().tile_named("device.wifi", "Wi-Fi", true).is_on(0));
+    /// ```
+    pub fn tile_named(mut self, name: &str, title: impl Into<String>, on: bool) -> Self {
+        let icon = crate::widgets::morph_icon::MorphIcon::named(name)
+            .ok()
+            .map(|i| {
+                i.decorative(true)
+                    .ink_over(martensite_theme::TokenKey::AccentColor)
+            });
+        self.items.push(Entry {
+            glyph: String::new(),
+            title: title.into(),
+            icon,
             item: Item::Tile { on },
         });
         self
@@ -134,6 +173,35 @@ impl ControlCenter {
         self.items.push(Entry {
             glyph: glyph.into(),
             title: title.into(),
+            icon: None,
+            item: Item::Slider {
+                value: value.clamp(0.0, 1.0),
+                dragging: false,
+            },
+        });
+        self
+    }
+
+    /// [`slider`](Self::slider) with a hosted
+    /// [`MorphIcon`](crate::widgets::morph_icon::MorphIcon) stroke icon
+    /// resolved from the native icon pack — `"media.volume"`,
+    /// `"misc.sun"`, … An unknown name leaves the row iconless rather
+    /// than failing the build.
+    ///
+    /// ```
+    /// use martensite::widgets::control_center::ControlCenter;
+    ///
+    /// let c = ControlCenter::new().slider_named("media.volume", "Volume", 0.8);
+    /// assert_eq!(c.value_at(0), Some(0.8));
+    /// ```
+    pub fn slider_named(mut self, name: &str, title: impl Into<String>, value: f32) -> Self {
+        let icon = crate::widgets::morph_icon::MorphIcon::named(name)
+            .ok()
+            .map(|i| i.decorative(true));
+        self.items.push(Entry {
+            glyph: String::new(),
+            title: title.into(),
+            icon,
             item: Item::Slider {
                 value: value.clamp(0.0, 1.0),
                 dragging: false,
@@ -277,17 +345,29 @@ impl Widget for ControlCenter {
         self.scale = cx.scale;
         let s = cx.scale;
         self.rects.clear();
+        self.icon_rects.clear();
         let pad = PAD_PT * s;
         let gap = GAP_PT * s;
+        let icon_side = GLYPH_PT * s + 2.0 * s;
         let cols = self.tile_cols.max(1);
         let tw = (bounds.width() - pad * 2.0 - gap * (cols - 1) as f32) / cols as f32;
         let mut y = bounds.min_y() + pad;
         let mut col = 0usize;
-        for e in &self.items {
+        for e in &mut self.items {
             match e.item {
                 Item::Tile { .. } => {
                     let x = bounds.min_x() + pad + col as f32 * (tw + gap);
-                    self.rects.push(Rect::new(x, y, tw, TILE_PT * s));
+                    let r = Rect::new(x, y, tw, TILE_PT * s);
+                    self.rects.push(r);
+                    let ir = Rect::new(x + gap, y + gap * 0.6, icon_side, icon_side);
+                    self.icon_rects.push(if e.icon.is_some() {
+                        ir
+                    } else {
+                        Rect::default()
+                    });
+                    if let Some(icon) = e.icon.as_mut() {
+                        cx.layout_child(icon, ir);
+                    }
                     col += 1;
                     if col == cols {
                         col = 0;
@@ -299,12 +379,27 @@ impl Widget for ControlCenter {
                         col = 0;
                         y += TILE_PT * s + gap;
                     }
-                    self.rects.push(Rect::new(
+                    let r = Rect::new(
                         bounds.min_x() + pad,
                         y,
                         bounds.width() - pad * 2.0,
                         ROW_PT * s,
-                    ));
+                    );
+                    self.rects.push(r);
+                    let ir = Rect::new(
+                        r.min_x() + gap,
+                        r.min_y() + (r.height() - icon_side) / 2.0,
+                        icon_side,
+                        icon_side,
+                    );
+                    self.icon_rects.push(if e.icon.is_some() {
+                        ir
+                    } else {
+                        Rect::default()
+                    });
+                    if let Some(icon) = e.icon.as_mut() {
+                        cx.layout_child(icon, ir);
+                    }
                     y += ROW_PT * s + gap;
                 }
             }
@@ -403,23 +498,30 @@ impl Widget for ControlCenter {
                         &martensite_core::shape::Shape::rounded(8.0 * s),
                         if *on { accent } else { TILE_BG },
                     );
+                    // A hosted stroke icon paints itself at the
+                    // `icon_rect` slot as an internal child.
+                    if e.icon.is_none() {
+                        crate::text_paint::paint_label(
+                            painter,
+                            cx.list,
+                            kurbo::Point::new(
+                                f64::from(r.min_x() + GAP_PT * s),
+                                f64::from(r.min_y() + GAP_PT * s * 0.6),
+                            ),
+                            &e.glyph,
+                            gfs,
+                            TEXT_FG,
+                        );
+                    }
+                    // Bottom-anchored caption — the line box stays
+                    // inside the tile instead of spilling past the
+                    // edge.
                     crate::text_paint::paint_label(
                         painter,
                         cx.list,
                         kurbo::Point::new(
                             f64::from(r.min_x() + GAP_PT * s),
-                            f64::from(r.min_y() + gfs + GAP_PT * s * 0.5),
-                        ),
-                        &e.glyph,
-                        gfs,
-                        TEXT_FG,
-                    );
-                    crate::text_paint::paint_label(
-                        painter,
-                        cx.list,
-                        kurbo::Point::new(
-                            f64::from(r.min_x() + GAP_PT * s),
-                            f64::from(r.max_y() - GAP_PT * s * 0.7),
+                            f64::from(r.max_y() - CAPTION_PT * 1.25 * s - 2.0 * s),
                         ),
                         &e.title,
                         CAPTION_PT * s,
@@ -432,17 +534,22 @@ impl Widget for ControlCenter {
                         &martensite_core::shape::Shape::rounded(8.0 * s),
                         TILE_BG,
                     );
-                    crate::text_paint::paint_label(
-                        painter,
-                        cx.list,
-                        kurbo::Point::new(
+                    if e.icon.is_none() {
+                        crate::text_paint::paint_label_vcenter(
+                            painter,
+                            cx.list,
+                            kurbo::Rect::new(
+                                f64::from(r.min_x() + GAP_PT * s),
+                                f64::from(r.min_y()),
+                                f64::from(r.min_x() + GAP_PT * s + GLYPH_PT * s + 2.0 * s),
+                                f64::from(r.max_y()),
+                            ),
                             f64::from(r.min_x() + GAP_PT * s),
-                            f64::from(r.min_y() + r.height() / 2.0 + gfs * 0.35),
-                        ),
-                        &e.glyph,
-                        gfs,
-                        TEXT_FG,
-                    );
+                            &e.glyph,
+                            gfs,
+                            TEXT_FG,
+                        );
+                    }
                     let tx = r.min_x() + GLYPH_PT * s + GAP_PT * s * 2.0;
                     let tw = r.max_x() - tx - GAP_PT * s;
                     let ty = r.min_y() + r.height() / 2.0 - 3.0 * s;
@@ -469,6 +576,33 @@ impl Widget for ControlCenter {
                 }
             }
         }
+    }
+
+    fn child_count(&self) -> usize {
+        self.items.iter().filter(|e| e.icon.is_some()).count()
+    }
+
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        self.items
+            .iter()
+            .filter_map(|e| e.icon.as_ref().map(|i| i as &dyn Widget))
+            .nth(index)
+    }
+
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        self.items
+            .iter_mut()
+            .filter_map(|e| e.icon.as_mut().map(|i| i as &mut dyn Widget))
+            .nth(index)
+    }
+
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        self.items
+            .iter()
+            .zip(self.icon_rects.iter())
+            .filter(|(e, _)| e.icon.is_some())
+            .map(|(_, r)| *r)
+            .nth(index)
     }
 }
 

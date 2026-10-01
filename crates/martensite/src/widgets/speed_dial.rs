@@ -229,6 +229,17 @@ impl SpeedDial {
 }
 
 impl Widget for SpeedDial {
+    /// `@labeled` declares the accessible name to design-lint's
+    /// `icon-only-control` rule — the FAB mark is a native icon, so
+    /// the scope marker carries what the paint list can't see.
+    fn debug_name(&self) -> &'static str {
+        if self.label.is_empty() {
+            "SpeedDial"
+        } else {
+            "SpeedDial@labeled"
+        }
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = FAB_PT + GAP_PT + self.actions.len() as f32 * (MINI_PT + GAP_PT) + GAP_PT;
         Vec2::new(
@@ -383,19 +394,43 @@ impl Widget for SpeedDial {
             &martensite_core::shape::Shape::ELLIPSE,
             cx.color(TokenKey::AccentColor, FAB_BG),
         );
-        let glyph = if self.open { "×" } else { "+" };
+        // FAB mark — native plus/close icons, +/× glyphs as fallback.
+        let ink = cx.color(TokenKey::TextInverseColor, FAB_FG);
         let gsz = 24.0 * s;
-        crate::text_paint::paint_label(
-            painter,
-            cx.list,
-            kurbo::Point::new(
-                f64::from(fab.min_x() + fab_d / 2.0 - gsz * 0.3),
-                f64::from(fab.min_y() + fab_d / 2.0 - gsz * 0.68),
-            ),
-            glyph,
-            gsz,
-            cx.color(TokenKey::TextInverseColor, FAB_FG),
-        );
+        let icon_ok = crate::icons::builtin()
+            .lookup(if self.open {
+                "status.close"
+            } else {
+                "status.plus"
+            })
+            .is_some_and(|d| {
+                crate::widgets::morph_icon::paint_icon_d(
+                    cx.list,
+                    Rect::new(
+                        fab.min_x() + fab_d / 2.0 - gsz / 2.0,
+                        fab.min_y() + fab_d / 2.0 - gsz / 2.0,
+                        gsz,
+                        gsz,
+                    ),
+                    d,
+                    s,
+                    ink,
+                )
+            });
+        if !icon_ok {
+            let glyph = if self.open { "×" } else { "+" };
+            crate::text_paint::paint_label(
+                painter,
+                cx.list,
+                kurbo::Point::new(
+                    f64::from(fab.min_x() + fab_d / 2.0 - gsz * 0.3),
+                    f64::from(fab.min_y() + fab_d / 2.0 - gsz * 0.68),
+                ),
+                glyph,
+                gsz,
+                ink,
+            );
+        }
     }
 }
 

@@ -579,18 +579,34 @@ impl Widget for JsonView {
             )
             .intersect(krect(self.bounds));
             let mut x = self.bounds.min_x() + pad + *depth as f32 * indent;
-            // Disclosure triangle.
+            // Disclosure chevron — native-pack icon first, ▾/▸ glyph
+            // as the fallback.
             if n.value.is_container() {
-                let tri = if n.expanded { "▾" } else { "▸" };
-                crate::text_paint::paint_label_clipped(
-                    painter,
-                    cx.list,
-                    row_clip,
-                    kurbo::Point::new(f64::from(x), f64::from(y + row * 0.18)),
-                    tri,
-                    size,
-                    cx.color(TokenKey::TextMutedColor, META),
-                );
+                let chevron = crate::icons::builtin().lookup(if n.expanded {
+                    "nav.chevron-down"
+                } else {
+                    "nav.chevron-right"
+                });
+                let ok = chevron.is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(x, y + (row - size) / 2.0, size, size),
+                        d,
+                        self.scale.max(1e-6),
+                        cx.color(TokenKey::TextMutedColor, META),
+                    )
+                });
+                if !ok {
+                    crate::text_paint::paint_label_clipped(
+                        painter,
+                        cx.list,
+                        row_clip,
+                        kurbo::Point::new(f64::from(x), f64::from(y + row * 0.18)),
+                        if n.expanded { "▾" } else { "▸" },
+                        size,
+                        cx.color(TokenKey::TextMutedColor, META),
+                    );
+                }
             }
             x += indent;
             // Key then value.

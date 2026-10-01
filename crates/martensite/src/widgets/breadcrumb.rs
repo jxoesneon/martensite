@@ -445,23 +445,47 @@ impl Widget for Breadcrumb {
             );
             x += w;
             if vi + 1 < plan.visible.len() {
-                // No room for the separator glyph → no separator; a
+                // No room for the separator → no separator; a
                 // clipped sliver at the edge reads worse than none.
                 if x + sep_w <= b.max_x() {
-                    crate::text_paint::paint_label_clipped(
-                        painter,
-                        cx.list,
-                        kurbo::Rect::new(
-                            f64::from(x),
-                            f64::from(y),
-                            f64::from(x + sep_w),
-                            f64::from(y + size_px),
-                        ),
-                        kurbo::Point::new(f64::from(x + sep_w / 2.0 - size_px * 0.3), f64::from(y)),
-                        "›",
-                        size_px,
-                        cx.color(TokenKey::TextMutedColor, SEP_INK),
-                    );
+                    let ink = cx.color(TokenKey::TextMutedColor, SEP_INK);
+                    // Native chevron — the `›` glyph is the fallback.
+                    let side = size_px * 0.8;
+                    let icon_ok = crate::icons::builtin()
+                        .lookup("nav.chevron-right")
+                        .is_some_and(|d| {
+                            crate::widgets::morph_icon::paint_icon_d(
+                                cx.list,
+                                Rect::new(
+                                    x + (sep_w - side) / 2.0,
+                                    y + (size_px - side) / 2.0,
+                                    side,
+                                    side,
+                                ),
+                                d,
+                                cx.scale,
+                                ink,
+                            )
+                        });
+                    if !icon_ok {
+                        crate::text_paint::paint_label_clipped(
+                            painter,
+                            cx.list,
+                            kurbo::Rect::new(
+                                f64::from(x),
+                                f64::from(y),
+                                f64::from(x + sep_w),
+                                f64::from(y + size_px),
+                            ),
+                            kurbo::Point::new(
+                                f64::from(x + sep_w / 2.0 - size_px * 0.3),
+                                f64::from(y),
+                            ),
+                            "›",
+                            size_px,
+                            ink,
+                        );
+                    }
                     x += sep_w;
                 }
             }

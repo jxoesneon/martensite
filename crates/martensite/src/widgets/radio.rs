@@ -186,7 +186,7 @@ impl Widget for RadioOption {
         // Clip the label to the widget bounds — a long label can't
         // spill past the right edge.
         let text_x = b.min_x() + dot + cx.pt(LABEL_GAP);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
             kurbo::Rect::new(
@@ -195,7 +195,7 @@ impl Widget for RadioOption {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            kurbo::Point::new(f64::from(text_x), cy - cx.ptf(7.0)),
+            f64::from(text_x),
             &self.label,
             cx.pt(14.0),
             cx.color(TokenKey::TextColor, INK),

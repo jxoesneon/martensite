@@ -487,15 +487,36 @@ impl Widget for VideoGrid {
                 );
                 cx.list
                     .push_fill_shape(br, &martensite_core::shape::Shape::ELLIPSE, BADGE);
-                crate::text_paint::paint_label_clipped(
-                    painter,
-                    cx.list,
-                    br,
-                    kurbo::Point::new(br.x0 + f64::from(d) * 0.28, br.y0 + f64::from(d) * 0.72),
-                    "✕",
-                    FONT_PT * s,
-                    crate::text_paint::better_ink(BADGE, cx.color(TokenKey::TextColor, TEXT), TEXT),
-                );
+                let badge_ink =
+                    crate::text_paint::better_ink(BADGE, cx.color(TokenKey::TextColor, TEXT), TEXT);
+                let side = d * 0.62;
+                let icon_ok = crate::icons::builtin()
+                    .lookup("media.mic-off")
+                    .is_some_and(|p| {
+                        crate::widgets::morph_icon::paint_icon_d(
+                            cx.list,
+                            Rect::new(
+                                (br.x0 + f64::from(d) / 2.0 - f64::from(side) / 2.0) as f32,
+                                (br.y0 + f64::from(d) / 2.0 - f64::from(side) / 2.0) as f32,
+                                side,
+                                side,
+                            ),
+                            p,
+                            s,
+                            badge_ink,
+                        )
+                    });
+                if !icon_ok {
+                    crate::text_paint::paint_label_vcenter(
+                        painter,
+                        cx.list,
+                        br,
+                        br.x0 + f64::from(d) * 0.28,
+                        "✕",
+                        FONT_PT * s,
+                        badge_ink,
+                    );
+                }
             }
         }
         cx.list.pop_clip();

@@ -487,31 +487,52 @@ impl Widget for Steps {
                 );
             }
 
-            // Node content: ✓ for done, number otherwise.
-            let mark = if done {
-                "✓".to_string()
+            // Node content: native check icon for done, number
+            // otherwise; `✓` stays the fallback glyph.
+            let mark_ink = if current || done {
+                NODE_INK
             } else {
-                (i + 1).to_string()
+                cx.color(TokenKey::TextMutedColor, LABEL_DIM)
             };
             let mark_size = cx.pt(12.0);
-            let w = painter
-                .and_then(|p| p.measure_text(&mark, mark_size))
-                .unwrap_or(mark_size * mark.chars().count() as f32 * 0.55);
-            let mx = r.origin.x + (r.size.x - w) / 2.0;
-            let my = r.origin.y + (r.size.y - mark_size) / 2.0;
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                kr,
-                kurbo::Point::new(f64::from(mx), f64::from(my)),
-                &mark,
-                mark_size,
-                if current || done {
-                    NODE_INK
+            let done_icon = done
+                && crate::icons::builtin()
+                    .lookup("status.check")
+                    .is_some_and(|d| {
+                        let side = mark_size * 1.2;
+                        crate::widgets::morph_icon::paint_icon_d(
+                            cx.list,
+                            Rect::new(
+                                r.origin.x + (r.size.x - side) / 2.0,
+                                r.origin.y + (r.size.y - side) / 2.0,
+                                side,
+                                side,
+                            ),
+                            d,
+                            cx.scale,
+                            mark_ink,
+                        )
+                    });
+            if !done_icon {
+                let mark = if done {
+                    "✓".to_string()
                 } else {
-                    cx.color(TokenKey::TextMutedColor, LABEL_DIM)
-                },
-            );
+                    (i + 1).to_string()
+                };
+                let w = painter
+                    .and_then(|p| p.measure_text(&mark, mark_size))
+                    .unwrap_or(mark_size * mark.chars().count() as f32 * 0.55);
+                let mx = r.origin.x + (r.size.x - w) / 2.0;
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    kr,
+                    f64::from(mx),
+                    &mark,
+                    mark_size,
+                    mark_ink,
+                );
+            }
 
             // Label + description centred under the node — clamped
             // into the widget so end-step captions don't spill past

@@ -518,17 +518,32 @@ impl Widget for Playlist {
                     );
                 }
             }
-            // Now-playing marker.
+            // Now-playing marker — native play icon, `▶` fallback.
             let x = self.bounds.min_x() + pad + 4.0 * s;
             if self.current == Some(i) {
-                crate::text_paint::paint_label(
-                    painter,
-                    cx.list,
-                    kurbo::Point::new(f64::from(x), f64::from(y + row * 0.3)),
-                    "▶",
-                    sub_sz,
-                    cx.color(TokenKey::AccentColor, NOW),
-                );
+                let ink = cx.color(TokenKey::AccentColor, NOW);
+                let side = sub_sz;
+                let ok = crate::icons::builtin()
+                    .lookup("media.play")
+                    .is_some_and(|d| {
+                        crate::widgets::morph_icon::paint_icon_d(
+                            cx.list,
+                            Rect::new(x, y + (row - side) / 2.0, side, side),
+                            d,
+                            s,
+                            ink,
+                        )
+                    });
+                if !ok {
+                    crate::text_paint::paint_label(
+                        painter,
+                        cx.list,
+                        kurbo::Point::new(f64::from(x), f64::from(y + row * 0.3)),
+                        "▶",
+                        sub_sz,
+                        ink,
+                    );
+                }
             }
             // The clock is right-aligned; title/subtitle clip short of
             // it so long names truncate instead of overprinting.

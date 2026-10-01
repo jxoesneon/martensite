@@ -554,13 +554,11 @@ impl Widget for UnitConverter {
             s.max(1.0),
             cx.color(TokenKey::BorderColor, ACCENT),
         );
-        crate::text_paint::paint_label(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            kurbo::Point::new(
-                f64::from(r.min_x() + r.width() * 0.28),
-                f64::from(r.min_y() + r.height() * 0.72),
-            ),
+            krect(r),
+            f64::from(r.min_x() + r.width() * 0.28),
             "⇅",
             FONT_PT * s,
             cx.color(TokenKey::AccentColor, ACCENT),

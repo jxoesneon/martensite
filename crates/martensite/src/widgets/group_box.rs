@@ -429,19 +429,17 @@ impl Widget for GroupBox {
         );
 
         if self.checkbox.is_none() {
-            crate::text_paint::paint_label_clipped(
+            let title_strip = kurbo::Rect::new(
+                f64::from(t.origin.x),
+                f64::from(t.origin.y),
+                f64::from(t.max_x()),
+                f64::from(t.max_y()),
+            );
+            crate::text_paint::paint_label_vcenter(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
-                kurbo::Rect::new(
-                    f64::from(t.origin.x),
-                    f64::from(t.origin.y),
-                    f64::from(t.max_x()),
-                    f64::from(t.max_y()),
-                ),
-                kurbo::Point::new(
-                    f64::from(t.origin.x),
-                    f64::from(t.origin.y + (t.size.y - cx.pt(TITLE_SIZE)) / 2.0),
-                ),
+                title_strip,
+                f64::from(t.origin.x),
                 &self.title,
                 cx.pt(TITLE_SIZE),
                 cx.color(TokenKey::TextColor, INK),

@@ -448,19 +448,35 @@ impl Widget for NowPlaying {
         let block_h = (TITLE_PT + SUB_PT + 6.0) * s;
         let title_y = card.min_y() + (card.height() - block_h).max(0.0) / 2.0;
         let sub_y = title_y + (TITLE_PT * 1.35) * s;
-        let title = if self.playing {
-            format!("▶ {}", self.title)
-        } else {
-            self.title.clone()
+        // Playing marker — a native play icon in its own lane, the
+        // `▶` prefix as fallback.
+        let title_ink = cx.color(TokenKey::TextColor, TEXT);
+        let side = TITLE_PT * s;
+        let icon_ok = self.playing
+            && crate::icons::builtin()
+                .lookup("media.play")
+                .is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(tx, title_y + (side * 1.25 - side) / 2.0, side, side),
+                        d,
+                        s,
+                        title_ink,
+                    )
+                });
+        let (title, title_x) = match (self.playing, icon_ok) {
+            (true, true) => (self.title.clone(), tx + side + 4.0 * s),
+            (true, false) => (format!("▶ {}", self.title), tx),
+            (false, _) => (self.title.clone(), tx),
         };
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
             text_zone,
-            kurbo::Point::new(f64::from(tx), f64::from(title_y)),
+            kurbo::Point::new(f64::from(title_x), f64::from(title_y)),
             &title,
             TITLE_PT * s,
-            cx.color(TokenKey::TextColor, TEXT),
+            title_ink,
         );
         // Times right-aligned — measured first so `sub` can be clipped
         // short of it. Dropped entirely when the text zone can't fit

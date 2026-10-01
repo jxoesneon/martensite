@@ -264,24 +264,23 @@ impl Widget for Attachment {
         let pad = PAD_PT * s;
         let ic = ICON_PT * s;
         let iy = b.min_y() + (b.height() - ic) / 2.0;
+        let chip = kurbo::Rect::new(
+            f64::from(b.min_x() + pad),
+            f64::from(iy),
+            f64::from(b.min_x() + pad + ic),
+            f64::from(iy + ic),
+        );
         cx.list.push_fill_shape(
-            kurbo::Rect::new(
-                f64::from(b.min_x() + pad),
-                f64::from(iy),
-                f64::from(b.min_x() + pad + ic),
-                f64::from(iy + ic),
-            ),
+            chip,
             &martensite_core::shape::Shape::rounded(4.0 * s),
             ICON_BG,
         );
         let ifs = SIZE_PT * s;
-        crate::text_paint::paint_label(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            kurbo::Point::new(
-                f64::from(b.min_x() + pad + ic * 0.18),
-                f64::from(iy + ic * 0.72),
-            ),
+            chip,
+            f64::from(b.min_x() + pad + ic * 0.18),
             &self.glyph,
             ifs,
             TEXT_FG,

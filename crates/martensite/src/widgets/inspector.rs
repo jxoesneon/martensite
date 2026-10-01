@@ -471,27 +471,45 @@ impl Widget for Inspector {
             );
             cx.list.push_fill_shape(khr, &shape, HEAD_BG);
             let head_clip = khr.intersect(kbounds);
-            // Disclosure triangle.
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                head_clip,
-                kurbo::Point::new(
+            // Disclosure chevron — the native pack's icon under
+            // `MorphIcon`'s paint conventions; the ▾/▸ glyph stays as
+            // the no-pack fallback.
+            let chevron = crate::icons::builtin().lookup(if sec.open {
+                "nav.chevron-down"
+            } else {
+                "nav.chevron-right"
+            });
+            let side = HEAD_FONT_PT * s * 0.9;
+            let icon_ok = chevron.is_some_and(|d| {
+                crate::widgets::morph_icon::paint_icon_d(
+                    cx.list,
+                    Rect::new(
+                        hr.min_x() + 6.0 * s,
+                        hr.min_y() + (hr.size.y - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    d,
+                    s,
+                    MUTED_FG,
+                )
+            });
+            if !icon_ok {
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    head_clip,
                     f64::from(hr.min_x() + 6.0 * s),
-                    f64::from(hr.min_y() + hr.height() * 0.72),
-                ),
-                if sec.open { "▾" } else { "▸" },
-                HEAD_FONT_PT * s,
-                MUTED_FG,
-            );
-            crate::text_paint::paint_label_clipped(
+                    if sec.open { "▾" } else { "▸" },
+                    HEAD_FONT_PT * s,
+                    MUTED_FG,
+                );
+            }
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 head_clip,
-                kurbo::Point::new(
-                    f64::from(hr.min_x() + 18.0 * s),
-                    f64::from(hr.min_y() + hr.height() * 0.72),
-                ),
+                f64::from(hr.min_x() + 18.0 * s),
                 &sec.title,
                 HEAD_FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),
@@ -526,19 +544,16 @@ impl Widget for Inspector {
                 row_clip.x1.min(f64::from(value_x - 4.0 * s)),
                 row_clip.y1,
             );
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 label_clip,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + 18.0 * s),
-                    f64::from(r.min_y() + r.height() * 0.72),
-                ),
+                f64::from(r.min_x() + 18.0 * s),
                 &row.label,
                 FONT_PT * s,
                 MUTED_FG,
             );
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
@@ -547,7 +562,7 @@ impl Widget for Inspector {
                     row_clip.x1,
                     row_clip.y1,
                 ),
-                kurbo::Point::new(f64::from(value_x), f64::from(r.min_y() + r.height() * 0.72)),
+                f64::from(value_x),
                 &row.value,
                 FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),

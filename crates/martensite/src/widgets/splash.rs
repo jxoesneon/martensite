@@ -260,10 +260,11 @@ impl Widget for Splash {
         let iw = painter
             .and_then(|p| p.measure_text(&initial, ifs))
             .unwrap_or(ifs * 0.5);
-        crate::text_paint::paint_label(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            kurbo::Point::new(f64::from(cxm - iw / 2.0), f64::from(ly + logo * 0.72)),
+            lr,
+            f64::from(cxm - iw / 2.0),
             &initial,
             ifs,
             TEXT,

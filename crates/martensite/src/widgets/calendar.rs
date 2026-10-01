@@ -744,14 +744,11 @@ impl Widget for Calendar {
         let cap_w = painter
             .and_then(|p| p.measure_text(&caption, cap_size))
             .unwrap_or(cap_size * caption.len() as f32 * 0.5);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             header,
-            kurbo::Point::new(
-                header.x0 + (header.width() - f64::from(cap_w)) * 0.5,
-                header.y0 + header.height() * 0.72,
-            ),
+            header.x0 + (header.width() - f64::from(cap_w)) * 0.5,
             &caption,
             cap_size,
             ink,

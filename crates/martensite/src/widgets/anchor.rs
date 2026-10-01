@@ -346,11 +346,11 @@ impl Widget for Anchor {
             } else {
                 cx.color(TokenKey::TextMutedColor, [150, 150, 158, 255])
             };
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 clip,
-                kurbo::Point::new(clip.x0, clip.y0 + clip.height() * 0.72),
+                clip.x0,
                 &item.title,
                 size,
                 color,

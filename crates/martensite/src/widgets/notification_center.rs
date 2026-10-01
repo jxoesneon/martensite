@@ -489,17 +489,25 @@ impl Widget for NotificationCenter {
             );
             // Meta label at the card's top-right, ✕ beside it.
             let close = Rect::new(r.max_x() - 20.0 * s, y + 6.0 * s, 16.0 * s, 16.0 * s);
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                kurbo::Point::new(
-                    f64::from(close.min_x() + 4.0 * s),
-                    f64::from(close.min_y() + 2.0 * s),
-                ),
-                "✕",
-                body_sz,
-                cx.color(TokenKey::TextMutedColor, DISMISS),
-            );
+            let dismiss_ink = cx.color(TokenKey::TextMutedColor, DISMISS);
+            let icon_ok = crate::icons::builtin()
+                .lookup("status.close")
+                .is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(cx.list, close, d, s, dismiss_ink)
+                });
+            if !icon_ok {
+                crate::text_paint::paint_label(
+                    painter,
+                    cx.list,
+                    kurbo::Point::new(
+                        f64::from(close.min_x() + 4.0 * s),
+                        f64::from(close.min_y() + 2.0 * s),
+                    ),
+                    "✕",
+                    body_sz,
+                    dismiss_ink,
+                );
+            }
             hits.dismiss.push((i, close));
             if !n.meta.is_empty() {
                 let mw = n.meta.chars().count() as f32 * body_sz * 0.55;

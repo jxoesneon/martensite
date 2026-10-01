@@ -556,20 +556,40 @@ impl Widget for Cascader {
                     ink,
                 );
                 let _ = text_w;
-                // Disclosure chevron for expandable rows.
+                // Disclosure chevron for expandable rows — native
+                // icon first, `›` as fallback.
                 if option.expandable() {
-                    paint_label_clipped(
-                        painter,
-                        cx.list,
-                        clip,
-                        kurbo::Point::new(
-                            f64::from(col_x + col_w - chev + pad / 2.0),
-                            f64::from(y + (row_h - 10.0 * cx.scale) / 2.0),
-                        ),
-                        "›",
-                        10.0 * cx.scale,
-                        muted,
-                    );
+                    let side = 10.0 * cx.scale;
+                    let icon_ok = crate::icons::builtin()
+                        .lookup("nav.chevron-right")
+                        .is_some_and(|d| {
+                            crate::widgets::morph_icon::paint_icon_d(
+                                cx.list,
+                                Rect::new(
+                                    col_x + col_w - chev + pad / 2.0,
+                                    y + (row_h - side) / 2.0,
+                                    side,
+                                    side,
+                                ),
+                                d,
+                                cx.scale,
+                                muted,
+                            )
+                        });
+                    if !icon_ok {
+                        paint_label_clipped(
+                            painter,
+                            cx.list,
+                            clip,
+                            kurbo::Point::new(
+                                f64::from(col_x + col_w - chev + pad / 2.0),
+                                f64::from(y + (row_h - 10.0 * cx.scale) / 2.0),
+                            ),
+                            "›",
+                            10.0 * cx.scale,
+                            muted,
+                        );
+                    }
                 }
             }
         }

@@ -51,10 +51,13 @@ const ACTION_HOVER: [u8; 4] = [255, 255, 255, 14];
 /// ```
 #[derive(Clone, Debug)]
 pub struct CardAction {
-    /// Glyph or short label.
+    /// Glyph or short label — the fallback when no native icon is
+    /// installed (or its name fails to resolve).
     pub glyph: String,
     /// Display count (0 hides the number).
     pub count: u32,
+    /// Resolved native-pack icon `d` painted in place of `glyph`.
+    icon_d: Option<String>,
 }
 
 impl CardAction {
@@ -69,6 +72,26 @@ impl CardAction {
         Self {
             glyph: glyph.into(),
             count,
+            icon_d: None,
+        }
+    }
+
+    /// An action with a native-pack stroke icon
+    /// ([`icons::BUILTIN`](crate::icons::BUILTIN)) — `"status.heart"`,
+    /// `"comms.message-circle"`, `"arrow.share"`, … painted in
+    /// place of the glyph. An unknown name leaves `glyph` — the
+    /// default `"↗"` — as the visible fallback.
+    ///
+    /// ```
+    /// use martensite::widgets::social_card::CardAction;
+    ///
+    /// assert_eq!(CardAction::named("people.users", 4).count, 4);
+    /// ```
+    pub fn named(name: &str, count: u32) -> Self {
+        Self {
+            glyph: "↗".to_string(),
+            count,
+            icon_d: crate::icons::builtin().lookup(name).map(str::to_string),
         }
     }
 }
@@ -126,9 +149,9 @@ impl SocialCard {
         Self {
             label: "Post".to_string(),
             actions: vec![
-                CardAction::new("♥", 0),
-                CardAction::new("💬", 0),
-                CardAction::new("↗", 0),
+                CardAction::named("status.heart", 0),
+                CardAction::named("comms.message-circle", 0),
+                CardAction::named("arrow.share", 0),
             ],
             author: author.into(),
             handle: handle.into(),
@@ -451,22 +474,58 @@ impl Widget for SocialCard {
             } else {
                 MUTED_FG
             };
-            let label = if a.count > 0 {
-                format!("{} {}", a.glyph, a.count)
+            // Native stroke icon when the action carries one — the
+            // shared `paint_icon_d` seam paints it under MorphIcon's
+            // transform; a rejected `d` falls back to the glyph.
+            let icon_ok = a.icon_d.as_deref().is_some_and(|d| {
+                crate::widgets::morph_icon::paint_icon_d(
+                    cx.list,
+                    Rect::new(
+                        r.min_x() + 8.0 * s,
+                        r.min_y() + (r.height() - 14.0 * s) / 2.0,
+                        14.0 * s,
+                        14.0 * s,
+                    ),
+                    d,
+                    s,
+                    fg,
+                )
+            });
+            let (tx, label) = if icon_ok {
+                (
+                    r.min_x() + 8.0 * s + 14.0 * s + 4.0 * s,
+                    if a.count > 0 {
+                        a.count.to_string()
+                    } else {
+                        String::new()
+                    },
+                )
             } else {
-                a.glyph.clone()
+                (
+                    r.min_x() + 8.0 * s,
+                    if a.count > 0 {
+                        format!("{} {}", a.glyph, a.count)
+                    } else {
+                        a.glyph.clone()
+                    },
+                )
             };
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + 8.0 * s),
-                    f64::from(r.min_y() + r.height() * 0.72),
-                ),
-                &label,
-                META_PT * s,
-                fg,
-            );
+            if !label.is_empty() {
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    kurbo::Rect::new(
+                        f64::from(r.min_x()),
+                        f64::from(r.min_y()),
+                        f64::from(r.max_x()),
+                        f64::from(r.max_y()),
+                    ),
+                    f64::from(tx),
+                    &label,
+                    META_PT * s,
+                    fg,
+                );
+            }
         }
     }
 }

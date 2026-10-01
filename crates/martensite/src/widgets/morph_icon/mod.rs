@@ -51,6 +51,48 @@ const SIZE_PT: f32 = 24.0;
 #[doc(hidden)]
 pub mod demo;
 
+/// Maps icon `d`-space (the 24-unit grid) into `bounds` — uniform
+/// scale + centering — and returns the stroke width that rides the
+/// same scale (so a 2pt-at-24 icon stays proportional). The shared
+/// transform behind [`MorphIcon::paint`] and [`paint_icon_d`].
+fn icon_space_transform(bounds: Rect, scale: f32, stroke_pt: f32) -> (kurbo::Affine, f32) {
+    let icon_extent = 24.0f64; // upstream grid convention
+    let (bw, bh) = (f64::from(bounds.width()), f64::from(bounds.height()));
+    let sc = bw.min(bh) / icon_extent;
+    let ox = f64::from(bounds.min_x()) + (bw - icon_extent * sc) * 0.5;
+    let oy = f64::from(bounds.min_y()) + (bh - icon_extent * sc) * 0.5;
+    (
+        kurbo::Affine::translate((ox, oy)) * kurbo::Affine::scale(sc),
+        stroke_pt * scale * sc as f32,
+    )
+}
+
+/// Paints a static stroke icon — `d` path data on the 24-unit grid —
+/// into `bounds` under the same transform and stroke conventions a
+/// hosted [`MorphIcon`] uses. The shared seam for icon lanes that
+/// don't need a live widget (inline action glyphs, decorative marks
+/// inside non-widget slots). Returns `false` when `d` fails to parse;
+/// the caller falls back to its own text/glyph path.
+pub(crate) fn paint_icon_d(
+    list: &mut martensite_core::PaintList,
+    bounds: Rect,
+    d: &str,
+    scale: f32,
+    ink: [u8; 4],
+) -> bool {
+    if bounds.width() <= 0.0 || bounds.height() <= 0.0 {
+        return false;
+    }
+    let Ok(sampled) = d_to_sampled(d) else {
+        return false;
+    };
+    let (xform, width_px) = icon_space_transform(bounds, scale, STROKE_PT);
+    for path in sampled_to_bezpaths(&sampled) {
+        list.push_stroke_path(xform * path, width_px.max(0.5), ink);
+    }
+    true
+}
+
 /// A stroke-icon widget that morphs between arbitrary `d`-string icons
 /// under a [`SpringConfig`] (ADR-0041).
 ///
@@ -551,18 +593,7 @@ impl Widget for MorphIcon {
                 cx.color(TokenKey::TextColor, [230, 230, 235, 255])
             }
         });
-        let (bx, by, bw, bh) = (
-            self.bounds.min_x(),
-            self.bounds.min_y(),
-            self.bounds.width(),
-            self.bounds.height(),
-        );
-        let icon_extent = 24.0f64; // upstream grid convention
-        let sc = f64::from(bw.min(bh)) / icon_extent;
-        let ox = f64::from(bx) + (f64::from(bw) - icon_extent * sc) * 0.5;
-        let oy = f64::from(by) + (f64::from(bh) - icon_extent * sc) * 0.5;
-        let xform = kurbo::Affine::translate((ox, oy)) * kurbo::Affine::scale(sc);
-        let width_px = cx.pt(self.stroke_pt) * sc as f32;
+        let (xform, width_px) = icon_space_transform(self.bounds, cx.scale, self.stroke_pt);
         for path in self.frame_paths() {
             cx.list
                 .push_stroke_path(xform * path, width_px.max(0.5), ink);

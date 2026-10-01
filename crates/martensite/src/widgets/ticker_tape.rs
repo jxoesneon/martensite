@@ -261,21 +261,21 @@ impl TickerTape {
     /// Measures one item's row width.
     fn item_width(&self, item: &TickerItem) -> f32 {
         let s = self.scale;
+        let size = FONT_PT * s;
         if let Some(p) = &self.text_painter {
-            let size = FONT_PT * s;
-            let w = [
-                item.symbol.clone(),
-                item.price.clone(),
-                format!("{}{:.1}%", arrow(item.delta), item.delta * 100.0),
-            ]
-            .iter()
-            .map(|t| p.measure(t, size))
-            .sum::<f32>()
+            let p = p as &(dyn martensite_core::paint::TextShaper + Send + Sync);
+            let w = [item.symbol.clone(), item.price.clone(), delta_text(item)]
+                .iter()
+                .map(|t| p.measure_text(t, size).unwrap_or(0.0))
+                .sum::<f32>()
+                + mark_width(item.delta, Some(p), size, s)
                 + 16.0 * s;
             return w;
         }
         // Fallback estimate without a painter.
-        (item.symbol.len() + item.price.len() + 6) as f32 * 7.0 * s + 16.0 * s
+        (item.symbol.len() + item.price.len() + 6) as f32 * 7.0 * s
+            + mark_width(item.delta, None, size, s)
+            + 16.0 * s
     }
 
     /// Maps a local x to an item index via the wrap cycle.
@@ -298,7 +298,8 @@ impl TickerTape {
     }
 }
 
-/// Gain/loss marker for a delta.
+/// Gain/loss marker for a delta — the fallback glyph prefix used
+/// when the native trending icon doesn't resolve.
 fn arrow(delta: f32) -> &'static str {
     if delta > 0.0 {
         "▲ "
@@ -306,6 +307,40 @@ fn arrow(delta: f32) -> &'static str {
         "▼ "
     } else {
         ""
+    }
+}
+
+/// The signed-delta text (mark excluded — the mark is its own lane).
+fn delta_text(item: &TickerItem) -> String {
+    format!("{:+.1}%", item.delta * 100.0)
+}
+
+/// The native-pack trending icon for a delta's direction.
+fn trend_icon(delta: f32) -> Option<&'static str> {
+    if delta > 0.0 {
+        Some("data.trending-up")
+    } else if delta < 0.0 {
+        Some("data.trending-down")
+    } else {
+        None
+    }
+}
+
+/// Width of the delta direction mark's lane — an icon square plus
+/// gap when the pack resolves, else the measured glyph prefix.
+fn mark_width(
+    delta: f32,
+    p: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    size: f32,
+    s: f32,
+) -> f32 {
+    if delta == 0.0 {
+        0.0
+    } else if trend_icon(delta).is_some_and(|n| crate::icons::builtin().lookup(n).is_some()) {
+        size + 4.0 * s
+    } else {
+        p.and_then(|p| p.measure_text(arrow(delta), size))
+            .unwrap_or(size * 0.8)
     }
 }
 
@@ -417,19 +452,37 @@ impl Widget for TickerTape {
                         crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
                     if let Some(p) = painter {
                         let mut pen = x + 6.0 * s;
-                        let mut put =
-                            |t: &str, c: [u8; 4], list: &mut martensite_core::PaintList| {
-                                let pt = kurbo::Point::new(f64::from(pen), f64::from(y));
+                        let put =
+                            |pen: &mut f32,
+                             t: &str,
+                             c: [u8; 4],
+                             list: &mut martensite_core::PaintList| {
+                                let pt = kurbo::Point::new(f64::from(*pen), f64::from(y));
                                 crate::text_paint::paint_label(Some(p), list, pt, t, size, c);
-                                pen += p.measure_text(t, size).unwrap_or(0.0) + 6.0 * s;
+                                *pen += p.measure_text(t, size).unwrap_or(0.0) + 6.0 * s;
                             };
-                        put(&item.symbol, muted, cx.list);
-                        put(&item.price, text, cx.list);
-                        put(
-                            &format!("{}{:+.1}%", arrow(item.delta), item.delta * 100.0),
-                            up_down,
-                            cx.list,
-                        );
+                        put(&mut pen, &item.symbol, muted, cx.list);
+                        put(&mut pen, &item.price, text, cx.list);
+                        // Direction mark — native trending icon in
+                        // its own lane, ▲/▼ prefix as fallback.
+                        let icon_ok = trend_icon(item.delta).is_some_and(|n| {
+                            crate::icons::builtin().lookup(n).is_some_and(|d| {
+                                crate::widgets::morph_icon::paint_icon_d(
+                                    cx.list,
+                                    Rect::new(pen, y - size / 2.0, size, size),
+                                    d,
+                                    s,
+                                    up_down,
+                                )
+                            })
+                        });
+                        let delta = if icon_ok {
+                            pen += mark_width(item.delta, Some(p), size, s);
+                            delta_text(item)
+                        } else {
+                            format!("{}{}", arrow(item.delta), delta_text(item))
+                        };
+                        put(&mut pen, &delta, up_down, cx.list);
                     } else {
                         // Painterless fallback: symbol bar + delta tick.
                         let bar = kurbo::Rect::new(

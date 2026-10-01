@@ -321,23 +321,45 @@ impl Widget for TabItem {
         );
         if self.closable {
             let glyph_px = cx.pt(11.0);
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                kurbo::Rect::new(
-                    f64::from(b.max_x() - close_w - cx.pt(4.0)),
-                    f64::from(b.min_y()),
-                    f64::from(b.max_x()),
-                    f64::from(b.max_y()),
-                ),
-                kurbo::Point::new(
-                    f64::from(b.max_x() - close_w - cx.pt(2.0)),
-                    f64::from(b.min_y() + (b.height() - glyph_px) / 2.0),
-                ),
-                "×",
-                glyph_px,
-                cx.color(TokenKey::TextMutedColor, INK),
+            let close_clip = kurbo::Rect::new(
+                f64::from(b.max_x() - close_w - cx.pt(4.0)),
+                f64::from(b.min_y()),
+                f64::from(b.max_x()),
+                f64::from(b.max_y()),
             );
+            let ink = cx.color(TokenKey::TextMutedColor, INK);
+            // Native close icon first — `×` stays the fallback glyph.
+            let side = glyph_px;
+            let icon_ok = crate::icons::builtin()
+                .lookup("status.close")
+                .is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(
+                            b.max_x() - close_w - cx.pt(2.0),
+                            b.min_y() + (b.height() - side) / 2.0,
+                            side,
+                            side,
+                        ),
+                        d,
+                        cx.scale,
+                        ink,
+                    )
+                });
+            if !icon_ok {
+                crate::text_paint::paint_label_clipped(
+                    painter,
+                    cx.list,
+                    close_clip,
+                    kurbo::Point::new(
+                        f64::from(b.max_x() - close_w - cx.pt(2.0)),
+                        f64::from(b.min_y() + (b.height() - glyph_px) / 2.0),
+                    ),
+                    "×",
+                    glyph_px,
+                    ink,
+                );
+            }
         }
         if let (Some(spec), Some(pill)) = (&self.badge, pill) {
             crate::widgets::badge::paint_spec_pill(spec, painter, cx, pill);

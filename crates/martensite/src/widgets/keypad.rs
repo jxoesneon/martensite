@@ -274,14 +274,11 @@ impl Widget for Keypad {
             let w = painter
                 .and_then(|p| p.measure_text(&s, size))
                 .unwrap_or(size * 0.6);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 f(cell),
-                kurbo::Point::new(
-                    f64::from(cell.min_x() + (cell.width() - w) / 2.0),
-                    f64::from(cell.min_y() + (cell.height() - size * 1.2) / 2.0),
-                ),
+                f64::from(cell.min_x() + (cell.width() - w) / 2.0),
                 &s,
                 size,
                 if self.enabled { fg } else { muted },

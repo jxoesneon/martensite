@@ -333,11 +333,11 @@ impl Widget for NavStack {
             path.line_to(kurbo::Point::new(cxp + s, cy + s));
             cx.list.push_stroke_path(path, 1.6, back_ink);
             let size = 13.0 * cx.scale;
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 strip,
-                kurbo::Point::new(strip.x0 + f64::from(cx.pt(20.0)), cy + 4.0),
+                strip.x0 + f64::from(cx.pt(20.0)),
                 "Back",
                 size,
                 back_ink,
@@ -357,14 +357,11 @@ impl Widget for NavStack {
                 f64::from(b.max_x()),
                 f64::from(b.min_y() + header_h),
             );
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 strip,
-                kurbo::Point::new(
-                    strip.x0 + (strip.width() - f64::from(w)) * 0.5,
-                    strip.y0 + strip.height() * 0.72,
-                ),
+                strip.x0 + (strip.width() - f64::from(w)) * 0.5,
                 title,
                 size,
                 ink,

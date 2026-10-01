@@ -396,25 +396,48 @@ impl Widget for Statistic {
             );
         }
         y += value_px + cx.pt(GAP_PT);
-        // Trend line.
+        // Trend line — a native trending icon for up/down, ▲/▼
+        // glyph prefix as fallback.
         if let Some((dir, ref t)) = self.trend {
-            let (mark, col) = match dir {
-                Trend::Up => ("▲", cx.color(TokenKey::SuccessColor, [60, 160, 90, 255])),
-                Trend::Down => ("▼", cx.color(TokenKey::ErrorColor, [200, 60, 60, 255])),
-                Trend::Neutral => ("", muted),
+            let (mark, icon, col) = match dir {
+                Trend::Up => (
+                    "▲",
+                    "data.trending-up",
+                    cx.color(TokenKey::SuccessColor, [60, 160, 90, 255]),
+                ),
+                Trend::Down => (
+                    "▼",
+                    "data.trending-down",
+                    cx.color(TokenKey::ErrorColor, [200, 60, 60, 255]),
+                ),
+                Trend::Neutral => ("", "", muted),
             };
-            let trend_text = if mark.is_empty() {
-                t.clone()
-            } else {
-                format!("{mark} {t}")
-            };
+            let size = cx.pt(TREND_PT);
+            let mut lx = b.min_x();
+            let mut trend_text = t.clone();
+            if !mark.is_empty() {
+                let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(lx, y, size, size),
+                        d,
+                        cx.scale,
+                        col,
+                    )
+                });
+                if icon_ok {
+                    lx += size + 4.0 * cx.scale;
+                } else {
+                    trend_text = format!("{mark} {t}");
+                }
+            }
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
                 clip,
-                kurbo::Point::new(f64::from(b.min_x()), f64::from(y)),
+                kurbo::Point::new(f64::from(lx), f64::from(y)),
                 &trend_text,
-                cx.pt(TREND_PT),
+                size,
                 col,
             );
         }

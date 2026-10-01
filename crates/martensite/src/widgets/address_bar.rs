@@ -72,6 +72,15 @@ impl SecurityState {
             Self::Loading => "◌",
         }
     }
+
+    /// The native-pack icon for this state.
+    fn icon_name(self) -> Option<&'static str> {
+        match self {
+            Self::Secure => Some("status.lock"),
+            Self::Insecure => Some("status.warning"),
+            Self::Loading => Some("status.loader"),
+        }
+    }
 }
 
 /// What the host should do.
@@ -359,17 +368,41 @@ impl Widget for AddressBar {
             SecurityState::Loading => MUTED_FG,
         };
         let cfs = FONT_PT * s;
-        crate::text_paint::paint_label(
-            painter,
-            cx.list,
-            kurbo::Point::new(
+        let chip_icon_ok = self
+            .state
+            .icon_name()
+            .and_then(|n| crate::icons::builtin().lookup(n))
+            .is_some_and(|d| {
+                let side = cfs;
+                crate::widgets::morph_icon::paint_icon_d(
+                    cx.list,
+                    Rect::new(
+                        cr.min_x() + (cr.width() - side) / 2.0,
+                        cr.min_y() + (cr.height() - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    d,
+                    s,
+                    chip_fg,
+                )
+            });
+        if !chip_icon_ok {
+            crate::text_paint::paint_label_vcenter(
+                painter,
+                cx.list,
+                kurbo::Rect::new(
+                    f64::from(cr.min_x()),
+                    f64::from(cr.min_y()),
+                    f64::from(cr.max_x()),
+                    f64::from(cr.max_y()),
+                ),
                 f64::from(cr.min_x() + cr.width() * 0.15),
-                f64::from(cr.min_y() + cr.height() * 0.78),
-            ),
-            self.state.glyph(),
-            cfs,
-            chip_fg,
-        );
+                self.state.glyph(),
+                cfs,
+                chip_fg,
+            );
+        }
         // URL.
         let fs = FONT_PT * s;
         crate::text_paint::paint_label(
@@ -383,9 +416,32 @@ impl Widget for AddressBar {
             fs,
             cx.color(TokenKey::TextColor, TEXT_FG),
         );
-        // Reload / stop button.
+        // Reload / stop button — native icons first, the hand-drawn
+        // marks stay as fallback.
         let rr = self.reload_rect;
-        if self.state == SecurityState::Loading || self.progress.is_some_and(|p| p < 1.0) {
+        let loading =
+            self.state == SecurityState::Loading || self.progress.is_some_and(|p| p < 1.0);
+        let icon = if loading {
+            "status.close"
+        } else {
+            "arrow.rotate-cw"
+        };
+        let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
+            let side = rr.width() * 0.6;
+            crate::widgets::morph_icon::paint_icon_d(
+                cx.list,
+                Rect::new(
+                    rr.min_x() + (rr.width() - side) / 2.0,
+                    rr.min_y() + (rr.height() - side) / 2.0,
+                    side,
+                    side,
+                ),
+                d,
+                s,
+                MUTED_FG,
+            )
+        });
+        if !icon_ok && loading {
             // ✕ stop glyph while loading.
             let q = rr.width() * 0.25;
             let mut p = kurbo::BezPath::new();
@@ -394,7 +450,7 @@ impl Widget for AddressBar {
             p.move_to((f64::from(rr.max_x() - q), f64::from(rr.min_y() + q)));
             p.line_to((f64::from(rr.min_x() + q), f64::from(rr.max_y() - q)));
             cx.list.push_stroke_path(p, 1.4 * s, MUTED_FG);
-        } else {
+        } else if !icon_ok {
             // ↻ reload: arc + arrowhead.
             let mut p = kurbo::BezPath::new();
             let c = Vec2::new(

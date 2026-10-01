@@ -402,17 +402,32 @@ impl Widget for PricingTable {
                 MUTED_FG,
             );
             y += PRICE_PT * s + 12.0 * s;
-            // Features.
+            // Features — native check/close marks, ✓/✕ fallback.
             for (fi, feat) in plan.features.iter().enumerate() {
                 let ok = plan.included.get(fi).copied().unwrap_or(true);
-                crate::text_paint::paint_label(
-                    painter,
-                    cx.list,
-                    kurbo::Point::new(f64::from(x + pad), f64::from(y + FEATURE_PT * s)),
-                    if ok { "✓" } else { "✕" },
-                    FEATURE_PT * s,
-                    if ok { OK } else { MUTED_FG },
-                );
+                let mark_ink = if ok { OK } else { MUTED_FG };
+                let side = FEATURE_PT * s;
+                let icon_ok = crate::icons::builtin()
+                    .lookup(if ok { "status.check" } else { "status.close" })
+                    .is_some_and(|d| {
+                        crate::widgets::morph_icon::paint_icon_d(
+                            cx.list,
+                            Rect::new(x + pad, y + FEATURE_PT * s, side, side),
+                            d,
+                            s,
+                            mark_ink,
+                        )
+                    });
+                if !icon_ok {
+                    crate::text_paint::paint_label(
+                        painter,
+                        cx.list,
+                        kurbo::Point::new(f64::from(x + pad), f64::from(y + FEATURE_PT * s)),
+                        if ok { "✓" } else { "✕" },
+                        FEATURE_PT * s,
+                        mark_ink,
+                    );
+                }
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,

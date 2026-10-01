@@ -365,14 +365,11 @@ impl Widget for WaitingRoom {
         );
         cx.list
             .push_fill_shape(akr, &shape, cx.color(TokenKey::SuccessColor, ADMIT));
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             akr,
-            kurbo::Point::new(
-                akr.x0 + f64::from(8.0 * s),
-                akr.y0 + f64::from(ar.height() * 0.72),
-            ),
+            akr.x0 + f64::from(8.0 * s),
             "Admit all",
             FONT_PT * 0.85 * s,
             TEXT,
@@ -413,52 +410,55 @@ impl Widget for WaitingRoom {
                 FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),
             );
-            // Admit ✓.
+            // Admit/deny — native check/close icons, ✓/✕ fallback.
             let a = self.admit_rects[i];
-            cx.list.push_fill_shape(
-                kurbo::Rect::new(
-                    f64::from(a.min_x()),
-                    f64::from(a.min_y()),
-                    f64::from(a.max_x()),
-                    f64::from(a.max_y()),
-                ),
-                &shape,
-                cx.color(TokenKey::SuccessColor, ADMIT),
-            );
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                kurbo::Point::new(
-                    f64::from(a.min_x() + a.width() * 0.24),
-                    f64::from(a.min_y() + a.height() * 0.74),
-                ),
-                "✓",
-                FONT_PT * s,
-                TEXT,
-            );
-            // Deny ✕.
             let d = self.deny_rects[i];
-            cx.list.push_fill_shape(
-                kurbo::Rect::new(
-                    f64::from(d.min_x()),
-                    f64::from(d.min_y()),
-                    f64::from(d.max_x()),
-                    f64::from(d.max_y()),
-                ),
-                &shape,
-                cx.color(TokenKey::ErrorColor, DENY),
-            );
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                kurbo::Point::new(
-                    f64::from(d.min_x() + d.width() * 0.26),
-                    f64::from(d.min_y() + d.height() * 0.74),
-                ),
-                "✕",
-                FONT_PT * s,
-                TEXT,
-            );
+            for (rect, tint, face, icon, glyph) in [
+                (a, TokenKey::SuccessColor, ADMIT, "status.check", "✓"),
+                (d, TokenKey::ErrorColor, DENY, "status.close", "✕"),
+            ] {
+                cx.list.push_fill_shape(
+                    kurbo::Rect::new(
+                        f64::from(rect.min_x()),
+                        f64::from(rect.min_y()),
+                        f64::from(rect.max_x()),
+                        f64::from(rect.max_y()),
+                    ),
+                    &shape,
+                    cx.color(tint, face),
+                );
+                let side = FONT_PT * s;
+                let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(
+                            rect.min_x() + (rect.width() - side) / 2.0,
+                            rect.min_y() + (rect.height() - side) / 2.0,
+                            side,
+                            side,
+                        ),
+                        d,
+                        s,
+                        TEXT,
+                    )
+                });
+                if !icon_ok {
+                    crate::text_paint::paint_label_vcenter(
+                        painter,
+                        cx.list,
+                        kurbo::Rect::new(
+                            f64::from(rect.min_x()),
+                            f64::from(rect.min_y()),
+                            f64::from(rect.max_x()),
+                            f64::from(rect.max_y()),
+                        ),
+                        f64::from(rect.min_x() + rect.width() * 0.25),
+                        glyph,
+                        FONT_PT * s,
+                        TEXT,
+                    );
+                }
+            }
         }
     }
 }

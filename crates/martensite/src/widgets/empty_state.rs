@@ -19,6 +19,7 @@ use martensite_core::widget::{LayoutConstraints, LayoutContext, PaintContext, Wi
 use martensite_core::{Rect, TokenKey};
 
 use crate::widgets::button::Button;
+use crate::widgets::morph_icon::MorphIcon;
 
 /// Glyph size for the icon, logical points.
 const ICON_PT: f32 = 42.0;
@@ -37,14 +38,26 @@ const TITLE_INK: [u8; 4] = [30, 31, 36, 255];
 /// Description ink.
 const DESC_INK: [u8; 4] = [105, 109, 118, 255];
 
+/// The icon lane content — a text glyph or a hosted stroke icon.
+enum EmptyIcon {
+    /// A short string (emoji, symbol, icon-font glyph) painted large.
+    Glyph(String),
+    /// A hosted [`MorphIcon`] stroke icon — a real internal child, so
+    /// it ticks with the arena (`morph_to_named` animates) and reports
+    /// decorative-hidden in the a11y tree.
+    Stroke(MorphIcon),
+}
+
 /// A centred placeholder shown when a view has no content.
 ///
-/// Stacks an optional icon glyph, a title, an optional description
-/// line, and an optional action [`Button`] vertically in the centre of
-/// the allocated bounds. The action button is a real widget child —
-/// events, focus, and its accessibility node flow through the
-/// framework's internal-child protocol, and its activation is drained
-/// via [`EmptyState::take_activated`].
+/// Stacks an optional icon glyph or stroke icon, a title, an optional
+/// description line, and an optional action [`Button`] vertically in
+/// the centre of the allocated bounds. The action button — and a
+/// stroke icon installed via [`icon_d`](Self::icon_d) /
+/// [`icon_named`](Self::icon_named) — is a real widget child: events,
+/// focus, and its accessibility node flow through the framework's
+/// internal-child protocol, and the action's activation is drained via
+/// [`EmptyState::take_activated`].
 ///
 /// # Examples
 ///
@@ -55,8 +68,9 @@ const DESC_INK: [u8; 4] = [105, 109, 118, 255];
 /// assert_eq!(e.title(), "Inbox zero");
 /// ```
 pub struct EmptyState {
-    /// Optional icon glyph painted large above the title.
-    icon: Option<String>,
+    /// Optional icon painted large above the title — a text glyph or
+    /// a hosted [`MorphIcon`].
+    icon: Option<EmptyIcon>,
     /// The headline text.
     title: String,
     /// Optional secondary line under the title.
@@ -67,6 +81,8 @@ pub struct EmptyState {
     cached_bounds: Rect,
     /// Bounds assigned to the action button, in widget space.
     action_rect: Rect,
+    /// Bounds assigned to a hosted stroke icon, in widget space.
+    icon_rect: Rect,
     /// Shared shaped-text painter for real `GlyphRun`s. See
     /// [`crate::text_paint`].
     text_painter: Option<crate::text_paint::SharedTextPainter>,
@@ -92,6 +108,7 @@ impl EmptyState {
             action: None,
             cached_bounds: Rect::default(),
             action_rect: Rect::default(),
+            icon_rect: Rect::default(),
             text_painter: None,
         }
     }
@@ -108,8 +125,89 @@ impl EmptyState {
     /// ```
     #[must_use]
     pub fn icon(mut self, glyph: impl Into<String>) -> Self {
-        self.icon = Some(glyph.into());
+        self.icon = Some(EmptyIcon::Glyph(glyph.into()));
         self
+    }
+
+    /// Sets the icon to a hosted [`MorphIcon`] stroke icon — `d` is
+    /// SVG path data on the 24-unit icon grid (the lucide/feather
+    /// idiom; see [`crate::icons::builtin`]). The icon is a real
+    /// internal child: it ticks with the arena, paints the stroke
+    /// itself, and reports decorative-hidden in the a11y tree — the
+    /// state owns the accessible name.
+    ///
+    /// A `d` the icon engine rejects parses to no icon at all — the
+    /// state keeps its title and behaves iconless rather than failing
+    /// the build.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::icons::builtin;
+    /// use martensite::widgets::empty_state::EmptyState;
+    ///
+    /// let d = builtin().lookup("status.check-circle").unwrap();
+    /// let e = EmptyState::new("Inbox zero").icon_d(d);
+    /// assert!(e.icon_widget().is_some());
+    /// ```
+    #[must_use]
+    pub fn icon_d(mut self, d: &str) -> Self {
+        self.icon = MorphIcon::icon(d)
+            .ok()
+            .map(|i| EmptyIcon::Stroke(i.decorative(true)));
+        self
+    }
+
+    /// Sets the icon to a hosted [`MorphIcon`] resolving `name`
+    /// through the native icon pack
+    /// ([`icons::BUILTIN`](crate::icons::BUILTIN)) — `"status.check-circle"`,
+    /// `"file.inbox"`, … An unknown name degrades to an iconless state
+    /// rather than failing the build — same contract as
+    /// [`icon_d`](Self::icon_d).
+    ///
+    /// Apps carrying overlay packs resolve names through their own
+    /// [`IconSet`](crate::icons::IconSet) and pass the `d` to
+    /// [`icon_d`](Self::icon_d).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::empty_state::EmptyState;
+    ///
+    /// let e = EmptyState::new("All clear").icon_named("status.check-circle");
+    /// assert!(e.icon_widget().is_some());
+    /// assert!(EmptyState::new("x")
+    ///     .icon_named("bogus.name")
+    ///     .icon_widget()
+    ///     .is_none());
+    /// ```
+    #[must_use]
+    pub fn icon_named(mut self, name: &str) -> Self {
+        self.icon = MorphIcon::named(name)
+            .ok()
+            .map(|i| EmptyIcon::Stroke(i.decorative(true)));
+        self
+    }
+
+    /// The hosted stroke icon, when one is installed —
+    /// `None` for a glyph icon or none. Mutate through
+    /// [`icon_widget_mut`](Self::icon_widget_mut) to morph it (e.g.
+    /// `morph_to_named("status.warning")` when a later state change
+    /// turns "all clear" into "attention").
+    #[must_use]
+    pub fn icon_widget(&self) -> Option<&MorphIcon> {
+        match &self.icon {
+            Some(EmptyIcon::Stroke(i)) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Mutable twin of [`icon_widget`](Self::icon_widget).
+    pub fn icon_widget_mut(&mut self) -> Option<&mut MorphIcon> {
+        match &mut self.icon {
+            Some(EmptyIcon::Stroke(i)) => Some(i),
+            _ => None,
+        }
     }
 
     /// Sets the description line under the title.
@@ -250,10 +348,21 @@ impl Widget for EmptyState {
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
         self.action_rect = Rect::default();
+        self.icon_rect = Rect::default();
         let content_h = cx.pt(self.content_height_pt());
         let button_h = cx.pt(32.0);
         let button_w = cx.pt(140.0).min(bounds.size.x);
         let stack_top = bounds.origin.y + (bounds.size.y - content_h).max(0.0) / 2.0;
+        if let Some(EmptyIcon::Stroke(icon)) = &mut self.icon {
+            let side = cx.pt(ICON_PT);
+            self.icon_rect = Rect::new(
+                bounds.origin.x + (bounds.size.x - side) / 2.0,
+                stack_top,
+                side,
+                side,
+            );
+            cx.layout_child(icon, self.icon_rect);
+        }
         if let Some(button) = &mut self.action {
             let y = stack_top + content_h - button_h;
             self.action_rect = Rect::new(
@@ -281,14 +390,18 @@ impl Widget for EmptyState {
 
         if let Some(icon) = &self.icon {
             y_center += cx.pt(ICON_PT) / 2.0;
-            self.paint_centered(
-                cx,
-                icon,
-                ICON_PT,
-                ICON_PT * 2.0,
-                y_center,
-                cx.color(TokenKey::TextMutedColor, ICON_INK),
-            );
+            // A hosted stroke icon paints itself at `icon_rect` as an
+            // internal child — the arena emits it after this pass.
+            if let EmptyIcon::Glyph(glyph) = icon {
+                self.paint_centered(
+                    cx,
+                    glyph,
+                    ICON_PT,
+                    ICON_PT * 2.0,
+                    y_center,
+                    cx.color(TokenKey::TextMutedColor, ICON_INK),
+                );
+            }
             y_center += cx.pt(ICON_PT) / 2.0 + cx.pt(GAP_PT);
         }
 
@@ -317,11 +430,19 @@ impl Widget for EmptyState {
     }
 
     fn child_count(&self) -> usize {
-        usize::from(self.action.is_some())
+        usize::from(matches!(self.icon, Some(EmptyIcon::Stroke(_))))
+            + usize::from(self.action.is_some())
     }
 
     fn child(&self, index: usize) -> Option<&dyn Widget> {
-        if index == 0 {
+        let icon = match &self.icon {
+            Some(EmptyIcon::Stroke(i)) => Some(i as &dyn Widget),
+            _ => None,
+        };
+        if index == 0 && icon.is_some() {
+            return icon;
+        }
+        if index == usize::from(icon.is_some()) {
             self.action.as_ref().map(|b| b as &dyn Widget)
         } else {
             None
@@ -329,7 +450,15 @@ impl Widget for EmptyState {
     }
 
     fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
-        if index == 0 {
+        let has_icon = matches!(self.icon, Some(EmptyIcon::Stroke(_)));
+        if index == 0 && has_icon {
+            return match &mut self.icon {
+                Some(EmptyIcon::Stroke(i)) => Some(i as &mut dyn Widget),
+                _ => None,
+            };
+        }
+        let action_idx = usize::from(has_icon);
+        if index == action_idx {
             self.action.as_mut().map(|b| b as &mut dyn Widget)
         } else {
             None
@@ -337,7 +466,12 @@ impl Widget for EmptyState {
     }
 
     fn child_bounds(&self, index: usize) -> Option<Rect> {
-        if index == 0 && self.action.is_some() {
+        let has_icon = matches!(self.icon, Some(EmptyIcon::Stroke(_)));
+        if index == 0 && has_icon {
+            return Some(self.icon_rect);
+        }
+        let action_idx = usize::from(has_icon);
+        if index == action_idx && self.action.is_some() {
             Some(self.action_rect)
         } else {
             None
@@ -347,9 +481,14 @@ impl Widget for EmptyState {
 
 impl std::fmt::Debug for EmptyState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let icon = match &self.icon {
+            Some(EmptyIcon::Glyph(g)) => format!("glyph:{g:?}"),
+            Some(EmptyIcon::Stroke(_)) => "stroke".to_string(),
+            None => "none".to_string(),
+        };
         f.debug_struct("EmptyState")
             .field("title", &self.title)
-            .field("icon", &self.icon)
+            .field("icon", &icon)
             .field("description", &self.description)
             .field("has_action", &self.action.is_some())
             .finish()

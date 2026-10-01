@@ -457,14 +457,11 @@ impl Widget for Descriptions {
                 f64::from(r.min_x() + label_w - pad / 2.0),
                 f64::from(r.max_y()),
             );
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 label_clip,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + pad),
-                    f64::from(r.min_y() + (r.height() - font_px) / 2.0),
-                ),
+                f64::from(r.min_x() + pad),
                 &it.label,
                 font_px,
                 muted,
@@ -475,14 +472,11 @@ impl Widget for Descriptions {
                 f64::from(r.max_x() - pad / 2.0),
                 f64::from(r.max_y()),
             );
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 content_clip,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + label_w + pad),
-                    f64::from(r.min_y() + (r.height() - font_px) / 2.0),
-                ),
+                f64::from(r.min_x() + label_w + pad),
                 &it.content,
                 font_px,
                 ink,

@@ -182,20 +182,45 @@ impl Widget for OptionItem {
             cx.list
                 .push_fill_rect(rect, cx.color(TokenKey::AccentColor, HIGHLIGHT_BG));
         }
-        // `DrawText` positions by the run's top edge — centre the 14 pt
-        // font box inside the row.
         let font_px = cx.pt(14.0);
-        let text_y = b.min_y() + (b.height() - font_px) / 2.0;
+        let row_strip = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        );
         if self.index == state.selected && !highlighted {
-            // Selected but not highlighted: draw a check glyph.
-            crate::text_paint::paint_label(
-                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
-                cx.list,
-                kurbo::Point::new(f64::from(b.min_x() + cx.pt(6.0)), f64::from(text_y)),
-                "✓",
-                font_px,
-                cx.color(TokenKey::AccentColor, CHECK),
-            );
+            // Selected but not highlighted: a native check icon —
+            // `✓` stays the fallback glyph.
+            let ink = cx.color(TokenKey::AccentColor, CHECK);
+            let side = font_px;
+            let icon_ok = crate::icons::builtin()
+                .lookup("status.check")
+                .is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(
+                            b.min_x() + cx.pt(6.0),
+                            b.min_y() + (b.height() - side) / 2.0,
+                            side,
+                            side,
+                        ),
+                        d,
+                        cx.scale,
+                        ink,
+                    )
+                });
+            if !icon_ok {
+                crate::text_paint::paint_label_vcenter(
+                    crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                    cx.list,
+                    row_strip,
+                    f64::from(b.min_x() + cx.pt(6.0)),
+                    "✓",
+                    font_px,
+                    ink,
+                );
+            }
         }
         let ink = if highlighted {
             cx.color(TokenKey::TextInverseColor, HIGHLIGHT_INK)
@@ -206,7 +231,7 @@ impl Widget for OptionItem {
             // Clip the option label to the row — a long option can't
             // spill past the popup's right edge.
             let text_x = b.min_x() + cx.pt(24.0);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
                 kurbo::Rect::new(
@@ -215,7 +240,7 @@ impl Widget for OptionItem {
                     f64::from(b.max_x() - cx.pt(6.0)),
                     f64::from(b.max_y()),
                 ),
-                kurbo::Point::new(f64::from(text_x), f64::from(text_y)),
+                f64::from(text_x),
                 label.as_str(),
                 font_px,
                 ink,
@@ -1254,7 +1279,7 @@ impl Widget for Dropdown {
         // Clip the selected label to the face minus the chevron zone —
         // a long option can't spill past the field edge.
         let text_x = b.min_x() + cx.pt(10.0);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
             kurbo::Rect::new(
@@ -1263,10 +1288,7 @@ impl Widget for Dropdown {
                 f64::from(b.max_x() - cx.pt(24.0)),
                 f64::from(b.max_y()),
             ),
-            kurbo::Point::new(
-                f64::from(text_x),
-                f64::from(b.min_y() + (b.height() - font_px) / 2.0),
-            ),
+            f64::from(text_x),
             &text,
             font_px,
             ink,

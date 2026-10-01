@@ -165,14 +165,11 @@ impl Widget for Kbd {
         let w = painter
             .and_then(|p| p.measure_text(&self.text, size))
             .unwrap_or(size * self.text.chars().count() as f32 * 0.6);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             face,
-            kurbo::Point::new(
-                face.x0 + (face.width() - f64::from(w)) * 0.5,
-                face.y0 + face.height() * 0.72,
-            ),
+            face.x0 + (face.width() - f64::from(w)) * 0.5,
             &self.text,
             size,
             if self.enabled { ink } else { muted },

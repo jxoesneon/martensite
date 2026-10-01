@@ -490,22 +490,37 @@ impl Widget for TokenField {
                 font,
                 cx.color(TokenKey::TextColor, CHIP_INK),
             );
-            // `×` affordance.
+            // Remove affordance — native close icon, `×` fallback.
             let rx = r.max_x() - remove_w + cx.pt(2.0);
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                kurbo::Rect::new(
-                    f64::from(r.max_x() - remove_w),
-                    f64::from(r.min_y()),
-                    f64::from(r.max_x()),
-                    f64::from(r.max_y()),
-                ),
-                kurbo::Point::new(f64::from(rx), f64::from(ly)),
-                "×",
-                font,
-                cx.color(TokenKey::TextMutedColor, REMOVE_INK),
-            );
+            let ink = cx.color(TokenKey::TextMutedColor, REMOVE_INK);
+            let icon_ok = crate::icons::builtin()
+                .lookup("status.close")
+                .is_some_and(|d| {
+                    let side = font;
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(rx, r.min_y() + (r.height() - side) / 2.0, side, side),
+                        d,
+                        cx.scale,
+                        ink,
+                    )
+                });
+            if !icon_ok {
+                crate::text_paint::paint_label_clipped(
+                    painter,
+                    cx.list,
+                    kurbo::Rect::new(
+                        f64::from(r.max_x() - remove_w),
+                        f64::from(r.min_y()),
+                        f64::from(r.max_x()),
+                        f64::from(r.max_y()),
+                    ),
+                    kurbo::Point::new(f64::from(rx), f64::from(ly)),
+                    "×",
+                    font,
+                    ink,
+                );
+            }
         }
     }
 

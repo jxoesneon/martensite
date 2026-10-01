@@ -363,38 +363,28 @@ impl Widget for FormField {
             // A shallow allocation gives the label strip less than
             // LABEL_H — the clip must not extend below the widget.
             let strip_bottom = (b.min_y() + label_h).min(b.max_y());
-            let (clip, origin) = match self.position {
-                LabelPosition::Top => {
-                    let clip = kurbo::Rect::new(
-                        f64::from(b.min_x()),
-                        f64::from(b.min_y()),
-                        f64::from(b.max_x()),
-                        f64::from(strip_bottom),
-                    );
-                    (
-                        clip,
-                        kurbo::Point::new(clip.x0, clip.y0 + clip.height() * 0.72),
-                    )
-                }
+            let clip = match self.position {
+                LabelPosition::Top => kurbo::Rect::new(
+                    f64::from(b.min_x()),
+                    f64::from(b.min_y()),
+                    f64::from(b.max_x()),
+                    f64::from(strip_bottom),
+                ),
                 LabelPosition::Left => {
                     let lw = cx.pt(self.label_width);
-                    let clip = kurbo::Rect::new(
+                    kurbo::Rect::new(
                         f64::from(b.min_x()),
                         f64::from(b.min_y()),
                         f64::from(b.min_x() + lw),
                         f64::from(strip_bottom),
-                    );
-                    (
-                        clip,
-                        kurbo::Point::new(clip.x0, clip.y0 + clip.height() * 0.72),
                     )
                 }
             };
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 clip,
-                origin,
+                clip.x0,
                 &self.label_text(),
                 label_size,
                 if self.enabled { ink } else { muted },
@@ -411,11 +401,11 @@ impl Widget for FormField {
                 f64::from(b.max_y()),
             );
             let color = if self.error.is_some() { error } else { muted };
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 clip,
-                kurbo::Point::new(clip.x0, clip.y0 + clip.height() * 0.72),
+                clip.x0,
                 msg,
                 11.0 * cx.scale,
                 color,

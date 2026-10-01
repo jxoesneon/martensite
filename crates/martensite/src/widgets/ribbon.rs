@@ -218,11 +218,11 @@ impl Widget for Ribbon {
         );
         cx.list
             .push_fill_shape(band, &shape, if self.enabled { band_color } else { muted });
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             band,
-            kurbo::Point::new(band.x0 + f64::from(pad), band.y0 + band.height() * 0.72),
+            band.x0 + f64::from(pad),
             &self.text,
             size,
             ink,

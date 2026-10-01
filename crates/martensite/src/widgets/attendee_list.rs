@@ -497,21 +497,22 @@ impl Widget for AttendeeList {
                 );
             }
             // Name.
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kr,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + 8.0 * s + d + 8.0 * s),
-                    f64::from(r.min_y() + r.height() * 0.72),
-                ),
+                f64::from(r.min_x() + 8.0 * s + d + 8.0 * s),
                 &a.name,
                 FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),
             );
-            // Badges, right-aligned: muted "✕", hand "✋".
+            // Badges, right-aligned — native mic-off/hand icons,
+            // ✕/✋ glyphs as fallback.
             let mut x = r.max_x() - 8.0 * s;
-            for (show, glyph) in [(a.muted, "✕"), (a.hand_raised, "✋")] {
+            for (show, icon, glyph) in [
+                (a.muted, "media.mic-off", "✕"),
+                (a.hand_raised, "edit.hand", "✋"),
+            ] {
                 if !show {
                     continue;
                 }
@@ -523,14 +524,32 @@ impl Widget for AttendeeList {
                     f64::from(r.min_y() + (r.height() + w) / 2.0),
                 );
                 cx.list.push_fill_shape(br, &shape, BADGE_BG);
-                crate::text_paint::paint_label(
-                    painter,
-                    cx.list,
-                    kurbo::Point::new(br.x0 + f64::from(w) * 0.22, br.y0 + f64::from(w) * 0.74),
-                    glyph,
-                    FONT_PT * s,
-                    BADGE_FG,
-                );
+                let side = w * 0.68;
+                let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(
+                            (br.x0 + f64::from(w) / 2.0 - f64::from(side) / 2.0) as f32,
+                            (br.y0 + f64::from(w) / 2.0 - f64::from(side) / 2.0) as f32,
+                            side,
+                            side,
+                        ),
+                        d,
+                        s,
+                        BADGE_FG,
+                    )
+                });
+                if !icon_ok {
+                    crate::text_paint::paint_label_vcenter(
+                        painter,
+                        cx.list,
+                        br,
+                        br.x0 + f64::from(w) * 0.22,
+                        glyph,
+                        FONT_PT * s,
+                        BADGE_FG,
+                    );
+                }
                 x -= w + 4.0 * s;
             }
         }

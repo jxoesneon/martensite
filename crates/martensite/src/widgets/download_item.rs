@@ -295,6 +295,18 @@ fn glyph_for(action: DownloadAction) -> &'static str {
     }
 }
 
+/// The native-pack icon for an action — paired with [`glyph_for`]
+/// so a missing name can't strand the button iconless.
+fn icon_for(action: DownloadAction) -> &'static str {
+    match action {
+        DownloadAction::Pause => "media.pause",
+        DownloadAction::Resume => "media.play",
+        DownloadAction::Cancel => "status.close",
+        DownloadAction::ShowInFolder => "file.folder-open",
+        DownloadAction::Retry => "arrow.rotate-cw",
+    }
+}
+
 impl Widget for DownloadItem {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
@@ -388,23 +400,22 @@ impl Widget for DownloadItem {
         // Icon.
         let ic = ICON_PT * s;
         let iy = b.min_y() + pad;
+        let chip = kurbo::Rect::new(
+            f64::from(b.min_x() + pad),
+            f64::from(iy),
+            f64::from(b.min_x() + pad + ic),
+            f64::from(iy + ic),
+        );
         cx.list.push_fill_shape(
-            kurbo::Rect::new(
-                f64::from(b.min_x() + pad),
-                f64::from(iy),
-                f64::from(b.min_x() + pad + ic),
-                f64::from(iy + ic),
-            ),
+            chip,
             &martensite_core::shape::Shape::rounded(4.0 * s),
             ICON_BG,
         );
-        crate::text_paint::paint_label(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            kurbo::Point::new(
-                f64::from(b.min_x() + pad + ic * 0.2),
-                f64::from(iy + ic * 0.72),
-            ),
+            chip,
+            f64::from(b.min_x() + pad + ic * 0.2),
             &self.glyph,
             INFO_PT * s,
             TEXT_FG,
@@ -469,15 +480,39 @@ impl Widget for DownloadItem {
                 &martensite_core::shape::Shape::rounded(4.0 * s),
                 ICON_BG,
             );
+            // Native icon first — `glyph_for` is the fallback.
+            let side = bfs;
+            let icon_ok = crate::icons::builtin()
+                .lookup(icon_for(*action))
+                .is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(
+                            rect.min_x() + (rect.width() - side) / 2.0,
+                            rect.min_y() + (rect.height() - side) / 2.0,
+                            side,
+                            side,
+                        ),
+                        d,
+                        s,
+                        TEXT_FG,
+                    )
+                });
+            if icon_ok {
+                continue;
+            }
             let g = glyph_for(*action);
             let w = g.len() as f32 * bfs * 0.7;
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                kurbo::Point::new(
-                    f64::from(rect.min_x() + (rect.width() - w) / 2.0),
-                    f64::from(rect.min_y() + rect.height() / 2.0 + bfs * 0.35),
+                kurbo::Rect::new(
+                    f64::from(rect.min_x()),
+                    f64::from(rect.min_y()),
+                    f64::from(rect.max_x()),
+                    f64::from(rect.max_y()),
                 ),
+                f64::from(rect.min_x() + (rect.width() - w) / 2.0),
                 g,
                 bfs,
                 TEXT_FG,

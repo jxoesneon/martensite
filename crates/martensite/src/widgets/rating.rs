@@ -71,6 +71,8 @@ pub struct Rating {
     changed: Option<f32>,
     /// Per-cell hit rects from the last layout.
     cell_rects: Vec<Rect>,
+    /// Accessible name — defaults to `"Rating"`.
+    label: String,
     /// Shared shaped-text painter.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
@@ -98,8 +100,34 @@ impl Rating {
             preview: None,
             changed: None,
             cell_rects: Vec::new(),
+            label: "Rating".to_string(),
             text_painter: None,
         }
+    }
+
+    /// Sets the accessible name announced by assistive tech —
+    /// `"Condition rating"`, not the default `"Rating"`, when several
+    /// ratings share a surface.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::rating::Rating;
+    ///
+    /// let r = Rating::new().label("Condition rating");
+    /// assert_eq!(r.get_label(), "Condition rating");
+    /// ```
+    #[must_use]
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
+    }
+
+    /// The accessible name — `"Rating"` unless [`label`](Self::label)
+    /// overrode it.
+    #[must_use]
+    pub fn get_label(&self) -> &str {
+        &self.label
     }
 
     /// Sets the cell count.
@@ -303,9 +331,16 @@ impl Widget for Rating {
         }
     }
 
+    /// `@labeled` declares the accessible name to design-lint's
+    /// `icon-only-control` rule — the paint list can't see the
+    /// AccessKit label, so the scope marker carries it.
+    fn debug_name(&self) -> &'static str {
+        "Rating@labeled"
+    }
+
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::Slider);
-        node.set_label("Rating");
+        node.set_label(self.label.as_str());
         node.set_numeric_value(f64::from(self.value));
         node.set_min_numeric_value(0.0);
         node.set_max_numeric_value(self.max as f64);
@@ -406,6 +441,11 @@ impl Widget for Rating {
             .map(|r| (r.size.x * 0.9).clamp(cx.pt(12.0), cx.pt(GLYPH_PT)))
             .unwrap_or_else(|| cx.pt(GLYPH_PT));
         let shown = self.preview.unwrap_or(self.value);
+        // Native stroke star — fill level rides on the ink, so the
+        // same icon serves on/half/off cells. Resolved once per paint;
+        // `paint_icon_d` answers `false` on a rejected path and the
+        // cell falls back to the ★ glyph.
+        let star_d = crate::icons::builtin().lookup("status.star");
         for (i, r) in self.cell_rects.iter().enumerate() {
             // A cell squeezed to nothing has no room for a glyph —
             // emit nothing rather than paint clipped-out microtext.
@@ -424,12 +464,29 @@ impl Widget for Rating {
             } else {
                 cx.color(TokenKey::BorderColor, STAR_OFF)
             };
+            let painted = star_d.is_some_and(|d| {
+                let side = size.min(r.size.x).min(r.size.y);
+                crate::widgets::morph_icon::paint_icon_d(
+                    cx.list,
+                    Rect::new(
+                        r.origin.x + (r.size.x - side) / 2.0,
+                        r.origin.y + (r.size.y - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    d,
+                    cx.scale,
+                    ink,
+                )
+            });
+            if painted {
+                continue;
+            }
             let w = painter
                 .and_then(|p| p.measure_text(glyph, size))
                 .unwrap_or(size);
             let x = r.origin.x + (r.size.x - w) / 2.0;
-            let y = r.origin.y + (r.size.y - size) / 2.0;
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
@@ -438,7 +495,7 @@ impl Widget for Rating {
                     f64::from(r.max_x()),
                     f64::from(r.max_y()),
                 ),
-                kurbo::Point::new(f64::from(x), f64::from(y)),
+                f64::from(x),
                 glyph,
                 size,
                 ink,

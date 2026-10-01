@@ -421,6 +421,39 @@ impl Widget for Pagination {
                 );
             }
 
+            let ink = if enabled {
+                cx.color(TokenKey::TextColor, INK)
+            } else {
+                cx.color(TokenKey::TextMutedColor, DIM_INK)
+            };
+            // Prev/next/ellipsis paint as native-pack icons —
+            // chevrons and the more mark; glyphs stay as fallback.
+            let icon_name = match cell {
+                Cell::Prev => Some("nav.chevron-left"),
+                Cell::Next => Some("nav.chevron-right"),
+                Cell::Ellipsis => Some("nav.more-horizontal"),
+                Cell::Page(_) => None,
+            };
+            if let Some(name) = icon_name {
+                let side = (r.size.y * 0.5).min(r.size.x * 0.5);
+                let ok = crate::icons::builtin().lookup(name).is_some_and(|d| {
+                    crate::widgets::morph_icon::paint_icon_d(
+                        cx.list,
+                        Rect::new(
+                            r.origin.x + (r.size.x - side) / 2.0,
+                            r.origin.y + (r.size.y - side) / 2.0,
+                            side,
+                            side,
+                        ),
+                        d,
+                        cx.scale,
+                        ink,
+                    )
+                });
+                if ok {
+                    continue;
+                }
+            }
             let label = match cell {
                 Cell::Prev => "‹",
                 Cell::Next => "›",
@@ -475,11 +508,7 @@ impl Widget for Pagination {
                 kurbo::Point::new(f64::from(slot_x), f64::from(y)),
                 label,
                 font,
-                if enabled {
-                    cx.color(TokenKey::TextColor, INK)
-                } else {
-                    cx.color(TokenKey::TextMutedColor, DIM_INK)
-                },
+                ink,
             );
         }
     }

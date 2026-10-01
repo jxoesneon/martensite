@@ -322,17 +322,31 @@ impl Widget for CommandLink {
             );
         }
 
-        // Trailing `›` affordance.
+        // Trailing chevron affordance — native icon, `›` fallback.
         let chev_x = self.bounds.max_x() - pad_x - cx.pt(8.0);
         let chev_y = self.bounds.origin.y + (self.bounds.size.y - label_font) / 2.0;
-        crate::text_paint::paint_label(
-            painter,
-            cx.list,
-            kurbo::Point::new(f64::from(chev_x), f64::from(chev_y)),
-            "›",
-            label_font,
-            cx.color(TokenKey::TextMutedColor, CHEV_INK),
-        );
+        let ink = cx.color(TokenKey::TextMutedColor, CHEV_INK);
+        let icon_ok = crate::icons::builtin()
+            .lookup("nav.chevron-right")
+            .is_some_and(|d| {
+                crate::widgets::morph_icon::paint_icon_d(
+                    cx.list,
+                    Rect::new(chev_x, chev_y, label_font, label_font),
+                    d,
+                    cx.scale,
+                    ink,
+                )
+            });
+        if !icon_ok {
+            crate::text_paint::paint_label(
+                painter,
+                cx.list,
+                kurbo::Point::new(f64::from(chev_x), f64::from(chev_y)),
+                "›",
+                label_font,
+                ink,
+            );
+        }
     }
 }
 

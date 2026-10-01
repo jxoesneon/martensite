@@ -682,17 +682,32 @@ impl Widget for AlarmPanel {
                 );
             }
             if acked {
-                crate::text_paint::paint_label(
-                    painter,
-                    cx.list,
-                    kurbo::Point::new(
-                        f64::from(r.max_x() - 18.0 * s),
-                        f64::from(y + (row_h - msg_sz * 1.4) / 2.0),
-                    ),
-                    "✓",
-                    msg_sz,
-                    cx.color(TokenKey::SuccessColor, [92, 200, 120, 255]),
-                );
+                let ink = cx.color(TokenKey::SuccessColor, [92, 200, 120, 255]);
+                let side = msg_sz;
+                let icon_ok = crate::icons::builtin()
+                    .lookup("status.check")
+                    .is_some_and(|d| {
+                        crate::widgets::morph_icon::paint_icon_d(
+                            cx.list,
+                            Rect::new(r.max_x() - 18.0 * s, y + (row_h - side) / 2.0, side, side),
+                            d,
+                            s,
+                            ink,
+                        )
+                    });
+                if !icon_ok {
+                    crate::text_paint::paint_label(
+                        painter,
+                        cx.list,
+                        kurbo::Point::new(
+                            f64::from(r.max_x() - 18.0 * s),
+                            f64::from(y + (row_h - msg_sz * 1.4) / 2.0),
+                        ),
+                        "✓",
+                        msg_sz,
+                        ink,
+                    );
+                }
             } else {
                 let chip = Rect::new(
                     r.max_x() - 44.0 * s,

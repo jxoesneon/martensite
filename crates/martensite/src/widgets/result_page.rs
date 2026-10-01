@@ -88,6 +88,18 @@ impl ResultStatus {
         }
     }
 
+    /// The native-pack icon painted for this status — `None` for the
+    /// HTTP-code statuses, which keep their numeric glyphs.
+    fn icon_name(self) -> Option<&'static str> {
+        match self {
+            Self::Success => Some("status.check-circle"),
+            Self::Warning => Some("status.circle-alert"),
+            Self::Error => Some("status.close"),
+            Self::Info => Some("status.info"),
+            Self::Forbidden | Self::NotFound | Self::ServerError => None,
+        }
+    }
+
     /// The fallback accent colour for this status.
     ///
     /// # Examples
@@ -382,15 +394,37 @@ impl Widget for ResultPage {
         let content_h = cx.pt(self.content_height_pt());
         let mut y_center = b.origin.y + (b.size.y - content_h).max(0.0) / 2.0;
 
-        // Status glyph in its accent colour — the whole page's signal.
+        // Status mark in its accent colour — a native-pack icon when
+        // one maps, the status glyph otherwise.
         y_center += cx.pt(ICON_PT) / 2.0;
-        self.paint_centered(
-            cx,
-            self.status.glyph(),
-            ICON_PT,
-            y_center,
-            self.status.color(),
-        );
+        let side = cx.pt(ICON_PT);
+        let icon_ok = self
+            .status
+            .icon_name()
+            .and_then(|n| crate::icons::builtin().lookup(n))
+            .is_some_and(|d| {
+                crate::widgets::morph_icon::paint_icon_d(
+                    cx.list,
+                    Rect::new(
+                        b.origin.x + (b.size.x - side) / 2.0,
+                        y_center - side / 2.0,
+                        side,
+                        side,
+                    ),
+                    d,
+                    cx.scale,
+                    self.status.color(),
+                )
+            });
+        if !icon_ok {
+            self.paint_centered(
+                cx,
+                self.status.glyph(),
+                ICON_PT,
+                y_center,
+                self.status.color(),
+            );
+        }
         y_center += cx.pt(ICON_PT) / 2.0 + cx.pt(GAP_PT);
 
         if !self.title.is_empty() {

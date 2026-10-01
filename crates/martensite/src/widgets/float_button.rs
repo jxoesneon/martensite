@@ -24,10 +24,13 @@ use martensite_core::{
 };
 use martensite_theme::TokenKey;
 
-use crate::text_paint::paint_label_clipped;
+use crate::text_paint::paint_label_vcenter;
+use crate::widgets::morph_icon::MorphIcon;
 
 /// Diameter in points.
 const SIZE_PT: f32 = 44.0;
+/// Stroke-icon box inside the circle, logical points.
+const ICON_PT: f32 = 20.0;
 
 /// Floating action button.
 ///
@@ -50,6 +53,11 @@ pub struct FloatButton {
     hover: bool,
     activated: bool,
     bounds: Rect,
+    /// Optional hosted [`MorphIcon`] painted in place of `text` — a
+    /// real internal child, so it ticks with the arena and morphs.
+    icon: Option<MorphIcon>,
+    /// Bounds assigned to `icon`, in widget space.
+    icon_rect: Rect,
     text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
 
@@ -74,6 +82,8 @@ impl FloatButton {
             hover: false,
             activated: false,
             bounds: Rect::default(),
+            icon: None,
+            icon_rect: Rect::default(),
             text_painter: None,
         }
     }
@@ -89,7 +99,7 @@ impl FloatButton {
     /// assert!(!FloatButton::back_top().visible);
     /// ```
     pub fn back_top() -> Self {
-        let mut b = Self::new("↑");
+        let mut b = Self::new("↑").icon_named("arrow.up");
         b.visible = false;
         b.label = Some("Back to top".to_string());
         b
@@ -163,6 +173,65 @@ impl FloatButton {
         self
     }
 
+    /// Replaces the text glyph with a hosted [`MorphIcon`] stroke icon
+    /// — `d` is SVG path data on the 24-unit icon grid (see
+    /// [`crate::icons::builtin`]). The icon is a real internal child:
+    /// it ticks with the arena and morphs via
+    /// [`icon_widget_mut`](Self::icon_widget_mut). It paints on the
+    /// accent face in the button's ink; a `d` the icon engine rejects
+    /// falls back to the text glyph rather than failing the build.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::FloatButton;
+    ///
+    /// let f = FloatButton::new("+")
+    ///     .icon_named("status.plus")
+    ///     .label("Add");
+    /// assert!(f.icon_widget().is_some());
+    /// ```
+    #[must_use]
+    pub fn icon_d(mut self, d: &str) -> Self {
+        if let Ok(icon) = MorphIcon::icon(d) {
+            self.icon = Some(icon.decorative(true).ink([255, 255, 255, 255]));
+        }
+        self
+    }
+
+    /// [`icon_d`](Self::icon_d) resolving `name` through the native
+    /// icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// `"status.plus"`, `"edit.pen"`, … An unknown name keeps the text
+    /// glyph — same fallback contract as a rejected `d`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::FloatButton;
+    ///
+    /// assert!(FloatButton::new("+").icon_named("status.plus").icon_widget().is_some());
+    /// assert!(FloatButton::new("+").icon_named("bogus.name").icon_widget().is_none());
+    /// ```
+    #[must_use]
+    pub fn icon_named(mut self, name: &str) -> Self {
+        if let Ok(icon) = MorphIcon::named(name) {
+            self.icon = Some(icon.decorative(true).ink([255, 255, 255, 255]));
+        }
+        self
+    }
+
+    /// The hosted stroke icon, if one is installed. Mutate through
+    /// [`icon_widget_mut`](Self::icon_widget_mut) to morph it.
+    #[must_use]
+    pub fn icon_widget(&self) -> Option<&MorphIcon> {
+        self.icon.as_ref()
+    }
+
+    /// Mutable twin of [`icon_widget`](Self::icon_widget).
+    pub fn icon_widget_mut(&mut self) -> Option<&mut MorphIcon> {
+        self.icon.as_mut()
+    }
+
     /// The button text.
     ///
     /// # Examples
@@ -202,6 +271,17 @@ impl std::fmt::Debug for FloatButton {
 }
 
 impl Widget for FloatButton {
+    /// `@labeled` declares the accessible name to design-lint's
+    /// `icon-only-control` rule — only when `.label()` set an explicit
+    /// name; a bare `"+"` glyph is a weak name the rule should catch.
+    fn debug_name(&self) -> &'static str {
+        if self.label.is_some() {
+            "FloatButton@labeled"
+        } else {
+            "FloatButton"
+        }
+    }
+
     fn measure(&mut self, cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
         Vec2::splat(cx.pt(SIZE_PT))
     }
@@ -210,8 +290,19 @@ impl Widget for FloatButton {
         RenderMinimum::new(Vec2::new(32.0, 32.0)).with_policy(UnderflowPolicy::Lint)
     }
 
-    fn layout(&mut self, _cx: &mut LayoutContext, bounds: Rect) {
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
+        self.icon_rect = Rect::default();
+        if let Some(icon) = &mut self.icon {
+            let side = cx.pt(ICON_PT);
+            self.icon_rect = Rect::new(
+                bounds.origin.x + (bounds.size.x - side) / 2.0,
+                bounds.origin.y + (bounds.size.y - side) / 2.0,
+                side,
+                side,
+            );
+            cx.layout_child(icon, self.icon_rect);
+        }
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -255,16 +346,52 @@ impl Widget for FloatButton {
             1.0_f32.max(cx.pt(0.5)),
             [0, 0, 0, 60],
         );
-        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        let size = 16.0 * cx.scale;
-        let w = painter
-            .and_then(|p| p.measure_text(&self.text, size))
-            .unwrap_or(size * self.text.chars().count() as f32 * 0.5);
-        let origin = kurbo::Point::new(
-            f64::from(b.min_x() + (b.width() - w.min(b.width())) / 2.0),
-            f64::from(b.min_y() + (b.height() - size) / 2.0),
-        );
-        paint_label_clipped(painter, cx.list, r, origin, &self.text, size, fg);
+        // A hosted stroke icon paints itself at `icon_rect` as an
+        // internal child — the arena emits it after this pass.
+        if self.icon.is_none() {
+            let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+            let size = 16.0 * cx.scale;
+            let w = painter
+                .and_then(|p| p.measure_text(&self.text, size))
+                .unwrap_or(size * self.text.chars().count() as f32 * 0.5);
+            paint_label_vcenter(
+                painter,
+                cx.list,
+                r,
+                f64::from(b.min_x() + (b.width() - w.min(b.width())) / 2.0),
+                &self.text,
+                size,
+                fg,
+            );
+        }
+    }
+
+    fn child_count(&self) -> usize {
+        usize::from(self.icon.is_some())
+    }
+
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        if index == 0 {
+            self.icon.as_ref().map(|i| i as &dyn Widget)
+        } else {
+            None
+        }
+    }
+
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        if index == 0 {
+            self.icon.as_mut().map(|i| i as &mut dyn Widget)
+        } else {
+            None
+        }
+    }
+
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        if index == 0 && self.icon.is_some() {
+            Some(self.icon_rect)
+        } else {
+            None
+        }
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {

@@ -111,6 +111,15 @@ impl AlertSeverity {
             Self::Error => "×",
         }
     }
+
+    /// The native-pack icon painted inside the severity disc.
+    fn icon_name(self) -> &'static str {
+        match self {
+            Self::Info => "status.info",
+            Self::Warning => "status.warning",
+            Self::Error => "status.close",
+        }
+    }
 }
 
 /// The semantic role of an [`AlertDialog`] footer button.
@@ -591,19 +600,39 @@ impl Widget for AlertDialog {
             f64::from(b.min_y() + pad * 0.8 + icon_side),
         );
         cx.list.push_fill_shape(icon_rect, &Shape::ELLIPSE, accent);
-        // Centre the glyph in the disc.
-        crate::text_paint::paint_label_clipped(
-            painter,
-            cx.list,
-            icon_rect,
-            kurbo::Point::new(
-                f64::from(b.min_x() + pad + icon_side * 0.34),
-                f64::from(b.min_y() + pad * 0.8 + (icon_side - cx.pt(16.0)) / 2.0),
-            ),
-            self.severity.glyph(),
-            cx.pt(16.0),
-            [255, 255, 255, 255],
-        );
+        // The native severity icon in the disc — the severity glyph
+        // stays as fallback.
+        let side = cx.pt(16.0);
+        let icon_ok = crate::icons::builtin()
+            .lookup(self.severity.icon_name())
+            .is_some_and(|d| {
+                crate::widgets::morph_icon::paint_icon_d(
+                    cx.list,
+                    Rect::new(
+                        b.min_x() + pad + (icon_side - side) / 2.0,
+                        b.min_y() + pad * 0.8 + (icon_side - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    d,
+                    cx.scale,
+                    [255, 255, 255, 255],
+                )
+            });
+        if !icon_ok {
+            crate::text_paint::paint_label_clipped(
+                painter,
+                cx.list,
+                icon_rect,
+                kurbo::Point::new(
+                    f64::from(b.min_x() + pad + icon_side * 0.34),
+                    f64::from(b.min_y() + pad * 0.8 + (icon_side - cx.pt(16.0)) / 2.0),
+                ),
+                self.severity.glyph(),
+                cx.pt(16.0),
+                [255, 255, 255, 255],
+            );
+        }
 
         // Title — severity-tinted for Warning/Error, plain ink for
         // Info — clipped to the card interior right of the icon.

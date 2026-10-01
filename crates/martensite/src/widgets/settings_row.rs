@@ -36,6 +36,9 @@ const PAD_PT: f32 = 14.0;
 const ICON_PT: f32 = 28.0;
 /// Icon glyph size, logical points.
 const ICON_FONT_PT: f32 = 18.0;
+/// Hosted stroke-icon side inside the icon slot, logical points —
+/// ~2pt larger than the glyph box so stroke icons match optical size.
+const ICON_STROKE_PT: f32 = 20.0;
 /// Title font size, logical points.
 const TITLE_PT: f32 = 13.0;
 /// Subtitle font size, logical points.
@@ -64,6 +67,16 @@ const SEP: [u8; 4] = [222, 225, 231, 255];
 /// Header ink.
 const HEADER_INK: [u8; 4] = [110, 114, 123, 255];
 
+/// The leading icon lane content — a text glyph or a hosted stroke
+/// icon.
+enum RowIcon {
+    /// A short string (emoji, symbol, icon-font glyph).
+    Glyph(String),
+    /// A hosted [`MorphIcon`](crate::widgets::morph_icon::MorphIcon)
+    /// stroke icon — a real internal child that ticks and morphs.
+    Stroke(crate::widgets::morph_icon::MorphIcon),
+}
+
 /// A preferences/settings row.
 ///
 /// # Examples
@@ -74,8 +87,8 @@ const HEADER_INK: [u8; 4] = [110, 114, 123, 255];
 /// let r = SettingsRow::new("Appearance").icon("🎨").activatable(true);
 /// ```
 pub struct SettingsRow {
-    /// Optional leading icon glyph.
-    icon: Option<String>,
+    /// Optional leading icon — a text glyph or a hosted stroke icon.
+    icon: Option<RowIcon>,
     /// Row title.
     title: String,
     /// Optional subtitle line.
@@ -92,6 +105,8 @@ pub struct SettingsRow {
     enabled: bool,
     /// Trailing child bounds from the last layout.
     trailing_rect: Rect,
+    /// Hosted stroke-icon bounds from the last layout.
+    icon_rect: Rect,
     /// Cached bounds.
     bounds: Rect,
     /// Shared shaped-text painter.
@@ -120,6 +135,7 @@ impl SettingsRow {
             highlighted: false,
             enabled: true,
             trailing_rect: Rect::default(),
+            icon_rect: Rect::default(),
             bounds: Rect::default(),
             text_painter: None,
         }
@@ -136,8 +152,76 @@ impl SettingsRow {
     /// ```
     #[must_use]
     pub fn icon(mut self, glyph: impl Into<String>) -> Self {
-        self.icon = Some(glyph.into());
+        self.icon = Some(RowIcon::Glyph(glyph.into()));
         self
+    }
+
+    /// Sets the leading icon to a hosted
+    /// [`MorphIcon`](crate::widgets::morph_icon::MorphIcon) stroke icon
+    /// — `d` is SVG path data on the 24-unit icon grid (see
+    /// [`crate::icons::builtin`]). The icon is a real internal child:
+    /// it ticks with the arena (morphs animate) and reports
+    /// decorative-hidden — the row title owns the accessible name. A
+    /// `d` the icon engine rejects leaves the row iconless rather than
+    /// failing the build.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::settings_row::SettingsRow;
+    ///
+    /// let r = SettingsRow::new("Wi-Fi").icon_named("device.wifi");
+    /// assert!(r.icon_widget().is_some());
+    /// ```
+    #[must_use]
+    pub fn icon_d(mut self, d: &str) -> Self {
+        if let Ok(icon) = crate::widgets::morph_icon::MorphIcon::icon(d) {
+            self.icon = Some(RowIcon::Stroke(icon.decorative(true)));
+        }
+        self
+    }
+
+    /// [`icon_d`](Self::icon_d) resolving `name` through the native
+    /// icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// `"device.wifi"`, `"status.warning"`, … An unknown name leaves
+    /// the row iconless — same fallback contract as a rejected `d`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::settings_row::SettingsRow;
+    ///
+    /// assert!(SettingsRow::new("A").icon_named("status.bell").icon_widget().is_some());
+    /// assert!(SettingsRow::new("A")
+    ///     .icon_named("bogus.name")
+    ///     .icon_widget()
+    ///     .is_none());
+    /// ```
+    #[must_use]
+    pub fn icon_named(mut self, name: &str) -> Self {
+        if let Ok(icon) = crate::widgets::morph_icon::MorphIcon::named(name) {
+            self.icon = Some(RowIcon::Stroke(icon.decorative(true)));
+        }
+        self
+    }
+
+    /// The hosted stroke icon, when one is installed — `None` for a
+    /// glyph icon or none. Mutate through
+    /// [`icon_widget_mut`](Self::icon_widget_mut) to morph it.
+    #[must_use]
+    pub fn icon_widget(&self) -> Option<&crate::widgets::morph_icon::MorphIcon> {
+        match &self.icon {
+            Some(RowIcon::Stroke(i)) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Mutable twin of [`icon_widget`](Self::icon_widget).
+    pub fn icon_widget_mut(&mut self) -> Option<&mut crate::widgets::morph_icon::MorphIcon> {
+        match &mut self.icon {
+            Some(RowIcon::Stroke(i)) => Some(i),
+            _ => None,
+        }
     }
 
     /// Sets the subtitle.
@@ -259,6 +343,19 @@ impl Widget for SettingsRow {
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
         self.trailing_rect = Rect::default();
+        self.icon_rect = Rect::default();
+        if let Some(RowIcon::Stroke(icon)) = self.icon.as_mut() {
+            let pad = cx.pt(PAD_PT);
+            let side = cx.pt(ICON_STROKE_PT).min(bounds.size.y);
+            let r = Rect::new(
+                bounds.origin.x + pad + (cx.pt(ICON_PT) - side) / 2.0,
+                bounds.origin.y + (bounds.size.y - side) / 2.0,
+                side,
+                side,
+            );
+            self.icon_rect = r;
+            cx.layout_child(icon, r);
+        }
         if let Some(child) = self.trailing.as_mut() {
             // Right-dock the trailing control at its measured size.
             let size = child.measure(
@@ -363,30 +460,34 @@ impl Widget for SettingsRow {
         }
         let pad = cx.pt(PAD_PT);
         let mut x = cx.bounds.min_x() + pad;
-        // Icon slot.
-        if let Some(icon) = &self.icon {
-            let size = cx.pt(ICON_FONT_PT);
-            let w = painter
-                .and_then(|p| p.measure_text(icon, size))
-                .unwrap_or(size);
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                kurbo::Rect::new(
-                    f64::from(x),
-                    f64::from(cx.bounds.min_y()),
-                    f64::from(x + cx.pt(ICON_PT)),
-                    f64::from(cx.bounds.max_y()),
-                ),
-                kurbo::Point::new(
+        // Icon slot — a hosted stroke icon paints itself at
+        // `icon_rect` as an internal child; a glyph is centred here.
+        match &self.icon {
+            Some(RowIcon::Glyph(glyph)) => {
+                let size = cx.pt(ICON_FONT_PT);
+                let w = painter
+                    .and_then(|p| p.measure_text(glyph, size))
+                    .unwrap_or(size);
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    kurbo::Rect::new(
+                        f64::from(x),
+                        f64::from(cx.bounds.min_y()),
+                        f64::from(x + cx.pt(ICON_PT)),
+                        f64::from(cx.bounds.max_y()),
+                    ),
                     f64::from(x + (cx.pt(ICON_PT) - w) / 2.0),
-                    f64::from(cx.bounds.min_y() + (cx.bounds.size.y - size) / 2.0),
-                ),
-                icon,
-                size,
-                cx.color(TokenKey::TextColor, TITLE_INK),
-            );
-            x += cx.pt(ICON_PT) + cx.pt(4.0);
+                    glyph,
+                    size,
+                    cx.color(TokenKey::TextColor, TITLE_INK),
+                );
+                x += cx.pt(ICON_PT) + cx.pt(4.0);
+            }
+            Some(RowIcon::Stroke(_)) => {
+                x += cx.pt(ICON_PT) + cx.pt(4.0);
+            }
+            None => {}
         }
         // Title + subtitle block.
         let title_size = cx.pt(TITLE_PT);
@@ -424,14 +525,11 @@ impl Widget for SettingsRow {
                 cx.color(TokenKey::TextMutedColor, SUB_INK),
             );
         } else {
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 clip,
-                kurbo::Point::new(
-                    f64::from(x),
-                    f64::from(cx.bounds.min_y() + (cx.bounds.size.y - title_size) / 2.0),
-                ),
+                f64::from(x),
                 &self.title,
                 title_size,
                 cx.color(TokenKey::TextColor, TITLE_INK),
@@ -440,11 +538,19 @@ impl Widget for SettingsRow {
     }
 
     fn child_count(&self) -> usize {
-        self.trailing.is_some() as usize
+        usize::from(matches!(self.icon, Some(RowIcon::Stroke(_))))
+            + usize::from(self.trailing.is_some())
     }
 
     fn child(&self, index: usize) -> Option<&dyn Widget> {
-        if index == 0 {
+        let icon = match &self.icon {
+            Some(RowIcon::Stroke(i)) => Some(i as &dyn Widget),
+            _ => None,
+        };
+        if index == 0 && icon.is_some() {
+            return icon;
+        }
+        if index == usize::from(icon.is_some()) {
             self.trailing.as_deref()
         } else {
             None
@@ -452,7 +558,14 @@ impl Widget for SettingsRow {
     }
 
     fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
-        if index == 0 {
+        let has_icon = matches!(self.icon, Some(RowIcon::Stroke(_)));
+        if index == 0 && has_icon {
+            return match &mut self.icon {
+                Some(RowIcon::Stroke(i)) => Some(i as &mut dyn Widget),
+                _ => None,
+            };
+        }
+        if index == usize::from(has_icon) {
             self.trailing.as_deref_mut()
         } else {
             None
@@ -460,7 +573,11 @@ impl Widget for SettingsRow {
     }
 
     fn child_bounds(&self, index: usize) -> Option<Rect> {
-        (index == 0 && self.trailing.is_some()).then_some(self.trailing_rect)
+        let has_icon = matches!(self.icon, Some(RowIcon::Stroke(_)));
+        if index == 0 && has_icon {
+            return Some(self.icon_rect);
+        }
+        (index == usize::from(has_icon) && self.trailing.is_some()).then_some(self.trailing_rect)
     }
 }
 
