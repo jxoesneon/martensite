@@ -387,7 +387,7 @@ impl Widget for EmojiPicker {
         // band with the active clip and culls off-screen headers.
         let mut y = self.bounds.min_y() + PAD_PT * s;
         for (name, emojis) in &self.sections {
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
@@ -396,10 +396,7 @@ impl Widget for EmojiPicker {
                     f64::from(self.bounds.max_x()),
                     f64::from(y + HEADER_PT * s),
                 ),
-                kurbo::Point::new(
-                    f64::from(self.bounds.min_x() + PAD_PT * s),
-                    f64::from(y + HEADER_PT * 0.65 * s),
-                ),
+                f64::from(self.bounds.min_x() + PAD_PT * s),
                 name,
                 FONT_PT * s,
                 cx.color(TokenKey::TextMutedColor, MUTED),
@@ -429,14 +426,16 @@ impl Widget for EmojiPicker {
                 let gw = painter
                     .and_then(|p| p.measure_text(&e.glyph, gsize))
                     .unwrap_or(gsize * 0.6);
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    kr,
-                    kurbo::Point::new(
-                        f64::from(r.min_x() + (r.width() - gw) / 2.0),
-                        f64::from(r.min_y() + r.height() / 2.0),
+                    kurbo::Rect::new(
+                        kr.x0,
+                        f64::from(r.min_y()),
+                        kr.x1,
+                        f64::from(r.min_y() + (r.height())),
                     ),
+                    f64::from(r.min_x() + (r.width() - gw) / 2.0),
                     &e.glyph,
                     gsize,
                     cx.color(TokenKey::TextColor, TEXT),

@@ -329,14 +329,16 @@ impl Widget for Flashcard {
         let w = painter
             .and_then(|p| p.measure_text(face, size))
             .unwrap_or(face.chars().count() as f32 * size * 0.55);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            krect,
-            kurbo::Point::new(
-                f64::from(b.min_x() + (b.width() - w).max(0.0) / 2.0),
-                f64::from(b.min_y() + (b.height() - size * 1.2).max(0.0) / 2.0),
+            kurbo::Rect::new(
+                krect.x0,
+                f64::from(b.min_y()),
+                krect.x1,
+                f64::from(b.min_y() + (b.height())),
             ),
+            f64::from(b.min_x() + (b.width() - w).max(0.0) / 2.0),
             face,
             size,
             fg,

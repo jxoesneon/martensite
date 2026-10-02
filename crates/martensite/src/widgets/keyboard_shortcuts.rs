@@ -331,28 +331,32 @@ impl Widget for KeyboardShortcuts {
                     f64::from(y1),
                 )
             };
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                kr(r.min_y(), r.min_y() + title_h),
-                kurbo::Point::new(
-                    f64::from(r.min_x()),
-                    f64::from(r.min_y() + (title_h - title_font) / 2.0),
+                kurbo::Rect::new(
+                    kr(r.min_y(), r.min_y() + title_h).x0,
+                    f64::from(r.min_y()),
+                    kr(r.min_y(), r.min_y() + title_h).x1,
+                    f64::from(r.min_y() + (title_h)),
                 ),
+                f64::from(r.min_x()),
                 &g.title,
                 title_font,
                 cx.color(TokenKey::TextColor, INK),
             );
             for (i, row) in g.rows.iter().enumerate() {
                 let y = r.min_y() + title_h + i as f32 * row_h;
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    kr(y, y + row_h),
-                    kurbo::Point::new(
-                        f64::from(r.min_x()),
-                        f64::from(y + (row_h - row_font) / 2.0),
+                    kurbo::Rect::new(
+                        kr(y, y + row_h).x0,
+                        f64::from(y),
+                        kr(y, y + row_h).x1,
+                        f64::from(y + (row_h)),
                     ),
+                    f64::from(r.min_x()),
                     &row.label,
                     row_font,
                     cx.color(TokenKey::TextColor, INK),
@@ -361,14 +365,16 @@ impl Widget for KeyboardShortcuts {
                 let kw = painter
                     .and_then(|p| p.measure_text(&row.keys, row_font))
                     .unwrap_or(0.0);
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    kr(y, y + row_h),
-                    kurbo::Point::new(
-                        f64::from((r.max_x() - kw).max(r.min_x() + keys_gap)),
-                        f64::from(y + (row_h - row_font) / 2.0),
+                    kurbo::Rect::new(
+                        kr(y, y + row_h).x0,
+                        f64::from(y),
+                        kr(y, y + row_h).x1,
+                        f64::from(y + (row_h)),
                     ),
+                    f64::from((r.max_x() - kw).max(r.min_x() + keys_gap)),
                     &row.keys,
                     row_font,
                     cx.color(TokenKey::TextMutedColor, MUTED),

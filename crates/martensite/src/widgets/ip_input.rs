@@ -35,7 +35,7 @@ use martensite_sanitize::{Sanitize, SanitizerConfig};
 use martensite_theme::TokenKey;
 use std::sync::Arc;
 
-use crate::text_paint::{paint_label_clipped, SharedTextPainter};
+use crate::text_paint::SharedTextPainter;
 use crate::widgets::SpinBox;
 
 const OCTET_W_PT: f32 = 52.0;
@@ -588,19 +588,16 @@ impl Widget for IpInput {
                 self.dot_w(),
                 self.bounds.height(),
             );
-            paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(gap.min_x()),
                     f64::from(gap.min_y()),
                     f64::from(gap.max_x()),
-                    f64::from(gap.max_y()),
+                    f64::from(gap.min_y() + (gap.height())),
                 ),
-                kurbo::Point::new(
-                    f64::from(gap.min_x() + gap.width() / 2.0 - size * 0.15),
-                    f64::from(gap.min_y() + (gap.height() - size * 1.2) / 2.0),
-                ),
+                f64::from(gap.min_x() + gap.width() / 2.0 - size * 0.15),
                 ".",
                 size,
                 muted,

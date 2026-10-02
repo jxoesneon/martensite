@@ -761,19 +761,16 @@ impl Widget for SectionHeader {
         } else {
             b.max_x() - cx.pt(4.0)
         };
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
                 f64::from(title_x),
                 f64::from(b.min_y()),
                 f64::from(title_right),
-                f64::from(b.max_y()),
+                f64::from(b.min_y() + (b.height())),
             ),
-            kurbo::Point::new(
-                f64::from(title_x),
-                f64::from(b.min_y() + (b.height() - font_px) / 2.0),
-            ),
+            f64::from(title_x),
             &self.title,
             font_px,
             muted,

@@ -356,19 +356,16 @@ impl Widget for Dialog {
                 cx.pt(1.0),
                 cx.color(TokenKey::BorderColor, [110, 115, 125, 255]),
             );
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(r.origin.x + cx.pt(12.0)),
                     f64::from(r.origin.y),
                     f64::from(r.max_x() - cx.pt(8.0)),
-                    f64::from(r.max_y()),
+                    f64::from(r.origin.y + (r.size.y)),
                 ),
-                kurbo::Point::new(
-                    f64::from(r.origin.x + cx.pt(12.0)),
-                    f64::from(r.origin.y + (r.size.y - cx.pt(13.0)) / 2.0),
-                ),
+                f64::from(r.origin.x + cx.pt(12.0)),
                 label,
                 cx.pt(13.0),
                 if primary {

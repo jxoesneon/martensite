@@ -368,7 +368,12 @@ impl Widget for SpeedDial {
                     cx.list,
                     kurbo::Point::new(
                         f64::from(chip.min_x() + 6.0 * s),
-                        f64::from(chip.min_y() + (chip_h - sz * 1.3) / 2.0 + 1.0 * s),
+                        crate::text_paint::centered_label_top(
+                            painter,
+                            chip.min_y() + (chip_h) / 2.0,
+                            a,
+                            sz,
+                        ),
                     ),
                     a,
                     sz,
@@ -386,7 +391,12 @@ impl Widget for SpeedDial {
                     cx.list,
                     kurbo::Point::new(
                         f64::from(cx_center - sz * 0.35),
-                        f64::from(my + (mini_d - sz * 1.4) / 2.0 + 2.0 * s),
+                        crate::text_paint::centered_label_top(
+                            painter,
+                            my + (mini_d) / 2.0,
+                            &glyph,
+                            sz * 1.3,
+                        ),
                     ),
                     &glyph,
                     sz * 1.3,
@@ -429,7 +439,12 @@ impl Widget for SpeedDial {
                 cx.list,
                 kurbo::Point::new(
                     f64::from(fab.min_x() + fab_d / 2.0 - gsz * 0.3),
-                    f64::from(fab.min_y() + fab_d / 2.0 - gsz * 0.68),
+                    crate::text_paint::centered_label_top(
+                        painter,
+                        fab.min_y() + fab_d / 2.0,
+                        glyph,
+                        gsz,
+                    ),
                 ),
                 glyph,
                 gsz,

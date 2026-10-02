@@ -1112,14 +1112,16 @@ impl Widget for MenuRow {
                         ),
                     )
                 };
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                     cx.list,
-                    clip,
-                    kurbo::Point::new(
-                        f64::from(x),
-                        f64::from(b.min_y() + (b.height() - font_px) / 2.0),
+                    kurbo::Rect::new(
+                        clip.x0,
+                        f64::from(b.min_y()),
+                        clip.x1,
+                        f64::from(b.min_y() + (b.height())),
                     ),
+                    f64::from(x),
                     label.as_str(),
                     font_px,
                     cx.color(TokenKey::TextMutedColor, INK_MUTED),
@@ -1265,19 +1267,16 @@ impl Widget for MenuRow {
             } else {
                 cx.color(TokenKey::TextMutedColor, INK_MUTED)
             };
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(sc_x),
                     f64::from(b.min_y()),
                     f64::from(sc_right),
-                    f64::from(b.max_y()),
+                    f64::from(b.min_y() + (b.height())),
                 ),
-                kurbo::Point::new(
-                    f64::from(sc_x),
-                    f64::from(b.min_y() + (b.height() - sc_px) / 2.0),
-                ),
+                f64::from(sc_x),
                 shortcut,
                 sc_px,
                 sc_ink,
@@ -1316,7 +1315,12 @@ impl Widget for MenuRow {
                     cx.list,
                     kurbo::Point::new(
                         f64::from(x),
-                        f64::from(b.min_y() + (b.height() - sub_px) / 2.0),
+                        crate::text_paint::centered_label_top(
+                            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                            b.min_y() + (b.height()) / 2.0,
+                            if rtl { "◂" } else { "▸" },
+                            sub_px,
+                        ),
                     ),
                     if rtl { "◂" } else { "▸" },
                     sub_px,

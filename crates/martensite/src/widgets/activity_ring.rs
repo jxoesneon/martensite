@@ -264,7 +264,7 @@ impl Widget for ActivityRing {
             ),
             kurbo::Point::new(
                 f64::from(center.x - w / 2.0),
-                f64::from(center.y - size / 2.0),
+                crate::text_paint::centered_label_top(painter, center.y, &pct, size),
             ),
             &pct,
             size,

@@ -269,14 +269,16 @@ impl Widget for Marquee {
         let clip = f(self.bounds);
         cx.list.push_clip(clip);
         let x = self.bounds.max_x() - self.offset;
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            clip,
-            kurbo::Point::new(
-                f64::from(x),
-                f64::from(self.bounds.min_y() + (self.bounds.height() - size * 1.2) / 2.0),
+            kurbo::Rect::new(
+                clip.x0,
+                f64::from(self.bounds.min_y()),
+                clip.x1,
+                f64::from(self.bounds.min_y() + (self.bounds.height())),
             ),
+            f64::from(x),
             &self.text,
             size,
             cx.color(TokenKey::TextColor, FG),

@@ -403,14 +403,11 @@ impl Widget for WaitingRoom {
             if self.hovered == Some(i) {
                 cx.list.push_fill_shape(kr, &shape, ROW_HOVER);
             }
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kr,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + 8.0 * s),
-                    f64::from(r.min_y() + r.height() * 0.7),
-                ),
+                f64::from(r.min_x() + 8.0 * s),
                 name,
                 FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),

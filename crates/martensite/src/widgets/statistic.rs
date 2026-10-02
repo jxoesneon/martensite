@@ -362,11 +362,11 @@ impl Widget for Statistic {
         let affix_px = cx.pt(VALUE_PT * 0.55);
         let mut x = b.min_x();
         if let Some(ref p) = self.prefix {
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                clip,
-                kurbo::Point::new(f64::from(x), f64::from(y + (value_px - affix_px) / 2.0)),
+                kurbo::Rect::new(clip.x0, f64::from(y), clip.x1, f64::from(y + (value_px))),
+                f64::from(x),
                 p,
                 affix_px,
                 muted,
@@ -390,11 +390,11 @@ impl Widget for Statistic {
             .unwrap_or(value_px * self.value.chars().count() as f32 * 0.55);
         x += vw + cx.pt(AFFIX_GAP_PT);
         if let Some(ref s) = self.suffix {
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                clip,
-                kurbo::Point::new(f64::from(x), f64::from(y + (value_px - affix_px) / 2.0)),
+                kurbo::Rect::new(clip.x0, f64::from(y), clip.x1, f64::from(y + (value_px))),
+                f64::from(x),
                 s,
                 affix_px,
                 muted,

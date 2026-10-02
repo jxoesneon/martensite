@@ -676,19 +676,16 @@ impl Widget for MenuBar {
                 cx.color(TokenKey::TextColor, INK)
             };
             let tx = r.min_x() + cx.pt(BUTTON_PAD_X);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(tx),
                     f64::from(r.min_y()),
                     f64::from(r.max_x() - cx.pt(4.0)),
-                    f64::from(r.max_y()),
+                    f64::from(r.min_y() + (r.height())),
                 ),
-                kurbo::Point::new(
-                    f64::from(tx),
-                    f64::from(r.min_y() + (r.height() - font_px) / 2.0),
-                ),
+                f64::from(tx),
                 &menu.label,
                 font_px,
                 ink,

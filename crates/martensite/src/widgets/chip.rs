@@ -413,19 +413,16 @@ impl Widget for Chip {
             b.max_x() - cx.pt(PAD_X)
         };
 
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
             kurbo::Rect::new(
                 f64::from(text_x),
                 f64::from(b.origin.y),
                 f64::from(text_right),
-                f64::from(b.max_y()),
+                f64::from(b.origin.y + (b.size.y)),
             ),
-            kurbo::Point::new(
-                f64::from(text_x),
-                f64::from(b.origin.y + (b.size.y - cx.pt(LABEL_SIZE)) / 2.0),
-            ),
+            f64::from(text_x),
             &self.label,
             cx.pt(LABEL_SIZE),
             ink,

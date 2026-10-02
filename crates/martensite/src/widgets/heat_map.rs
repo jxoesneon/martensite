@@ -275,7 +275,7 @@ impl Widget for HeatMap {
                 self.cells.len(),
                 lo,
                 hi,
-                sum / n as f32,
+                sum / n as f32
             )
         });
         if !self.enabled {

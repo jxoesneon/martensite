@@ -25,7 +25,7 @@ use martensite_core::{
 };
 use martensite_theme::TokenKey;
 
-use crate::text_paint::{paint_label_clipped, SharedTextPainter};
+use crate::text_paint::SharedTextPainter;
 
 const CELL_W_PT: f32 = 22.0;
 const CELL_H_PT: f32 = 30.0;
@@ -292,14 +292,16 @@ impl Widget for SplitFlap {
             if ch != ' ' {
                 let s = ch.to_string();
                 let w = size * 0.62;
-                paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    f(r),
-                    kurbo::Point::new(
-                        f64::from(r.min_x() + (cell_w - w) / 2.0),
-                        f64::from(r.min_y() + (cell_h - size) / 2.0),
+                    kurbo::Rect::new(
+                        f(r).x0,
+                        f64::from(r.min_y()),
+                        f(r).x1,
+                        f64::from(r.min_y() + (cell_h)),
                     ),
+                    f64::from(r.min_x() + (cell_w - w) / 2.0),
                     &s,
                     size,
                     glyph,

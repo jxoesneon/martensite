@@ -499,14 +499,16 @@ impl Widget for ZoomControls {
             let gw = painter
                 .and_then(|p| p.measure_text(glyph, size))
                 .unwrap_or(glyph.chars().count() as f32 * size * 0.55);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                krect,
-                kurbo::Point::new(
-                    f64::from(rect.min_x() + (rect.width() - gw).max(0.0) / 2.0),
-                    f64::from(rect.min_y() + (rect.height() - size * 1.2).max(0.0) / 2.0),
+                kurbo::Rect::new(
+                    krect.x0,
+                    f64::from(rect.min_y()),
+                    krect.x1,
+                    f64::from(rect.min_y() + (rect.height())),
                 ),
+                f64::from(rect.min_x() + (rect.width() - gw).max(0.0) / 2.0),
                 glyph,
                 size,
                 if self.action_enabled(*action) {
@@ -546,19 +548,16 @@ impl Widget for ZoomControls {
             } else {
                 cx.bounds.min_x() + (cx.bounds.width() - rw).max(0.0) / 2.0
             };
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(cx.bounds.min_x()),
                     f64::from(ry),
                     f64::from(cx.bounds.max_x()),
-                    f64::from(ry + READOUT_PT * s),
+                    f64::from(ry + (READOUT_PT * s)),
                 ),
-                kurbo::Point::new(
-                    f64::from(rw_x),
-                    f64::from(ry + (READOUT_PT * s - small * 1.2).max(0.0) / 2.0),
-                ),
+                f64::from(rw_x),
                 &readout,
                 small,
                 dim,

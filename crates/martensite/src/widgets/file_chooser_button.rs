@@ -434,14 +434,16 @@ impl Widget for FileChooserButton {
             (self.bounds.max_x() - pad - glyph_rect.max_x() - cx.pt(6.0)).max(0.0),
             self.bounds.height(),
         );
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            f(clip),
-            kurbo::Point::new(
-                f64::from(clip.min_x()),
-                f64::from(self.bounds.min_y() + (self.bounds.height() - size) / 2.0),
+            kurbo::Rect::new(
+                f(clip).x0,
+                f64::from(self.bounds.min_y()),
+                f(clip).x1,
+                f64::from(self.bounds.min_y() + (self.bounds.height())),
             ),
+            f64::from(clip.min_x()),
             self.face_text(),
             size,
             if self.file_name.is_some() { fg } else { muted },

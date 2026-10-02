@@ -350,7 +350,12 @@ impl Widget for HeroHeader {
                 cx.list,
                 kurbo::Point::new(
                     f64::from(rect.min_x() + (rect.width() - w) / 2.0),
-                    f64::from(rect.min_y() + rect.height() / 2.0 + cfs * 0.35),
+                    crate::text_paint::centered_label_top(
+                        painter,
+                        rect.min_y() + (rect.height()) / 2.0,
+                        caption,
+                        cfs,
+                    ),
                 ),
                 caption,
                 cfs,

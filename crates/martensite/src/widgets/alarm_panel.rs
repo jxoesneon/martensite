@@ -706,7 +706,12 @@ impl Widget for AlarmPanel {
                         cx.list,
                         kurbo::Point::new(
                             f64::from(r.max_x() - 18.0 * s),
-                            f64::from(y + (row_h - msg_sz * 1.4) / 2.0),
+                            crate::text_paint::centered_label_top(
+                                painter,
+                                y + (row_h) / 2.0,
+                                "✓",
+                                msg_sz,
+                            ),
                         ),
                         "✓",
                         msg_sz,

@@ -511,7 +511,10 @@ impl Widget for Weather {
                     f64::from(self.bounds.max_x()),
                     f64::from(self.bounds.max_y()),
                 ),
-                kurbo::Point::new(f64::from(tx), f64::from(cy - temp_sz - loc_sz * 0.4)),
+                kurbo::Point::new(
+                    f64::from(tx),
+                    crate::text_paint::centered_label_top(painter, cy, &self.location, loc_sz),
+                ),
                 &self.location,
                 loc_sz,
                 muted,
@@ -526,7 +529,10 @@ impl Widget for Weather {
                 f64::from(self.bounds.max_x()),
                 f64::from(self.bounds.max_y()),
             ),
-            kurbo::Point::new(f64::from(tx), f64::from(cy - temp_sz * 0.55)),
+            kurbo::Point::new(
+                f64::from(tx),
+                crate::text_paint::centered_label_top(painter, cy, &self.face(), temp_sz),
+            ),
             &self.face(),
             temp_sz,
             fg,

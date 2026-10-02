@@ -474,7 +474,12 @@ impl Widget for PricingTable {
                 cx.list,
                 kurbo::Point::new(
                     f64::from(cta.min_x() + (cta.width() - w) / 2.0),
-                    f64::from(cta.min_y() + cta.height() / 2.0 + cfs * 0.35),
+                    crate::text_paint::centered_label_top(
+                        painter,
+                        cta.min_y() + (cta.height()) / 2.0,
+                        &plan.cta,
+                        cfs,
+                    ),
                 ),
                 &plan.cta,
                 cfs,

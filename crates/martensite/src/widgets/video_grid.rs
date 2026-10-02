@@ -444,7 +444,12 @@ impl Widget for VideoGrid {
                     cx.list,
                     kurbo::Point::new(
                         f64::from(r.min_x() + (r.width() - iw) / 2.0),
-                        f64::from(r.min_y() + (r.height() - cap) / 2.0),
+                        crate::text_paint::centered_label_top(
+                            painter,
+                            r.min_y() + (r.height()) / 2.0,
+                            &initial,
+                            fs,
+                        ),
                     ),
                     &initial,
                     fs,

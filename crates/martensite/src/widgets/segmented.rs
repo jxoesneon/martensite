@@ -320,19 +320,16 @@ impl Widget for Segment {
         } else {
             cx.color(TokenKey::TextColor, INK)
         };
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
                 f64::from(b.min_x() + cx.pt(4.0)),
                 f64::from(b.min_y()),
                 f64::from(label_right),
-                f64::from(b.max_y()),
+                f64::from(b.min_y() + (b.height())),
             ),
-            kurbo::Point::new(
-                f64::from(text_x.max(b.min_x() + cx.pt(4.0))),
-                f64::from(b.min_y() + (b.height() - font_px) / 2.0),
-            ),
+            f64::from(text_x.max(b.min_x() + cx.pt(4.0))),
             &label,
             font_px,
             ink,

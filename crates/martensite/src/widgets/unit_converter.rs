@@ -518,13 +518,11 @@ impl Widget for UnitConverter {
             krect(self.cat_rect),
             cx.color(TokenKey::SecondaryColor, CELL),
         );
-        crate::text_paint::paint_label(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            kurbo::Point::new(
-                f64::from(self.cat_rect.min_x() + PAD_PT * 0.6 * s),
-                f64::from(self.cat_rect.min_y() + self.cat_rect.height() * 0.68),
-            ),
+            krect(self.cat_rect),
+            f64::from(self.cat_rect.min_x() + PAD_PT * 0.6 * s),
             &format!("{} ▾", self.category.name()),
             FONT_PT * s,
             cx.color(TokenKey::TextColor, TEXT),
@@ -539,14 +537,11 @@ impl Widget for UnitConverter {
         ] {
             cx.list
                 .push_fill_rect(krect(rect), cx.color(TokenKey::SecondaryColor, CELL));
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 krect(rect),
-                kurbo::Point::new(
-                    f64::from(rect.min_x() + PAD_PT * 0.6 * s),
-                    f64::from(rect.min_y() + rect.height() * 0.68),
-                ),
+                f64::from(rect.min_x() + PAD_PT * 0.6 * s),
                 &text,
                 FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),

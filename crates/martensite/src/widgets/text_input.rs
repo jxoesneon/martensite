@@ -1986,19 +1986,16 @@ impl Widget for TextInput {
                     None => muted,
                 };
                 let msg_px = cx.pt(MSG_FONT_PT);
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                     cx.list,
                     kurbo::Rect::new(
                         f64::from(b.min_x()),
                         f64::from(face_bottom),
                         f64::from(b.max_x()),
-                        f64::from(b.max_y()),
+                        f64::from(face_bottom + (msg_h)),
                     ),
-                    kurbo::Point::new(
-                        f64::from(b.origin.x + pad),
-                        f64::from(face_bottom + (msg_h - msg_px) / 2.0),
-                    ),
+                    f64::from(b.origin.x + pad),
                     msg,
                     msg_px,
                     color,

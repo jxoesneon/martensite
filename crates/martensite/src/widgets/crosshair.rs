@@ -286,10 +286,16 @@ impl Widget for Crosshair {
                 ),
                 cx.color(TokenKey::SurfaceColor, CHIP),
             );
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                kurbo::Point::new(f64::from(cx0 + pad), f64::from(cy0 + pad + fs * 0.5)),
+                kurbo::Rect::new(
+                    f64::from(cx0),
+                    f64::from(cy0),
+                    f64::from(cx0 + tw + pad * 2.0),
+                    f64::from(cy0 + fs + pad * 2.0),
+                ),
+                f64::from(cx0 + pad),
                 &text,
                 fs,
                 cx.color(TokenKey::TextColor, TEXT),

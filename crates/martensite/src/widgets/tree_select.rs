@@ -1127,19 +1127,16 @@ impl Widget for TreeSelect {
         // Clip the selected label to the face minus the chevron zone —
         // a long label can't spill past the field edge.
         let text_x = b.min_x() + cx.pt(10.0);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
             kurbo::Rect::new(
                 f64::from(text_x),
                 f64::from(b.min_y()),
                 f64::from(b.max_x() - cx.pt(24.0)),
-                f64::from(b.max_y()),
+                f64::from(b.min_y() + (b.height())),
             ),
-            kurbo::Point::new(
-                f64::from(text_x),
-                f64::from(b.min_y() + (b.height() - font_px) / 2.0),
-            ),
+            f64::from(text_x),
             &text,
             font_px,
             ink,
@@ -1473,7 +1470,7 @@ mod tests {
         assert_eq!(
             event(
                 &mut ts,
-                &WidgetEvent::SemanticAction(SemanticAction::SetValue("Group".to_string())),
+                &WidgetEvent::SemanticAction(SemanticAction::SetValue("Group".to_string()))
             ),
             EventResponse::Ignored
         );

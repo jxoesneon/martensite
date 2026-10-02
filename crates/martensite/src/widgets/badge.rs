@@ -249,14 +249,11 @@ pub(crate) fn paint_spec_pill(
     let w = painter
         .and_then(|p| p.measure_text(&text, size_px))
         .unwrap_or_else(|| text.chars().count() as f32 * size_px * 0.65);
-    crate::text_paint::paint_label_clipped(
+    crate::text_paint::paint_label_vcenter(
         painter,
         cx.list,
-        pill,
-        kurbo::Point::new(
-            pill.x0 + (pill.width() - f64::from(w)).max(0.0) * 0.5,
-            pill.y0 + (pill.height() - f64::from(size_px)) * 0.5,
-        ),
+        kurbo::Rect::new(pill.x0, pill.y0, pill.x1, pill.y0 + pill.height()),
+        pill.x0 + (pill.width() - f64::from(w)).max(0.0) * 0.5,
         &text,
         size_px,
         cx.color(TokenKey::TextInverseColor, INVERSE_INK),
@@ -652,14 +649,16 @@ impl Widget for Badge {
         let w = painter
             .and_then(|p| p.measure_text(&text, size_px))
             .unwrap_or_else(|| text.chars().count() as f32 * size_px * 0.6);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            rect,
-            kurbo::Point::new(
-                f64::from(r.origin.x + (r.size.x - w) * 0.5),
-                f64::from(r.origin.y + (r.size.y - size_px) * 0.5),
+            kurbo::Rect::new(
+                rect.x0,
+                f64::from(r.origin.y),
+                rect.x1,
+                f64::from(r.origin.y + (r.size.y)),
             ),
+            f64::from(r.origin.x + (r.size.x - w) * 0.5),
             &text,
             size_px,
             cx.color(TokenKey::TextInverseColor, INVERSE_INK),

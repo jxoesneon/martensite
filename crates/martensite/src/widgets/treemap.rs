@@ -418,17 +418,18 @@ impl Widget for Treemap {
                 .and_then(|p| p.measure_text(&item.name, size))
                 .unwrap_or(item.name.chars().count() as f32 * size * 0.55);
             if w <= inner.width() - gap * 2.0 && size <= inner.height() - gap * 2.0 {
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    f(inner),
-                    kurbo::Point::new(
-                        f64::from(inner.min_x() + (inner.width() - w) / 2.0),
-                        f64::from(inner.min_y() + (inner.height() - size) / 2.0),
+                    kurbo::Rect::new(
+                        f(inner).x0,
+                        f64::from(inner.min_y()),
+                        f(inner).x1,
+                        f64::from(inner.min_y() + (inner.height())),
                     ),
+                    f64::from(inner.min_x() + (inner.width() - w) / 2.0),
                     &item.name,
-                    size,
-                    // Tile colors are data — pick the readable ink.
+                    size, // Tile colors are data — pick the readable ink.
                     crate::text_paint::better_ink(
                         color,
                         LABEL,

@@ -370,7 +370,12 @@ impl Widget for CallControls {
                 cx.list,
                 kurbo::Point::new(
                     f64::from(r.min_x() + (r.width() - w) / 2.0),
-                    f64::from(r.min_y() + r.height() / 2.0),
+                    crate::text_paint::centered_label_top(
+                        painter,
+                        r.min_y() + (r.height()) / 2.0,
+                        label,
+                        fs,
+                    ),
                 ),
                 label,
                 fs,

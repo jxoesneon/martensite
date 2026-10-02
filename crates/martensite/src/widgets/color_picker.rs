@@ -722,7 +722,12 @@ impl Widget for ColorSurface {
             cx.list,
             kurbo::Point::new(
                 f64::from(self.sv_rect.min_x()),
-                f64::from(row_y + (self.ok_rect.height() - font_px) / 2.0),
+                crate::text_paint::centered_label_top(
+                    painter,
+                    row_y + (self.ok_rect.height()) / 2.0,
+                    &hex,
+                    font_px,
+                ),
             ),
             &hex,
             font_px,
@@ -745,7 +750,12 @@ impl Widget for ColorSurface {
             cx.list,
             kurbo::Point::new(
                 f64::from(self.ok_rect.min_x() + (self.ok_rect.width() - ok_label_w) / 2.0),
-                f64::from(row_y + (self.ok_rect.height() - font_px) / 2.0),
+                crate::text_paint::centered_label_top(
+                    painter,
+                    row_y + (self.ok_rect.height()) / 2.0,
+                    "OK",
+                    font_px,
+                ),
             ),
             "OK",
             font_px,

@@ -836,14 +836,11 @@ impl Widget for Calendar {
             let w = painter
                 .and_then(|p| p.measure_text(name, wd_size))
                 .unwrap_or(wd_size * name.len() as f32 * 0.5);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 clip,
-                kurbo::Point::new(
-                    clip.x0 + (clip.width() - f64::from(w)) * 0.5,
-                    clip.y0 + clip.height() * 0.7,
-                ),
+                clip.x0 + (clip.width() - f64::from(w)) * 0.5,
                 name,
                 wd_size,
                 muted,
@@ -901,14 +898,11 @@ impl Widget for Calendar {
             let w = painter
                 .and_then(|p| p.measure_text(&label, day_size))
                 .unwrap_or(day_size * label.len() as f32 * 0.5);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 r,
-                kurbo::Point::new(
-                    r.x0 + (r.width() - f64::from(w)) * 0.5,
-                    r.y0 + r.height() * 0.68,
-                ),
+                r.x0 + (r.width() - f64::from(w)) * 0.5,
                 &label,
                 day_size,
                 day_ink,

@@ -431,19 +431,16 @@ impl Widget for ListItemRow {
             cx.color(TokenKey::TextMutedColor, INK_DISABLED)
         };
         let text_x = b.min_x() + cx.pt(8.0);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
             kurbo::Rect::new(
                 f64::from(text_x),
                 f64::from(b.min_y()),
                 f64::from(b.max_x() - cx.pt(8.0)),
-                f64::from(b.max_y()),
+                f64::from(b.min_y() + (b.height())),
             ),
-            kurbo::Point::new(
-                f64::from(text_x),
-                f64::from(b.min_y() + (b.height() - font_px) / 2.0),
-            ),
+            f64::from(text_x),
             &self.label,
             font_px,
             ink,

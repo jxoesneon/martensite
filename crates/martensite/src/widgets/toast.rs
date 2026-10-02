@@ -374,19 +374,16 @@ impl Widget for ToastHost {
             } else {
                 (r.origin.x + cx.pt(28.0), r.max_x() - cx.pt(8.0))
             };
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(text_x),
                     f64::from(r.origin.y),
                     f64::from(text_right),
-                    f64::from(r.max_y()),
+                    f64::from(r.origin.y + (r.size.y)),
                 ),
-                kurbo::Point::new(
-                    f64::from(text_x),
-                    f64::from(r.origin.y + (r.size.y - cx.pt(13.0)) / 2.0),
-                ),
+                f64::from(text_x),
                 &toast.message,
                 cx.pt(13.0),
                 cx.color(TokenKey::TextColor, INK),

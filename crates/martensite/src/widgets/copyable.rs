@@ -268,19 +268,16 @@ impl Widget for Copyable {
         let fs = FONT_PT * s;
         // Origin is the block top — centre the `fs`-high ink box in the
         // face so descenders don't spill past the bottom edge.
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
                 f64::from(b.min_x()),
                 f64::from(b.min_y()),
                 f64::from(b.max_x()),
-                f64::from(b.max_y()),
+                f64::from(b.min_y() + (b.height())),
             ),
-            kurbo::Point::new(
-                f64::from(b.min_x() + pad),
-                f64::from(b.min_y() + (b.height() - fs * 1.25) / 2.0),
-            ),
+            f64::from(b.min_x() + pad),
             &self.text,
             fs,
             cx.color(TokenKey::TextColor, TEXT_FG),

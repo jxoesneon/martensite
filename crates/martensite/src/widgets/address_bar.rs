@@ -415,7 +415,12 @@ impl Widget for AddressBar {
             cx.list,
             kurbo::Point::new(
                 f64::from(self.field_rect.min_x()),
-                f64::from(self.field_rect.min_y() + self.field_rect.height() / 2.0 + fs * 0.35),
+                crate::text_paint::centered_label_top(
+                    painter,
+                    self.field_rect.min_y() + (self.field_rect.height()) / 2.0,
+                    &self.url,
+                    fs,
+                ),
             ),
             &self.url,
             fs,

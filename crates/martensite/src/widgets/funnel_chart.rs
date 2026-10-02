@@ -280,19 +280,16 @@ impl Widget for FunnelChart {
             // "name — value" to the right of the funnel.
             let size = 12.0 * cx.scale;
             let text = format!("{name} — {value:.0}");
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                f(Rect::new(
-                    self.bounds.min_x() + chart_w + cx.pt(6.0),
-                    y0,
-                    self.bounds.width() - chart_w - cx.pt(8.0),
-                    band_h,
-                )),
-                kurbo::Point::new(
+                kurbo::Rect::new(
                     f64::from(self.bounds.min_x() + chart_w + cx.pt(6.0)),
-                    f64::from(y0 + (band_h - size * 1.2) / 2.0),
+                    f64::from(y0),
+                    f64::from(self.bounds.min_x() + self.bounds.width() - cx.pt(8.0)),
+                    f64::from(y0 + band_h),
                 ),
+                f64::from(self.bounds.min_x() + chart_w + cx.pt(6.0)),
                 &text,
                 size,
                 if self.hovered == Some(i) { fg } else { muted },

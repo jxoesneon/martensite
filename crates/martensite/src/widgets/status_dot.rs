@@ -451,7 +451,10 @@ impl StatusDot {
                 f64::from(clip.max_x()),
                 f64::from(clip.max_y()),
             ),
-            kurbo::Point::new(f64::from(x), f64::from(cy - size / 2.0)),
+            kurbo::Point::new(
+                f64::from(x),
+                crate::text_paint::centered_label_top(painter, cy, &self.text, size),
+            ),
             &self.text,
             size,
             cx.color(TokenKey::TextColor, FG),

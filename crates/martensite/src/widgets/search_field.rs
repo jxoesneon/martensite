@@ -582,19 +582,16 @@ impl Widget for SearchField {
         }
         if let Some(ref label) = self.label {
             let font_px = cx.pt(CAPTION_FONT_PT);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(b.min_x()),
                     f64::from(b.min_y()),
                     f64::from(b.max_x()),
-                    f64::from(b.min_y() + caption_h),
+                    f64::from(b.min_y() + (caption_h)),
                 ),
-                kurbo::Point::new(
-                    f64::from(b.min_x() + cx.pt(2.0)),
-                    f64::from(b.min_y() + (caption_h - font_px) / 2.0),
-                ),
+                f64::from(b.min_x() + cx.pt(2.0)),
                 label,
                 font_px,
                 cx.color(TokenKey::TextMutedColor, CAPTION_INK),

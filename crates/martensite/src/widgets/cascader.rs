@@ -548,14 +548,11 @@ impl Widget for Cascader {
                 };
                 let chev = cx.pt(CHEV_PT);
                 let text_w = (col_w - 2.0 * pad - chev).max(0.0);
-                paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    clip,
-                    kurbo::Point::new(
-                        f64::from(col_x + pad),
-                        f64::from(y + (row_h - 12.0 * cx.scale) / 2.0),
-                    ),
+                    kurbo::Rect::new(clip.x0, f64::from(y), clip.x1, f64::from(y + (row_h))),
+                    f64::from(col_x + pad),
                     &option.label,
                     12.0 * cx.scale,
                     ink,
@@ -588,14 +585,16 @@ impl Widget for Cascader {
                             )
                         });
                     if !icon_ok {
-                        paint_label_clipped(
+                        crate::text_paint::paint_label_vcenter(
                             painter,
                             cx.list,
-                            clip,
-                            kurbo::Point::new(
-                                f64::from(chev_x),
-                                f64::from(y + (row_h - 10.0 * cx.scale) / 2.0),
+                            kurbo::Rect::new(
+                                clip.x0,
+                                f64::from(y),
+                                clip.x1,
+                                f64::from(y + (row_h)),
                             ),
+                            f64::from(chev_x),
                             if rtl { "‹" } else { "›" },
                             10.0 * cx.scale,
                             muted,

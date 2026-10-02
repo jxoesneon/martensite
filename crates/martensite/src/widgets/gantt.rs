@@ -369,14 +369,16 @@ impl Widget for Gantt {
                 LABEL_PT * cx.scale - cx.pt(6.0),
                 row_h,
             );
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                f(label_r),
-                kurbo::Point::new(
-                    f64::from(label_r.min_x() + cx.pt(4.0)),
-                    f64::from(y0 + (row_h - size * 1.2) / 2.0),
+                kurbo::Rect::new(
+                    f(label_r).x0,
+                    f64::from(y0),
+                    f(label_r).x1,
+                    f64::from(y0 + (row_h)),
                 ),
+                f64::from(label_r.min_x() + cx.pt(4.0)),
                 &task.name,
                 size,
                 if self.hovered == Some(i) { fg } else { muted },

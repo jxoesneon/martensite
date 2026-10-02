@@ -307,19 +307,16 @@ impl Widget for TabItem {
             14.0,
             label_right - text_x,
         );
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
                 f64::from(text_x),
                 f64::from(b.min_y()),
                 f64::from(label_right),
-                f64::from(b.max_y()),
+                f64::from(b.min_y() + (b.height())),
             ),
-            kurbo::Point::new(
-                f64::from(text_x),
-                f64::from(b.min_y() + (b.height() - font_px) / 2.0),
-            ),
+            f64::from(text_x),
             &label,
             font_px,
             cx.color(TokenKey::TextColor, INK),
@@ -352,14 +349,16 @@ impl Widget for TabItem {
                     )
                 });
             if !icon_ok {
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    close_clip,
-                    kurbo::Point::new(
-                        f64::from(b.max_x() - close_w - cx.pt(2.0)),
-                        f64::from(b.min_y() + (b.height() - glyph_px) / 2.0),
+                    kurbo::Rect::new(
+                        close_clip.x0,
+                        f64::from(b.min_y()),
+                        close_clip.x1,
+                        f64::from(b.min_y() + (b.height())),
                     ),
+                    f64::from(b.max_x() - close_w - cx.pt(2.0)),
                     "×",
                     glyph_px,
                     ink,

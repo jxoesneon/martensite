@@ -322,14 +322,16 @@ impl Widget for HeaderBar {
             let w = painter
                 .and_then(|p| p.measure_text(&self.title, title_size))
                 .unwrap_or(title_size * self.title.len() as f32 * 0.5);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                clip,
-                kurbo::Point::new(
-                    mid_x - f64::from(w) / 2.0,
-                    f64::from(b.min_y() + (b.height() - title_size) / 2.0),
+                kurbo::Rect::new(
+                    clip.x0,
+                    f64::from(b.min_y()),
+                    clip.x1,
+                    f64::from(b.min_y() + (b.height())),
                 ),
+                mid_x - f64::from(w) / 2.0,
                 &self.title,
                 title_size,
                 cx.color(TokenKey::TextColor, TITLE_INK),

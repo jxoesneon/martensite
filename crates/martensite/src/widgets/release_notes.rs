@@ -370,7 +370,12 @@ impl Widget for ReleaseNotes {
                     cx.list,
                     kurbo::Point::new(
                         f64::from(tr.min_x() + (tr.width() - tw) / 2.0),
-                        f64::from(tr.min_y() + tr.height() / 2.0 + tfs * 0.35),
+                        crate::text_paint::centered_label_top(
+                            painter,
+                            f64::from(tr.min_y() + tr.height() / 2.0),
+                            kind.tag(),
+                            tfs,
+                        ),
                     ),
                     kind.tag(),
                     tfs,
@@ -381,7 +386,12 @@ impl Widget for ReleaseNotes {
                     cx.list,
                     kurbo::Point::new(
                         f64::from(tr.max_x() + 8.0 * s),
-                        f64::from(y + tr.height() * 0.8),
+                        crate::text_paint::centered_label_top(
+                            painter,
+                            f64::from(y) + f64::from(tr.height()) / 2.0,
+                            text,
+                            DATE_PT * s,
+                        ),
                     ),
                     text,
                     DATE_PT * s,

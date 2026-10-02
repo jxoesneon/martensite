@@ -1019,6 +1019,48 @@ pub(crate) fn vcenter_origin_y(strip: kurbo::Rect, size_px: f32) -> f64 {
     strip.y0 + (strip.height() - line_h).max(0.0) * 0.5
 }
 
+/// Block-top `y` that centers the *ink* of `text` inside `strip`, not
+/// the line box — the optical centering that `text-box-trim`/`text-box-edge`
+/// (`cap alphabetic`) and tight-bounds centering aim for. Centering the
+/// metric line box leaves the baseline low when a font's ascent carries
+/// headroom above the cap height (the common case), so glyphs read as
+/// sunk; centering the real glyph bounds puts visible text at the
+/// strip's midpoint. `None` when the painter cannot produce outlines —
+/// callers fall back to [`vcenter_origin_y`].
+pub(crate) fn ink_vcenter_origin_y(
+    painter: &(dyn martensite_core::paint::TextShaper + Send + Sync),
+    strip: kurbo::Rect,
+    text: &str,
+    size_px: f32,
+) -> Option<f64> {
+    let bb = painter.text_path(text, size_px)?.bounding_box();
+    // Degenerate ink (e.g. whitespace) — no optical signal.
+    (bb.y1 > bb.y0).then_some((strip.y0 + strip.y1 - (bb.y0 + bb.y1)) * 0.5)
+}
+
+/// Block-top `y` that places `text`'s ink center at `center_y` — the
+/// [`ink_vcenter_origin_y`] computation for point-centered labels
+/// (gauges, chart nodes, compass roses) that have no strip rect. Falls
+/// back to centering the `1.25·size_px` line box when the painter
+/// cannot outline.
+pub(crate) fn centered_label_top(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    center_y: impl Into<f64>,
+    text: &str,
+    size_px: f32,
+) -> f64 {
+    let center_y = center_y.into();
+    let strip = kurbo::Rect::new(
+        0.0,
+        center_y - f64::from(size_px),
+        0.0,
+        center_y + f64::from(size_px),
+    );
+    painter
+        .and_then(|p| ink_vcenter_origin_y(p, strip, text, size_px))
+        .unwrap_or(center_y - f64::from(size_px) * 0.625)
+}
+
 /// [`paint_label_vcenter`] with an explicit style axis — see
 /// [`paint_label_styled`].
 #[allow(clippy::too_many_arguments)]
@@ -1032,7 +1074,9 @@ pub(crate) fn paint_label_vcenter_styled(
     color: [u8; 4],
     style: TextStyle,
 ) {
-    let y = vcenter_origin_y(clip, size_px);
+    let y = painter
+        .and_then(|p| ink_vcenter_origin_y(p, clip, text, size_px))
+        .unwrap_or_else(|| vcenter_origin_y(clip, size_px));
     paint_label_clipped_styled(
         painter,
         list,
@@ -1332,5 +1376,65 @@ mod tests {
         // Clamping outside the run.
         assert_eq!(p.byte_at(text, 14.0, -100.0), 0);
         assert_eq!(p.byte_at(text, 14.0, 100_000.0), text.len());
+    }
+
+    #[test]
+    fn vcenter_origin_y_centers_the_line_box() {
+        // A 40px strip with a 14px font → line box 17.5px → top 11.25.
+        let strip = kurbo::Rect::new(0.0, 10.0, 200.0, 50.0);
+        let y = vcenter_origin_y(strip, 14.0);
+        let line_h = 14.0 * 1.25;
+        assert!((y - (10.0 + (40.0 - line_h) * 0.5)).abs() < 1e-9);
+        // Strips shorter than the line box clamp to the strip top.
+        let tight = kurbo::Rect::new(0.0, 4.0, 50.0, 12.0);
+        assert_eq!(vcenter_origin_y(tight, 14.0), 4.0);
+    }
+
+    #[test]
+    fn centered_label_top_without_painter_uses_line_box() {
+        // Fallback centers the 1.25·size line box on the point.
+        let y = centered_label_top(None, 100.0_f64, "ignored", 20.0);
+        assert!((y - (100.0 - 20.0 * 0.625)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ink_vcenter_origin_y_centers_real_ink() {
+        let painter = shared_painter();
+        let p: &(dyn martensite_core::paint::TextShaper + Send + Sync) = &painter;
+        let strip = kurbo::Rect::new(0.0, 0.0, 300.0, 24.0);
+        let y = ink_vcenter_origin_y(p, strip, "Ag", 14.0).expect("ink");
+        // Invariant: painting the block at `y` puts the ink bbox's
+        // midpoint exactly on the strip midpoint — the property the
+        // baseline-heuristic sites were missing.
+        let bb = p.text_path("Ag", 14.0).unwrap().bounding_box();
+        let ink_center = y + (bb.y0 + bb.y1) * 0.5;
+        assert!(
+            (ink_center - 12.0).abs() < 0.51,
+            "ink center {ink_center} vs strip center 12.0"
+        );
+        // Metric centering would sink the ink: ink-centered top must
+        // sit above the line-box-centered top (less y = higher).
+        assert!(y < vcenter_origin_y(strip, 14.0));
+    }
+
+    #[test]
+    fn ink_vcenter_origin_y_rejects_inkless_runs() {
+        let painter = shared_painter();
+        let p: &(dyn martensite_core::paint::TextShaper + Send + Sync) = &painter;
+        let strip = kurbo::Rect::new(0.0, 0.0, 100.0, 24.0);
+        assert_eq!(ink_vcenter_origin_y(p, strip, "", 14.0), None);
+        assert_eq!(ink_vcenter_origin_y(p, strip, "   ", 14.0), None);
+    }
+
+    #[test]
+    fn centered_label_top_matches_strip_centering() {
+        // With a painter, the point-centered helper must agree with the
+        // strip-centered one when the point is the strip's midpoint.
+        let painter = shared_painter();
+        let p: &(dyn martensite_core::paint::TextShaper + Send + Sync) = &painter;
+        let strip = kurbo::Rect::new(0.0, 40.0, 200.0, 80.0);
+        let by_strip = ink_vcenter_origin_y(p, strip, "Centered", 16.0).unwrap();
+        let by_point = centered_label_top(Some(p), 60.0_f64, "Centered", 16.0);
+        assert!((by_strip - by_point).abs() < 1e-9);
     }
 }

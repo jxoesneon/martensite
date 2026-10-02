@@ -367,7 +367,10 @@ impl Widget for RadarChart {
                     f64::from(self.bounds.max_x()),
                     f64::from(self.bounds.max_y()),
                 ),
-                kurbo::Point::new(f64::from(lx - w / 2.0), f64::from(ly - size / 2.0)),
+                kurbo::Point::new(
+                    f64::from(lx - w / 2.0),
+                    crate::text_paint::centered_label_top(painter, ly, name, size),
+                ),
                 name,
                 size,
                 muted,

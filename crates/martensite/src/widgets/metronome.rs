@@ -333,7 +333,7 @@ impl Widget for Metronome {
                 format!(", beat {}", self.beat + 1)
             } else {
                 String::new()
-            },
+            }
         ));
     }
 
@@ -467,7 +467,12 @@ impl Widget for Metronome {
             cx.list,
             kurbo::Point::new(
                 f64::from(self.bounds.max_x() - pad - sub.len() as f32 * size * 0.42),
-                f64::from(self.bounds.min_y() + self.bounds.height() - pad - size * 0.7),
+                crate::text_paint::centered_label_top(
+                    painter,
+                    f64::from(self.bounds.max_y() - pad - size * 0.35),
+                    &sub,
+                    size * 0.7,
+                ),
             ),
             &sub,
             size * 0.7,

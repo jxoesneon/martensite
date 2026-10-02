@@ -262,7 +262,7 @@ impl Widget for Burndown {
             "{} of {} days, {:.0} remaining",
             self.actual.len(),
             self.days,
-            self.remaining().unwrap_or(self.total),
+            self.remaining().unwrap_or(self.total)
         ));
     }
 

@@ -244,19 +244,16 @@ impl Widget for Drawer {
         // header chrome.
         let title_x = b.origin.x + cx.pt(14.0);
         let cr = self.close_rect(cx.scale);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
                 f64::from(title_x),
                 f64::from(b.origin.y),
                 f64::from(cr.origin.x - cx.pt(4.0)),
-                f64::from(b.origin.y + cx.pt(HEADER_H)),
+                f64::from(b.origin.y + (cx.pt(HEADER_H))),
             ),
-            kurbo::Point::new(
-                f64::from(title_x),
-                f64::from(b.origin.y + (cx.pt(HEADER_H) - cx.pt(15.0)) / 2.0),
-            ),
+            f64::from(title_x),
             &self.title,
             cx.pt(15.0),
             cx.color(TokenKey::TextColor, INK),

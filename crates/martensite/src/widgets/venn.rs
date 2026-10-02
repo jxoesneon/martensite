@@ -286,7 +286,10 @@ impl Widget for Venn {
                 painter,
                 cx.list,
                 f(self.bounds),
-                kurbo::Point::new(f64::from(p.x - w / 2.0), f64::from(p.y - size / 2.0)),
+                kurbo::Point::new(
+                    f64::from(p.x - w / 2.0),
+                    crate::text_paint::centered_label_top(painter, p.y, name, size),
+                ),
                 name,
                 size,
                 cx.color(TokenKey::TextColor, LABEL),

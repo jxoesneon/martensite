@@ -766,7 +766,12 @@ impl Widget for ChessBoard {
                     krect(r),
                     kurbo::Point::new(
                         f64::from(r.min_x() + s * 0.5 - size * 0.3),
-                        f64::from(r.min_y() + s * 0.5 - size * 0.62),
+                        crate::text_paint::centered_label_top(
+                            painter,
+                            r.min_y() + s * 0.5,
+                            &text,
+                            size,
+                        ),
                     ),
                     &text,
                     size,

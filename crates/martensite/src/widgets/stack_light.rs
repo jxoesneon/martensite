@@ -447,14 +447,11 @@ impl Widget for StackLight {
             if !l.label.is_empty() {
                 let size_px = cx.pt(12.0);
                 let kr = krect(r);
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     cx.text_painter,
                     cx.list,
-                    kr,
-                    kurbo::Point::new(
-                        kr.x0 + 6.0 * f64::from(s),
-                        kr.y0 + (kr.height() - f64::from(size_px)) * 0.5,
-                    ),
+                    kurbo::Rect::new(kr.x0, kr.y0, kr.x1, kr.y0 + kr.height()),
+                    kr.x0 + 6.0 * f64::from(s),
                     &l.label,
                     size_px,
                     muted,
@@ -532,14 +529,11 @@ impl Widget for StackLight {
                 };
                 let size_px = cx.pt(12.0);
                 let kr = krect(r);
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     cx.text_painter,
                     cx.list,
-                    kr,
-                    kurbo::Point::new(
-                        kr.x0 + 6.0 * f64::from(s),
-                        kr.y0 + (kr.height() - f64::from(size_px)) * 0.5,
-                    ),
+                    kurbo::Rect::new(kr.x0, kr.y0, kr.x1, kr.y0 + kr.height()),
+                    kr.x0 + 6.0 * f64::from(s),
                     &l.label,
                     size_px,
                     ink,

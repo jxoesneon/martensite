@@ -404,19 +404,16 @@ impl Widget for Legend {
             }
             // Label.
             let label_color = if entry.dimmed { dim } else { fg };
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(rect.min_x()),
                     f64::from(rect.min_y()),
                     f64::from(rect.max_x()),
-                    f64::from(rect.max_y()),
+                    f64::from(rect.min_y() + (rect.height())),
                 ),
-                kurbo::Point::new(
-                    f64::from(rect.min_x() + swatch + gap),
-                    f64::from(rect.min_y() + (rect.height() - size * 1.2) / 2.0),
-                ),
+                f64::from(rect.min_x() + swatch + gap),
                 &entry.label,
                 size,
                 label_color,

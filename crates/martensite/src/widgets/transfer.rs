@@ -24,7 +24,6 @@ use martensite_core::{
 };
 use martensite_theme::TokenKey;
 
-use crate::text_paint::paint_label_clipped;
 use crate::widgets::Button;
 
 /// Row height in points.
@@ -484,14 +483,16 @@ impl Widget for Transfer {
                 .push_stroke_rect(f(pane), 1.0_f32.max(cx.pt(0.5)), border);
             let clip = f(pane);
             // Title strip.
-            paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                clip,
-                kurbo::Point::new(
-                    f64::from(pane.min_x() + pad),
-                    f64::from(pane.min_y() + (title_h - 10.0 * cx.scale) / 2.0),
+                kurbo::Rect::new(
+                    clip.x0,
+                    f64::from(pane.min_y()),
+                    clip.x1,
+                    f64::from(pane.min_y() + (title_h)),
                 ),
+                f64::from(pane.min_x() + pad),
                 &format!("{title} ({})", items.len()),
                 10.0 * cx.scale,
                 muted,
@@ -516,14 +517,11 @@ impl Widget for Transfer {
                 } else if self.hover == Some((is_target, i)) {
                     cx.list.push_fill_rect(f(row_r), hover_wash);
                 }
-                paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    clip,
-                    kurbo::Point::new(
-                        f64::from(pane.min_x() + pad),
-                        f64::from(y + (row_h - 12.0 * cx.scale) / 2.0),
-                    ),
+                    kurbo::Rect::new(clip.x0, f64::from(y), clip.x1, f64::from(y + (row_h))),
+                    f64::from(pane.min_x() + pad),
                     item,
                     12.0 * cx.scale,
                     if self.enabled { fg } else { muted },

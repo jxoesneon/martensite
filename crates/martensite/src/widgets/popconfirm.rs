@@ -325,19 +325,16 @@ impl Widget for PopconfirmSurface {
                 cx.pt(1.0),
                 cx.color(TokenKey::BorderColor, EDGE),
             );
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(r.min_x() + cx.pt(6.0)),
                     f64::from(r.min_y()),
                     f64::from(r.max_x() - cx.pt(6.0)),
-                    f64::from(r.max_y()),
+                    f64::from(r.min_y() + (r.height())),
                 ),
-                kurbo::Point::new(
-                    f64::from(r.min_x() + cx.pt(10.0)),
-                    f64::from(r.min_y() + (r.height() - cx.pt(12.0)) / 2.0),
-                ),
+                f64::from(r.min_x() + cx.pt(10.0)),
                 label,
                 cx.pt(12.0),
                 if primary {

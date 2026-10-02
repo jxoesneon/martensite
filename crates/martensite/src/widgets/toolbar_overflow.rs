@@ -345,14 +345,11 @@ impl Widget for ToolbarOverflow {
                 PILL
             };
             cx.list.push_fill_shape(kr, &shape, bg);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kr,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + PILL_PAD_PT * s),
-                    f64::from(r.min_y() + r.height() * 0.7),
-                ),
+                f64::from(r.min_x() + PILL_PAD_PT * s),
                 &self.items[i],
                 fs,
                 cx.color(TokenKey::TextColor, TEXT),
@@ -377,13 +374,11 @@ impl Widget for ToolbarOverflow {
             let tw = painter
                 .and_then(|p| p.measure_text(&label, fs))
                 .unwrap_or(label.len() as f32 * fs * 0.55);
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                kurbo::Point::new(
-                    f64::from(r.min_x() + (r.width() - tw) / 2.0),
-                    f64::from(r.min_y() + r.height() * 0.7),
-                ),
+                kr,
+                f64::from(r.min_x() + (r.width() - tw) / 2.0),
                 &label,
                 fs,
                 cx.color(TokenKey::TextColor, TEXT),

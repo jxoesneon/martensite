@@ -733,14 +733,16 @@ impl Widget for Tour {
             title_size,
             fg,
         );
-        paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            f(counter_clip),
-            kurbo::Point::new(
-                f64::from(counter_clip.min_x()),
-                f64::from(counter_clip.min_y() + (title_h - counter_size) / 2.0),
+            kurbo::Rect::new(
+                f(counter_clip).x0,
+                f64::from(counter_clip.min_y()),
+                f(counter_clip).x1,
+                f64::from(counter_clip.min_y() + (title_h)),
             ),
+            f64::from(counter_clip.min_x()),
             &counter,
             counter_size,
             muted,

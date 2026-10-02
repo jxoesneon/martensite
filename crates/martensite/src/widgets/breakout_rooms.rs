@@ -373,7 +373,12 @@ impl Widget for BreakoutRooms {
                 cx.list,
                 kurbo::Point::new(
                     f64::from(btn.min_x() + (btn.width() - w) / 2.0),
-                    f64::from(btn.min_y() + btn.height() / 2.0 + cfs * 0.35),
+                    crate::text_paint::centered_label_top(
+                        painter,
+                        btn.min_y() + (btn.height()) / 2.0,
+                        caption,
+                        cfs,
+                    ),
                 ),
                 caption,
                 cfs,

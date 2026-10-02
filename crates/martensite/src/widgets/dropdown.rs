@@ -1723,6 +1723,6 @@ mod tests {
         assert!(!list
             .commands
             .iter()
-            .any(|c| matches!(c, PaintCommand::FillLinearGradient(..))),);
+            .any(|c| matches!(c, PaintCommand::FillLinearGradient(..))));
     }
 }

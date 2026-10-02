@@ -180,19 +180,16 @@ impl Widget for TooltipBubble {
         );
         // Clip the text to the bubble interior — a long tooltip
         // can't spill past the rounded chrome.
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
             kurbo::Rect::new(
                 f64::from(b.min_x() + cx.pt(PAD)),
                 f64::from(b.min_y()),
                 f64::from(b.max_x() - cx.pt(PAD)),
-                f64::from(b.max_y()),
+                f64::from(b.min_y() + (b.height())),
             ),
-            kurbo::Point::new(
-                f64::from(b.min_x() + cx.pt(PAD)),
-                f64::from(b.min_y() + (b.height() - cx.pt(12.0)) / 2.0),
-            ),
+            f64::from(b.min_x() + cx.pt(PAD)),
             &self.text,
             cx.pt(12.0),
             cx.color(TokenKey::TextColor, BUBBLE_INK),

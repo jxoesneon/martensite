@@ -757,19 +757,16 @@ impl Widget for StatusBar {
                 } else {
                     cx.color(TokenKey::TextColor, INK)
                 };
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                     cx.list,
                     kurbo::Rect::new(
                         f64::from(m.min_x()),
                         f64::from(m.min_y()),
                         f64::from(m.max_x()),
-                        f64::from(m.max_y()),
+                        f64::from(m.min_y() + (m.size.y)),
                     ),
-                    kurbo::Point::new(
-                        f64::from(m.min_x()),
-                        f64::from(m.min_y() + (m.size.y - size_px) / 2.0),
-                    ),
+                    f64::from(m.min_x()),
                     text,
                     size_px,
                     ink,

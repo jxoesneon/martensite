@@ -322,14 +322,16 @@ impl Widget for Countdown {
         let w = painter
             .and_then(|p| p.measure_text(&face, size))
             .unwrap_or(face.chars().count() as f32 * size * 0.6);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            f(self.bounds),
-            kurbo::Point::new(
-                f64::from(self.bounds.min_x() + (self.bounds.width() - w).max(0.0) / 2.0),
-                f64::from(self.bounds.min_y() + (self.bounds.height() - size * 1.2) / 2.0),
+            kurbo::Rect::new(
+                f(self.bounds).x0,
+                f64::from(self.bounds.min_y()),
+                f(self.bounds).x1,
+                f64::from(self.bounds.min_y() + (self.bounds.height())),
             ),
+            f64::from(self.bounds.min_x() + (self.bounds.width() - w).max(0.0) / 2.0),
             &face,
             size,
             color,

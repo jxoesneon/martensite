@@ -442,7 +442,10 @@ impl Widget for CountdownRing {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            kurbo::Point::new(f64::from(cxm - w / 2.0), f64::from(cym - size * 0.6)),
+            kurbo::Point::new(
+                f64::from(cxm - w / 2.0),
+                crate::text_paint::centered_label_top(painter, cym, &face, size),
+            ),
             &face,
             size,
             fg,

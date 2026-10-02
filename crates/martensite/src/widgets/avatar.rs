@@ -257,14 +257,16 @@ impl Widget for Avatar {
         let w = painter
             .and_then(|p| p.measure_text(&initials, size_px))
             .unwrap_or_else(|| initials.chars().count() as f32 * size_px * 0.6);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            rect,
-            kurbo::Point::new(
-                f64::from(b.origin.x + (b.size.x - w) * 0.5),
-                f64::from(b.origin.y + (b.size.y - size_px) * 0.5),
+            kurbo::Rect::new(
+                rect.x0,
+                f64::from(b.origin.y),
+                rect.x1,
+                f64::from(b.origin.y + (b.size.y)),
             ),
+            f64::from(b.origin.x + (b.size.x - w) * 0.5),
             &initials,
             size_px,
             cx.color(TokenKey::TextInverseColor, INVERSE_INK),

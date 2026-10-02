@@ -547,14 +547,11 @@ impl Widget for CheckList {
                 cx.list
                     .push_stroke_path(mark, 1.6 * s, cx.color(TokenKey::TextInverseColor, MARK));
             }
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                kr,
-                kurbo::Point::new(
-                    f64::from(bx.max_x() + 8.0 * s),
-                    f64::from(y + (row_h - size) / 2.0),
-                ),
+                kurbo::Rect::new(kr.x0, f64::from(y), kr.x1, f64::from(y + (row_h))),
+                f64::from(bx.max_x() + 8.0 * s),
                 &it.label,
                 size,
                 cx.color(TokenKey::TextColor, TEXT),

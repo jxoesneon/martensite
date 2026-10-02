@@ -827,7 +827,12 @@ impl Widget for CalendarSurface {
                     cx.list,
                     kurbo::Point::new(
                         f64::from(rect.min_x() + (rect.width() - approx_w) / 2.0),
-                        f64::from(rect.min_y() + (rect.height() - day_px) / 2.0),
+                        crate::text_paint::centered_label_top(
+                            painter,
+                            rect.min_y() + (rect.height()) / 2.0,
+                            &label,
+                            day_px,
+                        ),
                     ),
                     &label,
                     day_px,
@@ -1715,19 +1720,16 @@ impl Widget for DatePicker {
         };
         let font_px = cx.pt(13.0);
         let text_x = b.min_x() + cx.pt(10.0);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
             kurbo::Rect::new(
                 f64::from(text_x),
                 f64::from(b.min_y()),
                 f64::from(b.max_x() - cx.pt(30.0)),
-                f64::from(b.max_y()),
+                f64::from(b.min_y() + (b.height())),
             ),
-            kurbo::Point::new(
-                f64::from(text_x),
-                f64::from(b.min_y() + (b.height() - font_px) / 2.0),
-            ),
+            f64::from(text_x),
             &self.text(),
             font_px,
             ink,
@@ -2212,7 +2214,7 @@ mod tests {
                     year: 2024,
                     month: 6,
                     day: 14
-                },
+                }
             ))
         );
         assert_eq!(dp.text(), "2024-06-10 – 2024-06-14");
@@ -2252,7 +2254,7 @@ mod tests {
                     year: 2024,
                     month: 6,
                     day: 10
-                },
+                }
             ))
         );
     }

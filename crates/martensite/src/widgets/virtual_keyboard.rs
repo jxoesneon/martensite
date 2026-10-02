@@ -387,19 +387,16 @@ impl Widget for VirtualKeyboard {
             let tw = painter
                 .and_then(|p| p.measure_text(&label, size))
                 .unwrap_or(label.chars().count() as f32 * size * 0.55);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(rect.min_x()),
                     f64::from(rect.min_y()),
                     f64::from(rect.max_x()),
-                    f64::from(rect.max_y()),
+                    f64::from(rect.min_y() + (rect.height())),
                 ),
-                kurbo::Point::new(
-                    f64::from(rect.min_x() + (rect.width() - tw).max(0.0) / 2.0),
-                    f64::from(rect.min_y() + (rect.height() - size * 1.2).max(0.0) / 2.0),
-                ),
+                f64::from(rect.min_x() + (rect.width() - tw).max(0.0) / 2.0),
                 &label,
                 size,
                 fg,

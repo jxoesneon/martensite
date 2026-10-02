@@ -820,14 +820,16 @@ impl Widget for TimePicker {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             );
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                wclip,
-                kurbo::Point::new(
-                    f64::from(tx),
-                    f64::from(r.min_y() + (r.height() - font_px) / 2.0),
+                kurbo::Rect::new(
+                    wclip.x0,
+                    f64::from(r.min_y()),
+                    wclip.x1,
+                    f64::from(r.min_y() + (r.height())),
                 ),
+                f64::from(tx),
                 text,
                 font_px,
                 seg_ink,
@@ -835,14 +837,16 @@ impl Widget for TimePicker {
             // ':' separator after hour (and after minute in 12h mode
             // would read oddly — only hour→minute gets one).
             if *i == 0 {
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    wclip,
-                    kurbo::Point::new(
-                        f64::from(r.max_x() - font_px * 0.2),
-                        f64::from(r.min_y() + (r.height() - font_px) / 2.0),
+                    kurbo::Rect::new(
+                        wclip.x0,
+                        f64::from(r.min_y()),
+                        wclip.x1,
+                        f64::from(r.min_y() + (r.height())),
                     ),
+                    f64::from(r.max_x() - font_px * 0.2),
                     ":",
                     font_px,
                     ink,

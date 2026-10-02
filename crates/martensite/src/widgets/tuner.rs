@@ -383,7 +383,7 @@ impl Widget for Tuner {
             ),
             kurbo::Point::new(
                 f64::from(px - nw / 2.0),
-                f64::from(py - r * 0.55 - note_size * 0.6),
+                crate::text_paint::centered_label_top(painter, py, &self.note, note_size),
             ),
             &self.note,
             note_size,
@@ -406,7 +406,7 @@ impl Widget for Tuner {
             ),
             kurbo::Point::new(
                 f64::from(px - cw / 2.0),
-                f64::from(py - r * 0.3 - cents_size * 0.6),
+                crate::text_paint::centered_label_top(painter, py, &cents_face, cents_size),
             ),
             &cents_face,
             cents_size,

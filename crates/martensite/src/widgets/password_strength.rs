@@ -294,7 +294,12 @@ impl Widget for PasswordStrength {
                 cx.list,
                 kurbo::Point::new(
                     f64::from(self.bounds.min_x() + bar_w + GAP_PT * s),
-                    f64::from(y - (size - bar_h) / 2.0),
+                    crate::text_paint::centered_label_top(
+                        painter,
+                        f64::from(y + bar_h / 2.0),
+                        self.label_for_score(),
+                        size,
+                    ),
                 ),
                 self.label_for_score(),
                 size,

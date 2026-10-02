@@ -496,19 +496,16 @@ impl Widget for Card {
         if let Some(title) = &self.title {
             let t = &self.title_rect;
             let pad_x = cx.pt(4.0);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(t.origin.x),
                     f64::from(t.origin.y),
                     f64::from(t.max_x() - pad_x),
-                    f64::from(t.max_y()),
+                    f64::from(t.origin.y + (t.size.y)),
                 ),
-                kurbo::Point::new(
-                    f64::from(t.origin.x),
-                    f64::from(t.origin.y + (t.size.y - cx.pt(TITLE_SIZE)) / 2.0),
-                ),
+                f64::from(t.origin.x),
                 title,
                 cx.pt(TITLE_SIZE),
                 cx.color(TokenKey::TextColor, INK),

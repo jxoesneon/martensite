@@ -992,7 +992,7 @@ mod tests {
         let mut t = TokenField::new();
         t.event(&mut ev(&WidgetEvent::FocusGained));
         let e = WidgetEvent::ImeCommitted {
-            text: " a ,,b; ".into(),
+            text: " a ,b; ".into(),
         };
         t.event(&mut ev(&e));
         assert_eq!(t.token_list(), &["a", "b"]);

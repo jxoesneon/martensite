@@ -324,8 +324,11 @@ impl Widget for CookieBanner {
                 cx.list,
                 kurbo::Point::new(
                     f64::from(self.link_rect.min_x()),
-                    f64::from(
-                        self.link_rect.min_y() + self.link_rect.height() / 2.0 + LINK_PT * s * 0.35,
+                    crate::text_paint::centered_label_top(
+                        painter,
+                        self.link_rect.min_y() + (self.link_rect.height()) / 2.0,
+                        &self.policy_caption,
+                        LINK_PT * s,
                     ),
                 ),
                 &self.policy_caption,
@@ -362,7 +365,12 @@ impl Widget for CookieBanner {
                 cx.list,
                 kurbo::Point::new(
                     f64::from(rect.min_x() + (rect.width() - w) / 2.0),
-                    f64::from(rect.min_y() + rect.height() / 2.0 + fs * 0.35),
+                    crate::text_paint::centered_label_top(
+                        painter,
+                        rect.min_y() + (rect.height()) / 2.0,
+                        labels[i],
+                        fs,
+                    ),
                 ),
                 labels[i],
                 fs,

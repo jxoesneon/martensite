@@ -440,19 +440,16 @@ impl Widget for ToggleButton {
             .unwrap_or_else(|| 8.0 * self.label.chars().count() as f32 * cx.scale);
         let pad = cx.pt(TEXT_PAD_X);
         let text_x = (b.min_x() + (b.width() - text_w) / 2.0).max(b.min_x() + pad);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
                 f64::from(b.min_x() + pad),
                 f64::from(b.min_y()),
                 f64::from(b.max_x() - pad),
-                f64::from(b.max_y()),
+                f64::from(b.min_y() + (b.height())),
             ),
-            kurbo::Point::new(
-                f64::from(text_x),
-                f64::from(b.min_y() + (b.height() - font_px) / 2.0),
-            ),
+            f64::from(text_x),
             &self.label,
             font_px,
             ink,

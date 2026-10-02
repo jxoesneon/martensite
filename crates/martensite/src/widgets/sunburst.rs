@@ -444,7 +444,7 @@ impl Widget for Sunburst {
                     )),
                     kurbo::Point::new(
                         f64::from(center.x - w / 2.0),
-                        f64::from(center.y - size / 2.0),
+                        crate::text_paint::centered_label_top(painter, center.y, name, size),
                     ),
                     name,
                     size,
