@@ -2192,6 +2192,21 @@ pub trait TextShaper {
         let _ = style;
         self.ink_bounds(origin, text, size_px)
     }
+
+    /// Glyph outlines of `text` shaped at `size_px`, merged into one
+    /// path in run-local coordinates — `x` advances along the text
+    /// direction, `y = 0` is the baseline, ascenders reach into
+    /// negative `y` (the `DrawGlyphRun` convention).
+    ///
+    /// The paint command set has no transform op, so rotated or
+    /// vertical labels emit this path under
+    /// [`PaintCommand::FillPath`] — every backend fills a path the same
+    /// way, so the rotation renders identically everywhere. `None`
+    /// means the shaper can't produce outlines; callers must fall back
+    /// to a plain text run.
+    fn text_path(&self, _text: &str, _size_px: f32) -> Option<BezPath> {
+        None
+    }
 }
 
 thread_local! {

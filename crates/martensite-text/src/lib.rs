@@ -34,6 +34,9 @@ pub mod grapheme;
 pub mod ime;
 /// Unicode line breaking (UAX #14) and Kinsoku Shori.
 pub mod line_break;
+/// Glyph outline extraction as kurbo `BezPath`s — for rotated labels
+/// and other text rendered as filled paths.
+pub mod outline;
 /// Complex text shaping: `Shaper`, `TextMetrics`, `ShapedLine`.
 pub mod shaping;
 /// Unicode vertical text layout (UAX #50) and coordinate transformation.

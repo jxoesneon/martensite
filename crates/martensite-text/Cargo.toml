@@ -23,6 +23,7 @@ unicode-bidi-mirroring = "0.2"
 unicode-linebreak = "0.1.5"
 unicode-segmentation = { workspace = true }
 swash = "0.2"
+kurbo = { workspace = true }
 smallvec = { workspace = true }
 parking_lot = { workspace = true }
 tracing = { workspace = true }

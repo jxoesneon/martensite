@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use kurbo::Point;
+use kurbo::{Point, Shape};
 use martensite_core::paint::{FontResource, GlyphInstance, GlyphRun, PaintList, TextStyle};
 use martensite_text::{shape_text, shape_text_with_attrs, Attrs, FontManager, Style, Weight};
 
@@ -430,6 +430,60 @@ impl TextPainter {
         }
         box_
     }
+
+    /// Glyph outlines of `text` at `size` merged into one
+    /// [`BezPath`](kurbo::BezPath) in run-local coordinates — advance
+    /// along +x, baseline at `y = 0`, ascenders into negative y.
+    /// Shapers that only paint runs can't offer this; the path is the
+    /// raw material for rotated labels, which emit it under
+    /// `FillPath` so both backends render the rotation identically.
+    /// `None` when the text shapes to nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::text_paint::TextPainter;
+    ///
+    /// let mut p = TextPainter::new();
+    /// assert!(p.text_path("", 14.0).is_none());
+    /// ```
+    pub fn text_path(&mut self, text: &str, size: f32) -> Option<kurbo::BezPath> {
+        if text.is_empty() || size <= 0.0 {
+            return None;
+        }
+        let fonts = self.fonts();
+        let lines = shape_text_with_attrs(
+            fonts,
+            text,
+            &attrs_for(TextStyle::REGULAR),
+            size,
+            size * 1.25,
+            None,
+        );
+        let mut out = kurbo::BezPath::new();
+        let mut any = false;
+        for line in &lines {
+            for g in &line.glyphs {
+                let Some((data, index)) = fonts.font_data(g.font_id) else {
+                    continue;
+                };
+                let Some(mut p) =
+                    martensite_text::outline::glyph_outline(&data, index, g.glyph_id, g.font_size)
+                else {
+                    continue;
+                };
+                // Glyph-local → run-local: baseline at `line_y`, advance
+                // at `g.x` — the same placement `push_styled` uses.
+                p.apply_affine(kurbo::Affine::translate((
+                    f64::from(g.x),
+                    f64::from(line.line_y + g.y),
+                )));
+                out.extend(p);
+                any = true;
+            }
+        }
+        any.then_some(out)
+    }
 }
 
 impl SharedTextPainter {
@@ -543,6 +597,10 @@ impl martensite_core::paint::TextShaper for SharedTextPainter {
                 .ink_bounds_styled(origin, text, size_px, None, style)
                 .unwrap_or(kurbo::Rect::ZERO),
         )
+    }
+
+    fn text_path(&self, text: &str, size_px: f32) -> Option<kurbo::BezPath> {
+        self.0.lock().text_path(text, size_px)
     }
 }
 
@@ -784,6 +842,51 @@ pub(crate) fn paint_label_clipped_styled(
     list.push_clip(clip);
     paint_label_styled(painter, list, origin, text, size_px, color, style);
     list.pop_clip();
+}
+
+/// Paints `text` rotated 90° counterclockwise — reading bottom-to-top,
+/// the y-axis-label convention — centered inside `strip`. The paint
+/// command set has no transform op, so the label emits as its glyph
+/// outlines under `FillPath`, which every backend fills identically.
+///
+/// Falls back to a clipped horizontal run when the painter can't
+/// produce outlines (`text_path` returns `None`), so the label still
+/// exists — degraded, but visible to users and to lint.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_label_vertical(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    list: &mut PaintList,
+    strip: kurbo::Rect,
+    text: &str,
+    size_px: f32,
+    color: [u8; 4],
+) {
+    if let Some(mut path) = painter.and_then(|p| p.text_path(text, size_px)) {
+        // Run-local → screen: +x advance maps to −y (up), ascender
+        // direction (−y) maps to −x (left) — text reads bottom-to-top
+        // with letter tops facing left.
+        path.apply_affine(kurbo::Affine::new([0.0, -1.0, 1.0, 0.0, 0.0, 0.0]));
+        let bb = path.bounding_box();
+        if bb.width() > 0.0 && bb.height() > 0.0 {
+            let dx = strip.x0 + (strip.width() - bb.width()) / 2.0 - bb.x0;
+            let dy = strip.y0 + (strip.height() - bb.height()) / 2.0 - bb.y0;
+            path.apply_affine(kurbo::Affine::translate((dx, dy)));
+            list.push_clip(strip);
+            list.commands
+                .push(martensite_core::paint::PaintCommand::FillPath(path, color));
+            list.pop_clip();
+            return;
+        }
+    }
+    paint_label_clipped(
+        painter,
+        list,
+        strip,
+        Point::new(strip.x0 + 1.0, strip.y0 + f64::from(size_px)),
+        text,
+        size_px,
+        color,
+    );
 }
 
 /// [`paint_label_clipped`] that vertically centers `text`'s line box

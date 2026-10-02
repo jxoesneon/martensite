@@ -3451,6 +3451,7 @@ dependencies = [
  "fontdb",
  "glam",
  "js-sys",
+ "kurbo",
  "martensite-core",
  "martensite-cosmic-text",
  "parking_lot",

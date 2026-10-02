@@ -223,15 +223,14 @@ impl Widget for XYPad {
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
         self.scale = cx.scale;
-        // Square pad region inset for the edge labels — a top strip
-        // holds the y label (rotation isn't in the paint API) and the
-        // bottom margin holds the x label.
+        // Square pad region inset for the edge labels — a left strip
+        // holds the rotated y label and the bottom margin the x label.
         let label = cx.pt(16.0);
-        let dim = (bounds.width().min(bounds.height() - label)).max(0.0);
+        let dim = (bounds.width().min(bounds.height()) - label).max(0.0);
         let m = cx.pt(10.0);
         self.pad = Rect::new(
-            bounds.min_x() + (bounds.width() - dim) / 2.0 + m,
-            bounds.min_y() + label + (bounds.height() - label - dim) / 2.0,
+            bounds.min_x() + label + (bounds.width() - label - dim) / 2.0 + m,
+            bounds.min_y() + (bounds.height() - label - dim) / 2.0,
             (dim - 2.0 * m).max(0.0),
             (dim - 2.0 * m).max(0.0),
         );
@@ -425,8 +424,8 @@ impl Widget for XYPad {
             cx.color(TokenKey::TextColor, FG),
         );
 
-        // Edge labels: x under the pad, y rotated at the left — text
-        // rotation isn't in the paint API, so y sits top-left.
+        // Edge labels: x under the pad, y rotated counterclockwise in
+        // the left strip — reading bottom-to-top, the axis convention.
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let size = 12.0 * cx.scale;
         let muted = cx.color(TokenKey::TextMutedColor, MUTED);
@@ -450,19 +449,15 @@ impl Widget for XYPad {
             size,
             muted,
         );
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vertical(
             painter,
             cx.list,
             f(Rect::new(
                 self.bounds.min_x(),
-                self.bounds.min_y(),
-                self.bounds.width(),
-                self.pad.min_y() - self.bounds.min_y(),
+                self.pad.min_y(),
+                self.pad.min_x() - self.bounds.min_x(),
+                self.pad.height(),
             )),
-            kurbo::Point::new(
-                f64::from(self.pad.min_x()),
-                f64::from(self.bounds.min_y() + 1.0),
-            ),
             &self.y_label,
             size,
             muted,
