@@ -135,6 +135,9 @@ pub struct SpinBox {
     /// Whether the field holds uncommitted typed text — i.e. the
     /// widget has keyboard focus.
     editing: bool,
+    /// Keyboard focus — a claimed press or `FocusGained` sets it;
+    /// `FocusLost` clears. Keys/IME are gated on it.
+    focused: bool,
     /// Time the current step-button press has been held.
     hold_elapsed: Duration,
     /// Accumulator for the auto-repeat interval.
@@ -179,6 +182,7 @@ impl SpinBox {
             pressed: None,
             hover: None,
             editing: false,
+            focused: false,
             hold_elapsed: Duration::ZERO,
             repeat_accum: Duration::ZERO,
             cached_bounds: Rect::default(),
@@ -699,11 +703,22 @@ impl Widget for SpinBox {
         }
     }
 
+    fn focused(&self) -> bool {
+        self.focused || self.input.focused()
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         if !self.enabled {
             return EventResponse::Ignored;
         }
         match cx.event {
+            WidgetEvent::KeyPressed { .. }
+            | WidgetEvent::ImeCommitted { .. }
+            | WidgetEvent::ImePreedit { .. }
+                if !self.focused() =>
+            {
+                EventResponse::Ignored
+            }
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Primary,
@@ -717,6 +732,7 @@ impl Widget for SpinBox {
                     None
                 };
                 if let Some((button, delta)) = button {
+                    self.focused = true;
                     self.commit_text();
                     self.nudge(delta);
                     self.pressed = Some(button);
@@ -798,12 +814,14 @@ impl Widget for SpinBox {
             },
             WidgetEvent::FocusGained => {
                 self.editing = true;
+                self.focused = true;
                 self.forward(cx)
             }
             WidgetEvent::FocusLost => {
                 // Leaving the field commits whatever was typed.
                 self.commit_text();
                 self.editing = false;
+                self.focused = false;
                 self.pressed = None;
                 self.forward(cx)
             }
@@ -1018,6 +1036,7 @@ mod tests {
             .range(0.0, 100.0)
             .with_value(50.0)
             .with_page_step(20.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(&mut sb, &key("ArrowUp"));
         assert_eq!(sb.value(), 51.0);
@@ -1032,6 +1051,7 @@ mod tests {
     #[test]
     fn home_end_jump_to_ends() {
         let mut sb = SpinBox::new().range(0.0, 10.0).with_value(5.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(&mut sb, &key("End"));
         assert_eq!(sb.value(), 10.0);
@@ -1042,6 +1062,7 @@ mod tests {
     #[test]
     fn wrap_cycles_at_bounds() {
         let mut sb = SpinBox::new().range(0.0, 10.0).with_value(10.0).wrap(true);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(&mut sb, &key("ArrowUp"));
         assert_eq!(sb.value(), 0.0);
@@ -1049,6 +1070,7 @@ mod tests {
         assert_eq!(sb.value(), 10.0);
         // Without wrap it stays clamped.
         let mut sb = SpinBox::new().range(0.0, 10.0).with_value(10.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(&mut sb, &key("ArrowUp"));
         assert_eq!(sb.value(), 10.0);
@@ -1057,6 +1079,7 @@ mod tests {
     #[test]
     fn scroll_steps_by_sign() {
         let mut sb = SpinBox::new().range(0.0, 10.0).with_value(5.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         let up = WidgetEvent::Scroll {
             position: Vec2::new(10.0, 12.0),
@@ -1075,6 +1098,7 @@ mod tests {
     #[test]
     fn button_press_steps_and_captures() {
         let mut sb = SpinBox::new().range(0.0, 10.0).with_value(5.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         // Stepper column is the right 20px; ▲ occupies the top half.
         assert_eq!(
@@ -1099,6 +1123,7 @@ mod tests {
     #[test]
     fn hold_repeat_fires_after_delay() {
         let mut sb = SpinBox::new().range(0.0, 100.0).with_value(50.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(&mut sb, &press(130.0, 6.0));
         assert_eq!(sb.value(), 51.0);
@@ -1114,6 +1139,7 @@ mod tests {
     #[test]
     fn typed_text_commits_on_enter() {
         let mut sb = SpinBox::new().range(0.0, 100.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(&mut sb, &WidgetEvent::FocusGained);
         assert!(sb.is_editing());
@@ -1129,6 +1155,7 @@ mod tests {
     #[test]
     fn typed_text_commits_on_blur() {
         let mut sb = SpinBox::new().range(0.0, 100.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(&mut sb, &WidgetEvent::FocusGained);
         event(&mut sb, &key("SelectAll"));
@@ -1141,6 +1168,7 @@ mod tests {
     #[test]
     fn unparseable_text_restores_value() {
         let mut sb = SpinBox::new().range(0.0, 100.0).with_value(9.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(&mut sb, &WidgetEvent::FocusGained);
         event(&mut sb, &key("SelectAll"));
@@ -1176,6 +1204,7 @@ mod tests {
     #[test]
     fn read_only_blocks_typing_but_steps() {
         let mut sb = SpinBox::new().range(0.0, 10.0).editable(false);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(&mut sb, &WidgetEvent::FocusGained);
         event(&mut sb, &WidgetEvent::ImeCommitted { text: "9".into() });
@@ -1188,6 +1217,7 @@ mod tests {
     #[test]
     fn step_commits_pending_text() {
         let mut sb = SpinBox::new().range(0.0, 100.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(&mut sb, &WidgetEvent::FocusGained);
         event(&mut sb, &key("SelectAll"));
@@ -1200,6 +1230,7 @@ mod tests {
     #[test]
     fn semantic_actions_step_and_set() {
         let mut sb = SpinBox::new().range(0.0, 10.0).with_value(5.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         event(
             &mut sb,
@@ -1246,6 +1277,7 @@ mod tests {
     #[test]
     fn disabled_ignores_input() {
         let mut sb = SpinBox::new().range(0.0, 10.0).enabled(false);
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         assert_eq!(event(&mut sb, &press(130.0, 6.0)), EventResponse::Ignored);
         assert_eq!(event(&mut sb, &key("ArrowUp")), EventResponse::Ignored);
@@ -1255,6 +1287,7 @@ mod tests {
     #[test]
     fn field_is_internal_child() {
         let mut sb = SpinBox::new();
+        event(&mut sb, &WidgetEvent::FocusGained);
         laid_out(&mut sb, 140.0, 24.0);
         assert_eq!(sb.child_count(), 1);
         assert_eq!(sb.child_bounds(0), Some(Rect::new(0.0, 0.0, 120.0, 24.0)));

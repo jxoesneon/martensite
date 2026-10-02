@@ -1083,6 +1083,60 @@ pub trait Widget: Send + Sync + 'static {
         None
     }
 
+    /// Whether this widget itself holds keyboard focus.
+    ///
+    /// Widgets with editable or keyboard-driven state (text fields,
+    /// lists) override this to report their focus flag; the default is
+    /// `false`. Internal children have no arena node, so their focus is
+    /// tracked by the widget itself — set by a claimed primary press,
+    /// confirmed by [`WidgetEvent::FocusGained`], cleared by
+    /// [`WidgetEvent::FocusLost`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::widget::DummyWidget;
+    /// use martensite_core::Widget;
+    ///
+    /// assert!(!DummyWidget.focused());
+    /// ```
+    fn focused(&self) -> bool {
+        false
+    }
+
+    /// Whether this widget or any internal descendant holds keyboard
+    /// focus. Containers get the default recursive walk for free from
+    /// [`Widget::child_count`]/[`Widget::child`]; leaf widgets override
+    /// [`Widget::focused`] and inherit this.
+    ///
+    /// [`Widget::forward_event_to_children`] uses it to route
+    /// non-positional events — keys, IME, focus transitions — to the
+    /// subtree holding focus, so a keyboard event lands in the field
+    /// the user actually focused instead of the first child that
+    /// happens to claim it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::widget::DummyWidget;
+    /// use martensite_core::Widget;
+    ///
+    /// assert!(!DummyWidget.has_focused_descendant());
+    /// ```
+    fn has_focused_descendant(&self) -> bool {
+        if self.focused() {
+            return true;
+        }
+        for i in 0..self.child_count() {
+            if let Some(child) = self.child(i) {
+                if child.has_focused_descendant() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Process an input event.
     ///
     /// The default implementation forwards the event to internal children
@@ -1128,6 +1182,67 @@ pub trait Widget: Send + Sync + 'static {
             return EventResponse::Ignored;
         }
         let n = self.child_count();
+
+        // Focus transitions and keyboard/IME input are non-positional:
+        // internal children have no arena nodes, so their focus is
+        // tracked on the widget itself (see `Widget::focused`).
+        match cx.event {
+            WidgetEvent::FocusLost => {
+                // Broadcast — every internal descendant drops its
+                // focus/edit state, not just the first claimer.
+                let mut response = EventResponse::Ignored;
+                for i in 0..n {
+                    let (Some(b), Some(child)) = (self.child_bounds(i), self.child_mut(i)) else {
+                        continue;
+                    };
+                    let mut child_cx = EventContext {
+                        event: cx.event,
+                        bounds: b,
+                        scale: cx.scale,
+                    };
+                    let r = child.event(&mut child_cx);
+                    if response == EventResponse::Ignored {
+                        response = r;
+                    }
+                }
+                return response;
+            }
+            // When a descendant holds focus, only the focused path
+            // receives the event — a stray keypress must not edit a
+            // field the user is not looking at. Without any focused
+            // descendant the event falls through to the default
+            // topmost-first scan (typeahead, container shortcuts).
+            WidgetEvent::FocusGained
+            | WidgetEvent::KeyPressed { .. }
+            | WidgetEvent::KeyReleased { .. }
+            | WidgetEvent::ImePreedit { .. }
+            | WidgetEvent::ImeCommitted { .. }
+                if self.has_focused_descendant() =>
+            {
+                for i in (0..n).rev() {
+                    let focused_path = self.child(i).is_some_and(|c| c.has_focused_descendant());
+                    if !focused_path {
+                        continue;
+                    }
+                    let (Some(b), Some(child)) = (self.child_bounds(i), self.child_mut(i)) else {
+                        continue;
+                    };
+                    let mut child_cx = EventContext {
+                        event: cx.event,
+                        bounds: b,
+                        scale: cx.scale,
+                    };
+                    match child.event(&mut child_cx) {
+                        EventResponse::Ignored => {}
+                        response => return response,
+                    }
+                }
+                return EventResponse::Ignored;
+            }
+            _ => {}
+        }
+
+        let press = matches!(cx.event, WidgetEvent::PointerPressed { .. });
         for i in (0..n).rev() {
             let Some(child_bounds) = self.child_bounds(i) else {
                 continue;
@@ -1157,10 +1272,46 @@ pub trait Widget: Send + Sync + 'static {
             };
             match child.event(&mut child_cx) {
                 EventResponse::Ignored => continue,
-                response => return response,
+                response => {
+                    if press {
+                        // Claimed press = focused leaf: every sibling
+                        // subtree drops focus. The claimer sets its own
+                        // `focused` inside its press handler; a
+                        // `FocusLost` afterwards would clear it again.
+                        self.broadcast_focus_lost_except(Some(i), cx.scale);
+                    }
+                    return response;
+                }
             }
         }
+        if press {
+            // Press reached this widget unclaimed — dead space or a
+            // non-interactive surface: clear any focused descendant.
+            self.broadcast_focus_lost_except(None, cx.scale);
+        }
         EventResponse::Ignored
+    }
+
+    /// Delivers [`WidgetEvent::FocusLost`] to every internal child —
+    /// except `skip` — recursively through their own `event` handlers.
+    /// Called by [`Widget::forward_event_to_children`] so a claimed
+    /// pointer press defocuses the rest of the subtree.
+    fn broadcast_focus_lost_except(&mut self, skip: Option<usize>, scale: f32) {
+        let event = WidgetEvent::FocusLost;
+        for j in 0..self.child_count() {
+            if Some(j) == skip {
+                continue;
+            }
+            let (Some(b), Some(child)) = (self.child_bounds(j), self.child_mut(j)) else {
+                continue;
+            };
+            let mut child_cx = EventContext {
+                event: &event,
+                bounds: b,
+                scale,
+            };
+            let _ = child.event(&mut child_cx);
+        }
     }
 
     /// Populate the AccessKit accessibility node. Default is a no-op.

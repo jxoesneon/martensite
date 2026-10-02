@@ -844,16 +844,61 @@ pub(crate) fn paint_label_clipped_styled(
     list.pop_clip();
 }
 
-/// Paints `text` rotated 90° counterclockwise — reading bottom-to-top,
-/// the y-axis-label convention — centered inside `strip`. The paint
-/// command set has no transform op, so the label emits as its glyph
-/// outlines under `FillPath`, which every backend fills identically.
+/// How a vertical label arranges its glyphs.
 ///
-/// Falls back to a clipped horizontal run when the painter can't
-/// produce outlines (`text_path` returns `None`), so the label still
-/// exists — degraded, but visible to users and to lint.
+/// ```
+/// use martensite::text_paint::VerticalTextMode;
+///
+/// assert_eq!(VerticalTextMode::default(), VerticalTextMode::Rotated);
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VerticalTextMode {
+    /// Glyphs rotated 90° counterclockwise — reads bottom-to-top, the
+    /// y-axis-label convention (electro-mechanical meters, `XYPad`).
+    #[default]
+    Rotated,
+    /// Glyphs keep their upright orientation, one grapheme cluster per
+    /// line, stacked top-to-bottom (CJK `writing-mode: vertical` with
+    /// upright Latin, marquee labels).
+    Upright,
+}
+
+/// Paints `text` vertically inside `strip`, centered.
+///
+/// * [`VerticalTextMode::Rotated`] rotates the glyph run 90°
+///   counterclockwise — reading bottom-to-top — by emitting its
+///   outlines under `FillPath` (the paint command set has no transform
+///   op; every backend fills a path identically).
+/// * [`VerticalTextMode::Upright`] stacks grapheme clusters
+///   top-to-bottom at the painter's line pitch, each kept upright and
+///   horizontally centered.
+///
+/// Rotated mode falls back to a clipped horizontal run when the
+/// painter can't produce outlines (`text_path` returns `None`), so
+/// the label still exists — degraded, but visible to users and lint.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_label_vertical(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    list: &mut PaintList,
+    strip: kurbo::Rect,
+    text: &str,
+    size_px: f32,
+    color: [u8; 4],
+    mode: VerticalTextMode,
+) {
+    match mode {
+        VerticalTextMode::Rotated => {
+            paint_label_vertical_rotated(painter, list, strip, text, size_px, color)
+        }
+        VerticalTextMode::Upright => {
+            paint_label_vertical_upright(painter, list, strip, text, size_px, color)
+        }
+    }
+}
+
+/// The rotated [`VerticalTextMode`] path — see
+/// [`paint_label_vertical`].
+fn paint_label_vertical_rotated(
     painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
     list: &mut PaintList,
     strip: kurbo::Rect,
@@ -887,6 +932,49 @@ pub(crate) fn paint_label_vertical(
         size_px,
         color,
     );
+}
+
+/// The upright [`VerticalTextMode`] path — one grapheme cluster per
+/// line, stacked top-to-bottom at the painter's line pitch
+/// (`1.25·size`), each centered horizontally inside `strip` and the
+/// whole stack centered vertically. Combining marks, emoji ZWJ
+/// sequences and other multi-codepoint clusters stay on one line.
+fn paint_label_vertical_upright(
+    painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+    list: &mut PaintList,
+    strip: kurbo::Rect,
+    text: &str,
+    size_px: f32,
+    color: [u8; 4],
+) {
+    use unicode_segmentation::UnicodeSegmentation;
+    let line_h = f64::from(size_px) * 1.25;
+    let clusters: Vec<&str> = text.graphemes(true).collect();
+    if clusters.is_empty() || strip.width() <= 0.0 || strip.height() <= 0.0 {
+        return;
+    }
+    // Block-center the stack vertically; each cluster centers
+    // horizontally on its measured advance (heuristic when the
+    // painter can't measure).
+    let stack_h = line_h * clusters.len() as f64;
+    let top = strip.y0 + (strip.height() - stack_h).max(0.0) / 2.0;
+    list.push_clip(strip);
+    for (i, g) in clusters.iter().enumerate() {
+        let w = painter
+            .and_then(|p| p.measure_text(g, size_px))
+            .unwrap_or(g.chars().count() as f32 * size_px * 0.55)
+            .max(size_px * 0.5);
+        let x = strip.x0 + (strip.width() - f64::from(w)).max(0.0) / 2.0;
+        paint_label(
+            painter,
+            list,
+            Point::new(x, top + i as f64 * line_h),
+            g,
+            size_px,
+            color,
+        );
+    }
+    list.pop_clip();
 }
 
 /// [`paint_label_clipped`] that vertically centers `text`'s line box
@@ -1138,6 +1226,97 @@ mod tests {
             list.commands.last(),
             Some(martensite_core::paint::PaintCommand::PopClip)
         ));
+    }
+
+    #[test]
+    fn vertical_upright_stacks_one_run_per_grapheme() {
+        use martensite_core::paint::PaintCommand;
+        let mut list = PaintList::new();
+        let strip = kurbo::Rect::new(0.0, 0.0, 24.0, 200.0);
+        paint_label_vertical(
+            None,
+            &mut list,
+            strip,
+            "abc",
+            12.0,
+            [255; 4],
+            VerticalTextMode::Upright,
+        );
+        // ClipRect → 3 text runs → PopClip.
+        let runs: Vec<&str> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::DrawText(_, t, ..) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(runs, ["a", "b", "c"]);
+        assert!(matches!(list.commands[0], PaintCommand::ClipRect(r) if r == strip));
+        assert!(matches!(list.commands.last(), Some(PaintCommand::PopClip)));
+    }
+
+    #[test]
+    fn vertical_upright_keeps_clusters_on_one_line() {
+        use martensite_core::paint::PaintCommand;
+        let mut list = PaintList::new();
+        let strip = kurbo::Rect::new(0.0, 0.0, 24.0, 200.0);
+        // "e\u{301}" is a two-codepoint grapheme — it must stay a
+        // single stacked run, not split base + combining mark.
+        paint_label_vertical(
+            None,
+            &mut list,
+            strip,
+            "e\u{301}x",
+            12.0,
+            [255; 4],
+            VerticalTextMode::Upright,
+        );
+        let runs: Vec<&str> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::DrawText(_, t, ..) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(runs, ["e\u{301}", "x"]);
+    }
+
+    #[test]
+    fn vertical_upright_degenerate_strip_emits_nothing() {
+        let mut list = PaintList::new();
+        paint_label_vertical(
+            None,
+            &mut list,
+            kurbo::Rect::new(0.0, 0.0, 0.0, 200.0),
+            "abc",
+            12.0,
+            [255; 4],
+            VerticalTextMode::Upright,
+        );
+        assert!(list.commands.is_empty());
+    }
+
+    #[test]
+    fn vertical_rotated_falls_back_to_horizontal_run() {
+        use martensite_core::paint::PaintCommand;
+        let mut list = PaintList::new();
+        // No painter → `text_path` is None → the clipped horizontal
+        // fallback keeps the label on the paint list.
+        paint_label_vertical(
+            None,
+            &mut list,
+            kurbo::Rect::new(0.0, 0.0, 24.0, 200.0),
+            "Resonance",
+            12.0,
+            [255; 4],
+            VerticalTextMode::Rotated,
+        );
+        assert!(list
+            .commands
+            .iter()
+            .any(|c| matches!(c, PaintCommand::DrawText(_, t, ..) if t == "Resonance")));
     }
 
     #[test]

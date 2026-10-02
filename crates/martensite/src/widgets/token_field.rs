@@ -350,6 +350,32 @@ impl TokenField {
         };
         Some(Rect::new(x, r.origin.y, w, r.size.y))
     }
+
+    /// Delivers an event to the embedded input under its own bounds.
+    /// Positional events outside the input rect are dropped; focus
+    /// transitions and keys pass through so the field can gate on
+    /// its own `focused` flag.
+    fn forward_input(&mut self, cx: &mut EventContext) -> EventResponse {
+        if let Some(pos) = cx.event.position() {
+            let inside = self.child_bounds(0).is_some_and(|r| r.contains(pos));
+            let drag = matches!(
+                cx.event,
+                WidgetEvent::PointerMoved { .. } | WidgetEvent::PointerReleased { .. }
+            );
+            if !drag && !inside {
+                return EventResponse::Ignored;
+            }
+        }
+        let Some(bounds) = self.child_bounds(0) else {
+            return EventResponse::Ignored;
+        };
+        let mut child_cx = EventContext {
+            event: cx.event,
+            bounds,
+            scale: cx.scale,
+        };
+        self.input.event(&mut child_cx)
+    }
 }
 
 impl Default for TokenField {
@@ -448,36 +474,41 @@ impl Widget for TokenField {
                         return EventResponse::RequestRepaint;
                     }
                 }
-                EventResponse::Ignored // falls through to input child
+                self.forward_input(cx)
             }
             WidgetEvent::KeyPressed { key, .. } => {
-                if key == "Backspace" && self.input.value.is_empty() && !self.tokens.is_empty() {
-                    self.remove_token(self.tokens.len() - 1);
-                    return EventResponse::RequestRepaint;
+                if self.input.focused() {
+                    if key == "Backspace" && self.input.value.is_empty() && !self.tokens.is_empty()
+                    {
+                        self.remove_token(self.tokens.len() - 1);
+                        return EventResponse::RequestRepaint;
+                    }
+                    if key == "Enter" && self.commit_pending() {
+                        return EventResponse::RequestRepaint;
+                    }
                 }
-                if key == "Enter" && self.commit_pending() {
-                    return EventResponse::RequestRepaint;
-                }
-                EventResponse::Ignored // falls through to input child
+                self.forward_input(cx)
             }
             WidgetEvent::ImeCommitted { text } => {
                 // A trailing delimiter commits the pending text as a
                 // token; the input never sees the delimiter.
-                let ends = text
-                    .chars()
-                    .last()
-                    .is_some_and(|c| self.delimiters.contains(&c));
-                if ends {
-                    let mut stripped = text.clone();
-                    stripped.pop();
-                    let combined = format!("{}{}", self.input.value, stripped);
-                    self.input.set_value(combined);
-                    self.commit_pending();
-                    return EventResponse::RequestRepaint;
+                if self.input.focused() {
+                    let ends = text
+                        .chars()
+                        .last()
+                        .is_some_and(|c| self.delimiters.contains(&c));
+                    if ends {
+                        let mut stripped = text.clone();
+                        stripped.pop();
+                        let combined = format!("{}{}", self.input.value, stripped);
+                        self.input.set_value(combined);
+                        self.commit_pending();
+                        return EventResponse::RequestRepaint;
+                    }
                 }
-                EventResponse::Ignored
+                self.forward_input(cx)
             }
-            _ => EventResponse::Ignored,
+            _ => self.forward_input(cx),
         }
     }
 
@@ -659,6 +690,7 @@ mod tests {
         let mut t = TokenField::new().tokens(["a", "b"]);
         let mut hot = HotNode::default();
         t.layout(&mut make_cx(&mut hot), Rect::new(0.0, 0.0, 300.0, 32.0));
+        t.event(&mut ev(&WidgetEvent::FocusGained));
         assert_eq!(
             t.event(&mut ev(&key("Backspace"))),
             EventResponse::RequestRepaint
@@ -670,14 +702,21 @@ mod tests {
     fn backspace_with_text_ignored() {
         let mut t = TokenField::new().tokens(["a"]);
         t.input.set_value("xy");
-        // The widget returns Ignored so the input child can handle it.
+        // Unfocused: the key forwards to the input, which gates on
+        // focus and ignores it — nothing edits, no chip pops.
         assert_eq!(t.event(&mut ev(&key("Backspace"))), EventResponse::Ignored);
+        assert_eq!(t.input.value, "xy");
+        // Focused: the input consumes it and deletes a character.
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.event(&mut ev(&key("Backspace")));
+        assert_eq!(t.input.value, "x");
         assert_eq!(t.token_list(), &["a"]);
     }
 
     #[test]
     fn enter_commits_pending() {
         let mut t = TokenField::new();
+        t.event(&mut ev(&WidgetEvent::FocusGained));
         t.input.set_value("tag1");
         assert_eq!(
             t.event(&mut ev(&key("Enter"))),
@@ -690,6 +729,7 @@ mod tests {
     #[test]
     fn delimiter_commit() {
         let mut t = TokenField::new();
+        t.event(&mut ev(&WidgetEvent::FocusGained));
         let ev_commit = WidgetEvent::ImeCommitted {
             text: "alpha,".into(),
         };

@@ -165,6 +165,28 @@ fn word_edges(text: &str) -> Vec<usize> {
     edges
 }
 
+/// The byte offset where the grapheme cluster containing `pos`'s
+/// predecessor starts — ArrowLeft's and Backspace's target. Caret
+/// motion and deletion step whole extended grapheme clusters so
+/// combining marks, regional-indicator flags, and ZWJ emoji
+/// sequences never split under the caret, matching platform
+/// text-field behavior.
+fn prev_grapheme_boundary(text: &str, pos: usize) -> usize {
+    text[..pos]
+        .grapheme_indices(true)
+        .next_back()
+        .map_or(0, |(i, _)| i)
+}
+
+/// The byte offset just past the grapheme cluster starting at `pos`
+/// — ArrowRight's and Delete's target.
+fn next_grapheme_boundary(text: &str, pos: usize) -> usize {
+    text[pos..]
+        .graphemes(true)
+        .next()
+        .map_or(text.len(), |g| pos + g.len())
+}
+
 /// Splits a chorded key name like `"Ctrl+Shift+ArrowLeft"` into its
 /// modifier flags and base name. `WidgetEvent::KeyPressed` carries no
 /// modifier state (F17), so window layers either dispatch the
@@ -173,7 +195,7 @@ fn word_edges(text: &str) -> Vec<usize> {
 /// `+`-joined chord names; both encodings resolve here.
 ///
 /// Returns `(word_modifier, shift, base_key)`.
-fn parse_key_chord(key: &str) -> (bool, bool, &str) {
+pub(crate) fn parse_key_chord(key: &str) -> (bool, bool, &str) {
     let mut word = false;
     let mut shift = false;
     let mut rest = key;
@@ -917,11 +939,7 @@ impl TextInput {
                 return;
             }
         }
-        let prev = self.value[..self.cursor]
-            .chars()
-            .next_back()
-            .map_or(0, |c| self.cursor - c.len_utf8());
-        self.set_caret(prev, extend);
+        self.set_caret(prev_grapheme_boundary(&self.value, self.cursor), extend);
     }
 
     fn caret_right(&mut self, extend: bool) {
@@ -932,11 +950,7 @@ impl TextInput {
                 return;
             }
         }
-        let next = self.value[self.cursor..]
-            .chars()
-            .next()
-            .map_or(self.value.len(), |c| self.cursor + c.len_utf8());
-        self.set_caret(next, extend);
+        self.set_caret(next_grapheme_boundary(&self.value, self.cursor), extend);
     }
 
     /// The nearest word-jump boundary strictly left of `pos` —
@@ -1010,8 +1024,8 @@ impl TextInput {
         if self.delete_selection() {
             return;
         }
-        if let Some(c) = self.value[..self.cursor].chars().next_back() {
-            let start = self.cursor - c.len_utf8();
+        let start = prev_grapheme_boundary(&self.value, self.cursor);
+        if start < self.cursor {
             self.value.drain(start..self.cursor);
             self.cursor = start;
         }
@@ -1024,8 +1038,9 @@ impl TextInput {
         if self.delete_selection() {
             return;
         }
-        if let Some(c) = self.value[self.cursor..].chars().next() {
-            self.value.drain(self.cursor..self.cursor + c.len_utf8());
+        let end = next_grapheme_boundary(&self.value, self.cursor);
+        if end > self.cursor {
+            self.value.drain(self.cursor..end);
         }
     }
 
@@ -1435,9 +1450,28 @@ impl Widget for TextInput {
         }
     }
 
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         if !self.enabled {
             return EventResponse::Ignored;
+        }
+        match cx.event {
+            // Editing events belong to the focused field only. An
+            // unfocused input must not claim keys — the forwarding
+            // helper would otherwise deliver them to the first
+            // claiming child regardless of where the user clicked.
+            WidgetEvent::KeyPressed { .. }
+            | WidgetEvent::KeyReleased { .. }
+            | WidgetEvent::ImePreedit { .. }
+            | WidgetEvent::ImeCommitted { .. }
+                if !self.focused =>
+            {
+                return EventResponse::Ignored;
+            }
+            _ => {}
         }
         match cx.event {
             WidgetEvent::PointerPressed {
@@ -1445,6 +1479,11 @@ impl Widget for TextInput {
                 position,
                 count,
             } => {
+                // Internal children never receive the arena's
+                // `FocusGained` reliably — a claimed primary press IS
+                // the focus signal. Sibling fields drop theirs via the
+                // `FocusLost` the forwarding helper broadcasts.
+                self.focused = true;
                 // Right-edge affordance zones win over caret
                 // placement — a press on the eye or ✕ is not a text
                 // gesture and must not move the caret or open a drag.
@@ -1897,6 +1936,7 @@ mod tests {
     #[test]
     fn text_input_set_value() {
         let mut input = TextInput::new("Name");
+        focus(&mut input);
         input.set_value("John");
         assert_eq!(input.value, "John");
     }
@@ -1906,6 +1946,7 @@ mod tests {
         let mut hot = HotNode::default();
         let mut cx = make_cx(&mut hot);
         let mut input = TextInput::new("Test");
+        focus(&mut input);
         let size = input.measure(
             &mut cx,
             LayoutConstraints {
@@ -1921,6 +1962,7 @@ mod tests {
         let mut hot = HotNode::default();
         let mut cx = make_cx(&mut hot);
         let mut input = TextInput::new("Test");
+        focus(&mut input);
         let bounds = Rect::new(0.0, 0.0, 120.0, 24.0);
         input.layout(&mut cx, bounds);
         assert_eq!(input.cached_bounds(), bounds);
@@ -1990,9 +2032,16 @@ mod tests {
         }
     }
 
+    /// Editing events only reach a focused field — tests simulate the
+    /// arena's focus delivery the way production does.
+    fn focus(input: &mut TextInput) {
+        input.event(&mut ev(&WidgetEvent::FocusGained));
+    }
+
     #[test]
     fn text_input_ime_inserts_at_caret() {
         let mut input = TextInput::new("F");
+        focus(&mut input);
         input.event(&mut ev(&ime("abc")));
         input.event(&mut ev(&key("ArrowLeft")));
         input.event(&mut ev(&key("ArrowLeft")));
@@ -2004,6 +2053,7 @@ mod tests {
     #[test]
     fn text_input_ime_preedit_lifecycle() {
         let mut input = TextInput::new("F");
+        focus(&mut input);
         input.event(&mut ev(&preedit("nich", Some((0, 4)))));
         assert_eq!(input.preedit(), Some("nich"));
         assert_eq!(input.preedit_cursor(), Some((0, 4)));
@@ -2021,6 +2071,7 @@ mod tests {
     #[test]
     fn text_input_preedit_cleared_on_focus_loss() {
         let mut input = TextInput::new("F");
+        focus(&mut input);
         input.event(&mut ev(&preedit("wip", None)));
         assert_eq!(input.preedit(), Some("wip"));
         input.event(&mut ev(&WidgetEvent::FocusLost));
@@ -2030,6 +2081,7 @@ mod tests {
     #[test]
     fn text_input_backspace_and_delete() {
         let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
         input.event(&mut ev(&key("ArrowLeft")));
         input.event(&mut ev(&key("Backspace")));
         assert_eq!(input.value, "ac");
@@ -2039,8 +2091,94 @@ mod tests {
     }
 
     #[test]
+    fn text_input_backspace_deletes_whole_grapheme() {
+        // "e\u{301}" is e + combining acute — one user-perceived char.
+        let mut input = TextInput::new("F").value("e\u{301}x");
+        focus(&mut input);
+        input.event(&mut ev(&key("ArrowLeft")));
+        input.event(&mut ev(&key("Backspace")));
+        assert_eq!(input.value, "x");
+        assert_eq!(input.cursor, 0);
+        // A ZWJ family emoji is one cluster — Backspace removes it whole.
+        let mut input = TextInput::new("F").value("\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}!");
+        focus(&mut input);
+        input.event(&mut ev(&key("ArrowLeft")));
+        input.event(&mut ev(&key("Backspace")));
+        assert_eq!(input.value, "!");
+    }
+
+    #[test]
+    fn text_input_delete_forward_removes_whole_grapheme() {
+        let mut input = TextInput::new("F").value("e\u{301}x");
+        focus(&mut input);
+        input.event(&mut ev(&key("Home")));
+        input.event(&mut ev(&key("Delete")));
+        assert_eq!(input.value, "x");
+    }
+
+    #[test]
+    fn text_input_arrows_step_graphemes() {
+        // Two clusters, three scalar values: "é" (2 chars) + "x".
+        let mut input = TextInput::new("F").value("e\u{301}x");
+        focus(&mut input);
+        input.event(&mut ev(&key("Home")));
+        input.event(&mut ev(&key("ArrowRight")));
+        assert_eq!(input.cursor, "e\u{301}".len());
+        input.event(&mut ev(&key("ArrowRight")));
+        assert_eq!(input.cursor, input.value.len());
+        input.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(input.cursor, "e\u{301}".len());
+    }
+
+    #[test]
+    fn text_input_grapheme_delete_undoes_whole() {
+        let mut input = TextInput::new("F").value("e\u{301}");
+        focus(&mut input);
+        input.event(&mut ev(&key("Backspace")));
+        assert_eq!(input.value, "");
+        input.event(&mut ev(&key("Ctrl+Z")));
+        assert_eq!(input.value, "e\u{301}");
+    }
+
+    #[test]
+    fn text_input_unfocused_ignores_editing_keys() {
+        let mut input = TextInput::new("F").value("abc");
+        // No FocusGained/click — keys and IME must not edit.
+        assert_eq!(
+            input.event(&mut ev(&key("Backspace"))),
+            EventResponse::Ignored
+        );
+        assert_eq!(input.event(&mut ev(&ime("z"))), EventResponse::Ignored);
+        assert_eq!(input.value, "abc");
+    }
+
+    #[test]
+    fn text_input_disabled_ignores_editing_keys() {
+        let mut input = TextInput::new("F").value("abc").enabled(false);
+        focus(&mut input);
+        assert_eq!(
+            input.event(&mut ev(&key("Backspace"))),
+            EventResponse::Ignored
+        );
+        assert_eq!(input.event(&mut ev(&ime("z"))), EventResponse::Ignored);
+        assert_eq!(input.value, "abc");
+    }
+
+    #[test]
+    fn text_input_focus_lost_stops_editing() {
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        input.event(&mut ev(&ime("z")));
+        assert_eq!(input.value, "abcz");
+        input.event(&mut ev(&WidgetEvent::FocusLost));
+        input.event(&mut ev(&key("Backspace")));
+        assert_eq!(input.value, "abcz");
+    }
+
+    #[test]
     fn text_input_select_all_then_type_replaces() {
         let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
         input.event(&mut ev(&key("SelectAll")));
         assert_eq!(input.selection(), Some((0, 3)));
         input.event(&mut ev(&ime("z")));
@@ -2052,6 +2190,7 @@ mod tests {
     #[test]
     fn text_input_shift_arrows_extend_selection() {
         let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
         input.event(&mut ev(&key("Shift")));
         input.event(&mut ev(&key("ArrowLeft")));
         assert_eq!(input.selection(), Some((2, 3)));
@@ -2083,6 +2222,7 @@ mod tests {
     #[test]
     fn text_input_double_click_selects_word() {
         let mut input = TextInput::new("F").value("alpha beta gamma");
+        focus(&mut input);
         let x = click_x(&mut input, 8); // inside "beta"
         assert_eq!(press(&mut input, x, 2), EventResponse::CapturePointer);
         assert_eq!(input.selected_text(), Some("beta"));
@@ -2091,6 +2231,7 @@ mod tests {
     #[test]
     fn text_input_triple_click_selects_all() {
         let mut input = TextInput::new("F").value("alpha beta gamma");
+        focus(&mut input);
         let x = click_x(&mut input, 8);
         press(&mut input, x, 3);
         assert_eq!(input.selection(), Some((0, "alpha beta gamma".len())));
@@ -2099,6 +2240,7 @@ mod tests {
     #[test]
     fn text_input_double_click_drag_extends_by_word() {
         let mut input = TextInput::new("F").value("alpha beta gamma");
+        focus(&mut input);
         let x = click_x(&mut input, 8); // inside "beta"
         press(&mut input, x, 2);
         // Drag left into "alpha" — the whole initial word stays
@@ -2125,6 +2267,7 @@ mod tests {
     #[test]
     fn text_input_single_click_drag_selects_chars() {
         let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
         let x = click_x(&mut input, 2);
         press(&mut input, x, 1);
         let end = click_x(&mut input, 5);
@@ -2138,6 +2281,7 @@ mod tests {
     #[test]
     fn text_input_arrows_collapse_selection() {
         let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
         input.event(&mut ev(&key("SelectAll")));
         input.event(&mut ev(&key("ArrowLeft")));
         assert_eq!(input.cursor, 0);
@@ -2151,6 +2295,7 @@ mod tests {
     #[test]
     fn text_input_backspace_deletes_selection() {
         let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
         input.event(&mut ev(&key("SelectAll")));
         input.event(&mut ev(&key("Backspace")));
         assert_eq!(input.value, "");
@@ -2160,6 +2305,7 @@ mod tests {
     #[test]
     fn text_input_escape_clears_selection() {
         let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
         input.event(&mut ev(&key("SelectAll")));
         input.event(&mut ev(&key("Escape")));
         assert_eq!(input.selection(), None);
@@ -2169,6 +2315,7 @@ mod tests {
     #[test]
     fn text_input_home_end() {
         let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
         input.event(&mut ev(&key("Home")));
         assert_eq!(input.cursor, 0);
         input.event(&mut ev(&key("End")));
@@ -2178,6 +2325,7 @@ mod tests {
     #[test]
     fn text_input_set_value_resets_caret() {
         let mut input = TextInput::new("F").value("abcdef");
+        focus(&mut input);
         input.event(&mut ev(&key("Home")));
         input.set_value("xy");
         assert_eq!(input.cursor, 2);
@@ -2187,6 +2335,7 @@ mod tests {
     #[test]
     fn text_input_read_only_blocks_edits() {
         let mut input = TextInput::new("F").value("abc").read_only(true);
+        focus(&mut input);
         input.event(&mut ev(&ime("X")));
         input.event(&mut ev(&key("Backspace")));
         input.event(&mut ev(&key("Paste")));
@@ -2200,6 +2349,7 @@ mod tests {
     #[test]
     fn text_input_insert_strips_newlines() {
         let mut input = TextInput::new("F");
+        focus(&mut input);
         input.event(&mut ev(&ime("a\nb\rc")));
         assert_eq!(input.value, "abc");
         assert_eq!(input.cursor, 3);
@@ -2210,6 +2360,7 @@ mod tests {
         let mut hot = HotNode::default();
         let mut cx = make_cx(&mut hot);
         let mut input = TextInput::new("F").value("alpha beta gamma delta epsilon");
+        focus(&mut input);
         let bounds = Rect::new(0.0, 0.0, 60.0, 24.0);
         input.layout(&mut cx, bounds);
 
@@ -2239,6 +2390,7 @@ mod tests {
     #[test]
     fn text_input_undo_redo_restores_edits() {
         let mut input = TextInput::new("F");
+        focus(&mut input);
         input.event(&mut ev(&ime("abc")));
         input.event(&mut ev(&ime("d")));
         assert_eq!(input.value, "abcd");
@@ -2266,6 +2418,7 @@ mod tests {
     #[test]
     fn text_input_word_jump_chorded_and_tracked() {
         let mut input = TextInput::new("F").value("alpha beta gamma");
+        focus(&mut input);
         // Chorded name — Ctrl+ArrowLeft lands on the previous UAX#29
         // boundary (start of "gamma").
         input.event(&mut ev(&key("Ctrl+ArrowLeft")));
@@ -2285,6 +2438,7 @@ mod tests {
     #[test]
     fn text_input_word_jump_extends_selection() {
         let mut input = TextInput::new("F").value("alpha beta gamma");
+        focus(&mut input);
         input.event(&mut ev(&key("Ctrl+Shift+ArrowLeft")));
         assert_eq!(input.selection(), Some((11, 16)));
     }
@@ -2292,6 +2446,7 @@ mod tests {
     #[test]
     fn text_input_ctrl_backspace_deletes_word() {
         let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
         input.event(&mut ev(&key("Ctrl+Backspace")));
         assert_eq!(input.value, "alpha ");
         assert_eq!(input.cursor, 6);
@@ -2314,6 +2469,7 @@ mod tests {
             .value("secret")
             .secure(true)
             .revealable(true);
+        focus(&mut input);
         assert!(input.masked());
         // Bounds are (0,0,200,24) at scale 1 — the reveal zone is the
         // rightmost ZONE_pt strip; a press there does not capture.
@@ -2327,6 +2483,7 @@ mod tests {
     #[test]
     fn text_input_clear_zone_clears_and_undoes() {
         let mut input = TextInput::new("S").value("query").clearable(true);
+        focus(&mut input);
         assert_eq!(press(&mut input, 190.0, 1), EventResponse::RequestRepaint);
         assert!(input.value.is_empty());
         assert!(input.take_edited());
@@ -2338,6 +2495,7 @@ mod tests {
     #[test]
     fn text_input_zone_press_does_not_move_caret() {
         let mut input = TextInput::new("S").value("query").clearable(true);
+        focus(&mut input);
         input.event(&mut ev(&key("Home")));
         // A clear-zone press is consumed by the zone, not the text —
         // the caret must not warp to the click position.

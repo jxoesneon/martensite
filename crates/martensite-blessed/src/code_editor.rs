@@ -1,5 +1,7 @@
 //! A line-based, multi-cursor code editor.
 
+use unicode_segmentation::UnicodeSegmentation;
+
 /// A zero-based text cursor.
 ///
 /// # Examples
@@ -410,8 +412,10 @@ impl CodeEditor {
         self.cursors = cursors;
     }
 
-    /// Deletes one character before every cursor, joining lines at
-    /// column zero — or just the selection when one is open.
+    /// Deletes one extended grapheme cluster before every cursor —
+    /// combining marks and ZWJ emoji sequences come out whole —
+    /// joining lines at column zero, or just the selection when one
+    /// is open.
     pub fn delete_backward(&mut self) {
         if self.delete_selection() {
             return;
@@ -487,9 +491,18 @@ impl CodeEditor {
     fn delete_at(&mut self, cursor: Cursor) -> Cursor {
         if cursor.column > 0 {
             let end = char_byte(&self.lines[cursor.line], cursor.column);
-            let start = char_byte(&self.lines[cursor.line], cursor.column - 1);
+            // One user-perceived character: the whole extended
+            // grapheme cluster, so combining marks and ZWJ emoji
+            // sequences never split under Backspace.
+            let start = self.lines[cursor.line][..end]
+                .grapheme_indices(true)
+                .next_back()
+                .map_or(0, |(i, _)| i);
             self.lines[cursor.line].replace_range(start..end, "");
-            Cursor::new(cursor.line, cursor.column - 1)
+            Cursor::new(
+                cursor.line,
+                self.lines[cursor.line][..start].chars().count(),
+            )
         } else if cursor.line > 0 {
             let removed = self.lines.remove(cursor.line);
             let column = self.lines[cursor.line - 1].chars().count();
@@ -596,5 +609,29 @@ mod tests {
         // A plain caret move collapses it.
         editor.set_cursors(vec![Cursor::new(1, 2)]);
         assert_eq!(editor.selection(), None);
+    }
+
+    #[test]
+    fn delete_backward_removes_whole_grapheme_cluster() {
+        // "e\u{301}" is two chars but one user-perceived character.
+        let mut editor = CodeEditor::new("e\u{301}x");
+        editor.set_cursors(vec![Cursor::new(0, 3)]);
+        editor.delete_backward();
+        assert_eq!(editor.text(), "e\u{301}");
+        editor.delete_backward();
+        assert_eq!(editor.text(), "");
+        assert_eq!(editor.cursors(), &[Cursor::new(0, 0)]);
+    }
+
+    #[test]
+    fn delete_backward_removes_zwj_emoji_whole() {
+        let mut editor = CodeEditor::new("a\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}");
+        // Caret past the family emoji — 'a' plus five emoji scalars
+        // (person, ZWJ, person, ZWJ, person).
+        let col = editor.text().chars().count();
+        editor.set_cursors(vec![Cursor::new(0, col)]);
+        editor.delete_backward();
+        assert_eq!(editor.text(), "a");
+        assert_eq!(editor.cursors(), &[Cursor::new(0, 1)]);
     }
 }

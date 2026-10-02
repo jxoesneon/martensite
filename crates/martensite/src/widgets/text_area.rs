@@ -40,6 +40,7 @@
 //! assert!(area.value().is_empty());
 //! ```
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use accesskit::Node as AccessKitNode;
@@ -73,6 +74,29 @@ const TRACK_COLOR: [u8; 4] = [235, 237, 240, 255];
 const THUMB_COLOR: [u8; 4] = [160, 166, 176, 255];
 /// Scrollbar thumb colour while dragged.
 const THUMB_ACTIVE: [u8; 4] = [120, 126, 138, 255];
+
+/// Bounded undo history — `TextInput`'s depth.
+const UNDO_LIMIT: usize = 100;
+
+/// Word-jump boundaries of `line` in CHARACTER positions (the
+/// `Cursor::column` unit): the edges of every non-whitespace UAX#29
+/// word segment plus the two extremes — the same target set
+/// `TextInput`'s `word_edges` computes in bytes.
+fn char_word_edges(line: &str) -> Vec<usize> {
+    let mut edges = Vec::new();
+    for (i, seg) in line.split_word_bound_indices() {
+        if !seg.trim().is_empty() {
+            edges.push(line[..i].chars().count());
+            edges.push(line[..i].chars().count() + seg.chars().count());
+        }
+    }
+    edges.push(0);
+    edges.push(line.chars().count());
+    edges.sort_unstable();
+    edges.dedup();
+    edges
+}
+
 /// Horizontal inset for the editable text.
 const TEXT_PAD_X: f32 = 8.0;
 /// Vertical inset for the editable text.
@@ -152,6 +176,31 @@ fn col_byte(text: &str, col: usize) -> usize {
 /// Char index of `byte` in `text` — the inverse of [`col_byte`].
 fn byte_col(text: &str, byte: usize) -> usize {
     text[..byte.min(text.len())].chars().count()
+}
+
+/// The char column where the grapheme cluster containing `col`'s
+/// predecessor starts — ArrowLeft's and Backspace's target. Caret
+/// motion and deletion step whole extended grapheme clusters so
+/// combining marks and ZWJ emoji sequences never split under the
+/// caret, matching platform text-field behavior.
+fn prev_grapheme_col(line: &str, col: usize) -> usize {
+    let byte = col_byte(line, col);
+    let prev = line[..byte]
+        .grapheme_indices(true)
+        .next_back()
+        .map_or(0, |(i, _)| i);
+    byte_col(line, prev)
+}
+
+/// The char column just past the grapheme cluster starting at `col`
+/// — ArrowRight's and forward-Delete's target.
+fn next_grapheme_col(line: &str, col: usize) -> usize {
+    let byte = col_byte(line, col);
+    let next = line[byte..]
+        .graphemes(true)
+        .next()
+        .map_or(line.len(), |g| byte + g.len());
+    byte_col(line, next)
 }
 
 /// Largest byte offset `<= byte` that is a char boundary — the
@@ -292,6 +341,15 @@ pub struct TextArea {
     /// Shift state tracked from `KeyPressed`/`KeyReleased` —
     /// `WidgetEvent::KeyPressed` carries no modifier state (F17).
     shift_held: bool,
+    /// Word-modifier state (Ctrl/Cmd/Alt) tracked the same way —
+    /// `parse_key_chord` covers `+`-joined chord names, this covers
+    /// platforms that deliver the modifier as its own key event.
+    word_mod_held: bool,
+    /// Bounded undo history — one [`CodeEditor`] snapshot per user
+    /// edit (text + cursors + selection), `TextInput`'s model.
+    undo: VecDeque<CodeEditor>,
+    /// Redo branch cleared by every new edit.
+    redo: VecDeque<CodeEditor>,
     /// Drag-select in progress; the widget holds pointer capture.
     dragging: bool,
     /// The granularity the current drag selects with — set from the
@@ -349,6 +407,9 @@ impl Clone for TextArea {
             text_painter: self.text_painter.clone(),
             focused: self.focused,
             shift_held: self.shift_held,
+            word_mod_held: self.word_mod_held,
+            undo: self.undo.clone(),
+            redo: self.redo.clone(),
             dragging: self.dragging,
             drag_granularity: self.drag_granularity,
             drag_word: self.drag_word,
@@ -400,6 +461,9 @@ impl TextArea {
             text_painter: None,
             focused: false,
             shift_held: false,
+            word_mod_held: false,
+            undo: VecDeque::new(),
+            redo: VecDeque::new(),
             dragging: false,
             drag_granularity: SelectGranularity::Char,
             drag_word: None,
@@ -586,6 +650,10 @@ impl TextArea {
     /// ```
     pub fn set_value(&mut self, value: impl Into<String>) {
         self.editor = CodeEditor::new(&value.into());
+        // A programmatic write is not a user edit — it drops the undo
+        // history (Qt's setText behaves the same).
+        self.undo.clear();
+        self.redo.clear();
         // Programmatic writes collapse the caret to the end — matching
         // `TextInput::set_value`.
         let last = self.editor.lines().len().saturating_sub(1);
@@ -807,6 +875,109 @@ impl TextArea {
         self.sync_caret_tracker();
     }
 
+    /// Pushes the whole editor state (text, cursors, selection) onto
+    /// the bounded undo stack and clears the redo branch — every
+    /// user-driven mutation routes through here so one logical edit
+    /// is one undo step, `TextInput`'s snapshot model.
+    fn record_undo(&mut self) {
+        self.undo.push_back(self.editor.clone());
+        if self.undo.len() > UNDO_LIMIT {
+            self.undo.pop_front();
+        }
+        self.redo.clear();
+    }
+
+    /// Restores the newest undo snapshot, pushing the current state
+    /// onto the redo stack.
+    fn undo_edit(&mut self) -> bool {
+        let Some(snap) = self.undo.pop_back() else {
+            return false;
+        };
+        self.redo
+            .push_back(std::mem::replace(&mut self.editor, snap));
+        self.mark_edited();
+        true
+    }
+
+    /// Re-applies the newest undone snapshot.
+    fn redo_edit(&mut self) -> bool {
+        let Some(snap) = self.redo.pop_back() else {
+            return false;
+        };
+        self.undo
+            .push_back(std::mem::replace(&mut self.editor, snap));
+        self.mark_edited();
+        true
+    }
+
+    /// The nearest word-jump boundary strictly before `pos` —
+    /// Ctrl/Cmd+ArrowLeft's target: the previous word edge on the
+    /// line, else the previous line's end, else the origin.
+    fn word_left(&self, pos: Cursor) -> Cursor {
+        let line = &self.editor.lines()[pos.line];
+        let col_char = pos.column.min(line.chars().count());
+        let edges = char_word_edges(line);
+        if let Some(&e) = edges.iter().rev().find(|&&e| e < col_char) {
+            return Cursor::new(pos.line, e);
+        }
+        if pos.line > 0 {
+            return Cursor::new(pos.line - 1, self.line_len(pos.line - 1));
+        }
+        Cursor::new(0, 0)
+    }
+
+    /// The nearest word-jump boundary strictly after `pos`.
+    fn word_right(&self, pos: Cursor) -> Cursor {
+        let line = &self.editor.lines()[pos.line];
+        let col_char = pos.column.min(line.chars().count());
+        let edges = char_word_edges(line);
+        if let Some(&e) = edges.iter().find(|&&e| e > col_char) {
+            return Cursor::new(pos.line, e);
+        }
+        let last = self.editor.lines().len().saturating_sub(1);
+        if pos.line < last {
+            return Cursor::new(pos.line + 1, 0);
+        }
+        Cursor::new(last, self.line_len(last))
+    }
+
+    /// Ctrl/Cmd+Backspace — deletes the selection, else the run from
+    /// the previous word edge to the caret (crossing the line break
+    /// at column 0, matching `caret_left`).
+    fn delete_word_back(&mut self) {
+        if self.editor.selection().is_some() {
+            self.record_undo();
+            self.editor.delete_selection();
+            self.mark_edited();
+            return;
+        }
+        let cur = self.primary();
+        let start = self.word_left(cur);
+        if start != cur {
+            self.record_undo();
+            self.editor.delete_range(start, cur);
+            self.mark_edited();
+        }
+    }
+
+    /// Ctrl/Cmd+Delete — deletes the selection, else the run from the
+    /// caret to the next word edge.
+    fn delete_word_forward(&mut self) {
+        if self.editor.selection().is_some() {
+            self.record_undo();
+            self.editor.delete_selection();
+            self.mark_edited();
+            return;
+        }
+        let cur = self.primary();
+        let end = self.word_right(cur);
+        if end != cur {
+            self.record_undo();
+            self.editor.delete_range(cur, end);
+            self.mark_edited();
+        }
+    }
+
     /// Pushes the model's selection into an attached `CaretTracker`
     /// (anchor first, focus = primary caret) — the a11y mirror of the
     /// editing state.
@@ -849,9 +1020,12 @@ impl TextArea {
             .chars()
             .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
             .collect();
-        if clean.is_empty() {
+        // A pure-selection delete still counts as an edit (an empty
+        // paste over a selection removes it).
+        if clean.is_empty() && self.editor.selection().is_none() {
             return;
         }
+        self.record_undo();
         self.editor.insert(&clean);
         self.mark_edited();
     }
@@ -866,6 +1040,7 @@ impl TextArea {
                 .iter()
                 .any(|c| c.line > 0 || c.column > 0);
         if can_delete {
+            self.record_undo();
             self.editor.delete_backward();
             self.mark_edited();
         }
@@ -875,16 +1050,20 @@ impl TextArea {
     /// so this is a `delete_range` of the char after the caret, or the
     /// line join when the caret sits at EOL.
     fn delete_forward(&mut self) {
-        if self.editor.delete_selection() {
+        if self.editor.selection().is_some() {
+            self.record_undo();
+            self.editor.delete_selection();
             self.mark_edited();
             return;
         }
         let cur = self.primary();
         if cur.column < self.line_len(cur.line) {
-            self.editor
-                .delete_range(cur, Cursor::new(cur.line, cur.column + 1));
+            let end = next_grapheme_col(&self.editor.lines()[cur.line], cur.column);
+            self.record_undo();
+            self.editor.delete_range(cur, Cursor::new(cur.line, end));
             self.mark_edited();
         } else if cur.line + 1 < self.editor.lines().len() {
+            self.record_undo();
             self.editor.delete_range(cur, Cursor::new(cur.line + 1, 0));
             self.mark_edited();
         }
@@ -925,8 +1104,9 @@ impl TextArea {
             }
         }
         let cur = self.primary();
+        let line = &self.editor.lines()[cur.line];
         let target = if cur.column > 0 {
-            Cursor::new(cur.line, cur.column - 1)
+            Cursor::new(cur.line, prev_grapheme_col(line, cur.column))
         } else if cur.line > 0 {
             // Cross the line break — prose-editor semantics, like
             // QTextEdit/GtkTextView.
@@ -947,8 +1127,9 @@ impl TextArea {
             }
         }
         let cur = self.primary();
+        let line = &self.editor.lines()[cur.line];
         let target = if cur.column < self.line_len(cur.line) {
-            Cursor::new(cur.line, cur.column + 1)
+            Cursor::new(cur.line, next_grapheme_col(line, cur.column))
         } else if cur.line + 1 < self.editor.lines().len() {
             Cursor::new(cur.line + 1, 0)
         } else {
@@ -1301,54 +1482,104 @@ impl TextArea {
     /// key name — plain characters arrive via `ImeCommitted`, while
     /// chords like Cmd+A arrive as the synthetic names
     /// `"SelectAll"`/`"Cut"`/`"Copy"`/`"Paste"` that the window layer
-    /// dispatches (see `TextInput::key_pressed` and the example's
-    /// chord synthesis).
+    /// dispatches or as `+`-joined chord names (`"Ctrl+ArrowLeft"`) —
+    /// both resolve through `parse_key_chord`, `TextInput`'s seam.
     fn key_pressed(&mut self, key: &str, bounds: Rect) -> EventResponse {
-        match key {
+        let (wm_chord, sh_chord, base) = crate::widgets::text_input::parse_key_chord(key);
+        match base {
+            "Control" | "Ctrl" | "Meta" | "Cmd" | "Super" | "Alt" | "Option" => {
+                self.word_mod_held = true;
+                return EventResponse::Handled;
+            }
             "Shift" => {
                 self.shift_held = true;
-                EventResponse::Handled
+                return EventResponse::Handled;
             }
+            _ => {}
+        }
+        let word = wm_chord || self.word_mod_held;
+        let extend = sh_chord || self.shift_held;
+        match base {
             "ArrowLeft" => {
-                self.caret_left(self.shift_held);
+                if word {
+                    let target = self.word_left(self.primary());
+                    self.preferred_col = None;
+                    self.move_to(target, extend);
+                } else {
+                    self.caret_left(extend);
+                }
                 EventResponse::RequestRepaint
             }
             "ArrowRight" => {
-                self.caret_right(self.shift_held);
+                if word {
+                    let target = self.word_right(self.primary());
+                    self.preferred_col = None;
+                    self.move_to(target, extend);
+                } else {
+                    self.caret_right(extend);
+                }
                 EventResponse::RequestRepaint
             }
             "ArrowUp" => {
-                self.caret_vertical(-1, self.shift_held);
+                if word {
+                    // Document edge — Cmd+Up on macOS.
+                    self.preferred_col = None;
+                    self.move_to(Cursor::new(0, 0), extend);
+                } else {
+                    self.caret_vertical(-1, extend);
+                }
                 EventResponse::RequestRepaint
             }
             "ArrowDown" => {
-                self.caret_vertical(1, self.shift_held);
+                if word {
+                    let last = self.editor.lines().len().saturating_sub(1);
+                    self.preferred_col = None;
+                    self.move_to(Cursor::new(last, self.line_len(last)), extend);
+                } else {
+                    self.caret_vertical(1, extend);
+                }
                 EventResponse::RequestRepaint
             }
             "PageUp" => {
                 let rows = self.page_rows(bounds) as isize;
-                self.caret_vertical(-rows, self.shift_held);
+                self.caret_vertical(-rows, extend);
                 EventResponse::RequestRepaint
             }
             "PageDown" => {
                 let rows = self.page_rows(bounds) as isize;
-                self.caret_vertical(rows, self.shift_held);
+                self.caret_vertical(rows, extend);
                 EventResponse::RequestRepaint
             }
             "Home" => {
                 self.preferred_col = None;
-                let line = self.primary().line;
-                self.move_to(Cursor::new(line, 0), self.shift_held);
+                // Word-modifier Home jumps to the document start —
+                // Ctrl+Home on Windows/Linux, Cmd+Up's sibling.
+                let target = if word {
+                    Cursor::new(0, 0)
+                } else {
+                    Cursor::new(self.primary().line, 0)
+                };
+                self.move_to(target, extend);
                 EventResponse::RequestRepaint
             }
             "End" => {
                 self.preferred_col = None;
-                let cur = self.primary();
-                let col = self.line_len(cur.line);
-                self.move_to(Cursor::new(cur.line, col), self.shift_held);
+                let target = if word {
+                    let last = self.editor.lines().len().saturating_sub(1);
+                    Cursor::new(last, self.line_len(last))
+                } else {
+                    let cur = self.primary();
+                    Cursor::new(cur.line, self.line_len(cur.line))
+                };
+                self.move_to(target, extend);
                 EventResponse::RequestRepaint
             }
             "SelectAll" => {
+                self.editor.select_all();
+                self.sync_caret_tracker();
+                EventResponse::RequestRepaint
+            }
+            "a" | "A" if word => {
                 self.editor.select_all();
                 self.sync_caret_tracker();
                 EventResponse::RequestRepaint
@@ -1357,23 +1588,37 @@ impl TextArea {
                 self.copy_selection();
                 EventResponse::Handled
             }
-            "Cut" if !self.read_only => {
+            "c" | "C" if word => {
                 self.copy_selection();
-                if self.editor.delete_selection() {
+                EventResponse::Handled
+            }
+            "Cut" | "x" | "X" if !self.read_only && (word || base == "Cut") => {
+                if self.editor.selection().is_some() {
+                    self.copy_selection();
+                    self.record_undo();
+                    self.editor.delete_selection();
                     self.mark_edited();
                 }
                 EventResponse::RequestRepaint
             }
-            "Paste" if !self.read_only => {
+            "Paste" | "v" | "V" if !self.read_only && (word || base == "Paste") => {
                 self.paste_clipboard();
                 EventResponse::RequestRepaint
             }
             "Backspace" if !self.read_only => {
-                self.backspace();
+                if word {
+                    self.delete_word_back();
+                } else {
+                    self.backspace();
+                }
                 EventResponse::RequestRepaint
             }
             "Delete" if !self.read_only => {
-                self.delete_forward();
+                if word {
+                    self.delete_word_forward();
+                } else {
+                    self.delete_forward();
+                }
                 EventResponse::RequestRepaint
             }
             // Multiline editors own Enter — it inserts the newline
@@ -1388,6 +1633,26 @@ impl TextArea {
             "Tab" if !self.read_only => {
                 self.insert_str("\t");
                 EventResponse::RequestRepaint
+            }
+            "Undo" | "z" | "Z" if !self.read_only && (word || base == "Undo") => {
+                // Cmd+Shift+Z is redo on macOS — `extend` marks it.
+                let did = if base != "Undo" && extend {
+                    self.redo_edit()
+                } else {
+                    self.undo_edit()
+                };
+                if did {
+                    EventResponse::RequestRepaint
+                } else {
+                    EventResponse::Handled
+                }
+            }
+            "Redo" | "y" | "Y" if !self.read_only && (word || base == "Redo") => {
+                if self.redo_edit() {
+                    EventResponse::RequestRepaint
+                } else {
+                    EventResponse::Handled
+                }
             }
             "Escape" if self.editor.selection().is_some() => {
                 // Collapse the selection onto its head — the
@@ -1473,9 +1738,27 @@ impl Widget for TextArea {
         }
     }
 
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         if !self.enabled {
             return EventResponse::Ignored;
+        }
+        match cx.event {
+            // Editing events belong to the focused area only — an
+            // unfocused area must not claim keys when the event is
+            // broadcast down the internal-child chain.
+            WidgetEvent::KeyPressed { .. }
+            | WidgetEvent::KeyReleased { .. }
+            | WidgetEvent::ImePreedit { .. }
+            | WidgetEvent::ImeCommitted { .. }
+                if !self.focused =>
+            {
+                return EventResponse::Ignored;
+            }
+            _ => {}
         }
         match cx.event {
             WidgetEvent::PointerPressed {
@@ -1483,6 +1766,10 @@ impl Widget for TextArea {
                 position,
                 count,
             } => {
+                // A claimed primary press is the focus signal for
+                // internal children — siblings drop theirs through the
+                // helper's `FocusLost` broadcast.
+                self.focused = true;
                 // Scrollbar strips take precedence over text hit-testing.
                 if self.bar_press(cx.bounds, *position) {
                     return EventResponse::CapturePointer;
@@ -1602,6 +1889,7 @@ impl Widget for TextArea {
                 // The OS can swallow key releases on focus transitions —
                 // don't leak a stuck Shift or drag into the next focus.
                 self.shift_held = false;
+                self.word_mod_held = false;
                 self.dragging = false;
                 self.bar_drag = None;
                 self.preedit = None;
@@ -1622,6 +1910,15 @@ impl Widget for TextArea {
                 EventResponse::RequestRepaint
             }
             WidgetEvent::KeyPressed { key, .. } => self.key_pressed(key, cx.bounds),
+            WidgetEvent::KeyReleased { key }
+                if matches!(
+                    key.as_str(),
+                    "Control" | "Ctrl" | "Meta" | "Cmd" | "Super" | "Alt" | "Option"
+                ) =>
+            {
+                self.word_mod_held = false;
+                EventResponse::Handled
+            }
             WidgetEvent::KeyReleased { key } if key == "Shift" => {
                 self.shift_held = false;
                 EventResponse::Handled
@@ -1945,6 +2242,12 @@ mod tests {
         }
     }
 
+    /// Editing events only reach a focused area — tests simulate the
+    /// arena's focus delivery the way production does.
+    fn focus(area: &mut TextArea) {
+        area.event(&mut ev(&WidgetEvent::FocusGained));
+    }
+
     #[test]
     fn text_area_new() {
         let area = TextArea::new();
@@ -1981,6 +2284,7 @@ mod tests {
     #[test]
     fn text_area_set_value_collapses_caret_to_end() {
         let mut area = TextArea::new().with_value("one\ntwo");
+        focus(&mut area);
         area.event(&mut ev(&key("Home")));
         area.set_value("xy");
         assert_eq!(area.value(), "xy");
@@ -1990,6 +2294,7 @@ mod tests {
     #[test]
     fn text_area_take_edited() {
         let mut area = TextArea::new();
+        focus(&mut area);
         assert_eq!(area.take_edited(), None);
         area.event(&mut ev(&ime("a")));
         assert_eq!(area.take_edited(), Some(()));
@@ -2008,6 +2313,7 @@ mod tests {
             max_size: Vec2::new(400.0, 400.0),
         };
         let mut area = TextArea::new().min_lines(3);
+        focus(&mut area);
         let size = area.measure(&mut cx, constraints);
         assert!((size.y - (3.0 * LINE_PT + 2.0 * TEXT_PAD_Y + 2.0)).abs() < 0.01);
         // max_lines caps the desired height.
@@ -2023,6 +2329,7 @@ mod tests {
     fn text_area_layout_sets_bounds_and_focusable() {
         let mut hot = HotNode::default();
         let mut area = TextArea::new();
+        focus(&mut area);
         {
             let mut cx = make_cx(&mut hot);
             area.layout(&mut cx, BOUNDS);
@@ -2077,6 +2384,7 @@ mod tests {
     #[test]
     fn text_area_ime_inserts_and_keeps_newlines() {
         let mut area = TextArea::new();
+        focus(&mut area);
         area.event(&mut ev(&ime("a\nb")));
         assert_eq!(area.value(), "a\nb");
         assert_eq!(area.cursor(), Cursor::new(1, 1));
@@ -2088,6 +2396,7 @@ mod tests {
     #[test]
     fn text_area_ime_strips_control_chars_except_tab() {
         let mut area = TextArea::new();
+        focus(&mut area);
         area.event(&mut ev(&ime("a\u{7}b\tc")));
         assert_eq!(area.value(), "ab\tc");
     }
@@ -2095,6 +2404,7 @@ mod tests {
     #[test]
     fn text_area_ime_preedit_lifecycle() {
         let mut area = TextArea::new();
+        focus(&mut area);
         let pre = |text: &str, cursor: Option<(usize, usize)>| WidgetEvent::ImePreedit {
             text: text.to_string(),
             cursor,
@@ -2120,6 +2430,7 @@ mod tests {
     #[test]
     fn text_area_enter_inserts_newline() {
         let mut area = TextArea::new().with_value("ab");
+        focus(&mut area);
         area.event(&mut ev(&key("ArrowLeft")));
         area.event(&mut ev(&key("Enter")));
         assert_eq!(area.value(), "a\nb");
@@ -2129,6 +2440,7 @@ mod tests {
     #[test]
     fn text_area_tab_inserts_tab() {
         let mut area = TextArea::new().with_value("ab");
+        focus(&mut area);
         area.event(&mut ev(&key("Tab")));
         assert_eq!(area.value(), "ab\t");
     }
@@ -2136,6 +2448,7 @@ mod tests {
     #[test]
     fn text_area_backspace_and_delete_cross_lines() {
         let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
         // Caret starts at (1, 2) after set_value — Home then Delete
         // forward joins? No: Backspace at line start joins upward.
         area.event(&mut ev(&key("Home")));
@@ -2155,8 +2468,47 @@ mod tests {
     }
 
     #[test]
+    fn text_area_backspace_deletes_whole_grapheme() {
+        let mut area = TextArea::new().with_value("e\u{301}x");
+        focus(&mut area);
+        area.event(&mut ev(&key("ArrowLeft")));
+        area.event(&mut ev(&key("Backspace")));
+        assert_eq!(area.value(), "x");
+        assert_eq!(area.cursor(), Cursor::new(0, 0));
+        // ZWJ family emoji — one cluster, removed atomically.
+        let mut area = TextArea::new().with_value("\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}!");
+        focus(&mut area);
+        area.event(&mut ev(&key("ArrowLeft")));
+        area.event(&mut ev(&key("Backspace")));
+        assert_eq!(area.value(), "!");
+    }
+
+    #[test]
+    fn text_area_delete_forward_removes_whole_grapheme() {
+        let mut area = TextArea::new().with_value("e\u{301}x");
+        focus(&mut area);
+        area.event(&mut ev(&key("Home")));
+        area.event(&mut ev(&key("Delete")));
+        assert_eq!(area.value(), "x");
+    }
+
+    #[test]
+    fn text_area_arrows_step_graphemes() {
+        let mut area = TextArea::new().with_value("e\u{301}x");
+        focus(&mut area);
+        area.event(&mut ev(&key("Home")));
+        area.event(&mut ev(&key("ArrowRight")));
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+        area.event(&mut ev(&key("ArrowRight")));
+        assert_eq!(area.cursor(), Cursor::new(0, 3));
+        area.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+    }
+
+    #[test]
     fn text_area_arrows_move_and_wrap_lines() {
         let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
         // set_value leaves caret at end (1,2).
         area.event(&mut ev(&key("ArrowRight")));
         assert_eq!(area.cursor(), Cursor::new(1, 2)); // clamped at doc end
@@ -2175,6 +2527,7 @@ mod tests {
     #[test]
     fn text_area_vertical_moves_keep_sticky_column() {
         let mut area = TextArea::new().with_value("abcdef\nx\nabc");
+        focus(&mut area);
         // `set_value` parks the caret at the document end — walk to
         // column 5 of line 0 first (Home is a line-home, not a doc-home).
         area.event(&mut ev(&key("Home")));
@@ -2200,6 +2553,7 @@ mod tests {
     #[test]
     fn text_area_page_up_down() {
         let mut area = TextArea::new().with_value(&("l\n".repeat(29) + "l"));
+        focus(&mut area);
         // Caret at end (line 29); PageUp jumps by viewport rows
         // (view ≈ 88px / 17.5px ≈ 5 rows).
         area.event(&mut ev(&key("PageUp")));
@@ -2212,6 +2566,7 @@ mod tests {
     #[test]
     fn text_area_home_end() {
         let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
         area.event(&mut ev(&key("Home")));
         assert_eq!(area.cursor(), Cursor::new(1, 0));
         area.event(&mut ev(&key("End")));
@@ -2221,6 +2576,7 @@ mod tests {
     #[test]
     fn text_area_select_all_then_type_replaces() {
         let mut area = TextArea::new().with_value("a\nb");
+        focus(&mut area);
         area.event(&mut ev(&key("SelectAll")));
         assert_eq!(
             area.editor.selection(),
@@ -2234,6 +2590,7 @@ mod tests {
     #[test]
     fn text_area_shift_arrows_extend_selection() {
         let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
         area.event(&mut ev(&key("Home")));
         area.event(&mut ev(&key("Shift")));
         area.event(&mut ev(&key("ArrowUp")));
@@ -2250,6 +2607,7 @@ mod tests {
     #[test]
     fn text_area_arrows_collapse_selection() {
         let mut area = TextArea::new().with_value("ab");
+        focus(&mut area);
         area.event(&mut ev(&key("SelectAll")));
         area.event(&mut ev(&key("ArrowLeft")));
         assert_eq!(area.cursor(), Cursor::new(0, 0));
@@ -2265,6 +2623,7 @@ mod tests {
     #[test]
     fn text_area_escape_collapses_selection() {
         let mut area = TextArea::new().with_value("ab");
+        focus(&mut area);
         area.event(&mut ev(&key("SelectAll")));
         area.event(&mut ev(&key("Escape")));
         assert_eq!(area.editor.selection(), None);
@@ -2274,6 +2633,7 @@ mod tests {
     #[test]
     fn text_area_backspace_deletes_selection() {
         let mut area = TextArea::new().with_value("a\nb");
+        focus(&mut area);
         area.event(&mut ev(&key("SelectAll")));
         area.event(&mut ev(&key("Backspace")));
         assert_eq!(area.value(), "");
@@ -2288,6 +2648,7 @@ mod tests {
     #[test]
     fn text_area_read_only_blocks_edits() {
         let mut area = TextArea::new().with_value("a\nb").read_only(true);
+        focus(&mut area);
         area.event(&mut ev(&ime("X")));
         area.event(&mut ev(&key("Backspace")));
         area.event(&mut ev(&key("Delete")));
@@ -2336,6 +2697,7 @@ mod tests {
     #[test]
     fn text_area_click_places_caret() {
         let mut area = TextArea::new().with_value("alpha\nbeta");
+        focus(&mut area);
         let p = pos_of(&mut area, 1, 3);
         assert_eq!(press(&mut area, p, 1), EventResponse::CapturePointer);
         assert_eq!(area.cursor(), Cursor::new(1, 3));
@@ -2344,6 +2706,7 @@ mod tests {
     #[test]
     fn text_area_double_click_selects_word() {
         let mut area = TextArea::new().with_value("alpha beta\ngamma");
+        focus(&mut area);
         let p = pos_of(&mut area, 0, 8); // inside "beta"
         press(&mut area, p, 2);
         assert_eq!(area.editor.selected_text().as_deref(), Some("beta"));
@@ -2352,6 +2715,7 @@ mod tests {
     #[test]
     fn text_area_triple_click_selects_line_with_newline() {
         let mut area = TextArea::new().with_value("one\ntwo\nthree");
+        focus(&mut area);
         let p = pos_of(&mut area, 1, 1);
         press(&mut area, p, 3);
         // Non-final line selection covers its newline — same as
@@ -2362,6 +2726,7 @@ mod tests {
     #[test]
     fn text_area_double_click_drag_extends_by_word() {
         let mut area = TextArea::new().with_value("alpha beta\ngamma delta");
+        focus(&mut area);
         let p = pos_of(&mut area, 0, 8); // inside "beta"
         press(&mut area, p, 2);
         // Drag into "delta" on the next line — the initial word stays
@@ -2382,6 +2747,7 @@ mod tests {
     #[test]
     fn text_area_triple_click_drag_extends_by_line() {
         let mut area = TextArea::new().with_value("one\ntwo\nthree\nfour");
+        focus(&mut area);
         let p = pos_of(&mut area, 1, 1);
         press(&mut area, p, 3);
         let down = pos_of(&mut area, 2, 1);
@@ -2396,6 +2762,7 @@ mod tests {
     #[test]
     fn text_area_single_click_drag_selects_chars() {
         let mut area = TextArea::new().with_value("alpha\nbeta");
+        focus(&mut area);
         let p = pos_of(&mut area, 0, 2);
         press(&mut area, p, 1);
         let end = pos_of(&mut area, 1, 3);
@@ -2406,6 +2773,7 @@ mod tests {
     #[test]
     fn text_area_shift_click_extends() {
         let mut area = TextArea::new().with_value("alpha\nbeta");
+        focus(&mut area);
         let p = pos_of(&mut area, 0, 2);
         press(&mut area, p, 1);
         area.event(&mut ev(&WidgetEvent::PointerReleased {
@@ -2464,6 +2832,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n"),
         );
+        focus(&mut area);
         let scroll = |d: f32| WidgetEvent::Scroll {
             position: Vec2::new(10.0, 10.0),
             delta: Vec2::new(0.0, d),
@@ -2487,6 +2856,7 @@ mod tests {
     #[test]
     fn text_area_horizontal_scroll_only_when_unwrapped() {
         let mut area = TextArea::new().with_value("short\nalso short");
+        focus(&mut area);
         let scroll = |d: Vec2| WidgetEvent::Scroll {
             position: Vec2::new(10.0, 10.0),
             delta: d,
@@ -2513,6 +2883,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n"),
         );
+        focus(&mut area);
         // The vbar strip hugs the right padding edge.
         let track_x = 200.0 - TEXT_PAD_X - 1.0;
         let p = Vec2::new(track_x, 15.0);
@@ -2532,6 +2903,7 @@ mod tests {
     #[test]
     fn text_area_disabled_ignores_events() {
         let mut area = TextArea::new().with_value("ab").enabled(false);
+        focus(&mut area);
         assert_eq!(area.event(&mut ev(&ime("x"))), EventResponse::Ignored);
         assert_eq!(
             area.event(&mut ev(&key("SelectAll"))),
@@ -2543,10 +2915,130 @@ mod tests {
     #[test]
     fn text_area_semantic_actions() {
         let mut area = TextArea::new();
+        focus(&mut area);
         let focus = WidgetEvent::SemanticAction(SemanticAction::Focus);
         assert_eq!(area.event(&mut ev(&focus)), EventResponse::CaptureFocus);
         let set = WidgetEvent::SemanticAction(SemanticAction::SetValue("hi".into()));
         assert_eq!(area.event(&mut ev(&set)), EventResponse::RequestRepaint);
         assert_eq!(area.value(), "hi");
+    }
+
+    #[test]
+    fn text_area_ctrl_a_selects_all() {
+        let mut area = TextArea::new().with_value("one\ntwo");
+        focus(&mut area);
+        area.event(&mut ev(&key("Ctrl+a")));
+        // Select-all covers the whole document — typing replaces it.
+        area.event(&mut ev(&ime("z")));
+        assert_eq!(area.value(), "z");
+    }
+
+    #[test]
+    fn text_area_ctrl_arrows_word_nav() {
+        let mut area = TextArea::new().with_value("foo bar\nbaz qux");
+        focus(&mut area);
+        // Word edges are word starts AND ends (the `TextInput`
+        // convention) — "baz qux" walks 4 → 3 → 0, then crosses the
+        // line to "bar"'s end at (0,7) and start at (0,4).
+        area.event(&mut ev(&key("Ctrl+ArrowLeft")));
+        let c = area.cursor();
+        assert_eq!(c, Cursor::new(1, 4), "word-left landed at {c:?}");
+        area.event(&mut ev(&key("Ctrl+ArrowLeft")));
+        assert_eq!(area.cursor(), Cursor::new(1, 3));
+        area.event(&mut ev(&key("Ctrl+ArrowLeft")));
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+        area.event(&mut ev(&key("Ctrl+ArrowLeft")));
+        assert_eq!(area.cursor(), Cursor::new(0, 7));
+        area.event(&mut ev(&key("Ctrl+ArrowRight")));
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+    }
+
+    #[test]
+    fn text_area_ctrl_backspace_word_delete() {
+        let mut area = TextArea::new().with_value("alpha beta");
+        focus(&mut area);
+        // Deletes back to the previous word edge — "beta" goes,
+        // then the space, then "alpha".
+        area.event(&mut ev(&key("Ctrl+Backspace")));
+        assert_eq!(area.value(), "alpha ");
+        area.event(&mut ev(&key("Ctrl+Backspace")));
+        assert_eq!(area.value(), "alpha");
+        area.event(&mut ev(&key("Ctrl+Backspace")));
+        assert_eq!(area.value(), "");
+    }
+
+    #[test]
+    fn text_area_ctrl_delete_word_forward() {
+        let mut area = TextArea::new().with_value("alpha beta");
+        focus(&mut area);
+        area.event(&mut ev(&key("Home")));
+        area.event(&mut ev(&key("Ctrl+Delete")));
+        assert_eq!(area.value(), " beta");
+    }
+
+    #[test]
+    fn text_area_undo_redo_roundtrip() {
+        let mut area = TextArea::new();
+        focus(&mut area);
+        area.event(&mut ev(&ime("hello")));
+        area.event(&mut ev(&ime(" world")));
+        assert_eq!(area.value(), "hello world");
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "hello");
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "");
+        area.event(&mut ev(&key("Ctrl+Shift+z")));
+        assert_eq!(area.value(), "hello");
+        area.event(&mut ev(&key("Ctrl+y")));
+        assert_eq!(area.value(), "hello world");
+    }
+
+    #[test]
+    fn text_area_edit_invalidates_redo() {
+        let mut area = TextArea::new();
+        focus(&mut area);
+        area.event(&mut ev(&ime("a")));
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "");
+        // A new edit clears the redo stack — redoing "a" would
+        // resurrect text the user deleted.
+        area.event(&mut ev(&ime("b")));
+        area.event(&mut ev(&key("Ctrl+y")));
+        assert_eq!(area.value(), "b");
+    }
+
+    #[test]
+    fn text_area_set_value_clears_history() {
+        let mut area = TextArea::new();
+        focus(&mut area);
+        area.event(&mut ev(&ime("typed")));
+        // Programmatic replacement resets the edit session — undo
+        // must not resurrect the old buffer.
+        area.set_value("fresh");
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "fresh");
+    }
+
+    #[test]
+    fn text_area_unfocused_ignores_editing_keys() {
+        let mut area = TextArea::new().with_value("abc");
+        // No FocusGained — keys and IME are gated on focus.
+        assert_eq!(
+            area.event(&mut ev(&key("Backspace"))),
+            EventResponse::Ignored
+        );
+        assert_eq!(area.event(&mut ev(&ime("x"))), EventResponse::Ignored);
+        assert_eq!(area.value(), "abc");
+    }
+
+    #[test]
+    fn text_area_focus_lost_stops_editing() {
+        let mut area = TextArea::new().with_value("abc");
+        focus(&mut area);
+        area.event(&mut ev(&ime("d")));
+        assert_eq!(area.value(), "abcd");
+        area.event(&mut ev(&WidgetEvent::FocusLost));
+        assert_eq!(area.event(&mut ev(&ime("e"))), EventResponse::Ignored);
+        assert_eq!(area.value(), "abcd");
     }
 }

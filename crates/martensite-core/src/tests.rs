@@ -1359,8 +1359,13 @@ mod dispatch_paint {
             Vec2::ZERO
         }
         fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
-        fn event(&mut self, _cx: &mut EventContext) -> EventResponse {
-            self.calls.fetch_add(1, Ordering::SeqCst);
+        fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+            // Count presses only — a claimed press broadcasts
+            // `FocusLost` to sibling subtrees, which is expected
+            // reach, not a bounds-gate violation.
+            if matches!(cx.event, WidgetEvent::PointerPressed { .. }) {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+            }
             EventResponse::Handled
         }
     }
@@ -2541,5 +2546,192 @@ mod clip_shape_tests {
             "CLIPS_CHILDREN + per-corner shape should emit ClipPath: {:?}",
             list.commands
         );
+    }
+
+    // --- Internal-child focus routing (forward_event_to_children) ---
+
+    /// A leaf that tracks its own focus and records keys — the
+    /// internal-child analogue of a text field.
+    struct FocusLeaf {
+        focused: bool,
+        got_focus_lost: usize,
+        keys: Vec<String>,
+    }
+
+    impl FocusLeaf {
+        fn new() -> Self {
+            Self {
+                focused: false,
+                got_focus_lost: 0,
+                keys: Vec::new(),
+            }
+        }
+    }
+
+    impl Widget for FocusLeaf {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn focused(&self) -> bool {
+            self.focused
+        }
+        fn event(&mut self, cx: &mut crate::EventContext) -> crate::EventResponse {
+            match cx.event {
+                crate::WidgetEvent::FocusGained => {
+                    self.focused = true;
+                    crate::EventResponse::RequestRepaint
+                }
+                crate::WidgetEvent::FocusLost => {
+                    self.focused = false;
+                    self.got_focus_lost += 1;
+                    crate::EventResponse::RequestRepaint
+                }
+                crate::WidgetEvent::PointerPressed { .. } => {
+                    self.focused = true;
+                    crate::EventResponse::Handled
+                }
+                crate::WidgetEvent::KeyPressed { key, .. } if self.focused => {
+                    self.keys.push(key.clone());
+                    crate::EventResponse::RequestRepaint
+                }
+                // Unfocused leaves ignore editing keys — the
+                // production `TextInput` contract.
+                _ => crate::EventResponse::Ignored,
+            }
+        }
+    }
+
+    /// A container that forwards through the standard helper — the
+    /// `CatalogView` shape.
+    struct Pair {
+        a: FocusLeaf,
+        b: FocusLeaf,
+        bounds: [Rect; 2],
+    }
+
+    impl Pair {
+        fn new() -> Self {
+            Self {
+                a: FocusLeaf::new(),
+                b: FocusLeaf::new(),
+                bounds: [
+                    Rect::new(0.0, 0.0, 100.0, 30.0),
+                    Rect::new(0.0, 30.0, 100.0, 30.0),
+                ],
+            }
+        }
+    }
+
+    impl Widget for Pair {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
+        fn child_count(&self) -> usize {
+            2
+        }
+        fn child(&self, i: usize) -> Option<&dyn Widget> {
+            match i {
+                0 => Some(&self.a),
+                1 => Some(&self.b),
+                _ => None,
+            }
+        }
+        fn child_mut(&mut self, i: usize) -> Option<&mut dyn Widget> {
+            match i {
+                0 => Some(&mut self.a),
+                1 => Some(&mut self.b),
+                _ => None,
+            }
+        }
+        fn child_bounds(&self, i: usize) -> Option<Rect> {
+            self.bounds.get(i).copied()
+        }
+    }
+
+    fn pair_ev<'a>(event: &'a crate::WidgetEvent) -> crate::EventContext<'a> {
+        crate::EventContext {
+            event,
+            bounds: Rect::new(0.0, 0.0, 100.0, 60.0),
+            scale: 1.0,
+        }
+    }
+
+    fn press(x: f32, y: f32) -> crate::WidgetEvent {
+        crate::WidgetEvent::PointerPressed {
+            position: Vec2::new(x, y),
+            button: crate::PointerButton::Primary,
+            count: 1,
+        }
+    }
+
+    fn key(k: &str) -> crate::WidgetEvent {
+        crate::WidgetEvent::KeyPressed {
+            key: k.to_string(),
+            repeat: false,
+        }
+    }
+
+    /// A claimed press focuses that leaf; later keys reach it and
+    /// only it — the "delete edits the field you clicked" contract.
+    #[test]
+    fn focused_child_gets_keys_not_first_claimer() {
+        let mut pair = Pair::new();
+        // Press on `a` (top half) — child(0) is tried last (reverse
+        // order) but is the hit.
+        pair.event(&mut pair_ev(&press(10.0, 10.0)));
+        assert!(pair.a.focused && !pair.b.focused);
+        pair.event(&mut pair_ev(&key("Backspace")));
+        pair.event(&mut pair_ev(&key("x")));
+        assert_eq!(pair.a.keys, ["Backspace", "x"]);
+        assert!(pair.b.keys.is_empty());
+    }
+
+    /// Clicking a different leaf moves internal focus: the previous
+    /// field gets `FocusLost`, keys follow the new leaf.
+    #[test]
+    fn press_moves_focus_between_children() {
+        let mut pair = Pair::new();
+        pair.event(&mut pair_ev(&press(10.0, 10.0)));
+        pair.event(&mut pair_ev(&press(10.0, 40.0)));
+        assert!(!pair.a.focused && pair.b.focused);
+        assert_eq!(pair.a.got_focus_lost, 1, "defocused leaf got FocusLost");
+        pair.event(&mut pair_ev(&key("Backspace")));
+        assert!(pair.a.keys.is_empty());
+        assert_eq!(pair.b.keys, ["Backspace"]);
+    }
+
+    /// An unclaimed press on dead space broadcasts `FocusLost` —
+    /// nothing stays focused to swallow keys.
+    #[test]
+    fn dead_space_press_clears_focus() {
+        let mut pair = Pair::new();
+        pair.event(&mut pair_ev(&press(10.0, 10.0)));
+        assert!(pair.a.focused);
+        // Press outside both child rects → unclaimed → broadcast.
+        pair.event(&mut pair_ev(&press(200.0, 200.0)));
+        assert!(!pair.a.focused);
+        assert_eq!(pair.a.got_focus_lost, 1);
+        // With no focused descendant, keys fall to the default scan;
+        // unfocused leaves ignore them.
+        pair.event(&mut pair_ev(&key("Backspace")));
+        assert!(pair.a.keys.is_empty() && pair.b.keys.is_empty());
+    }
+
+    /// `FocusGained` delivered to a container reaches only the
+    /// focused-path leaf; `FocusLost` reaches every descendant.
+    #[test]
+    fn focus_events_route_by_focus_path() {
+        let mut pair = Pair::new();
+        pair.event(&mut pair_ev(&press(10.0, 40.0))); // b focused, a got FocusLost
+                                                      // FocusGained must land on the focused path only.
+        pair.event(&mut pair_ev(&crate::WidgetEvent::FocusGained));
+        assert_eq!(pair.b.keys.len(), 0); // no phantom keys
+                                          // FocusLost broadcast — every descendant sees it.
+        pair.event(&mut pair_ev(&crate::WidgetEvent::FocusLost));
+        assert_eq!(pair.a.got_focus_lost, 2); // press-broadcast + this one
+        assert_eq!(pair.b.got_focus_lost, 1);
+        assert!(!pair.b.focused);
     }
 }

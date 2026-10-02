@@ -1182,13 +1182,33 @@ page!(XyPadPage {
             label: "Y label",
             default: "Resonance"
         },
+        PropSpec::Choice {
+            key: "ymode",
+            label: "Y mode",
+            options: &["Rotated", "Upright"],
+            default: 0
+        },
     ],
     build: |p| {
         let mut pad = XYPad::new();
         pad = pad.labels(p.str("x"), p.str("y"));
+        pad = pad.y_label_mode(if p.choice("ymode") == 0 {
+            martensite::text_paint::VerticalTextMode::Rotated
+        } else {
+            martensite::text_paint::VerticalTextMode::Upright
+        });
         Box::new(pad)
     },
-    snippet: |p| format!("XYPad::new().labels({:?}, {:?})", p.str("x"), p.str("y"),),
+    snippet: |p| format!(
+        "XYPad::new().labels({:?}, {:?}).y_label_mode(VerticalTextMode::{})",
+        p.str("x"),
+        p.str("y"),
+        if p.choice("ymode") == 0 {
+            "Rotated"
+        } else {
+            "Upright"
+        }
+    ),
     poll: |w, out| {
         if let Some(pad) = downcast_mut::<XYPad>(w) {
             if pad.take_changed() {

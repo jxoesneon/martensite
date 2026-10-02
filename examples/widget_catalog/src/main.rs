@@ -5,7 +5,14 @@ use widget_catalog::{all_pages, CatalogView};
 /// Rasterizes the catalog view to a PNG — the same
 /// `WidgetArena` → `PaintList` → `TinySkiaBackend` path the dev
 /// channel's `capture_node` uses, without needing a window or GPU.
-fn render_png(path: &str, w: f32, h: f32, scale: f32, page: Option<usize>) {
+fn render_png(
+    path: &str,
+    w: f32,
+    h: f32,
+    scale: f32,
+    page: Option<usize>,
+    props: &[(String, String)],
+) {
     use glam::Vec2;
     use martensite::core::{LayoutConstraints, LayoutContext, PaintList};
     use martensite::prelude::*;
@@ -24,6 +31,11 @@ fn render_png(path: &str, w: f32, h: f32, scale: f32, page: Option<usize>) {
     if let Some(page) = page {
         view.select_page(page);
     }
+    for (k, v) in props {
+        view.apply_prop_text(k, v);
+    }
+    // Rebuild the staged widget with the overridden props.
+    view.reconcile();
     let root = arena.insert_with_widget(hot, Box::new(view));
 
     // Same contract as the live path: layout works in surface
@@ -83,6 +95,7 @@ fn main() {
     }
 
     let mut page_sel: Option<usize> = None;
+    let mut props: Vec<(String, String)> = Vec::new();
     let mut args = args.drain(..);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -107,11 +120,18 @@ fn main() {
                     .next()
                     .unwrap_or_else(|| "/tmp/widget_catalog.png".into());
                 let (w, h) = headless_size();
-                render_png(&path, w, h, headless_scale(), page_sel);
+                render_png(&path, w, h, headless_scale(), page_sel, &props);
             }
             "--page" => {
                 if let Some(n) = args.next() {
                     page_sel = n.parse().ok();
+                }
+            }
+            "--prop" => {
+                if let Some(kv) = args.next() {
+                    if let Some((k, v)) = kv.split_once('=') {
+                        props.push((k.to_string(), v.to_string()));
+                    }
                 }
             }
             _ => {}

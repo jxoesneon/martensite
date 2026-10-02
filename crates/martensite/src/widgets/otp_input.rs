@@ -70,6 +70,9 @@ pub struct OtpInput {
     masked: bool,
     /// Enabled flag.
     enabled: bool,
+    /// Keyboard focus — set by a claimed press or `FocusGained`,
+    /// cleared by `FocusLost`. Editing keys are gated on it.
+    focused: bool,
     /// Pending completion notification.
     completed: Option<String>,
     /// Pending edit flag.
@@ -107,6 +110,7 @@ impl OtpInput {
             alphabetic: false,
             masked: false,
             enabled: true,
+            focused: false,
             completed: None,
             edited: false,
             signaled: false,
@@ -384,11 +388,27 @@ impl Widget for OtpInput {
         }
     }
 
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         if !self.enabled {
             return EventResponse::Ignored;
         }
         match cx.event {
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                EventResponse::RequestRepaint
+            }
+            // Editing events belong to the focused widget only.
+            WidgetEvent::ImeCommitted { .. } | WidgetEvent::KeyPressed { .. } if !self.focused => {
+                EventResponse::Ignored
+            }
             WidgetEvent::ImeCommitted { text } => {
                 if self.insert(text) {
                     EventResponse::RequestRepaint
@@ -402,58 +422,76 @@ impl Widget for OtpInput {
                 ..
             } => {
                 if let Some(i) = self.cell_rects.iter().position(|r| r.contains(*position)) {
+                    self.focused = true;
                     self.caret = i.min(self.value.chars().count());
                     return EventResponse::Handled;
                 }
                 EventResponse::Ignored
             }
-            WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
-                "Backspace" => {
-                    if self.backspace() {
-                        EventResponse::RequestRepaint
-                    } else {
+            WidgetEvent::KeyPressed { key, .. } => {
+                let (word, _, base) = crate::widgets::text_input::parse_key_chord(key);
+                match base {
+                    "Paste" | "v" | "V" if word || base == "Paste" => {
+                        // Clipboard paste — one shot fills the cells, the
+                        // same path `ImeCommitted` paste lands on.
+                        let cb = martensite_clipboard::default_platform_clipboard();
+                        if let Some(bytes) =
+                            cb.get_contents(martensite_clipboard::clipboard::MIME_TEXT_PLAIN)
+                        {
+                            let text = String::from_utf8_lossy(&bytes);
+                            if self.insert(&text) {
+                                return EventResponse::RequestRepaint;
+                            }
+                        }
                         EventResponse::Handled
                     }
-                }
-                "Delete" => {
-                    let mut chars: Vec<char> = self.value.chars().collect();
-                    if self.caret < chars.len() {
-                        chars.remove(self.caret);
-                        self.value = chars.into_iter().collect();
-                        self.after_edit();
-                        EventResponse::RequestRepaint
-                    } else {
-                        EventResponse::Handled
+                    "Backspace" => {
+                        if self.backspace() {
+                            EventResponse::RequestRepaint
+                        } else {
+                            EventResponse::Handled
+                        }
                     }
+                    "Delete" => {
+                        let mut chars: Vec<char> = self.value.chars().collect();
+                        if self.caret < chars.len() {
+                            chars.remove(self.caret);
+                            self.value = chars.into_iter().collect();
+                            self.after_edit();
+                            EventResponse::RequestRepaint
+                        } else {
+                            EventResponse::Handled
+                        }
+                    }
+                    "ArrowLeft" => {
+                        // Under RTL the cell strip mirrors — left moves
+                        // the caret forward through the value.
+                        self.caret = if cx.is_rtl() {
+                            (self.caret + 1).min(self.value.chars().count())
+                        } else {
+                            self.caret.saturating_sub(1)
+                        };
+                        EventResponse::RequestRepaint
+                    }
+                    "ArrowRight" => {
+                        self.caret = if cx.is_rtl() {
+                            self.caret.saturating_sub(1)
+                        } else {
+                            (self.caret + 1).min(self.value.chars().count())
+                        };
+                        EventResponse::RequestRepaint
+                    }
+                    "Home" => {
+                        self.caret = 0;
+                        EventResponse::RequestRepaint
+                    }
+                    "End" => {
+                        self.caret = self.value.chars().count();
+                        EventResponse::RequestRepaint
+                    }
+                    _ => EventResponse::Ignored,
                 }
-                "ArrowLeft" => {
-                    // Under RTL the cell strip mirrors — left moves
-                    // the caret forward through the value.
-                    self.caret = if cx.is_rtl() {
-                        (self.caret + 1).min(self.value.chars().count())
-                    } else {
-                        self.caret.saturating_sub(1)
-                    };
-                    EventResponse::RequestRepaint
-                }
-                "ArrowRight" => {
-                    self.caret = if cx.is_rtl() {
-                        self.caret.saturating_sub(1)
-                    } else {
-                        (self.caret + 1).min(self.value.chars().count())
-                    };
-                    EventResponse::RequestRepaint
-                }
-                "Home" => {
-                    self.caret = 0;
-                    EventResponse::RequestRepaint
-                }
-                "End" => {
-                    self.caret = self.value.chars().count();
-                    EventResponse::RequestRepaint
-                }
-                _ => EventResponse::Ignored,
-            },
+            }
             _ => EventResponse::Ignored,
         }
     }
@@ -559,6 +597,7 @@ mod tests {
     #[test]
     fn digits_fill_and_complete() {
         let mut o = OtpInput::new().length(4);
+        o.event(&mut ev(&WidgetEvent::FocusGained));
         o.event(&mut ev(&commit("12")));
         assert_eq!(o.get_value(), "12");
         assert_eq!(o.take_completed(), None);
@@ -569,6 +608,7 @@ mod tests {
     #[test]
     fn paste_distributes() {
         let mut o = OtpInput::new().length(6);
+        o.event(&mut ev(&WidgetEvent::FocusGained));
         o.event(&mut ev(&commit("1-2-3-4-5-6"))); // separators filtered
         assert_eq!(o.get_value(), "123456");
     }
@@ -576,9 +616,11 @@ mod tests {
     #[test]
     fn letters_rejected_unless_alphabetic() {
         let mut o = OtpInput::new().length(4);
+        o.event(&mut ev(&WidgetEvent::FocusGained));
         o.event(&mut ev(&commit("ab12")));
         assert_eq!(o.get_value(), "12");
         let mut a = OtpInput::new().length(4).alphabetic(true);
+        a.event(&mut ev(&WidgetEvent::FocusGained));
         a.event(&mut ev(&commit("ab12")));
         assert_eq!(a.get_value(), "ab12");
     }
@@ -586,6 +628,7 @@ mod tests {
     #[test]
     fn backspace_retreats() {
         let mut o = OtpInput::new().length(4).value("123");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
         o.event(&mut ev(&key("Backspace")));
         assert_eq!(o.get_value(), "12");
         assert!(o.take_edited());
@@ -594,6 +637,7 @@ mod tests {
     #[test]
     fn completion_rearms_after_edit() {
         let mut o = OtpInput::new().length(2).value("12");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
         o.event(&mut ev(&key("Backspace")));
         assert_eq!(o.take_completed(), None);
         o.event(&mut ev(&commit("9")));
@@ -603,6 +647,7 @@ mod tests {
     #[test]
     fn click_positions_caret() {
         let mut o = OtpInput::new().length(4).value("12");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
         let mut hot = HotNode::default();
         o.layout(&mut make_cx(&mut hot), Rect::new(0.0, 0.0, 300.0, 32.0));
         // Click cell 2 → caret parks at value end (2) since cells
@@ -620,6 +665,7 @@ mod tests {
     #[test]
     fn arrows_move_caret() {
         let mut o = OtpInput::new().length(4).value("123");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
         o.event(&mut ev(&key("ArrowLeft")));
         assert_eq!(o.caret, 2);
         o.event(&mut ev(&key("Home")));
@@ -631,6 +677,7 @@ mod tests {
     #[test]
     fn disabled_inert() {
         let mut o = OtpInput::new().enabled(false);
+        o.event(&mut ev(&WidgetEvent::FocusGained));
         assert_eq!(o.event(&mut ev(&commit("1"))), EventResponse::Ignored);
         assert_eq!(o.get_value(), "");
     }

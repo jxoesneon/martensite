@@ -403,8 +403,11 @@ impl Widget for SearchField {
         match cx.event {
             // `Enter` is the submit seam — the embedded field ignores
             // the key itself, so intercepting here cannot steal an
-            // editing gesture.
-            WidgetEvent::KeyPressed { key, .. } if key.as_str() == "Enter" => {
+            // editing gesture. Only while the field holds focus —
+            // a stray Enter must not submit an unfocused search.
+            WidgetEvent::KeyPressed { key, .. }
+                if key.as_str() == "Enter" && self.field.focused() =>
+            {
                 self.submitted = Some(self.field.value.clone());
                 EventResponse::RequestRepaint
             }
@@ -518,6 +521,7 @@ mod tests {
     fn enter_submits_current_text() {
         let mut field = SearchField::new().with_value("widgets");
         laid_out(&mut field, 200.0, FIELD_PT);
+        event(&mut field, &WidgetEvent::FocusGained);
         assert_eq!(
             event(&mut field, &key("Enter")),
             EventResponse::RequestRepaint
@@ -531,6 +535,7 @@ mod tests {
     fn typing_sets_edited_flag() {
         let mut field = SearchField::new();
         laid_out(&mut field, 200.0, FIELD_PT);
+        event(&mut field, &WidgetEvent::FocusGained);
         let ime = WidgetEvent::ImeCommitted {
             text: "rus".to_string(),
         };

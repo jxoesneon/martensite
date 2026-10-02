@@ -24,7 +24,7 @@ use martensite_core::{
 };
 use martensite_theme::TokenKey;
 
-use crate::text_paint::SharedTextPainter;
+use crate::text_paint::{SharedTextPainter, VerticalTextMode};
 
 const SIZE_PT: f32 = 160.0;
 const THUMB_PT: f32 = 14.0;
@@ -51,6 +51,10 @@ pub struct XYPad {
     pub x_label: String,
     /// Y axis name (a11y + edge label).
     pub y_label: String,
+    /// How the Y label arranges vertically — rotated glyphs
+    /// (axis-label convention) or upright glyphs stacked
+    /// top-to-bottom.
+    pub y_label_mode: VerticalTextMode,
     x: f32,
     y: f32,
     changed: bool,
@@ -81,6 +85,7 @@ impl XYPad {
             enabled: true,
             x_label: "X".to_string(),
             y_label: "Y".to_string(),
+            y_label_mode: VerticalTextMode::Rotated,
             x: 0.0,
             y: 0.0,
             changed: false,
@@ -118,6 +123,21 @@ impl XYPad {
     pub fn labels(mut self, x: impl Into<String>, y: impl Into<String>) -> Self {
         self.x_label = x.into();
         self.y_label = y.into();
+        self
+    }
+
+    /// Sets the Y label's vertical mode — rotated glyphs or upright
+    /// glyphs stacked top-to-bottom.
+    ///
+    /// ```
+    /// use martensite::text_paint::VerticalTextMode;
+    /// use martensite::widgets::xy_pad::XYPad;
+    ///
+    /// let pad = XYPad::new().y_label_mode(VerticalTextMode::Upright);
+    /// assert_eq!(pad.y_label_mode, VerticalTextMode::Upright);
+    /// ```
+    pub fn y_label_mode(mut self, mode: VerticalTextMode) -> Self {
+        self.y_label_mode = mode;
         self
     }
 
@@ -247,6 +267,10 @@ impl Widget for XYPad {
         }
     }
 
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         if !self.enabled {
             return EventResponse::Ignored;
@@ -258,6 +282,7 @@ impl Widget for XYPad {
                 ..
             } => {
                 if self.pad.contains(*position) {
+                    self.focused = true;
                     self.dragging = true;
                     let (x, y) = self.value_at(*position);
                     self.set_value(x, y);
@@ -288,6 +313,7 @@ impl Widget for XYPad {
                 }
                 EventResponse::Ignored
             }
+            WidgetEvent::KeyPressed { .. } if !self.focused => EventResponse::Ignored,
             WidgetEvent::KeyPressed { key, .. } => {
                 let (mut x, mut y) = (self.x, self.y);
                 match key.as_str() {
@@ -461,6 +487,7 @@ impl Widget for XYPad {
             &self.y_label,
             size,
             muted,
+            self.y_label_mode,
         );
     }
 }
@@ -537,6 +564,11 @@ mod tests {
     fn arrows_nudge() {
         let mut pad = XYPad::new().value(0.5, 0.5);
         laid_out(&mut pad, 200.0, 200.0);
+        pad.event(&mut EventContext {
+            event: &WidgetEvent::FocusGained,
+            bounds: Rect::new(0.0, 0.0, 200.0, 200.0),
+            scale: 1.0,
+        });
         for k in ["ArrowRight", "ArrowUp"] {
             pad.event(&mut EventContext {
                 event: &WidgetEvent::KeyPressed {
@@ -555,6 +587,11 @@ mod tests {
     fn home_end_snap() {
         let mut pad = XYPad::new().value(0.5, 0.5);
         laid_out(&mut pad, 200.0, 200.0);
+        pad.event(&mut EventContext {
+            event: &WidgetEvent::FocusGained,
+            bounds: Rect::new(0.0, 0.0, 200.0, 200.0),
+            scale: 1.0,
+        });
         for k in ["End", "Home"] {
             pad.event(&mut EventContext {
                 event: &WidgetEvent::KeyPressed {

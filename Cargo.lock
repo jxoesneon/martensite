@@ -3047,6 +3047,7 @@ dependencies = [
  "serde",
  "slab",
  "smallvec",
+ "unicode-segmentation",
 ]
 
 [[package]]

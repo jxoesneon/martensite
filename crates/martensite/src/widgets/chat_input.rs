@@ -23,11 +23,12 @@ use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
-    Rect, RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
+    Rect, RenderMinimum, SemanticAction, UnderflowPolicy, Widget, WidgetEvent,
 };
 use martensite_theme::TokenKey;
 
 use crate::text_paint::SharedTextPainter;
+use crate::widgets::text_input::TextInput;
 
 const FONT_PT: f32 = 13.0;
 const PAD_V_PT: f32 = 9.0;
@@ -37,12 +38,9 @@ const AUX_W_PT: f32 = 30.0;
 const BTN_GAP_PT: f32 = 6.0;
 const RADIUS_PT: f32 = 8.0;
 
-const FACE: [u8; 4] = [36, 38, 44, 255];
 const SEND: [u8; 4] = [88, 130, 247, 255];
 const SEND_DIM: [u8; 4] = [70, 72, 80, 255];
-const TEXT: [u8; 4] = [220, 222, 228, 255];
 const MUTED: [u8; 4] = [139, 148, 158, 255];
-const EDGE: [u8; 4] = [70, 72, 80, 255];
 
 /// A message composer — see the module docs.
 ///
@@ -62,7 +60,10 @@ pub struct ChatInput {
     pub emoji_button: bool,
     /// Disabled state.
     pub enabled: bool,
-    draft: String,
+    /// The draft field — a real [`TextInput`] internal child, so the
+    /// composer gets the full editing surface (caret, selection,
+    /// clipboard, word ops, undo/redo, IME) for free.
+    input: TextInput,
     sent: Option<String>,
     attach: bool,
     emoji: bool,
@@ -70,7 +71,7 @@ pub struct ChatInput {
     send_rect: Rect,
     attach_rect: Rect,
     emoji_rect: Rect,
-    focused: bool,
+    field_rect: Rect,
     text_painter: Option<SharedTextPainter>,
     bounds: Rect,
     scale: f32,
@@ -79,7 +80,7 @@ pub struct ChatInput {
 impl std::fmt::Debug for ChatInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChatInput")
-            .field("draft", &self.draft)
+            .field("draft", &self.draft())
             .field("enabled", &self.enabled)
             .finish()
     }
@@ -106,7 +107,7 @@ impl ChatInput {
             attachable: false,
             emoji_button: false,
             enabled: true,
-            draft: String::new(),
+            input: TextInput::new("Message"),
             sent: None,
             attach: false,
             emoji: false,
@@ -114,7 +115,7 @@ impl ChatInput {
             send_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             attach_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             emoji_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
-            focused: false,
+            field_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             text_painter: None,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
@@ -178,6 +179,7 @@ impl ChatInput {
     /// ```
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self.input.enabled = enabled;
         self
     }
 
@@ -202,7 +204,7 @@ impl ChatInput {
     /// assert_eq!(ChatInput::new().draft(), "");
     /// ```
     pub fn draft(&self) -> &str {
-        &self.draft
+        &self.input.value
     }
 
     /// Appends text to the draft (paste insertion seam).
@@ -215,7 +217,8 @@ impl ChatInput {
     /// assert_eq!(c.draft(), "hello");
     /// ```
     pub fn insert(&mut self, text: &str) {
-        self.draft.push_str(text);
+        let combined = format!("{}{}", self.input.value, text);
+        self.input.set_value(combined);
     }
 
     /// Replaces the draft (host-controlled editing, e.g. reply
@@ -229,7 +232,7 @@ impl ChatInput {
     /// assert_eq!(c.draft(), "re: hi");
     /// ```
     pub fn set_draft(&mut self, draft: impl Into<String>) {
-        self.draft = draft.into();
+        self.input.set_value(draft);
     }
 
     /// Clears the draft.
@@ -243,7 +246,7 @@ impl ChatInput {
     /// assert_eq!(c.draft(), "");
     /// ```
     pub fn clear(&mut self) {
-        self.draft.clear();
+        self.input.set_value("");
     }
 
     /// Whether the draft has sendable content.
@@ -254,7 +257,7 @@ impl ChatInput {
     /// assert!(!ChatInput::new().can_send());
     /// ```
     pub fn can_send(&self) -> bool {
-        self.enabled && !self.draft.trim().is_empty()
+        self.enabled && !self.input.value.trim().is_empty()
     }
 
     /// Drains the committed message (Enter / send click).
@@ -296,8 +299,32 @@ impl ChatInput {
     /// Commits the draft if non-empty.
     fn submit(&mut self) {
         if self.can_send() {
-            self.sent = Some(std::mem::take(&mut self.draft));
+            let draft = std::mem::take(&mut self.input.value);
+            self.input.set_value("");
+            self.sent = Some(draft);
         }
+    }
+
+    /// Delivers an event to the draft field under its own bounds.
+    /// Positional events outside the field are dropped; keys, IME and
+    /// focus transitions pass through so the field's own focus gate
+    /// applies.
+    fn forward_input(&mut self, cx: &mut EventContext) -> EventResponse {
+        if let Some(pos) = cx.event.position() {
+            let drag = matches!(
+                cx.event,
+                WidgetEvent::PointerMoved { .. } | WidgetEvent::PointerReleased { .. }
+            );
+            if !drag && !self.field_rect.contains(pos) {
+                return EventResponse::Ignored;
+            }
+        }
+        let mut child_cx = EventContext {
+            event: cx.event,
+            bounds: self.field_rect,
+            scale: cx.scale,
+        };
+        self.input.event(&mut child_cx)
     }
 }
 
@@ -336,12 +363,43 @@ impl Widget for ChatInput {
             self.attach_rect =
                 Rect::new(x, bounds.min_y() + PAD_V_PT * s / 2.0, AUX_W_PT * s, btn_h);
         }
+        // The draft field takes the remainder.
+        self.field_rect = Rect::new(
+            bounds.min_x(),
+            bounds.min_y(),
+            (x - BTN_GAP_PT * s - bounds.min_x()).max(0.0),
+            bounds.height(),
+        );
+        self.input.placeholder.clone_from(&self.placeholder);
+        self.input.enabled = self.enabled;
+        self.input.label.clone_from(&self.label);
+        cx.layout_child(&mut self.input, self.field_rect);
+    }
+
+    fn child_count(&self) -> usize {
+        1
+    }
+
+    fn child(&self, index: usize) -> Option<&dyn Widget> {
+        (index == 0).then_some(&self.input as &dyn Widget)
+    }
+
+    fn child_mut(&mut self, index: usize) -> Option<&mut dyn Widget> {
+        (index == 0).then_some(&mut self.input as &mut dyn Widget)
+    }
+
+    fn child_bounds(&self, index: usize) -> Option<Rect> {
+        (index == 0).then_some(self.field_rect)
+    }
+
+    fn focused(&self) -> bool {
+        self.input.focused()
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {
         node.set_role(accesskit::Role::TextInput);
         node.set_label(self.label.clone());
-        node.set_value(self.draft.clone());
+        node.set_value(self.input.value.clone());
         if !self.enabled {
             node.set_disabled();
         }
@@ -354,44 +412,31 @@ impl Widget for ChatInput {
             return EventResponse::Ignored;
         }
         match cx.event {
-            WidgetEvent::ImeCommitted { text } => {
-                self.draft.push_str(text);
-                EventResponse::RequestRepaint
+            WidgetEvent::KeyPressed { key, .. } => {
+                // Composer chrome — only while the draft holds focus.
+                if self.input.focused() {
+                    if key == "Enter" {
+                        self.submit();
+                        return EventResponse::RequestRepaint;
+                    }
+                    if key == "Escape" {
+                        // Escape clears the draft without sending; an
+                        // empty draft lets the field collapse any
+                        // selection and return `Ignored`.
+                        if !self.input.value.is_empty() {
+                            self.input.set_value("");
+                            return EventResponse::RequestRepaint;
+                        }
+                    }
+                }
+                self.forward_input(cx)
             }
-            WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
-                "Backspace" => {
-                    if self.draft.pop().is_some() {
-                        return EventResponse::RequestRepaint;
-                    }
-                    EventResponse::Ignored
-                }
-                "Enter" => {
-                    self.submit();
-                    EventResponse::RequestRepaint
-                }
-                "Escape" => {
-                    if !self.draft.is_empty() {
-                        self.draft.clear();
-                        return EventResponse::RequestRepaint;
-                    }
-                    EventResponse::Ignored
-                }
-                k if k.chars().count() == 1 => {
-                    self.draft.push_str(k);
-                    EventResponse::RequestRepaint
-                }
-                _ => EventResponse::Ignored,
-            },
             WidgetEvent::PointerPressed {
                 button: PointerButton::Primary,
                 position,
                 ..
             } => {
                 if !self.bounds.contains(*position) {
-                    if self.focused {
-                        self.focused = false;
-                        return EventResponse::RequestRepaint;
-                    }
                     return EventResponse::Ignored;
                 }
                 if self.attachable && self.attach_rect.contains(*position) {
@@ -406,8 +451,7 @@ impl Widget for ChatInput {
                     self.held_send = true;
                     return EventResponse::CapturePointer;
                 }
-                self.focused = true;
-                EventResponse::CaptureFocus
+                self.forward_input(cx)
             }
             WidgetEvent::PointerReleased {
                 button: PointerButton::Primary,
@@ -420,9 +464,17 @@ impl Widget for ChatInput {
                     }
                     return EventResponse::ReleasePointer;
                 }
-                EventResponse::Ignored
+                self.forward_input(cx)
             }
-            _ => EventResponse::Ignored,
+            WidgetEvent::SemanticAction(action) => match action {
+                SemanticAction::SetValue(text) => {
+                    self.input.set_value(text.clone());
+                    EventResponse::RequestRepaint
+                }
+                SemanticAction::Focus => EventResponse::CaptureFocus,
+                _ => self.forward_input(cx),
+            },
+            _ => self.forward_input(cx),
         }
     }
 
@@ -438,57 +490,9 @@ impl Widget for ChatInput {
             )
         };
         let shape = martensite_core::shape::Shape::rounded(RADIUS_PT * s);
-        // Input face.
-        let field = Rect::new(
-            self.bounds.min_x(),
-            self.bounds.min_y(),
-            self.send_rect.min_x() - self.bounds.min_x() - BTN_GAP_PT * s,
-            self.bounds.height(),
-        );
-        let face = cx.color(TokenKey::SurfaceColor, FACE);
-        let edge = cx.color(TokenKey::DividerColor, EDGE);
-        cx.list.push_fill_shape(krect(field), &shape, face);
-        cx.list
-            .push_stroke_shape(krect(field), &shape, 1.0 * s, edge);
-        // Draft or placeholder.
-        let shown: &str = if self.draft.is_empty() {
-            &self.placeholder
-        } else {
-            &self.draft
-        };
-        let color = if self.draft.is_empty() {
-            cx.color(TokenKey::TextMutedColor, MUTED)
-        } else {
-            cx.color(TokenKey::TextColor, TEXT)
-        };
+        // The draft field paints its own chrome (face, placeholder,
+        // text, caret, selection) through the internal-child walk.
         let size = FONT_PT * s;
-        let y = self.bounds.min_y() + self.bounds.height() / 2.0;
-        let origin = kurbo::Point::new(f64::from(self.bounds.min_x() + PAD_H_PT * s), f64::from(y));
-        crate::text_paint::paint_label_clipped(
-            painter,
-            cx.list,
-            krect(field),
-            origin,
-            shown,
-            size,
-            color,
-        );
-        // Caret when focused.
-        if self.focused && !self.draft.is_empty() {
-            let x = self.bounds.min_x()
-                + PAD_H_PT * s
-                + painter
-                    .and_then(|p| p.measure_text(&self.draft, size))
-                    .unwrap_or(0.0)
-                + 2.0 * s;
-            let caret = kurbo::Rect::new(
-                f64::from(x),
-                f64::from(y - size * 0.7),
-                f64::from(x + s),
-                f64::from(y + size * 0.7),
-            );
-            cx.list.push_fill_rect(caret, color);
-        }
         // Aux buttons: 📎 / ☺ glyphs as labels.
         for (rect, glyph) in [(self.attach_rect, "📎"), (self.emoji_rect, "☺")] {
             if rect.width() > 0.0 {
@@ -553,6 +557,7 @@ mod tests {
     }
 
     fn type_text(c: &mut ChatInput, s: &str) {
+        ev(c, &WidgetEvent::FocusGained);
         ev(
             c,
             &WidgetEvent::ImeCommitted {

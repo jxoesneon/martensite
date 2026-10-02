@@ -681,7 +681,7 @@ impl CatalogView {
 
     /// Applies `"key=value"` text (dev channel `prop` signal) to the
     /// staged page's props.
-    fn apply_prop_text(&mut self, key: &str, value: &str) {
+    pub fn apply_prop_text(&mut self, key: &str, value: &str) {
         let Some(spec) = self.pages[self.sel].props().iter().find(|s| s.key() == key) else {
             self.log_line(format!("prop {key}: unknown"));
             return;

@@ -327,6 +327,9 @@ impl Widget for InlineEdit {
                 }
                 WidgetEvent::FocusLost => {
                     self.commit_edit();
+                    // The field still gets the event — its own focus
+                    // flag must drop or it would keep claiming keys.
+                    let _ = self.forward_to_input(cx);
                     return EventResponse::RequestRepaint;
                 }
                 // A press outside the (captured) field commits — the
