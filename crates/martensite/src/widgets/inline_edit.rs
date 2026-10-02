@@ -26,7 +26,9 @@ use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, NodeFlags, PaintContext,
     PointerButton, Rect, RenderMinimum, SemanticAction, UnderflowPolicy, Widget, WidgetEvent,
 };
+use martensite_sanitize::{Phase, Sanitize, SanitizeContext, SanitizerConfig};
 use martensite_theme::TokenKey;
+use std::sync::Arc;
 
 use crate::text_paint::SharedTextPainter;
 use crate::widgets::text_input::TextInput;
@@ -60,6 +62,10 @@ pub struct InlineEdit {
     edit_origin: String,
     input: TextInput,
     committed: Option<(String, String)>,
+    /// The sanitization pipeline — propagated to the embedded input
+    /// for insert-time filtering and applied to the committed value
+    /// with [`Phase::Commit`].
+    sanitizer: SanitizerConfig,
     placeholder: String,
     bounds: Rect,
     hovered: bool,
@@ -88,6 +94,7 @@ impl InlineEdit {
             edit_origin: String::new(),
             input: TextInput::new("inline edit"),
             committed: None,
+            sanitizer: SanitizerConfig::default(),
             placeholder: String::new(),
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             hovered: false,
@@ -123,6 +130,99 @@ impl InlineEdit {
         self.enabled = enabled;
         self.input = self.input.enabled(enabled);
         self
+    }
+
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile on every ingestion
+    /// and at commit; `false` keeps only the structural
+    /// control-character floor; [`raw`](Self::raw) disables the
+    /// engine entirely.
+    ///
+    /// ```
+    /// use martensite::widgets::inline_edit::InlineEdit;
+    ///
+    /// let mut edit = InlineEdit::new("x").sanitize(false);
+    /// edit.begin_edit();
+    /// edit.input_mut().set_value("a\u{202e}b");
+    /// edit.commit_edit();
+    /// assert_eq!(edit.value, "a\u{202e}b");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.set_sanitizer(if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        });
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten.
+    ///
+    /// ```
+    /// use martensite::widgets::inline_edit::InlineEdit;
+    ///
+    /// let mut edit = InlineEdit::new("x").raw();
+    /// edit.begin_edit();
+    /// edit.input_mut().set_value("a\x00b");
+    /// edit.commit_edit();
+    /// assert_eq!(edit.value, "a\x00b");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.set_sanitizer(SanitizerConfig::Raw);
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule.
+    ///
+    /// ```
+    /// use martensite::widgets::inline_edit::InlineEdit;
+    /// use martensite_sanitize::{Sanitize, SanitizeContext};
+    /// use std::sync::Arc;
+    ///
+    /// struct Rev;
+    /// impl Sanitize for Rev {
+    ///     fn name(&self) -> &'static str { "rev" }
+    ///     fn sanitize(&self, input: &str, _: &SanitizeContext) -> String {
+    ///         input.chars().rev().collect()
+    ///     }
+    /// }
+    /// let mut edit = InlineEdit::new("x").with_sanitizer(Arc::new(Rev));
+    /// edit.begin_edit();
+    /// edit.input_mut().set_value("ab");
+    /// edit.commit_edit();
+    /// assert_eq!(edit.value, "ba");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.set_sanitizer(SanitizerConfig::Custom(rule));
+        self
+    }
+
+    /// Replaces the sanitization configuration, propagating it to the
+    /// embedded input.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.input.set_sanitizer(config.clone());
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// ```
+    /// use martensite::widgets::inline_edit::InlineEdit;
+    ///
+    /// assert!(InlineEdit::new("x").raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
     }
 
     /// Installs a shared shaped-text painter on the display and input.
@@ -227,7 +327,10 @@ impl InlineEdit {
         if !self.editing {
             return;
         }
-        let new = self.input.value.clone();
+        let new = self.sanitizer.sanitize(
+            &self.input.value,
+            &SanitizeContext::single_line(Phase::Commit),
+        );
         self.editing = false;
         self.release_input_focus();
         if new != self.value {

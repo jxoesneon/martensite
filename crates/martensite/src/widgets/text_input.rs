@@ -30,7 +30,9 @@ use martensite_core::widget::{
     Widget, WidgetEvent,
 };
 use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
+use martensite_sanitize::{Phase, Sanitize, SanitizeContext, SanitizerConfig};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Field background colour.
@@ -316,6 +318,11 @@ pub struct TextInput {
     /// [`take_edited`](Self::take_edited) out-seam (mirrors
     /// `Banner::take_dismissed`).
     edited: bool,
+    /// The sanitization pipeline applied to every text ingestion
+    /// (IME commit, paste, programmatic `set_value`). See
+    /// [`TextInput::sanitize`], [`TextInput::raw`],
+    /// [`TextInput::with_sanitizer`].
+    sanitizer: SanitizerConfig,
     /// Bounded undo stack — newest snapshot at the back.
     undo: VecDeque<EditSnapshot>,
     /// Snapshots undone since the last edit — redo restores them,
@@ -355,6 +362,7 @@ impl Clone for TextInput {
             revealed: self.revealed,
             preedit: self.preedit.clone(),
             edited: self.edited,
+            sanitizer: self.sanitizer.clone(),
             undo: self.undo.clone(),
             redo: self.redo.clone(),
         }
@@ -402,6 +410,7 @@ impl TextInput {
             revealed: false,
             preedit: None,
             edited: false,
+            sanitizer: SanitizerConfig::default(),
             undo: VecDeque::new(),
             redo: VecDeque::new(),
         }
@@ -422,6 +431,113 @@ impl TextInput {
     pub fn value(mut self, value: impl Into<String>) -> Self {
         self.set_value(value);
         self
+    }
+
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile on every text
+    /// ingestion: NFKC normalization, stripping of controls, bidi
+    /// overrides, noncharacters, and invisible format characters,
+    /// confusable folding, and whitespace policy. `false` keeps only
+    /// the structural control-character floor. [`raw`](Self::raw)
+    /// disables the engine entirely.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    ///
+    /// let mut input = TextInput::new("Name").sanitize(false);
+    /// input.set_value("a\u{202e}b");
+    /// assert_eq!(input.value, "a\u{202e}b");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.sanitizer = if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        };
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten, including newlines in a paste. Use for fields that
+    /// must round-trip arbitrary text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    ///
+    /// let mut input = TextInput::new("Hex").raw();
+    /// input.set_value("a\u{202e}\x00");
+    /// assert_eq!(input.value, "a\u{202e}\x00");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.sanitizer = SanitizerConfig::Raw;
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied rule
+    /// — a [`Sanitize`] trait object applied at insert and commit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    /// use martensite_sanitize::{Sanitize, SanitizeContext};
+    /// use std::sync::Arc;
+    ///
+    /// struct Strip;
+    /// impl Sanitize for Strip {
+    ///     fn name(&self) -> &'static str { "strip" }
+    ///     fn sanitize(&self, input: &str, _: &SanitizeContext) -> String {
+    ///         input.chars().filter(|c| c.is_ascii()).collect()
+    ///     }
+    /// }
+    /// let mut input = TextInput::new("Ascii").with_sanitizer(Arc::new(Strip));
+    /// input.set_value("aé");
+    /// assert_eq!(input.value, "a");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.sanitizer = SanitizerConfig::Custom(rule);
+        self
+    }
+
+    /// Replaces the sanitization configuration in place — wrapper
+    /// widgets propagate their own setting to embedded fields through
+    /// this.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextInput;
+    /// use martensite_sanitize::SanitizerConfig;
+    ///
+    /// let input = TextInput::new("Name").raw();
+    /// assert!(input.sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
+    }
+
+    /// Sanitizes `text` as ingested content — IME commits, pastes,
+    /// and programmatic writes all route through here.
+    fn sanitize_insert(&self, text: &str) -> String {
+        self.sanitizer
+            .sanitize(text, &SanitizeContext::single_line(Phase::Insert))
     }
 
     /// Sets the placeholder text.
@@ -779,7 +895,7 @@ impl TextInput {
     /// ```
     #[inline]
     pub fn set_value(&mut self, value: impl Into<String>) {
-        self.value = value.into();
+        self.value = self.sanitize_insert(&value.into());
         // Programmatic writes collapse the caret to the end — a stale
         // byte offset could land mid-char after a shorter write.
         self.cursor = self.value.len();
@@ -900,11 +1016,12 @@ impl TextInput {
         self.selection_anchor = None;
     }
 
-    /// Inserts `text` at the caret, replacing any selection. Newlines
-    /// are stripped — this is a single-line field. One undo step
-    /// covers the replace-and-insert.
+    /// Inserts `text` at the caret, replacing any selection. The
+    /// configured [`SanitizerConfig`] filters it first — at minimum
+    /// newlines, which a single-line field never stores. One undo
+    /// step covers the replace-and-insert.
     fn insert_str(&mut self, text: &str) {
-        let clean: String = text.chars().filter(|c| *c != '\n' && *c != '\r').collect();
+        let clean = self.sanitize_insert(text);
         // No-op commits (an empty IME string with nothing selected)
         // don't earn an undo step or the edited flag.
         if clean.is_empty() && self.selection().is_none() {
@@ -2093,7 +2210,7 @@ mod tests {
     #[test]
     fn text_input_backspace_deletes_whole_grapheme() {
         // "e\u{301}" is e + combining acute — one user-perceived char.
-        let mut input = TextInput::new("F").value("e\u{301}x");
+        let mut input = TextInput::new("F").sanitize(false).value("e\u{301}x");
         focus(&mut input);
         input.event(&mut ev(&key("ArrowLeft")));
         input.event(&mut ev(&key("Backspace")));
@@ -2109,7 +2226,7 @@ mod tests {
 
     #[test]
     fn text_input_delete_forward_removes_whole_grapheme() {
-        let mut input = TextInput::new("F").value("e\u{301}x");
+        let mut input = TextInput::new("F").sanitize(false).value("e\u{301}x");
         focus(&mut input);
         input.event(&mut ev(&key("Home")));
         input.event(&mut ev(&key("Delete")));
@@ -2119,7 +2236,7 @@ mod tests {
     #[test]
     fn text_input_arrows_step_graphemes() {
         // Two clusters, three scalar values: "é" (2 chars) + "x".
-        let mut input = TextInput::new("F").value("e\u{301}x");
+        let mut input = TextInput::new("F").sanitize(false).value("e\u{301}x");
         focus(&mut input);
         input.event(&mut ev(&key("Home")));
         input.event(&mut ev(&key("ArrowRight")));
@@ -2132,7 +2249,7 @@ mod tests {
 
     #[test]
     fn text_input_grapheme_delete_undoes_whole() {
-        let mut input = TextInput::new("F").value("e\u{301}");
+        let mut input = TextInput::new("F").sanitize(false).value("e\u{301}");
         focus(&mut input);
         input.event(&mut ev(&key("Backspace")));
         assert_eq!(input.value, "");
@@ -3113,5 +3230,100 @@ mod tests {
         assert_eq!(input.event(&mut ev(&key("Ctrl+C"))), EventResponse::Handled);
         assert_eq!(input.value, "abc");
         assert!(!input.take_edited());
+    }
+
+    // ----- sanitization engine wiring -----
+
+    #[test]
+    fn sanitize_strips_bidi_overrides_on_insert() {
+        let mut input = TextInput::new("F");
+        focus(&mut input);
+        // Trojan Source vector — a pasted/committed bidi override
+        // never reaches the model.
+        input.event(&mut ev(&ime("a\u{202e}b\u{202c}c")));
+        assert_eq!(input.value, "abc");
+    }
+
+    #[test]
+    fn sanitize_nfkc_folds_fullwidth_and_ligatures() {
+        let mut input = TextInput::new("F");
+        focus(&mut input);
+        input.event(&mut ev(&ime("\u{ff21}\u{ff42}\u{fb01}")));
+        assert_eq!(input.value, "Abfi");
+    }
+
+    #[test]
+    fn sanitize_strips_controls_keeps_tab_strips_newline() {
+        let mut input = TextInput::new("F");
+        focus(&mut input);
+        input.event(&mut ev(&ime("a\x00\x07b\nc\td")));
+        assert_eq!(input.value, "abc\td");
+    }
+
+    #[test]
+    fn sanitize_keeps_functional_invisibles() {
+        // ZWJ/ZWNJ/ZWSP survive — breaking them destroys emoji and
+        // Indic/Persian shaping.
+        let mut input = TextInput::new("F");
+        focus(&mut input);
+        input.event(&mut ev(&ime("\u{1f468}\u{200d}\u{1f4bb}")));
+        assert_eq!(input.value, "\u{1f468}\u{200d}\u{1f4bb}");
+    }
+
+    #[test]
+    fn sanitize_false_is_structural_baseline() {
+        // Baseline strips control chars but keeps format chars and
+        // does not normalize.
+        let mut input = TextInput::new("F").sanitize(false);
+        focus(&mut input);
+        input.event(&mut ev(&ime("a\u{202e}b\x00\u{fb01}")));
+        assert_eq!(input.value, "a\u{202e}b\u{fb01}");
+    }
+
+    #[test]
+    fn raw_passes_verbatim_including_newline() {
+        let mut input = TextInput::new("F").raw();
+        focus(&mut input);
+        input.event(&mut ev(&ime("a\nb\x00")));
+        assert_eq!(input.value, "a\nb\x00");
+    }
+
+    #[test]
+    fn custom_sanitizer_replaces_profile() {
+        struct Upper;
+        impl Sanitize for Upper {
+            fn name(&self) -> &'static str {
+                "upper"
+            }
+            fn sanitize(&self, input: &str, _ctx: &SanitizeContext) -> String {
+                input.to_uppercase()
+            }
+        }
+        let mut input = TextInput::new("F").with_sanitizer(Arc::new(Upper));
+        focus(&mut input);
+        input.event(&mut ev(&ime("ab")));
+        assert_eq!(input.value, "AB");
+    }
+
+    #[test]
+    fn set_value_is_sanitized() {
+        let mut input = TextInput::new("F");
+        input.set_value("a\u{202e}b");
+        assert_eq!(input.value, "ab");
+        let mut raw = TextInput::new("F").raw();
+        raw.set_value("a\u{202e}b");
+        assert_eq!(raw.value, "a\u{202e}b");
+    }
+
+    #[test]
+    fn sanitize_is_idempotent_across_undo() {
+        // A sanitized insert is one undo step; undo restores the
+        // pre-edit state exactly.
+        let mut input = TextInput::new("F").value("x");
+        focus(&mut input);
+        input.event(&mut ev(&ime("\u{ff21}")));
+        assert_eq!(input.value, "xA");
+        input.event(&mut ev(&key("Ctrl+Z")));
+        assert_eq!(input.value, "x");
     }
 }

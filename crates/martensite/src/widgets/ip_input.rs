@@ -31,7 +31,9 @@ use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
 };
+use martensite_sanitize::{Sanitize, SanitizerConfig};
 use martensite_theme::TokenKey;
+use std::sync::Arc;
 
 use crate::text_paint::{paint_label_clipped, SharedTextPainter};
 use crate::widgets::SpinBox;
@@ -57,6 +59,8 @@ pub struct IpInput {
     octets: Vec<SpinBox>,
     last: [u8; 4],
     changed: bool,
+    /// The sanitization pipeline — propagated to every octet field.
+    sanitizer: SanitizerConfig,
     bounds: Rect,
     scale: f32,
     text_painter: Option<SharedTextPainter>,
@@ -91,6 +95,7 @@ impl IpInput {
                 .collect(),
             last: [0; 4],
             changed: false,
+            sanitizer: SanitizerConfig::default(),
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
             text_painter: None,
@@ -121,6 +126,81 @@ impl IpInput {
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = label.into();
         self
+    }
+
+    /// Toggles input sanitization — propagated to every octet field;
+    /// `true` (the default) runs the aggressive
+    /// [`martensite_sanitize`] profile, `false` keeps the structural
+    /// floor, [`raw`](Self::raw) disables the engine entirely.
+    ///
+    /// ```
+    /// use martensite::widgets::ip_input::IpInput;
+    ///
+    /// assert!(IpInput::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.set_sanitizer(if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        });
+        self
+    }
+
+    /// Fully verbatim input in every octet.
+    ///
+    /// ```
+    /// use martensite::widgets::ip_input::IpInput;
+    ///
+    /// assert!(IpInput::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.set_sanitizer(SanitizerConfig::Raw);
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule, propagated to every octet.
+    ///
+    /// ```
+    /// use martensite::widgets::ip_input::IpInput;
+    /// use martensite_sanitize::Profile;
+    /// use std::sync::Arc;
+    ///
+    /// let ip = IpInput::new().with_sanitizer(Arc::new(Profile::baseline()));
+    /// assert!(ip.sanitizer_config().is_custom());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.set_sanitizer(SanitizerConfig::Custom(rule));
+        self
+    }
+
+    /// Replaces the sanitization configuration, propagating it to all
+    /// four octet fields.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        for octet in &mut self.octets {
+            octet.set_sanitizer(config.clone());
+        }
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// ```
+    /// use martensite::widgets::ip_input::IpInput;
+    ///
+    /// assert!(!IpInput::new().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
     }
 
     /// Enables or disables all octets.

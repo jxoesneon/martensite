@@ -25,6 +25,8 @@ use martensite_core::widget::{
     Widget, WidgetEvent,
 };
 use martensite_core::{Rect, TokenKey};
+use martensite_sanitize::{Phase, Sanitize, SanitizeContext, SanitizerConfig};
+use std::sync::Arc;
 
 /// Cell size, logical points.
 const CELL_PT: f32 = 32.0;
@@ -88,6 +90,10 @@ pub struct OtpInput {
     cell_rects: Vec<Rect>,
     /// Shared shaped-text painter.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// The sanitization pipeline applied to every ingestion before
+    /// the digit/letter filter — NFKC folds fullwidth digits into
+    /// ASCII digits that then validate.
+    sanitizer: SanitizerConfig,
     /// Accessible label override — unset falls back to the
     /// built-in `"One-time code"` chrome string so the host app
     /// can localize it.
@@ -120,6 +126,7 @@ impl OtpInput {
             signaled_value: None,
             cell_rects: Vec::new(),
             text_painter: None,
+            sanitizer: SanitizerConfig::default(),
             a11y_label: None,
         }
     }
@@ -157,7 +164,93 @@ impl OtpInput {
         self
     }
 
-    /// Accepts letters in addition to digits.
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile before the
+    /// digit/letter filter (fullwidth digits fold to ASCII and
+    /// validate); `false` keeps only the structural
+    /// control-character floor; [`raw`](Self::raw) disables the
+    /// engine entirely.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::otp_input::OtpInput;
+    ///
+    /// let mut o = OtpInput::new().length(4);
+    /// o.set_value("\u{ff11}\u{ff12}"); // fullwidth "12"
+    /// assert_eq!(o.get_value(), "12");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.sanitizer = if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        };
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten before the digit/letter filter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::otp_input::OtpInput;
+    ///
+    /// let mut o = OtpInput::new().length(4).raw();
+    /// o.set_value("\u{ff11}\u{ff12}");
+    /// assert_eq!(o.get_value(), ""); // fullwidth stays non-ASCII
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.sanitizer = SanitizerConfig::Raw;
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::otp_input::OtpInput;
+    /// use martensite_sanitize::Profile;
+    /// use std::sync::Arc;
+    ///
+    /// let o = OtpInput::new().with_sanitizer(Arc::new(Profile::baseline()));
+    /// assert!(o.sanitizer_config().is_custom());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.sanitizer = SanitizerConfig::Custom(rule);
+        self
+    }
+
+    /// Replaces the sanitization configuration in place.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::otp_input::OtpInput;
+    ///
+    /// assert!(OtpInput::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
+    }
+
+    /// Accept letters as well as digits.
     ///
     /// # Examples
     ///
@@ -262,9 +355,15 @@ impl OtpInput {
         self
     }
 
-    /// Filters a string to acceptable characters, truncated.
+    /// Filters a string to acceptable characters, truncated — the
+    /// configured [`SanitizerConfig`] runs first, so e.g. fullwidth
+    /// digits fold to ASCII before the digit check.
     fn filter(&self, text: &str) -> String {
-        text.chars()
+        let clean = self
+            .sanitizer
+            .sanitize(text, &SanitizeContext::single_line(Phase::Insert));
+        clean
+            .chars()
             .filter(|c| c.is_ascii_digit() || (self.alphabetic && c.is_ascii_alphabetic()))
             .take(self.length)
             .collect()

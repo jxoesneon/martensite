@@ -1102,6 +1102,7 @@ mod tests {
             texts: Vec::new(),
             fills: Vec::new(),
             painted_area: 0.0,
+            clip_owners: Default::default(),
             children: Vec::new(),
         };
         n.bounds.x0 = x0;

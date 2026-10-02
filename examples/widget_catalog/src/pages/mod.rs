@@ -101,6 +101,27 @@ pub(crate) fn csv(props: &PropValues, key: &str) -> Vec<String> {
         .collect()
 }
 
+/// Maps the shared `"sanitize"` Choice prop to a `SanitizerConfig`:
+/// Aggressive (default) / Baseline / Raw.
+pub(crate) fn sanitize_cfg(p: &PropValues) -> martensite::sanitize::SanitizerConfig {
+    use martensite::sanitize::SanitizerConfig;
+    match p.choice("sanitize") {
+        1 => SanitizerConfig::Baseline,
+        2 => SanitizerConfig::Raw,
+        _ => SanitizerConfig::Aggressive,
+    }
+}
+
+/// The snippet suffix for the `"sanitize"` prop — `.sanitize(false)`
+/// or `.raw()`, empty for the aggressive default.
+pub(crate) fn sanitize_snippet(p: &PropValues) -> &'static str {
+    match p.choice("sanitize") {
+        1 => "\n    .sanitize(false)",
+        2 => "\n    .raw()",
+        _ => "",
+    }
+}
+
 /// Every registered page, in rail order — grouped by family.
 pub fn all_pages() -> Vec<Box<dyn crate::page::Page>> {
     let mut v: Vec<Box<dyn crate::page::Page>> = Vec::new();

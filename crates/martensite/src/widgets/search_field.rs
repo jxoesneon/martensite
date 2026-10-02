@@ -40,6 +40,8 @@ use martensite_core::widget::{
     Widget, WidgetEvent,
 };
 use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
+use martensite_sanitize::{Phase, Sanitize, SanitizeContext, SanitizerConfig};
+use std::sync::Arc;
 
 use crate::widgets::text_input::TextInput;
 
@@ -86,6 +88,10 @@ pub struct SearchField {
     /// `Enter` submit out-seam — see
     /// [`take_submitted`](Self::take_submitted).
     submitted: Option<String>,
+    /// The sanitization pipeline — propagated to the embedded field
+    /// for insert-time filtering and applied again at the submit
+    /// seam with [`Phase::Commit`].
+    sanitizer: SanitizerConfig,
     /// Shared shaped-text painter — caption text emits real
     /// `GlyphRun`s when set; propagated to the embedded field.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
@@ -116,6 +122,7 @@ impl SearchField {
                 .clearable(true),
             field_rect: Rect::default(),
             submitted: None,
+            sanitizer: SanitizerConfig::default(),
             text_painter: None,
             cached_bounds: Rect::default(),
         }
@@ -221,6 +228,101 @@ impl SearchField {
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
+    }
+
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile on every ingestion
+    /// and at submit; `false` keeps only the structural
+    /// control-character floor; [`raw`](Self::raw) disables the
+    /// engine entirely.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SearchField;
+    ///
+    /// let mut field = SearchField::new().sanitize(false);
+    /// field.set_value("a\u{202e}b");
+    /// assert_eq!(field.value(), "a\u{202e}b");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.set_sanitizer(if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        });
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SearchField;
+    ///
+    /// let mut field = SearchField::new().raw();
+    /// field.set_value("a\u{202e}\x00");
+    /// assert_eq!(field.value(), "a\u{202e}\x00");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.set_sanitizer(SanitizerConfig::Raw);
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SearchField;
+    /// use martensite_sanitize::{Sanitize, SanitizeContext};
+    /// use std::sync::Arc;
+    ///
+    /// struct Strip;
+    /// impl Sanitize for Strip {
+    ///     fn name(&self) -> &'static str { "strip" }
+    ///     fn sanitize(&self, input: &str, _: &SanitizeContext) -> String {
+    ///         input.chars().filter(|c| c.is_ascii()).collect()
+    ///     }
+    /// }
+    /// let mut field = SearchField::new().with_sanitizer(Arc::new(Strip));
+    /// field.set_value("aé");
+    /// assert_eq!(field.value(), "a");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.set_sanitizer(SanitizerConfig::Custom(rule));
+        self
+    }
+
+    /// Replaces the sanitization configuration, propagating it to the
+    /// embedded field.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.field.set_sanitizer(config.clone());
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SearchField;
+    ///
+    /// assert!(SearchField::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
     }
 
     /// Shares a [`crate::text_paint::TextPainter`] so the caption and
@@ -435,7 +537,10 @@ impl Widget for SearchField {
             WidgetEvent::KeyPressed { key, .. }
                 if key.as_str() == "Enter" && self.field.focused() =>
             {
-                self.submitted = Some(self.field.value.clone());
+                self.submitted = Some(self.sanitizer.sanitize(
+                    &self.field.value,
+                    &SanitizeContext::single_line(Phase::Commit),
+                ));
                 EventResponse::RequestRepaint
             }
             WidgetEvent::KeyPressed { key, .. } if key.as_str() == "Escape" => {
@@ -786,5 +891,26 @@ mod tests {
         laid_out(&mut field, 200.0, FIELD_PT);
         assert_eq!(event(&mut field, &key("Escape")), EventResponse::Ignored);
         assert_eq!(field.value(), "abc");
+    }
+
+    #[test]
+    fn submit_applies_commit_phase_sanitize() {
+        // The aggressive profile trims at commit — the submit seam.
+        let mut field = SearchField::new();
+        event(&mut field, &WidgetEvent::FocusGained);
+        field.field.set_value("  spaced  \u{202e}");
+        event(&mut field, &key("Enter"));
+        assert_eq!(field.take_submitted(), Some("spaced".to_string()));
+        // The field display itself is untouched by the commit trim.
+        assert_eq!(field.value(), "  spaced  ");
+    }
+
+    #[test]
+    fn raw_field_submits_verbatim() {
+        let mut field = SearchField::new().raw();
+        event(&mut field, &WidgetEvent::FocusGained);
+        field.field.set_value("  a\u{202e}  ");
+        event(&mut field, &key("Enter"));
+        assert_eq!(field.take_submitted(), Some("  a\u{202e}  ".to_string()));
     }
 }

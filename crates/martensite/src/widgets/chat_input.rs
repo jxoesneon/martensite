@@ -27,7 +27,9 @@ use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, RenderMinimum, SemanticAction, UnderflowPolicy, Widget, WidgetEvent,
 };
+use martensite_sanitize::{Phase, Sanitize, SanitizeContext, SanitizerConfig};
 use martensite_theme::TokenKey;
+use std::sync::Arc;
 
 use crate::text_paint::SharedTextPainter;
 use crate::widgets::text_input::{parse_key_chord, TextInput};
@@ -67,6 +69,10 @@ pub struct ChatInput {
     /// clipboard, word ops, undo/redo, IME) for free.
     input: TextInput,
     sent: Option<String>,
+    /// The sanitization pipeline — propagated to the draft field for
+    /// insert-time filtering and applied to the sent message with
+    /// [`Phase::Commit`].
+    sanitizer: SanitizerConfig,
     attach: bool,
     emoji: bool,
     held_send: bool,
@@ -117,6 +123,7 @@ impl ChatInput {
             enabled: true,
             input: TextInput::new("Message"),
             sent: None,
+            sanitizer: SanitizerConfig::default(),
             attach: false,
             emoji: false,
             held_send: false,
@@ -190,6 +197,82 @@ impl ChatInput {
         self.enabled = enabled;
         self.input.enabled = enabled;
         self
+    }
+
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile on every ingestion
+    /// and on the sent draft; `false` keeps only the structural
+    /// control-character floor; [`raw`](Self::raw) disables the
+    /// engine entirely.
+    ///
+    /// ```
+    /// use martensite::widgets::chat_input::ChatInput;
+    ///
+    /// let c = ChatInput::new().sanitize(false);
+    /// assert!(!c.sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.set_sanitizer(if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        });
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten.
+    ///
+    /// ```
+    /// use martensite::widgets::chat_input::ChatInput;
+    ///
+    /// assert!(ChatInput::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.set_sanitizer(SanitizerConfig::Raw);
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule.
+    ///
+    /// ```
+    /// use martensite::widgets::chat_input::ChatInput;
+    /// use martensite_sanitize::Profile;
+    /// use std::sync::Arc;
+    ///
+    /// let c = ChatInput::new().with_sanitizer(Arc::new(Profile::baseline()));
+    /// assert!(c.sanitizer_config().is_custom());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.set_sanitizer(SanitizerConfig::Custom(rule));
+        self
+    }
+
+    /// Replaces the sanitization configuration, propagating it to the
+    /// draft field.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.input.set_sanitizer(config.clone());
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// ```
+    /// use martensite::widgets::chat_input::ChatInput;
+    ///
+    /// assert!(ChatInput::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
     }
 
     /// Shared text painter for real glyph metrics.
@@ -311,7 +394,14 @@ impl ChatInput {
     /// button active.
     fn submit(&mut self) {
         if self.can_send() {
-            let draft = self.input.value.trim().to_string();
+            let draft = self
+                .sanitizer
+                .sanitize(
+                    &self.input.value,
+                    &SanitizeContext::single_line(Phase::Commit),
+                )
+                .trim()
+                .to_string();
             self.input.set_value("");
             self.sent = Some(draft);
         }

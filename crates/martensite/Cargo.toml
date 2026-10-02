@@ -23,6 +23,7 @@ martensite-access = { workspace = true }
 martensite-window = { workspace = true }
 martensite-focus = { workspace = true }
 martensite-clipboard = { workspace = true, features = ["platform"] }
+martensite-sanitize = { workspace = true }
 martensite-dnd = { workspace = true }
 martensite-theme = { workspace = true }
 martensite-motion = { workspace = true }

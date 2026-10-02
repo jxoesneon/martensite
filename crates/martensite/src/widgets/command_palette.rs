@@ -62,6 +62,7 @@ use martensite_core::widget::{
     PaintContext, PointerButton, SemanticAction, Widget, WidgetEvent,
 };
 use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
+use martensite_sanitize::{Sanitize, SanitizerConfig};
 use parking_lot::Mutex;
 
 use crate::widgets::scrollview::ScrollView;
@@ -810,6 +811,8 @@ pub struct CommandPalette {
     pub placeholder: String,
     /// The embedded query field (internal child).
     field: TextInput,
+    /// The sanitization pipeline — propagated to the embedded field.
+    sanitizer: SanitizerConfig,
     /// Field bounds assigned in `layout` (fills the widget).
     field_rect: Rect,
     /// Full action list in declaration order.
@@ -874,6 +877,7 @@ impl CommandPalette {
             field: TextInput::new(DEFAULT_LABEL)
                 .clearable(true)
                 .suffix(SHORTCUT_HINT),
+            sanitizer: SanitizerConfig::default(),
             field_rect: Rect::default(),
             actions: Vec::new(),
             filtered: Vec::new(),
@@ -1070,6 +1074,87 @@ impl CommandPalette {
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self
+    }
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile on the embedded
+    /// field; `false` keeps the structural floor; [`raw`](Self::raw)
+    /// disables the engine entirely.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CommandPalette;
+    ///
+    /// assert!(CommandPalette::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.set_sanitizer(if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        });
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CommandPalette;
+    ///
+    /// assert!(CommandPalette::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.set_sanitizer(SanitizerConfig::Raw);
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CommandPalette;
+    /// use martensite_sanitize::Profile;
+    /// use std::sync::Arc;
+    ///
+    /// let w = CommandPalette::new().with_sanitizer(Arc::new(Profile::baseline()));
+    /// assert!(w.sanitizer_config().is_custom());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.set_sanitizer(SanitizerConfig::Custom(rule));
+        self
+    }
+
+    /// Replaces the sanitization configuration, propagating it to the
+    /// embedded field.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.field.set_sanitizer(config.clone());
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::CommandPalette;
+    ///
+    /// assert!(!CommandPalette::new().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
     }
 
     /// Sets whether the widget is enabled.

@@ -38,6 +38,8 @@ use martensite_core::widget::{
     SemanticAction, Widget, WidgetEvent,
 };
 use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
+use martensite_sanitize::{Phase, Sanitize, SanitizeContext, SanitizerConfig};
+use std::sync::Arc;
 
 use crate::widgets::text_input::TextInput;
 
@@ -122,6 +124,9 @@ pub struct SpinBox {
     value: f64,
     /// The embedded text field (internal child).
     input: TextInput,
+    /// The sanitization pipeline — propagated to the embedded field
+    /// and applied to typed text at commit.
+    sanitizer: SanitizerConfig,
     /// Field bounds assigned in `layout`.
     input_rect: Rect,
     /// ▲ button bounds assigned in `layout`.
@@ -176,6 +181,7 @@ impl SpinBox {
             wrap: false,
             value: 0.0,
             input: TextInput::new("Value"),
+            sanitizer: SanitizerConfig::default(),
             input_rect: Rect::default(),
             up_rect: Rect::default(),
             down_rect: Rect::default(),
@@ -351,6 +357,88 @@ impl SpinBox {
     pub fn wrap(mut self, wrap: bool) -> Self {
         self.wrap = wrap;
         self
+    }
+
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile on typed text;
+    /// `false` keeps only the structural control-character floor;
+    /// [`raw`](Self::raw) disables the engine entirely.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SpinBox;
+    ///
+    /// assert!(SpinBox::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.set_sanitizer(if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        });
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SpinBox;
+    ///
+    /// assert!(SpinBox::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.set_sanitizer(SanitizerConfig::Raw);
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SpinBox;
+    /// use martensite_sanitize::Profile;
+    /// use std::sync::Arc;
+    ///
+    /// let sb = SpinBox::new().with_sanitizer(Arc::new(Profile::baseline()));
+    /// assert!(sb.sanitizer_config().is_custom());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.set_sanitizer(SanitizerConfig::Custom(rule));
+        self
+    }
+
+    /// Replaces the sanitization configuration, propagating it to the
+    /// embedded field.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.input.set_sanitizer(config.clone());
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SpinBox;
+    ///
+    /// assert!(!SpinBox::new().sanitize(false).sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
     }
 
     /// Sets whether the spin box is enabled.
@@ -529,9 +617,14 @@ impl SpinBox {
         s
     }
 
-    /// Parses the field text with the affixes stripped.
+    /// Parses the field text with the affixes stripped — the typed
+    /// text is sanitized at commit before parsing.
     fn parse_text(&self) -> Option<f64> {
-        let mut t = self.input.value.trim();
+        let clean = self.sanitizer.sanitize(
+            &self.input.value,
+            &SanitizeContext::single_line(Phase::Commit),
+        );
+        let mut t = clean.trim();
         if !self.prefix.is_empty() {
             t = t
                 .strip_prefix(self.prefix.as_str())

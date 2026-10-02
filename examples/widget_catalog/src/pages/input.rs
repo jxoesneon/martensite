@@ -60,30 +60,43 @@ page!(TextInputPage {
             label: "Enabled",
             default: true
         },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
     ],
-    build: |p| Box::new(
-        TextInput::new(p.str("label"))
+    build: |p| {
+        let mut w = TextInput::new(p.str("label"))
             .placeholder(p.str("placeholder"))
             .secure(p.bool("secure"))
             .clearable(p.bool("clearable"))
-            .enabled(p.bool("enabled")),
-    ),
+            .enabled(p.bool("enabled"));
+        w.set_sanitizer(crate::pages::sanitize_cfg(p));
+        Box::new(w)
+    },
     snippet: |p| {
-        let mut s = format!(
-            "TextInput::new({:?})\n    .placeholder({:?})",
-            p.str("label"),
-            p.str("placeholder")
-        );
-        if p.bool("secure") {
-            s.push_str("\n    .secure(true)");
-        }
-        if p.bool("clearable") {
-            s.push_str("\n    .clearable(true)");
-        }
-        if !p.bool("enabled") {
-            s.push_str("\n    .enabled(false)");
-        }
-        s
+        let base: String = {
+            {
+                let mut s = format!(
+                    "TextInput::new({:?})\n    .placeholder({:?})",
+                    p.str("label"),
+                    p.str("placeholder")
+                );
+                if p.bool("secure") {
+                    s.push_str("\n    .secure(true)");
+                }
+                if p.bool("clearable") {
+                    s.push_str("\n    .clearable(true)");
+                }
+                if !p.bool("enabled") {
+                    s.push_str("\n    .enabled(false)");
+                }
+                s
+            }
+        };
+        base + crate::pages::sanitize_snippet(p)
     },
     poll: |w, out| {
         if let Some(ti) = downcast_mut::<TextInput>(w) {
@@ -146,20 +159,33 @@ page!(TextAreaPage {
             label: "Read-only",
             default: false
         },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
     ],
-    build: |p| Box::new(
-        TextArea::new()
+    build: |p| {
+        let mut w = TextArea::new()
             .placeholder(p.str("placeholder"))
             .wrap(p.bool("wrap"))
             .min_lines(p.i64("min_lines") as usize)
-            .read_only(p.bool("read_only")),
-    ),
-    snippet: |p| format!(
-        "TextArea::new()\n    .placeholder({:?})\n    .wrap({})\n    .min_lines({})",
-        p.str("placeholder"),
-        p.bool("wrap"),
-        p.i64("min_lines"),
-    ),
+            .read_only(p.bool("read_only"));
+        w.set_sanitizer(crate::pages::sanitize_cfg(p));
+        Box::new(w)
+    },
+    snippet: |p| {
+        let base: String = {
+            format!(
+                "TextArea::new()\n    .placeholder({:?})\n    .wrap({})\n    .min_lines({})",
+                p.str("placeholder"),
+                p.bool("wrap"),
+                p.i64("min_lines"),
+            )
+        };
+        base + crate::pages::sanitize_snippet(p)
+    },
     poll: |w, out| {
         if let Some(ta) = downcast_mut::<TextArea>(w) {
             if ta.take_edited().is_some() {
@@ -199,18 +225,31 @@ page!(SearchFieldPage {
             label: "Enabled",
             default: true
         },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
     ],
-    build: |p| Box::new(
-        SearchField::new()
+    build: |p| {
+        let mut w = SearchField::new()
             .placeholder(p.str("placeholder"))
             .with_value(p.str("value"))
-            .enabled(p.bool("enabled")),
-    ),
-    snippet: |p| format!(
-        "SearchField::new()\n    .placeholder({:?})\n    .with_value({:?})",
-        p.str("placeholder"),
-        p.str("value"),
-    ),
+            .enabled(p.bool("enabled"));
+        w.set_sanitizer(crate::pages::sanitize_cfg(p));
+        Box::new(w)
+    },
+    snippet: |p| {
+        let base: String = {
+            format!(
+                "SearchField::new()\n    .placeholder({:?})\n    .with_value({:?})",
+                p.str("placeholder"),
+                p.str("value"),
+            )
+        };
+        base + crate::pages::sanitize_snippet(p)
+    },
     poll: |w, out| {
         if let Some(s) = downcast_mut::<SearchField>(w) {
             if let Some(q) = s.take_submitted() {
@@ -237,13 +276,28 @@ page!(SearchBarPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "placeholder",
-        label: "Placeholder",
-        default: "Search files",
-    }],
-    build: |p| Box::new(SearchBar::new().placeholder(p.str("placeholder"))),
-    snippet: |p| format!("SearchBar::new().placeholder({:?})", p.str("placeholder")),
+    props: &[
+        PropSpec::Text {
+            key: "placeholder",
+            label: "Placeholder",
+            default: "Search files",
+        },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
+    ],
+    build: |p| {
+        let mut w = SearchBar::new().placeholder(p.str("placeholder"));
+        w.set_sanitizer(crate::pages::sanitize_cfg(p));
+        Box::new(w)
+    },
+    snippet: |p| {
+        let base: String = { format!("SearchBar::new().placeholder({:?})", p.str("placeholder")) };
+        base + crate::pages::sanitize_snippet(p)
+    },
     poll: |w, out| {
         if let Some(s) = downcast_mut::<SearchBar>(w) {
             if let Some(q) = s.take_submitted() {
@@ -281,24 +335,37 @@ page!(AutoCompletePage {
             label: "Suggestions (csv)",
             default: "Apple,Apricot,Banana,Cherry,Grape,Mango",
         },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
     ],
     build: |p| {
-        Box::new(
-            AutoComplete::new()
+        {
+            let mut w = AutoComplete::new()
                 .placeholder(p.str("placeholder"))
-                .suggestions(csv(p, "suggestions")),
-        )
+                .suggestions(csv(p, "suggestions"));
+            w.set_sanitizer(crate::pages::sanitize_cfg(p));
+            Box::new(w)
+        }
     },
     snippet: |p| {
-        let sg = csv(p, "suggestions")
-            .iter()
-            .map(|s| format!("{s:?}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "AutoComplete::new()\n    .placeholder({:?})\n    .suggestions([{sg}])",
-            p.str("placeholder"),
-        )
+        let base: String = {
+            {
+                let sg = csv(p, "suggestions")
+                    .iter()
+                    .map(|s| format!("{s:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "AutoComplete::new()\n    .placeholder({:?})\n    .suggestions([{sg}])",
+                    p.str("placeholder"),
+                )
+            }
+        };
+        base + crate::pages::sanitize_snippet(p)
     },
     poll: |w, out| {
         if let Some(a) = downcast_mut::<AutoComplete>(w) {
@@ -342,19 +409,32 @@ page!(ChatInputPage {
             label: "Emoji button",
             default: true
         },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
     ],
-    build: |p| Box::new(
-        ChatInput::new()
+    build: |p| {
+        let mut w = ChatInput::new()
             .placeholder(p.str("placeholder"))
             .attachable(p.bool("attachable"))
-            .emoji_button(p.bool("emoji")),
-    ),
-    snippet: |p| format!(
-        "ChatInput::new()\n    .placeholder({:?})\n    .attachable({})\n    .emoji_button({})",
-        p.str("placeholder"),
-        p.bool("attachable"),
-        p.bool("emoji"),
-    ),
+            .emoji_button(p.bool("emoji"));
+        w.set_sanitizer(crate::pages::sanitize_cfg(p));
+        Box::new(w)
+    },
+    snippet: |p| {
+        let base: String = {
+            format!(
+            "ChatInput::new()\n    .placeholder({:?})\n    .attachable({})\n    .emoji_button({})",
+            p.str("placeholder"),
+            p.bool("attachable"),
+            p.bool("emoji"),
+            )
+        };
+        base + crate::pages::sanitize_snippet(p)
+    },
     poll: |w, out| {
         if let Some(c) = downcast_mut::<ChatInput>(w) {
             if let Some(msg) = c.take_sent() {
@@ -385,13 +465,28 @@ page!(InlineEditPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "value",
-        label: "Value",
-        default: "untitled.txt",
-    }],
-    build: |p| Box::new(InlineEdit::new(p.str("value"))),
-    snippet: |p| format!("InlineEdit::new({:?})", p.str("value")),
+    props: &[
+        PropSpec::Text {
+            key: "value",
+            label: "Value",
+            default: "untitled.txt",
+        },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
+    ],
+    build: |p| {
+        let mut w = InlineEdit::new(p.str("value"));
+        w.set_sanitizer(crate::pages::sanitize_cfg(p));
+        Box::new(w)
+    },
+    snippet: |p| {
+        let base: String = { format!("InlineEdit::new({:?})", p.str("value")) };
+        base + crate::pages::sanitize_snippet(p)
+    },
     poll: |w, out| {
         if let Some(e) = downcast_mut::<InlineEdit>(w) {
             if let Some((old, new)) = e.take_committed() {
@@ -415,20 +510,35 @@ page!(IpInputPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "label",
-        label: "Label",
-        default: "Server"
-    }],
-    build: |p| Box::new(
-        IpInput::new()
+    props: &[
+        PropSpec::Text {
+            key: "label",
+            label: "Label",
+            default: "Server"
+        },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
+    ],
+    build: |p| {
+        let mut w = IpInput::new()
             .label(p.str("label"))
-            .value([192, 168, 1, 10])
-    ),
-    snippet: |p| format!(
-        "IpInput::new().label({:?}).value([192, 168, 1, 10])",
-        p.str("label")
-    ),
+            .value([192, 168, 1, 10]);
+        w.set_sanitizer(crate::pages::sanitize_cfg(p));
+        Box::new(w)
+    },
+    snippet: |p| {
+        let base: String = {
+            format!(
+                "IpInput::new().label({:?}).value([192, 168, 1, 10])",
+                p.str("label")
+            )
+        };
+        base + crate::pages::sanitize_snippet(p)
+    },
     poll: |w, out| {
         if let Some(i) = downcast_mut::<IpInput>(w) {
             if i.take_changed() {
@@ -465,17 +575,30 @@ page!(OtpInputPage {
             label: "Masked",
             default: false
         },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
     ],
-    build: |p| Box::new(
-        OtpInput::new()
+    build: |p| {
+        let mut w = OtpInput::new()
             .length(p.i64("length") as usize)
-            .masked(p.bool("masked")),
-    ),
-    snippet: |p| format!(
-        "OtpInput::new().length({}).masked({})",
-        p.i64("length"),
-        p.bool("masked"),
-    ),
+            .masked(p.bool("masked"));
+        w.set_sanitizer(crate::pages::sanitize_cfg(p));
+        Box::new(w)
+    },
+    snippet: |p| {
+        let base: String = {
+            format!(
+                "OtpInput::new().length({}).masked({})",
+                p.i64("length"),
+                p.bool("masked"),
+            )
+        };
+        base + crate::pages::sanitize_snippet(p)
+    },
     poll: |w, out| {
         if let Some(o) = downcast_mut::<OtpInput>(w) {
             if let Some(code) = o.take_completed() {
@@ -563,21 +686,34 @@ page!(MentionPage {
             label: "Trigger",
             default: "@"
         },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
     ],
     build: |p| {
         let trig = p.str("trigger").chars().next().unwrap_or('@');
-        Box::new(
-            Mention::new()
+        {
+            let mut w = Mention::new()
                 .placeholder(p.str("placeholder"))
                 .trigger(trig)
-                .suggestions(["@ada", "@grace", "@linus", "@turing"]),
-        )
+                .suggestions(["@ada", "@grace", "@linus", "@turing"]);
+            w.set_sanitizer(crate::pages::sanitize_cfg(p));
+            Box::new(w)
+        }
     },
-    snippet: |p| format!(
-        "Mention::new()\n    .placeholder({:?})\n    .trigger('{}')",
-        p.str("placeholder"),
-        p.str("trigger"),
-    ),
+    snippet: |p| {
+        let base: String = {
+            format!(
+                "Mention::new()\n    .placeholder({:?})\n    .trigger('{}')",
+                p.str("placeholder"),
+                p.str("trigger"),
+            )
+        };
+        base + crate::pages::sanitize_snippet(p)
+    },
     poll: |w, out| {
         if let Some(m) = downcast_mut::<Mention>(w) {
             if let Some(v) = m.take_committed() {
@@ -612,22 +748,35 @@ page!(TokenFieldPage {
             label: "Tokens (csv)",
             default: "ui,theme"
         },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0,
+        },
     ],
-    build: |p| Box::new(
-        TokenField::new()
+    build: |p| {
+        let mut w = TokenField::new()
             .placeholder(p.str("placeholder"))
-            .tokens(csv(p, "tokens")),
-    ),
+            .tokens(csv(p, "tokens"));
+        w.set_sanitizer(crate::pages::sanitize_cfg(p));
+        Box::new(w)
+    },
     snippet: |p| {
-        let toks = csv(p, "tokens")
-            .iter()
-            .map(|t| format!("{t:?}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "TokenField::new()\n    .placeholder({:?})\n    .tokens([{toks}])",
-            p.str("placeholder"),
-        )
+        let base: String = {
+            {
+                let toks = csv(p, "tokens")
+                    .iter()
+                    .map(|t| format!("{t:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "TokenField::new()\n    .placeholder({:?})\n    .tokens([{toks}])",
+                    p.str("placeholder"),
+                )
+            }
+        };
+        base + crate::pages::sanitize_snippet(p)
     },
     poll: |w, out| {
         if let Some(t) = downcast_mut::<TokenField>(w) {

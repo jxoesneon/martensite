@@ -275,13 +275,22 @@ page!(TerminalPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| {
+    props: &[PropSpec::Choice {
+        key: "sanitize",
+        label: "Sanitize",
+        options: &["Aggressive", "Baseline", "Raw"],
+        default: 0,
+    },],
+    build: |p| {
         let mut t = Terminal::new().lines(["$ cargo build", "   Compiling martensite…"]);
+        t.set_sanitizer(crate::pages::sanitize_cfg(p));
         t.submit_line();
         Box::new(t)
     },
-    snippet: |_p| "Terminal::new().lines([\"$ cargo build\"])".to_string(),
+    snippet: |p| {
+        let base: String = { "Terminal::new().lines([\"$ cargo build\"])".to_string() };
+        base + crate::pages::sanitize_snippet(p)
+    },
     poll: |w, out| {
         if let Some(t) = downcast_mut::<Terminal>(w) {
             if let Some(cmd) = t.take_submitted() {

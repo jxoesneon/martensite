@@ -1017,6 +1017,7 @@ mod tests {
             texts: vec![],
             fills: vec![],
             painted_area: 0.0,
+            clip_owners: Default::default(),
             children: vec![],
         };
         let id = scene_node_id(&node);

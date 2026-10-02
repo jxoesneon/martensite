@@ -30,7 +30,9 @@ use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect,
     RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
 };
+use martensite_sanitize::{Phase, Sanitize, SanitizeContext, SanitizerConfig};
 use martensite_theme::TokenKey;
+use std::sync::Arc;
 use std::time::Duration;
 
 const W_PT: f32 = 420.0;
@@ -63,6 +65,9 @@ pub struct Terminal {
     lines: Vec<String>,
     /// In-progress input buffer.
     input: String,
+    /// The sanitization pipeline applied to typed/committed input.
+    /// A terminal often wants [`raw`](Self::raw) passthrough.
+    sanitizer: SanitizerConfig,
     scroll: f32,
     /// Caret blink phase.
     blink: f32,
@@ -102,6 +107,7 @@ impl Terminal {
             prompt: ">".to_string(),
             lines: Vec::new(),
             input: String::new(),
+            sanitizer: SanitizerConfig::default(),
             scroll: 0.0,
             blink: 0.0,
             caret_on: true,
@@ -213,7 +219,86 @@ impl Terminal {
         &self.input
     }
 
-    /// Appends `text` to the input buffer (host-driven edit).
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile on typed input and
+    /// submitted lines; `false` keeps the structural floor;
+    /// [`raw`](Self::raw) passes input verbatim.
+    ///
+    /// ```
+    /// use martensite::widgets::terminal::Terminal;
+    ///
+    /// assert!(Terminal::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.sanitizer = if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        };
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten.
+    ///
+    /// ```
+    /// use martensite::widgets::terminal::Terminal;
+    ///
+    /// assert!(Terminal::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.sanitizer = SanitizerConfig::Raw;
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule.
+    ///
+    /// ```
+    /// use martensite::widgets::terminal::Terminal;
+    /// use martensite_sanitize::Profile;
+    /// use std::sync::Arc;
+    ///
+    /// let t = Terminal::new().with_sanitizer(Arc::new(Profile::baseline()));
+    /// assert!(t.sanitizer_config().is_custom());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.sanitizer = SanitizerConfig::Custom(rule);
+        self
+    }
+
+    /// Replaces the sanitization configuration in place.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// ```
+    /// use martensite::widgets::terminal::Terminal;
+    ///
+    /// assert!(!Terminal::new().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
+    }
+
+    /// Runs the configured sanitizer over `text` for the input buffer.
+    fn sanitize_insert(&self, text: &str) -> String {
+        self.sanitizer
+            .sanitize(text, &SanitizeContext::single_line(Phase::Insert))
+    }
+
+    /// Types `text` into the input buffer — the configured
+    /// sanitizer filters it first.
     ///
     /// ```
     /// use martensite::widgets::terminal::Terminal;
@@ -223,7 +308,7 @@ impl Terminal {
     /// assert_eq!(t.input(), "ls");
     /// ```
     pub fn type_str(&mut self, text: &str) {
-        self.input.push_str(text);
+        self.input.push_str(&self.sanitize_insert(text));
     }
 
     /// Submits the input buffer: echoes `prompt + input` to the
@@ -240,7 +325,10 @@ impl Terminal {
     /// assert_eq!(t.input(), "");
     /// ```
     pub fn submit_line(&mut self) {
-        let text = std::mem::take(&mut self.input);
+        let text = self.sanitizer.sanitize(
+            &std::mem::take(&mut self.input),
+            &SanitizeContext::single_line(Phase::Commit),
+        );
         self.write(format!("{} {}", self.prompt, text));
         self.submitted = Some(text);
     }
@@ -256,7 +344,9 @@ impl Terminal {
     /// assert_eq!(t.line(0), Some("$ ls"));
     /// ```
     pub fn submit(&mut self, text: impl Into<String>) {
-        let text = text.into();
+        let text = self
+            .sanitizer
+            .sanitize(&text.into(), &SanitizeContext::single_line(Phase::Commit));
         self.write(format!("{} {}", self.prompt, text));
         self.submitted = Some(text);
     }
@@ -334,7 +424,7 @@ impl Widget for Terminal {
                 EventResponse::Ignored
             }
             WidgetEvent::ImeCommitted { text } => {
-                self.input.push_str(text);
+                self.input.push_str(&self.sanitize_insert(text));
                 EventResponse::RequestRepaint
             }
             WidgetEvent::KeyPressed { key, .. } => match key.as_str() {
@@ -348,7 +438,7 @@ impl Widget for Terminal {
                 }
                 // Single-character keys type directly (IME-free path).
                 k if k.chars().count() == 1 => {
-                    self.input.push_str(k);
+                    self.input.push_str(&self.sanitize_insert(k));
                     EventResponse::RequestRepaint
                 }
                 _ => EventResponse::Ignored,

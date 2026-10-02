@@ -107,6 +107,7 @@ pub use martensite_media as media;
 pub use martensite_motion as motion;
 pub use martensite_reactive as reactive;
 pub use martensite_render as render;
+pub use martensite_sanitize as sanitize;
 pub use martensite_shell as shell;
 pub use martensite_text as text;
 pub use martensite_theme as theme;

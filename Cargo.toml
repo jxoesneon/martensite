@@ -31,6 +31,7 @@ members = [
     "crates/martensite-macros",
     "crates/martensite-test",
     "crates/martensite-blessed",
+    "crates/martensite-sanitize",
     "crates/martensite-plugin",
     "crates/martensite-cosmic-text",
     "crates/martensite-vello",
@@ -119,6 +120,7 @@ martensite-devtools = { version = "0.20.1", path = "crates/martensite-devtools" 
 martensite-macros = { version = "0.20.1", path = "crates/martensite-macros" }
 martensite-test = { version = "0.20.1", path = "crates/martensite-test" }
 martensite-blessed = { version = "0.20.1", path = "crates/martensite-blessed" }
+martensite-sanitize = { version = "0.20.1", path = "crates/martensite-sanitize" }
 martensite-plugin = { version = "0.20.1", path = "crates/martensite-plugin" }
 cargo-martensite = { version = "0.20.1", path = "tools/cargo-martensite" }
 martensite-cosmic-text = { version = "0.19.0-martensite.2", path = "crates/martensite-cosmic-text" }
@@ -203,6 +205,7 @@ raw-window-handle = { package = "raw-window-handle", version = "0.6", features =
 pollster = "1.0"
 parking_lot = "0.12"
 unicode-segmentation = "1.13"
+unicode-normalization = "0.1"
 fluent-bundle = "0.16"
 unic-langid = "0.9"
 fluent-langneg = "0.14"

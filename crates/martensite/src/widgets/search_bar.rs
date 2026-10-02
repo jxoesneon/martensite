@@ -26,7 +26,9 @@ use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect,
     RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
 };
+use martensite_sanitize::{Sanitize, SanitizerConfig};
 use martensite_theme::TokenKey;
+use std::sync::Arc;
 
 use crate::text_paint::SharedTextPainter;
 use crate::widgets::search_field::SearchField;
@@ -51,6 +53,8 @@ pub struct SearchBar {
     /// When `false` the whole bar ignores input.
     pub enabled: bool,
     field: SearchField,
+    /// The sanitization pipeline — propagated to the embedded field.
+    sanitizer: SanitizerConfig,
     close_requested: bool,
     bounds: Rect,
     scale: f32,
@@ -74,6 +78,7 @@ impl SearchBar {
             search_mode: false,
             enabled: true,
             field: SearchField::new(),
+            sanitizer: SanitizerConfig::default(),
             close_requested: false,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
@@ -92,6 +97,87 @@ impl SearchBar {
     pub fn placeholder(mut self, text: impl Into<String>) -> Self {
         self.field = self.field.placeholder(text);
         self
+    }
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile on the embedded
+    /// field; `false` keeps the structural floor; [`raw`](Self::raw)
+    /// disables the engine entirely.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SearchBar;
+    ///
+    /// assert!(SearchBar::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.set_sanitizer(if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        });
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SearchBar;
+    ///
+    /// assert!(SearchBar::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.set_sanitizer(SanitizerConfig::Raw);
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SearchBar;
+    /// use martensite_sanitize::Profile;
+    /// use std::sync::Arc;
+    ///
+    /// let w = SearchBar::new().with_sanitizer(Arc::new(Profile::baseline()));
+    /// assert!(w.sanitizer_config().is_custom());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.set_sanitizer(SanitizerConfig::Custom(rule));
+        self
+    }
+
+    /// Replaces the sanitization configuration, propagating it to the
+    /// embedded field.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.field.set_sanitizer(config.clone());
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::SearchBar;
+    ///
+    /// assert!(!SearchBar::new().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
     }
 
     /// Enables or disables the bar.

@@ -31,7 +31,9 @@ use martensite_core::widget::{
     Widget, WidgetEvent,
 };
 use martensite_core::{Rect, TokenKey};
+use martensite_sanitize::{Phase, Sanitize, SanitizeContext, SanitizerConfig};
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use crate::widgets::text_input::TextInput;
 
@@ -89,6 +91,9 @@ pub struct TokenField {
     /// (a delimiter-separated commit) reports every token, oldest
     /// first.
     added: VecDeque<String>,
+    /// The sanitization pipeline — propagated to the pending-entry
+    /// input and applied to every token text at commit.
+    sanitizer: SanitizerConfig,
     /// Per-chip rects — estimated in `layout`, refined in `paint`
     /// (which has the real text shaper). Mutex because
     /// `Widget::paint` is `&self`.
@@ -124,6 +129,7 @@ impl TokenField {
             edited: false,
             removed: None,
             added: VecDeque::new(),
+            sanitizer: SanitizerConfig::default(),
             chip_rects: parking_lot::Mutex::new(Vec::new()),
             bounds: Rect::default(),
             scale: 1.0,
@@ -179,6 +185,91 @@ impl TokenField {
         self
     }
 
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile on the pending
+    /// entry and every committed token; `false` keeps only the
+    /// structural control-character floor; [`raw`](Self::raw)
+    /// disables the engine entirely.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::token_field::TokenField;
+    ///
+    /// let mut t = TokenField::new().sanitize(false);
+    /// t.add_token("a\u{202e}b");
+    /// assert_eq!(t.token_list(), &["a\u{202e}b"]);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.set_sanitizer(if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        });
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::token_field::TokenField;
+    ///
+    /// assert!(TokenField::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.set_sanitizer(SanitizerConfig::Raw);
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::token_field::TokenField;
+    /// use martensite_sanitize::Profile;
+    /// use std::sync::Arc;
+    ///
+    /// let t = TokenField::new().with_sanitizer(Arc::new(Profile::baseline()));
+    /// assert!(t.sanitizer_config().is_custom());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.set_sanitizer(SanitizerConfig::Custom(rule));
+        self
+    }
+
+    /// Replaces the sanitization configuration, propagating it to the
+    /// pending-entry input.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.input.set_sanitizer(config.clone());
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::token_field::TokenField;
+    ///
+    /// assert!(!TokenField::new().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
+    }
+
     /// Enables or disables the field.
     ///
     /// # Examples
@@ -217,7 +308,11 @@ impl TokenField {
     /// assert_eq!(t.token_list(), &["x"]);
     /// ```
     pub fn add_token(&mut self, token: impl Into<String>) {
-        let token = token.into().trim().to_string();
+        let token = self
+            .sanitizer
+            .sanitize(&token.into(), &SanitizeContext::single_line(Phase::Commit))
+            .trim()
+            .to_string();
         if token.is_empty() || self.tokens.contains(&token) {
             return;
         }
@@ -1099,5 +1194,19 @@ mod tests {
         t.input.set_value("x");
         assert_eq!(t.event(&mut ev(&key("Enter"))), EventResponse::Ignored);
         assert!(t.token_list().is_empty());
+    }
+
+    #[test]
+    fn add_token_sanitizes_commit_text() {
+        let mut t = TokenField::new();
+        t.add_token("a\u{202e}b\x00");
+        assert_eq!(t.token_list(), &["ab"]);
+    }
+
+    #[test]
+    fn raw_token_field_commits_verbatim() {
+        let mut t = TokenField::new().raw();
+        t.add_token("a\u{202e}b");
+        assert_eq!(t.token_list(), &["a\u{202e}b"]);
     }
 }

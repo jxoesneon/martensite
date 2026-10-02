@@ -54,6 +54,8 @@ use martensite_core::widget::{
     SemanticAction, Widget, WidgetEvent,
 };
 use martensite_core::{NodeFlags, Rect, RenderMinimum, TokenKey, UnderflowPolicy};
+use martensite_sanitize::{Phase, Sanitize, SanitizeContext, SanitizerConfig};
+use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Field background colour.
@@ -390,6 +392,11 @@ pub struct TextArea {
     /// byte-range, rendered underlined at the insertion caret until the
     /// matching `ImeCommitted` arrives (or an empty preedit clears it).
     preedit: Option<(String, Option<(usize, usize)>)>,
+    /// The sanitization pipeline applied to every text ingestion —
+    /// IME commits, pastes, and programmatic `set_value`. See
+    /// [`TextArea::sanitize`], [`TextArea::raw`],
+    /// [`TextArea::with_sanitizer`].
+    sanitizer: SanitizerConfig,
 }
 
 impl Clone for TextArea {
@@ -422,6 +429,7 @@ impl Clone for TextArea {
             caret: self.caret.clone(),
             preferred_col: self.preferred_col,
             preedit: self.preedit.clone(),
+            sanitizer: self.sanitizer.clone(),
         }
     }
 }
@@ -476,6 +484,7 @@ impl TextArea {
             caret: None,
             preferred_col: None,
             preedit: None,
+            sanitizer: SanitizerConfig::default(),
         }
     }
 
@@ -565,6 +574,92 @@ impl TextArea {
         self
     }
 
+    /// Toggles input sanitization — `true` (the default) runs the
+    /// aggressive [`martensite_sanitize`] profile on every ingestion:
+    /// NFKC normalization, stripping of controls, bidi overrides, and
+    /// invisible format characters. `false` keeps only the structural
+    /// control-character floor; [`raw`](Self::raw) disables the
+    /// engine entirely.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextArea;
+    ///
+    /// let mut area = TextArea::new().sanitize(false);
+    /// area.set_value("a\u{202e}b");
+    /// assert_eq!(area.value(), "a\u{202e}b");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn sanitize(mut self, on: bool) -> Self {
+        self.sanitizer = if on {
+            SanitizerConfig::Aggressive
+        } else {
+            SanitizerConfig::Baseline
+        };
+        self
+    }
+
+    /// Fully verbatim input — nothing is removed, normalized, or
+    /// rewritten.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextArea;
+    ///
+    /// let mut area = TextArea::new().raw();
+    /// area.set_value("a\x00b");
+    /// assert_eq!(area.value(), "a\x00b");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn raw(mut self) -> Self {
+        self.sanitizer = SanitizerConfig::Raw;
+        self
+    }
+
+    /// Replaces the sanitization pipeline with a caller-supplied
+    /// [`Sanitize`] rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextArea;
+    /// use martensite_sanitize::Profile;
+    /// use std::sync::Arc;
+    ///
+    /// let area = TextArea::new().with_sanitizer(Arc::new(Profile::baseline()));
+    /// assert!(area.sanitizer_config().is_custom());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_sanitizer(mut self, rule: Arc<dyn Sanitize>) -> Self {
+        self.sanitizer = SanitizerConfig::Custom(rule);
+        self
+    }
+
+    /// Replaces the sanitization configuration in place.
+    #[inline]
+    pub fn set_sanitizer(&mut self, config: SanitizerConfig) {
+        self.sanitizer = config;
+    }
+
+    /// The configured sanitization pipeline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::TextArea;
+    ///
+    /// assert!(TextArea::new().raw().sanitizer_config().is_raw());
+    /// ```
+    #[inline]
+    pub fn sanitizer_config(&self) -> &SanitizerConfig {
+        &self.sanitizer
+    }
+
     /// Sets soft-wrap: `true` (default) breaks long lines into visual
     /// rows at the viewport edge; `false` clips them and enables
     /// horizontal scrolling.
@@ -649,7 +744,10 @@ impl TextArea {
     /// assert_eq!(area.value(), "one\ntwo");
     /// ```
     pub fn set_value(&mut self, value: impl Into<String>) {
-        self.editor = CodeEditor::new(&value.into());
+        let clean = self
+            .sanitizer
+            .sanitize(&value.into(), &SanitizeContext::multi_line(Phase::Insert));
+        self.editor = CodeEditor::new(&clean);
         // A programmatic write is not a user edit — it drops the undo
         // history (Qt's setText behaves the same).
         self.undo.clear();
@@ -1017,13 +1115,14 @@ impl TextArea {
 
     /// Inserts `text` at the caret, replacing any selection. Newlines
     /// are kept (this is the multiline field — `\r\n`/`\r` normalize
-    /// to `\n`); other control characters except `\t` are dropped.
+    /// to `\n`); the configured [`SanitizerConfig`] then applies its
+    /// profile — at minimum dropping control characters other than
+    /// `\n`/`\t`.
     fn insert_str(&mut self, text: &str) {
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-        let clean: String = normalized
-            .chars()
-            .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-            .collect();
+        let clean = self
+            .sanitizer
+            .sanitize(&normalized, &SanitizeContext::multi_line(Phase::Insert));
         // A pure-selection delete still counts as an edit (an empty
         // paste over a selection removes it).
         if clean.is_empty() && self.editor.selection().is_none() {
@@ -2482,7 +2581,7 @@ mod tests {
 
     #[test]
     fn text_area_backspace_deletes_whole_grapheme() {
-        let mut area = TextArea::new().with_value("e\u{301}x");
+        let mut area = TextArea::new().sanitize(false).with_value("e\u{301}x");
         focus(&mut area);
         area.event(&mut ev(&key("ArrowLeft")));
         area.event(&mut ev(&key("Backspace")));
@@ -2498,7 +2597,7 @@ mod tests {
 
     #[test]
     fn text_area_delete_forward_removes_whole_grapheme() {
-        let mut area = TextArea::new().with_value("e\u{301}x");
+        let mut area = TextArea::new().sanitize(false).with_value("e\u{301}x");
         focus(&mut area);
         area.event(&mut ev(&key("Home")));
         area.event(&mut ev(&key("Delete")));
@@ -2507,7 +2606,7 @@ mod tests {
 
     #[test]
     fn text_area_arrows_step_graphemes() {
-        let mut area = TextArea::new().with_value("e\u{301}x");
+        let mut area = TextArea::new().sanitize(false).with_value("e\u{301}x");
         focus(&mut area);
         area.event(&mut ev(&key("Home")));
         area.event(&mut ev(&key("ArrowRight")));
@@ -3838,7 +3937,7 @@ mod tests {
 
     #[test]
     fn text_area_grapheme_ops_on_later_lines() {
-        let mut area = TextArea::new().with_value("ab\ne\u{301}x");
+        let mut area = TextArea::new().sanitize(false).with_value("ab\ne\u{301}x");
         focus(&mut area);
         // Caret (1,3): "e\u{301}x" is three chars but two clusters.
         area.event(&mut ev(&key("Home")));
@@ -3903,5 +4002,38 @@ mod tests {
         // the preedit belongs to the document it was composed into.
         area.set_value("fresh");
         assert_eq!(area.preedit(), None);
+    }
+
+    // ----- sanitization engine wiring -----
+
+    #[test]
+    fn sanitize_strips_bidi_keeps_newlines() {
+        let mut area = TextArea::new();
+        focus(&mut area);
+        area.event(&mut ev(&WidgetEvent::ImeCommitted {
+            text: "a\u{202e}b\nc\u{2066}d".to_string(),
+        }));
+        assert_eq!(area.value(), "ab\ncd");
+    }
+
+    #[test]
+    fn sanitize_nfkc_folds_fullwidth_multiline() {
+        let mut area = TextArea::new();
+        area.set_value("\u{ff21}\n\u{ff42}");
+        assert_eq!(area.value(), "A\nb");
+    }
+
+    #[test]
+    fn raw_area_passes_verbatim() {
+        let mut area = TextArea::new().raw();
+        area.set_value("a\x00\u{202e}\r\n");
+        assert_eq!(area.value(), "a\x00\u{202e}\r\n");
+    }
+
+    #[test]
+    fn sanitize_false_area_is_baseline() {
+        let mut area = TextArea::new().sanitize(false);
+        area.set_value("a\u{202e}b\x00");
+        assert_eq!(area.value(), "a\u{202e}b");
     }
 }
