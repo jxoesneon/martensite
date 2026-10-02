@@ -223,12 +223,15 @@ impl Widget for XYPad {
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
         self.scale = cx.scale;
-        // Square pad region inset for the edge labels.
-        let dim = bounds.width().min(bounds.height());
+        // Square pad region inset for the edge labels — a top strip
+        // holds the y label (rotation isn't in the paint API) and the
+        // bottom margin holds the x label.
+        let label = cx.pt(16.0);
+        let dim = (bounds.width().min(bounds.height() - label)).max(0.0);
         let m = cx.pt(10.0);
         self.pad = Rect::new(
             bounds.min_x() + (bounds.width() - dim) / 2.0 + m,
-            bounds.min_y() + (bounds.height() - dim) / 2.0,
+            bounds.min_y() + label + (bounds.height() - label - dim) / 2.0,
             (dim - 2.0 * m).max(0.0),
             (dim - 2.0 * m).max(0.0),
         );
@@ -453,11 +456,11 @@ impl Widget for XYPad {
             f(Rect::new(
                 self.bounds.min_x(),
                 self.bounds.min_y(),
-                self.pad.min_x() - self.bounds.min_x() + 4.0,
+                self.bounds.width(),
                 self.pad.min_y() - self.bounds.min_y(),
             )),
             kurbo::Point::new(
-                f64::from(self.bounds.min_x() + 1.0),
+                f64::from(self.pad.min_x()),
                 f64::from(self.bounds.min_y() + 1.0),
             ),
             &self.y_label,

@@ -988,6 +988,10 @@ pub struct SerializedLintNode {
     /// Clip stack active when the scope opened, `[x0, y0, x1, y1]`.
     #[serde(default)]
     pub clip: Option<[f64; 4]>,
+    /// Per-edge clip provenance — `[left, top, right, bottom]` naming
+    /// the scope that pushed the tightest clip on that edge.
+    #[serde(default)]
+    pub clip_owners: [Option<String>; 4],
     /// Optional arena widget id.
     pub widget_id: Option<u64>,
     /// Classified kind string ("Navigation", "Interactive", etc.).
@@ -1028,6 +1032,7 @@ impl SerializedLintNode {
                 self.bounds[3],
             ),
             clip: self.clip.map(|c| Rect::new(c[0], c[1], c[2], c[3])),
+            clip_owners: self.clip_owners.clone(),
             widget_id: self.widget_id,
             kind: match self.kind.as_str() {
                 "Navigation" => NodeKind::Navigation,
@@ -1078,6 +1083,7 @@ impl From<&LintNode> for SerializedLintNode {
             path: n.path.clone(),
             bounds: [n.bounds.x0, n.bounds.y0, n.bounds.x1, n.bounds.y1],
             clip: n.clip.map(|c| [c.x0, c.y0, c.x1, c.y1]),
+            clip_owners: n.clip_owners.clone(),
             widget_id: n.widget_id,
             kind: format!("{:?}", n.kind),
             allows: n.allows.clone(),

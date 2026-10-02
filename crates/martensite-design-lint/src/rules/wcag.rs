@@ -398,15 +398,49 @@ impl LintRule for TextTruncation {
         "clipped text fails WCAG 1.4.4 resize expectations and reads as a defect"
     }
     fn check(&self, scene: &LintScene, cfg: &LintConfig) -> Vec<Finding> {
+        /// The clip edge's owner scrolls its content — a cut there is a
+        /// scroll sliver the user can reveal, not a permanent truncation.
+        /// `None` (clip pushed outside every scope — a frame clip) and
+        /// non-scrolling panes report false so their cuts flag.
+        fn scroll_clip_owner(owner: Option<&str>) -> bool {
+            const SCROLLERS: &[&str] = &[
+                "scrollview",
+                "listview",
+                "treeview",
+                "datagrid",
+                "tableview",
+                "gridview",
+                "virtuallist",
+                "textarea",
+                "codeview",
+                "pdfview",
+                "imageviewer",
+                "mapview",
+                "terminal",
+                "marquee",
+                "tickertape",
+                "ticker",
+                "viewport",
+                "webview",
+            ];
+            owner.is_some_and(|o| {
+                let o = o.to_ascii_lowercase();
+                let o = o.replace('_', "");
+                SCROLLERS.iter().any(|s| o.contains(s))
+            })
+        }
         let tol = param(cfg, self.id(), "tolerance_px", 2.0);
         let char_w = param(cfg, self.id(), "char_width_ratio", 0.55);
         let elide_fill = param(cfg, self.id(), "elide_fill_ratio", 0.8);
+        let surface = scene.surface();
         let mut out = Vec::new();
         for n in scene.walk() {
             // The node's visible region — bounds minus any inherited
             // (scrollport) clip. A cut at an edge *interior* to this
             // region is permanent truncation; a cut at the inherited
-            // edge is a scroll sliver and stays quiet.
+            // edge is a scroll sliver only when the clipper scrolls —
+            // `clip_owners` names which scope pushed each clip edge so
+            // a static pane or the frame edge still flags.
             let eff = n.clip.map_or(n.bounds, |c| n.bounds.intersect(c));
             let mut worst = 0.0f64;
             let mut elided = false;
@@ -439,6 +473,44 @@ impl LintRule for TextTruncation {
                     if c.y1 < eff.y1 - tol {
                         worst = worst.max((t.origin.y + f64::from(t.size) * 0.2) - c.y1);
                     }
+                }
+                // An ancestor clip cutting the node's own edge —
+                // revealable only when the clipping scope scrolls. A
+                // static pane or frame clip permanently halves the
+                // last visible line.
+                if let Some(c) = n.clip {
+                    let o = &n.clip_owners;
+                    if c.x0 > n.bounds.x0 + tol && !scroll_clip_owner(o[0].as_deref()) {
+                        worst = worst.max(c.x0 - t.origin.x);
+                    }
+                    if c.y0 > n.bounds.y0 + tol && !scroll_clip_owner(o[1].as_deref()) {
+                        worst = worst.max(c.y0 - (t.origin.y - f64::from(t.size)));
+                    }
+                    if c.x1 < n.bounds.x1 - tol && !scroll_clip_owner(o[2].as_deref()) {
+                        worst = worst.max((t.origin.x + w) - c.x1);
+                    }
+                    if c.y1 < n.bounds.y1 - tol && !scroll_clip_owner(o[3].as_deref()) {
+                        worst = worst.max((t.origin.y + f64::from(t.size) * 0.2) - c.y1);
+                    }
+                }
+                // Past the surface nothing can ever be revealed —
+                // unflagged by every check above when no clip records
+                // the cut (an unclipped pane overflowing the window).
+                let ink_r = t.origin.x + w;
+                let ink_b = t.origin.y + f64::from(t.size) * 0.2;
+                if ink_r > surface.x1 + tol && n.clip.is_none_or(|c| c.x1 > surface.x1 - tol) {
+                    worst = worst.max(ink_r - surface.x1);
+                }
+                if t.origin.x < surface.x0 - tol && n.clip.is_none_or(|c| c.x0 < surface.x0 + tol) {
+                    worst = worst.max(surface.x0 - t.origin.x);
+                }
+                if t.origin.y - f64::from(t.size) < surface.y0 - tol
+                    && n.clip.is_none_or(|c| c.y0 < surface.y0 + tol)
+                {
+                    worst = worst.max(surface.y0 - (t.origin.y - f64::from(t.size)));
+                }
+                if ink_b > surface.y1 + tol && n.clip.is_none_or(|c| c.y1 > surface.y1 - tol) {
+                    worst = worst.max(ink_b - surface.y1);
                 }
                 // A painted `…` filling its clip is an elided label —
                 // the run fits so edge checks stay silent, but the
@@ -1083,6 +1155,54 @@ mod tests {
             hits.is_empty(),
             "scroll-edge sliver must not flag: {hits:?}"
         );
+    }
+
+    #[test]
+    fn text_truncation_flags_static_pane_clip() {
+        // Same half-clipped row as the scroll-edge case, but the clip
+        // comes from a static pane — no scrolling will ever reveal the
+        // cut text, so it must flag.
+        let mut list = app_list();
+        list.push_scope(None, "InfoPane", Rect::new(0.0, 0.0, 200.0, 100.0));
+        list.commands
+            .push(PaintCommand::ClipRect(Rect::new(0.0, 0.0, 200.0, 100.0)));
+        list.push_scope(None, "TextRow", Rect::new(0.0, 80.0, 200.0, 120.0));
+        list.commands.push(PaintCommand::DrawText(
+            Point::new(8.0, 105.0),
+            "Row label".to_string(),
+            12.0,
+            [230, 230, 230, 255],
+        ));
+        list.pop_scope();
+        list.commands.push(PaintCommand::PopClip);
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "text-truncation");
+        assert!(!hits.is_empty(), "a non-scrolling pane clip must flag");
+    }
+
+    #[test]
+    fn text_truncation_flags_text_past_surface() {
+        // A label whose ink runs past the surface edge — nothing can
+        // reveal it. No clip records the cut, so only the surface
+        // check sees it.
+        let mut list = app_list();
+        list.push_scope(None, "InfoPane", Rect::new(0.0, 560.0, 400.0, 80.0));
+        // Baseline at y=610 → ink bottom ≈ 612.4, past the 600px frame.
+        list.commands.push(PaintCommand::DrawText(
+            Point::new(8.0, 610.0),
+            "snippet tail".to_string(),
+            12.0,
+            [230, 230, 230, 255],
+        ));
+        list.pop_scope();
+        list.pop_scope();
+        let scene = LintScene::from_paint_list(&list);
+        let report = lint(&scene, &LintConfig::new());
+        let hits = findings_for(&report, "text-truncation");
+        assert!(!hits.is_empty(), "text past the surface must flag");
     }
 
     #[test]

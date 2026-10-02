@@ -143,7 +143,7 @@ pub struct CatalogView {
     rail: ListView,           // 2
     stage: StageHost,         // 3
     props_scroll: ScrollView, // 4
-    info: DynamicColumn,      // 5
+    info: ScrollView,         // 5
     log_list: ListView,       // 6
 }
 
@@ -222,8 +222,9 @@ impl CatalogView {
             props_scroll: ScrollView::new(DynamicColumn::new().gap(6.0)),
             // `@prose` declares the reference pane's text as document
             // payload — NUREG-0700's packing cap targets at-a-glance
-            // readouts, not manuals/snippets.
-            info: DynamicColumn::new().gap(3.0).named("InfoPane@prose"),
+            // readouts, not manuals/snippets. The ScrollView keeps
+            // overflow inside the pane (page bodies outgrow 196pt).
+            info: ScrollView::new(DynamicColumn::new().gap(3.0).named("InfoPane@prose")),
             log_list: ListView::new().label("Event log"),
             pages,
         };
@@ -430,7 +431,14 @@ impl CatalogView {
                     .family("monospace"),
             ));
         }
-        self.info.set_children(rows);
+        if let Some(col) = self
+            .info
+            .child_mut(0)
+            .and_then(|c| c.as_any_mut())
+            .and_then(|a| a.downcast_mut::<DynamicColumn>())
+        {
+            col.set_children(rows);
+        }
     }
 
     /// Drains a prop row's control value. Returns `Some(value)` when it
@@ -644,6 +652,11 @@ impl CatalogView {
         for line in diffs {
             self.log_line(line);
         }
+    }
+
+    /// Selects a page by absolute index (harness/dev-channel entry).
+    pub fn select_page(&mut self, page: usize) {
+        self.select(page);
     }
 
     /// Selects a page by absolute index.

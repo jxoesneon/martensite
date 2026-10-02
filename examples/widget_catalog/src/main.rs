@@ -5,7 +5,7 @@ use widget_catalog::{all_pages, CatalogView};
 /// Rasterizes the catalog view to a PNG — the same
 /// `WidgetArena` → `PaintList` → `TinySkiaBackend` path the dev
 /// channel's `capture_node` uses, without needing a window or GPU.
-fn render_png(path: &str, w: f32, h: f32) {
+fn render_png(path: &str, w: f32, h: f32, scale: f32, page: Option<usize>) {
     use glam::Vec2;
     use martensite::core::{LayoutConstraints, LayoutContext, PaintList};
     use martensite::prelude::*;
@@ -13,19 +13,25 @@ fn render_png(path: &str, w: f32, h: f32) {
 
     let mut arena = WidgetArena::new();
     arena.set_theme(martensite::theme::tokens::default_dark());
-    arena.set_scale_factor(1.0);
+    arena.set_scale_factor(scale);
     arena.set_text_painter(martensite::text_paint::shared_painter());
     let _measurer = arena
         .text_painter_shared()
         .map(martensite::core::paint::install_ambient_measurer);
     let mut hot = HotNode::default();
     hot.flags |= NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
-    let root = arena.insert_with_widget(hot, Box::new(CatalogView::new(all_pages())));
+    let mut view = CatalogView::new(all_pages());
+    if let Some(page) = page {
+        view.select_page(page);
+    }
+    let root = arena.insert_with_widget(hot, Box::new(view));
 
+    // Same contract as the live path: layout works in surface
+    // (device) pixels; widgets convert pt→px via `cx.pt(scale)`.
     let bounds = Rect::new(0.0, 0.0, w, h);
     if let Some((hot, cold)) = arena.get_both_mut(root) {
         cold.widget.measure(
-            &mut LayoutContext { hot, scale: 1.0 },
+            &mut LayoutContext { hot, scale },
             LayoutConstraints {
                 min_size: Vec2::ZERO,
                 max_size: Vec2::new(w, h),
@@ -33,7 +39,7 @@ fn render_png(path: &str, w: f32, h: f32) {
         );
         hot.bounds = bounds;
         cold.widget
-            .layout(&mut LayoutContext { hot, scale: 1.0 }, bounds);
+            .layout(&mut LayoutContext { hot, scale }, bounds);
     }
     let mut list = PaintList::new();
     arena.build_paint_list(root, &mut list);
@@ -42,7 +48,25 @@ fn render_png(path: &str, w: f32, h: f32) {
     RenderBackend::render(&mut backend, &list);
     let png = backend.pixmap().encode_png().expect("png encode");
     std::fs::write(path, png).expect("png write");
-    eprintln!("catalog → {path} ({w}x{h})");
+    eprintln!("catalog → {path} ({w}x{h} @ {scale}x)");
+}
+
+/// `WxH` like the live-headless env knob, in device pixels.
+fn headless_size() -> (f32, f32) {
+    std::env::var("MARTENSITE_HEADLESS_SIZE")
+        .ok()
+        .and_then(|s| {
+            let (w, h) = s.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+        .unwrap_or((1600.0, 1000.0))
+}
+
+fn headless_scale() -> f32 {
+    std::env::var("MARTENSITE_HEADLESS_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0)
 }
 
 fn main() {
@@ -58,6 +82,7 @@ fn main() {
         return;
     }
 
+    let mut page_sel: Option<usize> = None;
     let mut args = args.drain(..);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -81,7 +106,13 @@ fn main() {
                 let path = args
                     .next()
                     .unwrap_or_else(|| "/tmp/widget_catalog.png".into());
-                render_png(&path, 1600.0, 1000.0);
+                let (w, h) = headless_size();
+                render_png(&path, w, h, headless_scale(), page_sel);
+            }
+            "--page" => {
+                if let Some(n) = args.next() {
+                    page_sel = n.parse().ok();
+                }
             }
             _ => {}
         }

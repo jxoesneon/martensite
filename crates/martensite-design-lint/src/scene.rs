@@ -222,6 +222,13 @@ pub struct LintNode {
     /// is the visible region; a node mostly outside it is a
     /// scroll-edge sliver that visibility rules can't judge.
     pub clip: Option<Rect>,
+    /// Which scope contributed each edge of [`clip`](Self::clip) —
+    /// `[left, top, right, bottom]`, the name of the widget that pushed
+    /// the tightest clip on that edge (`None` when the clip came from
+    /// outside all scopes). Lets rules tell a scrollport sliver
+    /// (revealable — the owner scrolls) from a static pane or frame
+    /// edge cutting content permanently.
+    pub clip_owners: [Option<String>; 4],
     /// Arena handle of the emitting widget, when one exists.
     pub widget_id: Option<u64>,
     /// Classified kind — see [`NodeKind::from_widget_name`].
@@ -447,8 +454,41 @@ impl LintScene {
         }
         let mut stack: Vec<Acc> = Vec::new();
         let mut roots: Vec<LintNode> = Vec::new();
-        let mut clip: Vec<Rect> = Vec::new();
-        let clip_rect = |clip: &[Rect]| clip.iter().copied().reduce(|a, b| a.intersect(b));
+        // The clip stack pairs each pushed rect with the name of the
+        // innermost live scope at push time — the clip's owner.
+        let mut clip: Vec<(Rect, Option<String>)> = Vec::new();
+        let clip_rect = |clip: &[(Rect, Option<String>)]| {
+            clip.iter().map(|(r, _)| *r).reduce(|a, b| a.intersect(b))
+        };
+        // Per-edge provenance of the combined clip — `[left, top,
+        // right, bottom]` naming the scope that pushed the tightest
+        // clip on that edge (innermost push wins ties).
+        let clip_owners = |clip: &[(Rect, Option<String>)]| {
+            let mut owners: [Option<String>; 4] = [None, None, None, None];
+            let mut left = f64::NEG_INFINITY;
+            let mut top = f64::NEG_INFINITY;
+            let mut right = f64::INFINITY;
+            let mut bottom = f64::INFINITY;
+            for (r, owner) in clip {
+                if r.x0 >= left {
+                    left = r.x0;
+                    owners[0] = owner.clone();
+                }
+                if r.y0 >= top {
+                    top = r.y0;
+                    owners[1] = owner.clone();
+                }
+                if r.x1 <= right {
+                    right = r.x1;
+                    owners[2] = owner.clone();
+                }
+                if r.y1 <= bottom {
+                    bottom = r.y1;
+                    owners[3] = owner.clone();
+                }
+            }
+            owners
+        };
 
         // Attribute a paint stat to the innermost live scope.
         macro_rules! current {
@@ -477,6 +517,7 @@ impl LintScene {
                         None => (short.clone(), own_allows.clone()),
                     };
                     let inherited_clip = clip_rect(&clip);
+                    let inherited_owners = clip_owners(&clip);
                     stack.push(Acc {
                         node: LintNode {
                             name: short,
@@ -484,6 +525,7 @@ impl LintScene {
                             path,
                             bounds: *bounds,
                             clip: inherited_clip,
+                            clip_owners: inherited_owners,
                             widget_id: id.map(|w| w.to_u64()),
                             kind: NodeKind::from_widget_name(display),
                             allows,
@@ -507,8 +549,14 @@ impl LintScene {
                         }
                     }
                 }
-                PaintCommand::ClipRect(r) | PaintCommand::ClipRoundedRect(r, _) => clip.push(*r),
-                PaintCommand::ClipPath(p) => clip.push(p.bounding_box()),
+                PaintCommand::ClipRect(r) | PaintCommand::ClipRoundedRect(r, _) => {
+                    let owner = stack.last().map(|a| a.node.name.clone());
+                    clip.push((*r, owner));
+                }
+                PaintCommand::ClipPath(p) => {
+                    let owner = stack.last().map(|a| a.node.name.clone());
+                    clip.push((p.bounding_box(), owner));
+                }
                 PaintCommand::PopClip => {
                     clip.pop();
                 }

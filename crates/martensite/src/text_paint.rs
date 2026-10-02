@@ -738,10 +738,37 @@ pub(crate) fn paint_label_clipped_styled(
     // culling check matches what the backend and audit will see. Rows
     // scrolled outside a scrollport hit this: their local clip is fine
     // but the intersected clip is empty and the run is dead paint.
+    let local = clip;
     let clip = list
         .active_clip()
-        .map(|o| o.intersect(clip))
-        .unwrap_or(clip);
+        .map(|o| o.intersect(local))
+        .unwrap_or(local);
+    let ink = label_ink_bounds_styled(painter, origin, text, size_px, style);
+    // The label's *own* clip suppresses it — a degenerate zone or ink
+    // wholly outside it. That's a real defect (a missing label), not a
+    // scroll sliver, so the dead run still ships under the local clip:
+    // the backend paints nothing but the lint scene keeps the evidence
+    // for `text-truncation` to flag.
+    let local_dead = local.x1 <= local.x0
+        || local.y1 <= local.y0
+        || ink.is_some_and(|i| {
+            i.x1 <= local.x0 || i.x0 >= local.x1 || i.y1 <= local.y0 || i.y0 >= local.y1
+        });
+    if local_dead {
+        list.push_clip(local);
+        // Raw emission — `paint_label_styled`'s `visible_ink` probe
+        // would re-cull the run against the clip we just pushed.
+        match painter {
+            Some(tp) => {
+                tp.paint_shaped_text_styled(list, origin, text, size_px, color, style);
+            }
+            None => {
+                list.push_text(origin, text.to_string(), size_px, color);
+            }
+        }
+        list.pop_clip();
+        return;
+    }
     // A degenerate or inverted clip provably paints nothing — emitting
     // the clip+text anyway is dead work the paint audit flags as
     // clipped text. Narrow widgets (a face too small for its label)
@@ -749,7 +776,7 @@ pub(crate) fn paint_label_clipped_styled(
     if clip.x1 <= clip.x0 || clip.y1 <= clip.y0 {
         return;
     }
-    if let Some(ink) = label_ink_bounds_styled(painter, origin, text, size_px, style) {
+    if let Some(ink) = ink {
         if ink.x1 <= clip.x0 || ink.x0 >= clip.x1 || ink.y1 <= clip.y0 || ink.y0 >= clip.y1 {
             return;
         }
@@ -976,6 +1003,34 @@ mod tests {
             martensite_core::paint::PaintCommand::ClipRect(r)
                 if r == kurbo::Rect::new(10.0, 2.0, 50.0, 20.0)
         ));
+        assert!(matches!(
+            list.commands.last(),
+            Some(martensite_core::paint::PaintCommand::PopClip)
+        ));
+    }
+
+    #[test]
+    fn paint_label_clipped_emits_dead_local_clip_for_lint() {
+        // A zero-height local clip paints nothing on screen, but the
+        // clip+text pair still reaches the paint list so the lint
+        // scene sees the suppressed label — a missing label is a
+        // defect `text-truncation` must be able to report.
+        let mut list = PaintList::new();
+        paint_label_clipped(
+            None,
+            &mut list,
+            kurbo::Rect::new(10.0, 2.0, 50.0, 2.0),
+            Point::new(12.0, 4.0),
+            "dead label",
+            14.0,
+            [255; 4],
+        );
+        assert!(
+            list.commands
+                .iter()
+                .any(|c| matches!(c, martensite_core::paint::PaintCommand::DrawText(..))),
+            "dead-clip label must still reach the paint list"
+        );
         assert!(matches!(
             list.commands.last(),
             Some(martensite_core::paint::PaintCommand::PopClip)
