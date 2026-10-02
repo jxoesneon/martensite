@@ -664,6 +664,10 @@ impl TextArea {
         self.dragging = false;
         self.bar_drag = None;
         self.preferred_col = None;
+        // An in-flight IME composition belonged to the old document —
+        // painting it over the replacement would be a stale ghost
+        // (the same reset FocusLost performs).
+        self.preedit = None;
         self.mark_edited();
     }
 
@@ -2242,6 +2246,15 @@ mod tests {
         }
     }
 
+    /// The release half of a key event — modifier tracking needs it:
+    /// `word_mod_held`/`shift_held` are armed by `KeyPressed` and
+    /// disarmed by `KeyReleased`.
+    fn key_rel(name: &str) -> WidgetEvent {
+        WidgetEvent::KeyReleased {
+            key: name.to_string(),
+        }
+    }
+
     /// Editing events only reach a focused area — tests simulate the
     /// arena's focus delivery the way production does.
     fn focus(area: &mut TextArea) {
@@ -3040,5 +3053,855 @@ mod tests {
         area.event(&mut ev(&WidgetEvent::FocusLost));
         assert_eq!(area.event(&mut ev(&ime("e"))), EventResponse::Ignored);
         assert_eq!(area.value(), "abcd");
+    }
+
+    #[test]
+    fn text_area_modifier_key_events_toggle_word_ops() {
+        let mut area = TextArea::new().with_value("foo bar");
+        focus(&mut area);
+        // Some platforms deliver the modifier as its own key event
+        // rather than a `+`-joined chord — `word_mod_held` covers it.
+        assert_eq!(area.event(&mut ev(&key("Control"))), EventResponse::Handled);
+        // While held, arrows jump words and Backspace deletes words.
+        area.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(area.cursor(), Cursor::new(0, 4));
+        area.event(&mut ev(&key("ArrowRight")));
+        assert_eq!(area.cursor(), Cursor::new(0, 7));
+        area.event(&mut ev(&key("Backspace")));
+        assert_eq!(area.value(), "foo ");
+        // Release returns to single-grapheme deletes — the state must
+        // not leak into the next keypress.
+        assert_eq!(
+            area.event(&mut ev(&key_rel("Control"))),
+            EventResponse::Handled
+        );
+        area.event(&mut ev(&key("Backspace")));
+        assert_eq!(area.value(), "foo");
+    }
+
+    #[test]
+    fn text_area_shift_release_collapses_extension() {
+        let mut area = TextArea::new().with_value("abc");
+        focus(&mut area);
+        // Caret at (0,3). Shift held + ArrowLeft extends backward.
+        area.event(&mut ev(&key("Shift")));
+        area.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(
+            area.editor.selection(),
+            Some((Cursor::new(0, 2), Cursor::new(0, 3)))
+        );
+        // After the release the next plain arrow collapses to the
+        // selection edge rather than extending further.
+        area.event(&mut ev(&key_rel("Shift")));
+        area.event(&mut ev(&key("ArrowRight")));
+        assert_eq!(area.editor.selection(), None);
+        assert_eq!(area.cursor(), Cursor::new(0, 3));
+    }
+
+    #[test]
+    fn text_area_ctrl_home_end_document_edges() {
+        let mut area = TextArea::new().with_value("one\ntwo\nthree");
+        focus(&mut area);
+        // `set_value` parks the caret at (2,5) — the document end.
+        area.event(&mut ev(&key("Ctrl+Home")));
+        assert_eq!(area.cursor(), Cursor::new(0, 0));
+        area.event(&mut ev(&key("Ctrl+End")));
+        assert_eq!(area.cursor(), Cursor::new(2, 5));
+        // The word-modifier vertical arrows are the macOS equivalents.
+        area.event(&mut ev(&key("Ctrl+ArrowUp")));
+        assert_eq!(area.cursor(), Cursor::new(0, 0));
+        area.event(&mut ev(&key("Ctrl+ArrowDown")));
+        assert_eq!(area.cursor(), Cursor::new(2, 5));
+        // Ctrl+Shift+Home selects back to the document start.
+        area.event(&mut ev(&key("Ctrl+Shift+Home")));
+        assert_eq!(area.cursor(), Cursor::new(0, 0));
+        assert_eq!(
+            area.editor.selection(),
+            Some((Cursor::new(0, 0), Cursor::new(2, 5)))
+        );
+    }
+
+    #[test]
+    fn text_area_shift_home_end_select_to_line_edges() {
+        let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
+        // Caret at (1,2). Shift+Home selects the line back to its
+        // start — the anchor stays where the caret was.
+        area.event(&mut ev(&key("Shift+Home")));
+        assert_eq!(
+            area.editor.selection(),
+            Some((Cursor::new(1, 0), Cursor::new(1, 2)))
+        );
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+        // Extending back to the anchor collapses the selection to
+        // nothing — an anchor==head pair is not a selection.
+        area.event(&mut ev(&key("Shift+End")));
+        assert_eq!(area.editor.selection(), None);
+        assert_eq!(area.cursor(), Cursor::new(1, 2));
+    }
+
+    #[test]
+    fn text_area_enter_at_line_edges() {
+        let mut area = TextArea::new().with_value("ab");
+        focus(&mut area);
+        // Enter at the line start pushes the whole line down.
+        area.event(&mut ev(&key("Home")));
+        area.event(&mut ev(&key("Enter")));
+        assert_eq!(area.value(), "\nab");
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+        // Backspace rejoins it.
+        area.event(&mut ev(&key("Backspace")));
+        assert_eq!(area.value(), "ab");
+        // Enter at the line end appends a blank line — typing lands
+        // on it.
+        area.event(&mut ev(&key("End")));
+        area.event(&mut ev(&key("Enter")));
+        assert_eq!(area.value(), "ab\n");
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+        area.event(&mut ev(&ime("c")));
+        assert_eq!(area.value(), "ab\nc");
+    }
+
+    #[test]
+    fn text_area_enter_on_empty_buffer() {
+        let mut area = TextArea::new();
+        focus(&mut area);
+        area.event(&mut ev(&key("Enter")));
+        assert_eq!(area.value(), "\n");
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+        // An all-empty-lines document still navigates: Up crosses the
+        // break, Right from line start crosses it again.
+        area.event(&mut ev(&key("ArrowUp")));
+        assert_eq!(area.cursor(), Cursor::new(0, 0));
+        area.event(&mut ev(&key("ArrowRight")));
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+    }
+
+    #[test]
+    fn text_area_enter_replaces_selection_across_lines() {
+        let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
+        area.editor
+            .set_selection(Cursor::new(0, 1), Cursor::new(1, 1));
+        area.event(&mut ev(&key("Enter")));
+        // "b\nc" out, "\n" in.
+        assert_eq!(area.value(), "a\nd");
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+        // One undo step restores the text AND the open selection.
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "ab\ncd");
+        assert_eq!(
+            area.editor.selection(),
+            Some((Cursor::new(0, 1), Cursor::new(1, 1)))
+        );
+    }
+
+    #[test]
+    fn text_area_tab_replaces_selection() {
+        let mut area = TextArea::new().with_value("a\nb");
+        focus(&mut area);
+        area.event(&mut ev(&key("SelectAll")));
+        area.event(&mut ev(&key("Tab")));
+        assert_eq!(area.value(), "\t");
+        assert_eq!(area.cursor(), Cursor::new(0, 1));
+    }
+
+    #[test]
+    fn text_area_noop_deletes_do_not_flag_edits() {
+        let mut area = TextArea::new().with_value("ab");
+        focus(&mut area);
+        // `set_value` itself flags an edit — drain it so only the
+        // no-op deletes below are observed.
+        area.take_edited();
+        // Forward delete at the document end is a no-op — no undo
+        // snapshot, no edit flag.
+        area.event(&mut ev(&key("Delete")));
+        assert_eq!(area.value(), "ab");
+        assert_eq!(area.take_edited(), None);
+        // Same for Ctrl+Delete at the document end.
+        area.event(&mut ev(&key("Ctrl+Delete")));
+        assert_eq!(area.value(), "ab");
+        assert_eq!(area.take_edited(), None);
+        // Backspace at the document start, and its word variant.
+        area.event(&mut ev(&key("Home")));
+        area.event(&mut ev(&key("Backspace")));
+        area.event(&mut ev(&key("Ctrl+Backspace")));
+        assert_eq!(area.value(), "ab");
+        assert_eq!(area.take_edited(), None);
+    }
+
+    #[test]
+    fn text_area_delete_forward_removes_selection() {
+        let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
+        area.editor
+            .set_selection(Cursor::new(0, 1), Cursor::new(1, 1));
+        area.event(&mut ev(&key("Delete")));
+        assert_eq!(area.value(), "ad");
+        assert_eq!(area.cursor(), Cursor::new(0, 1));
+    }
+
+    #[test]
+    fn text_area_undo_redo_across_line_joins() {
+        let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
+        area.event(&mut ev(&key("Home"))); // caret (1,0)
+        area.event(&mut ev(&key("Backspace"))); // joins -> "abcd"
+        assert_eq!(area.value(), "abcd");
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+        // Undo restores the split AND the pre-edit caret.
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "ab\ncd");
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+        // Redo rejoins.
+        area.event(&mut ev(&key("Ctrl+y")));
+        assert_eq!(area.value(), "abcd");
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+    }
+
+    #[test]
+    fn text_area_undo_restores_selection_snapshot() {
+        let mut area = TextArea::new().with_value("a\nb");
+        focus(&mut area);
+        area.event(&mut ev(&key("SelectAll")));
+        area.event(&mut ev(&ime("z")));
+        assert_eq!(area.value(), "z");
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "a\nb");
+        // The snapshot carries the whole editing context — the
+        // select-all anchor comes back too.
+        assert_eq!(
+            area.editor.selection(),
+            Some((Cursor::new(0, 0), Cursor::new(1, 1)))
+        );
+        area.event(&mut ev(&key("Ctrl+y")));
+        assert_eq!(area.value(), "z");
+    }
+
+    #[test]
+    fn text_area_undo_flags_edited() {
+        let mut area = TextArea::new();
+        focus(&mut area);
+        area.event(&mut ev(&ime("x")));
+        assert_eq!(area.take_edited(), Some(()));
+        // Undo and redo ARE buffer changes — the flag must fire so
+        // observers refresh.
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.take_edited(), Some(()));
+        area.event(&mut ev(&key("Ctrl+y")));
+        assert_eq!(area.take_edited(), Some(()));
+    }
+
+    #[test]
+    fn text_area_undo_redo_synthetic_key_names() {
+        let mut area = TextArea::new();
+        focus(&mut area);
+        area.event(&mut ev(&ime("ab")));
+        // The window layer's dispatched names work alongside chords.
+        assert_eq!(
+            area.event(&mut ev(&key("Undo"))),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(area.value(), "");
+        assert_eq!(
+            area.event(&mut ev(&key("Redo"))),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(area.value(), "ab");
+        // Exhausted history is consumed quietly — Handled, not
+        // Ignored (a sibling must not claim the key).
+        area.event(&mut ev(&key("Undo")));
+        assert_eq!(area.event(&mut ev(&key("Undo"))), EventResponse::Handled);
+        assert_eq!(area.value(), "");
+        // The undone insert is still on the redo branch — one Redo
+        // replays it, the next is the quiet Handled.
+        assert_eq!(
+            area.event(&mut ev(&key("Redo"))),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(area.value(), "ab");
+        assert_eq!(area.event(&mut ev(&key("Redo"))), EventResponse::Handled);
+    }
+
+    #[test]
+    fn text_area_undo_history_is_bounded() {
+        let mut area = TextArea::new();
+        focus(&mut area);
+        for _ in 0..UNDO_LIMIT + 5 {
+            area.event(&mut ev(&ime("x")));
+        }
+        // Only the newest UNDO_LIMIT steps survive — the first five
+        // inserts are gone for good.
+        for _ in 0..UNDO_LIMIT {
+            area.event(&mut ev(&key("Ctrl+z")));
+        }
+        assert_eq!(area.value(), "x".repeat(5));
+        assert_eq!(area.event(&mut ev(&key("Ctrl+z"))), EventResponse::Handled);
+        assert_eq!(area.value(), "x".repeat(5));
+    }
+
+    #[test]
+    fn text_area_word_delete_crosses_line_boundary() {
+        let mut area = TextArea::new().with_value("foo\nbar");
+        focus(&mut area);
+        // Caret at (1,0): the previous word edge is the previous
+        // line's end, so Ctrl+Backspace eats the line break — the
+        // same crossing ArrowLeft makes.
+        area.event(&mut ev(&key("Home")));
+        area.event(&mut ev(&key("Ctrl+Backspace")));
+        assert_eq!(area.value(), "foobar");
+        assert_eq!(area.cursor(), Cursor::new(0, 3));
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "foo\nbar");
+        // Ctrl+Delete at EOL eats the break forward.
+        area.event(&mut ev(&key("ArrowUp"))); // restored caret (1,0) -> (0,0)
+        area.event(&mut ev(&key("End")));
+        area.event(&mut ev(&key("Ctrl+Delete")));
+        assert_eq!(area.value(), "foobar");
+        assert_eq!(area.cursor(), Cursor::new(0, 3));
+    }
+
+    #[test]
+    fn text_area_word_delete_with_selection_removes_only_selection() {
+        let mut area = TextArea::new().with_value("alpha beta");
+        focus(&mut area);
+        area.editor.select_word_at(Cursor::new(0, 8)); // "beta"
+                                                       // A word-delete with an open selection removes exactly the
+                                                       // selection — it does not reach for the next word.
+        area.event(&mut ev(&key("Ctrl+Backspace")));
+        assert_eq!(area.value(), "alpha ");
+        assert_eq!(area.cursor(), Cursor::new(0, 6));
+        area.event(&mut ev(&key("Ctrl+Delete")));
+        assert_eq!(area.value(), "alpha ");
+        // Now without a selection the word ops resume.
+        area.event(&mut ev(&key("Ctrl+Backspace")));
+        assert_eq!(area.value(), "alpha");
+    }
+
+    #[test]
+    fn text_area_ctrl_shift_arrows_select_words() {
+        let mut area = TextArea::new().with_value("foo bar\nbaz");
+        focus(&mut area);
+        // Caret at (1,3) — the chord form carries Shift in the name.
+        area.event(&mut ev(&key("Ctrl+Shift+ArrowLeft")));
+        assert_eq!(area.editor.selected_text().as_deref(), Some("baz"));
+        // Extending again crosses the line break to the previous word
+        // edge — the end of "bar".
+        area.event(&mut ev(&key("Ctrl+Shift+ArrowLeft")));
+        assert_eq!(area.editor.selected_text().as_deref(), Some("\nbaz"));
+        area.event(&mut ev(&key("Ctrl+Shift+ArrowRight")));
+        assert_eq!(area.editor.selected_text().as_deref(), Some("baz"));
+    }
+
+    #[test]
+    fn text_area_multiline_insert_splits_line() {
+        let mut area = TextArea::new().with_value("ab");
+        focus(&mut area);
+        area.event(&mut ev(&key("ArrowLeft"))); // caret (0,1)
+        area.event(&mut ev(&ime("x\ny")));
+        // The suffix after the caret lands on the last inserted line.
+        assert_eq!(area.value(), "ax\nyb");
+        assert_eq!(area.cursor(), Cursor::new(1, 1));
+        // One undo step reverts the whole multi-line commit.
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "ab");
+        assert_eq!(area.cursor(), Cursor::new(0, 1));
+    }
+
+    #[test]
+    fn text_area_multiline_insert_over_selection() {
+        let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
+        area.event(&mut ev(&key("SelectAll")));
+        area.event(&mut ev(&ime("x\ny\nz")));
+        assert_eq!(area.value(), "x\ny\nz");
+        assert_eq!(area.cursor(), Cursor::new(2, 1));
+        // Still a single undo step despite spanning three lines.
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "ab\ncd");
+    }
+
+    #[test]
+    fn text_area_ime_normalizes_crlf_and_cr() {
+        let mut area = TextArea::new();
+        focus(&mut area);
+        // Committed text can carry CRLF pairs (Windows clipboards)
+        // and bare CRs (classic Mac) — both become `\n`.
+        area.event(&mut ev(&ime("a\r\nb\rc\nd")));
+        assert_eq!(area.value(), "a\nb\nc\nd");
+        assert_eq!(area.cursor(), Cursor::new(3, 1));
+    }
+
+    #[test]
+    fn text_area_control_char_only_insert() {
+        let mut area = TextArea::new().with_value("ab");
+        focus(&mut area);
+        area.take_edited(); // drain the flag `set_value` raises
+                            // A payload that sanitizes to nothing is a true no-op — no
+                            // undo snapshot, no edit flag.
+        area.event(&mut ev(&ime("\u{0}\u{7}\u{b}\u{1f}")));
+        assert_eq!(area.value(), "ab");
+        assert_eq!(area.take_edited(), None);
+        // Over an open selection the same payload still counts as an
+        // edit: an empty paste replaces the selection.
+        area.event(&mut ev(&key("SelectAll")));
+        area.event(&mut ev(&ime("\u{7}")));
+        assert_eq!(area.value(), "");
+        assert_eq!(area.take_edited(), Some(()));
+    }
+
+    #[test]
+    fn text_area_edit_resets_sticky_column() {
+        let mut area = TextArea::new().with_value("abcdef\nx\nabcde");
+        focus(&mut area);
+        // From (2,5) up twice parks on (0,5); down clamps onto the
+        // one-char middle line with the sticky column 5 remembered.
+        area.event(&mut ev(&key("ArrowUp")));
+        area.event(&mut ev(&key("ArrowUp")));
+        assert_eq!(area.cursor(), Cursor::new(0, 5));
+        area.event(&mut ev(&key("ArrowDown")));
+        assert_eq!(area.cursor(), Cursor::new(1, 1));
+        // An edit clears the sticky column — the next vertical move
+        // anchors on the post-edit caret, not the stale preference.
+        area.event(&mut ev(&ime("y")));
+        assert_eq!(area.cursor(), Cursor::new(1, 2));
+        area.event(&mut ev(&key("ArrowDown")));
+        assert_eq!(area.cursor(), Cursor::new(2, 2));
+    }
+
+    #[test]
+    fn text_area_click_resets_sticky_column() {
+        let mut area = TextArea::new().with_value("abcdef\nx\nabcde");
+        focus(&mut area);
+        area.event(&mut ev(&key("ArrowUp")));
+        area.event(&mut ev(&key("ArrowUp")));
+        assert_eq!(area.cursor(), Cursor::new(0, 5));
+        area.event(&mut ev(&key("ArrowDown")));
+        assert_eq!(area.cursor(), Cursor::new(1, 1));
+        // A click reseeds the column — the next vertical move must
+        // not resurrect the stale preferred column.
+        let p = pos_of(&mut area, 1, 0);
+        press(&mut area, p, 1);
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+        area.event(&mut ev(&key("ArrowDown")));
+        assert_eq!(area.cursor(), Cursor::new(2, 0));
+    }
+
+    #[test]
+    fn text_area_shift_vertical_selects_with_sticky_column() {
+        let mut area = TextArea::new().with_value("abcdef\nx\nabcde");
+        focus(&mut area);
+        // Caret (2,5); up to (0,5) first.
+        area.event(&mut ev(&key("ArrowUp")));
+        area.event(&mut ev(&key("ArrowUp")));
+        assert_eq!(area.cursor(), Cursor::new(0, 5));
+        // Shift+Down twice: the sticky column rides through the
+        // one-char middle line, so the head lands back on column 5.
+        area.event(&mut ev(&key("Shift")));
+        area.event(&mut ev(&key("ArrowDown")));
+        assert_eq!(area.cursor(), Cursor::new(1, 1));
+        area.event(&mut ev(&key("ArrowDown")));
+        assert_eq!(area.cursor(), Cursor::new(2, 5));
+        assert_eq!(area.editor.selected_text().as_deref(), Some("f\nx\nabcde"));
+    }
+
+    #[test]
+    fn text_area_page_up_down_clamp_at_document_edges() {
+        let mut area = TextArea::new().with_value(&("l\n".repeat(9) + "l"));
+        focus(&mut area);
+        // Caret at line 9. Repeated PageUp clamps at the first line —
+        // never past it.
+        area.event(&mut ev(&key("PageUp")));
+        assert!(area.cursor().line > 0);
+        area.event(&mut ev(&key("PageUp")));
+        assert_eq!(area.cursor(), Cursor::new(0, 1));
+        area.event(&mut ev(&key("PageUp")));
+        assert_eq!(area.cursor(), Cursor::new(0, 1));
+        // …and PageDown clamps at the last.
+        area.event(&mut ev(&key("PageDown")));
+        area.event(&mut ev(&key("PageDown")));
+        assert_eq!(area.cursor(), Cursor::new(9, 1));
+        // Shift+PageUp extends by a viewport of rows.
+        area.event(&mut ev(&key("Shift")));
+        area.event(&mut ev(&key("PageUp")));
+        let (lo, hi) = area.editor.selection().unwrap();
+        assert_eq!(hi, Cursor::new(9, 1));
+        assert!(hi.line - lo.line >= 1);
+    }
+
+    #[test]
+    fn text_area_arrows_clamp_at_document_edges() {
+        let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
+        // Caret (1,2) — the document end.
+        area.event(&mut ev(&key("ArrowUp")));
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+        area.event(&mut ev(&key("ArrowUp")));
+        assert_eq!(area.cursor(), Cursor::new(0, 2)); // stays
+                                                      // Shift+ArrowUp on the first line is a true no-op — no
+                                                      // phantom selection past the document start.
+        area.event(&mut ev(&key("Shift")));
+        area.event(&mut ev(&key("ArrowUp")));
+        assert_eq!(area.editor.selection(), None);
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+        area.event(&mut ev(&key_rel("Shift")));
+        // Back down clamps on the last line.
+        area.event(&mut ev(&key("ArrowDown")));
+        area.event(&mut ev(&key("ArrowDown")));
+        assert_eq!(area.cursor(), Cursor::new(1, 2));
+    }
+
+    #[test]
+    fn text_area_click_past_content_clamps() {
+        let mut area = TextArea::new().with_value("ab\ncd");
+        focus(&mut area);
+        // Below the last row the caret clamps to the last line.
+        press(&mut area, Vec2::new(10.0, 95.0), 1);
+        assert_eq!(area.cursor().line, 1);
+        // Far past a short line's end it lands at EOL, not inside
+        // some later character.
+        press(&mut area, Vec2::new(190.0, 10.0), 1);
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+    }
+
+    #[test]
+    fn text_area_hit_test_accounts_for_vertical_scroll() {
+        let mut area = TextArea::new().with_value(
+            (0..30)
+                .map(|i| format!("line {i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        focus(&mut area);
+        // Scroll five rows down, then click the first visible row —
+        // it must hit line 5, not line 0.
+        area.event(&mut ev(&WidgetEvent::Scroll {
+            position: Vec2::new(10.0, 10.0),
+            delta: Vec2::new(0.0, 5.0 * LINE_PT),
+        }));
+        assert!((area.scroll_offset().y - 5.0 * LINE_PT).abs() < 0.01);
+        press(&mut area, Vec2::new(10.0, 7.0), 1);
+        assert_eq!(area.cursor().line, 5);
+    }
+
+    #[test]
+    fn text_area_hit_test_accounts_for_horizontal_scroll() {
+        let mut area = TextArea::new().wrap(false).with_value("x".repeat(400));
+        focus(&mut area);
+        area.event(&mut ev(&WidgetEvent::Scroll {
+            position: Vec2::new(10.0, 10.0),
+            delta: Vec2::new(200.0, 0.0),
+        }));
+        assert!(area.scroll_offset().x > 0.0);
+        // Clicking just inside the left padding maps mid-line — the
+        // scroll offset shifts the glyph hit-test.
+        press(&mut area, Vec2::new(9.0, 10.0), 1);
+        assert!(area.cursor().column > 10);
+    }
+
+    #[test]
+    fn text_area_click_on_wrapped_row_hit_tests() {
+        let mut area = TextArea::new()
+            .with_value("one two three four five six seven eight nine ten eleven twelve");
+        focus(&mut area);
+        // A click on the second visual row of a wrapped logical line
+        // must resolve through the wrap to the clicked column — not
+        // to the line start.
+        let painter = crate::text_paint::shared_painter();
+        let x_of = |t: &str, b: usize| painter.caret_x(t, FONT_PT, b);
+        let lay = TextArea::geometry(area.editor.lines(), true, 1.0, BOUNDS, &x_of);
+        assert!(lay.rows.len() >= 2);
+        let row = lay.rows[1];
+        let line_len = area.editor.lines()[0].chars().count();
+        let col = byte_col(
+            &area.editor.lines()[0],
+            row.start + (row.end - row.start) / 2,
+        );
+        let p = pos_of(&mut area, 0, col);
+        press(&mut area, p, 1);
+        assert_eq!(area.cursor(), Cursor::new(0, col));
+        // Home/End stay logical even mid-wrap (the documented v1
+        // simplification — no visual-row Home).
+        area.event(&mut ev(&key("Home")));
+        assert_eq!(area.cursor(), Cursor::new(0, 0));
+        area.event(&mut ev(&key("End")));
+        assert_eq!(area.cursor(), Cursor::new(0, line_len));
+    }
+
+    #[test]
+    fn text_area_wrap_rows_never_start_with_whitespace() {
+        let area = TextArea::new()
+            .with_value("one two three four five six seven eight nine ten eleven twelve");
+        let painter = crate::text_paint::shared_painter();
+        let x_of = |t: &str, b: usize| painter.caret_x(t, FONT_PT, b);
+        let lay = TextArea::geometry(area.editor.lines(), true, 1.0, BOUNDS, &x_of);
+        assert!(lay.rows.len() >= 2);
+        // Break whitespace folds into the preceding row — no
+        // continuation row may begin with a space.
+        let line = &area.editor.lines()[0];
+        for r in &lay.rows[1..] {
+            assert!(
+                !line[r.start..].starts_with(char::is_whitespace),
+                "row {r:?} starts with whitespace"
+            );
+        }
+    }
+
+    #[test]
+    fn text_area_disabled_ignores_pointer_and_keys() {
+        let mut area = TextArea::new().with_value("ab").enabled(false);
+        // The focus-grab path is gated too — a disabled area never
+        // takes focus and never moves the caret.
+        let p = pos_of(&mut area, 0, 1);
+        assert_eq!(press(&mut area, p, 1), EventResponse::Ignored);
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+        assert!(!area.focused());
+        assert_eq!(
+            area.event(&mut ev(&WidgetEvent::FocusGained)),
+            EventResponse::Ignored
+        );
+        assert!(!area.focused());
+        // Scroll falls through so an ancestor region can take it.
+        let scroll = WidgetEvent::Scroll {
+            position: Vec2::new(10.0, 10.0),
+            delta: Vec2::new(0.0, 10.0),
+        };
+        assert_eq!(area.event(&mut ev(&scroll)), EventResponse::Ignored);
+    }
+
+    #[test]
+    fn text_area_read_only_navigates_and_selects_but_blocks_edits() {
+        let mut area = TextArea::new().with_value("ab\ncd").read_only(true);
+        focus(&mut area);
+        area.take_edited(); // drain the flag `set_value` raises
+                            // Caret motion and selection stay live in read-only mode —
+                            // screen readers and copy need them.
+        area.event(&mut ev(&key("Home")));
+        assert_eq!(area.cursor(), Cursor::new(1, 0));
+        area.event(&mut ev(&key("Ctrl+a")));
+        assert!(area.editor.selection().is_some());
+        // Every mutation path is refused, including chords, the
+        // synthetic names, and undo/redo.
+        assert_eq!(area.event(&mut ev(&key("Ctrl+z"))), EventResponse::Ignored);
+        assert_eq!(area.event(&mut ev(&key("Undo"))), EventResponse::Ignored);
+        assert_eq!(area.event(&mut ev(&key("Ctrl+x"))), EventResponse::Ignored);
+        assert_eq!(area.event(&mut ev(&key("Ctrl+v"))), EventResponse::Ignored);
+        area.event(&mut ev(&key("Enter")));
+        area.event(&mut ev(&key("Tab")));
+        assert_eq!(area.value(), "ab\ncd");
+        assert_eq!(area.take_edited(), None);
+        // A pointer click still places the caret.
+        let p = pos_of(&mut area, 0, 1);
+        assert_eq!(press(&mut area, p, 1), EventResponse::CapturePointer);
+        assert_eq!(area.cursor(), Cursor::new(0, 1));
+    }
+
+    #[test]
+    fn text_area_escape_without_selection_is_ignored() {
+        let mut area = TextArea::new().with_value("ab");
+        focus(&mut area);
+        // Nothing to collapse — the key falls through for a parent
+        // (e.g. an IME composition cancel) to claim.
+        assert_eq!(area.event(&mut ev(&key("Escape"))), EventResponse::Ignored);
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+    }
+
+    #[test]
+    fn text_area_escape_collapses_backward_selection_to_head() {
+        let mut area = TextArea::new().with_value("abc");
+        focus(&mut area);
+        // Caret (0,3); select backward over "bc" — the head sits at
+        // the selection's low edge.
+        area.event(&mut ev(&key("Shift")));
+        area.event(&mut ev(&key("ArrowLeft")));
+        area.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(
+            area.editor.selection(),
+            Some((Cursor::new(0, 1), Cursor::new(0, 3)))
+        );
+        area.event(&mut ev(&key_rel("Shift")));
+        // Escape collapses onto the moving end (the head) — the
+        // EditorPanel convention.
+        area.event(&mut ev(&key("Escape")));
+        assert_eq!(area.editor.selection(), None);
+        assert_eq!(area.cursor(), Cursor::new(0, 1));
+    }
+
+    #[test]
+    fn text_area_backward_selection_replaced_by_typing() {
+        let mut area = TextArea::new().with_value("abc");
+        focus(&mut area);
+        // Caret (0,3) — select backward over "bc", then type.
+        area.event(&mut ev(&key("Shift")));
+        area.event(&mut ev(&key("ArrowLeft")));
+        area.event(&mut ev(&key("ArrowLeft")));
+        area.event(&mut ev(&key_rel("Shift")));
+        area.event(&mut ev(&ime("X")));
+        assert_eq!(area.value(), "aX");
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+    }
+
+    #[test]
+    fn text_area_focus_loss_clears_modifiers_and_drag() {
+        let mut area = TextArea::new().with_value("alpha\nbeta");
+        focus(&mut area);
+        // Hold Shift and begin a shift-click extension, then lose
+        // focus mid-gesture — the OS may never deliver the matching
+        // releases.
+        area.event(&mut ev(&key("Shift")));
+        let p = pos_of(&mut area, 0, 1);
+        press(&mut area, p, 1);
+        assert_eq!(
+            area.editor.selection(),
+            Some((Cursor::new(0, 1), Cursor::new(1, 4)))
+        );
+        area.event(&mut ev(&WidgetEvent::FocusLost));
+        // The in-flight drag is dead: pointer motion no longer
+        // extends the selection.
+        let end = pos_of(&mut area, 1, 3);
+        assert_eq!(
+            area.event(&mut ev(&WidgetEvent::PointerMoved { position: end })),
+            EventResponse::Ignored
+        );
+        // On refocus the leaked Shift must not turn a plain arrow
+        // into an extension — it collapses to the left edge instead.
+        focus(&mut area);
+        area.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(area.editor.selection(), None);
+        assert_eq!(area.cursor(), Cursor::new(0, 1));
+    }
+
+    #[test]
+    fn text_area_caret_tracker_mirrors_selection() {
+        let mut area = TextArea::new()
+            .with_value("a\nb")
+            .with_caret_tracker(CaretTracker::new(
+                accesskit::NodeId(7),
+                TextSelection::caret(0, TextAffinity::Downstream),
+            ));
+        focus(&mut area);
+        area.event(&mut ev(&key("SelectAll")));
+        // Flat document offsets: "a\nb" numbers (1,1) as 1 + '\n' + 1.
+        let sel = area.caret_tracker().unwrap().selection;
+        assert_eq!((sel.anchor, sel.focus), (0, 3));
+        // Collapsing the selection mirrors a plain caret.
+        area.event(&mut ev(&key("ArrowLeft")));
+        let sel = area.caret_tracker().unwrap().selection;
+        assert_eq!((sel.anchor, sel.focus), (0, 0));
+    }
+
+    #[test]
+    fn text_area_semantic_set_value_blocked_when_read_only() {
+        let mut area = TextArea::new().with_value("keep").read_only(true);
+        focus(&mut area);
+        let set = WidgetEvent::SemanticAction(SemanticAction::SetValue("nope".into()));
+        assert_eq!(area.event(&mut ev(&set)), EventResponse::Ignored);
+        assert_eq!(area.value(), "keep");
+        // ScrollIntoView acknowledges with a repaint — the
+        // caret-following scroll in `paint` does the work.
+        let siv = WidgetEvent::SemanticAction(SemanticAction::ScrollIntoView);
+        assert_eq!(area.event(&mut ev(&siv)), EventResponse::RequestRepaint);
+    }
+
+    #[test]
+    fn text_area_semantic_scroll_actions() {
+        let mut area = TextArea::new().with_value(&("l\n".repeat(29) + "l"));
+        focus(&mut area);
+        // SetScrollOffset applies an absolute offset through the same
+        // clamped `scroll_by`.
+        let s = WidgetEvent::SemanticAction(SemanticAction::SetScrollOffset(Vec2::new(0.0, 50.0)));
+        assert_eq!(area.event(&mut ev(&s)), EventResponse::RequestRepaint);
+        assert!((area.scroll_offset().y - 50.0).abs() < 0.01);
+        // Setting the offset it already holds is a quiet Handled.
+        assert_eq!(area.event(&mut ev(&s)), EventResponse::Handled);
+        // ScrollUp steps a line at a time.
+        let up = WidgetEvent::SemanticAction(SemanticAction::ScrollUp);
+        assert_eq!(area.event(&mut ev(&up)), EventResponse::RequestRepaint);
+        assert!((area.scroll_offset().y - (50.0 - LINE_PT)).abs() < 0.01);
+    }
+
+    #[test]
+    fn text_area_horizontal_scrollbar_track_pages() {
+        let mut area = TextArea::new().wrap(false).with_value("x".repeat(400));
+        focus(&mut area);
+        // The hbar strip hugs the bottom padding edge when unwrapped
+        // content overflows horizontally; a track click below the
+        // thumb pages right.
+        let p = Vec2::new(100.0, 90.0);
+        assert_eq!(press(&mut area, p, 1), EventResponse::CapturePointer);
+        assert!(area.scroll_offset().x > 0.0);
+        area.event(&mut ev(&WidgetEvent::PointerReleased {
+            position: p,
+            button: PointerButton::Primary,
+        }));
+    }
+
+    #[test]
+    fn text_area_grapheme_ops_on_later_lines() {
+        let mut area = TextArea::new().with_value("ab\ne\u{301}x");
+        focus(&mut area);
+        // Caret (1,3): "e\u{301}x" is three chars but two clusters.
+        area.event(&mut ev(&key("Home")));
+        area.event(&mut ev(&key("ArrowRight"))); // steps the cluster
+        assert_eq!(area.cursor(), Cursor::new(1, 2));
+        // Backspace removes the whole combining-mark cluster.
+        area.event(&mut ev(&key("Backspace")));
+        assert_eq!(area.value(), "ab\nx");
+        // Backspace again joins the line upward.
+        area.event(&mut ev(&key("Backspace")));
+        assert_eq!(area.value(), "abx");
+        assert_eq!(area.cursor(), Cursor::new(0, 2));
+    }
+
+    #[test]
+    fn text_area_cut_removes_selection_in_one_undo_step() {
+        let mut area = TextArea::new().with_value("a\nb");
+        focus(&mut area);
+        area.event(&mut ev(&key("SelectAll")));
+        assert_eq!(
+            area.event(&mut ev(&key("Ctrl+x"))),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(area.value(), "");
+        assert_eq!(area.editor.selection(), None);
+        // Cut is a single undo step that restores the select-all
+        // anchor too.
+        area.event(&mut ev(&key("Ctrl+z")));
+        assert_eq!(area.value(), "a\nb");
+        assert_eq!(
+            area.editor.selection(),
+            Some((Cursor::new(0, 0), Cursor::new(1, 1)))
+        );
+    }
+
+    #[test]
+    fn text_area_cut_copy_without_selection_are_noops() {
+        let mut area = TextArea::new().with_value("ab");
+        focus(&mut area);
+        area.take_edited(); // drain the flag `set_value` raises
+                            // Nothing selected: copy is consumed quietly, cut repaints
+                            // but changes nothing.
+        assert_eq!(area.event(&mut ev(&key("Ctrl+c"))), EventResponse::Handled);
+        assert_eq!(
+            area.event(&mut ev(&key("Ctrl+x"))),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(area.value(), "ab");
+        assert_eq!(area.take_edited(), None);
+    }
+
+    #[test]
+    fn text_area_set_value_clears_preedit() {
+        let mut area = TextArea::new();
+        focus(&mut area);
+        area.event(&mut ev(&WidgetEvent::ImePreedit {
+            text: "wip".to_string(),
+            cursor: None,
+        }));
+        assert_eq!(area.preedit(), Some("wip"));
+        // A programmatic write discards the in-flight composition —
+        // the preedit belongs to the document it was composed into.
+        area.set_value("fresh");
+        assert_eq!(area.preedit(), None);
     }
 }

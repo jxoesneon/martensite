@@ -3,7 +3,9 @@
 //! composer idiom).
 //!
 //! Enter commits the draft to [`ChatInput::take_sent`] and clears
-//! it; `Escape` clears without sending; the send button (or the
+//! it — `Shift+Enter`, the newline chord of multi-line composers,
+//! is deliberately inert here because the draft is a single line.
+//! `Escape` clears without sending; the send button (or the
 //! attach/emoji buttons when enabled) park intents in
 //! [`ChatInput::take_attach`]/[`ChatInput::take_emoji`]. Completes
 //! the chat family with [`MessageList`](crate::widgets::MessageList)
@@ -28,7 +30,7 @@ use martensite_core::{
 use martensite_theme::TokenKey;
 
 use crate::text_paint::SharedTextPainter;
-use crate::widgets::text_input::TextInput;
+use crate::widgets::text_input::{parse_key_chord, TextInput};
 
 const FONT_PT: f32 = 13.0;
 const PAD_V_PT: f32 = 9.0;
@@ -68,6 +70,12 @@ pub struct ChatInput {
     attach: bool,
     emoji: bool,
     held_send: bool,
+    /// Shift state tracked from `KeyPressed`/`KeyReleased` —
+    /// `WidgetEvent::KeyPressed` carries no modifier state (F17), so
+    /// the wrapper tracks it to keep `Shift+Enter` from sending
+    /// (the newline chord of multi-line composers; inert in this
+    /// single-line field).
+    shift_held: bool,
     send_rect: Rect,
     attach_rect: Rect,
     emoji_rect: Rect,
@@ -112,6 +120,7 @@ impl ChatInput {
             attach: false,
             emoji: false,
             held_send: false,
+            shift_held: false,
             send_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             attach_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             emoji_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
@@ -296,10 +305,13 @@ impl ChatInput {
         std::mem::take(&mut self.emoji)
     }
 
-    /// Commits the draft if non-empty.
+    /// Commits the draft if non-empty. Surrounding whitespace is
+    /// trimmed before parking — `can_send` already gates on the
+    /// trimmed check, so the sent message matches what made the
+    /// button active.
     fn submit(&mut self) {
         if self.can_send() {
-            let draft = std::mem::take(&mut self.input.value);
+            let draft = self.input.value.trim().to_string();
             self.input.set_value("");
             self.sent = Some(draft);
         }
@@ -413,10 +425,21 @@ impl Widget for ChatInput {
         }
         match cx.event {
             WidgetEvent::KeyPressed { key, .. } => {
+                if key == "Shift" {
+                    self.shift_held = true;
+                }
                 // Composer chrome — only while the draft holds focus.
                 if self.input.focused() {
-                    if key == "Enter" {
-                        self.submit();
+                    let (_, shift_chord, base) = parse_key_chord(key);
+                    if base == "Enter" {
+                        // Enter sends; Shift+Enter is the newline
+                        // chord of multi-line composers — this field
+                        // is single-line, so it stays deliberately
+                        // inert rather than becoming an accidental
+                        // send.
+                        if !shift_chord && !self.shift_held {
+                            self.submit();
+                        }
                         return EventResponse::RequestRepaint;
                     }
                     if key == "Escape" {
@@ -429,6 +452,18 @@ impl Widget for ChatInput {
                         }
                     }
                 }
+                self.forward_input(cx)
+            }
+            WidgetEvent::KeyReleased { key } => {
+                if key == "Shift" {
+                    self.shift_held = false;
+                }
+                self.forward_input(cx)
+            }
+            WidgetEvent::FocusLost => {
+                // A swallowed release must not leave Shift latched —
+                // the input clears its own modifier state the same way.
+                self.shift_held = false;
                 self.forward_input(cx)
             }
             WidgetEvent::PointerPressed {
@@ -692,5 +727,195 @@ mod tests {
             text_painter: None,
         });
         assert!(!list.is_empty());
+    }
+
+    fn key(name: &str) -> WidgetEvent {
+        WidgetEvent::KeyPressed {
+            key: name.into(),
+            repeat: false,
+        }
+    }
+
+    #[test]
+    fn shift_enter_chord_does_not_send() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        type_text(&mut c, "draft");
+        // The single-line composer has no newline — Shift+Enter must
+        // not turn into an accidental send.
+        ev(&mut c, &key("Shift+Enter"));
+        assert_eq!(c.take_sent(), None);
+        assert_eq!(c.draft(), "draft");
+    }
+
+    #[test]
+    fn tracked_shift_modifier_blocks_send() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        type_text(&mut c, "draft");
+        // Window layers may deliver Shift as its own key event rather
+        // than a `+`-joined chord name — the suppression must hold
+        // under both encodings.
+        ev(&mut c, &key("Shift"));
+        ev(&mut c, &key("Enter"));
+        assert_eq!(c.take_sent(), None);
+        assert_eq!(c.draft(), "draft");
+        ev(
+            &mut c,
+            &WidgetEvent::KeyReleased {
+                key: "Shift".into(),
+            },
+        );
+        ev(&mut c, &key("Enter"));
+        assert_eq!(c.take_sent(), Some("draft".to_string()));
+    }
+
+    #[test]
+    fn whitespace_only_draft_does_not_send() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        type_text(&mut c, "   ");
+        assert!(!c.can_send());
+        ev(&mut c, &key("Enter"));
+        assert_eq!(c.take_sent(), None);
+        assert_eq!(c.draft(), "   ");
+    }
+
+    #[test]
+    fn send_trims_surrounding_whitespace() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        type_text(&mut c, "  hi  ");
+        ev(&mut c, &key("Enter"));
+        assert_eq!(c.take_sent(), Some("hi".to_string()));
+        assert_eq!(c.draft(), "");
+    }
+
+    #[test]
+    fn multiline_commit_collapses_to_one_line() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        // The draft is single-line: committed/pasted newlines are
+        // stripped by the embedded field.
+        type_text(&mut c, "line one\nline two");
+        assert_eq!(c.draft(), "line oneline two");
+    }
+
+    #[test]
+    fn unfocused_enter_does_not_send() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        c.set_draft("draft");
+        ev(&mut c, &key("Enter"));
+        assert_eq!(c.take_sent(), None);
+        assert_eq!(c.draft(), "draft");
+    }
+
+    #[test]
+    fn unfocused_ime_does_not_edit() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        ev(
+            &mut c,
+            &WidgetEvent::ImeCommitted {
+                text: "nope".into(),
+            },
+        );
+        assert_eq!(c.draft(), "");
+    }
+
+    #[test]
+    fn escape_on_empty_draft_passes_through() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        ev(&mut c, &WidgetEvent::FocusGained);
+        // Empty draft: Escape reaches the field, which has nothing
+        // to collapse — the event stays Ignored for ancestors.
+        assert_eq!(ev(&mut c, &key("Escape")), EventResponse::Ignored);
+    }
+
+    #[test]
+    fn focus_lost_drops_input_focus() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        type_text(&mut c, "draft");
+        assert!(c.input.focused());
+        ev(&mut c, &WidgetEvent::FocusLost);
+        assert!(!c.input.focused());
+        // And a stale latched modifier cannot suppress the next send.
+        ev(&mut c, &WidgetEvent::FocusGained);
+        ev(&mut c, &key("Enter"));
+        assert_eq!(c.take_sent(), Some("draft".to_string()));
+    }
+
+    #[test]
+    fn send_release_off_button_cancels() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        type_text(&mut c, "draft");
+        let r = c.send_rect;
+        let mid = Vec2::new((r.min_x() + r.max_x()) / 2.0, (r.min_y() + r.max_y()) / 2.0);
+        ev(
+            &mut c,
+            &WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                position: mid,
+                count: 1,
+            },
+        );
+        // Drag-off cancels: releasing outside the send target sends nothing.
+        ev(
+            &mut c,
+            &WidgetEvent::PointerReleased {
+                button: PointerButton::Primary,
+                position: Vec2::new(5.0, 5.0),
+            },
+        );
+        assert_eq!(c.take_sent(), None);
+        assert_eq!(c.draft(), "draft");
+    }
+
+    #[test]
+    fn emoji_button_parks() {
+        let mut c = ChatInput::new().emoji_button(true);
+        laid_out(&mut c);
+        let r = c.emoji_rect;
+        assert!(r.width() > 0.0);
+        ev(
+            &mut c,
+            &WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                position: Vec2::new((r.min_x() + r.max_x()) / 2.0, (r.min_y() + r.max_y()) / 2.0),
+                count: 1,
+            },
+        );
+        assert!(c.take_emoji());
+    }
+
+    #[test]
+    fn send_button_keeps_input_focused() {
+        let mut c = ChatInput::new();
+        laid_out(&mut c);
+        type_text(&mut c, "draft");
+        let r = c.send_rect;
+        let mid = Vec2::new((r.min_x() + r.max_x()) / 2.0, (r.min_y() + r.max_y()) / 2.0);
+        ev(
+            &mut c,
+            &WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                position: mid,
+                count: 1,
+            },
+        );
+        ev(
+            &mut c,
+            &WidgetEvent::PointerReleased {
+                button: PointerButton::Primary,
+                position: mid,
+            },
+        );
+        assert_eq!(c.take_sent(), Some("draft".to_string()));
+        // The composer keeps editing context after a send.
+        assert!(c.input.focused());
     }
 }

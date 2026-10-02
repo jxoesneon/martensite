@@ -2502,4 +2502,616 @@ mod tests {
         press(&mut input, 190.0, 1);
         assert_eq!(input.cursor, 0);
     }
+
+    #[test]
+    fn text_input_shift_home_end_extend_selection() {
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        // Chorded Shift+Home selects from the caret to the line start.
+        input.event(&mut ev(&key("Shift+Home")));
+        assert_eq!(input.selection(), Some((0, 3)));
+        input.event(&mut ev(&key("End"))); // collapse at end
+                                           // Tracked-modifier path produces the same extension.
+        input.event(&mut ev(&key("Shift")));
+        input.event(&mut ev(&key("Home")));
+        assert_eq!(input.selection(), Some((0, 3)));
+        // Shift+End extends from a collapsed caret back to the end.
+        input.event(&mut ev(&WidgetEvent::KeyReleased {
+            key: "Shift".to_string(),
+        }));
+        input.event(&mut ev(&key("Home")));
+        input.event(&mut ev(&key("Shift+End")));
+        assert_eq!(input.selection(), Some((0, 3)));
+    }
+
+    #[test]
+    fn text_input_home_end_collapse_open_selection() {
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        input.event(&mut ev(&key("SelectAll")));
+        input.event(&mut ev(&key("Home")));
+        assert_eq!(input.selection(), None);
+        assert_eq!(input.cursor, 0);
+        input.event(&mut ev(&key("SelectAll")));
+        input.event(&mut ev(&key("End")));
+        assert_eq!(input.selection(), None);
+        assert_eq!(input.cursor, 3);
+    }
+
+    #[test]
+    fn text_input_word_delete_at_boundaries_is_noop() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
+        // Caret at end — Ctrl+Delete has nothing to eat and must not
+        // mint an undo step.
+        input.event(&mut ev(&key("Ctrl+Delete")));
+        assert_eq!(input.value, "alpha beta");
+        assert!(!input.can_undo());
+        // Caret at start — Ctrl+Backspace likewise.
+        input.event(&mut ev(&key("Home")));
+        input.event(&mut ev(&key("Ctrl+Backspace")));
+        assert_eq!(input.value, "alpha beta");
+        assert!(!input.can_undo());
+    }
+
+    #[test]
+    fn text_input_ctrl_delete_mid_word_eats_to_word_end() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
+        input.event(&mut ev(&key("Home")));
+        input.event(&mut ev(&key("ArrowRight"))); // inside "alpha"
+        input.event(&mut ev(&key("Ctrl+Delete")));
+        assert_eq!(input.value, "a beta");
+        assert_eq!(input.cursor, 1);
+    }
+
+    #[test]
+    fn text_input_backspace_at_start_mints_no_undo() {
+        let mut input = TextInput::new("F").value("ab");
+        focus(&mut input);
+        input.event(&mut ev(&key("Home")));
+        assert_eq!(
+            input.event(&mut ev(&key("Backspace"))),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(input.value, "ab");
+        assert_eq!(input.cursor, 0);
+        // A boundary no-op earns neither an undo step nor the edited
+        // flag — undoing later must not replay a phantom edit.
+        assert!(!input.can_undo());
+        assert!(!input.take_edited());
+    }
+
+    #[test]
+    fn text_input_delete_at_end_mints_no_undo() {
+        let mut input = TextInput::new("F").value("ab");
+        focus(&mut input);
+        input.event(&mut ev(&key("Delete")));
+        assert_eq!(input.value, "ab");
+        assert!(!input.can_undo());
+        assert!(!input.take_edited());
+    }
+
+    #[test]
+    fn text_input_typing_replaces_mid_string_selection() {
+        let mut input = TextInput::new("F").value("abcdef");
+        focus(&mut input);
+        input.event(&mut ev(&key("ArrowLeft")));
+        input.event(&mut ev(&key("ArrowLeft")));
+        input.event(&mut ev(&key("Shift+ArrowLeft")));
+        input.event(&mut ev(&key("Shift+ArrowLeft")));
+        assert_eq!(input.selected_text(), Some("cd"));
+        input.event(&mut ev(&ime("XY")));
+        assert_eq!(input.value, "abXYef");
+        assert_eq!(input.cursor, 4);
+        assert_eq!(input.selection(), None);
+    }
+
+    #[test]
+    fn text_input_escape_twice_second_is_ignored() {
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        input.event(&mut ev(&key("SelectAll")));
+        assert_eq!(
+            input.event(&mut ev(&key("Escape"))),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(input.selection(), None);
+        // With nothing left to collapse, Escape bubbles up — a parent
+        // dialog or overlay may still use it.
+        assert_eq!(input.event(&mut ev(&key("Escape"))), EventResponse::Ignored);
+        assert_eq!(input.value, "abc");
+    }
+
+    #[test]
+    fn text_input_preedit_updates_and_commit_replaces() {
+        let mut input = TextInput::new("F");
+        focus(&mut input);
+        input.event(&mut ev(&preedit("ni", Some((0, 2)))));
+        assert_eq!(input.preedit(), Some("ni"));
+        // A new preedit replaces the old one wholesale; nothing enters
+        // the value until the commit arrives.
+        input.event(&mut ev(&preedit("nihon", Some((0, 5)))));
+        assert_eq!(input.preedit(), Some("nihon"));
+        assert!(input.value.is_empty());
+        input.event(&mut ev(&ime("日本")));
+        assert_eq!(input.preedit(), None);
+        assert_eq!(input.value, "日本");
+    }
+
+    #[test]
+    fn text_input_empty_commit_clears_preedit_without_edit() {
+        let mut input = TextInput::new("F").value("ab");
+        focus(&mut input);
+        input.event(&mut ev(&preedit("kan", None)));
+        // A cancelled composition commits an empty string — the
+        // document must not change and no undo step is earned.
+        assert_eq!(
+            input.event(&mut ev(&ime(""))),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(input.preedit(), None);
+        assert_eq!(input.value, "ab");
+        assert!(!input.can_undo());
+        assert!(!input.take_edited());
+    }
+
+    #[test]
+    fn text_input_empty_commit_over_selection_removes_it() {
+        // Wayland input-method-v2 semantics: placing a preedit over a
+        // selection consumes the selection, so a cancelled composition
+        // (empty commit) still removes it. Desktop toolkits differ —
+        // GTK/macOS cancellations preserve the selection — but this is
+        // the documented insert-replaces-selection path and a single
+        // undo restores the removed range.
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        input.event(&mut ev(&key("SelectAll")));
+        input.event(&mut ev(&ime("")));
+        assert_eq!(input.value, "");
+        input.event(&mut ev(&key("Ctrl+Z")));
+        assert_eq!(input.value, "abc");
+        assert_eq!(input.selection(), Some((0, 3)));
+    }
+
+    #[test]
+    fn text_input_caret_never_splits_multibyte_char() {
+        // 'é' (U+00E9) is a single 2-byte char — the caret must only
+        // ever rest on char boundaries.
+        let mut input = TextInput::new("F").value("a\u{e9}b");
+        focus(&mut input);
+        assert_eq!(input.cursor, 4);
+        input.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(input.cursor, 3);
+        input.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(input.cursor, 1); // stepped past 'é' whole
+        assert!(input.value.is_char_boundary(input.cursor));
+    }
+
+    #[test]
+    fn text_input_flag_emoji_is_one_grapheme() {
+        // Two regional indicators form one flag cluster — motion and
+        // deletion must never split it.
+        let mut input = TextInput::new("F").value("\u{1f1fa}\u{1f1f8}x");
+        focus(&mut input);
+        input.event(&mut ev(&key("ArrowLeft"))); // past 'x'
+        input.event(&mut ev(&key("ArrowLeft"))); // past the whole flag
+        assert_eq!(input.cursor, 0);
+        input.event(&mut ev(&key("ArrowLeft"))); // clamped at start
+        assert_eq!(input.cursor, 0);
+        input.event(&mut ev(&key("Delete")));
+        assert_eq!(input.value, "x");
+    }
+
+    #[test]
+    fn text_input_cut_removes_selection_one_undo_step() {
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        input.event(&mut ev(&key("SelectAll")));
+        input.event(&mut ev(&key("Ctrl+X")));
+        assert_eq!(input.value, "");
+        assert_eq!(input.selection(), None);
+        assert!(input.take_edited());
+        // Cut is one undo step that restores the whole editing
+        // context, including the select-all anchor.
+        input.event(&mut ev(&key("Ctrl+Z")));
+        assert_eq!(input.value, "abc");
+        assert_eq!(input.selection(), Some((0, 3)));
+        assert!(!input.can_undo());
+    }
+
+    #[test]
+    fn text_input_undo_restores_pre_edit_selection() {
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        input.event(&mut ev(&key("SelectAll")));
+        input.event(&mut ev(&ime("z")));
+        assert_eq!(input.value, "z");
+        input.event(&mut ev(&key("Ctrl+Z")));
+        assert_eq!(input.value, "abc");
+        // Undo restores the whole editing context — value, caret, AND
+        // the select-all anchor that was in effect before the edit.
+        assert_eq!(input.selection(), Some((0, 3)));
+    }
+
+    #[test]
+    fn text_input_disabled_pointer_press_is_ignored() {
+        let mut input = TextInput::new("F").value("abc").enabled(false);
+        let x = click_x(&mut input, 1);
+        assert_eq!(press(&mut input, x, 1), EventResponse::Ignored);
+        assert!(!input.focused);
+        assert_eq!(input.cursor, 3); // caret untouched
+    }
+
+    #[test]
+    fn text_input_clicks_beyond_triple_keep_line_selection() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
+        let x = click_x(&mut input, 3);
+        // The click streak keeps counting past triple — a single-line
+        // field has nothing beyond the line to select.
+        press(&mut input, x, 4);
+        assert_eq!(input.selection(), Some((0, "alpha beta".len())));
+        press(&mut input, x, 7);
+        assert_eq!(input.selection(), Some((0, "alpha beta".len())));
+    }
+
+    #[test]
+    fn text_input_drag_release_outside_bounds() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
+        let x = click_x(&mut input, 2);
+        press(&mut input, x, 1);
+        // Drag far past the right edge — the selection clamps to the
+        // end rather than wrapping or dropping.
+        input.event(&mut ev(&WidgetEvent::PointerMoved {
+            position: Vec2::new(500.0, 12.0),
+        }));
+        assert_eq!(input.selection(), Some((2, "alpha beta".len())));
+        // The release lands outside the bounds; pointer capture still
+        // delivers it and ends the drag.
+        assert_eq!(
+            input.event(&mut ev(&WidgetEvent::PointerReleased {
+                position: Vec2::new(500.0, 12.0),
+                button: PointerButton::Primary,
+            })),
+            EventResponse::ReleasePointer
+        );
+        assert!(!input.dragging);
+        // Post-release motion no longer mutates the selection.
+        input.event(&mut ev(&WidgetEvent::PointerMoved {
+            position: Vec2::new(10.0, 12.0),
+        }));
+        assert_eq!(input.selection(), Some((2, "alpha beta".len())));
+    }
+
+    #[test]
+    fn text_input_drag_beyond_left_edge_selects_to_start() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
+        let x = click_x(&mut input, 8);
+        press(&mut input, x, 1);
+        input.event(&mut ev(&WidgetEvent::PointerMoved {
+            position: Vec2::new(-30.0, 12.0),
+        }));
+        assert_eq!(input.selection(), Some((0, 8)));
+    }
+
+    #[test]
+    fn text_input_pointer_events_without_drag_are_ignored() {
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        assert_eq!(
+            input.event(&mut ev(&WidgetEvent::PointerMoved {
+                position: Vec2::new(50.0, 12.0),
+            })),
+            EventResponse::Ignored
+        );
+        assert_eq!(
+            input.event(&mut ev(&WidgetEvent::PointerReleased {
+                position: Vec2::new(50.0, 12.0),
+                button: PointerButton::Primary,
+            })),
+            EventResponse::Ignored
+        );
+        // A non-primary press is not an editing gesture — no focus
+        // claim, no caret move, no capture.
+        assert_eq!(
+            input.event(&mut ev(&WidgetEvent::PointerPressed {
+                position: Vec2::new(50.0, 12.0),
+                button: PointerButton::Secondary,
+                count: 1,
+            })),
+            EventResponse::Ignored
+        );
+        assert_eq!(input.value, "abc");
+        assert_eq!(input.selection(), None);
+    }
+
+    #[test]
+    fn text_input_shift_click_extends_from_caret() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
+        input.event(&mut ev(&key("Home")));
+        input.event(&mut ev(&key("ArrowRight")));
+        input.event(&mut ev(&key("Shift")));
+        let x = click_x(&mut input, 7);
+        press(&mut input, x, 1);
+        // Shift-click extends from the existing caret instead of
+        // collapsing the caret to the click.
+        assert_eq!(input.selection(), Some((1, 7)));
+    }
+
+    #[test]
+    fn text_input_plain_click_collapses_selection() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
+        input.event(&mut ev(&key("SelectAll")));
+        let x = click_x(&mut input, 4);
+        press(&mut input, x, 1);
+        assert_eq!(input.selection(), None);
+        assert_eq!(input.cursor, 4);
+    }
+
+    #[test]
+    fn text_input_focus_loss_clears_sticky_modifiers() {
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        input.event(&mut ev(&key("Shift")));
+        input.event(&mut ev(&key("Control")));
+        input.event(&mut ev(&WidgetEvent::FocusLost));
+        // Refocus — a stuck Shift or word modifier must not leak into
+        // the new session.
+        focus(&mut input);
+        input.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(input.selection(), None);
+        assert_eq!(input.cursor, 2); // one char, not a word jump
+    }
+
+    #[test]
+    fn text_input_focus_loss_mid_drag_stops_drag() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
+        let x = click_x(&mut input, 2);
+        press(&mut input, x, 1);
+        assert!(input.dragging);
+        input.event(&mut ev(&WidgetEvent::FocusLost));
+        assert!(!input.dragging);
+        input.event(&mut ev(&WidgetEvent::PointerMoved {
+            position: Vec2::new(150.0, 12.0),
+        }));
+        assert_eq!(input.selection(), None);
+    }
+
+    #[test]
+    fn text_input_triple_click_drag_stays_line() {
+        let mut input = TextInput::new("F").value("alpha beta gamma");
+        focus(&mut input);
+        let x = click_x(&mut input, 5);
+        press(&mut input, x, 3);
+        // Line granularity — a drag has nothing to extend in a
+        // single-line field, so the selection stays whole.
+        let left = click_x(&mut input, 2);
+        input.event(&mut ev(&WidgetEvent::PointerMoved {
+            position: Vec2::new(left, 12.0),
+        }));
+        assert_eq!(input.selection(), Some((0, "alpha beta gamma".len())));
+    }
+
+    #[test]
+    fn text_input_undo_stack_is_bounded() {
+        let mut input = TextInput::new("F");
+        focus(&mut input);
+        for _ in 0..UNDO_LIMIT + 5 {
+            input.event(&mut ev(&ime("x")));
+        }
+        assert_eq!(input.value.len(), UNDO_LIMIT + 5);
+        let mut undone = 0;
+        while input.can_undo() {
+            input.event(&mut ev(&key("Ctrl+Z")));
+            undone += 1;
+        }
+        // Only the newest UNDO_LIMIT edits are reachable — the oldest
+        // snapshots fell off the front of the deque.
+        assert_eq!(undone, UNDO_LIMIT);
+        assert_eq!(input.value.len(), 5);
+    }
+
+    #[test]
+    fn text_input_undo_redo_empty_stack_returns_handled() {
+        let mut input = TextInput::new("F").value("ab");
+        focus(&mut input);
+        // Empty stacks report Handled — the field consumed the
+        // shortcut, there was just nothing to do.
+        assert_eq!(input.event(&mut ev(&key("Ctrl+Z"))), EventResponse::Handled);
+        assert_eq!(input.event(&mut ev(&key("Ctrl+Y"))), EventResponse::Handled);
+        assert_eq!(input.event(&mut ev(&key("Undo"))), EventResponse::Handled);
+        assert_eq!(input.event(&mut ev(&key("Redo"))), EventResponse::Handled);
+        assert_eq!(input.value, "ab");
+    }
+
+    #[test]
+    fn text_input_set_value_drops_history_quietly() {
+        let mut input = TextInput::new("F");
+        focus(&mut input);
+        input.event(&mut ev(&ime("abc")));
+        assert!(input.can_undo());
+        assert!(input.take_edited()); // drain the flag typing set
+        input.set_value("fresh");
+        // Programmatic writes are not user edits — Qt setText
+        // semantics: history drops and the edited flag stays clear.
+        assert!(!input.can_undo());
+        assert!(!input.can_redo());
+        assert!(!input.take_edited());
+        assert_eq!(input.cursor, 5);
+    }
+
+    #[test]
+    fn text_input_key_release_non_modifier_ignored() {
+        let mut input = TextInput::new("F").value("ab");
+        focus(&mut input);
+        assert_eq!(
+            input.event(&mut ev(&WidgetEvent::KeyReleased {
+                key: "x".to_string(),
+            })),
+            EventResponse::Ignored
+        );
+        // Modifier releases are consumed to clear the tracked state.
+        input.event(&mut ev(&key("Shift")));
+        assert_eq!(
+            input.event(&mut ev(&WidgetEvent::KeyReleased {
+                key: "Shift".to_string(),
+            })),
+            EventResponse::Handled
+        );
+        // Post-release arrows collapse rather than extend.
+        input.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(input.selection(), None);
+        assert_eq!(input.cursor, 1);
+    }
+
+    #[test]
+    fn text_input_navigation_keys_pass_through() {
+        let mut input = TextInput::new("F").value("ab");
+        focus(&mut input);
+        // Single-line fields don't consume line/page/submit keys —
+        // they bubble so parents can handle Enter-to-submit, Tab
+        // traversal, and so on. Bare characters are also ignored:
+        // text arrives via ImeCommitted, not KeyPressed.
+        for k in [
+            "Enter",
+            "Return",
+            "Tab",
+            "PageUp",
+            "PageDown",
+            "ArrowUp",
+            "ArrowDown",
+            "a",
+        ] {
+            assert_eq!(input.event(&mut ev(&key(k))), EventResponse::Ignored, "{k}");
+            assert_eq!(input.value, "ab");
+        }
+    }
+
+    #[test]
+    fn text_input_word_jump_crosses_whitespace_runs() {
+        let mut input = TextInput::new("F").value("foo   bar");
+        focus(&mut input);
+        // Ctrl+Left hops between word edges — whitespace runs are
+        // crossed, never landed inside.
+        input.event(&mut ev(&key("Ctrl+ArrowLeft")));
+        assert_eq!(input.cursor, 6); // start of "bar"
+        input.event(&mut ev(&key("Ctrl+ArrowLeft")));
+        assert_eq!(input.cursor, 3); // end of "foo"
+        input.event(&mut ev(&key("Ctrl+ArrowLeft")));
+        assert_eq!(input.cursor, 0); // start of "foo"
+    }
+
+    #[test]
+    fn text_input_ctrl_backspace_with_selection_deletes_selection_only() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
+        input.event(&mut ev(&key("Ctrl+Shift+ArrowLeft")));
+        assert_eq!(input.selected_text(), Some("beta"));
+        input.event(&mut ev(&key("Ctrl+Backspace")));
+        // The open selection is deleted — the word before it survives.
+        assert_eq!(input.value, "alpha ");
+        assert_eq!(input.cursor, 6);
+    }
+
+    /// Window-space x of a caret boundary inside the painted bullet
+    /// run of a masked field — the mirror of `click_x` for `secure`.
+    fn masked_click_x(input: &mut TextInput, bullet: usize) -> f32 {
+        let mask = input.mask_text();
+        let p = input
+            .text_painter
+            .get_or_insert_with(crate::text_paint::shared_painter);
+        TEXT_PAD_X + p.caret_x(&mask, FONT_PT, bullet * BULLET_LEN)
+    }
+
+    #[test]
+    fn text_input_masked_field_hit_tests_bullet_run() {
+        let mut input = TextInput::new("P").value("h\u{e9}llo").secure(true);
+        focus(&mut input);
+        // The painted run is bullets; a click past the second bullet
+        // maps back to the real byte offset of the second grapheme.
+        let x = masked_click_x(&mut input, 2);
+        press(&mut input, x, 1);
+        assert_eq!(input.cursor, 3); // 'h' + 'é' = 3 bytes
+                                     // Deletion still steps real grapheme clusters.
+        input.event(&mut ev(&key("Backspace")));
+        assert_eq!(input.value, "hllo");
+        assert_eq!(input.cursor, 1);
+    }
+
+    #[test]
+    fn text_input_masked_cut_operates_on_real_text() {
+        // Documented behavior: editing and clipboard act on the real
+        // value while the display shows bullets.
+        let mut input = TextInput::new("P").value("secret").secure(true);
+        focus(&mut input);
+        input.event(&mut ev(&key("SelectAll")));
+        input.event(&mut ev(&key("Ctrl+X")));
+        assert_eq!(input.value, "");
+        input.event(&mut ev(&key("Ctrl+Z")));
+        assert_eq!(input.value, "secret");
+    }
+
+    #[test]
+    fn text_input_read_only_clearable_zone_inert() {
+        let mut input = TextInput::new("S")
+            .value("query")
+            .clearable(true)
+            .read_only(true);
+        focus(&mut input);
+        input.event(&mut ev(&key("Home")));
+        // No ✕ zone exists on a read-only field — the press falls
+        // through to the text and places the caret like any click.
+        assert_eq!(press(&mut input, 190.0, 1), EventResponse::CapturePointer);
+        assert_eq!(input.value, "query");
+        assert_eq!(input.cursor, 5);
+        input.event(&mut ev(&WidgetEvent::PointerReleased {
+            position: Vec2::new(190.0, 12.0),
+            button: PointerButton::Primary,
+        }));
+    }
+
+    #[test]
+    fn text_input_select_all_chorded() {
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        input.event(&mut ev(&key("Ctrl+A")));
+        assert_eq!(input.selection(), Some((0, 3)));
+    }
+
+    #[test]
+    fn text_input_select_all_on_empty_is_collapsed() {
+        let mut input = TextInput::new("F");
+        focus(&mut input);
+        input.event(&mut ev(&key("SelectAll")));
+        assert_eq!(input.selection(), None);
+        input.event(&mut ev(&key("Backspace")));
+        assert_eq!(input.value, "");
+        assert!(!input.can_undo());
+    }
+
+    #[test]
+    fn text_input_double_click_at_end_selects_last_word() {
+        let mut input = TextInput::new("F").value("alpha beta");
+        focus(&mut input);
+        // A double-click past the text end resolves to the last
+        // segment — matching platform double-click behavior.
+        press(&mut input, 195.0, 2);
+        assert_eq!(input.selected_text(), Some("beta"));
+    }
+
+    #[test]
+    fn text_input_copy_with_no_selection_is_noop() {
+        let mut input = TextInput::new("F").value("abc");
+        focus(&mut input);
+        // Nothing selected — Copy is consumed but mutates nothing.
+        assert_eq!(input.event(&mut ev(&key("Ctrl+C"))), EventResponse::Handled);
+        assert_eq!(input.value, "abc");
+        assert!(!input.take_edited());
+    }
 }

@@ -5,7 +5,16 @@
 //! side by side with painted dot separators. The composite reads
 //! out as `[u8; 4]`; any octet change parks a flag in
 //! [`IpInput::take_changed`]. Each octet stays a fully editable
-//! spin field — cursor keys, steppers, and typed entry all work.
+//! spin field — cursor keys, steppers, and typed entry all work —
+//! with the IP-control conveniences layered on top:
+//!
+//! - Typing `.` jumps to the next octet, committing (and clamping)
+//!   the departing field — so does reaching three digits.
+//! - Committing a dotted quad (`"192.168.1.1"`) or pasting one via
+//!   Ctrl+V distributes it across the octets.
+//! - `Backspace` in an emptied octet retreats to the previous one.
+//! - Entering an octet (Tab, click, or a `.` jump) selects its text
+//!   so the next keystroke replaces the field wholesale.
 //!
 //! # Examples
 //!
@@ -19,8 +28,8 @@
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite_core::{
-    EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect,
-    RenderMinimum, UnderflowPolicy, Widget,
+    EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
+    Rect, RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
 };
 use martensite_theme::TokenKey;
 
@@ -216,6 +225,127 @@ impl IpInput {
     fn dot_w(&self) -> f32 {
         DOT_W_PT * self.scale
     }
+
+    /// The octet currently holding keyboard focus, if any.
+    fn focused_octet(&self) -> Option<usize> {
+        self.octets.iter().position(|o| o.focused())
+    }
+
+    /// Delivers an event to octet `index` in its own bounds.
+    fn deliver(&mut self, index: usize, event: &WidgetEvent) -> EventResponse {
+        let mut ecx = EventContext {
+            event,
+            bounds: self.octet_bounds(index),
+            scale: self.scale,
+        };
+        self.octets[index].event(&mut ecx)
+    }
+
+    /// Moves keyboard focus to octet `index`. Departing octets get
+    /// `FocusLost`, which commits their pending text (an over-range
+    /// field clamps to 255 on the way out); the arriving octet selects
+    /// its text so the next digit replaces the field wholesale — the
+    /// IP control's enter-to-overwrite idiom. Re-entering an already
+    /// focused octet still round-trips `FocusLost`→`FocusGained` so a
+    /// pasted segment that lands focus back on the same octet commits.
+    fn transfer_focus(&mut self, index: usize) {
+        for i in 0..4 {
+            if i != index && self.octets[i].focused() {
+                self.deliver(i, &WidgetEvent::FocusLost);
+            }
+        }
+        if self.octets[index].focused() {
+            self.deliver(index, &WidgetEvent::FocusLost);
+        }
+        self.deliver(index, &WidgetEvent::FocusGained);
+        let select_all = WidgetEvent::KeyPressed {
+            key: "SelectAll".to_string(),
+            repeat: false,
+        };
+        self.deliver(index, &select_all);
+    }
+
+    /// Distributes a dotted commit (`"192.168.1.1"`, or a lone `"."`)
+    /// across consecutive octets starting at `start`. Each segment
+    /// lands in its octet's field and commits — clamping above 255 —
+    /// as focus moves on. Surplus segments past the fourth are
+    /// dropped. Focus lands on the last octet a segment addressed.
+    fn distribute(&mut self, start: usize, text: &str) {
+        for (k, seg) in text.split('.').enumerate() {
+            let j = start + k;
+            if j >= 4 {
+                break;
+            }
+            self.transfer_focus(j);
+            if !seg.is_empty() {
+                let commit = WidgetEvent::ImeCommitted {
+                    text: seg.to_string(),
+                };
+                self.deliver(j, &commit);
+            }
+        }
+        let last = (start + text.matches('.').count()).min(3);
+        self.transfer_focus(last);
+    }
+
+    /// The standard child-forwarding pass: positional events go to the
+    /// octet under the pointer; keyboard/focus/IME events reach every
+    /// octet and the unfocused ones gate themselves out. A claimed
+    /// primary press defocuses the sibling octets and selects the
+    /// newly entered field's text; a press nobody claimed (a dot
+    /// separator) defocuses all of them.
+    fn forward(&mut self, cx: &mut EventContext) -> EventResponse {
+        let (press, first_click) = match cx.event {
+            WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                count,
+                ..
+            } => (true, *count == 1),
+            _ => (false, false),
+        };
+        let mut response = EventResponse::Ignored;
+        for i in (0..4).rev() {
+            let b = self.octet_bounds(i);
+            let hit = match cx.event {
+                WidgetEvent::PointerPressed { position, .. }
+                | WidgetEvent::PointerMoved { position }
+                | WidgetEvent::PointerReleased { position, .. }
+                | WidgetEvent::Scroll { position, .. } => b.contains(*position),
+                _ => true, // keyboard/focus events flow to every octet
+            };
+            if !hit {
+                continue;
+            }
+            let r = self.deliver(i, cx.event);
+            if r != EventResponse::Ignored {
+                if press {
+                    self.broadcast_focus_lost_except(Some(i), cx.scale);
+                    if first_click {
+                        let select_all = WidgetEvent::KeyPressed {
+                            key: "SelectAll".to_string(),
+                            repeat: false,
+                        };
+                        self.deliver(i, &select_all);
+                    }
+                }
+                response = r;
+                break;
+            }
+        }
+        if press && response == EventResponse::Ignored {
+            self.broadcast_focus_lost_except(None, cx.scale);
+        }
+        response
+    }
+
+    /// Applies the octet-change diff seam after event handling.
+    fn finish(&mut self, response: EventResponse) -> EventResponse {
+        if self.address() != self.last {
+            self.last = self.address();
+            self.changed = true;
+        }
+        response
+    }
 }
 
 impl Widget for IpInput {
@@ -273,35 +403,98 @@ impl Widget for IpInput {
         if !self.enabled {
             return EventResponse::Ignored;
         }
-        let mut response = EventResponse::Ignored;
-        for i in (0..4).rev() {
-            let b = self.octet_bounds(i);
-            let hit = match cx.event {
-                martensite_core::WidgetEvent::PointerPressed { position, .. }
-                | martensite_core::WidgetEvent::PointerMoved { position }
-                | martensite_core::WidgetEvent::PointerReleased { position, .. }
-                | martensite_core::WidgetEvent::Scroll { position, .. } => b.contains(*position),
-                _ => true, // keyboard/focus events flow to every octet
-            };
-            if !hit {
-                continue;
+        let event = cx.event;
+        let response = match event {
+            // Focus-in lands on the octet that last held it — or the
+            // first when nothing was focused. Without this the
+            // reverse-order forwarding loop would tab into octet 4.
+            WidgetEvent::FocusGained => {
+                let target = self.focused_octet().unwrap_or(0);
+                self.transfer_focus(target);
+                EventResponse::RequestRepaint
             }
-            let mut ecx = EventContext {
-                event: cx.event,
-                bounds: b,
-                scale: cx.scale,
-            };
-            let r = self.octets[i].event(&mut ecx);
-            if r != EventResponse::Ignored {
-                response = r;
-                break;
+            // Focus-out broadcasts: every octet commits pending text
+            // and drops focus. Forwarding to the first claimer would
+            // strand stale focus and uncommitted digits elsewhere.
+            WidgetEvent::FocusLost => {
+                self.broadcast_focus_lost_except(None, cx.scale);
+                EventResponse::RequestRepaint
             }
-        }
-        if self.address() != self.last {
-            self.last = self.address();
-            self.changed = true;
-        }
-        response
+            WidgetEvent::KeyPressed { key, .. } => {
+                let (word, _, base) = crate::widgets::text_input::parse_key_chord(key);
+                match base {
+                    // The '.' key press itself is dead — the committed
+                    // '.' *text* performs the jump below. Swallowing
+                    // the key event keeps the pair from double-jumping.
+                    "." | "Period" | "Decimal" | "NumpadDecimal"
+                        if self.focused_octet().is_some() =>
+                    {
+                        EventResponse::Handled
+                    }
+                    // Backspace in an emptied octet retreats to the
+                    // previous field — the IP-control convention.
+                    "Backspace" => match self.focused_octet() {
+                        Some(i) if i > 0 && self.octets[i].text().is_empty() => {
+                            self.transfer_focus(i - 1);
+                            EventResponse::RequestRepaint
+                        }
+                        _ => self.forward(cx),
+                    },
+                    // A dotted clipboard payload distributes across
+                    // octets; anything else pastes into the one field.
+                    "Paste" | "v" | "V" if word || base == "Paste" => match self.focused_octet() {
+                        Some(start) => {
+                            let cb = martensite_clipboard::default_platform_clipboard();
+                            match cb.get_contents(martensite_clipboard::clipboard::MIME_TEXT_PLAIN)
+                            {
+                                Some(bytes) => {
+                                    let text = String::from_utf8_lossy(&bytes);
+                                    if text.contains('.') {
+                                        self.distribute(start, &text);
+                                        EventResponse::RequestRepaint
+                                    } else {
+                                        self.forward(cx)
+                                    }
+                                }
+                                None => self.forward(cx),
+                            }
+                        }
+                        None => EventResponse::Ignored,
+                    },
+                    _ => self.forward(cx),
+                }
+            }
+            // Committed text containing a '.' distributes across
+            // octets — typing "." jumps, pasting a quad fills.
+            WidgetEvent::ImeCommitted { text } if text.contains('.') => {
+                match self.focused_octet() {
+                    Some(start) => {
+                        self.distribute(start, text);
+                        EventResponse::RequestRepaint
+                    }
+                    None => EventResponse::Ignored,
+                }
+            }
+            WidgetEvent::ImeCommitted { .. } => match self.focused_octet() {
+                Some(i) => {
+                    let r = self.deliver(i, event);
+                    // Three typed digits auto-advance to the next
+                    // octet, committing the field on the way out.
+                    let digits = self.octets[i]
+                        .text()
+                        .chars()
+                        .filter(|c| c.is_ascii_digit())
+                        .count();
+                    if r != EventResponse::Ignored && i < 3 && digits >= 3 {
+                        self.transfer_focus(i + 1);
+                    }
+                    r
+                }
+                None => EventResponse::Ignored,
+            },
+            _ => self.forward(cx),
+        };
+        self.finish(response)
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -424,5 +617,246 @@ mod tests {
             scale: 1.0,
         });
         assert!(!ip.take_changed());
+    }
+
+    fn send(ip: &mut IpInput, event: &WidgetEvent) -> EventResponse {
+        let mut cx = EventContext {
+            event,
+            bounds: ip.bounds,
+            scale: 1.0,
+        };
+        ip.event(&mut cx)
+    }
+
+    fn key(name: &str) -> WidgetEvent {
+        WidgetEvent::KeyPressed {
+            key: name.into(),
+            repeat: false,
+        }
+    }
+
+    fn commit(text: &str) -> WidgetEvent {
+        WidgetEvent::ImeCommitted { text: text.into() }
+    }
+
+    fn press_octet(ip: &mut IpInput, i: usize) -> EventResponse {
+        let b = ip.octet_bounds(i);
+        send(
+            ip,
+            &WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                // +5px stays on the text field, clear of the stepper.
+                position: Vec2::new(b.min_x() + 5.0, b.min_y() + b.height() / 2.0),
+                count: 1,
+            },
+        )
+    }
+
+    fn focused_index(ip: &IpInput) -> Option<usize> {
+        ip.octets.iter().position(|o| o.focused())
+    }
+
+    #[test]
+    fn focus_gained_lands_on_first_octet() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        send(&mut ip, &WidgetEvent::FocusGained);
+        assert_eq!(focused_index(&ip), Some(0));
+        send(&mut ip, &commit("5"));
+        assert_eq!(focused_index(&ip), Some(0));
+        send(&mut ip, &WidgetEvent::FocusLost);
+        assert_eq!(ip.address(), [5, 0, 0, 0]);
+        assert_eq!(focused_index(&ip), None);
+        assert!(ip.take_changed());
+    }
+
+    #[test]
+    fn focus_lost_broadcasts_to_every_octet() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        // Focus octet 0 by click, type without committing, then blur —
+        // the pending digits must commit on the way out, not strand.
+        press_octet(&mut ip, 0);
+        assert_eq!(focused_index(&ip), Some(0));
+        send(&mut ip, &commit("77"));
+        send(&mut ip, &WidgetEvent::FocusLost);
+        assert_eq!(focused_index(&ip), None);
+        assert_eq!(ip.address()[0], 77);
+    }
+
+    #[test]
+    fn click_defocuses_sibling_octets() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        press_octet(&mut ip, 0);
+        send(&mut ip, &commit("9")); // uncommitted in octet 0
+        press_octet(&mut ip, 2);
+        assert_eq!(focused_index(&ip), Some(2));
+        // Moving focus committed octet 0's pending text.
+        assert_eq!(ip.address()[0], 9);
+        assert!(ip.take_changed());
+    }
+
+    #[test]
+    fn dot_jumps_to_next_octet_and_commits() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        send(&mut ip, &WidgetEvent::FocusGained);
+        send(&mut ip, &commit("12")); // replaces the selected "0"
+        send(&mut ip, &commit("."));
+        assert_eq!(focused_index(&ip), Some(1));
+        assert_eq!(ip.address()[0], 12);
+        assert!(ip.take_changed());
+    }
+
+    #[test]
+    fn period_key_press_is_consumed_without_double_jump() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        send(&mut ip, &WidgetEvent::FocusGained);
+        // The raw key event precedes the committed text on real
+        // backends — only the commit may jump.
+        assert_eq!(send(&mut ip, &key(".")), EventResponse::Handled);
+        assert_eq!(focused_index(&ip), Some(0));
+        send(&mut ip, &commit("."));
+        assert_eq!(focused_index(&ip), Some(1));
+    }
+
+    #[test]
+    fn three_digits_auto_advance() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        send(&mut ip, &WidgetEvent::FocusGained);
+        send(&mut ip, &commit("1"));
+        send(&mut ip, &commit("9"));
+        assert_eq!(focused_index(&ip), Some(0));
+        send(&mut ip, &commit("2"));
+        assert_eq!(focused_index(&ip), Some(1));
+        // The auto-advance committed octet 0.
+        assert_eq!(ip.address()[0], 192);
+    }
+
+    #[test]
+    fn over_range_octet_clamps_on_exit() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        send(&mut ip, &WidgetEvent::FocusGained);
+        send(&mut ip, &commit("999")); // 3 digits → advance + clamp
+        assert_eq!(focused_index(&ip), Some(1));
+        assert_eq!(ip.address()[0], 255);
+    }
+
+    #[test]
+    fn dotted_commit_distributes_across_octets() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        send(&mut ip, &WidgetEvent::FocusGained);
+        send(&mut ip, &commit("192.168.1.1"));
+        assert_eq!(ip.address(), [192, 168, 1, 1]);
+        assert_eq!(focused_index(&ip), Some(3));
+        assert!(ip.take_changed());
+    }
+
+    #[test]
+    fn dotted_commit_starts_at_focused_octet() {
+        let mut ip = IpInput::new().value([0, 0, 0, 0]);
+        laid_out(&mut ip, 240.0, 26.0);
+        press_octet(&mut ip, 1);
+        send(&mut ip, &commit("8.8"));
+        assert_eq!(ip.address(), [0, 8, 8, 0]);
+        assert_eq!(focused_index(&ip), Some(2));
+    }
+
+    #[test]
+    fn dotted_commit_overflow_drops_extra_segments() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        send(&mut ip, &WidgetEvent::FocusGained);
+        send(&mut ip, &commit("1.2.3.4.5.6"));
+        assert_eq!(ip.address(), [1, 2, 3, 4]);
+        assert_eq!(focused_index(&ip), Some(3));
+    }
+
+    #[test]
+    fn leading_zeros_normalize_on_commit() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        send(&mut ip, &WidgetEvent::FocusGained);
+        send(&mut ip, &commit("007")); // 3 digits → advance + commit
+        assert_eq!(ip.address()[0], 7);
+        assert_eq!(ip.octets[0].text(), "7");
+    }
+
+    #[test]
+    fn backspace_on_empty_octet_retreats() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        press_octet(&mut ip, 1);
+        // The entry select-all is replaced by "" — the octet's field
+        // is now empty, so Backspace steps back instead of editing.
+        send(&mut ip, &commit(""));
+        assert_eq!(ip.octets[1].text(), "");
+        send(&mut ip, &key("Backspace"));
+        assert_eq!(focused_index(&ip), Some(0));
+    }
+
+    #[test]
+    fn backspace_on_filled_octet_edits_normally() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        press_octet(&mut ip, 1);
+        send(&mut ip, &commit("25"));
+        send(&mut ip, &key("Backspace"));
+        assert_eq!(focused_index(&ip), Some(1));
+        assert_eq!(ip.octets[1].text(), "2");
+    }
+
+    #[test]
+    fn unparseable_octet_restores_on_exit() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        press_octet(&mut ip, 0);
+        send(&mut ip, &commit("abc"));
+        assert_eq!(ip.octets[0].text(), "abc");
+        send(&mut ip, &WidgetEvent::FocusLost);
+        assert_eq!(ip.address()[0], 0);
+        assert_eq!(ip.octets[0].text(), "0");
+    }
+
+    #[test]
+    fn scroll_over_octet_steps_value() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        let b = ip.octet_bounds(0);
+        send(
+            &mut ip,
+            &WidgetEvent::Scroll {
+                position: Vec2::new(b.min_x() + 5.0, b.min_y() + 5.0),
+                delta: Vec2::new(0.0, 30.0),
+            },
+        );
+        assert_eq!(ip.address()[0], 1);
+        assert!(ip.take_changed());
+    }
+
+    #[test]
+    fn editing_ignored_without_octet_focus() {
+        let mut ip = IpInput::new();
+        laid_out(&mut ip, 240.0, 26.0);
+        assert_eq!(send(&mut ip, &commit("5")), EventResponse::Ignored);
+        assert_eq!(send(&mut ip, &key(".")), EventResponse::Ignored);
+        assert_eq!(ip.address(), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn entering_octet_selects_for_replace() {
+        let mut ip = IpInput::new().value([10, 0, 0, 0]);
+        laid_out(&mut ip, 240.0, 26.0);
+        press_octet(&mut ip, 0);
+        // First keystroke replaces the field wholesale — no "100".
+        send(&mut ip, &commit("1"));
+        send(&mut ip, &commit("9"));
+        send(&mut ip, &commit("2")); // 3 digits → advance
+        assert_eq!(ip.address()[0], 192);
     }
 }

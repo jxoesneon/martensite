@@ -1222,8 +1222,12 @@ impl Mention {
         self.committed = Some(label);
         // The commit mutated the value — surface it on the edit seam.
         self.edited = true;
-        self.token = None;
         self.close();
+        // The inserted trailing space ends the token — refilter so
+        // `filtered()` empties out (its contract: empty while no
+        // token is active) instead of serving the pre-commit rows.
+        self.refilter();
+        self.push_shared();
     }
 
     /// Commits `filtered[highlighted]`, or the first row when nothing
@@ -2184,5 +2188,161 @@ mod tests {
         assert!(o.entry(id).unwrap().content().is_loading());
         // The skeleton surface keeps a legible height (3-row floor).
         assert!(o.entry_bounds(id).unwrap().height() >= 60.0);
+    }
+
+    #[test]
+    fn trigger_after_punctuation_opens() {
+        // The word-start rule keys off the character BEFORE the
+        // trigger — any non-word char (not just a space) begins a
+        // token.
+        let m = Mention::new().suggestions(["alice"]).with_value("hi (@al");
+        assert_eq!(m.filtered(), &["alice".to_string()]);
+        let m = Mention::new().suggestions(["alice"]).with_value("ping,@al");
+        assert_eq!(m.filtered(), &["alice".to_string()]);
+    }
+
+    #[test]
+    fn second_trigger_starts_a_fresh_token() {
+        // "@@" — the first trigger is abandoned, the second opens
+        // (the char before it is itself a trigger, not a word char).
+        let mut m = Mention::new().suggestions(["alice", "bob"]);
+        laid_out(&mut m);
+        focus(&mut m);
+        type_text(&mut m, "@@");
+        assert!(m.is_open());
+        assert_eq!(m.filtered().len(), 2);
+    }
+
+    #[test]
+    fn multibyte_trigger_commits_in_place() {
+        // A non-ASCII trigger exercises the byte-offset arithmetic —
+        // the token's start is a byte index into the value.
+        let mut m = Mention::new()
+            .trigger('€')
+            .suggestions(["alice"])
+            .with_value("hi €al");
+        laid_out(&mut m);
+        focus(&mut m);
+        assert!(m.is_open());
+        event(&mut m, &key("Enter"));
+        assert_eq!(m.value(), "hi €alice ");
+        assert_eq!(m.take_committed(), Some("alice".to_string()));
+    }
+
+    #[test]
+    fn keys_still_edit_when_popup_closed() {
+        // With no active token the field keeps its full editing
+        // vocabulary — ArrowLeft repositions the caret, so the next
+        // commit lands mid-string.
+        let mut m = Mention::new().suggestions(["alice"]);
+        laid_out(&mut m);
+        focus(&mut m);
+        type_text(&mut m, "ab");
+        assert!(!m.is_open());
+        event(&mut m, &key("ArrowLeft"));
+        type_text(&mut m, "x");
+        assert_eq!(m.value(), "axb");
+    }
+
+    #[test]
+    fn closed_enter_tab_arrows_fall_through() {
+        // No token, no popup — Enter/Tab/arrows are ordinary field
+        // keys, not commits or navigation.
+        let mut m = Mention::new().suggestions(["alice"]).with_value("plain");
+        laid_out(&mut m);
+        focus(&mut m);
+        assert!(!m.is_open());
+        assert_eq!(event(&mut m, &key("Enter")), EventResponse::Ignored);
+        assert_eq!(event(&mut m, &key("Tab")), EventResponse::Ignored);
+        assert_eq!(event(&mut m, &key("ArrowDown")), EventResponse::Ignored);
+        assert_eq!(m.take_committed(), None);
+        assert_eq!(m.value(), "plain");
+    }
+
+    #[test]
+    fn escape_unwinds_popup_then_selection_then_falls_through() {
+        // Escape ordering: an open popup dismisses first (keeping the
+        // token text), then the field's own Escape collapses a
+        // selection, and finally the key propagates — a mention field
+        // never clears the whole message on Escape.
+        let mut m = Mention::new().suggestions(["alice"]).with_value("@a");
+        laid_out(&mut m);
+        focus(&mut m);
+        assert!(m.is_open());
+        event(&mut m, &key("Escape"));
+        assert!(!m.is_open());
+        assert_eq!(m.value(), "@a");
+
+        event(&mut m, &key("SelectAll"));
+        assert_eq!(event(&mut m, &key("Escape")), EventResponse::RequestRepaint);
+        assert_eq!(m.value(), "@a"); // selection collapsed, text kept
+        assert_eq!(event(&mut m, &key("Escape")), EventResponse::Ignored);
+    }
+
+    #[test]
+    fn navigation_never_writes_the_field() {
+        // Unlike `AutoComplete`'s preview, arrowing through mention
+        // suggestions does not touch the text — the suggestion only
+        // enters on commit, so Escape needs no baseline restore.
+        let mut m = Mention::new()
+            .suggestions(["alice", "albert"])
+            .with_value("@al");
+        laid_out(&mut m);
+        focus(&mut m);
+        event(&mut m, &key("ArrowDown"));
+        event(&mut m, &key("ArrowDown"));
+        assert_eq!(m.highlighted(), Some(1));
+        assert_eq!(m.value(), "@al");
+    }
+
+    #[test]
+    fn commit_empties_filtered_list() {
+        // The trailing space ends the token — `filtered()` must
+        // empty on commit, not keep serving the pre-commit rows.
+        let mut m = Mention::new().suggestions(["alice"]).with_value("@al");
+        laid_out(&mut m);
+        focus(&mut m);
+        event(&mut m, &key("Enter"));
+        assert_eq!(m.value(), "@alice ");
+        assert!(m.filtered().is_empty());
+        assert!(!m.is_open());
+    }
+
+    #[test]
+    fn set_value_while_focused_reopens() {
+        // A programmatic write still refilters — and reopens when the
+        // widget is the user's current (focused) context.
+        let mut m = Mention::new().suggestions(["alice"]);
+        laid_out(&mut m);
+        focus(&mut m);
+        assert!(!m.is_open());
+        m.set_value("@a");
+        assert!(m.is_open());
+    }
+
+    #[test]
+    fn popup_keyboard_navigation_mirrors_highlight() {
+        let mut m = Mention::new()
+            .suggestions(["alice", "albert"])
+            .with_value("@al");
+        laid_out(&mut m);
+        focus(&mut m);
+        let mut o = overlay();
+        m.sync_overlay(&mut o);
+        o.layout_pass();
+        // The layer offers non-Escape keys to the topmost popup first.
+        assert_eq!(
+            o.dispatch_event(&key("ArrowDown")),
+            EventResponse::RequestRepaint
+        );
+        m.sync_overlay(&mut o);
+        assert_eq!(m.highlighted(), Some(0));
+        // Popup-side Enter commits — the highlighted row, or the first
+        // when nothing was highlighted yet (`rc-mentions` rule).
+        assert_eq!(o.dispatch_event(&key("Enter")), EventResponse::Handled);
+        m.sync_overlay(&mut o);
+        assert_eq!(m.take_committed(), Some("alice".to_string()));
+        assert_eq!(m.value(), "@alice ");
+        assert!(!m.is_open());
     }
 }

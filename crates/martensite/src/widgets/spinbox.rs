@@ -503,8 +503,15 @@ impl SpinBox {
         self.pressed.is_some()
     }
 
-    /// Clamps `v` to `[min, max]` and snaps to the `step` grid.
+    /// Clamps `v` to `[min, max]` and snaps to the `step` grid. NaN is
+    /// refused outright: `f64::parse` accepts `"NaN"`, and a NaN value
+    /// would survive `clamp` as NaN and wedge the field — every
+    /// subsequent step would still be NaN. Infinities still clamp to
+    /// the range ends.
     fn snap(&self, v: f64) -> f64 {
+        if v.is_nan() {
+            return self.value;
+        }
         let clamped = v.clamp(self.min, self.max);
         if self.step > 0.0 {
             let steps = ((clamped - self.min) / self.step).round();
@@ -1296,5 +1303,211 @@ mod tests {
             event(&mut sb, &press(10.0, 12.0)),
             EventResponse::CapturePointer
         );
+    }
+
+    #[test]
+    fn typed_below_min_clamps_on_commit() {
+        let mut sb = SpinBox::new().range(0.0, 100.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &key("SelectAll"));
+        event(&mut sb, &WidgetEvent::ImeCommitted { text: "-5".into() });
+        event(&mut sb, &key("Enter"));
+        assert_eq!(sb.value(), 0.0);
+        assert_eq!(sb.text(), "0");
+    }
+
+    #[test]
+    fn typed_negative_in_signed_range_commits() {
+        let mut sb = SpinBox::new().range(-50.0, 50.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &key("SelectAll"));
+        event(&mut sb, &WidgetEvent::ImeCommitted { text: "-25".into() });
+        event(&mut sb, &key("Enter"));
+        assert_eq!(sb.value(), -25.0);
+        assert_eq!(sb.text(), "-25");
+    }
+
+    #[test]
+    fn typed_text_snaps_to_step_grid() {
+        let mut sb = SpinBox::new().range(0.0, 10.0).step(0.5).decimals(1);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &key("SelectAll"));
+        event(&mut sb, &WidgetEvent::ImeCommitted { text: "4.7".into() });
+        event(&mut sb, &key("Enter"));
+        assert_eq!(sb.value(), 4.5);
+        assert_eq!(sb.text(), "4.5");
+    }
+
+    #[test]
+    fn nan_never_wedges_the_value() {
+        let mut sb = SpinBox::new().range(0.0, 100.0).with_value(9.0);
+        // f64::parse accepts "NaN"/"inf" — a NaN must not install, or
+        // every later step stays NaN forever.
+        sb.set_value(f64::NAN);
+        assert_eq!(sb.value(), 9.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &key("SelectAll"));
+        event(&mut sb, &WidgetEvent::ImeCommitted { text: "nan".into() });
+        event(&mut sb, &key("Enter"));
+        assert_eq!(sb.value(), 9.0);
+        assert_eq!(sb.text(), "9");
+        event(
+            &mut sb,
+            &WidgetEvent::SemanticAction(SemanticAction::SetValue("NaN".into())),
+        );
+        assert_eq!(sb.value(), 9.0);
+    }
+
+    #[test]
+    fn typed_infinity_clamps_to_range_end() {
+        let mut sb = SpinBox::new().range(0.0, 100.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &key("SelectAll"));
+        event(&mut sb, &WidgetEvent::ImeCommitted { text: "inf".into() });
+        event(&mut sb, &key("Enter"));
+        assert_eq!(sb.value(), 100.0);
+        event(&mut sb, &key("SelectAll"));
+        event(
+            &mut sb,
+            &WidgetEvent::ImeCommitted {
+                text: "-inf".into(),
+            },
+        );
+        event(&mut sb, &key("Enter"));
+        assert_eq!(sb.value(), 0.0);
+    }
+
+    #[test]
+    fn typed_negative_zero_normalizes() {
+        let mut sb = SpinBox::new().range(0.0, 100.0).with_value(5.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &key("SelectAll"));
+        event(&mut sb, &WidgetEvent::ImeCommitted { text: "-0".into() });
+        event(&mut sb, &key("Enter"));
+        assert_eq!(sb.value(), 0.0);
+        assert!(!sb.value().is_sign_negative());
+        assert_eq!(sb.text(), "0");
+    }
+
+    #[test]
+    fn empty_field_restores_formatted_value() {
+        let mut sb = SpinBox::new().range(0.0, 100.0).with_value(7.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &key("SelectAll"));
+        // Deleting the selection leaves "" — commit restores "7".
+        event(&mut sb, &WidgetEvent::ImeCommitted { text: "".into() });
+        assert_eq!(sb.text(), "");
+        event(&mut sb, &key("Enter"));
+        assert_eq!(sb.value(), 7.0);
+        assert_eq!(sb.text(), "7");
+    }
+
+    #[test]
+    fn scientific_notation_commits() {
+        let mut sb = SpinBox::new().range(0.0, 1000.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &key("SelectAll"));
+        event(&mut sb, &WidgetEvent::ImeCommitted { text: "1e2".into() });
+        event(&mut sb, &key("Enter"));
+        assert_eq!(sb.value(), 100.0);
+    }
+
+    #[test]
+    fn default_page_step_is_tenth_of_range() {
+        let mut sb = SpinBox::new().range(0.0, 50.0).with_value(20.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &key("PageUp"));
+        assert_eq!(sb.value(), 25.0); // +10% of 50
+                                      // A page_step below step still steps by at least `step`.
+        let mut sb = SpinBox::new()
+            .range(0.0, 50.0)
+            .step(4.0)
+            .with_page_step(1.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &key("PageUp"));
+        assert_eq!(sb.value(), 4.0);
+    }
+
+    #[test]
+    fn page_down_clamps_at_min() {
+        let mut sb = SpinBox::new().range(0.0, 100.0).with_value(3.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &key("PageDown")); // default jump is 10
+        assert_eq!(sb.value(), 0.0);
+    }
+
+    #[test]
+    fn scroll_commits_pending_text_first() {
+        let mut sb = SpinBox::new().range(0.0, 100.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &key("SelectAll"));
+        event(&mut sb, &WidgetEvent::ImeCommitted { text: "30".into() });
+        let wheel = WidgetEvent::Scroll {
+            position: Vec2::new(10.0, 12.0),
+            delta: Vec2::new(0.0, 30.0),
+        };
+        event(&mut sb, &wheel);
+        assert_eq!(sb.value(), 31.0);
+    }
+
+    #[test]
+    fn editing_events_need_focus() {
+        let mut sb = SpinBox::new().range(0.0, 100.0);
+        laid_out(&mut sb, 140.0, 24.0);
+        // Unfocused: committed text and keys are dead input.
+        assert_eq!(
+            event(&mut sb, &WidgetEvent::ImeCommitted { text: "5".into() }),
+            EventResponse::Ignored
+        );
+        assert_eq!(event(&mut sb, &key("Enter")), EventResponse::Ignored);
+        assert_eq!(sb.value(), 0.0);
+    }
+
+    #[test]
+    fn stepper_press_defocuses_field_commit() {
+        // Pressing ▲ commits pending text before stepping — Qt's
+        // "button press is an edit commit" rule.
+        let mut sb = SpinBox::new().range(0.0, 100.0).with_value(10.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &key("SelectAll"));
+        event(&mut sb, &WidgetEvent::ImeCommitted { text: "20".into() });
+        event(&mut sb, &press(130.0, 6.0)); // ▲
+        assert_eq!(sb.value(), 21.0); // 20 committed, then +1
+    }
+
+    #[test]
+    fn focus_lost_commits_step_safe_state() {
+        let mut sb = SpinBox::new().range(0.0, 100.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        laid_out(&mut sb, 140.0, 24.0);
+        event(&mut sb, &WidgetEvent::FocusGained);
+        event(&mut sb, &press(130.0, 6.0)); // ▲ held
+        event(&mut sb, &WidgetEvent::FocusLost);
+        // Blur drops the held-button repeat so ticks stop firing.
+        assert!(!sb.is_pressed());
+        assert!(!sb.tick(Duration::from_millis(600)));
     }
 }

@@ -10,7 +10,15 @@
 //! - `Role::SearchInput` accessibility — the inner field keeps its own
 //!   `Role::TextInput` node as a virtual child;
 //! - an `Enter` submit seam: [`SearchField::take_submitted`] yields
-//!   the field text from the moment `Enter` was pressed;
+//!   the field text from the moment `Enter` was pressed — gated on
+//!   field focus so a stray `Enter` cannot submit an unfocused search;
+//! - an `Escape` clear — the `<input type="search">` / `NSSearchField`
+//!   convention and the keyboard equivalent of the ✕ target. The
+//!   embedded field's own `Escape` (collapsing an active selection)
+//!   gets first claim; an empty or unfocused field lets the key fall
+//!   through so a containing widget (e.g.
+//!   [`SearchBar`](crate::widgets::search_bar::SearchBar), which turns
+//!   `Escape` into a close request before forwarding) can use it;
 //! - an optional caption [`label`](SearchField::label) painted above
 //!   the field when the widget's bounds leave room for a caption
 //!   strip (the same face/strip split `TextInput`'s
@@ -310,6 +318,25 @@ impl SearchField {
         self.field.placeholder.clone_from(&self.placeholder);
     }
 
+    /// Clears the field through its own event seam — `SelectAll`
+    /// then `Backspace` — so the edit records one undo step and
+    /// raises the `take_edited` flag, matching what the ✕ clear
+    /// target does.
+    fn clear_field(&mut self, scale: f32) {
+        for name in ["SelectAll", "Backspace"] {
+            let ev = WidgetEvent::KeyPressed {
+                key: name.to_string(),
+                repeat: false,
+            };
+            let mut child_cx = EventContext {
+                event: &ev,
+                bounds: self.field_rect,
+                scale,
+            };
+            self.field.event(&mut child_cx);
+        }
+    }
+
     /// Forwards an event to the embedded field the way the default
     /// `Widget::event` child walk would: positional events only inside
     /// the field's bounds, except moves and releases which always
@@ -410,6 +437,25 @@ impl Widget for SearchField {
             {
                 self.submitted = Some(self.field.value.clone());
                 EventResponse::RequestRepaint
+            }
+            WidgetEvent::KeyPressed { key, .. } if key.as_str() == "Escape" => {
+                // The field's own `Escape` collapses an active
+                // selection — let it win first. Otherwise a focused,
+                // non-empty search field clears (the
+                // `<input type="search">` convention — the keyboard
+                // equivalent of the ✕ target). An empty or unfocused
+                // field returns the field's `Ignored` so a container
+                // can still use the key.
+                let response = self.forward(cx);
+                if response == EventResponse::Ignored
+                    && self.field.focused()
+                    && !self.field.value.is_empty()
+                {
+                    self.clear_field(cx.scale);
+                    EventResponse::RequestRepaint
+                } else {
+                    response
+                }
             }
             WidgetEvent::SemanticAction(SemanticAction::SetValue(text)) => {
                 self.field.set_value(text.clone());
@@ -613,5 +659,132 @@ mod tests {
             &WidgetEvent::SemanticAction(SemanticAction::SetValue("typed".to_string())),
         );
         assert_eq!(field.value(), "typed");
+    }
+
+    #[test]
+    fn enter_without_focus_does_not_submit() {
+        // Regression: a stray Enter on an unfocused field must not
+        // submit — the embedded input ignores editing keys until
+        // focused, and the submit seam checks the same flag.
+        let mut field = SearchField::new().with_value("widgets");
+        laid_out(&mut field, 200.0, FIELD_PT);
+        assert_eq!(event(&mut field, &key("Enter")), EventResponse::Ignored);
+        assert_eq!(field.take_submitted(), None);
+    }
+
+    #[test]
+    fn focus_lost_stops_submit() {
+        let mut field = SearchField::new().with_value("q");
+        laid_out(&mut field, 200.0, FIELD_PT);
+        event(&mut field, &WidgetEvent::FocusGained);
+        event(&mut field, &WidgetEvent::FocusLost);
+        event(&mut field, &key("Enter"));
+        assert_eq!(field.take_submitted(), None);
+    }
+
+    #[test]
+    fn enter_submits_empty_text() {
+        // An empty submit is still a submit — `sendsWholeSearchString`-style
+        // consumers distinguish "user searched for nothing" from "never
+        // pressed Enter" via the seam, not via the payload.
+        let mut field = SearchField::new();
+        laid_out(&mut field, 200.0, FIELD_PT);
+        event(&mut field, &WidgetEvent::FocusGained);
+        event(&mut field, &key("Enter"));
+        assert_eq!(field.take_submitted(), Some(String::new()));
+    }
+
+    #[test]
+    fn press_inside_field_claims_focus_then_enter_submits() {
+        // Press-to-focus: a claimed PointerPressed inside the field is
+        // the internal child's focus signal — Enter must then submit.
+        let mut field = SearchField::new().with_value("abc");
+        laid_out(&mut field, 200.0, FIELD_PT);
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(40.0, 12.0),
+            button: martensite_core::PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(event(&mut field, &press), EventResponse::CapturePointer);
+        event(&mut field, &key("Enter"));
+        assert_eq!(field.take_submitted(), Some("abc".to_string()));
+    }
+
+    #[test]
+    fn press_outside_field_is_ignored() {
+        let mut field = SearchField::new().with_value("abc");
+        laid_out(&mut field, 200.0, FIELD_PT + CAPTION_PT);
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(40.0, 400.0),
+            button: martensite_core::PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(event(&mut field, &press), EventResponse::Ignored);
+        // The stray press never focused the field — Enter stays inert.
+        event(&mut field, &key("Enter"));
+        assert_eq!(field.take_submitted(), None);
+    }
+
+    #[test]
+    fn escape_clears_focused_text() {
+        // The `<input type="search">` convention: Escape on a focused,
+        // non-empty search field clears it — the keyboard equivalent
+        // of the ✕ clear target, so the `edited` seam fires and the
+        // clear is a single undo step.
+        let mut field = SearchField::new().with_value("query");
+        laid_out(&mut field, 200.0, FIELD_PT);
+        event(&mut field, &WidgetEvent::FocusGained);
+        assert_eq!(
+            event(&mut field, &key("Escape")),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(field.value(), "");
+        assert!(field.take_edited());
+        // The clear routed through the field's edit seam — Undo
+        // restores the cleared text.
+        event(&mut field, &key("Undo"));
+        assert_eq!(field.value(), "query");
+    }
+
+    #[test]
+    fn escape_collapses_selection_before_clearing() {
+        // Escape unwinds innermost state first: an active selection
+        // collapses on the first press, the text clears on the second.
+        let mut field = SearchField::new();
+        laid_out(&mut field, 200.0, FIELD_PT);
+        event(&mut field, &WidgetEvent::FocusGained);
+        event(
+            &mut field,
+            &WidgetEvent::ImeCommitted {
+                text: "abc".to_string(),
+            },
+        );
+        event(&mut field, &key("SelectAll"));
+        assert_eq!(
+            event(&mut field, &key("Escape")),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(field.value(), "abc"); // selection collapsed, not cleared
+        assert_eq!(
+            event(&mut field, &key("Escape")),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(field.value(), "");
+    }
+
+    #[test]
+    fn escape_empty_or_unfocused_falls_through() {
+        // Nothing to clear — the key propagates so a container (a
+        // `SearchBar` close request, a dialog cancel) can use it.
+        let mut field = SearchField::new();
+        laid_out(&mut field, 200.0, FIELD_PT);
+        event(&mut field, &WidgetEvent::FocusGained);
+        assert_eq!(event(&mut field, &key("Escape")), EventResponse::Ignored);
+
+        // Unfocused with text — same fall-through; the value stays.
+        let mut field = SearchField::new().with_value("abc");
+        laid_out(&mut field, 200.0, FIELD_PT);
+        assert_eq!(event(&mut field, &key("Escape")), EventResponse::Ignored);
+        assert_eq!(field.value(), "abc");
     }
 }

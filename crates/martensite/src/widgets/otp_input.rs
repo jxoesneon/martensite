@@ -3,9 +3,11 @@
 //!
 //! Renders `length` adjacent cells; typed digits fill left-to-right
 //! and the caret auto-advances, Backspace retreats, pasted text
-//! distributes across cells (non-digits are filtered unless
-//! `alphabetic` is set). Poll [`OtpInput::take_completed`] — it fires
-//! once each time all cells fill.
+//! distributes across cells (separators are filtered unless
+//! `alphabetic` is set). Retyping a filled cell overwrites it rather
+//! than shifting its neighbours — the `input-otp` slot model. Poll
+//! [`OtpInput::take_completed`] — it fires each time all cells hold a
+//! fresh full code.
 //!
 //! # Examples
 //!
@@ -77,9 +79,11 @@ pub struct OtpInput {
     completed: Option<String>,
     /// Pending edit flag.
     edited: bool,
-    /// Completion already signaled for this fill (fires once per
-    /// fill, re-arms after any edit shortens the value).
-    signaled: bool,
+    /// The code the completion last signaled — `None` re-arms it.
+    /// Re-arms when the value shortens, and re-fires when a full
+    /// value changes (a retyped digit is a fresh code worth
+    /// re-signalling).
+    signaled_value: Option<String>,
     /// Per-cell hit rects from the last layout.
     cell_rects: Vec<Rect>,
     /// Shared shaped-text painter.
@@ -113,7 +117,7 @@ impl OtpInput {
             focused: false,
             completed: None,
             edited: false,
-            signaled: false,
+            signaled_value: None,
             cell_rects: Vec::new(),
             text_painter: None,
             a11y_label: None,
@@ -219,11 +223,11 @@ impl OtpInput {
     pub fn set_value(&mut self, value: impl Into<String>) {
         self.value = self.filter(&value.into());
         self.caret = self.value.chars().count();
-        self.signaled = false;
+        self.signaled_value = None;
     }
 
     /// Drains the completion notification — the full code once all
-    /// cells fill.
+    /// cells fill, and again when an edit changes a still-full code.
     ///
     /// # Examples
     ///
@@ -274,23 +278,27 @@ impl OtpInput {
     }
 
     /// Inserts text at the caret, filtering + truncating; returns
-    /// whether anything changed.
+    /// whether anything changed. Characters landing on filled cells
+    /// overwrite them — retyping a cell replaces its digit instead of
+    /// shifting neighbours off the end (`input-otp` semantics). When
+    /// the caret sits past the last cell of a full field, typing folds
+    /// back onto the final cell.
     fn insert(&mut self, text: &str) -> bool {
-        let clean = self.filter(text);
+        let clean: Vec<char> = self.filter(text).chars().collect();
         if clean.is_empty() {
             return false;
         }
-        let chars: Vec<char> = self.value.chars().collect();
-        let mut new: String = chars[..self.caret].iter().collect();
-        new.push_str(&clean);
-        new.extend(chars[self.caret..].iter());
-        let new: String = new.chars().take(self.length).collect();
+        let mut chars: Vec<char> = self.value.chars().collect();
+        let pos = self.caret.min(self.length.saturating_sub(1));
+        let end = (pos + clean.len()).min(chars.len());
+        chars.splice(pos..end, clean.iter().copied());
+        chars.truncate(self.length);
+        let new: String = chars.into_iter().collect();
         if new == self.value {
             return false;
         }
-        let advanced = clean.chars().count();
         self.value = new;
-        self.caret = (self.caret + advanced).min(self.value.chars().count());
+        self.caret = (pos + clean.len()).min(self.value.chars().count());
         self.after_edit();
         true
     }
@@ -312,14 +320,18 @@ impl OtpInput {
         false
     }
 
-    /// Post-edit bookkeeping: edited flag + completion signal.
+    /// Post-edit bookkeeping: edited flag + completion signal. The
+    /// signal fires on every fresh full code — shortening the value
+    /// re-arms it, and overwriting a digit in a still-full field
+    /// re-fires with the new code.
     fn after_edit(&mut self) {
         self.edited = true;
-        if self.value.chars().count() < self.length {
-            self.signaled = false;
+        let full = self.value.chars().count() == self.length;
+        if !full {
+            self.signaled_value = None;
         }
-        if self.value.chars().count() == self.length && !self.signaled {
-            self.signaled = true;
+        if full && self.signaled_value.as_deref() != Some(self.value.as_str()) {
+            self.signaled_value = Some(self.value.clone());
             self.completed = Some(self.value.clone());
         }
     }
@@ -680,5 +692,159 @@ mod tests {
         o.event(&mut ev(&WidgetEvent::FocusGained));
         assert_eq!(o.event(&mut ev(&commit("1"))), EventResponse::Ignored);
         assert_eq!(o.get_value(), "");
+    }
+
+    #[test]
+    fn editing_requires_focus() {
+        let mut o = OtpInput::new().length(4);
+        // No FocusGained — keys and committed text are dead input.
+        assert_eq!(o.event(&mut ev(&commit("12"))), EventResponse::Ignored);
+        assert_eq!(o.event(&mut ev(&key("Backspace"))), EventResponse::Ignored);
+        assert_eq!(o.get_value(), "");
+        // FocusLost also drops the gate.
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        o.event(&mut ev(&WidgetEvent::FocusLost));
+        assert_eq!(o.event(&mut ev(&commit("1"))), EventResponse::Ignored);
+        assert_eq!(o.get_value(), "");
+    }
+
+    #[test]
+    fn paste_over_length_truncates_and_completes() {
+        let mut o = OtpInput::new().length(4);
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        o.event(&mut ev(&commit("1234567")));
+        assert_eq!(o.get_value(), "1234");
+        assert_eq!(o.take_completed(), Some("1234".into()));
+    }
+
+    #[test]
+    fn paste_strips_spaces_and_separators() {
+        let mut o = OtpInput::new().length(4);
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        // Codes arrive formatted: "12 34", "12-34", "1-2 3_4".
+        o.event(&mut ev(&commit(" 1-2 3_4 ")));
+        assert_eq!(o.get_value(), "1234");
+    }
+
+    #[test]
+    fn retype_overwrites_cell_not_shifts() {
+        let mut o = OtpInput::new().length(4).value("1234");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        o.event(&mut ev(&key("Home")));
+        o.event(&mut ev(&key("ArrowRight"))); // caret on cell 1
+        o.event(&mut ev(&commit("9")));
+        assert_eq!(o.get_value(), "1934"); // cell 1 replaced, "34" kept
+        assert_eq!(o.caret, 2);
+    }
+
+    #[test]
+    fn mid_field_paste_overwrites_cells() {
+        let mut o = OtpInput::new().length(4).value("1234");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        o.event(&mut ev(&key("Home")));
+        o.event(&mut ev(&key("ArrowRight")));
+        o.event(&mut ev(&commit("98")));
+        assert_eq!(o.get_value(), "1984"); // cells 1-2 replaced
+    }
+
+    #[test]
+    fn typing_at_end_of_full_field_folds_to_last_cell() {
+        let mut o = OtpInput::new().length(4).value("1234");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        // Caret sits past the last cell after a fill — a keystroke
+        // replaces the final digit rather than dead-ending.
+        assert_eq!(o.caret, 4);
+        o.event(&mut ev(&commit("5")));
+        assert_eq!(o.get_value(), "1235");
+    }
+
+    #[test]
+    fn overwrite_full_code_refires_completion() {
+        let mut o = OtpInput::new().length(4).value("1234");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        // First fill already signaled; a corrected digit is a new code.
+        o.event(&mut ev(&key("Home")));
+        o.event(&mut ev(&key("ArrowRight")));
+        o.event(&mut ev(&commit("9")));
+        assert_eq!(o.take_completed(), Some("1934".into()));
+    }
+
+    #[test]
+    fn typing_same_digit_does_not_refire() {
+        let mut o = OtpInput::new().length(2).value("12");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        assert_eq!(o.take_completed(), None);
+        // Caret folds to the last cell; retyping its digit is a no-op.
+        o.event(&mut ev(&commit("2")));
+        assert_eq!(o.get_value(), "12");
+        assert_eq!(o.take_completed(), None);
+    }
+
+    #[test]
+    fn delete_removes_char_at_caret() {
+        let mut o = OtpInput::new().length(4).value("123");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        o.event(&mut ev(&key("Home")));
+        o.event(&mut ev(&key("ArrowRight")));
+        o.event(&mut ev(&key("Delete")));
+        assert_eq!(o.get_value(), "13");
+        assert!(o.take_edited());
+    }
+
+    #[test]
+    fn backspace_at_start_is_a_noop() {
+        let mut o = OtpInput::new().length(4);
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        assert_eq!(o.event(&mut ev(&key("Backspace"))), EventResponse::Handled);
+        assert_eq!(o.get_value(), "");
+        // Backspace at caret 0 mid-value stays put too.
+        let mut o = OtpInput::new().length(4).value("12");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        o.event(&mut ev(&key("Home")));
+        assert_eq!(o.event(&mut ev(&key("Backspace"))), EventResponse::Handled);
+        assert_eq!(o.get_value(), "12");
+        assert_eq!(o.caret, 0);
+    }
+
+    #[test]
+    fn set_value_filters_and_truncates() {
+        let mut o = OtpInput::new().length(4);
+        o.set_value("9a876");
+        assert_eq!(o.get_value(), "9876");
+        assert_eq!(o.caret, 4);
+    }
+
+    #[test]
+    fn length_floor_is_one() {
+        let o = OtpInput::new().length(0);
+        assert_eq!(o.length, 1);
+    }
+
+    #[test]
+    fn click_past_value_clamps_caret_to_end() {
+        let mut o = OtpInput::new().length(4).value("12");
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        let mut hot = HotNode::default();
+        o.layout(&mut make_cx(&mut hot), Rect::new(0.0, 0.0, 300.0, 32.0));
+        // Click cell 3 — beyond the "12" fill — parks the caret at the
+        // value end, matching first-empty-slot convention.
+        let r = o.cell_rects[3];
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(r.origin.x + 4.0, r.origin.y + 4.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        o.event(&mut ev(&press));
+        assert_eq!(o.caret, 2);
+    }
+
+    #[test]
+    fn ctrl_v_paste_key_is_consumed() {
+        let mut o = OtpInput::new().length(4);
+        o.event(&mut ev(&WidgetEvent::FocusGained));
+        // The chord reaches the clipboard path — stub/empty clipboard
+        // is still claimed, never bubbled out as an unhandled key.
+        let r = o.event(&mut ev(&key("Ctrl+V")));
+        assert_ne!(r, EventResponse::Ignored);
     }
 }

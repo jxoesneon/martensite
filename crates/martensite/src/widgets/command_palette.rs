@@ -966,6 +966,10 @@ impl CommandPalette {
     pub fn add_action(&mut self, action: CommandAction) {
         self.actions.push(action);
         self.refilter();
+        // The resort can shuffle rows — reset the highlight to the
+        // top match like `set_actions` does, so a stale index can't
+        // silently point at a different action.
+        self.highlighted = if self.open { self.top_match() } else { None };
         self.push_shared();
     }
 
@@ -2342,5 +2346,188 @@ mod tests {
         let id = pal.popup_id.unwrap();
         assert!(o.entry(id).unwrap().content().is_loading());
         assert!(o.entry_bounds(id).unwrap().height() >= 60.0);
+    }
+
+    #[test]
+    fn arrow_up_at_top_clamps() {
+        // Documented choice: the highlight clamps at the list edges
+        // (APG listbox convention) rather than wrapping like cmdk.
+        let mut pal = palette(&[("a", "A"), ("b", "B")]);
+        laid_out(&mut pal);
+        pal.open();
+        assert_eq!(pal.highlighted(), Some(0));
+        event(&mut pal, &key("ArrowUp"));
+        assert_eq!(pal.highlighted(), Some(0)); // clamps — no wrap
+        event(&mut pal, &key("ArrowDown"));
+        event(&mut pal, &key("ArrowDown"));
+        event(&mut pal, &key("ArrowDown")); // past the end
+        assert_eq!(pal.highlighted(), Some(1)); // clamps at last
+    }
+
+    #[test]
+    fn arrows_on_empty_results_are_swallowed_noops() {
+        // Open but zero matches — the popup owns the arrows (the key
+        // is consumed) yet the highlight has nothing to land on.
+        let mut pal = palette(&[("a", "Alpha")]).with_query("zzz");
+        laid_out(&mut pal);
+        pal.open();
+        assert!(pal.is_open());
+        assert_eq!(
+            event(&mut pal, &key("ArrowDown")),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(pal.highlighted(), None);
+        assert_eq!(
+            event(&mut pal, &key("ArrowUp")),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(pal.highlighted(), None);
+    }
+
+    #[test]
+    fn escape_then_arrow_does_not_reopen() {
+        // A palette's Escape is "go away", not "collapse a layer" —
+        // a following arrow keeps the list closed and falls through
+        // to the field, which has no use for it on one line.
+        let mut pal = palette(&[("a", "Alpha"), ("b", "Beta")]);
+        laid_out(&mut pal);
+        focus(&mut pal);
+        assert!(pal.is_open());
+        event(&mut pal, &key("Escape"));
+        assert!(!pal.is_open());
+        assert_eq!(event(&mut pal, &key("ArrowDown")), EventResponse::Ignored);
+        assert!(!pal.is_open());
+        assert_eq!(pal.highlighted(), None);
+    }
+
+    #[test]
+    fn escape_closed_falls_through() {
+        // A closed palette doesn't eat Escape — a containing dialog
+        // or the app chrome can still claim it.
+        let mut pal = palette(&[("a", "Alpha")]);
+        laid_out(&mut pal);
+        pal.open();
+        event(&mut pal, &key("Escape"));
+        assert!(!pal.is_open());
+        assert_eq!(event(&mut pal, &key("Escape")), EventResponse::Ignored);
+    }
+
+    #[test]
+    fn backspace_to_empty_query_relists_all() {
+        // Deleting back to an empty query restores the full
+        // declaration-ordered list and re-pins the highlight at top.
+        let mut pal = palette(&[("a", "Alpha"), ("b", "Beta"), ("c", "Gamma")]);
+        laid_out(&mut pal);
+        focus(&mut pal);
+        type_text(&mut pal, "al");
+        assert_eq!(filtered_ids(&pal), ["a"]);
+        event(&mut pal, &key("Backspace"));
+        event(&mut pal, &key("Backspace"));
+        assert_eq!(pal.query(), "");
+        assert_eq!(filtered_ids(&pal), ["a", "b", "c"]);
+        assert_eq!(pal.highlighted(), Some(0));
+    }
+
+    #[test]
+    fn editing_parity_through_embedded_field() {
+        // The field's own editing vocabulary works verbatim —
+        // SelectAll + Backspace clears the query like ✕.
+        let mut pal = palette(&[("a", "Alpha"), ("b", "Beta")]);
+        laid_out(&mut pal);
+        focus(&mut pal);
+        type_text(&mut pal, "bet");
+        assert_eq!(filtered_ids(&pal), ["b"]);
+        event(&mut pal, &key("SelectAll"));
+        event(&mut pal, &key("Backspace"));
+        assert_eq!(pal.query(), "");
+        assert_eq!(filtered_ids(&pal), ["a", "b"]);
+        assert!(pal.is_open());
+        assert_eq!(pal.highlighted(), Some(0));
+    }
+
+    #[test]
+    fn enter_closed_falls_through() {
+        // Closed: Enter belongs to the field/surrounding UI, not the
+        // palette — nothing activates.
+        let mut pal = palette(&[("a", "Alpha")]);
+        laid_out(&mut pal);
+        focus(&mut pal);
+        event(&mut pal, &key("Escape"));
+        assert!(!pal.is_open());
+        assert_eq!(event(&mut pal, &key("Enter")), EventResponse::Ignored);
+        assert_eq!(pal.take_activated(), None);
+    }
+
+    #[test]
+    fn tab_falls_through_while_open() {
+        // The palette never claims Tab — focus traversal proceeds and
+        // the resulting FocusLost does the closing.
+        let mut pal = palette(&[("a", "Alpha")]);
+        laid_out(&mut pal);
+        pal.open();
+        assert_eq!(event(&mut pal, &key("Tab")), EventResponse::Ignored);
+        assert_eq!(pal.take_activated(), None);
+        assert!(pal.is_open());
+        event(&mut pal, &WidgetEvent::FocusLost);
+        assert!(!pal.is_open());
+    }
+
+    #[test]
+    fn semantic_click_toggles() {
+        // The trigger-face Click action toggles the palette — the
+        // AT/touch equivalent of the ⌘K shortcut.
+        let mut pal = palette(&[("a", "Alpha")]);
+        laid_out(&mut pal);
+        assert!(!pal.is_open());
+        event(
+            &mut pal,
+            &WidgetEvent::SemanticAction(SemanticAction::Click),
+        );
+        assert!(pal.is_open());
+        assert_eq!(pal.highlighted(), Some(0));
+        event(
+            &mut pal,
+            &WidgetEvent::SemanticAction(SemanticAction::Click),
+        );
+        assert!(!pal.is_open());
+    }
+
+    #[test]
+    fn add_action_while_open_resets_highlight() {
+        // Consistent with `set_actions`: the resort a new action
+        // triggers could silently re-point a stale index at a
+        // different row — the highlight re-pins to the top match.
+        let mut pal = palette(&[("a", "Alpha"), ("b", "Beta")]);
+        laid_out(&mut pal);
+        pal.open();
+        event(&mut pal, &key("ArrowDown"));
+        assert_eq!(pal.highlighted(), Some(1));
+        pal.add_action(act("c", "Gamma"));
+        assert_eq!(pal.highlighted(), Some(0));
+    }
+
+    #[test]
+    fn unfocused_query_write_does_not_pop() {
+        // Programmatic query writes obey the focus gate — an
+        // unfocused palette must not pop results over content.
+        let mut pal = palette(&[("a", "Alpha")]);
+        laid_out(&mut pal);
+        pal.set_query("alp");
+        assert_eq!(pal.query(), "alp");
+        assert!(!pal.is_open());
+        focus(&mut pal);
+        assert!(pal.is_open());
+        assert_eq!(pal.highlighted(), Some(0));
+    }
+
+    #[test]
+    fn unfocused_editing_keys_are_ignored() {
+        // Without focus the embedded field ignores editing keys and
+        // the palette's own Enter can't activate either.
+        let mut pal = palette(&[("a", "Alpha")]);
+        laid_out(&mut pal);
+        type_text(&mut pal, "alp");
+        assert_eq!(pal.query(), "");
+        assert!(!pal.is_open());
     }
 }

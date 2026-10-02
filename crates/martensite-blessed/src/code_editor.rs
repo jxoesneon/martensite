@@ -584,6 +584,15 @@ mod tests {
     }
 
     #[test]
+    fn delete_range_accepts_reversed_range() {
+        // The range is sorted internally — callers dragging backward
+        // don't have to order the endpoints themselves.
+        let mut editor = CodeEditor::new("one\ntwo\nthree");
+        editor.delete_range(Cursor::new(1, 2), Cursor::new(0, 1));
+        assert_eq!(editor.text(), "oo\nthree");
+    }
+
+    #[test]
     fn word_span_groups_punctuation_and_whitespace_runs() {
         let editor = CodeEditor::new("a::b c");
         // Identifier run, punctuation run, whitespace run.

@@ -2,10 +2,11 @@
 //! editable`, GWT `InlineLabel`).
 //!
 //! Displays a value as plain text; a press swaps in a real
-//! [`TextInput`] child for in-place editing. `Enter` commits, `Escape`
-//! reverts, and focus loss or a click outside commits — the platform
-//! editable-label conventions. Completed commits park
-//! `(previous, committed)` in [`InlineEdit::take_committed`].
+//! [`TextInput`] child for in-place editing, focused with the seeded
+//! value selected. `Enter` commits, `Escape` reverts, and focus loss
+//! or a click outside commits — the platform editable-label
+//! conventions. Completed commits park `(previous, committed)` in
+//! [`InlineEdit::take_committed`].
 //!
 //! # Examples
 //!
@@ -167,7 +168,10 @@ impl InlineEdit {
         &mut self.input
     }
 
-    /// Enters edit mode: the input child adopts the current value.
+    /// Enters edit mode: the input child adopts the current value,
+    /// takes keyboard focus, and selects the seeded text — the
+    /// platform rename-field convention (typing replaces, a click or
+    /// arrow key collapses the selection).
     ///
     /// ```
     /// use martensite::widgets::inline_edit::InlineEdit;
@@ -183,6 +187,27 @@ impl InlineEdit {
         self.edit_origin = self.value.clone();
         self.input.set_value(self.value.clone());
         self.editing = true;
+        // Internal children get no arena `FocusGained` — when edit
+        // mode begins from a key or a semantic action nothing else
+        // focuses the input, and its editing events would stay gated
+        // off. A follow-up pointer press collapses the select-all.
+        let focus = WidgetEvent::FocusGained;
+        let mut focus_cx = EventContext {
+            event: &focus,
+            bounds: self.bounds,
+            scale: self.scale,
+        };
+        let _ = self.input.event(&mut focus_cx);
+        let select_all = WidgetEvent::KeyPressed {
+            key: "SelectAll".into(),
+            repeat: false,
+        };
+        let mut select_cx = EventContext {
+            event: &select_all,
+            bounds: self.bounds,
+            scale: self.scale,
+        };
+        let _ = self.input.event(&mut select_cx);
     }
 
     /// Commits the in-progress edit: the display value takes the
@@ -204,6 +229,7 @@ impl InlineEdit {
         }
         let new = self.input.value.clone();
         self.editing = false;
+        self.release_input_focus();
         if new != self.value {
             self.committed = Some((std::mem::replace(&mut self.value, new), self.value.clone()));
         }
@@ -221,7 +247,25 @@ impl InlineEdit {
     /// assert_eq!(edit.value, "keep");
     /// ```
     pub fn cancel_edit(&mut self) {
+        if !self.editing {
+            return;
+        }
         self.editing = false;
+        self.release_input_focus();
+    }
+
+    /// Drops the input's focus flag when edit mode ends — a committed
+    /// or cancelled input must not keep claiming editing events, and
+    /// the `FocusLost` also unlatches its modifiers, drag state, and
+    /// any in-flight IME preedit.
+    fn release_input_focus(&mut self) {
+        let event = WidgetEvent::FocusLost;
+        let mut cx = EventContext {
+            event: &event,
+            bounds: self.bounds,
+            scale: self.scale,
+        };
+        let _ = self.input.event(&mut cx);
     }
 
     /// Drains the parked `(previous, committed)` pair.
@@ -326,10 +370,9 @@ impl Widget for InlineEdit {
                     return EventResponse::RequestRepaint;
                 }
                 WidgetEvent::FocusLost => {
+                    // Commit-on-blur; `commit_edit` also drops the
+                    // input's own focus flag so it stops claiming keys.
                     self.commit_edit();
-                    // The field still gets the event — its own focus
-                    // flag must drop or it would keep claiming keys.
-                    let _ = self.forward_to_input(cx);
                     return EventResponse::RequestRepaint;
                 }
                 // A press outside the (captured) field commits — the
@@ -341,6 +384,13 @@ impl Widget for InlineEdit {
                 } if !self.bounds.contains(*position) => {
                     self.commit_edit();
                     return EventResponse::ReleasePointer;
+                }
+                // Assistive-tech SetValue targets the live draft while
+                // editing — the display value commits on Enter/blur.
+                WidgetEvent::SemanticAction(SemanticAction::SetValue(text)) => {
+                    let text = text.clone();
+                    self.input.set_value(text);
+                    return EventResponse::RequestRepaint;
                 }
                 _ => return self.forward_to_input(cx),
             }
@@ -621,5 +671,150 @@ mod tests {
         assert!(e.hovered);
         e.event(&mut ev(&WidgetEvent::PointerLeave));
         assert!(!e.hovered);
+    }
+
+    fn key(name: &str) -> WidgetEvent {
+        WidgetEvent::KeyPressed {
+            key: name.into(),
+            repeat: false,
+        }
+    }
+
+    #[test]
+    fn keyboard_entry_focuses_input_for_typing() {
+        let mut e = InlineEdit::new("abc");
+        laid_out(&mut e, 200.0, 24.0);
+        e.event(&mut ev(&key("Enter")));
+        assert!(e.is_editing());
+        // Regression: keyboard entry must hand the embedded input its
+        // focus, or its editing-event gate silently swallows typing.
+        assert!(e.input.focused());
+        // The seeded value is selected, so typing replaces it.
+        e.event(&mut ev(&WidgetEvent::ImeCommitted { text: "z".into() }));
+        assert_eq!(e.input.value, "z");
+        e.event(&mut ev(&key("Enter")));
+        assert_eq!(e.value, "z");
+        assert_eq!(e.take_committed(), Some(("abc".into(), "z".into())));
+    }
+
+    #[test]
+    fn semantic_click_entry_focuses_input() {
+        let mut e = InlineEdit::new("x");
+        laid_out(&mut e, 200.0, 24.0);
+        e.event(&mut ev(&WidgetEvent::SemanticAction(SemanticAction::Click)));
+        assert!(e.is_editing());
+        assert!(e.input.focused());
+    }
+
+    #[test]
+    fn second_press_while_editing_keeps_draft() {
+        let mut e = InlineEdit::new("abc");
+        laid_out(&mut e, 200.0, 24.0);
+        e.event(&mut ev(&press(10.0, 12.0)));
+        e.input.set_value("edited");
+        // A re-click while editing repositions the caret — it must
+        // not re-enter edit mode and discard the in-progress draft.
+        e.event(&mut ev(&press(50.0, 12.0)));
+        assert!(e.is_editing());
+        assert_eq!(e.input.value, "edited");
+    }
+
+    #[test]
+    fn commit_drops_input_focus() {
+        let mut e = InlineEdit::new("a");
+        laid_out(&mut e, 200.0, 24.0);
+        e.event(&mut ev(&press(10.0, 12.0)));
+        assert!(e.input.focused());
+        e.event(&mut ev(&key("Enter")));
+        // A committed input must not keep claiming editing events.
+        assert!(!e.input.focused());
+    }
+
+    #[test]
+    fn cancel_drops_input_focus() {
+        let mut e = InlineEdit::new("a");
+        laid_out(&mut e, 200.0, 24.0);
+        e.event(&mut ev(&press(10.0, 12.0)));
+        e.event(&mut ev(&key("Escape")));
+        assert!(!e.is_editing());
+        assert!(!e.input.focused());
+    }
+
+    #[test]
+    fn commit_parks_pair_exactly_once() {
+        let mut e = InlineEdit::new("old");
+        laid_out(&mut e, 200.0, 24.0);
+        e.event(&mut ev(&press(10.0, 12.0)));
+        e.input.set_value("new");
+        e.event(&mut ev(&key("Enter")));
+        assert_eq!(e.take_committed(), Some(("old".into(), "new".into())));
+        assert_eq!(e.take_committed(), None);
+        // A trailing FocusLost after the commit must not fire again.
+        e.event(&mut ev(&WidgetEvent::FocusLost));
+        assert_eq!(e.take_committed(), None);
+    }
+
+    #[test]
+    fn escape_then_blur_still_commits_nothing() {
+        let mut e = InlineEdit::new("orig");
+        laid_out(&mut e, 200.0, 24.0);
+        e.event(&mut ev(&press(10.0, 12.0)));
+        e.input.set_value("bad");
+        e.event(&mut ev(&key("Escape")));
+        // Cancel wins over blur-commit: the FocusLost that follows an
+        // Escape must not resurrect the abandoned draft.
+        e.event(&mut ev(&WidgetEvent::FocusLost));
+        assert_eq!(e.value, "orig");
+        assert_eq!(e.take_committed(), None);
+    }
+
+    #[test]
+    fn empty_edit_commits_empty_value() {
+        let mut e = InlineEdit::new("x");
+        laid_out(&mut e, 200.0, 24.0);
+        e.event(&mut ev(&press(10.0, 12.0)));
+        e.input.set_value("");
+        e.event(&mut ev(&key("Enter")));
+        assert_eq!(e.value, "");
+        assert_eq!(e.take_committed(), Some(("x".into(), "".into())));
+    }
+
+    #[test]
+    fn set_value_action_updates_live_draft() {
+        let mut e = InlineEdit::new("a");
+        laid_out(&mut e, 200.0, 24.0);
+        e.event(&mut ev(&press(10.0, 12.0)));
+        e.event(&mut ev(&WidgetEvent::SemanticAction(
+            SemanticAction::SetValue("nv".into()),
+        )));
+        assert_eq!(e.input.value, "nv");
+        assert_eq!(e.value, "a");
+        e.event(&mut ev(&key("Enter")));
+        assert_eq!(e.take_committed(), Some(("a".into(), "nv".into())));
+    }
+
+    #[test]
+    fn disabled_ignores_semantic_click() {
+        let mut e = InlineEdit::new("x").enabled(false);
+        laid_out(&mut e, 200.0, 24.0);
+        assert_eq!(
+            e.event(&mut ev(&WidgetEvent::SemanticAction(SemanticAction::Click))),
+            EventResponse::Ignored
+        );
+        assert!(!e.is_editing());
+        assert!(!e.input.focused());
+    }
+
+    #[test]
+    fn reentry_after_cancel_reseeds_value() {
+        let mut e = InlineEdit::new("orig");
+        laid_out(&mut e, 200.0, 24.0);
+        e.event(&mut ev(&press(10.0, 12.0)));
+        e.input.set_value("bad");
+        e.event(&mut ev(&key("Escape")));
+        // Re-entering reseeds the input from the display value.
+        e.event(&mut ev(&key("Enter")));
+        assert!(e.is_editing());
+        assert_eq!(e.input.value, "orig");
     }
 }

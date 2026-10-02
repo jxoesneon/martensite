@@ -436,4 +436,79 @@ mod tests {
             EventResponse::Ignored
         );
     }
+
+    #[test]
+    fn disabled_ignores_input() {
+        let mut bar = SearchBar::new().enabled(false);
+        bar.search_mode = true;
+        laid_out(&mut bar, 400.0, 36.0);
+        assert_eq!(
+            bar.event(&mut ev(&WidgetEvent::KeyPressed {
+                key: "Escape".into(),
+                repeat: false,
+            })),
+            EventResponse::Ignored
+        );
+        assert!(!bar.take_close_requested());
+    }
+
+    #[test]
+    fn enter_submits_through_field() {
+        // Focus forwards to the embedded field, typing edits it, and
+        // Enter parks the submit seam — the whole chain in one flow.
+        let mut bar = SearchBar::new();
+        bar.search_mode = true;
+        laid_out(&mut bar, 400.0, 36.0);
+        bar.event(&mut ev(&WidgetEvent::FocusGained));
+        bar.event(&mut ev(&WidgetEvent::ImeCommitted {
+            text: "query".into(),
+        }));
+        assert_eq!(bar.field().value(), "query");
+        bar.event(&mut ev(&WidgetEvent::KeyPressed {
+            key: "Enter".into(),
+            repeat: false,
+        }));
+        assert_eq!(bar.take_submitted(), Some("query".to_string()));
+    }
+
+    #[test]
+    fn escape_wins_over_field_selection() {
+        // Documented bar-level precedence: `Escape` anywhere in the
+        // bar parks the close request before the field can consume it
+        // for a selection collapse — the GTK `SearchBar` convention.
+        let mut bar = SearchBar::new();
+        bar.search_mode = true;
+        laid_out(&mut bar, 400.0, 36.0);
+        bar.event(&mut ev(&WidgetEvent::FocusGained));
+        bar.event(&mut ev(&WidgetEvent::ImeCommitted { text: "ab".into() }));
+        bar.event(&mut ev(&WidgetEvent::KeyPressed {
+            key: "SelectAll".into(),
+            repeat: false,
+        }));
+        bar.event(&mut ev(&WidgetEvent::KeyPressed {
+            key: "Escape".into(),
+            repeat: false,
+        }));
+        assert!(bar.take_close_requested());
+        assert_eq!(bar.field().value(), "ab"); // text survives — close is app-owned
+    }
+
+    #[test]
+    fn clear_button_propagates_edited_flag() {
+        // Pressing the field's ✕ through the bar clears the value and
+        // raises the forwarded `take_edited` seam.
+        let mut bar = SearchBar::new();
+        bar.search_mode = true;
+        laid_out(&mut bar, 400.0, 36.0);
+        bar.field_mut().set_value("abc");
+        let field_b = bar.child_bounds(0).unwrap();
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(field_b.max_x() - 9.0, field_b.origin.y + 10.0),
+            button: martensite_core::PointerButton::Primary,
+            count: 1,
+        };
+        bar.event(&mut ev(&press));
+        assert_eq!(bar.field().value(), "");
+        assert!(bar.take_edited());
+    }
 }

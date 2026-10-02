@@ -24,11 +24,16 @@
 //!   commit, `Escape`, blur, or text that falls below `min_chars` /
 //!   yields no matches.
 //! - `ArrowDown`/`ArrowUp` move the highlight and preview the
-//!   suggestion in the field; `Enter`/`Tab` commits it into the field,
-//!   `Escape` closes and restores the pre-popup text. A live popup's
-//!   option list is rebuilt in place (`OverlayLayer::replace_content`)
-//!   as filtering narrows the matches, keeping its entry id and
-//!   z-position stable.
+//!   suggestion in the field — or open the popup first when it is
+//!   closed but eligible (the APG combobox arrow-to-open rule; the
+//!   focus gate still applies, so an unfocused keypress never pops
+//!   the list). `Enter`/`Tab` commits the highlight into the field;
+//!   `Escape` unwinds one layer per press — open popup (restoring
+//!   the pre-popup text), then an active selection, then the text
+//!   itself (the optional APG clear, matching the ✕ target). A live
+//!   popup's option list is rebuilt in place
+//!   (`OverlayLayer::replace_content`) as filtering narrows the
+//!   matches, keeping its entry id and z-position stable.
 //! - Out-seams: [`take_committed`](AutoComplete::take_committed)
 //!   (explicit pick or Enter-submit) and
 //!   [`take_edited`](AutoComplete::take_edited) (forwarded from the
@@ -1186,6 +1191,12 @@ impl AutoComplete {
         self.baseline.clone_from(&text);
         self.committed = Some(text);
         self.close();
+        // The committed text is the new field value — refilter so
+        // `filtered()` keeps honouring its "suggestions matching the
+        // current field text" contract instead of serving the
+        // pre-commit list until the next edit.
+        self.refilter();
+        self.push_shared();
     }
 
     /// Commits the highlighted suggestion, if any. Returns whether a
@@ -1277,10 +1288,39 @@ impl AutoComplete {
         self.field.event(&mut child_cx)
     }
 
+    /// Clears the field through its own event seam — `SelectAll`
+    /// then `Backspace` — so the edit records one undo step and
+    /// raises the `take_edited` flag, matching what the ✕ clear
+    /// target does.
+    fn clear_field(&mut self, scale: f32) {
+        for name in ["SelectAll", "Backspace"] {
+            let ev = WidgetEvent::KeyPressed {
+                key: name.to_string(),
+                repeat: false,
+            };
+            let mut child_cx = EventContext {
+                event: &ev,
+                bounds: self.field_rect,
+                scale,
+            };
+            self.field.event(&mut child_cx);
+        }
+    }
+
     /// Forwards an event to the field, then applies the edit protocol:
     /// a user-driven mutation refilters the popup and propagates the
     /// `edited` flag into the widget's own out-seam.
     fn forward_then_edit(&mut self, cx: &mut EventContext) -> EventResponse {
+        // A keyboard preview is a display artifact, not typed text:
+        // drop back to the baseline before the field sees the event
+        // so an edit lands on what the user actually typed instead
+        // of appending to the previewed suggestion (`"av"` →
+        // ArrowDown → `"Avocado"` → typing `x` must yield `"avx"`,
+        // not `"Avocadox"`).
+        if self.previewed {
+            self.field.set_value(self.baseline.clone());
+            self.previewed = false;
+        }
         let response = self.forward(cx);
         if self.field.take_edited() {
             self.edited = true;
@@ -1510,11 +1550,42 @@ impl Widget for AutoComplete {
                         self.dismiss();
                         EventResponse::RequestRepaint
                     } else {
-                        // Let the field collapse a selection.
-                        self.forward(cx)
+                        // APG ordering with the popup already closed:
+                        // the field's own `Escape` collapses an active
+                        // selection first; a still-ignored `Escape` on
+                        // a focused, non-empty combobox clears the
+                        // text (the optional APG clear — the keyboard
+                        // equivalent of the ✕ target).
+                        let response = self.forward(cx);
+                        if response == EventResponse::Ignored
+                            && self.field.focused()
+                            && !self.field.value.is_empty()
+                        {
+                            self.clear_field(cx.scale);
+                            if self.field.take_edited() {
+                                self.edited = true;
+                            }
+                            // The popup stays closed — clearing is a
+                            // terminal gesture, not a fresh query.
+                            self.baseline.clear();
+                            self.previewed = false;
+                            self.refilter();
+                            self.push_shared();
+                            EventResponse::RequestRepaint
+                        } else {
+                            response
+                        }
                     }
                 }
                 "ArrowDown" => {
+                    if !self.open {
+                        // APG combobox: Down on a closed but eligible
+                        // combobox opens the listbox and highlights the
+                        // first option. `refresh_open` keeps the focus
+                        // gate — an unfocused keypress can't pop it.
+                        self.refilter();
+                        self.refresh_open();
+                    }
                     if self.open {
                         self.move_highlight(1);
                         EventResponse::RequestRepaint
@@ -1523,6 +1594,13 @@ impl Widget for AutoComplete {
                     }
                 }
                 "ArrowUp" => {
+                    if !self.open {
+                        // APG: Up on a closed but eligible combobox
+                        // opens the listbox and highlights the LAST
+                        // option.
+                        self.refilter();
+                        self.refresh_open();
+                    }
                     if self.open {
                         self.move_highlight(-1);
                         EventResponse::RequestRepaint
@@ -2101,5 +2179,189 @@ mod tests {
         assert!(o.entry(id).unwrap().content().is_loading());
         // The skeleton surface keeps a legible height (3-row floor).
         assert!(o.entry_bounds(id).unwrap().height() >= 60.0);
+    }
+
+    #[test]
+    fn arrow_down_closed_opens_and_highlights_first() {
+        // APG combobox: Down on a closed-but-eligible combobox opens
+        // the listbox and moves visual focus to the first option —
+        // the same preview semantics as mid-list navigation.
+        let mut ac = AutoComplete::new()
+            .suggestions(["Apple", "Avocado"])
+            .with_value("a");
+        laid_out(&mut ac);
+        focus(&mut ac);
+        // Escape dismisses — the field stays focused and eligible.
+        event(&mut ac, &key("Escape"));
+        assert!(!ac.is_open());
+        event(&mut ac, &key("ArrowDown"));
+        assert!(ac.is_open());
+        assert_eq!(ac.highlighted(), Some(0));
+        assert_eq!(ac.value(), "Apple"); // previewed
+    }
+
+    #[test]
+    fn arrow_up_closed_opens_and_highlights_last() {
+        let mut ac = AutoComplete::new()
+            .suggestions(["Apple", "Avocado"])
+            .with_value("a");
+        laid_out(&mut ac);
+        focus(&mut ac);
+        event(&mut ac, &key("Escape"));
+        assert!(!ac.is_open());
+        event(&mut ac, &key("ArrowUp"));
+        assert!(ac.is_open());
+        assert_eq!(ac.highlighted(), Some(1));
+        assert_eq!(ac.value(), "Avocado");
+    }
+
+    #[test]
+    fn arrow_closed_without_matches_falls_through() {
+        // Nothing eligible — Down keeps meaning "field key" (which a
+        // one-line input ignores) rather than popping an empty list.
+        let mut ac = AutoComplete::new().suggestions(["Apple"]).with_value("zzz");
+        laid_out(&mut ac);
+        focus(&mut ac);
+        assert!(!ac.is_open());
+        assert_eq!(event(&mut ac, &key("ArrowDown")), EventResponse::Ignored);
+        assert!(!ac.is_open());
+    }
+
+    #[test]
+    fn arrow_down_unfocused_never_opens() {
+        // The arrow-to-open path shares `refresh_open`'s focus gate.
+        let mut ac = AutoComplete::new().suggestions(["Apple"]).with_value("a");
+        laid_out(&mut ac);
+        assert_eq!(event(&mut ac, &key("ArrowDown")), EventResponse::Ignored);
+        assert!(!ac.is_open());
+    }
+
+    #[test]
+    fn escape_unwinds_popup_selection_text() {
+        // One Escape per layer: dismiss the popup (restoring the
+        // previewed-over baseline), collapse an active selection,
+        // then clear the text — the optional APG clear.
+        let mut ac = AutoComplete::new()
+            .suggestions(["Apple", "Avocado"])
+            .with_value("av");
+        laid_out(&mut ac);
+        focus(&mut ac);
+        assert!(ac.is_open());
+        event(&mut ac, &key("ArrowDown"));
+        assert_eq!(ac.value(), "Avocado"); // previewed
+                                           // Layer 1 — popup dismissed, baseline restored.
+        event(&mut ac, &key("Escape"));
+        assert!(!ac.is_open());
+        assert_eq!(ac.value(), "av");
+        // Layer 2 — an active selection collapses.
+        event(&mut ac, &key("SelectAll"));
+        assert_eq!(
+            event(&mut ac, &key("Escape")),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(ac.value(), "av");
+        // Layer 3 — the text clears (the ✕ target's keyboard twin).
+        assert_eq!(
+            event(&mut ac, &key("Escape")),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(ac.value(), "");
+        assert!(ac.take_edited());
+        // Nothing left — the key falls through for a container.
+        assert_eq!(event(&mut ac, &key("Escape")), EventResponse::Ignored);
+    }
+
+    #[test]
+    fn typing_replaces_preview() {
+        // The previewed suggestion is a display artifact — a new
+        // keystroke edits the typed baseline, not the suggestion.
+        let mut ac = AutoComplete::new()
+            .suggestions(["Avocado"])
+            .with_value("av");
+        laid_out(&mut ac);
+        focus(&mut ac);
+        event(&mut ac, &key("ArrowDown"));
+        assert_eq!(ac.value(), "Avocado");
+        type_text(&mut ac, "z");
+        // "avz" — not "Avocadoz". No suggestion matches, so the
+        // popup closes.
+        assert_eq!(ac.value(), "avz");
+        assert!(!ac.is_open());
+        assert!(ac.take_edited());
+    }
+
+    #[test]
+    fn commit_updates_filtered_to_committed_text() {
+        // `filtered()` documents "matches the current field text" —
+        // after a commit the current text IS the suggestion.
+        let mut ac = AutoComplete::new()
+            .suggestions(["Apple", "Avocado"])
+            .with_value("a");
+        laid_out(&mut ac);
+        focus(&mut ac);
+        event(&mut ac, &key("ArrowDown"));
+        event(&mut ac, &key("ArrowDown"));
+        event(&mut ac, &key("Enter"));
+        assert_eq!(ac.take_committed(), Some("Avocado".to_string()));
+        assert_eq!(ac.filtered(), &["Avocado".to_string()]);
+    }
+
+    #[test]
+    fn popup_keyboard_navigation_mirrors_highlight() {
+        let mut ac = AutoComplete::new()
+            .suggestions(["Apple", "Avocado"])
+            .with_value("a");
+        laid_out(&mut ac);
+        focus(&mut ac);
+        let mut o = overlay();
+        ac.sync_overlay(&mut o);
+        o.layout_pass();
+        // The layer offers non-Escape keys to the topmost popup first.
+        assert_eq!(
+            o.dispatch_event(&key("ArrowDown")),
+            EventResponse::RequestRepaint
+        );
+        ac.sync_overlay(&mut o);
+        assert_eq!(ac.highlighted(), Some(0));
+        // Popup-side Enter commits the highlighted index.
+        assert_eq!(o.dispatch_event(&key("Enter")), EventResponse::Handled);
+        ac.sync_overlay(&mut o);
+        assert_eq!(ac.take_committed(), Some("Apple".to_string()));
+        assert!(!ac.is_open());
+    }
+
+    #[test]
+    fn home_end_jump_highlight_while_open() {
+        let mut ac = AutoComplete::new()
+            .suggestions(["Apple", "Apricot", "Avocado"])
+            .with_value("a");
+        laid_out(&mut ac);
+        focus(&mut ac);
+        event(&mut ac, &key("End"));
+        assert_eq!(ac.highlighted(), Some(2));
+        assert_eq!(ac.value(), "Avocado");
+        event(&mut ac, &key("Home"));
+        assert_eq!(ac.highlighted(), Some(0));
+        assert_eq!(ac.value(), "Apple");
+    }
+
+    #[test]
+    fn unfocused_set_value_does_not_pop() {
+        let mut ac = AutoComplete::new().suggestions(["Apple"]);
+        laid_out(&mut ac);
+        ac.set_value("a");
+        // Eligible text but no focus — must not pop over content.
+        assert!(!ac.is_open());
+        focus(&mut ac);
+        assert!(ac.is_open());
+    }
+
+    #[test]
+    fn tab_closed_passes_through_uncommitted() {
+        let mut ac = AutoComplete::new().suggestions(["Apple"]).with_value("zzz"); // no match — closed
+        laid_out(&mut ac);
+        focus(&mut ac);
+        assert_eq!(event(&mut ac, &key("Tab")), EventResponse::Ignored);
+        assert_eq!(ac.take_committed(), None);
     }
 }

@@ -3,11 +3,17 @@
 //! Toolkit `TokenizingTextBox`, Ant `Select tags` mode).
 //!
 //! Typing a delimiter (`,` `;` or `Enter`) commits the pending text
-//! as a token; `Backspace` on an empty input deletes the last token;
-//! clicking a chip's `×` removes it. The widget composes a
-//! [`TextInput`] child for the in-progress entry — the child's
-//! `take_edited` drives token commit decisions. Poll
-//! [`TokenField::take_edited`] and read [`TokenField::tokens`].
+//! as a token; committed text that itself contains delimiters (a
+//! pasted list like `"a,b,c"`) splits into one token per segment.
+//! Duplicate entries are refused (exact, case-sensitive match —
+//! the tag-input convention). `Backspace` on an empty input deletes
+//! the last token, and `ArrowLeft`/`ArrowRight` on an empty input
+//! walk a highlight across the chips so `Backspace`/`Delete` remove
+//! the highlighted one instead. Clicking a chip's `×` removes it and
+//! a press anywhere else in the field focuses the embedded input.
+//! The widget composes a [`TextInput`] child for the in-progress
+//! entry — the child's `take_edited` drives token commit decisions.
+//! Poll [`TokenField::take_edited`] and read [`TokenField::tokens`].
 //!
 //! # Examples
 //!
@@ -25,6 +31,7 @@ use martensite_core::widget::{
     Widget, WidgetEvent,
 };
 use martensite_core::{Rect, TokenKey};
+use std::collections::VecDeque;
 
 use crate::widgets::text_input::TextInput;
 
@@ -78,14 +85,20 @@ pub struct TokenField {
     edited: bool,
     /// Pending removal notification (index + text).
     removed: Option<String>,
-    /// Pending addition notification.
-    added: Option<String>,
+    /// Pending addition notifications — FIFO, so a multi-token batch
+    /// (a delimiter-separated commit) reports every token, oldest
+    /// first.
+    added: VecDeque<String>,
     /// Per-chip rects — estimated in `layout`, refined in `paint`
     /// (which has the real text shaper). Mutex because
     /// `Widget::paint` is `&self`.
     chip_rects: parking_lot::Mutex<Vec<Rect>>,
     /// Cached bounds.
     bounds: Rect,
+    /// Device pixels per logical point, cached in `layout` —
+    /// `child_bounds` needs it because the `Widget` protocol carries
+    /// no scale.
+    scale: f32,
     /// Shared shaped-text painter.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
 }
@@ -110,9 +123,10 @@ impl TokenField {
             highlighted: None,
             edited: false,
             removed: None,
-            added: None,
+            added: VecDeque::new(),
             chip_rects: parking_lot::Mutex::new(Vec::new()),
             bounds: Rect::default(),
+            scale: 1.0,
             text_painter: None,
         }
     }
@@ -149,7 +163,8 @@ impl TokenField {
     }
 
     /// Sets the commit delimiters (default `,` and `;`; `Enter`
-    /// always commits).
+    /// always commits). A delimiter also splits committed text —
+    /// a pasted `"a,b"` lands as two tokens.
     ///
     /// # Examples
     ///
@@ -186,7 +201,10 @@ impl TokenField {
         &self.tokens
     }
 
-    /// Appends a token programmatically.
+    /// Appends a token programmatically. Blank entries trim to a
+    /// no-op and duplicates (exact, case-sensitive match — the
+    /// tag-input convention) are refused; refused adds leave
+    /// `edited` and `take_added` untouched.
     ///
     /// # Examples
     ///
@@ -195,15 +213,17 @@ impl TokenField {
     ///
     /// let mut t = TokenField::new();
     /// t.add_token("x");
+    /// t.add_token("x");
     /// assert_eq!(t.token_list(), &["x"]);
     /// ```
     pub fn add_token(&mut self, token: impl Into<String>) {
         let token = token.into().trim().to_string();
-        if !token.is_empty() {
-            self.added = Some(token.clone());
-            self.tokens.push(token);
-            self.edited = true;
+        if token.is_empty() || self.tokens.contains(&token) {
+            return;
         }
+        self.added.push_back(token.clone());
+        self.tokens.push(token);
+        self.edited = true;
     }
 
     /// Removes a token by index.
@@ -221,6 +241,13 @@ impl TokenField {
         if index < self.tokens.len() {
             self.removed = Some(self.tokens.remove(index));
             self.edited = true;
+            // Keep the chip highlight inside the shrunken list —
+            // dropping the removed index, shifting the rest.
+            match self.highlighted {
+                Some(h) if h == index => self.highlighted = None,
+                Some(h) if h > index => self.highlighted = Some(h - 1),
+                _ => {}
+            }
         }
     }
 
@@ -252,7 +279,8 @@ impl TokenField {
         self.removed.take()
     }
 
-    /// Drains the last added token.
+    /// Drains the oldest unreported added token. A delimiter-separated
+    /// commit can add several tokens in one step — drain until `None`.
     ///
     /// # Examples
     ///
@@ -263,7 +291,7 @@ impl TokenField {
     /// assert_eq!(t.take_added(), None);
     /// ```
     pub fn take_added(&mut self) -> Option<String> {
-        self.added.take()
+        self.added.pop_front()
     }
 
     /// Accesses the inner input (e.g. to drain its own signals).
@@ -376,6 +404,19 @@ impl TokenField {
         };
         self.input.event(&mut child_cx)
     }
+
+    /// Hands the input the focus signal — internal children get no
+    /// arena `FocusGained`, so the wrapper synthesizes it wherever a
+    /// claimed press implies focus (chip removal, field chrome).
+    fn grant_input_focus(&mut self, scale: f32) {
+        let event = WidgetEvent::FocusGained;
+        let mut cx = EventContext {
+            event: &event,
+            bounds: self.child_bounds(0).unwrap_or(self.bounds),
+            scale,
+        };
+        let _ = self.input.event(&mut cx);
+    }
 }
 
 impl Default for TokenField {
@@ -399,6 +440,7 @@ impl Widget for TokenField {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
+        self.scale = cx.scale;
         *self.chip_rects.lock() = self.chip_layout(
             self.text_painter
                 .as_ref()
@@ -441,6 +483,9 @@ impl Widget for TokenField {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        if !self.input.enabled {
+            return EventResponse::Ignored;
+        }
         match cx.event {
             WidgetEvent::PointerMoved { position } => {
                 let hit = self
@@ -448,11 +493,16 @@ impl Widget for TokenField {
                     .lock()
                     .iter()
                     .position(|r| r.contains(*position));
-                if hit != self.highlighted {
-                    self.highlighted = hit;
-                    return EventResponse::RequestRepaint;
+                let changed = hit != self.highlighted;
+                self.highlighted = hit;
+                // Forward too — an in-progress drag-select in the
+                // input lives on these moves.
+                let response = self.forward_input(cx);
+                if changed {
+                    EventResponse::RequestRepaint
+                } else {
+                    response
                 }
-                EventResponse::Ignored
             }
             WidgetEvent::PointerLeave => {
                 self.highlighted = None;
@@ -471,17 +521,62 @@ impl Widget for TokenField {
                         .is_some_and(|z| z.contains(*position))
                     {
                         self.remove_token(i);
+                        // Focus stays in the input across chip removal.
+                        self.grant_input_focus(cx.scale);
                         return EventResponse::RequestRepaint;
                     }
                 }
-                self.forward_input(cx)
+                let response = self.forward_input(cx);
+                if response == EventResponse::Ignored && cx.bounds.contains(*position) {
+                    // A press on field chrome — padding or a chip
+                    // body — claims focus for the input the way a
+                    // press inside the field's text lane does.
+                    self.grant_input_focus(cx.scale);
+                    return EventResponse::CapturePointer;
+                }
+                response
             }
             WidgetEvent::KeyPressed { key, .. } => {
                 if self.input.focused() {
-                    if key == "Backspace" && self.input.value.is_empty() && !self.tokens.is_empty()
-                    {
-                        self.remove_token(self.tokens.len() - 1);
-                        return EventResponse::RequestRepaint;
+                    // Chip keyboard navigation shares the pending-
+                    // input-is-empty guard with the Backspace-pop, so
+                    // caret keys always reach real text first.
+                    if self.input.value.is_empty() && !self.tokens.is_empty() {
+                        match key.as_str() {
+                            "ArrowLeft" => {
+                                self.highlighted = Some(match self.highlighted {
+                                    Some(i) => i.saturating_sub(1).min(self.tokens.len() - 1),
+                                    None => self.tokens.len() - 1,
+                                });
+                                return EventResponse::RequestRepaint;
+                            }
+                            "ArrowRight" => {
+                                if let Some(i) = self.highlighted {
+                                    let next = i + 1;
+                                    self.highlighted = (next < self.tokens.len()).then_some(next);
+                                    return EventResponse::RequestRepaint;
+                                }
+                            }
+                            "Backspace" => {
+                                let i = self
+                                    .highlighted
+                                    .filter(|h| *h < self.tokens.len())
+                                    .unwrap_or(self.tokens.len() - 1);
+                                self.remove_token(i);
+                                return EventResponse::RequestRepaint;
+                            }
+                            "Delete" => {
+                                if let Some(i) = self.highlighted {
+                                    self.remove_token(i.min(self.tokens.len() - 1));
+                                    return EventResponse::RequestRepaint;
+                                }
+                            }
+                            "Escape" if self.highlighted.is_some() => {
+                                self.highlighted = None;
+                                return EventResponse::RequestRepaint;
+                            }
+                            _ => {}
+                        }
                     }
                     if key == "Enter" && self.commit_pending() {
                         return EventResponse::RequestRepaint;
@@ -490,22 +585,30 @@ impl Widget for TokenField {
                 self.forward_input(cx)
             }
             WidgetEvent::ImeCommitted { text } => {
-                // A trailing delimiter commits the pending text as a
-                // token; the input never sees the delimiter.
+                // A delimiter anywhere in the committed text splits
+                // it: every segment between boundaries commits as its
+                // own token, so a batched "a,b,c" lands as three
+                // chips — the NSTokenField / tag-input paste
+                // convention. The delimiters never reach the input.
                 if self.input.focused() {
-                    let ends = text
-                        .chars()
-                        .last()
-                        .is_some_and(|c| self.delimiters.contains(&c));
-                    if ends {
-                        let mut stripped = text.clone();
-                        stripped.pop();
-                        let combined = format!("{}{}", self.input.value, stripped);
-                        self.input.set_value(combined);
-                        self.commit_pending();
+                    self.highlighted = None;
+                    if text.chars().any(|c| self.delimiters.contains(&c)) {
+                        let combined = format!("{}{}", self.input.value, text);
+                        self.input.set_value("");
+                        let delimiters = self.delimiters.clone();
+                        for part in combined.split(|c| delimiters.contains(&c)) {
+                            let part = part.trim();
+                            if !part.is_empty() {
+                                self.add_token(part);
+                            }
+                        }
                         return EventResponse::RequestRepaint;
                     }
                 }
+                self.forward_input(cx)
+            }
+            WidgetEvent::FocusLost => {
+                self.highlighted = None;
                 self.forward_input(cx)
             }
             _ => self.forward_input(cx),
@@ -615,15 +718,20 @@ impl Widget for TokenField {
         (index == 0).then_some(&mut self.input as &mut dyn Widget)
     }
 
+    fn focused(&self) -> bool {
+        self.input.focused()
+    }
+
     fn child_bounds(&self, index: usize) -> Option<Rect> {
         if index != 0 {
             return None;
         }
+        let s = self.scale;
         let rects = self.chip_rects.lock();
         let x = rects
             .last()
-            .map(|r| r.max_x() + CHIP_GAP_PT)
-            .unwrap_or(self.bounds.origin.x + FIELD_PAD_PT);
+            .map(|r| r.max_x() + CHIP_GAP_PT * s)
+            .unwrap_or(self.bounds.origin.x + FIELD_PAD_PT * s);
         Some(Rect::new(
             x,
             self.bounds.origin.y,
@@ -671,7 +779,10 @@ mod tests {
         t.add_token("rust");
         t.add_token("gui");
         assert_eq!(t.token_list(), &["rust", "gui"]);
+        // Added notifications drain oldest-first.
+        assert_eq!(t.take_added(), Some("rust".into()));
         assert_eq!(t.take_added(), Some("gui".into()));
+        assert_eq!(t.take_added(), None);
         t.remove_token(0);
         assert_eq!(t.token_list(), &["gui"]);
         assert_eq!(t.take_removed(), Some("rust".into()));
@@ -760,5 +871,233 @@ mod tests {
         let t = TokenField::new();
         assert_eq!(Widget::child_count(&t), 1);
         assert!(Widget::child(&t, 0).is_some());
+    }
+
+    #[test]
+    fn batched_delimiter_commit_splits_tokens() {
+        let mut t = TokenField::new();
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        // A pasted "a,b,c" tokenizes every segment — the field never
+        // stores the delimiters in the pending text.
+        let e = WidgetEvent::ImeCommitted {
+            text: "a,b,c".into(),
+        };
+        assert_eq!(t.event(&mut ev(&e)), EventResponse::RequestRepaint);
+        assert_eq!(t.token_list(), &["a", "b", "c"]);
+        assert_eq!(t.input.value, "");
+        // The batch reports every added token, oldest first.
+        assert_eq!(t.take_added(), Some("a".into()));
+        assert_eq!(t.take_added(), Some("b".into()));
+        assert_eq!(t.take_added(), Some("c".into()));
+        assert_eq!(t.take_added(), None);
+    }
+
+    #[test]
+    fn delimiter_commit_trims_and_skips_empty_segments() {
+        let mut t = TokenField::new();
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        let e = WidgetEvent::ImeCommitted {
+            text: " a ,,b; ".into(),
+        };
+        t.event(&mut ev(&e));
+        assert_eq!(t.token_list(), &["a", "b"]);
+    }
+
+    #[test]
+    fn pending_text_joins_delimiter_commit() {
+        let mut t = TokenField::new();
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.input.set_value("pre");
+        let e = WidgetEvent::ImeCommitted {
+            text: ",post".into(),
+        };
+        t.event(&mut ev(&e));
+        assert_eq!(t.token_list(), &["pre", "post"]);
+        assert_eq!(t.input.value, "");
+    }
+
+    #[test]
+    fn duplicate_token_is_refused() {
+        let mut t = TokenField::new().tokens(["rust"]);
+        t.add_token("rust");
+        assert_eq!(t.token_list(), &["rust"]);
+        assert_eq!(t.take_added(), None);
+        assert!(!t.take_edited());
+        // Exact and case-sensitive: "Rust" is a different token.
+        t.add_token("Rust");
+        assert_eq!(t.token_list(), &["rust", "Rust"]);
+    }
+
+    #[test]
+    fn duplicate_commit_clears_pending_without_adding() {
+        let mut t = TokenField::new().tokens(["a"]);
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.input.set_value("a");
+        t.event(&mut ev(&key("Enter")));
+        assert_eq!(t.token_list(), &["a"]);
+        assert_eq!(t.input.value, "");
+        assert_eq!(t.take_added(), None);
+    }
+
+    #[test]
+    fn whitespace_only_pending_does_not_commit() {
+        let mut t = TokenField::new();
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.input.set_value("   ");
+        t.event(&mut ev(&key("Enter")));
+        assert!(t.token_list().is_empty());
+    }
+
+    #[test]
+    fn arrows_walk_chip_highlight() {
+        let mut t = TokenField::new().tokens(["a", "b", "c"]);
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(t.highlighted, Some(2));
+        t.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(t.highlighted, Some(1));
+        t.event(&mut ev(&key("ArrowRight")));
+        assert_eq!(t.highlighted, Some(2));
+        // Walking off the trailing edge returns to the input.
+        t.event(&mut ev(&key("ArrowRight")));
+        assert_eq!(t.highlighted, None);
+    }
+
+    #[test]
+    fn backspace_removes_highlighted_chip() {
+        let mut t = TokenField::new().tokens(["a", "b", "c"]);
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.event(&mut ev(&key("ArrowLeft")));
+        t.event(&mut ev(&key("ArrowLeft"))); // highlight "b" (index 1)
+        t.event(&mut ev(&key("Backspace")));
+        assert_eq!(t.token_list(), &["a", "c"]);
+        assert_eq!(t.highlighted, None);
+        assert_eq!(t.take_removed(), Some("b".into()));
+    }
+
+    #[test]
+    fn delete_removes_highlighted_chip() {
+        let mut t = TokenField::new().tokens(["a", "b"]);
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.event(&mut ev(&key("ArrowLeft")));
+        t.event(&mut ev(&key("Delete")));
+        assert_eq!(t.token_list(), &["a"]);
+    }
+
+    #[test]
+    fn chip_nav_ignored_while_pending_text() {
+        let mut t = TokenField::new().tokens(["a"]);
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.input.set_value("x");
+        // With pending text ArrowLeft is caret motion — no chip nav.
+        t.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(t.highlighted, None);
+    }
+
+    #[test]
+    fn typing_clears_chip_highlight() {
+        let mut t = TokenField::new().tokens(["a"]);
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(t.highlighted, Some(0));
+        t.event(&mut ev(&WidgetEvent::ImeCommitted { text: "x".into() }));
+        assert_eq!(t.highlighted, None);
+        assert_eq!(t.input.value, "x");
+    }
+
+    #[test]
+    fn escape_drops_chip_highlight() {
+        let mut t = TokenField::new().tokens(["a"]);
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(t.highlighted, Some(0));
+        assert_eq!(
+            t.event(&mut ev(&key("Escape"))),
+            EventResponse::RequestRepaint
+        );
+        assert_eq!(t.highlighted, None);
+    }
+
+    #[test]
+    fn focus_lost_clears_input_focus_and_highlight() {
+        let mut t = TokenField::new().tokens(["a"]);
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        t.event(&mut ev(&key("ArrowLeft")));
+        assert_eq!(t.highlighted, Some(0));
+        t.event(&mut ev(&WidgetEvent::FocusLost));
+        assert!(!t.input().focused());
+        assert_eq!(t.highlighted, None);
+        // Keys no longer pop chips — the input dropped focus.
+        assert_eq!(t.event(&mut ev(&key("Backspace"))), EventResponse::Ignored);
+        assert_eq!(t.token_list(), &["a"]);
+    }
+
+    #[test]
+    fn press_on_field_chrome_claims_focus() {
+        let mut t = TokenField::new().tokens(["one"]);
+        let mut hot = HotNode::default();
+        t.layout(&mut make_cx(&mut hot), Rect::new(0.0, 0.0, 300.0, 32.0));
+        // A press on the chip body (not its × zone) claims focus for
+        // the input rather than falling through dead space.
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(8.0, 16.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(t.event(&mut ev(&press)), EventResponse::CapturePointer);
+        assert!(t.input().focused());
+        assert_eq!(t.token_list(), &["one"]);
+    }
+
+    #[test]
+    fn remove_click_keeps_input_focused() {
+        let mut t = TokenField::new().tokens(["one", "two"]);
+        let mut hot = HotNode::default();
+        t.layout(&mut make_cx(&mut hot), Rect::new(0.0, 0.0, 300.0, 32.0));
+        let zone = t.remove_zone(0, 1.0).unwrap();
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(zone.origin.x + 1.0, zone.origin.y + 1.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(t.event(&mut ev(&press)), EventResponse::RequestRepaint);
+        assert_eq!(t.token_list(), &["two"]);
+        assert!(t.input().focused());
+    }
+
+    #[test]
+    fn disabled_field_ignores_press_and_keys() {
+        let mut t = TokenField::new().tokens(["a"]).enabled(false);
+        let mut hot = HotNode::default();
+        t.layout(&mut make_cx(&mut hot), Rect::new(0.0, 0.0, 300.0, 32.0));
+        let zone = t.remove_zone(0, 1.0).unwrap();
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(zone.origin.x + 1.0, zone.origin.y + 1.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(t.event(&mut ev(&press)), EventResponse::Ignored);
+        assert_eq!(t.token_list(), &["a"]);
+        assert_eq!(
+            t.event(&mut ev(&WidgetEvent::FocusGained)),
+            EventResponse::Ignored
+        );
+        assert!(!t.input().focused());
+    }
+
+    #[test]
+    fn wrapper_reports_input_focus() {
+        let mut t = TokenField::new();
+        assert!(!Widget::focused(&t));
+        t.event(&mut ev(&WidgetEvent::FocusGained));
+        assert!(Widget::focused(&t));
+    }
+
+    #[test]
+    fn unfocused_enter_does_not_commit() {
+        let mut t = TokenField::new();
+        t.input.set_value("x");
+        assert_eq!(t.event(&mut ev(&key("Enter"))), EventResponse::Ignored);
+        assert!(t.token_list().is_empty());
     }
 }
