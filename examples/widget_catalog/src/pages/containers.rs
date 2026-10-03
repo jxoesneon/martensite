@@ -23,7 +23,7 @@ use martensite::widgets::text::Text;
 use martensite::widgets::viewport::Viewport;
 
 use crate::page::{Page, PropSpec};
-use crate::pages::{downcast_mut, meta, page};
+use crate::pages::{downcast_mut, meta, page, SnipProp};
 
 page!(ContainerPage {
     meta: meta(
@@ -39,24 +39,50 @@ page!(ContainerPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "padding",
-        label: "Padding",
-        min: 0.0,
-        max: 64.0,
-        step: 2.0,
-        default: 16.0
-    },],
-    build: |p| Box::new(
-        Container::new()
+    props: &[
+        PropSpec::Float {
+            key: "padding",
+            label: "Padding",
+            min: 0.0,
+            max: 64.0,
+            step: 2.0,
+            default: 16.0
+        },
+        PropSpec::Text {
+            key: "background",
+            label: "Background",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = Container::new()
             .padding_uniform(p.f64("padding") as f32)
-            .child(Text::new("Contained content")),
-    ),
+            .child(Text::new("Contained content"));
+        if let Some([r, g, b, _]) = crate::pages::parse_rgba(p.str("background")) {
+            __w = __w.background(martensite_theme::Oklab::from_srgb(
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+            ));
+        }
+        Box::new(__w)
+    },
     snippet: |p| {
-        format!(
+        let mut __s = {
+            format!(
         "Container::new()\n    .padding_uniform({:?})\n    .child(Text::new(\"Contained content\"))",
         p.f64("padding") as f32,
     )
+        };
+        __s.push_str(&crate::pages::prop_snippet(p, &[]));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "background",
+            ".background",
+            "",
+            crate::pages::expr_oklab,
+        ));
+        __s
     },
 });
 
@@ -89,6 +115,18 @@ page!(FlexPage {
             step: 2.0,
             default: 8.0
         },
+        PropSpec::Choice {
+            key: "main_axis_alignment",
+            label: "Main Axis Alignment",
+            options: &["Start", "End", "Center", "Space Between", "Space Evenly"],
+            default: 0
+        },
+        PropSpec::Choice {
+            key: "cross_axis_alignment",
+            label: "Cross Axis Alignment",
+            options: &["Stretch", "Start", "End", "Center"],
+            default: 0
+        },
     ],
     build: |p| {
         let dir = if p.choice("direction") == 1 {
@@ -96,20 +134,69 @@ page!(FlexPage {
         } else {
             FlexDirection::Row
         };
-        Box::new(
-            Flex::new(dir)
+        {
+            let mut __w = Flex::new(dir)
                 .gap(p.f64("gap") as f32)
                 .child(Button::new("One"))
                 .child(Button::new("Two"))
-                .child(Button::new("Three")),
-        )
+                .child(Button::new("Three"));
+            if p.choice("main_axis_alignment") != 0 {
+                __w = __w.main_axis_alignment(match p.choice("main_axis_alignment") {
+                    0 => martensite::widgets::flex::MainAxisAlignment::Start,
+                    1 => martensite::widgets::flex::MainAxisAlignment::End,
+                    2 => martensite::widgets::flex::MainAxisAlignment::Center,
+                    3 => martensite::widgets::flex::MainAxisAlignment::SpaceBetween,
+                    4 => martensite::widgets::flex::MainAxisAlignment::SpaceEvenly,
+                    _ => martensite::widgets::flex::MainAxisAlignment::Start,
+                });
+            }
+            if p.choice("cross_axis_alignment") != 0 {
+                __w = __w.cross_axis_alignment(match p.choice("cross_axis_alignment") {
+                    0 => martensite::widgets::flex::CrossAxisAlignment::Stretch,
+                    1 => martensite::widgets::flex::CrossAxisAlignment::Start,
+                    2 => martensite::widgets::flex::CrossAxisAlignment::End,
+                    3 => martensite::widgets::flex::CrossAxisAlignment::Center,
+                    _ => martensite::widgets::flex::CrossAxisAlignment::Stretch,
+                });
+            }
+            Box::new(__w)
+        }
     },
     snippet: |p| {
-        format!(
+        let mut __s = {
+            format!(
         "Flex::new(FlexDirection::{})\n    .gap({:?})\n    .child(Button::new(\"One\"))\n    .child(Button::new(\"Two\"))",
         if p.choice("direction") == 1 { "Column" } else { "Row" },
         p.f64("gap") as f32,
     )
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                (
+                    "main_axis_alignment",
+                    ".main_axis_alignment",
+                    SnipProp::Choice(&[
+                        "martensite::widgets::flex::MainAxisAlignment::Start",
+                        "martensite::widgets::flex::MainAxisAlignment::End",
+                        "martensite::widgets::flex::MainAxisAlignment::Center",
+                        "martensite::widgets::flex::MainAxisAlignment::SpaceBetween",
+                        "martensite::widgets::flex::MainAxisAlignment::SpaceEvenly",
+                    ]),
+                ),
+                (
+                    "cross_axis_alignment",
+                    ".cross_axis_alignment",
+                    SnipProp::Choice(&[
+                        "martensite::widgets::flex::CrossAxisAlignment::Stretch",
+                        "martensite::widgets::flex::CrossAxisAlignment::Start",
+                        "martensite::widgets::flex::CrossAxisAlignment::End",
+                        "martensite::widgets::flex::CrossAxisAlignment::Center",
+                    ]),
+                ),
+            ],
+        ));
+        __s
     },
 });
 
@@ -127,7 +214,19 @@ page!(StackPage {
         ],
         false,
     ),
-    props: &[],
+    props: &[PropSpec::Choice {
+        key: "alignment",
+        label: "Alignment",
+        options: &[
+            "Top Start",
+            "Top End",
+            "Bottom Start",
+            "Bottom End",
+            "Center",
+            "Stretch"
+        ],
+        default: 0
+    },],
     build: |_p| {
         let mut s = Stack::new().child(
             Container::new()
@@ -135,10 +234,41 @@ page!(StackPage {
                 .child(Text::new("Base layer")),
         );
         s = s.child(Text::new("Overlay layer"));
-        Box::new(s)
+        {
+            let mut __w = s;
+            if _p.choice("alignment") != 0 {
+                __w = __w.alignment(match _p.choice("alignment") {
+                    0 => martensite::widgets::stack::StackAlignment::TopStart,
+                    1 => martensite::widgets::stack::StackAlignment::TopEnd,
+                    2 => martensite::widgets::stack::StackAlignment::BottomStart,
+                    3 => martensite::widgets::stack::StackAlignment::BottomEnd,
+                    4 => martensite::widgets::stack::StackAlignment::Center,
+                    5 => martensite::widgets::stack::StackAlignment::Stretch,
+                    _ => martensite::widgets::stack::StackAlignment::TopStart,
+                });
+            }
+            Box::new(__w)
+        }
     },
     snippet: |_p| {
-        "Stack::new()\n    .child(base_widget)\n    .child(badge_overlay)".to_string()
+        let mut __s =
+            { "Stack::new()\n    .child(base_widget)\n    .child(badge_overlay)".to_string() };
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[(
+                "alignment",
+                ".alignment",
+                SnipProp::Choice(&[
+                    "martensite::widgets::stack::StackAlignment::TopStart",
+                    "martensite::widgets::stack::StackAlignment::TopEnd",
+                    "martensite::widgets::stack::StackAlignment::BottomStart",
+                    "martensite::widgets::stack::StackAlignment::BottomEnd",
+                    "martensite::widgets::stack::StackAlignment::Center",
+                    "martensite::widgets::stack::StackAlignment::Stretch",
+                ]),
+            )],
+        ));
+        __s
     },
 });
 
@@ -156,25 +286,69 @@ page!(GridPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "cols",
-        label: "Columns",
-        min: 1,
-        max: 6,
-        default: 3
-    },],
+    props: &[
+        PropSpec::Int {
+            key: "cols",
+            label: "Columns",
+            min: 1,
+            max: 6,
+            default: 3
+        },
+        PropSpec::Float {
+            key: "gap",
+            label: "Gap",
+            min: 0.0,
+            max: 64.0,
+            step: 0.5,
+            default: 8.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut g = Grid::new().columns(p.i64("cols") as u32).row_height(32.0);
         for i in 1..=6 {
             g = g.cell(GridCell::new(Button::new(format!("Cell {i}"))));
         }
-        Box::new(g)
+        {
+            let mut __w = g;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.f64("gap") != 8.0 {
+                __w = __w.gap(p.f64("gap") as f32);
+            }
+            Box::new(__w)
+        }
     },
     snippet: |p| {
-        format!(
+        let mut __s = {
+            format!(
         "Grid::new()\n    .columns({})\n    .row_height(32.0)\n    .cell(GridCell::new(Button::new(\"Cell\")))",
         p.i64("cols"),
     )
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("gap", ".gap", SnipProp::Float(8.0)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
     },
 });
 
@@ -203,17 +377,52 @@ page!(GroupBoxPage {
             label: "Checkable",
             default: false
         },
+        PropSpec::Bool {
+            key: "checked",
+            label: "Checked",
+            default: false
+        },
+        PropSpec::Float {
+            key: "padding_uniform",
+            label: "Padding Uniform",
+            min: 0.0,
+            max: 64.0,
+            step: 0.5,
+            default: 0.0
+        },
+        PropSpec::Float {
+            key: "padding",
+            label: "Padding",
+            min: 0.0,
+            max: 100.0,
+            step: 0.5,
+            default: 0.0
+        },
     ],
-    build: |p| Box::new(
-        GroupBox::new(p.str("title"))
-            .checkable(p.bool("checkable"))
-            .child(Text::new("Grouped content")),
-    ),
-    snippet: |p| format!(
-        "GroupBox::new({:?})\n    .checkable({})\n    .child(Text::new(\"Grouped content\"))",
-        p.str("title"),
-        p.bool("checkable"),
-    ),
+    build: |p| {
+        let mut __w = GroupBox::new(p.str("title")).checkable(p.bool("checkable"));
+        if p.f64("padding") != 0.0 {
+            __w = __w.padding(martensite_layout::geometry::EdgeInsets::uniform(
+                p.f64("padding") as f32,
+            ));
+        }
+        Box::new(__w.child(Text::new("Grouped content")))
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "GroupBox::new({:?})\n    .checkable({})\n    .child(Text::new(\"Grouped content\"))",
+            p.str("title"),
+            p.bool("checkable"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(p, &[]));
+        if p.f64("padding") != 0.0 {
+            __s.push_str(&format!(
+                "\n    .padding(EdgeInsets::uniform({}))",
+                p.f64("padding")
+            ));
+        }
+        __s
+    },
     state: |w| {
         downcast_mut::<GroupBox>(w)
             .map(|g| vec![("checked".to_string(), g.is_checked().to_string())])
@@ -247,6 +456,22 @@ page!(CardPage {
             options: &["Elevated", "Filled", "Outlined"],
             default: 0,
         },
+        PropSpec::Float {
+            key: "padding_uniform",
+            label: "Padding Uniform",
+            min: 0.0,
+            max: 64.0,
+            step: 0.5,
+            default: 0.0
+        },
+        PropSpec::Float {
+            key: "padding",
+            label: "Padding",
+            min: 0.0,
+            max: 100.0,
+            step: 0.5,
+            default: 0.0
+        },
     ],
     build: |p| {
         let variant = match p.choice("variant") {
@@ -254,19 +479,41 @@ page!(CardPage {
             2 => CardVariant::Outlined,
             _ => CardVariant::Elevated,
         };
-        Box::new(
-            Card::new()
+        {
+            let mut __w = Card::new()
                 .title(p.str("title"))
                 .variant(variant)
-                .child(Text::new("Card body content goes here.")),
-        )
+                .child(Text::new("Card body content goes here."));
+            if p.f64("padding_uniform") != 0.0 {
+                __w = __w.padding_uniform(p.f64("padding_uniform") as f32);
+            }
+            if p.f64("padding") != 0.0 {
+                __w = __w.padding(martensite_layout::geometry::EdgeInsets::uniform(
+                    p.f64("padding") as f32,
+                ));
+            }
+            Box::new(__w)
+        }
     },
     snippet: |p| {
-        format!(
+        let mut __s = {
+            format!(
         "Card::new()\n    .title({:?})\n    .variant(CardVariant::{})\n    .child(Text::new(\"Card body\"))",
         p.str("title"),
         ["Elevated", "Filled", "Outlined"][p.choice("variant")],
     )
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("padding_uniform", ".padding_uniform", SnipProp::Float(0.0))],
+        ));
+        if p.f64("padding") != 0.0 {
+            __s.push_str(&format!(
+                "\n    .padding(EdgeInsets::uniform({}))",
+                p.f64("padding")
+            ));
+        }
+        __s
     },
 });
 
@@ -295,17 +542,72 @@ page!(ExpanderRowPage {
             label: "Subtitle",
             default: "Fine-tune behavior"
         },
+        PropSpec::Text {
+            key: "icon",
+            label: "Icon",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "icon_d",
+            label: "Icon D",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "icon_named",
+            label: "Icon Named",
+            default: ""
+        },
+        PropSpec::Bool {
+            key: "expanded",
+            label: "Expanded",
+            default: false
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
-    build: |p| Box::new(
-        ExpanderRow::new(p.str("title"))
+    build: |p| {
+        let mut __w = ExpanderRow::new(p.str("title"))
             .subtitle(p.str("subtitle"))
-            .child(Switch::new("Deep option").on(true)),
-    ),
-    snippet: |p| format!(
-        "ExpanderRow::new({:?})\n    .subtitle({:?})\n    .child(Switch::new(\"Deep option\"))",
-        p.str("title"),
-        p.str("subtitle"),
-    ),
+            .child(Switch::new("Deep option").on(true));
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("icon").is_empty() {
+            __w = __w.icon(p.str("icon"));
+        }
+        if !p.str("icon_d").is_empty() {
+            __w = __w.icon_d(p.str("icon_d"));
+        }
+        if !p.str("icon_named").is_empty() {
+            __w = __w.icon_named(p.str("icon_named"));
+        }
+        if p.bool("expanded") {
+            __w = __w.expanded(p.bool("expanded"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "ExpanderRow::new({:?})\n    .subtitle({:?})\n    .child(Switch::new(\"Deep option\"))",
+            p.str("title"),
+            p.str("subtitle"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("icon", ".icon", SnipProp::Text("")),
+                ("icon_d", ".icon_d", SnipProp::Text("")),
+                ("icon_named", ".icon_named", SnipProp::Text("")),
+                ("expanded", ".expanded", SnipProp::Bool(false)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(e) = downcast_mut::<ExpanderRow>(w) {
             if e.take_toggled() {
@@ -340,20 +642,92 @@ page!(SettingsRowPage {
             label: "Subtitle",
             default: "Output device"
         },
+        PropSpec::Bool {
+            key: "carded",
+            label: "Carded",
+            default: true
+        },
+        PropSpec::Text {
+            key: "icon",
+            label: "Icon",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "icon_d",
+            label: "Icon D",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "icon_named",
+            label: "Icon Named",
+            default: ""
+        },
+        PropSpec::Bool {
+            key: "activatable",
+            label: "Activatable",
+            default: false
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
-    build: |p| Box::new(
-        SettingsGroup::new("General").row(
-            SettingsRow::new(p.str("title"))
-                .subtitle(p.str("subtitle"))
-                .trailing(Switch::new("").on(true)),
-        ),
-    ),
+    build: |p| {
+        let mut row = SettingsRow::new(p.str("title"))
+            .subtitle(p.str("subtitle"))
+            .trailing(Switch::new("").on(true));
+        if !p.str("icon").is_empty() {
+            row = row.icon(p.str("icon"));
+        }
+        if !p.str("icon_d").is_empty() {
+            row = row.icon_d(p.str("icon_d"));
+        }
+        if !p.str("icon_named").is_empty() {
+            row = row.icon_named(p.str("icon_named"));
+        }
+        if p.bool("activatable") {
+            row = row.activatable(true);
+        }
+        if !p.bool("enabled") {
+            row = row.enabled(false);
+        }
+        let mut __w = SettingsGroup::new("General").row(row);
+        if !p.bool("carded") {
+            __w = __w.carded(p.bool("carded"));
+        }
+        Box::new(__w)
+    },
     snippet: |p| {
-        format!(
-        "SettingsGroup::new(\"General\")\n    .row(SettingsRow::new({:?})\n        .subtitle({:?})\n        .trailing(Switch::new(\"\")))",
-        p.str("title"),
-        p.str("subtitle"),
-    )
+        let mut row_s = format!(
+            "SettingsRow::new({:?})\n        .subtitle({:?})\n        .trailing(Switch::new(\"\")",
+            p.str("title"),
+            p.str("subtitle")
+        );
+        if !p.str("icon").is_empty() {
+            row_s.push_str(&format!("\n        .icon({:?})", p.str("icon")));
+        }
+        if !p.str("icon_d").is_empty() {
+            row_s.push_str(&format!("\n        .icon_d({:?})", p.str("icon_d")));
+        }
+        if !p.str("icon_named").is_empty() {
+            row_s.push_str(&format!("\n        .icon_named({:?})", p.str("icon_named")));
+        }
+        if p.bool("activatable") {
+            row_s.push_str("\n        .activatable(true)");
+        }
+        if !p.bool("enabled") {
+            row_s.push_str("\n        .enabled(false)");
+        }
+        let mut __s = format!("SettingsGroup::new(\"General\")\n    .row({row_s})");
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("carded", ".carded", SnipProp::Bool(true))],
+        ));
+        __s
     },
 });
 
@@ -399,19 +773,68 @@ page!(AspectFramePage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "ratio",
-        label: "Ratio",
-        min: 0.25,
-        max: 4.0,
-        step: 0.25,
-        default: 1.78
-    },],
-    build: |p| Box::new(AspectFrame::new(p.f64("ratio") as f32).child(Text::new("16:9")),),
-    snippet: |p| format!(
-        "AspectFrame::new({:?}).child(Text::new(\"16:9\"))",
-        p.f64("ratio") as f32,
-    ),
+    props: &[
+        PropSpec::Float {
+            key: "ratio",
+            label: "Ratio",
+            min: 0.25,
+            max: 4.0,
+            step: 0.25,
+            default: 1.78
+        },
+        PropSpec::Float {
+            key: "xalign",
+            label: "Xalign",
+            min: -9.25,
+            max: 100.0,
+            step: 1.0,
+            default: 0.5
+        },
+        PropSpec::Float {
+            key: "yalign",
+            label: "Yalign",
+            min: -9.25,
+            max: 100.0,
+            step: 1.0,
+            default: 0.5
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = AspectFrame::new(p.f64("ratio") as f32).child(Text::new("16:9"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if p.f64("xalign") != 0.5 {
+            __w = __w.xalign(p.f64("xalign") as f32);
+        }
+        if p.f64("yalign") != 0.5 {
+            __w = __w.yalign(p.f64("yalign") as f32);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "AspectFrame::new({:?}).child(Text::new(\"16:9\"))",
+            p.f64("ratio") as f32,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("xalign", ".xalign", SnipProp::Float(0.5)),
+                ("yalign", ".yalign", SnipProp::Float(0.5)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(ClampPage {
@@ -428,25 +851,46 @@ page!(ClampPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "maximum",
-        label: "Max width",
-        min: 60.0,
-        max: 480.0,
-        step: 10.0,
-        default: 240.0,
-    }],
-    build: |p| Box::new(
-        Clamp::new()
+    props: &[
+        PropSpec::Float {
+            key: "maximum",
+            label: "Max width",
+            min: 60.0,
+            max: 480.0,
+            step: 10.0,
+            default: 240.0,
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = Clamp::new()
             .maximum(p.f64("maximum") as f32)
             .child(Text::new(
-                "This paragraph is clamped to a maximum readable width."
-            )),
-    ),
-    snippet: |p| format!(
-        "Clamp::new()\n    .maximum({:?})\n    .child(Text::new(\"…\"))",
-        p.f64("maximum") as f32,
-    ),
+                "This paragraph is clamped to a maximum readable width.",
+            ));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "Clamp::new()\n    .maximum({:?})\n    .child(Text::new(\"…\"))",
+            p.f64("maximum") as f32,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
 });
 
 page!(SplitViewPage {
@@ -478,6 +922,30 @@ page!(SplitViewPage {
             step: 0.05,
             default: 0.4
         },
+        PropSpec::Float {
+            key: "default_ratio",
+            label: "Default Ratio",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 0.0
+        },
+        PropSpec::Float {
+            key: "minimums",
+            label: "Minimums",
+            min: -10.0,
+            max: 100.0,
+            step: 1.0,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
     build: |p| {
         let (a, b) = (Text::new("Left pane"), Text::new("Right pane"));
@@ -489,16 +957,37 @@ page!(SplitViewPage {
         .first(Container::new().padding_uniform(8.0).child(a))
         .second(Container::new().padding_uniform(8.0).child(b));
         s.set_ratio(p.f64("ratio") as f32);
-        Box::new(s)
+        {
+            let mut __w = s;
+            __w = __w.enabled(p.bool("enabled"));
+            if p.f64("default_ratio") != 0.0 {
+                __w = __w.default_ratio(p.f64("default_ratio") as f32);
+            }
+            if p.f64("minimums") != 0.0 {
+                __w = __w.minimums(p.f64("minimums") as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "SplitView::{}()\n    .first(pane_a)\n    .second(pane_b)",
-        if p.choice("orientation") == 1 {
-            "vertical"
-        } else {
-            "horizontal"
-        },
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "SplitView::{}()\n    .first(pane_a)\n    .second(pane_b)",
+            if p.choice("orientation") == 1 {
+                "vertical"
+            } else {
+                "horizontal"
+            },
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("default_ratio", ".default_ratio", SnipProp::Float(0.0)),
+                ("minimums", ".minimums", SnipProp::Float(0.0)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(s) = downcast_mut::<SplitView>(w) {
             if let Some(r) = s.take_moved() {
@@ -522,24 +1011,45 @@ page!(ScrollViewPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "lines",
-        label: "Content lines",
-        min: 4,
-        max: 60,
-        default: 24,
-    }],
+    props: &[
+        PropSpec::Int {
+            key: "lines",
+            label: "Content lines",
+            min: 4,
+            max: 60,
+            default: 24,
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+    ],
     build: |p| {
         let mut f = Flex::new(FlexDirection::Column).gap(4.0);
         for i in 1..=p.i64("lines") {
             f = f.child(Text::new(format!("Scrollable row {i}")));
         }
-        Box::new(ScrollView::new(f))
+        {
+            let mut __w = ScrollView::new(f);
+            __w = __w.enabled(p.bool("enabled"));
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "ScrollView::new(Flex::new(Column) /* {} rows */)",
-        p.i64("lines"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "ScrollView::new(Flex::new(Column) /* {} rows */)",
+            p.i64("lines"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("enabled", ".enabled", SnipProp::Bool(true))],
+        ));
+        __s
+    },
 });
 
 page!(ViewportPage {
@@ -556,13 +1066,71 @@ page!(ViewportPage {
         ],
         false,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Float {
+            key: "zoom",
+            label: "Zoom",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 1.0
+        },
+        PropSpec::Text {
+            key: "pan",
+            label: "Pan",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |_p| {
         let mut v = Viewport::new();
         v.set_child(Box::new(Text::new("Drag to pan, scroll to zoom.")));
-        Box::new(v)
+        {
+            let mut __w = v;
+            __w = __w.enabled(_p.bool("enabled"));
+            if !_p.str("a11y_label").is_empty() {
+                __w = __w.label(_p.str("a11y_label"));
+            }
+            if _p.f64("zoom") != 1.0 {
+                __w = __w.zoom(_p.f64("zoom") as f32);
+            }
+            if let Some((x, y)) = crate::pages::parse_pair(_p.str("pan")) {
+                __w = __w.pan(glam::Vec2::new(x as f32, y as f32));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |_p| "let mut v = Viewport::new();\nv.set_child(Box::new(content));".to_string(),
+    snippet: |_p| {
+        let mut __s = "let mut v = Viewport::new();\nv.set_child(Box::new(content));".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("zoom", ".zoom", SnipProp::Float(1.0)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            _p,
+            "pan",
+            ".pan",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s
+    },
     state: |w| {
         downcast_mut::<Viewport>(w)
             .map(|v| {
@@ -589,13 +1157,36 @@ page!(MasonryPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "cols",
-        label: "Columns",
-        min: 1,
-        max: 5,
-        default: 3
-    }],
+    props: &[
+        PropSpec::Int {
+            key: "cols",
+            label: "Columns",
+            min: 1,
+            max: 5,
+            default: 3
+        },
+        PropSpec::Float {
+            key: "gap",
+            label: "Gap",
+            min: 0.0,
+            max: 64.0,
+            step: 0.5,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut m = Masonry::new().columns(p.i64("cols") as usize);
         for (i, h) in [48.0f32, 72.0, 40.0, 88.0, 56.0, 64.0].iter().enumerate() {
@@ -605,9 +1196,30 @@ page!(MasonryPage {
                     .child(Text::new(format!("Tile {} ({}px)", i + 1, h))),
             );
         }
-        Box::new(m)
+        {
+            let mut __w = m;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.f64("gap") != 0.0 {
+                __w = __w.gap(p.f64("gap") as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("Masonry::new().columns({})", p.i64("cols")),
+    snippet: |p| {
+        let mut __s = format!("Masonry::new().columns({})", p.i64("cols"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("gap", ".gap", SnipProp::Float(0.0)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(FlowBoxPage {
@@ -624,14 +1236,35 @@ page!(FlowBoxPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "gap",
-        label: "Gap",
-        min: 0.0,
-        max: 24.0,
-        step: 2.0,
-        default: 8.0
-    }],
+    props: &[
+        PropSpec::Float {
+            key: "gap",
+            label: "Gap",
+            min: 0.0,
+            max: 24.0,
+            step: 2.0,
+            default: 8.0
+        },
+        PropSpec::Choice {
+            key: "selection_mode",
+            label: "Selection Mode",
+            options: &["None", "Single"],
+            default: 0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut fb = FlowBox::new().gap(p.f64("gap") as f32);
         for label in ["alpha", "beta", "gamma", "delta", "epsilon"] {
@@ -641,9 +1274,41 @@ page!(FlowBoxPage {
                     .child(Text::new(label)),
             );
         }
-        Box::new(fb)
+        {
+            let mut __w = fb;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.choice("selection_mode") != 0 {
+                __w = __w.selection_mode(match p.choice("selection_mode") {
+                    0 => martensite::widgets::flow_box::FlowSelection::None,
+                    1 => martensite::widgets::flow_box::FlowSelection::Single,
+                    _ => martensite::widgets::flow_box::FlowSelection::None,
+                });
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("FlowBox::new().gap({:?})", p.f64("gap") as f32),
+    snippet: |p| {
+        let mut __s = format!("FlowBox::new().gap({:?})", p.f64("gap") as f32);
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                (
+                    "selection_mode",
+                    ".selection_mode",
+                    SnipProp::Choice(&[
+                        "martensite::widgets::flow_box::FlowSelection::None",
+                        "martensite::widgets::flow_box::FlowSelection::Single",
+                    ]),
+                ),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(fb) = downcast_mut::<FlowBox>(w) {
             if let Some(i) = fb.take_selected() {
@@ -717,6 +1382,24 @@ page!(DescriptionsPage {
             label: "Bordered",
             default: true
         },
+        PropSpec::Text {
+            key: "item_label",
+            label: "Item Label",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "item_content",
+            label: "Item Content",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
     build: |p| {
         let mut d = Descriptions::new()
@@ -731,13 +1414,34 @@ page!(DescriptionsPage {
         ] {
             d = d.with_item(DescriptionItem::new(k, v));
         }
-        Box::new(d)
+        {
+            let mut __w = d;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("item_label").is_empty() || !p.str("item_content").is_empty() {
+                __w = __w.item(p.str("item_label"), p.str("item_content"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Descriptions::new()\n    .title(\"Asset\")\n    .column_count({})\n    .bordered({})",
-        p.i64("cols"),
-        p.bool("bordered"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Descriptions::new()\n    .title(\"Asset\")\n    .column_count({})\n    .bordered({})",
+            p.i64("cols"),
+            p.bool("bordered"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("enabled", ".enabled", SnipProp::Bool(true))],
+        ));
+        if !p.str("item_label").is_empty() || !p.str("item_content").is_empty() {
+            __s.push_str(&format!(
+                "\n    .item({:?}, {:?})",
+                p.str("item_label"),
+                p.str("item_content")
+            ));
+        }
+        __s
+    },
 });
 
 /// All Containers pages, in rail order.

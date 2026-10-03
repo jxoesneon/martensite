@@ -30,7 +30,7 @@ use martensite::widgets::update_prompt::UpdatePrompt;
 use martensite::widgets::watermark::Watermark;
 
 use crate::page::{Page, PropSpec};
-use crate::pages::{downcast_mut, meta, page};
+use crate::pages::{downcast_mut, meta, page, SnipProp};
 
 page!(ProgressBarPage {
     meta: meta(
@@ -91,15 +91,62 @@ page!(SpinnerPage {
             label: "Active",
             default: true
         },
+        PropSpec::Float {
+            key: "speed",
+            label: "Speed",
+            min: 0.0,
+            max: 10.0,
+            step: 0.1,
+            default: 1.25
+        },
+        PropSpec::Float {
+            key: "thickness",
+            label: "Thickness",
+            min: 0.0,
+            max: 64.0,
+            step: 0.5,
+            default: 2.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let mut s = Spinner::new().size(p.f64("size") as f32);
         if p.bool("active") {
             s.start();
         }
-        Box::new(s)
+        {
+            let mut __w = s;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.f64("speed") != 1.25 {
+                __w = __w.speed(p.f64("speed") as f32);
+            }
+            if p.f64("thickness") != 2.0 {
+                __w = __w.thickness(p.f64("thickness") as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("Spinner::new().size({:?})", p.f64("size") as f32),
+    snippet: |p| {
+        let mut __s = format!("Spinner::new().size({:?})", p.f64("size") as f32);
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("speed", ".speed", SnipProp::Float(1.25)),
+                ("thickness", ".thickness", SnipProp::Float(2.0)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(BadgePage {
@@ -135,6 +182,26 @@ page!(BadgePage {
             label: "Dot only",
             default: false
         },
+        PropSpec::Int {
+            key: "max",
+            label: "Max",
+            min: 0,
+            max: 100,
+            default: 99
+        },
+        PropSpec::Text {
+            key: "color",
+            label: "Color",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let sev = match p.choice("severity") {
@@ -147,13 +214,46 @@ page!(BadgePage {
         if p.bool("dot") {
             b = b.dot(true);
         }
-        Box::new(b)
+        {
+            let mut __w = b;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.a11y_label(p.str("a11y_label"));
+            }
+            if p.i64("max") != 99 {
+                __w = __w.max(p.i64("max") as u32);
+            }
+            if let Some([r, g, b, _]) = crate::pages::parse_rgba(p.str("color")) {
+                __w = __w.color(martensite_theme::Oklab::from_srgb(
+                    r as f32 / 255.0,
+                    g as f32 / 255.0,
+                    b as f32 / 255.0,
+                ));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Badge::new(\"\").severity(BadgeSeverity::{}).with_count({})",
-        ["Accent", "Info", "Ok", "Warning", "Error"][p.choice("severity")],
-        p.i64("count"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Badge::new(\"\").severity(BadgeSeverity::{}).with_count({})",
+            ["Accent", "Info", "Ok", "Warning", "Error"][p.choice("severity")],
+            p.i64("count"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("max", ".max", SnipProp::Int(99)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "color",
+            ".color",
+            "",
+            crate::pages::expr_oklab,
+        ));
+        __s
+    },
 });
 
 page!(BannerPage {
@@ -223,12 +323,27 @@ page!(SkeletonPage {
         ],
         false,
     ),
-    props: &[PropSpec::Choice {
-        key: "shape",
-        label: "Shape",
-        options: &["Block", "Circle", "Lines", "Rows", "Grid"],
-        default: 2,
-    }],
+    props: &[
+        PropSpec::Choice {
+            key: "shape",
+            label: "Shape",
+            options: &["Block", "Circle", "Lines", "Rows", "Grid"],
+            default: 2,
+        },
+        PropSpec::Bool {
+            key: "animated",
+            label: "Animated",
+            default: false
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let s = match p.choice("shape") {
             0 => Skeleton::block(),
@@ -237,12 +352,31 @@ page!(SkeletonPage {
             4 => Skeleton::grid(3, 2),
             _ => Skeleton::lines(3),
         };
-        Box::new(s)
+        {
+            let mut __w = s;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.a11y_label(p.str("a11y_label"));
+            }
+            if p.bool("animated") {
+                __w = __w.animated(p.bool("animated"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Skeleton::{}()",
-        ["block", "circle", "lines(3)", "rows(3)", "grid(3, 2)"][p.choice("shape")],
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Skeleton::{}()",
+            ["block", "circle", "lines(3)", "rows(3)", "grid(3, 2)"][p.choice("shape")],
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("animated", ".animated", SnipProp::Bool(false)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(EmptyStatePage {
@@ -270,17 +404,53 @@ page!(EmptyStatePage {
             label: "Description",
             default: "Start a conversation"
         },
+        PropSpec::Text {
+            key: "icon",
+            label: "Icon",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "icon_d",
+            label: "Icon D",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "icon_named",
+            label: "Icon Named",
+            default: ""
+        },
     ],
-    build: |p| Box::new(
-        EmptyState::new(p.str("title"))
+    build: |p| {
+        let mut __w = EmptyState::new(p.str("title"))
             .description(p.str("desc"))
-            .action("New message"),
-    ),
-    snippet: |p| format!(
-        "EmptyState::new({:?})\n    .description({:?})\n    .action(\"New message\")",
-        p.str("title"),
-        p.str("desc"),
-    ),
+            .action("New message");
+        if !p.str("icon").is_empty() {
+            __w = __w.icon(p.str("icon"));
+        }
+        if !p.str("icon_d").is_empty() {
+            __w = __w.icon_d(p.str("icon_d"));
+        }
+        if !p.str("icon_named").is_empty() {
+            __w = __w.icon_named(p.str("icon_named"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "EmptyState::new({:?})\n    .description({:?})\n    .action(\"New message\")",
+            p.str("title"),
+            p.str("desc"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("icon", ".icon", SnipProp::Text("")),
+                ("icon_d", ".icon_d", SnipProp::Text("")),
+                ("icon_named", ".icon_named", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if downcast_mut::<EmptyState>(w).is_some_and(|e| e.take_activated()) {
             out.push("action".to_string());
@@ -302,12 +472,19 @@ page!(ResultPagePage {
         ],
         false,
     ),
-    props: &[PropSpec::Choice {
-        key: "status",
-        label: "Status",
-        options: &["Success", "Warning", "Error", "Info"],
-        default: 0,
-    }],
+    props: &[
+        PropSpec::Choice {
+            key: "status",
+            label: "Status",
+            options: &["Success", "Warning", "Error", "Info"],
+            default: 0,
+        },
+        PropSpec::Text {
+            key: "action",
+            label: "Action",
+            default: ""
+        },
+    ],
     build: |p| {
         let st = match p.choice("status") {
             1 => ResultStatus::Warning,
@@ -315,16 +492,27 @@ page!(ResultPagePage {
             3 => ResultStatus::Info,
             _ => ResultStatus::Success,
         };
-        Box::new(
-            ResultPage::new(st)
+        {
+            let mut __w = ResultPage::new(st)
                 .title("Operation complete")
-                .subtitle("The file was processed without issues."),
-        )
+                .subtitle("The file was processed without issues.");
+            if !p.str("action").is_empty() {
+                __w = __w.action(p.str("action"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "ResultPage::new(ResultStatus::{})",
-        ["Success", "Warning", "Error", "Info"][p.choice("status")],
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "ResultPage::new(ResultStatus::{})",
+            ["Success", "Warning", "Error", "Info"][p.choice("status")],
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("action", ".action", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(rp) = downcast_mut::<ResultPage>(w) {
             if let Some(action) = rp.take_activated() {
@@ -360,6 +548,29 @@ page!(StatusDotPage {
             options: &["Off", "Info", "Ok", "Warning", "Error"],
             default: 2,
         },
+        PropSpec::Bool {
+            key: "pulse",
+            label: "Pulse",
+            default: false
+        },
+        PropSpec::Bool {
+            key: "glyph",
+            label: "Glyph",
+            default: true
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Bool {
+            key: "loading",
+            label: "Loading",
+            default: false
+        },
     ],
     build: |p| {
         let st = match p.choice("status") {
@@ -369,13 +580,36 @@ page!(StatusDotPage {
             4 => Status::Error,
             _ => Status::Ok,
         };
-        Box::new(StatusDot::new(p.str("text")).status(st))
+        {
+            let mut __w = StatusDot::new(p.str("text")).status(st);
+            __w = __w.enabled(p.bool("enabled"));
+            __w = __w.loading(p.bool("loading"));
+            if p.bool("pulse") {
+                __w = __w.pulse(p.bool("pulse"));
+            }
+            if !p.bool("glyph") {
+                __w = __w.glyph(p.bool("glyph"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "StatusDot::new({:?}).status(Status::{})",
-        p.str("text"),
-        ["Off", "Info", "Ok", "Warning", "Error"][p.choice("status")],
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "StatusDot::new({:?}).status(Status::{})",
+            p.str("text"),
+            ["Off", "Info", "Ok", "Warning", "Error"][p.choice("status")],
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("pulse", ".pulse", SnipProp::Bool(false)),
+                ("glyph", ".glyph", SnipProp::Bool(true)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("loading", ".loading", SnipProp::Bool(false)),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(StatusBarPage {
@@ -392,13 +626,44 @@ page!(StatusBarPage {
         ],
         false,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Text {
+            key: "message",
+            label: "Message",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+    ],
     build: |_p| {
         let mut sb = StatusBar::new().label("Status");
         sb.set_message("Ready");
-        Box::new(sb)
+        {
+            let mut __w = sb;
+            __w = __w.enabled(_p.bool("enabled"));
+            if !_p.str("message").is_empty() {
+                __w = __w.message(_p.str("message"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |_p| "StatusBar::new().label(\"Status\")".to_string(),
+    snippet: |_p| {
+        let mut __s = "StatusBar::new().label(\"Status\")".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("message", ".message", SnipProp::Text("")),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(sb) = downcast_mut::<StatusBar>(w) {
             if let Some(zone) = sb.take_activated() {
@@ -422,13 +687,36 @@ page!(TypingIndicatorPage {
         ],
         false,
     ),
-    props: &[PropSpec::Bool {
-        key: "active",
-        label: "Active",
-        default: true
-    }],
-    build: |p| Box::new(TypingIndicator::new().active(p.bool("active"))),
-    snippet: |p| format!("TypingIndicator::new().active({})", p.bool("active")),
+    props: &[
+        PropSpec::Bool {
+            key: "active",
+            label: "Active",
+            default: true
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = TypingIndicator::new().active(p.bool("active"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("TypingIndicator::new().active({})", p.bool("active"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
 });
 
 page!(ToastHostPage {
@@ -445,21 +733,42 @@ page!(ToastHostPage {
         ],
         true,
     ),
-    props: &[PropSpec::Text {
-        key: "message",
-        label: "Message",
-        default: "Saved to disk",
-    }],
+    props: &[
+        PropSpec::Text {
+            key: "message",
+            label: "Message",
+            default: "Saved to disk",
+        },
+        PropSpec::Float {
+            key: "ttl_secs",
+            label: "Ttl Secs",
+            min: 0.0,
+            max: 60.0,
+            step: 0.5,
+            default: 0.0
+        },
+    ],
     build: |p| {
         let mut host = ToastHost::new();
-        host.push(Toast::new(Severity::Info, p.str("message")));
+        let mut t = Toast::new(Severity::Info, p.str("message"));
+        if p.f64("ttl_secs") != 0.0 {
+            t = t.ttl_secs(p.f64("ttl_secs") as f32);
+        }
+        host.push(t);
         host.push(Toast::new(Severity::Warning, "Retry queued"));
         Box::new(host)
     },
-    snippet: |p| format!(
-        "let mut host = ToastHost::new();\nhost.push(Toast::new(Severity::Info, {:?}));",
-        p.str("message"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "let mut host = ToastHost::new();\nhost.push(Toast::new(Severity::Info, {:?})",
+            p.str("message"),
+        );
+        if p.f64("ttl_secs") != 0.0 {
+            __s.push_str(&format!(".ttl_secs({:?})", p.f64("ttl_secs") as f32));
+        }
+        __s.push_str(");");
+        __s
+    },
 });
 
 page!(AboutPage {
@@ -487,18 +796,57 @@ page!(AboutPage {
             label: "Version",
             default: "0.16.0"
         },
+        PropSpec::Text {
+            key: "copyright",
+            label: "Copyright",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "credits_title",
+            label: "Credits Title",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "credits_names",
+            label: "Credits Names",
+            default: ""
+        },
     ],
-    build: |p| Box::new(
-        About::new(p.str("name"))
+    build: |p| {
+        let mut __w = About::new(p.str("name"))
             .version(p.str("version"))
             .comments("A retained-mode widget toolkit.")
-            .website("martensite.dev", "https://example.com"),
-    ),
-    snippet: |p| format!(
-        "About::new({:?}).version({:?})",
-        p.str("name"),
-        p.str("version"),
-    ),
+            .website("martensite.dev", "https://example.com");
+        if !p.str("copyright").is_empty() {
+            __w = __w.copyright(p.str("copyright"));
+        }
+        if !p.str("credits_title").is_empty() || !p.str("credits_names").is_empty() {
+            __w = __w.credits(
+                p.str("credits_title"),
+                crate::pages::csv(p, "credits_names"),
+            );
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "About::new({:?}).version({:?})",
+            p.str("name"),
+            p.str("version"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("copyright", ".copyright", SnipProp::Text(""))],
+        ));
+        if !p.str("credits_title").is_empty() || !p.str("credits_names").is_empty() {
+            __s.push_str(&format!(
+                "\n    .credits({:?}, {})",
+                p.str("credits_title"),
+                crate::pages::expr_strs(p.str("credits_names")).unwrap_or_default()
+            ));
+        }
+        __s
+    },
     poll: |w, out| {
         if let Some(a) = downcast_mut::<About>(w) {
             if let Some(url) = a.take_activated_url() {
@@ -522,13 +870,83 @@ page!(CookieBannerPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "message",
-        label: "Message",
-        default: "We use cookies to improve your experience.",
-    }],
-    build: |p| Box::new(CookieBanner::new(p.str("message"))),
-    snippet: |p| format!("CookieBanner::new({:?})", p.str("message")),
+    props: &[
+        PropSpec::Text {
+            key: "message",
+            label: "Message",
+            default: "We use cookies to improve your experience.",
+        },
+        PropSpec::Text {
+            key: "policy_link",
+            label: "Policy Link",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "labels_accept",
+            label: "Labels Accept",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "labels_decline",
+            label: "Labels Decline",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "labels_customize",
+            label: "Labels Customize",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = CookieBanner::new(p.str("message"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if !p.str("policy_link").is_empty() {
+            __w = __w.policy_link(p.str("policy_link"));
+        }
+        if !p.str("labels_accept").is_empty()
+            || !p.str("labels_decline").is_empty()
+            || !p.str("labels_customize").is_empty()
+        {
+            __w = __w.labels(
+                p.str("labels_accept"),
+                p.str("labels_decline"),
+                p.str("labels_customize"),
+            );
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("CookieBanner::new({:?})", p.str("message"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("policy_link", ".policy_link", SnipProp::Text("")),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        if !p.str("labels_accept").is_empty()
+            || !p.str("labels_decline").is_empty()
+            || !p.str("labels_customize").is_empty()
+        {
+            __s.push_str(&format!(
+                "\n    .labels({:?}, {:?}, {:?})",
+                p.str("labels_accept"),
+                p.str("labels_decline"),
+                p.str("labels_customize")
+            ));
+        }
+        __s
+    },
     poll: |w, out| {
         if let Some(cb) = downcast_mut::<CookieBanner>(w) {
             if let Some(consent) = cb.take_consent() {
@@ -552,19 +970,75 @@ page!(CountdownPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "secs",
-        label: "Seconds",
-        min: 5,
-        max: 600,
-        default: 90,
-    }],
+    props: &[
+        PropSpec::Int {
+            key: "secs",
+            label: "Seconds",
+            min: 5,
+            max: 600,
+            default: 90,
+        },
+        PropSpec::Bool {
+            key: "paused",
+            label: "Paused",
+            default: false
+        },
+        PropSpec::Text {
+            key: "warn_under",
+            label: "Warn Under",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut c = Countdown::new(Duration::from_secs(p.i64("secs") as u64));
         c.set_running(true);
-        Box::new(c)
+        {
+            let mut __w = c;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.bool("paused") {
+                __w = __w.paused(p.bool("paused"));
+            }
+            if let Some(v) = crate::pages::parse_secs(p.str("warn_under")) {
+                __w = __w.warn_under(v);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("Countdown::new(Duration::from_secs({}))", p.i64("secs")),
+    snippet: |p| {
+        let mut __s = format!("Countdown::new(Duration::from_secs({}))", p.i64("secs"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("paused", ".paused", SnipProp::Bool(false)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "warn_under",
+            ".warn_under",
+            "",
+            crate::pages::expr_secs,
+        ));
+        __s
+    },
     poll: |w, out| {
         if downcast_mut::<Countdown>(w).is_some_and(|c| c.take_elapsed()) {
             out.push("elapsed".to_string());
@@ -591,19 +1065,75 @@ page!(CountdownRingPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "secs",
-        label: "Seconds",
-        min: 5,
-        max: 600,
-        default: 60,
-    }],
+    props: &[
+        PropSpec::Int {
+            key: "secs",
+            label: "Seconds",
+            min: 5,
+            max: 600,
+            default: 60,
+        },
+        PropSpec::Bool {
+            key: "paused",
+            label: "Paused",
+            default: false
+        },
+        PropSpec::Text {
+            key: "warn_under",
+            label: "Warn Under",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut c = CountdownRing::new(Duration::from_secs(p.i64("secs") as u64));
         c.set_running(true);
-        Box::new(c)
+        {
+            let mut __w = c;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.bool("paused") {
+                __w = __w.paused(p.bool("paused"));
+            }
+            if let Some(v) = crate::pages::parse_secs(p.str("warn_under")) {
+                __w = __w.warn_under(v);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("CountdownRing::new(Duration::from_secs({}))", p.i64("secs")),
+    snippet: |p| {
+        let mut __s = format!("CountdownRing::new(Duration::from_secs({}))", p.i64("secs"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("paused", ".paused", SnipProp::Bool(false)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "warn_under",
+            ".warn_under",
+            "",
+            crate::pages::expr_secs,
+        ));
+        __s
+    },
     poll: |w, out| {
         if downcast_mut::<CountdownRing>(w).is_some_and(|c| c.take_finished()) {
             out.push("finished".to_string());
@@ -683,13 +1213,46 @@ page!(MarqueePage {
             step: 10.0,
             default: 60.0
         },
+        PropSpec::Float {
+            key: "gap",
+            label: "Gap",
+            min: 0.0,
+            max: 64.0,
+            step: 0.5,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
-    build: |p| Box::new(Marquee::new(p.str("text")).speed(p.f64("speed") as f32),),
-    snippet: |p| format!(
-        "Marquee::new({:?}).speed({:?})",
-        p.str("text"),
-        p.f64("speed") as f32,
-    ),
+    build: |p| {
+        let mut __w = Marquee::new(p.str("text")).speed(p.f64("speed") as f32);
+        __w = __w.enabled(p.bool("enabled"));
+        if p.f64("gap") != 0.0 {
+            __w = __w.gap(p.f64("gap") as f32);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "Marquee::new({:?}).speed({:?})",
+            p.str("text"),
+            p.f64("speed") as f32,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("gap", ".gap", SnipProp::Float(0.0)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(NotificationCenterPage {
@@ -706,16 +1269,47 @@ page!(NotificationCenterPage {
         ],
         true,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "loading",
+            label: "Loading",
+            default: false
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |_p| {
         let mut nc = NotificationCenter::new();
         nc.push(Notification::new("Backup done", "2.4 GB written to vault"));
         nc.push(Notification::new("Update ready", "Restart to apply v0.16"));
-        Box::new(nc)
+        {
+            let mut __w = nc;
+            __w = __w.loading(_p.bool("loading"));
+            if !_p.str("a11y_label").is_empty() {
+                __w = __w.label(_p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
     snippet: |_p| {
-        "let mut nc = NotificationCenter::new();\nnc.push(Notification::new(\"Backup done\", \"…\"));"
+        let mut __s = {
+            "let mut nc = NotificationCenter::new();\nnc.push(Notification::new(\"Backup done\", \"…\"));"
             .to_string()
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("loading", ".loading", SnipProp::Bool(false)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
     },
     poll: |w, out| {
         if let Some(nc) = downcast_mut::<NotificationCenter>(w) {
@@ -743,14 +1337,45 @@ page!(AlarmPanelPage {
         ],
         false,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "loading",
+            label: "Loading",
+            default: false
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |_p| {
         let mut ap = AlarmPanel::new();
         ap.push(Alarm::new(Severity::Warning, "Temp sensor above range"));
         ap.push(Alarm::new(Severity::Error, "Comms lost on bus 2"));
-        Box::new(ap)
+        {
+            let mut __w = ap;
+            __w = __w.loading(_p.bool("loading"));
+            if !_p.str("a11y_label").is_empty() {
+                __w = __w.label(_p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |_p| "AlarmPanel::new().push(Alarm::new(Severity::Warning, \"…\"))".to_string(),
+    snippet: |_p| {
+        let mut __s = "AlarmPanel::new().push(Alarm::new(Severity::Warning, \"…\"))".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("loading", ".loading", SnipProp::Bool(false)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(ap) = downcast_mut::<AlarmPanel>(w) {
             if let Some(i) = ap.take_acked() {
@@ -788,14 +1413,46 @@ page!(SplashPage {
             step: 0.1,
             default: 0.4
         },
+        PropSpec::Text {
+            key: "version",
+            label: "Version",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let mut s = Splash::new(p.str("name"));
         s.set_progress(p.f64("progress") as f32);
         s.set_status("Loading assets…");
-        Box::new(s)
+        {
+            let mut __w = s;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if !p.str("version").is_empty() {
+                __w = __w.version(p.str("version"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("Splash::new({:?})", p.str("name")),
+    snippet: |p| {
+        let mut __s = format!("Splash::new({:?})", p.str("name"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("version", ".version", SnipProp::Text("")),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(ReleaseNotesPage {
@@ -812,18 +1469,38 @@ page!(ReleaseNotesPage {
         ],
         false,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |_p| {
-        Box::new(
-            ReleaseNotes::new().release(
+        {
+            let mut __w = ReleaseNotes::new().release(
                 Release::new("0.16.0")
                     .date("2025-06")
                     .change(ChangeKind::Added, "Added widget catalog")
                     .change(ChangeKind::Changed, "Native icon pack"),
-            ),
-        )
+            );
+            if !_p.str("a11y_label").is_empty() {
+                __w = __w.label(_p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |_p| "ReleaseNotes::new().release(Release::new(\"0.16.0\"))".to_string(),
+    snippet: |_p| {
+        let mut __s = "ReleaseNotes::new().release(Release::new(\"0.16.0\"))".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
 });
 
 page!(UpdatePromptPage {
@@ -840,15 +1517,73 @@ page!(UpdatePromptPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "version",
-        label: "Version",
-        default: "0.16.0"
-    }],
-    build: |p| Box::new(
-        UpdatePrompt::new(p.str("version")).notes("Bug fixes and performance improvements."),
-    ),
-    snippet: |p| format!("UpdatePrompt::new({:?})", p.str("version")),
+    props: &[
+        PropSpec::Text {
+            key: "version",
+            label: "Version",
+            default: "0.16.0"
+        },
+        PropSpec::Text {
+            key: "title",
+            label: "Title",
+            default: "Update available"
+        },
+        PropSpec::Text {
+            key: "action_label",
+            label: "Action Label",
+            default: "Update available"
+        },
+        PropSpec::Float {
+            key: "progress",
+            label: "Progress",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w =
+            UpdatePrompt::new(p.str("version")).notes("Bug fixes and performance improvements.");
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if p.str("title") != "Update available" {
+            __w = __w.title(p.str("title"));
+        }
+        if p.str("action_label") != "Update available" {
+            __w = __w.action_label(p.str("action_label"));
+        }
+        if p.f64("progress") != 0.0 {
+            __w = __w.progress(p.f64("progress") as f32);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("UpdatePrompt::new({:?})", p.str("version"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("title", ".title", SnipProp::Text("Update available")),
+                (
+                    "action_label",
+                    ".action_label",
+                    SnipProp::Text("Update available"),
+                ),
+                ("progress", ".progress", SnipProp::Float(0.0)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(up) = downcast_mut::<UpdatePrompt>(w) {
             if up.take_update() {
@@ -875,16 +1610,36 @@ page!(ActivityRingPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        ActivityRing::new()
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = ActivityRing::new()
             .ring("Move", 0.75, [240, 90, 80, 255])
             .ring("Exercise", 0.5, [160, 230, 90, 255])
-            .ring("Stand", 0.9, [80, 200, 250, 255]),
-    ),
+            .ring("Stand", 0.9, [80, 200, 250, 255]);
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
     snippet: |_p| {
-        "ActivityRing::new()\n    .ring(\"Move\", 0.75, [240, 90, 80, 255])\n    .ring(\"Exercise\", 0.5, [160, 230, 90, 255])"
+        let mut __s = {
+            "ActivityRing::new()\n    .ring(\"Move\", 0.75, [240, 90, 80, 255])\n    .ring(\"Exercise\", 0.5, [160, 230, 90, 255])"
             .to_string()
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
     },
 });
 
@@ -902,14 +1657,42 @@ page!(TickerTapePage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "speed",
-        label: "Speed",
-        min: 10.0,
-        max: 200.0,
-        step: 10.0,
-        default: 50.0,
-    }],
+    props: &[
+        PropSpec::Float {
+            key: "speed",
+            label: "Speed",
+            min: 10.0,
+            max: 200.0,
+            step: 10.0,
+            default: 50.0,
+        },
+        PropSpec::Text {
+            key: "ticker_sym",
+            label: "Ticker Symbol",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "ticker_price",
+            label: "Ticker Price",
+            default: ""
+        },
+        PropSpec::Float {
+            key: "ticker_delta",
+            label: "Ticker Delta",
+            min: -50.0,
+            max: 50.0,
+            step: 0.5,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut tt = TickerTape::new().speed(p.f64("speed") as f32);
         tt.set_items(vec![
@@ -917,9 +1700,37 @@ page!(TickerTapePage {
             TickerItem::new("AAPL", "214.10", -0.4),
             TickerItem::new("NVDA", "131.40", 2.1),
         ]);
-        Box::new(tt)
+        {
+            let mut __w = tt;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if !p.str("ticker_sym").is_empty() {
+                __w = __w.item(martensite::widgets::ticker_tape::TickerItem::new(
+                    p.str("ticker_sym"),
+                    p.str("ticker_price"),
+                    p.f64("ticker_delta") as f32,
+                ));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("TickerTape::new().speed({:?})", p.f64("speed") as f32),
+    snippet: |p| {
+        let mut __s = format!("TickerTape::new().speed({:?})", p.f64("speed") as f32);
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        if !p.str("ticker_sym").is_empty() {
+            __s.push_str(&format!(
+                "\n    .item(TickerItem::new({:?}, {:?}, {}))",
+                p.str("ticker_sym"),
+                p.str("ticker_price"),
+                p.f64("ticker_delta")
+            ));
+        }
+        __s
+    },
     poll: |w, out| {
         if let Some(tt) = downcast_mut::<TickerTape>(w) {
             if let Some(i) = tt.take_selected() {
@@ -954,13 +1765,79 @@ page!(StatisticPage {
             label: "Value",
             default: "99.98%"
         },
+        PropSpec::Text {
+            key: "prefix",
+            label: "Prefix",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "suffix",
+            label: "Suffix",
+            default: ""
+        },
+        PropSpec::Choice {
+            key: "trend_dir",
+            label: "Trend",
+            options: &["Neutral", "Up", "Down"],
+            default: 0
+        },
+        PropSpec::Text {
+            key: "trend_text",
+            label: "Trend Text",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
     build: |p| {
-        let mut s = martensite::widgets::statistic::Statistic::new(p.str("title"), p.str("value"));
+        use martensite::widgets::statistic::{Statistic, Trend};
+        let mut s = Statistic::new(p.str("title"), p.str("value"));
         s.set_value(p.str("value"));
+        if !p.str("prefix").is_empty() {
+            s = s.prefix(p.str("prefix"));
+        }
+        if !p.str("suffix").is_empty() {
+            s = s.suffix(p.str("suffix"));
+        }
+        let dir = match p.choice("trend_dir") {
+            1 => Trend::Up,
+            2 => Trend::Down,
+            _ => Trend::Neutral,
+        };
+        if dir != Trend::Neutral || !p.str("trend_text").is_empty() {
+            s = s.trend(dir, p.str("trend_text"));
+        }
+        if !p.bool("enabled") {
+            s = s.enabled(false);
+        }
         Box::new(s)
     },
-    snippet: |p| format!("Statistic::new({:?}, {:?})", p.str("title"), p.str("value"),),
+    snippet: |p| {
+        let mut __s = format!("Statistic::new({:?}, {:?})", p.str("title"), p.str("value"),);
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("prefix", ".prefix", SnipProp::Text("")),
+                ("suffix", ".suffix", SnipProp::Text("")),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+            ],
+        ));
+        let dir = match p.choice("trend_dir") {
+            1 => "Trend::Up",
+            2 => "Trend::Down",
+            _ => "Trend::Neutral",
+        };
+        if dir != "Trend::Neutral" || !p.str("trend_text").is_empty() {
+            __s.push_str(&format!("\n    .trend({}, {:?})", dir, p.str("trend_text")));
+        }
+        __s
+    },
 });
 
 page!(WatermarkPage {
@@ -991,13 +1868,76 @@ page!(WatermarkPage {
             step: 0.05,
             default: 0.15
         },
+        PropSpec::Float {
+            key: "font_size",
+            label: "Font Size",
+            min: 0.0,
+            max: 64.0,
+            step: 0.5,
+            default: 0.0
+        },
+        PropSpec::Text {
+            key: "gap",
+            label: "Gap (csv)",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "offset",
+            label: "Offset (csv)",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
-    build: |p| Box::new(Watermark::new(p.str("text")).opacity(p.f64("opacity") as f32),),
-    snippet: |p| format!(
-        "Watermark::new({:?}).opacity({:?})",
-        p.str("text"),
-        p.f64("opacity") as f32,
-    ),
+    build: |p| {
+        let mut __w = Watermark::new(p.str("text")).opacity(p.f64("opacity") as f32);
+        __w = __w.enabled(p.bool("enabled"));
+        if p.f64("font_size") != 0.0 {
+            __w = __w.font_size(p.f64("font_size") as f32);
+        }
+        if let Some(v) = crate::pages::parse_pair(p.str("gap")) {
+            __w = __w.gap(v.0 as f32, v.1 as f32);
+        }
+        if let Some(v) = crate::pages::parse_pair(p.str("offset")) {
+            __w = __w.offset(v.0 as f32, v.1 as f32);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "Watermark::new({:?}).opacity({:?})",
+            p.str("text"),
+            p.f64("opacity") as f32,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("font_size", ".font_size", SnipProp::Float(0.0)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "gap",
+            ".gap",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "offset",
+            ".offset",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s
+    },
 });
 
 /// All Feedback pages, in rail order.
@@ -1047,27 +1987,46 @@ page!(StackLightPage {
         ],
         false,
     ),
-    props: &[PropSpec::Bool {
-        key: "flashing",
-        label: "Warn flashing",
-        default: true
-    }],
-    build: |p| Box::new(
-        StackLight::new()
+    props: &[
+        PropSpec::Bool {
+            key: "flashing",
+            label: "Warn flashing",
+            default: true
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "loading",
+            label: "Loading",
+            default: false
+        },
+    ],
+    build: |p| {
+        let mut __w = StackLight::new()
             .label("Cell 4")
             .lamp(Lamp::new("Run", [90, 200, 120, 255]).lit(true))
             .lamp(
                 Lamp::new("Warn", [240, 180, 60, 255])
                     .lit(true)
-                    .flashing(p.bool("flashing"))
+                    .flashing(p.bool("flashing")),
             )
-            .lamp(Lamp::new("Fault", [240, 90, 80, 255])),
-    ),
+            .lamp(Lamp::new("Fault", [240, 90, 80, 255]));
+        __w = __w.loading(p.bool("loading"));
+        Box::new(__w)
+    },
     snippet: |p| {
-        format!(
+        let mut __s = {
+            format!(
         "StackLight::new()\n    .lamp(Lamp::new(\"Run\", [90, 200, 120, 255]).lit(true))\n    .lamp(Lamp::new(\"Warn\", [240, 180, 60, 255]).flashing({}))",
         p.bool("flashing"),
     )
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("loading", ".loading", SnipProp::Bool(false))],
+        ));
+        __s
     },
     poll: |w, out| {
         if let Some(s) = downcast_mut::<StackLight>(w) {

@@ -32,7 +32,7 @@ use martensite::widgets::vu_meter::VuMeter;
 use martensite::widgets::weather::{Weather, WeatherCondition};
 
 use crate::page::{Page, PropSpec};
-use crate::pages::{downcast_mut, meta, page};
+use crate::pages::{downcast_mut, meta, page, SnipProp};
 
 page!(GaugePage {
     meta: meta(
@@ -48,23 +48,44 @@ page!(GaugePage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "value",
-        label: "Value",
-        min: 0.0,
-        max: 100.0,
-        step: 1.0,
-        default: 62.0
-    }],
-    build: |p| Box::new(
-        Gauge::new()
+    props: &[
+        PropSpec::Float {
+            key: "value",
+            label: "Value",
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            default: 62.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = Gauge::new()
             .label("Load")
             .range(0.0, 100.0)
             .value(p.f64("value"))
             .zones(0.7, 0.9)
-            .ticks(true),
-    ),
-    snippet: |p| format!("Gauge::new().range(0.0, 100.0).value({:?})", p.f64("value")),
+            .ticks(true);
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.a11y_label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("Gauge::new().range(0.0, 100.0).value({:?})", p.f64("value"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".a11y_label", SnipProp::Text(""))],
+        ));
+        __s
+    },
 });
 
 page!(ThermometerPage {
@@ -81,22 +102,65 @@ page!(ThermometerPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "value",
-        label: "Value",
-        min: 0.0,
-        max: 100.0,
-        step: 1.0,
-        default: 37.0
-    }],
-    build: |p| Box::new(
-        Thermometer::new()
+    props: &[
+        PropSpec::Float {
+            key: "value",
+            label: "Value",
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            default: 37.0
+        },
+        PropSpec::Int {
+            key: "ticks",
+            label: "Ticks",
+            min: 0,
+            max: 100,
+            default: 5
+        },
+        PropSpec::Text {
+            key: "units",
+            label: "Units",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = Thermometer::new()
             .range(0.0, 100.0)
             .value(p.f64("value") as f32)
             .warning(0.6)
-            .critical(0.85),
-    ),
-    snippet: |p| format!("Thermometer::new().value({:?})", p.f64("value") as f32),
+            .critical(0.85);
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if p.i64("ticks") != 5 {
+            __w = __w.ticks(p.i64("ticks") as u32);
+        }
+        if !p.str("units").is_empty() {
+            __w = __w.units(p.str("units"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("Thermometer::new().value({:?})", p.f64("value") as f32);
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("ticks", ".ticks", SnipProp::Int(5)),
+                ("units", ".units", SnipProp::Text("")),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(LcdNumberPage {
@@ -129,18 +193,46 @@ page!(LcdNumberPage {
             max: 10,
             default: 6
         },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
-    build: |p| Box::new(
-        LcdNumber::new()
+    build: |p| {
+        let mut __w = LcdNumber::new()
             .value(p.f64("value"))
             .digits(p.i64("digits") as usize)
-            .decimals(1),
-    ),
-    snippet: |p| format!(
-        "LcdNumber::new().value({:?}).digits({})",
-        p.f64("value"),
-        p.i64("digits")
-    ),
+            .decimals(1);
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.a11y_label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "LcdNumber::new().value({:?}).digits({})",
+            p.f64("value"),
+            p.i64("digits")
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(LedMatrixPage {
@@ -157,13 +249,23 @@ page!(LedMatrixPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "size",
-        label: "Size",
-        min: 4,
-        max: 16,
-        default: 8
-    }],
+    props: &[
+        PropSpec::Int {
+            key: "size",
+            label: "Size",
+            min: 4,
+            max: 16,
+            default: 8
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let n = p.i64("size") as usize;
         let mut m = LedMatrix::new(n, n).on_color([90, 220, 120, 255]);
@@ -171,9 +273,22 @@ page!(LedMatrixPage {
             m.set(i, i, true);
             m.set(i, n - 1 - i, true);
         }
-        Box::new(m)
+        {
+            let mut __w = m;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("LedMatrix::new({}, {})", p.i64("size"), p.i64("size")),
+    snippet: |p| {
+        let mut __s = format!("LedMatrix::new({}, {})", p.i64("size"), p.i64("size"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
 });
 
 page!(SplitFlapPage {
@@ -190,17 +305,38 @@ page!(SplitFlapPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "text",
-        label: "Text",
-        default: "PARIS"
-    }],
-    build: |p| Box::new(
-        SplitFlap::new()
+    props: &[
+        PropSpec::Text {
+            key: "text",
+            label: "Text",
+            default: "PARIS"
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = SplitFlap::new()
             .cells(p.str("text").len().max(1))
-            .text(p.str("text"))
-    ),
-    snippet: |p| format!("SplitFlap::new().cells(5).text({:?})", p.str("text")),
+            .text(p.str("text"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("SplitFlap::new().cells(5).text({:?})", p.str("text"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
 });
 
 page!(OdometerPage {
@@ -217,20 +353,41 @@ page!(OdometerPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "value",
-        label: "Value",
-        min: 0,
-        max: 999999,
-        default: 42817
-    }],
-    build: |p| Box::new(
-        Odometer::new()
+    props: &[
+        PropSpec::Int {
+            key: "value",
+            label: "Value",
+            min: 0,
+            max: 999999,
+            default: 42817
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = Odometer::new()
             .digits(6)
             .value(p.i64("value") as u64)
-            .speed(4.0),
-    ),
-    snippet: |p| format!("Odometer::new().value({})", p.i64("value")),
+            .speed(4.0);
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("Odometer::new().value({})", p.i64("value"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
 });
 
 page!(DigitalClockPage {
@@ -263,18 +420,52 @@ page!(DigitalClockPage {
             label: "12h",
             default: false
         },
+        PropSpec::Text {
+            key: "time",
+            label: "Time",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
-    build: |p| Box::new(
-        DigitalClock::new()
+    build: |p| {
+        let mut __w = DigitalClock::new()
             .show_seconds(p.bool("seconds"))
             .blink(p.bool("blink"))
             .hour12(p.bool("hour12"))
-            .running(true),
-    ),
-    snippet: |p| format!(
-        "DigitalClock::new().show_seconds({}).running(true)",
-        p.bool("seconds"),
-    ),
+            .running(true);
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if let Some(v) = crate::pages::parse_time(p.str("time")) {
+            __w = __w.time(v);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "DigitalClock::new().show_seconds({}).running(true)",
+            p.bool("seconds"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "time",
+            ".time",
+            "",
+            crate::pages::expr_time,
+        ));
+        __s
+    },
 });
 
 page!(AnalogClockPage {
@@ -291,20 +482,50 @@ page!(AnalogClockPage {
         ],
         false,
     ),
-    props: &[PropSpec::Bool {
-        key: "seconds",
-        label: "Second hand",
-        default: true
-    }],
-    build: |p| Box::new(
-        AnalogClock::new()
+    props: &[
+        PropSpec::Bool {
+            key: "seconds",
+            label: "Second hand",
+            default: true
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = AnalogClock::new()
             .time(10, 9, 30)
-            .show_seconds(p.bool("seconds")),
-    ),
-    snippet: |p| format!(
-        "AnalogClock::new().time(10, 9, 30).show_seconds({})",
-        p.bool("seconds")
-    ),
+            .show_seconds(p.bool("seconds"));
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.a11y_label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "AnalogClock::new().time(10, 9, 30).show_seconds({})",
+            p.bool("seconds")
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(CompassPage {
@@ -359,6 +580,32 @@ page!(WeatherPage {
             options: &["Sunny", "Cloudy", "Rain", "Snow"],
             default: 0,
         },
+        PropSpec::Float {
+            key: "temperature",
+            label: "Temperature",
+            min: -10.0,
+            max: 100.0,
+            step: 1.0,
+            default: 0.0
+        },
+        PropSpec::Bool {
+            key: "fahrenheit",
+            label: "Fahrenheit",
+            default: false
+        },
+        PropSpec::Text {
+            key: "hi_lo",
+            label: "Hi Lo (csv)",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let cond = match p.choice("condition") {
@@ -367,9 +614,42 @@ page!(WeatherPage {
             3 => WeatherCondition::Snow,
             _ => WeatherCondition::Clear,
         };
-        Box::new(Weather::new().location(p.str("location")).condition(cond))
+        {
+            let mut __w = Weather::new().location(p.str("location")).condition(cond);
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.f64("temperature") != 0.0 {
+                __w = __w.temperature(p.f64("temperature") as f32);
+            }
+            if p.bool("fahrenheit") {
+                __w = __w.fahrenheit(p.bool("fahrenheit"));
+            }
+            if let Some(v) = crate::pages::parse_pair(p.str("hi_lo")) {
+                __w = __w.hi_lo(v.0 as f32, v.1 as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("Weather::new().location({:?})", p.str("location")),
+    snippet: |p| {
+        let mut __s = format!("Weather::new().location({:?})", p.str("location"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("temperature", ".temperature", SnipProp::Float(0.0)),
+                ("fahrenheit", ".fahrenheit", SnipProp::Bool(false)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "hi_lo",
+            ".hi_lo",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s
+    },
 });
 
 page!(QrCodePage {
@@ -386,7 +666,16 @@ page!(QrCodePage {
         ],
         false,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+    ],
     build: |_p| {
         // 21×21 demo matrix — finder squares in the corners.
         let mut m = vec![vec![false; 21]; 21];
@@ -405,9 +694,20 @@ page!(QrCodePage {
         for (i, cell) in m[10].iter_mut().enumerate() {
             *cell = i % 2 == 0;
         }
-        Box::new(QrCode::from_matrix(m).label("QR"))
+        {
+            let mut __w = QrCode::from_matrix(m).label("QR");
+            __w = __w.enabled(_p.bool("enabled"));
+            Box::new(__w)
+        }
     },
-    snippet: |_p| "QrCode::from_matrix(modules)".to_string(),
+    snippet: |_p| {
+        let mut __s = "QrCode::from_matrix(modules)".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("enabled", ".enabled", SnipProp::Bool(true))],
+        ));
+        __s
+    },
 });
 
 page!(BarcodePage {
@@ -447,18 +747,38 @@ page!(GraphViewPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        GraphView::new()
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = GraphView::new()
             .node("core")
             .node("a")
             .node("b")
             .node("c")
             .edge(0, 1)
             .edge(0, 2)
-            .edge(1, 3),
-    ),
-    snippet: |_p| "GraphView::new().node(\"core\").edge(0, 1)".to_string(),
+            .edge(1, 3);
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "GraphView::new().node(\"core\").edge(0, 1)".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(g) = downcast_mut::<GraphView>(w) {
             if let Some(i) = g.take_hovered() {
@@ -485,16 +805,36 @@ page!(MindMapPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        MindMap::new()
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = MindMap::new()
             .root("Martensite")
             .child("Martensite", "Widgets")
             .child("Martensite", "Layout")
-            .child("Widgets", "Catalog"),
-    ),
-    snippet: |_p| "MindMap::new().root(\"Martensite\").child(\"Martensite\", \"Widgets\")"
-        .to_string(),
+            .child("Widgets", "Catalog");
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s =
+            "MindMap::new().root(\"Martensite\").child(\"Martensite\", \"Widgets\")".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(mm) = downcast_mut::<MindMap>(w) {
             if let Some(i) = mm.take_hovered() {
@@ -518,13 +858,35 @@ page!(OrgChartPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(OrgChart::new(
-        OrgNode::new("Ada", "CEO")
-            .child(OrgNode::new("Grace", "CTO").child(OrgNode::new("Linus", "Eng")))
-            .child(OrgNode::new("Alan", "Chief Scientist")),
-    )),
-    snippet: |_p| "OrgChart::new(OrgNode::new(\"Ada\", \"CEO\"))".to_string(),
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = OrgChart::new(
+            OrgNode::new("Ada", "CEO")
+                .child(OrgNode::new("Grace", "CTO").child(OrgNode::new("Linus", "Eng")))
+                .child(OrgNode::new("Alan", "Chief Scientist")),
+        );
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "OrgChart::new(OrgNode::new(\"Ada\", \"CEO\"))".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(oc) = downcast_mut::<OrgChart>(w) {
             if let Some(i) = oc.take_hovered() {
@@ -548,13 +910,33 @@ page!(FishbonePage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        Fishbone::new("Defect")
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = Fishbone::new("Defect")
             .bone(Bone::new("Process").cause("No review"))
-            .bone(Bone::new("Tools").cause("Slow CI")),
-    ),
-    snippet: |_p| "Fishbone::new(\"Defect\").bone(Bone::new(\"Process\"))".to_string(),
+            .bone(Bone::new("Tools").cause("Slow CI"));
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "Fishbone::new(\"Defect\").bone(Bone::new(\"Process\"))".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(f) = downcast_mut::<Fishbone>(w) {
             if let Some(i) = f.take_hovered() {
@@ -604,15 +986,35 @@ page!(QuadrantPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        Quadrant::new("Effort", "Impact")
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = Quadrant::new("Effort", "Impact")
             .regions(["Do", "Plan", "Drop", "Delegate"])
-            .item(QuadrantItem::new("Catalog", 0.7, 0.9)),
-    ),
+            .item(QuadrantItem::new("Catalog", 0.7, 0.9));
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
     snippet: |_p| {
-        "Quadrant::new(\"Effort\", \"Impact\").item(QuadrantItem::new(\"Catalog\", 0.7, 0.9))"
-            .to_string()
+        let mut __s = {
+            "Quadrant::new(\"Effort\", \"Impact\").item(QuadrantItem::new(\"Catalog\", 0.7, 0.9))"
+                .to_string()
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
     },
     poll: |w, out| {
         if let Some(q) = downcast_mut::<Quadrant>(w) {
@@ -637,21 +1039,88 @@ page!(TimelinePage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        Timeline::new()
+    props: &[
+        PropSpec::Text {
+            key: "pending",
+            label: "Pending",
+            default: ""
+        },
+        PropSpec::Bool {
+            key: "reversed",
+            label: "Reversed",
+            default: false
+        },
+        PropSpec::Text {
+            key: "items",
+            label: "Items",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = Timeline::new()
             .item(
                 TimelineItem::new("Created")
                     .subtitle("2025-01")
-                    .dot(TimelineDot::Accent)
+                    .dot(TimelineDot::Accent),
             )
             .item(
                 TimelineItem::new("Released")
                     .subtitle("2025-06")
-                    .dot(TimelineDot::Success)
-            ),
-    ),
-    snippet: |_p| "Timeline::new().item(TimelineItem::new(\"Created\"))".to_string(),
+                    .dot(TimelineDot::Success),
+            );
+        __w = __w.enabled(_p.bool("enabled"));
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        if !_p.str("pending").is_empty() {
+            __w = __w.pending(_p.str("pending"));
+        }
+        if _p.bool("reversed") {
+            __w = __w.reversed(_p.bool("reversed"));
+        }
+        let __v = crate::pages::csv(_p, "items");
+        if !__v.is_empty() {
+            __w = __w.items(
+                __v.into_iter()
+                    .map(martensite::widgets::timeline::TimelineItem::new)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "Timeline::new().item(TimelineItem::new(\"Created\"))".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("pending", ".pending", SnipProp::Text("")),
+                ("reversed", ".reversed", SnipProp::Bool(false)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            _p,
+            "items",
+            ".items",
+            "",
+            crate::pages::expr_strs,
+        ));
+        __s
+    },
 });
 
 page!(StepSequencerPage {
@@ -668,21 +1137,58 @@ page!(StepSequencerPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "cols",
-        label: "Steps",
-        min: 4,
-        max: 32,
-        default: 16
-    }],
+    props: &[
+        PropSpec::Int {
+            key: "cols",
+            label: "Steps",
+            min: 4,
+            max: 32,
+            default: 16
+        },
+        PropSpec::Float {
+            key: "step_secs",
+            label: "Step Secs",
+            min: 0.0,
+            max: 10.0,
+            step: 0.1,
+            default: 0.125
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut s = StepSequencer::new(4, p.i64("cols") as usize);
         s.set_cell(0, 0, true);
         s.set_cell(1, 4, true);
         s.set_cell(2, 8, true);
-        Box::new(s)
+        {
+            let mut __w = s;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.f64("step_secs") != 0.125 {
+                __w = __w.step_secs(p.f64("step_secs") as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("StepSequencer::new(4, {})", p.i64("cols")),
+    snippet: |p| {
+        let mut __s = format!("StepSequencer::new(4, {})", p.i64("cols"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("step_secs", ".step_secs", SnipProp::Float(0.125)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(s) = downcast_mut::<StepSequencer>(w) {
             if let Some((r, c, on)) = s.take_changed() {
@@ -709,21 +1215,60 @@ page!(VuMeterPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "channels",
-        label: "Channels",
-        min: 1,
-        max: 8,
-        default: 2
-    }],
+    props: &[
+        PropSpec::Int {
+            key: "channels",
+            label: "Channels",
+            min: 1,
+            max: 8,
+            default: 2
+        },
+        PropSpec::Text {
+            key: "levels",
+            label: "Levels",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut v = VuMeter::new()
             .channels(p.i64("channels") as usize)
             .peak_hold(1.0);
         v.push([0.7, 0.5, 0.3, 0.8, 0.6, 0.4, 0.9, 0.2]);
-        Box::new(v)
+        {
+            let mut __w = v;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            let __v = crate::pages::parse_f32s(p.str("levels"));
+            if !__v.is_empty() {
+                __w = __w.levels(__v);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("VuMeter::new().channels({})", p.i64("channels")),
+    snippet: |p| {
+        let mut __s = format!("VuMeter::new().channels({})", p.i64("channels"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "levels",
+            ".levels",
+            "",
+            crate::pages::expr_f32s,
+        ));
+        __s
+    },
 });
 
 page!(SignalStrengthPage {
@@ -753,17 +1298,36 @@ page!(SignalStrengthPage {
             label: "Offline",
             default: false
         },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
-    build: |p| Box::new(
-        SignalStrength::new()
+    build: |p| {
+        let mut __w = SignalStrength::new()
             .level(p.i64("level") as u8)
-            .offline(p.bool("offline")),
-    ),
-    snippet: |p| format!(
-        "SignalStrength::new().level({}).offline({})",
-        p.i64("level"),
-        p.bool("offline"),
-    ),
+            .offline(p.bool("offline"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "SignalStrength::new().level({}).offline({})",
+            p.i64("level"),
+            p.bool("offline"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
 });
 
 page!(BatteryPage {
@@ -794,17 +1358,36 @@ page!(BatteryPage {
             label: "Charging",
             default: false
         },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
-    build: |p| Box::new(
-        Battery::new()
+    build: |p| {
+        let mut __w = Battery::new()
             .level(p.f64("level") as f32)
-            .charging(p.bool("charging")),
-    ),
-    snippet: |p| format!(
-        "Battery::new().level({:?}).charging({})",
-        p.f64("level") as f32,
-        p.bool("charging"),
-    ),
+            .charging(p.bool("charging"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "Battery::new().level({:?}).charging({})",
+            p.f64("level") as f32,
+            p.bool("charging"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
 });
 
 page!(RulerPage {
@@ -821,23 +1404,75 @@ page!(RulerPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "pos",
-        label: "Cursor",
-        min: 0.0,
-        max: 1.0,
-        step: 0.05,
-        default: 0.4
-    }],
+    props: &[
+        PropSpec::Float {
+            key: "pos",
+            label: "Cursor",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 0.4
+        },
+        PropSpec::Float {
+            key: "position",
+            label: "Position",
+            min: -10.0,
+            max: 100.0,
+            step: 1.0,
+            default: 0.0
+        },
+        PropSpec::Text {
+            key: "ticks",
+            label: "Ticks (csv)",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut r = Ruler::new().range(0.0, 100.0);
         r.set_position(p.f64("pos") as f32 * 100.0);
-        Box::new(r)
+        {
+            let mut __w = r;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.f64("position") != 0.0 {
+                __w = __w.position(p.f64("position") as f32);
+            }
+            if let Some(v) = crate::pages::parse_pair(p.str("ticks")) {
+                __w = __w.ticks(v.0 as f32, v.1 as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Ruler::new().range(0.0, 100.0).set_position({:?})",
-        p.f64("pos") as f32 * 100.0
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Ruler::new().range(0.0, 100.0).set_position({:?})",
+            p.f64("pos") as f32 * 100.0
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("position", ".position", SnipProp::Float(0.0)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "ticks",
+            ".ticks",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(r) = downcast_mut::<Ruler>(w) {
             if let Some(pos) = r.take_picked() {
@@ -861,15 +1496,37 @@ page!(PerfOverlayPage {
         ],
         false,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |_p| {
         let mut po = PerfOverlay::new();
         for ms in [16.6, 16.9, 17.2, 16.4, 18.0] {
             po.push_frame(ms);
         }
-        Box::new(po)
+        {
+            let mut __w = po;
+            if !_p.str("a11y_label").is_empty() {
+                __w = __w.label(_p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |_p| "PerfOverlay::new() /* push_frame(ms) */".to_string(),
+    snippet: |_p| {
+        let mut __s = "PerfOverlay::new() /* push_frame(ms) */".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
 });
 
 page!(GradientEditorPage {
@@ -886,15 +1543,62 @@ page!(GradientEditorPage {
         ],
         false,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Text {
+            key: "stops",
+            label: "Stops",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |_p| {
         let mut g = GradientEditor::new();
         g.add_stop(GradientStop::new(0.0, [80, 140, 255, 255]));
         g.add_stop(GradientStop::new(1.0, [240, 90, 160, 255]));
-        Box::new(g)
+        {
+            let mut __w = g;
+            __w = __w.enabled(_p.bool("enabled"));
+            if !_p.str("a11y_label").is_empty() {
+                __w = __w.label(_p.str("a11y_label"));
+            }
+            let __v = crate::pages::parse_stops(_p.str("stops"));
+            if !__v.is_empty() {
+                __w = __w.stops(__v);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |_p| "GradientEditor::new().add_stop(GradientStop::new(0.0, [80, 140, 255, 255]))"
-        .to_string(),
+    snippet: |_p| {
+        let mut __s = "GradientEditor::new().add_stop(GradientStop::new(0.0, [80, 140, 255, 255]))"
+            .to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            _p,
+            "stops",
+            ".stops",
+            "",
+            crate::pages::expr_strs,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(g) = downcast_mut::<GradientEditor>(w) {
             if let Some(i) = g.take_selected() {
@@ -921,9 +1625,31 @@ page!(CurveEditorPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(CurveEditor::new().handles((0.25, 0.1), (0.25, 1.0))),
-    snippet: |_p| "CurveEditor::new().handles((0.25, 0.1), (0.25, 1.0))".to_string(),
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = CurveEditor::new().handles((0.25, 0.1), (0.25, 1.0));
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "CurveEditor::new().handles((0.25, 0.1), (0.25, 1.0))".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(c) = downcast_mut::<CurveEditor>(w) {
             if c.take_changed() {
@@ -947,15 +1673,37 @@ page!(UnitConverterPage {
         ],
         false,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |_p| {
         let mut u = UnitConverter::new()
             .in_category(UnitCategory::Length)
             .with_value(1.0);
         u.set_units("meters", "feet");
-        Box::new(u)
+        {
+            let mut __w = u;
+            if !_p.str("a11y_label").is_empty() {
+                __w = __w.label(_p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |_p| "UnitConverter::new().category(\"Length\").with_value(1.0)".to_string(),
+    snippet: |_p| {
+        let mut __s = "UnitConverter::new().category(\"Length\").with_value(1.0)".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(u) = downcast_mut::<UnitConverter>(w) {
             if u.take_changed() {
@@ -979,13 +1727,54 @@ page!(LegendPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        Legend::new()
+    props: &[
+        PropSpec::Text {
+            key: "entries",
+            label: "Entries",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = Legend::new()
             .entry("CPU", [80, 140, 255, 255])
-            .entry("Memory", [240, 160, 60, 255]),
-    ),
-    snippet: |_p| "Legend::new().entry(LegendEntry::new(\"CPU\", [80, 140, 255, 255]))".to_string(),
+            .entry("Memory", [240, 160, 60, 255]);
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        let __v = crate::pages::csv(_p, "entries");
+        if !__v.is_empty() {
+            __w = __w.entries(
+                __v.into_iter()
+                    .map(|t| martensite::widgets::legend::LegendEntry::new(t, [66, 133, 244, 255]))
+                    .collect(),
+            );
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s =
+            "Legend::new().entry(LegendEntry::new(\"CPU\", [80, 140, 255, 255]))".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            _p,
+            "entries",
+            ".entries",
+            "",
+            crate::pages::expr_strs,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(l) = downcast_mut::<Legend>(w) {
             if let Some(i) = l.take_toggled() {
@@ -1009,9 +1798,45 @@ page!(RubberBandPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(RubberBand::new()),
-    snippet: |_p| "RubberBand::new()".to_string(),
+    props: &[
+        PropSpec::Float {
+            key: "threshold",
+            label: "Threshold",
+            min: -10.0,
+            max: 100.0,
+            step: 1.0,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = RubberBand::new();
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        if _p.f64("threshold") != 0.0 {
+            __w = __w.threshold(_p.f64("threshold") as f32);
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "RubberBand::new()".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("threshold", ".threshold", SnipProp::Float(0.0)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(rb) = downcast_mut::<RubberBand>(w) {
             if let Some(rect) = rb.take_selection() {

@@ -23,7 +23,7 @@ use martensite::widgets::tooltip::Tooltip;
 use martensite::widgets::tour::Tour;
 
 use crate::page::{Page, PropSpec};
-use crate::pages::{downcast_mut, meta, page};
+use crate::pages::{downcast_mut, meta, page, SnipProp};
 
 /// Stage-area anchor rect — center-ish, below the trigger zone.
 fn anchor() -> Rect {
@@ -85,11 +85,18 @@ page!(PopoverPage {
         ],
         true,
     ),
-    props: &[PropSpec::Text {
-        key: "title",
-        label: "Title",
-        default: "Filter"
-    }],
+    props: &[
+        PropSpec::Text {
+            key: "title",
+            label: "Title",
+            default: "Filter"
+        },
+        PropSpec::Bool {
+            key: "autohide",
+            label: "Autohide",
+            default: true
+        },
+    ],
     build: |p| {
         let mut pop = Popover::new()
             .title(p.str("title"))
@@ -97,13 +104,26 @@ page!(PopoverPage {
             .child(Text::new("Popover body content"))
             .anchor(anchor());
         pop.open();
-        Box::new(pop)
+        {
+            let mut __w = pop;
+            if !p.bool("autohide") {
+                __w = __w.autohide(p.bool("autohide"));
+            }
+            Box::new(__w)
+        }
     },
     snippet: |p| {
-        format!(
+        let mut __s = {
+            format!(
         "Popover::new()\n    .title({:?})\n    .preferred_edge(AnchorEdge::Bottom)\n    .anchor(rect)",
         p.str("title"),
     )
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("autohide", ".autohide", SnipProp::Bool(true))],
+        ));
+        __s
     },
 });
 
@@ -121,11 +141,18 @@ page!(PopconfirmPage {
         ],
         true,
     ),
-    props: &[PropSpec::Text {
-        key: "question",
-        label: "Question",
-        default: "Delete this item?",
-    }],
+    props: &[
+        PropSpec::Text {
+            key: "question",
+            label: "Question",
+            default: "Delete this item?",
+        },
+        PropSpec::Text {
+            key: "cancel_label",
+            label: "Cancel Label",
+            default: "Cancel"
+        },
+    ],
     build: |p| {
         let mut pc = Popconfirm::new()
             .question(p.str("question"))
@@ -133,9 +160,22 @@ page!(PopconfirmPage {
             .preferred_edge(AnchorEdge::Top)
             .anchor(anchor());
         pc.open();
-        Box::new(pc)
+        {
+            let mut __w = pc;
+            if p.str("cancel_label") != "Cancel" {
+                __w = __w.cancel_label(p.str("cancel_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("Popconfirm::new().question({:?})", p.str("question")),
+    snippet: |p| {
+        let mut __s = format!("Popconfirm::new().question({:?})", p.str("question"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("cancel_label", ".cancel_label", SnipProp::Text("Cancel"))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(pc) = downcast_mut::<Popconfirm>(w) {
             if let Some(res) = pc.take_result() {
@@ -212,21 +252,51 @@ page!(AlertDialogPage {
             label: "Destructive",
             default: true
         },
+        PropSpec::Choice {
+            key: "severity",
+            label: "Severity",
+            options: &["Info", "Warning", "Error"],
+            default: 0
+        },
     ],
-    build: |p| Box::new(
-        AlertDialog::new()
+    build: |p| {
+        let mut __w = AlertDialog::new()
             .title(p.str("title"))
             .message(p.str("message"))
             .destructive(p.bool("destructive"))
             .button("Cancel", AlertRole::Cancel)
-            .button("Delete", AlertRole::Confirm),
-    ),
-    snippet: |p| format!(
-        "AlertDialog::new()\n    .title({:?})\n    .message({:?})\n    .destructive({})",
-        p.str("title"),
-        p.str("message"),
-        p.bool("destructive"),
-    ),
+            .button("Delete", AlertRole::Confirm);
+        if p.choice("severity") != 0 {
+            __w = __w.severity(match p.choice("severity") {
+                0 => martensite::widgets::alert_dialog::AlertSeverity::Info,
+                1 => martensite::widgets::alert_dialog::AlertSeverity::Warning,
+                2 => martensite::widgets::alert_dialog::AlertSeverity::Error,
+                _ => martensite::widgets::alert_dialog::AlertSeverity::Info,
+            });
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "AlertDialog::new()\n    .title({:?})\n    .message({:?})\n    .destructive({})",
+            p.str("title"),
+            p.str("message"),
+            p.bool("destructive"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[(
+                "severity",
+                ".severity",
+                SnipProp::Choice(&[
+                    "martensite::widgets::alert_dialog::AlertSeverity::Info",
+                    "martensite::widgets::alert_dialog::AlertSeverity::Warning",
+                    "martensite::widgets::alert_dialog::AlertSeverity::Error",
+                ]),
+            )],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(d) = downcast_mut::<AlertDialog>(w) {
             if let Some(res) = d.take_result() {
@@ -250,24 +320,56 @@ page!(ActionSheetPage {
         ],
         true,
     ),
-    props: &[PropSpec::Text {
-        key: "title",
-        label: "Title",
-        default: "Photo options"
-    }],
-    build: |p| Box::new(
-        ActionSheet::new()
+    props: &[
+        PropSpec::Text {
+            key: "title",
+            label: "Title",
+            default: "Photo options"
+        },
+        PropSpec::Text {
+            key: "message",
+            label: "Message",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = ActionSheet::new()
             .title(p.str("title"))
             .action("Share")
             .action("Duplicate")
             .destructive("Delete")
-            .cancel("Cancel"),
-    ),
+            .cancel("Cancel");
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.a11y_label(p.str("a11y_label"));
+        }
+        if !p.str("message").is_empty() {
+            __w = __w.message(p.str("message"));
+        }
+        Box::new(__w)
+    },
     snippet: |p| {
-        format!(
+        let mut __s = {
+            format!(
         "ActionSheet::new()\n    .title({:?})\n    .action(\"Share\")\n    .destructive(\"Delete\")",
         p.str("title"),
     )
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("message", ".message", SnipProp::Text("")),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s
     },
     poll: |w, out| {
         if let Some(a) = downcast_mut::<ActionSheet>(w) {
@@ -292,22 +394,61 @@ page!(BottomSheetPage {
         ],
         true,
     ),
-    props: &[PropSpec::Text {
-        key: "title",
-        label: "Title",
-        default: "Share"
-    }],
+    props: &[
+        PropSpec::Text {
+            key: "title",
+            label: "Title",
+            default: "Share"
+        },
+        PropSpec::Text {
+            key: "detents",
+            label: "Detents",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut s = BottomSheet::new()
             .title(p.str("title"))
             .child(Text::new("Sheet content"));
         s.set_fraction(0.7);
-        Box::new(s)
+        {
+            let mut __w = s;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.a11y_label(p.str("a11y_label"));
+            }
+            let __v = crate::pages::parse_f32s(p.str("detents"));
+            if !__v.is_empty() {
+                __w = __w.detents(&__v);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "BottomSheet::new().title({:?}).child(content)",
-        p.str("title")
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "BottomSheet::new().title({:?}).child(content)",
+            p.str("title")
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".a11y_label", SnipProp::Text(""))],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "detents",
+            ".detents",
+            "",
+            crate::pages::expr_f32s,
+        ));
+        __s
+    },
     poll: |w, out| {
         if downcast_mut::<BottomSheet>(w).is_some_and(|s| s.take_close_requested()) {
             out.push("close requested".to_string());
@@ -329,16 +470,39 @@ page!(DrawerPage {
         ],
         true,
     ),
-    props: &[PropSpec::Text {
-        key: "title",
-        label: "Title",
-        default: "Layers"
-    }],
-    build: |p| Box::new(Drawer::new(p.str("title")).content(Text::new("Drawer content")),),
-    snippet: |p| format!(
-        "Drawer::new({:?}).content(Text::new(\"Drawer content\"))",
-        p.str("title"),
-    ),
+    props: &[
+        PropSpec::Text {
+            key: "title",
+            label: "Title",
+            default: "Layers"
+        },
+        PropSpec::Float {
+            key: "width",
+            label: "Width",
+            min: 0.0,
+            max: 64.0,
+            step: 0.5,
+            default: 300.0
+        },
+    ],
+    build: |p| {
+        let mut __w = Drawer::new(p.str("title")).content(Text::new("Drawer content"));
+        if p.f64("width") != 300.0 {
+            __w = __w.width(p.f64("width") as f32);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "Drawer::new({:?}).content(Text::new(\"Drawer content\"))",
+            p.str("title"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("width", ".width", SnipProp::Float(300.0))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if downcast_mut::<Drawer>(w).is_some_and(|d| d.take_close_requested()) {
             out.push("close requested".to_string());
@@ -434,16 +598,55 @@ page!(TourPage {
         ],
         true,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Bool {
+            key: "skippable",
+            label: "Skippable",
+            default: true
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |_p| {
         let mut t = Tour::new()
             .step("Welcome", "This is the stage.", None)
             .step("Props", "Edit props on the right.", Some(anchor()));
         t.restart();
-        Box::new(t)
+        {
+            let mut __w = t;
+            __w = __w.enabled(_p.bool("enabled"));
+            if !_p.str("a11y_label").is_empty() {
+                __w = __w.label(_p.str("a11y_label"));
+            }
+            if !_p.bool("skippable") {
+                __w = __w.skippable(_p.bool("skippable"));
+            }
+            Box::new(__w)
+        }
     },
     snippet: |_p| {
-        "Tour::new()\n    .step(\"Welcome\", \"This is the stage.\", None)".to_string()
+        let mut __s =
+            { "Tour::new()\n    .step(\"Welcome\", \"This is the stage.\", None)".to_string() };
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("skippable", ".skippable", SnipProp::Bool(true)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
     },
     poll: |w, out| {
         if let Some(t) = downcast_mut::<Tour>(w) {
@@ -484,18 +687,39 @@ page!(HoverCardPage {
             max: 2000,
             default: 300
         },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let mut h = HoverCard::new(p.str("title"), "Retained-mode widget toolkit")
             .with_delay(std::time::Duration::from_millis(p.i64("delay") as u64));
         h.set_hovered(true);
-        Box::new(h)
+        {
+            let mut __w = h;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "HoverCard::new({:?}, \"…\").with_delay({:?})",
-        p.str("title"),
-        p.i64("delay") as f32 / 1000.0,
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "HoverCard::new({:?}, \"…\").with_delay({:?})",
+            p.str("title"),
+            p.i64("delay") as f32 / 1000.0,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(h) = downcast_mut::<HoverCard>(w) {
             if h.take_opened() {
@@ -522,21 +746,44 @@ page!(PipPage {
         ],
         true,
     ),
-    props: &[PropSpec::Bool {
-        key: "closable",
-        label: "Closable",
-        default: true
-    }],
+    props: &[
+        PropSpec::Bool {
+            key: "closable",
+            label: "Closable",
+            default: true
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut pip = Pip::new(Text::new("PiP content"));
         pip.closable = p.bool("closable");
         pip.maximizable = true;
-        Box::new(pip)
+        {
+            let mut __w = pip;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Pip::new(content).closable({}).maximizable(true)",
-        p.bool("closable"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Pip::new(content).closable({}).maximizable(true)",
+            p.bool("closable"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(pip) = downcast_mut::<Pip>(w) {
             if pip.take_closed() {
@@ -563,19 +810,48 @@ page!(SwipeActionsPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        SwipeActions::new(Text::new("Swipe me"))
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = SwipeActions::new(Text::new("Swipe me"))
             .leading(vec![SwipeAction::new("Archive")])
             .trailing(vec![{
                 let mut a = SwipeAction::new("Delete");
                 a.destructive = true;
                 a
-            }]),
-    ),
+            }]);
+        __w = __w.enabled(_p.bool("enabled"));
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
     snippet: |_p| {
-        "SwipeActions::new(row)\n    .leading(vec![SwipeAction::new(\"Archive\")])\n    .trailing(vec![SwipeAction::new(\"Delete\")])"
+        let mut __s = {
+            "SwipeActions::new(row)\n    .leading(vec![SwipeAction::new(\"Archive\")])\n    .trailing(vec![SwipeAction::new(\"Delete\")])"
             .to_string()
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
     },
     poll: |w, out| {
         if let Some(sa) = downcast_mut::<SwipeActions>(w) {

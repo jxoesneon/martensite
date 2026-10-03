@@ -40,7 +40,7 @@ use martensite::widgets::xy_pad::XYPad;
 use martensite::widgets::zoom_controls::ZoomControls;
 
 use crate::page::{Page, PropSpec};
-use crate::pages::{csv, downcast_mut, meta, page};
+use crate::pages::{csv, downcast_mut, meta, page, SnipProp};
 
 page!(ButtonPage {
     meta: meta(
@@ -77,6 +77,21 @@ page!(ButtonPage {
             label: "Tooltip",
             default: ""
         },
+        PropSpec::Text {
+            key: "icon_d",
+            label: "Icon D",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "icon_named",
+            label: "Icon Named",
+            default: ""
+        },
+        PropSpec::Bool {
+            key: "icon_only",
+            label: "Icon Only",
+            default: false
+        },
     ],
     build: |p| {
         let mut b = Button::new(p.str("label"))
@@ -86,21 +101,44 @@ page!(ButtonPage {
         if !tip.is_empty() {
             b = b.tooltip(tip);
         }
-        Box::new(b)
+        {
+            let mut __w = b;
+            if !p.str("icon_d").is_empty() {
+                __w = __w.icon_d(p.str("icon_d"));
+            }
+            if !p.str("icon_named").is_empty() {
+                __w = __w.icon_named(p.str("icon_named"));
+            }
+            if p.bool("icon_only") {
+                __w = __w.icon_only(p.bool("icon_only"));
+            }
+            Box::new(__w)
+        }
     },
     snippet: |p| {
-        let mut s = format!("Button::new({:?})", p.str("label"));
-        if p.bool("primary") {
-            s.push_str("\n    .primary(true)");
-        }
-        if !p.bool("enabled") {
-            s.push_str("\n    .enabled(false)");
-        }
-        let tip = p.str("tooltip");
-        if !tip.is_empty() {
-            s.push_str(&format!("\n    .tooltip({tip:?})"));
-        }
-        s
+        let mut __s = {
+            let mut s = format!("Button::new({:?})", p.str("label"));
+            if p.bool("primary") {
+                s.push_str("\n    .primary(true)");
+            }
+            if !p.bool("enabled") {
+                s.push_str("\n    .enabled(false)");
+            }
+            let tip = p.str("tooltip");
+            if !tip.is_empty() {
+                s.push_str(&format!("\n    .tooltip({tip:?})"));
+            }
+            s
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("icon_d", ".icon_d", SnipProp::Text("")),
+                ("icon_named", ".icon_named", SnipProp::Text("")),
+                ("icon_only", ".icon_only", SnipProp::Bool(false)),
+            ],
+        ));
+        __s
     },
     poll: |w, out| {
         if downcast_mut::<Button>(w).is_some_and(|b| b.take_activated()) {
@@ -206,18 +244,37 @@ page!(SwitchPage {
             label: "Enabled",
             default: true
         },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
-    build: |p| Box::new(
-        Switch::new(p.str("label"))
+    build: |p| {
+        let mut __w = Switch::new(p.str("label"))
             .on(p.bool("on"))
-            .enabled(p.bool("enabled")),
-    ),
-    snippet: |p| {
-        let mut s = format!("Switch::new({:?}).on({})", p.str("label"), p.bool("on"));
-        if !p.bool("enabled") {
-            s.push_str("\n    .enabled(false)");
+            .enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.a11y_label(p.str("a11y_label"));
         }
-        s
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = {
+            let mut s = format!("Switch::new({:?}).on({})", p.str("label"), p.bool("on"));
+            if !p.bool("enabled") {
+                s.push_str("\n    .enabled(false)");
+            }
+            s
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".a11y_label", SnipProp::Text(""))],
+        ));
+        __s
     },
     state: |w| {
         downcast_mut::<Switch>(w)
@@ -256,18 +313,34 @@ page!(ToggleButtonPage {
             label: "Enabled",
             default: true
         },
+        PropSpec::Text {
+            key: "tooltip",
+            label: "Tooltip",
+            default: ""
+        },
     ],
-    build: |p| Box::new(
-        ToggleButton::new(p.str("label"))
+    build: |p| {
+        let mut __w = ToggleButton::new(p.str("label"))
             .pressed(p.bool("pressed"))
-            .enabled(p.bool("enabled")),
-    ),
-    snippet: |p| format!(
-        "ToggleButton::new({:?})\n    .pressed({})\n    .enabled({})",
-        p.str("label"),
-        p.bool("pressed"),
-        p.bool("enabled"),
-    ),
+            .enabled(p.bool("enabled"));
+        if !p.str("tooltip").is_empty() {
+            __w = __w.tooltip(p.str("tooltip"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "ToggleButton::new({:?})\n    .pressed({})\n    .enabled({})",
+            p.str("label"),
+            p.bool("pressed"),
+            p.bool("enabled"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("tooltip", ".tooltip", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(b) = downcast_mut::<ToggleButton>(w) {
             if let Some(on) = b.take_toggled() {
@@ -316,6 +389,41 @@ page!(SliderPage {
             step: 1.0,
             default: 40.0
         },
+        PropSpec::Float {
+            key: "step",
+            label: "Step",
+            min: -8.5,
+            max: 100.0,
+            step: 1.0,
+            default: 1.0
+        },
+        PropSpec::Float {
+            key: "with_page_step",
+            label: "With Page Step",
+            min: -10.0,
+            max: 100.0,
+            step: 1.0,
+            default: 0.0
+        },
+        PropSpec::Choice {
+            key: "orientation",
+            label: "Orientation",
+            options: &["Horizontal", "Vertical"],
+            default: 0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let (min, max) = (
@@ -323,14 +431,54 @@ page!(SliderPage {
             p.f64("max").max(p.f64("min")),
         );
         let v = p.f64("value").clamp(min, max);
-        Box::new(Slider::new(min, max).with_value(v))
+        {
+            let mut __w = Slider::new(min, max).with_value(v);
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.f64("step") != 1.0 {
+                __w = __w.step(p.f64("step"));
+            }
+            if p.f64("with_page_step") != 0.0 {
+                __w = __w.with_page_step(p.f64("with_page_step"));
+            }
+            if p.choice("orientation") != 0 {
+                __w = __w.orientation(match p.choice("orientation") {
+                    0 => martensite::widgets::slider::SliderOrientation::Horizontal,
+                    1 => martensite::widgets::slider::SliderOrientation::Vertical,
+                    _ => martensite::widgets::slider::SliderOrientation::Horizontal,
+                });
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Slider::new({}, {}).with_value({})",
-        p.f64("min"),
-        p.f64("max"),
-        p.f64("value"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Slider::new({}, {}).with_value({})",
+            p.f64("min"),
+            p.f64("max"),
+            p.f64("value"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("step", ".step", SnipProp::Float(1.0)),
+                ("with_page_step", ".with_page_step", SnipProp::Float(0.0)),
+                (
+                    "orientation",
+                    ".orientation",
+                    SnipProp::Choice(&[
+                        "martensite::widgets::slider::SliderOrientation::Horizontal",
+                        "martensite::widgets::slider::SliderOrientation::Vertical",
+                    ]),
+                ),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     state: |w| {
         downcast_mut::<Slider>(w)
             .map(|s| {
@@ -374,18 +522,108 @@ page!(RangeSliderPage {
             step: 1.0,
             default: 80.0
         },
+        PropSpec::Float {
+            key: "step",
+            label: "Step",
+            min: -8.5,
+            max: 100.0,
+            step: 1.0,
+            default: 1.0
+        },
+        PropSpec::Float {
+            key: "with_page_step",
+            label: "With Page Step",
+            min: -10.0,
+            max: 100.0,
+            step: 1.0,
+            default: 0.0
+        },
+        PropSpec::Choice {
+            key: "orientation",
+            label: "Orientation",
+            options: &["Horizontal", "Vertical"],
+            default: 0
+        },
+        PropSpec::Text {
+            key: "with_range",
+            label: "With Range (csv)",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let mut s = RangeSlider::new(0.0, 100.0);
         s.set_low(p.f64("low"));
         s.set_high(p.f64("high").max(p.f64("low")));
-        Box::new(s)
+        {
+            let mut __w = s;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.f64("step") != 1.0 {
+                __w = __w.step(p.f64("step"));
+            }
+            if p.f64("with_page_step") != 0.0 {
+                __w = __w.with_page_step(p.f64("with_page_step"));
+            }
+            if p.choice("orientation") != 0 {
+                __w = __w.orientation(match p.choice("orientation") {
+                    0 => martensite::widgets::slider::SliderOrientation::Horizontal,
+                    1 => martensite::widgets::slider::SliderOrientation::Vertical,
+                    _ => martensite::widgets::slider::SliderOrientation::Horizontal,
+                });
+            }
+            if let Some(v) = crate::pages::parse_pair(p.str("with_range")) {
+                __w = __w.with_range(v.0, v.1);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "let mut s = RangeSlider::new(0.0, 100.0);\ns.set_low({});\ns.set_high({});",
-        p.f64("low"),
-        p.f64("high"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "let mut s = RangeSlider::new(0.0, 100.0);\ns.set_low({});\ns.set_high({});",
+            p.f64("low"),
+            p.f64("high"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("step", ".step", SnipProp::Float(1.0)),
+                ("with_page_step", ".with_page_step", SnipProp::Float(0.0)),
+                (
+                    "orientation",
+                    ".orientation",
+                    SnipProp::Choice(&[
+                        "martensite::widgets::slider::SliderOrientation::Horizontal",
+                        "martensite::widgets::slider::SliderOrientation::Vertical",
+                    ]),
+                ),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "with_range",
+            ".with_range",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s
+    },
     state: |w| {
         downcast_mut::<RangeSlider>(w)
             .map(|s| {
@@ -439,6 +677,63 @@ page!(SpinBoxPage {
             label: "Suffix",
             default: ""
         },
+        PropSpec::Float {
+            key: "step",
+            label: "Step",
+            min: -8.5,
+            max: 100.0,
+            step: 1.0,
+            default: 1.0
+        },
+        PropSpec::Float {
+            key: "with_page_step",
+            label: "With Page Step",
+            min: -10.0,
+            max: 100.0,
+            step: 1.0,
+            default: 0.0
+        },
+        PropSpec::Int {
+            key: "decimals",
+            label: "Decimals",
+            min: 0,
+            max: 100,
+            default: 0
+        },
+        PropSpec::Text {
+            key: "prefix",
+            label: "Prefix",
+            default: ""
+        },
+        PropSpec::Bool {
+            key: "editable",
+            label: "Editable",
+            default: true
+        },
+        PropSpec::Bool {
+            key: "wrap",
+            label: "Wrap",
+            default: false
+        },
+        PropSpec::Choice {
+            key: "sanitize",
+            label: "Sanitize",
+            options: &["Aggressive", "Baseline", "Raw"],
+            default: 0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let mut s = SpinBox::new()
@@ -448,14 +743,57 @@ page!(SpinBoxPage {
         if !sfx.is_empty() {
             s = s.suffix(sfx);
         }
-        Box::new(s)
+        {
+            let mut __w = s;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.f64("step") != 1.0 {
+                __w = __w.step(p.f64("step"));
+            }
+            if p.f64("with_page_step") != 0.0 {
+                __w = __w.with_page_step(p.f64("with_page_step"));
+            }
+            if p.i64("decimals") != 0 {
+                __w = __w.decimals(p.i64("decimals") as usize);
+            }
+            if !p.str("prefix").is_empty() {
+                __w = __w.prefix(p.str("prefix"));
+            }
+            if !p.bool("editable") {
+                __w = __w.editable(p.bool("editable"));
+            }
+            if p.bool("wrap") {
+                __w = __w.wrap(p.bool("wrap"));
+            }
+            __w.set_sanitizer(crate::pages::sanitize_cfg(p));
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "SpinBox::new()\n    .range({}, {})\n    .with_value({})",
-        p.i64("min"),
-        p.i64("max"),
-        p.i64("value"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "SpinBox::new()\n    .range({}, {})\n    .with_value({})",
+            p.i64("min"),
+            p.i64("max"),
+            p.i64("value"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("step", ".step", SnipProp::Float(1.0)),
+                ("with_page_step", ".with_page_step", SnipProp::Float(0.0)),
+                ("decimals", ".decimals", SnipProp::Int(0)),
+                ("prefix", ".prefix", SnipProp::Text("")),
+                ("editable", ".editable", SnipProp::Bool(true)),
+                ("wrap", ".wrap", SnipProp::Bool(false)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(crate::pages::sanitize_snippet(p));
+        __s
+    },
     state: |w| {
         downcast_mut::<SpinBox>(w)
             .map(|s| vec![("value".to_string(), s.value().to_string())])
@@ -477,19 +815,108 @@ page!(SegmentedPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "options",
-        label: "Options (csv)",
-        default: "Day,Week,Month",
-    }],
-    build: |p| Box::new(Segmented::new().options(csv(p, "options")).selected(0)),
+    props: &[
+        PropSpec::Text {
+            key: "options",
+            label: "Options (csv)",
+            default: "Day,Week,Month",
+        },
+        PropSpec::Text {
+            key: "option",
+            label: "Option",
+            default: ""
+        },
+        PropSpec::Choice {
+            key: "direction",
+            label: "Direction",
+            options: &["Row", "Column"],
+            default: 0
+        },
+        PropSpec::Text {
+            key: "option_with_badge_label",
+            label: "Option With Badge Label",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "option_with_badge_badge",
+            label: "Option With Badge Badge",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = Segmented::new().options(csv(p, "options")).selected(0);
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if !p.str("option").is_empty() {
+            __w = __w.option(p.str("option"));
+        }
+        if p.choice("direction") != 0 {
+            __w = __w.direction(match p.choice("direction") {
+                0 => martensite::widgets::flex::FlexDirection::Row,
+                1 => martensite::widgets::flex::FlexDirection::Column,
+                _ => martensite::widgets::flex::FlexDirection::Row,
+            });
+        }
+        if !p.str("option_with_badge_label").is_empty()
+            || !p.str("option_with_badge_badge").is_empty()
+        {
+            __w = __w.option_with_badge(
+                p.str("option_with_badge_label"),
+                martensite::widgets::badge::BadgeSpec::new(p.str("option_with_badge_badge")),
+            );
+        }
+        Box::new(__w)
+    },
     snippet: |p| {
-        let opts = csv(p, "options")
-            .iter()
-            .map(|o| format!("{o:?}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("Segmented::new().options([{opts}]).selected(0)")
+        let mut __s = {
+            let opts = csv(p, "options")
+                .iter()
+                .map(|o| format!("{o:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Segmented::new().options([{opts}]).selected(0)")
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("option", ".option", SnipProp::Text("")),
+                (
+                    "direction",
+                    ".direction",
+                    SnipProp::Choice(&[
+                        "martensite::widgets::flex::FlexDirection::Row",
+                        "martensite::widgets::flex::FlexDirection::Column",
+                    ]),
+                ),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        if !p.str("option_with_badge_label").is_empty()
+            || !p.str("option_with_badge_badge").is_empty()
+        {
+            __s.push_str(&format!(
+                "\n    .option_with_badge({:?}, BadgeSpec::new({:?}))",
+                p.str("option_with_badge_label"),
+                p.str("option_with_badge_badge")
+            ));
+        }
+        __s
     },
     poll: |w, out| {
         if let Some(seg) = downcast_mut::<Segmented>(w) {
@@ -514,19 +941,67 @@ page!(DropdownPage {
         ],
         true,
     ),
-    props: &[PropSpec::Text {
-        key: "options",
-        label: "Options (csv)",
-        default: "Light,Dark,System",
-    }],
-    build: |p| Box::new(Dropdown::new(csv(p, "options"))),
+    props: &[
+        PropSpec::Text {
+            key: "options",
+            label: "Options (csv)",
+            default: "Light,Dark,System",
+        },
+        PropSpec::Text {
+            key: "placeholder",
+            label: "Placeholder",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Bool {
+            key: "loading",
+            label: "Loading",
+            default: false
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = Dropdown::new(csv(p, "options"));
+        __w = __w.enabled(p.bool("enabled"));
+        __w = __w.loading(p.bool("loading"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if !p.str("placeholder").is_empty() {
+            __w = __w.placeholder(p.str("placeholder"));
+        }
+        Box::new(__w)
+    },
     snippet: |p| {
-        let opts = csv(p, "options")
-            .iter()
-            .map(|o| format!("{o:?}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("Dropdown::new([{opts}])")
+        let mut __s = {
+            let opts = csv(p, "options")
+                .iter()
+                .map(|o| format!("{o:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Dropdown::new([{opts}])")
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("placeholder", ".placeholder", SnipProp::Text("")),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("loading", ".loading", SnipProp::Bool(false)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
     },
     state: |w| {
         downcast_mut::<Dropdown>(w)
@@ -554,19 +1029,72 @@ page!(RadioGroupPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "options",
-        label: "Options (csv)",
-        default: "Small,Medium,Large",
-    }],
-    build: |p| Box::new(RadioGroup::new(csv(p, "options"))),
+    props: &[
+        PropSpec::Text {
+            key: "options",
+            label: "Options (csv)",
+            default: "Small,Medium,Large",
+        },
+        PropSpec::Choice {
+            key: "direction",
+            label: "Direction",
+            options: &["Row", "Column"],
+            default: 0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = RadioGroup::new(csv(p, "options"));
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if p.choice("direction") != 0 {
+            __w = __w.direction(match p.choice("direction") {
+                0 => martensite::widgets::flex::FlexDirection::Row,
+                1 => martensite::widgets::flex::FlexDirection::Column,
+                _ => martensite::widgets::flex::FlexDirection::Row,
+            });
+        }
+        Box::new(__w)
+    },
     snippet: |p| {
-        let opts = csv(p, "options")
-            .iter()
-            .map(|o| format!("{o:?}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("RadioGroup::new([{opts}])")
+        let mut __s = {
+            let opts = csv(p, "options")
+                .iter()
+                .map(|o| format!("{o:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("RadioGroup::new([{opts}])")
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                (
+                    "direction",
+                    ".direction",
+                    SnipProp::Choice(&[
+                        "martensite::widgets::flex::FlexDirection::Row",
+                        "martensite::widgets::flex::FlexDirection::Column",
+                    ]),
+                ),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
     },
     state: |w| {
         downcast_mut::<RadioGroup>(w)
@@ -632,13 +1160,45 @@ page!(SplitButtonPage {
         ],
         true,
     ),
-    props: &[PropSpec::Text {
-        key: "label",
-        label: "Label",
-        default: "Save",
-    }],
-    build: |p| Box::new(SplitButton::new(p.str("label"))),
-    snippet: |p| format!("SplitButton::new({:?})", p.str("label")),
+    props: &[
+        PropSpec::Text {
+            key: "label",
+            label: "Label",
+            default: "Save",
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = SplitButton::new(p.str("label"));
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("SplitButton::new({:?})", p.str("label"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(b) = downcast_mut::<SplitButton>(w) {
             if b.take_activated() {
@@ -687,6 +1247,14 @@ page!(ChipPage {
             label: "Deletable",
             default: false
         },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
     build: |p| {
         let kind = match p.choice("kind") {
@@ -695,20 +1263,29 @@ page!(ChipPage {
             3 => ChipKind::Suggestion,
             _ => ChipKind::Filter,
         };
-        Box::new(
-            Chip::new(p.str("label"))
+        {
+            let mut __w = Chip::new(p.str("label"))
                 .kind(kind)
                 .selected(p.bool("selected"))
-                .deletable(p.bool("deletable")),
-        )
+                .deletable(p.bool("deletable"));
+            __w = __w.enabled(p.bool("enabled"));
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Chip::new({:?})\n    .kind(ChipKind::{:?})\n    .selected({})\n    .deletable({})",
-        p.str("label"),
-        ["Assist", "Filter", "Input", "Suggestion"][p.choice("kind")],
-        p.bool("selected"),
-        p.bool("deletable"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Chip::new({:?})\n    .kind(ChipKind::{:?})\n    .selected({})\n    .deletable({})",
+            p.str("label"),
+            ["Assist", "Filter", "Input", "Suggestion"][p.choice("kind")],
+            p.bool("selected"),
+            p.bool("deletable"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("enabled", ".enabled", SnipProp::Bool(true))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(c) = downcast_mut::<Chip>(w) {
             if let Some(sel) = c.take_selected() {
@@ -735,25 +1312,83 @@ page!(ChipGroupPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "chips",
-        label: "Chips (csv)",
-        default: "Rust,Cargo,GUI,Desktop",
-    }],
+    props: &[
+        PropSpec::Text {
+            key: "chips",
+            label: "Chips (csv)",
+            default: "Rust,Cargo,GUI,Desktop",
+        },
+        PropSpec::Float {
+            key: "gap",
+            label: "Gap",
+            min: 0.0,
+            max: 64.0,
+            step: 0.5,
+            default: 0.0
+        },
+        PropSpec::Choice {
+            key: "selection",
+            label: "Selection",
+            options: &["None", "Single", "Multiple"],
+            default: 0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+    ],
     build: |p| {
         let mut g = ChipGroup::new().label("Tags");
         for label in csv(p, "chips") {
             g = g.chip(Chip::new(label).kind(ChipKind::Filter));
         }
-        Box::new(g)
+        {
+            let mut __w = g;
+            __w = __w.enabled(p.bool("enabled"));
+            if p.f64("gap") != 0.0 {
+                __w = __w.gap(p.f64("gap") as f32);
+            }
+            if p.choice("selection") != 0 {
+                __w = __w.selection(match p.choice("selection") {
+                    0 => martensite::widgets::chip_group::ChipSelection::None,
+                    1 => martensite::widgets::chip_group::ChipSelection::Single,
+                    2 => martensite::widgets::chip_group::ChipSelection::Multiple,
+                    _ => martensite::widgets::chip_group::ChipSelection::None,
+                });
+            }
+            Box::new(__w)
+        }
     },
     snippet: |p| {
-        let chips = csv(p, "chips")
-            .iter()
-            .map(|c| format!("Chip::new({c:?})"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("ChipGroup::new()\n    .chips([{chips}])")
+        let mut __s = {
+            let chips = csv(p, "chips")
+                .iter()
+                .map(|c| format!("Chip::new({c:?})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("ChipGroup::new()\n    .chips([{chips}])")
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("gap", ".gap", SnipProp::Float(0.0)),
+                (
+                    "selection",
+                    ".selection",
+                    SnipProp::Choice(&[
+                        "martensite::widgets::chip_group::ChipSelection::None",
+                        "martensite::widgets::chip_group::ChipSelection::Single",
+                        "martensite::widgets::chip_group::ChipSelection::Multiple",
+                    ]),
+                ),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+            ],
+        ));
+        __s
     },
     poll: |w, out| {
         if let Some(g) = downcast_mut::<ChipGroup>(w) {
@@ -804,6 +1439,19 @@ page!(RatingPage {
             label: "Read-only",
             default: false
         },
+        PropSpec::Bool {
+            key: "allow_clear",
+            label: "Allow Clear",
+            default: true
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
     build: |p| {
         let mut r = Rating::new()
@@ -812,14 +1460,31 @@ page!(RatingPage {
             .read_only(p.bool("read_only"))
             .label("Rating");
         r.set_value(p.f64("value") as f32);
-        Box::new(r)
+        {
+            let mut __w = r;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.bool("allow_clear") {
+                __w = __w.allow_clear(p.bool("allow_clear"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Rating::new()\n    .max({})\n    .half_steps({})\n    .read_only({})",
-        p.i64("max"),
-        p.bool("half"),
-        p.bool("read_only"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Rating::new()\n    .max({})\n    .half_steps({})\n    .read_only({})",
+            p.i64("max"),
+            p.bool("half"),
+            p.bool("read_only"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("allow_clear", ".allow_clear", SnipProp::Bool(true)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(r) = downcast_mut::<Rating>(w) {
             if let Some(v) = r.take_changed() {
@@ -902,9 +1567,39 @@ page!(LinkPage {
             label: "Href",
             default: "https://example.com"
         },
+        PropSpec::Bool {
+            key: "visited",
+            label: "Visited",
+            default: false
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
-    build: |p| Box::new(Link::new(p.str("text")).target(p.str("href"))),
-    snippet: |p| format!("Link::new({:?}).target({:?})", p.str("text"), p.str("href")),
+    build: |p| {
+        let mut __w = Link::new(p.str("text")).target(p.str("href"));
+        __w = __w.enabled(p.bool("enabled"));
+        if p.bool("visited") {
+            __w = __w.visited(p.bool("visited"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("Link::new({:?}).target({:?})", p.str("text"), p.str("href"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("visited", ".visited", SnipProp::Bool(false)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(l) = downcast_mut::<Link>(w) {
             if let Some(target) = l.take_activated() {
@@ -939,9 +1634,59 @@ page!(FloatButtonPage {
             label: "Enabled",
             default: true
         },
+        PropSpec::Bool {
+            key: "visible",
+            label: "Visible",
+            default: true
+        },
+        PropSpec::Text {
+            key: "icon_d",
+            label: "Icon D",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "icon_named",
+            label: "Icon Named",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
-    build: |p| Box::new(FloatButton::new(p.str("label")).enabled(p.bool("enabled")),),
-    snippet: |p| format!("FloatButton::new({:?})", p.str("label")),
+    build: |p| {
+        let mut __w = FloatButton::new(p.str("label")).enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if !p.bool("visible") {
+            __w = __w.visible(p.bool("visible"));
+        }
+        if !p.str("icon_d").is_empty() {
+            __w = __w.icon_d(p.str("icon_d"));
+        }
+        if !p.str("icon_named").is_empty() {
+            __w = __w.icon_named(p.str("icon_named"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("FloatButton::new({:?})", p.str("label"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("visible", ".visible", SnipProp::Bool(true)),
+                ("icon_d", ".icon_d", SnipProp::Text("")),
+                ("icon_named", ".icon_named", SnipProp::Text("")),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if downcast_mut::<FloatButton>(w).is_some_and(|b| b.take_activated()) {
             out.push("activated".to_string());
@@ -977,18 +1722,53 @@ page!(VolumePage {
             label: "Muted",
             default: false
         },
+        PropSpec::Float {
+            key: "max",
+            label: "Max",
+            min: -8.5,
+            max: 100.0,
+            step: 1.0,
+            default: 1.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let mut v = Volume::new();
         v.set_gain(p.f64("gain") as f32);
         v.set_muted(p.bool("muted"));
-        Box::new(v)
+        {
+            let mut __w = v;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.f64("max") != 1.0 {
+                __w = __w.max(p.f64("max") as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "let mut v = Volume::new();\nv.set_gain({:?});\nv.set_muted({});",
-        p.f64("gain") as f32,
-        p.bool("muted"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "let mut v = Volume::new();\nv.set_gain({:?});\nv.set_muted({});",
+            p.f64("gain") as f32,
+            p.bool("muted"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("max", ".max", SnipProp::Float(1.0)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(v) = downcast_mut::<Volume>(w) {
             if let Some(g) = v.take_changed() {
@@ -1015,23 +1795,67 @@ page!(DialPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "value",
-        label: "Value",
-        min: 0.0,
-        max: 1.0,
-        step: 0.05,
-        default: 0.35
-    },],
+    props: &[
+        PropSpec::Float {
+            key: "value",
+            label: "Value",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 0.35
+        },
+        PropSpec::Float {
+            key: "step",
+            label: "Step",
+            min: -10.0,
+            max: 100.0,
+            step: 1.0,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut d = Dial::new().range(0.0, 1.0);
         d.set_value(p.f64("value"));
-        Box::new(d)
+        {
+            let mut __w = d;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.a11y_label(p.str("a11y_label"));
+            }
+            if p.f64("step") != 0.0 {
+                __w = __w.step(p.f64("step"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "let mut d = Dial::new().range(0.0, 1.0);\nd.set_value({});",
-        p.f64("value"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "let mut d = Dial::new().range(0.0, 1.0);\nd.set_value({});",
+            p.f64("value"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("step", ".step", SnipProp::Float(0.0)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(d) = downcast_mut::<Dial>(w) {
             if let Some(v) = d.take_changed() {
@@ -1055,19 +1879,62 @@ page!(WheelPickerPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "items",
-        label: "Items (csv)",
-        default: "Mercury,Venus,Earth,Mars",
-    }],
-    build: |p| Box::new(WheelPicker::new().items(csv(p, "items"))),
+    props: &[
+        PropSpec::Text {
+            key: "items",
+            label: "Items (csv)",
+            default: "Mercury,Venus,Earth,Mars",
+        },
+        PropSpec::Int {
+            key: "selected_index",
+            label: "Selected Index",
+            min: 0,
+            max: 100,
+            default: 0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = WheelPicker::new().items(csv(p, "items"));
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if p.i64("selected_index") != 0 {
+            __w = __w.selected_index(p.i64("selected_index") as usize);
+        }
+        Box::new(__w)
+    },
     snippet: |p| {
-        let items = csv(p, "items")
-            .iter()
-            .map(|i| format!("{i:?}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("WheelPicker::new().items([{items}])")
+        let mut __s = {
+            let items = csv(p, "items")
+                .iter()
+                .map(|i| format!("{i:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("WheelPicker::new().items([{items}])")
+        };
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("selected_index", ".selected_index", SnipProp::Int(0)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
     },
     poll: |w, out| {
         if let Some(wp) = downcast_mut::<WheelPicker>(w) {
@@ -1106,17 +1973,38 @@ page!(JoystickPage {
             step: 0.05,
             default: 0.1
         },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let mut j = Joystick::new().spring(p.bool("spring"));
         j = j.dead_zone(p.f64("dead_zone") as f32);
-        Box::new(j)
+        {
+            let mut __w = j;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Joystick::new()\n    .spring({})\n    .dead_zone({:?})",
-        p.bool("spring"),
-        p.f64("dead_zone") as f32,
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Joystick::new()\n    .spring({})\n    .dead_zone({:?})",
+            p.bool("spring"),
+            p.f64("dead_zone") as f32,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(j) = downcast_mut::<Joystick>(w) {
             if j.take_changed() {
@@ -1141,13 +2029,36 @@ page!(KeypadPage {
         ],
         false,
     ),
-    props: &[PropSpec::Bool {
-        key: "enabled",
-        label: "Enabled",
-        default: true
-    }],
-    build: |p| Box::new(Keypad::new().enabled(p.bool("enabled"))),
-    snippet: |p| format!("Keypad::new().enabled({})", p.bool("enabled")),
+    props: &[
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = Keypad::new().enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("Keypad::new().enabled({})", p.bool("enabled"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(k) = downcast_mut::<Keypad>(w) {
             if let Some(key) = k.take_pressed() {
@@ -1188,6 +2099,19 @@ page!(XyPadPage {
             options: &["Rotated", "Upright"],
             default: 0
         },
+        PropSpec::Text {
+            key: "value",
+            label: "Value (csv)",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
     ],
     build: |p| {
         let mut pad = XYPad::new();
@@ -1197,18 +2121,39 @@ page!(XyPadPage {
         } else {
             martensite::text_paint::VerticalTextMode::Upright
         });
-        Box::new(pad)
-    },
-    snippet: |p| format!(
-        "XYPad::new().labels({:?}, {:?}).y_label_mode(VerticalTextMode::{})",
-        p.str("x"),
-        p.str("y"),
-        if p.choice("ymode") == 0 {
-            "Rotated"
-        } else {
-            "Upright"
+        {
+            let mut __w = pad;
+            __w = __w.enabled(p.bool("enabled"));
+            if let Some(v) = crate::pages::parse_pair(p.str("value")) {
+                __w = __w.value(v.0 as f32, v.1 as f32);
+            }
+            Box::new(__w)
         }
-    ),
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "XYPad::new().labels({:?}, {:?}).y_label_mode(VerticalTextMode::{})",
+            p.str("x"),
+            p.str("y"),
+            if p.choice("ymode") == 0 {
+                "Rotated"
+            } else {
+                "Upright"
+            }
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("enabled", ".enabled", SnipProp::Bool(true))],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "value",
+            ".value",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(pad) = downcast_mut::<XYPad>(w) {
             if pad.take_changed() {
@@ -1233,17 +2178,55 @@ page!(CrosshairPage {
         ],
         false,
     ),
-    props: &[PropSpec::Bool {
-        key: "readout",
-        label: "Readout",
-        default: true
-    }],
+    props: &[
+        PropSpec::Bool {
+            key: "readout",
+            label: "Readout",
+            default: true
+        },
+        PropSpec::Text {
+            key: "color",
+            label: "Color",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut c = Crosshair::new();
         c.show_readout = p.bool("readout");
-        Box::new(c)
+        {
+            let mut __w = c;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if let Some(v) = crate::pages::parse_rgba(p.str("color")) {
+                __w = __w.color(v);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("Crosshair::new() /* show_readout={} */", p.bool("readout")),
+    snippet: |p| {
+        let mut __s = format!("Crosshair::new() /* show_readout={} */", p.bool("readout"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "color",
+            ".color",
+            "",
+            crate::pages::expr_rgba,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(c) = downcast_mut::<Crosshair>(w) {
             if let Some(pos) = c.take_moved() {
@@ -1267,23 +2250,69 @@ page!(TunerPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "cents",
-        label: "Cents",
-        min: -50.0,
-        max: 50.0,
-        step: 1.0,
-        default: -12.0,
-    }],
+    props: &[
+        PropSpec::Float {
+            key: "cents",
+            label: "Cents",
+            min: -50.0,
+            max: 50.0,
+            step: 1.0,
+            default: -12.0,
+        },
+        PropSpec::Text {
+            key: "note",
+            label: "Note",
+            default: "—"
+        },
+        PropSpec::Float {
+            key: "band",
+            label: "Band",
+            min: -10.0,
+            max: 100.0,
+            step: 1.0,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut t = Tuner::new();
         t.set_pitch("A", p.f64("cents") as f32);
-        Box::new(t)
+        {
+            let mut __w = t;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.str("note") != "—" {
+                __w = __w.note(p.str("note"));
+            }
+            if p.f64("band") != 0.0 {
+                __w = __w.band(p.f64("band") as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "let mut t = Tuner::new();\nt.set_pitch(\"A\", {:?});",
-        p.f64("cents") as f32,
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "let mut t = Tuner::new();\nt.set_pitch(\"A\", {:?});",
+            p.f64("cents") as f32,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("note", ".note", SnipProp::Text("—")),
+                ("band", ".band", SnipProp::Float(0.0)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(t) = downcast_mut::<Tuner>(w) {
             if t.take_steady() {
@@ -1322,9 +2351,77 @@ page!(PadGridPage {
             max: 8,
             default: 4
         },
+        PropSpec::Int {
+            key: "pad_color_index",
+            label: "Pad Color Index",
+            min: 0,
+            max: 32,
+            default: 0
+        },
+        PropSpec::Text {
+            key: "pad_color_color",
+            label: "Pad Color Color",
+            default: ""
+        },
+        PropSpec::Int {
+            key: "pad_label_index",
+            label: "Pad Label Index",
+            min: 0,
+            max: 32,
+            default: 0
+        },
+        PropSpec::Text {
+            key: "pad_label_label",
+            label: "Pad Label Label",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
-    build: |p| Box::new(PadGrid::new(p.i64("cols") as usize, p.i64("rows") as usize)),
-    snippet: |p| format!("PadGrid::new({}, {})", p.i64("cols"), p.i64("rows")),
+    build: |p| {
+        let mut __w = PadGrid::new(p.i64("cols") as usize, p.i64("rows") as usize);
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if p.i64("pad_color_index") != 0 || !p.str("pad_color_color").is_empty() {
+            __w = __w.pad_color(
+                p.i64("pad_color_index") as usize,
+                crate::pages::parse_rgba(p.str("pad_color_color")).unwrap_or([0, 0, 0, 255]),
+            );
+        }
+        if p.i64("pad_label_index") != 0 || !p.str("pad_label_label").is_empty() {
+            __w = __w.pad_label(p.i64("pad_label_index") as usize, p.str("pad_label_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("PadGrid::new({}, {})", p.i64("cols"), p.i64("rows"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        if p.i64("pad_color_index") != 0 || !p.str("pad_color_color").is_empty() {
+            __s.push_str(&format!(
+                "\n    .pad_color({}, {})",
+                p.i64("pad_color_index"),
+                crate::pages::expr_rgba(p.str("pad_color_color")).unwrap_or_default()
+            ));
+        }
+        if p.i64("pad_label_index") != 0 || !p.str("pad_label_label").is_empty() {
+            __s.push_str(&format!(
+                "\n    .pad_label({}, {:?})",
+                p.i64("pad_label_index"),
+                p.str("pad_label_label")
+            ));
+        }
+        __s
+    },
     poll: |w, out| {
         if let Some(g) = downcast_mut::<PadGrid>(w) {
             if let Some(i) = g.take_triggered() {
@@ -1348,16 +2445,37 @@ page!(ColorButtonPage {
         ],
         true,
     ),
-    props: &[PropSpec::Text {
-        key: "title",
-        label: "Title",
-        default: "Accent"
-    }],
-    build: |p| Box::new(ColorButton::new([80, 140, 255, 255]).title(p.str("title"))),
-    snippet: |p| format!(
-        "ColorButton::new([80, 140, 255, 255]).title({:?})",
-        p.str("title"),
-    ),
+    props: &[
+        PropSpec::Text {
+            key: "title",
+            label: "Title",
+            default: "Accent"
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+    ],
+    build: |p| {
+        let mut __w = ColorButton::new([80, 140, 255, 255]).title(p.str("title"));
+        __w = __w.enabled(p.bool("enabled"));
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "ColorButton::new([80, 140, 255, 255]).title({:?})",
+            p.str("title"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("enabled", ".enabled", SnipProp::Bool(true))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if downcast_mut::<ColorButton>(w).is_some_and(|b| b.take_activated()) {
             out.push("activated → picker".to_string());
@@ -1379,9 +2497,60 @@ page!(ColorPalettePage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(ColorPalette::new()),
-    snippet: |_p| "ColorPalette::new()".to_string(),
+    props: &[
+        PropSpec::Text {
+            key: "swatches",
+            label: "Swatches",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = ColorPalette::new();
+        __w = __w.enabled(_p.bool("enabled"));
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        let __v: Vec<[u8; 4]> = _p
+            .str("swatches")
+            .split(';')
+            .filter_map(crate::pages::parse_rgba)
+            .collect();
+        if !__v.is_empty() {
+            __w = __w.swatches(__v);
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "ColorPalette::new()".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            _p,
+            "swatches",
+            ".swatches",
+            "",
+            crate::pages::expr_strs,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(cp) = downcast_mut::<ColorPalette>(w) {
             if let Some(sel) = cp.take_selected() {
@@ -1405,17 +2574,64 @@ page!(ColorPickerPage {
         ],
         true,
     ),
-    props: &[PropSpec::Bool {
-        key: "alpha",
-        label: "Alpha channel",
-        default: true
-    }],
+    props: &[
+        PropSpec::Bool {
+            key: "alpha",
+            label: "Alpha channel",
+            default: true
+        },
+        PropSpec::Text {
+            key: "color",
+            label: "Color",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut c = ColorPicker::new().with_alpha(p.bool("alpha"));
         c.open();
-        Box::new(c)
+        {
+            let mut __w = c;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if let Some([r, g, b, a]) = crate::pages::parse_rgba(p.str("color")) {
+                __w = __w.color(martensite::widgets::color_picker::Color::rgba(r, g, b, a));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("ColorPicker::new().with_alpha({})", p.bool("alpha")),
+    snippet: |p| {
+        let mut __s = format!("ColorPicker::new().with_alpha({})", p.bool("alpha"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "color",
+            ".color",
+            "",
+            crate::pages::expr_rgba,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(c) = downcast_mut::<ColorPicker>(w) {
             if let Some(col) = c.take_selected() {
@@ -1439,19 +2655,68 @@ page!(ColorWheelPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "hue",
-        label: "Hue (deg)",
-        min: 0.0,
-        max: 360.0,
-        step: 1.0,
-        default: 210.0,
-    }],
-    build: |p| Box::new(ColorWheel::new().hue(p.f64("hue") as f32)),
-    snippet: |p| format!(
-        "let mut w = ColorWheel::new();\nw.set_hue({:?});",
-        p.f64("hue") as f32,
-    ),
+    props: &[
+        PropSpec::Float {
+            key: "hue",
+            label: "Hue (deg)",
+            min: 0.0,
+            max: 360.0,
+            step: 1.0,
+            default: 210.0,
+        },
+        PropSpec::Float {
+            key: "saturation",
+            label: "Saturation",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 1.0
+        },
+        PropSpec::Float {
+            key: "brightness",
+            label: "Brightness",
+            min: -8.5,
+            max: 100.0,
+            step: 1.0,
+            default: 1.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = ColorWheel::new().hue(p.f64("hue") as f32);
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        if p.f64("saturation") != 1.0 {
+            __w = __w.saturation(p.f64("saturation") as f32);
+        }
+        if p.f64("brightness") != 1.0 {
+            __w = __w.brightness(p.f64("brightness") as f32);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "let mut w = ColorWheel::new();\nw.set_hue({:?});",
+            p.f64("hue") as f32,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("saturation", ".saturation", SnipProp::Float(1.0)),
+                ("brightness", ".brightness", SnipProp::Float(1.0)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(wheel) = downcast_mut::<ColorWheel>(w) {
             if wheel.take_changed() {
@@ -1475,23 +2740,61 @@ page!(AlphaSliderPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "alpha",
-        label: "Alpha",
-        min: 0.0,
-        max: 1.0,
-        step: 0.05,
-        default: 0.8,
-    }],
+    props: &[
+        PropSpec::Float {
+            key: "alpha",
+            label: "Alpha",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 0.8,
+        },
+        PropSpec::Text {
+            key: "color",
+            label: "Color",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut s = AlphaSlider::new();
         s.set_alpha(p.f64("alpha") as f32);
-        Box::new(s)
+        {
+            let mut __w = s;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if let Some(v) = crate::pages::parse_rgba(p.str("color")) {
+                __w = __w.color(v);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "let mut s = AlphaSlider::new();\ns.set_alpha({:?});",
-        p.f64("alpha") as f32,
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "let mut s = AlphaSlider::new();\ns.set_alpha({:?});",
+            p.f64("alpha") as f32,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "color",
+            ".color",
+            "",
+            crate::pages::expr_rgba,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(s) = downcast_mut::<AlphaSlider>(w) {
             if let Some(a) = s.take_changed() {
@@ -1515,23 +2818,46 @@ page!(HueSliderPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "hue",
-        label: "Hue",
-        min: 0.0,
-        max: 360.0,
-        step: 1.0,
-        default: 40.0,
-    }],
+    props: &[
+        PropSpec::Float {
+            key: "hue",
+            label: "Hue",
+            min: 0.0,
+            max: 360.0,
+            step: 1.0,
+            default: 40.0,
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut s = HueSlider::new();
         s.set_hue(p.f64("hue") as f32);
-        Box::new(s)
+        {
+            let mut __w = s;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "let mut s = HueSlider::new();\ns.set_hue({:?});",
-        p.f64("hue") as f32,
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "let mut s = HueSlider::new();\ns.set_hue({:?});",
+            p.f64("hue") as f32,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(s) = downcast_mut::<HueSlider>(w) {
             if let Some(h) = s.take_changed() {
@@ -1555,16 +2881,69 @@ page!(FileChooserButtonPage {
         ],
         false,
     ),
-    props: &[PropSpec::Text {
-        key: "placeholder",
-        label: "Placeholder",
-        default: "Choose file…",
-    }],
-    build: |p| Box::new(FileChooserButton::new().placeholder(p.str("placeholder"))),
-    snippet: |p| format!(
-        "FileChooserButton::new().placeholder({:?})",
-        p.str("placeholder"),
-    ),
+    props: &[
+        PropSpec::Text {
+            key: "placeholder",
+            label: "Placeholder",
+            default: "Choose file…",
+        },
+        PropSpec::Choice {
+            key: "mode",
+            label: "Mode",
+            options: &["Open", "Save"],
+            default: 0
+        },
+        PropSpec::Text {
+            key: "file_name",
+            label: "File Name",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+    ],
+    build: |p| {
+        let mut __w = FileChooserButton::new().placeholder(p.str("placeholder"));
+        __w = __w.enabled(p.bool("enabled"));
+        if p.choice("mode") != 0 {
+            __w = __w.mode(match p.choice("mode") {
+                0 => martensite::widgets::file_chooser_button::ChooserMode::Open,
+                1 => martensite::widgets::file_chooser_button::ChooserMode::Save,
+                _ => martensite::widgets::file_chooser_button::ChooserMode::Open,
+            });
+        }
+        if !p.str("file_name").is_empty() {
+            __w = __w.file_name(p.str("file_name"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "FileChooserButton::new().placeholder({:?})",
+            p.str("placeholder"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                (
+                    "mode",
+                    ".mode",
+                    SnipProp::Choice(&[
+                        "martensite::widgets::file_chooser_button::ChooserMode::Open",
+                        "martensite::widgets::file_chooser_button::ChooserMode::Save",
+                    ]),
+                ),
+                ("file_name", ".file_name", SnipProp::Text("")),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if downcast_mut::<FileChooserButton>(w).is_some_and(|b| b.take_activated()) {
             out.push("activated → file dialog".to_string());
@@ -1600,13 +2979,43 @@ page!(FontButtonPage {
             step: 1.0,
             default: 14.0
         },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
-    build: |p| Box::new(FontButton::new(p.str("family"), p.f64("size") as f32)),
-    snippet: |p| format!(
-        "FontButton::new({:?}, {:?})",
-        p.str("family"),
-        p.f64("size") as f32,
-    ),
+    build: |p| {
+        let mut __w = FontButton::new(p.str("family"), p.f64("size") as f32);
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.a11y_label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "FontButton::new({:?}, {:?})",
+            p.str("family"),
+            p.f64("size") as f32,
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if downcast_mut::<FontButton>(w).is_some_and(|b| b.take_activated()) {
             out.push("activated → font picker".to_string());
@@ -1684,21 +3093,41 @@ page!(ZoomControlsPage {
             label: "Horizontal",
             default: true
         },
+        PropSpec::Text {
+            key: "zoom_range",
+            label: "Zoom Range (csv)",
+            default: ""
+        },
     ],
-    build: |p| Box::new(
-        ZoomControls::new()
+    build: |p| {
+        let mut __w = ZoomControls::new()
             .label("Zoom")
             .zoom(p.f64("zoom") as f32)
             .readout(true)
             .fit(true)
             .reset(true)
-            .horizontal(p.bool("horizontal")),
-    ),
-    snippet: |p| format!(
-        "ZoomControls::new().zoom({:?}).readout(true).horizontal({})",
-        p.f64("zoom") as f32,
-        p.bool("horizontal"),
-    ),
+            .horizontal(p.bool("horizontal"));
+        if let Some(v) = crate::pages::parse_pair(p.str("zoom_range")) {
+            __w = __w.zoom_range(v.0 as f32, v.1 as f32);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!(
+            "ZoomControls::new().zoom({:?}).readout(true).horizontal({})",
+            p.f64("zoom") as f32,
+            p.bool("horizontal"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(p, &[]));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "zoom_range",
+            ".zoom_range",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(z) = downcast_mut::<ZoomControls>(w) {
             if let Some(a) = z.take_action() {

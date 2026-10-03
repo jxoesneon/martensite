@@ -27,7 +27,7 @@ use martensite::widgets::waterfall::Waterfall;
 use martensite::widgets::waveform::Waveform;
 
 use crate::page::{Page, PropSpec};
-use crate::pages::{downcast_mut, meta, page};
+use crate::pages::{downcast_mut, meta, page, SnipProp};
 
 page!(BarChartPage {
     meta: meta(
@@ -43,24 +43,84 @@ page!(BarChartPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "bars",
-        label: "Bars",
-        min: 2,
-        max: 12,
-        default: 5
-    }],
+    props: &[
+        PropSpec::Int {
+            key: "bars",
+            label: "Bars",
+            min: 2,
+            max: 12,
+            default: 5
+        },
+        PropSpec::Text {
+            key: "bar_colored_label",
+            label: "Bar Colored Label",
+            default: ""
+        },
+        PropSpec::Float {
+            key: "bar_colored_value",
+            label: "Bar Colored Value",
+            min: 0.0,
+            max: 100.0,
+            step: 0.5,
+            default: 0.0
+        },
+        PropSpec::Text {
+            key: "bar_colored_color",
+            label: "Bar Colored Color",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "loading",
+            label: "Loading",
+            default: false
+        },
+    ],
     build: |p| {
         let mut c = BarChart::new().label("Quarterly");
         for i in 0..p.i64("bars") {
             c = c.bar(format!("B{}", i + 1), 20.0 + i as f32 * 12.0);
         }
-        Box::new(c)
+        {
+            let mut __w = c;
+            __w = __w.loading(p.bool("loading"));
+            if !p.str("bar_colored_label").is_empty()
+                || p.f64("bar_colored_value") != 0.0
+                || !p.str("bar_colored_color").is_empty()
+            {
+                __w = __w.bar_colored(
+                    p.str("bar_colored_label"),
+                    p.f64("bar_colored_value") as f32,
+                    crate::pages::parse_rgba(p.str("bar_colored_color")).unwrap_or([0, 0, 0, 255]),
+                );
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "BarChart::new().label(\"Quarterly\") /* {} bars */",
-        p.i64("bars")
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "BarChart::new().label(\"Quarterly\") /* {} bars */",
+            p.i64("bars")
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("loading", ".loading", SnipProp::Bool(false))],
+        ));
+        if !p.str("bar_colored_label").is_empty()
+            || p.f64("bar_colored_value") != 0.0
+            || !p.str("bar_colored_color").is_empty()
+        {
+            __s.push_str(&format!(
+                "\n    .bar_colored({:?}, {}, {})",
+                p.str("bar_colored_label"),
+                p.f64("bar_colored_value"),
+                crate::pages::expr_rgba(p.str("bar_colored_color")).unwrap_or_default()
+            ));
+        }
+        __s
+    },
 });
 
 page!(LineChartPage {
@@ -77,11 +137,26 @@ page!(LineChartPage {
         ],
         false,
     ),
-    props: &[PropSpec::Bool {
-        key: "axis",
-        label: "Axis",
-        default: true
-    }],
+    props: &[
+        PropSpec::Bool {
+            key: "axis",
+            label: "Axis",
+            default: true
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut c = LineChart::new().axis(p.bool("axis"));
         c = c.series(
@@ -90,12 +165,29 @@ page!(LineChartPage {
         c = c.series(
             LineSeries::new("mem", [40.0, 38.0, 44.0, 30.0, 26.0, 34.0]).color([240, 160, 60, 255]),
         );
-        Box::new(c)
+        {
+            let mut __w = c;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.a11y_label(p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "LineChart::new().axis({}).series(LineSeries::new(\"cpu\", […]))",
-        p.bool("axis"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "LineChart::new().axis({}).series(LineSeries::new(\"cpu\", […]))",
+            p.bool("axis"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(c) = downcast_mut::<LineChart>(w) {
             if let Some(i) = c.take_hovered() {
@@ -119,11 +211,34 @@ page!(PieChartPage {
         ],
         false,
     ),
-    props: &[PropSpec::Bool {
-        key: "donut",
-        label: "Donut",
-        default: true
-    }],
+    props: &[
+        PropSpec::Bool {
+            key: "donut",
+            label: "Donut",
+            default: true
+        },
+        PropSpec::Float {
+            key: "hole",
+            label: "Hole",
+            min: -9.175,
+            max: 100.0,
+            step: 1.0,
+            default: 0.55
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let slices = vec![
             PieSlice::new(40.0, "Rust").color([230, 120, 60, 255]),
@@ -134,9 +249,30 @@ page!(PieChartPage {
         if p.bool("donut") {
             c = c.donut();
         }
-        Box::new(c)
+        {
+            let mut __w = c;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.a11y_label(p.str("a11y_label"));
+            }
+            if p.f64("hole") != 0.55 {
+                __w = __w.hole(p.f64("hole") as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("PieChart::new(slices) /* donut={} */", p.bool("donut")),
+    snippet: |p| {
+        let mut __s = format!("PieChart::new(slices) /* donut={} */", p.bool("donut"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("hole", ".hole", SnipProp::Float(0.55)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(c) = downcast_mut::<PieChart>(w) {
             if let Some(i) = c.take_selected() {
@@ -160,11 +296,31 @@ page!(CandlestickPage {
         ],
         false,
     ),
-    props: &[PropSpec::Bool {
-        key: "grid",
-        label: "Grid",
-        default: true
-    }],
+    props: &[
+        PropSpec::Bool {
+            key: "grid",
+            label: "Grid",
+            default: true
+        },
+        PropSpec::Text {
+            key: "candles",
+            label: "Candles",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut c = Candlestick::new().grid(p.bool("grid")).y_range(90.0, 130.0);
         for (o, h, l, cl) in [
@@ -175,12 +331,40 @@ page!(CandlestickPage {
         ] {
             c = c.candle(Candle::new(o, h, l, cl));
         }
-        Box::new(c)
+        {
+            let mut __w = c;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.a11y_label(p.str("a11y_label"));
+            }
+            let __v = crate::pages::parse_candles(p.str("candles"));
+            if !__v.is_empty() {
+                __w = __w.candles(__v);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Candlestick::new().grid({}).candle(Candle::new(…))",
-        p.bool("grid")
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Candlestick::new().grid({}).candle(Candle::new(…))",
+            p.bool("grid")
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "candles",
+            ".candles",
+            "",
+            crate::pages::expr_strs,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(c) = downcast_mut::<Candlestick>(w) {
             if let Some(i) = c.take_hovered() {
@@ -204,24 +388,47 @@ page!(HistogramPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "bins",
-        label: "Bins",
-        min: 4,
-        max: 40,
-        default: 12
-    }],
-    build: |p| Box::new(
-        Histogram::new()
+    props: &[
+        PropSpec::Int {
+            key: "bins",
+            label: "Bins",
+            min: 4,
+            max: 40,
+            default: 12
+        },
+        PropSpec::Text {
+            key: "samples",
+            label: "Samples",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = Histogram::new()
             .label("Response times")
             .bins(p.i64("bins") as usize)
             .counts(
                 (0..p.i64("bins"))
                     .map(|i| ((i * 37) % 24 + 2) as usize)
-                    .collect()
-            ),
-    ),
-    snippet: |p| format!("Histogram::new().bins({}).counts(vec![…])", p.i64("bins")),
+                    .collect(),
+            );
+        let __v = crate::pages::parse_f32s(p.str("samples"));
+        if !__v.is_empty() {
+            __w = __w.samples(__v);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("Histogram::new().bins({}).counts(vec![…])", p.i64("bins"));
+        __s.push_str(&crate::pages::prop_snippet(p, &[]));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "samples",
+            ".samples",
+            "",
+            crate::pages::expr_f32s,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(h) = downcast_mut::<Histogram>(w) {
             if let Some(i) = h.take_hovered() {
@@ -260,6 +467,46 @@ page!(HeatMapPage {
             max: 24,
             default: 14
         },
+        PropSpec::Text {
+            key: "set",
+            label: "Set (csv)",
+            default: ""
+        },
+        PropSpec::Int {
+            key: "set_row",
+            label: "Set Row",
+            min: 0,
+            max: 32,
+            default: 0
+        },
+        PropSpec::Int {
+            key: "set_col",
+            label: "Set Col",
+            min: 0,
+            max: 32,
+            default: 0
+        },
+        PropSpec::Float {
+            key: "set_value",
+            label: "Set Value",
+            min: 0.0,
+            max: 100.0,
+            step: 0.5,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
     ],
     build: |p| {
         let mut h = HeatMap::new(p.i64("rows") as usize, p.i64("cols") as usize);
@@ -268,13 +515,45 @@ page!(HeatMapPage {
                 h.set_cell(r as usize, c as usize, ((r * c) % 10) as f32 / 10.0);
             }
         }
-        Box::new(h)
+        {
+            let mut __w = h;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.a11y_label(p.str("a11y_label"));
+            }
+            if p.i64("set_row") != 0 || p.i64("set_col") != 0 || p.f64("set_value") != 0.0 {
+                __w = __w.set(
+                    p.i64("set_row") as usize,
+                    p.i64("set_col") as usize,
+                    p.f64("set_value") as f32,
+                );
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "HeatMap::new({}, {}) /* + set_cell */",
-        p.i64("rows"),
-        p.i64("cols"),
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "HeatMap::new({}, {}) /* + set_cell */",
+            p.i64("rows"),
+            p.i64("cols"),
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        if p.i64("set_row") != 0 || p.i64("set_col") != 0 || p.f64("set_value") != 0.0 {
+            __s.push_str(&format!(
+                "\n    .set({}, {}, {})",
+                p.i64("set_row"),
+                p.i64("set_col"),
+                p.f64("set_value")
+            ));
+        }
+        __s
+    },
     poll: |w, out| {
         if let Some(h) = downcast_mut::<HeatMap>(w) {
             if let Some((r, c, v)) = h.take_hovered() {
@@ -298,20 +577,80 @@ page!(ScatterChartPage {
         ],
         false,
     ),
-    props: &[PropSpec::Bool {
-        key: "grid",
-        label: "Grid",
-        default: true
-    }],
-    build: |p| Box::new(
-        ScatterChart::new()
+    props: &[
+        PropSpec::Bool {
+            key: "grid",
+            label: "Grid",
+            default: true
+        },
+        PropSpec::Text {
+            key: "x_range",
+            label: "X Range (csv)",
+            default: ""
+        },
+        PropSpec::Text {
+            key: "y_range",
+            label: "Y Range (csv)",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = ScatterChart::new()
             .grid(p.bool("grid"))
             .series(ScatterSeries::new(
                 "samples",
-                [(1.0, 2.0), (2.0, 5.0), (3.0, 3.0), (4.0, 8.0), (5.0, 6.0)]
-            )),
-    ),
-    snippet: |p| format!("ScatterChart::new().grid({}).series(…)", p.bool("grid")),
+                [(1.0, 2.0), (2.0, 5.0), (3.0, 3.0), (4.0, 8.0), (5.0, 6.0)],
+            ));
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.a11y_label(p.str("a11y_label"));
+        }
+        if let Some(v) = crate::pages::parse_pair(p.str("x_range")) {
+            __w = __w.x_range(v.0 as f32, v.1 as f32);
+        }
+        if let Some(v) = crate::pages::parse_pair(p.str("y_range")) {
+            __w = __w.y_range(v.0 as f32, v.1 as f32);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("ScatterChart::new().grid({}).series(…)", p.bool("grid"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "x_range",
+            ".x_range",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "y_range",
+            ".y_range",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(c) = downcast_mut::<ScatterChart>(w) {
             if let Some((series, idx, pt)) = c.take_hovered() {
@@ -335,17 +674,38 @@ page!(SankeyPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        Sankey::new()
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = Sankey::new()
             .node_at("Source", Some(0))
             .node_at("Queue", Some(1))
             .node_at("Sink", Some(2))
             .link("Source", "Queue", 40.0)
-            .link("Queue", "Sink", 40.0),
-    ),
-    snippet: |_p| "Sankey::new().node_at(\"Source\", Some(0)).link(\"Source\", \"Queue\", 40.0)"
-        .to_string(),
+            .link("Queue", "Sink", 40.0);
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s =
+            "Sankey::new().node_at(\"Source\", Some(0)).link(\"Source\", \"Queue\", 40.0)"
+                .to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(s) = downcast_mut::<Sankey>(w) {
             if let Some(i) = s.take_hovered() {
@@ -369,14 +729,43 @@ page!(TreemapPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        Treemap::new()
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = Treemap::new()
             .item(TreemapItem::new("src", 60.0).color([80, 140, 255, 255]))
             .item(TreemapItem::new("docs", 25.0).color([90, 200, 120, 255]))
-            .item(TreemapItem::new("tests", 15.0).color([240, 160, 60, 255])),
-    ),
-    snippet: |_p| "Treemap::new().item(TreemapItem::new(\"src\", 60.0))".to_string(),
+            .item(TreemapItem::new("tests", 15.0).color([240, 160, 60, 255]));
+        __w = __w.enabled(_p.bool("enabled"));
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.a11y_label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "Treemap::new().item(TreemapItem::new(\"src\", 60.0))".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(t) = downcast_mut::<Treemap>(w) {
             if let Some(i) = t.take_hovered() {
@@ -400,15 +789,35 @@ page!(SunburstPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        Sunburst::new().node(
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = Sunburst::new().node(
             SunburstNode::new("root", 100.0)
                 .child(SunburstNode::new("a", 40.0))
                 .child(SunburstNode::new("b", 60.0)),
-        ),
-    ),
-    snippet: |_p| "Sunburst::new().node(SunburstNode::new(\"root\", 100.0))".to_string(),
+        );
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "Sunburst::new().node(SunburstNode::new(\"root\", 100.0))".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(s) = downcast_mut::<Sunburst>(w) {
             if let Some(i) = s.take_hovered() {
@@ -432,20 +841,62 @@ page!(RadarChartPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "rings",
-        label: "Rings",
-        min: 2,
-        max: 8,
-        default: 4
-    }],
-    build: |p| Box::new(
-        RadarChart::new()
+    props: &[
+        PropSpec::Int {
+            key: "rings",
+            label: "Rings",
+            min: 2,
+            max: 8,
+            default: 4
+        },
+        PropSpec::Float {
+            key: "max",
+            label: "Max",
+            min: -10.0,
+            max: 100.0,
+            step: 1.0,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = RadarChart::new()
             .axes(["Speed", "Power", "Range", "Agility", "Armor"])
             .rings(p.i64("rings") as usize)
-            .series(RadarSeries::new("Unit A", [0.8, 0.6, 0.9, 0.5, 0.7])),
-    ),
-    snippet: |p| format!("RadarChart::new().rings({}).series(…)", p.i64("rings")),
+            .series(RadarSeries::new("Unit A", [0.8, 0.6, 0.9, 0.5, 0.7]));
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.a11y_label(p.str("a11y_label"));
+        }
+        if p.f64("max") != 0.0 {
+            __w = __w.max(p.f64("max") as f32);
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("RadarChart::new().rings({}).series(…)", p.i64("rings"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("max", ".max", SnipProp::Float(0.0)),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".a11y_label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(PolarAreaPage {
@@ -494,13 +945,33 @@ page!(StreamGraphPage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(
-        StreamGraph::new()
+    props: &[
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = StreamGraph::new()
             .layer("a", vec![1.0, 3.0, 2.0, 4.0, 3.0])
-            .layer("b", vec![2.0, 1.0, 3.0, 2.0, 4.0]),
-    ),
-    snippet: |_p| "StreamGraph::new().layer(\"a\", vec![…])".to_string(),
+            .layer("b", vec![2.0, 1.0, 3.0, 2.0, 4.0]);
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "StreamGraph::new().layer(\"a\", vec![…])".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(sg) = downcast_mut::<StreamGraph>(w) {
             if let Some(i) = sg.take_hovered() {
@@ -737,9 +1208,63 @@ page!(SparklinePage {
         ],
         false,
     ),
-    props: &[],
-    build: |_p| Box::new(Sparkline::new([3.0, 5.0, 2.0, 8.0, 6.0, 9.0, 4.0]).dot(true)),
-    snippet: |_p| "Sparkline::new([3.0, 5.0, 2.0, 8.0, 6.0]).dot(true)".to_string(),
+    props: &[
+        PropSpec::Choice {
+            key: "style",
+            label: "Style",
+            options: &["Line", "Area", "Bars"],
+            default: 0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |_p| {
+        let mut __w = Sparkline::new([3.0, 5.0, 2.0, 8.0, 6.0, 9.0, 4.0]).dot(true);
+        __w = __w.enabled(_p.bool("enabled"));
+        if !_p.str("a11y_label").is_empty() {
+            __w = __w.label(_p.str("a11y_label"));
+        }
+        if _p.choice("style") != 0 {
+            __w = __w.style(match _p.choice("style") {
+                0 => martensite::widgets::sparkline::SparkStyle::Line,
+                1 => martensite::widgets::sparkline::SparkStyle::Area,
+                2 => martensite::widgets::sparkline::SparkStyle::Bars,
+                _ => martensite::widgets::sparkline::SparkStyle::Line,
+            });
+        }
+        Box::new(__w)
+    },
+    snippet: |_p| {
+        let mut __s = "Sparkline::new([3.0, 5.0, 2.0, 8.0, 6.0]).dot(true)".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                (
+                    "style",
+                    ".style",
+                    SnipProp::Choice(&[
+                        "martensite::widgets::sparkline::SparkStyle::Line",
+                        "martensite::widgets::sparkline::SparkStyle::Area",
+                        "martensite::widgets::sparkline::SparkStyle::Bars",
+                    ]),
+                ),
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
 });
 
 page!(StripChartPage {
@@ -756,21 +1281,59 @@ page!(StripChartPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "capacity",
-        label: "Capacity",
-        min: 20,
-        max: 500,
-        default: 120
-    }],
+    props: &[
+        PropSpec::Int {
+            key: "capacity",
+            label: "Capacity",
+            min: 20,
+            max: 500,
+            default: 120
+        },
+        PropSpec::Text {
+            key: "range",
+            label: "Range (csv)",
+            default: ""
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut s = StripChart::new().capacity(p.i64("capacity") as usize);
         for i in 0..60 {
             s.push((i as f32 * 0.3).sin() * 0.5 + 0.5);
         }
-        Box::new(s)
+        {
+            let mut __w = s;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if let Some(v) = crate::pages::parse_pair(p.str("range")) {
+                __w = __w.range(v.0 as f32, v.1 as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("StripChart::new().capacity({})", p.i64("capacity")),
+    snippet: |p| {
+        let mut __s = format!("StripChart::new().capacity({})", p.i64("capacity"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[("a11y_label", ".label", SnipProp::Text(""))],
+        ));
+        __s.push_str(&crate::pages::snip_textmap(
+            p,
+            "range",
+            ".range",
+            "",
+            crate::pages::expr_pair,
+        ));
+        __s
+    },
 });
 
 page!(GanttPage {
@@ -787,16 +1350,63 @@ page!(GanttPage {
         ],
         false,
     ),
-    props: &[],
+    props: &[
+        PropSpec::Float {
+            key: "total_days",
+            label: "Total Days",
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            default: 30.0
+        },
+        PropSpec::Float {
+            key: "progress",
+            label: "Progress",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 0.0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |_p| {
-        Box::new(
-            Gantt::new()
+        {
+            let mut __w = Gantt::new()
                 .task("Design", 0.0, 4.0)
                 .task("Build", 3.0, 6.0)
-                .task("Ship", 8.0, 2.0),
-        )
+                .task("Ship", 8.0, 2.0);
+            if !_p.str("a11y_label").is_empty() {
+                __w = __w.label(_p.str("a11y_label"));
+            }
+            if _p.f64("total_days") != 30.0 {
+                __w = __w.total_days(_p.f64("total_days") as f32);
+            }
+            if _p.f64("progress") != 0.0 {
+                __w = __w.progress(_p.f64("progress") as f32);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |_p| "Gantt::new().task(\"Design\", 0.0, 4.0).task(\"Build\", 3.0, 6.0)".to_string(),
+    snippet: |_p| {
+        let mut __s =
+            "Gantt::new().task(\"Design\", 0.0, 4.0).task(\"Build\", 3.0, 6.0)".to_string();
+        __s.push_str(&crate::pages::prop_snippet(
+            _p,
+            &[
+                ("total_days", ".total_days", SnipProp::Float(30.0)),
+                ("progress", ".progress", SnipProp::Float(0.0)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(g) = downcast_mut::<Gantt>(w) {
             if let Some(i) = g.take_hovered() {
@@ -820,23 +1430,55 @@ page!(WaveformPage {
         ],
         false,
     ),
-    props: &[PropSpec::Float {
-        key: "position",
-        label: "Position",
-        min: 0.0,
-        max: 1.0,
-        step: 0.05,
-        default: 0.3,
-    }],
+    props: &[
+        PropSpec::Float {
+            key: "position",
+            label: "Position",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 0.3,
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut w = Waveform::new().peaks((0..80).map(|i| ((i * 7) % 20) as f32 / 20.0 + 0.1));
         w.set_position(p.f64("position") as f32);
-        Box::new(w)
+        {
+            let mut __w = w;
+            __w = __w.enabled(p.bool("enabled"));
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!(
-        "Waveform::new().peaks(vec![…]).set_position({:?})",
-        p.f64("position") as f32
-    ),
+    snippet: |p| {
+        let mut __s = format!(
+            "Waveform::new().peaks(vec![…]).set_position({:?})",
+            p.f64("position") as f32
+        );
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(wf) = downcast_mut::<Waveform>(w) {
             if let Some(pos) = wf.take_seek() {
@@ -860,22 +1502,58 @@ page!(EqualizerPage {
         ],
         false,
     ),
-    props: &[PropSpec::Int {
-        key: "bands",
-        label: "Bands",
-        min: 3,
-        max: 16,
-        default: 8
-    }],
+    props: &[
+        PropSpec::Int {
+            key: "bands",
+            label: "Bands",
+            min: 3,
+            max: 16,
+            default: 8
+        },
+        PropSpec::Int {
+            key: "faders",
+            label: "Faders",
+            min: 0,
+            max: 100,
+            default: 0
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
     build: |p| {
         let mut eq = Equalizer::new();
         for i in 0..p.i64("bands") {
             let gain = ((i * 5) % 7) as f32 - 3.0;
             eq.set_gain(i as usize, gain);
         }
-        Box::new(eq)
+        {
+            let mut __w = eq;
+            if !p.str("a11y_label").is_empty() {
+                __w = __w.label(p.str("a11y_label"));
+            }
+            if p.i64("faders") != 0 {
+                __w = __w.faders(p.i64("faders") as usize);
+            }
+            Box::new(__w)
+        }
     },
-    snippet: |p| format!("Equalizer::new() /* {} bands */", p.i64("bands")),
+    snippet: |p| {
+        let mut __s = format!("Equalizer::new() /* {} bands */", p.i64("bands"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("faders", ".faders", SnipProp::Int(0)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(eq) = downcast_mut::<Equalizer>(w) {
             if eq.take_changed() {
@@ -899,17 +1577,47 @@ page!(SpectrumPage {
         ],
         false,
     ),
-    props: &[PropSpec::Bool {
-        key: "peak",
-        label: "Peak hold",
-        default: true
-    }],
-    build: |p| Box::new(
-        Spectrum::new()
+    props: &[
+        PropSpec::Bool {
+            key: "peak",
+            label: "Peak hold",
+            default: true
+        },
+        PropSpec::Header {
+            label: "State & Accessibility"
+        },
+        PropSpec::Bool {
+            key: "enabled",
+            label: "Enabled",
+            default: true
+        },
+        PropSpec::Text {
+            key: "a11y_label",
+            label: "A11y label",
+            default: ""
+        },
+    ],
+    build: |p| {
+        let mut __w = Spectrum::new()
             .peak_hold(p.bool("peak"))
-            .bands(vec![0.2, 0.5, 0.8, 0.6, 0.9, 0.4, 0.3, 0.7]),
-    ),
-    snippet: |p| format!("Spectrum::new().peak_hold({})", p.bool("peak")),
+            .bands(vec![0.2, 0.5, 0.8, 0.6, 0.9, 0.4, 0.3, 0.7]);
+        __w = __w.enabled(p.bool("enabled"));
+        if !p.str("a11y_label").is_empty() {
+            __w = __w.label(p.str("a11y_label"));
+        }
+        Box::new(__w)
+    },
+    snippet: |p| {
+        let mut __s = format!("Spectrum::new().peak_hold({})", p.bool("peak"));
+        __s.push_str(&crate::pages::prop_snippet(
+            p,
+            &[
+                ("enabled", ".enabled", SnipProp::Bool(true)),
+                ("a11y_label", ".label", SnipProp::Text("")),
+            ],
+        ));
+        __s
+    },
     poll: |w, out| {
         if let Some(s) = downcast_mut::<Spectrum>(w) {
             if let Some(i) = s.take_pressed() {

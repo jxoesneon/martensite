@@ -90,12 +90,19 @@ pub enum PropSpec {
         /// Default option index.
         default: usize,
     },
+    /// Non-interactive section heading — groups the interactive
+    /// specs that follow it (e.g. `"State & Accessibility"`).
+    Header {
+        /// Heading text.
+        label: &'static str,
+    },
 }
 
 impl PropSpec {
-    /// The spec's stable key.
+    /// The spec's stable key — `""` for headers, which carry no value.
     pub fn key(&self) -> &'static str {
         match self {
+            Self::Header { .. } => "",
             Self::Bool { key, .. }
             | Self::Float { key, .. }
             | Self::Int { key, .. }
@@ -107,6 +114,7 @@ impl PropSpec {
     /// The spec's display label.
     pub fn label(&self) -> &'static str {
         match self {
+            Self::Header { label } => label,
             Self::Bool { label, .. }
             | Self::Float { label, .. }
             | Self::Int { label, .. }
@@ -115,9 +123,11 @@ impl PropSpec {
         }
     }
 
-    /// The spec's default value.
+    /// The spec's default value — headers carry `Bool(false)` as a
+    /// placeholder and are skipped by [`PropValues::from_specs`].
     pub fn default_value(&self) -> PropValue {
         match *self {
+            Self::Header { .. } => PropValue::Bool(false),
             Self::Bool { default, .. } => PropValue::Bool(default),
             Self::Float { default, .. } => PropValue::Float(default),
             Self::Int { default, .. } => PropValue::Int(default),
@@ -153,6 +163,9 @@ impl PropValues {
     pub fn from_specs(specs: &[PropSpec]) -> Self {
         let mut map = BTreeMap::new();
         for spec in specs {
+            if matches!(spec, PropSpec::Header { .. }) {
+                continue;
+            }
             map.insert(spec.key(), spec.default_value());
         }
         Self { map }

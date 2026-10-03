@@ -310,6 +310,12 @@ impl CatalogView {
         let mut rows: Vec<Box<dyn Widget>> = Vec::new();
         for spec in specs {
             let control: Box<dyn Widget> = match spec {
+                PropSpec::Header { label } => {
+                    // Section heading — a full-width muted label, no
+                    // paired control.
+                    rows.push(Box::new(Text::new(format!("— {label} —")).font_size(11.0)));
+                    continue;
+                }
                 PropSpec::Bool { default, .. } => {
                     let on = props
                         .get(spec.key())
@@ -475,6 +481,7 @@ impl CatalogView {
                     Some(PropValue::Choice(dd.selected().min(options.len() - 1)))
                 }
             }
+            PropSpec::Header { .. } => None,
         }
     }
 
@@ -696,6 +703,7 @@ impl CatalogView {
                 .ok()
                 .or_else(|| options.iter().position(|o| *o == value))
                 .map(PropValue::Choice),
+            PropSpec::Header { .. } => None,
         };
         match parsed {
             Some(v) => {
