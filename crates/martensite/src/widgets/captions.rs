@@ -321,7 +321,7 @@ impl Widget for Captions {
             f64::from(by + band_h),
         );
         cx.list
-            .push_fill_shape(br, &martensite_core::shape::Shape::rounded(4.0 * s), BAND);
+            .push_fill_shape(br, &martensite_core::shape::Shape::squircle(4.0 * s), BAND);
         for (i, line) in lines.iter().enumerate() {
             crate::text_paint::paint_label_clipped(
                 painter,

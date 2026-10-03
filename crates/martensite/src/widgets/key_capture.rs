@@ -384,13 +384,13 @@ impl Widget for KeyCapture {
             f64::from(cx.bounds.max_x()),
             f64::from(cx.bounds.max_y()),
         );
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(RADIUS_PT));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(RADIUS_PT));
         cx.list.push_fill_shape(r, &shape, face);
         if self.armed {
             let grow = f64::from(cx.pt(2.0));
             cx.list.push_fill_shape(
                 kurbo::Rect::new(r.x0 - grow, r.y0 - grow, r.x1 + grow, r.y1 + grow),
-                &martensite_core::shape::Shape::rounded(cx.pt(RADIUS_PT + 2.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(RADIUS_PT + 2.0)),
                 cx.color(TokenKey::AccentColor, RING),
             );
         }

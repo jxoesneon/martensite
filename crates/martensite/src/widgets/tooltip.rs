@@ -47,7 +47,6 @@ use std::sync::Arc;
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
-use kurbo::Shape;
 use martensite_core::overlay::{OverlayAnchor, OverlayLayer};
 use martensite_core::widget::{
     A11yEmittedNode, EventContext, EventResponse, LayoutConstraints, LayoutContext, OverlayA11yRef,
@@ -162,19 +161,20 @@ impl Widget for TooltipBubble {
 
     fn paint(&self, cx: &mut PaintContext) {
         let b = cx.bounds;
-        let rect = kurbo::RoundedRect::new(
+        let bounds = kurbo::Rect::new(
             f64::from(b.min_x()),
             f64::from(b.min_y()),
             f64::from(b.max_x()),
             f64::from(b.max_y()),
-            cx.ptf(RADIUS),
         );
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(RADIUS as f32));
         // Themed surface, keeping the bubble's near-opaque alpha.
         let bg = cx.color(TokenKey::SurfaceColor, BUBBLE_BG);
         cx.list
-            .push_path(rect.to_path(0.1), [bg[0], bg[1], bg[2], BUBBLE_BG[3]]);
-        cx.list.push_stroke_path(
-            rect.to_path(0.1),
+            .push_fill_shape(bounds, &shape, [bg[0], bg[1], bg[2], BUBBLE_BG[3]]);
+        cx.list.push_stroke_shape(
+            bounds,
+            &shape,
             cx.pt(1.0),
             cx.color(TokenKey::BorderColor, BUBBLE_BORDER),
         );

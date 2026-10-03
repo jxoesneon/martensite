@@ -359,7 +359,7 @@ impl Widget for WaitingRoom {
             FONT_PT * s,
             cx.color(TokenKey::TextColor, TEXT),
         );
-        let shape = martensite_core::shape::Shape::rounded(5.0 * s);
+        let shape = martensite_core::shape::Shape::squircle(5.0 * s);
         // Admit-all button.
         let ar = self.admit_all_rect;
         let akr = kurbo::Rect::new(

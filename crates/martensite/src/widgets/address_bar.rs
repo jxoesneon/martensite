@@ -361,7 +361,7 @@ impl Widget for AddressBar {
         );
         cx.list.push_fill_shape(
             main,
-            &martensite_core::shape::Shape::rounded(6.0 * s),
+            &martensite_core::shape::Shape::squircle(6.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         cx.list.push_stroke_rect(main, 1.0, EDGE);

@@ -324,7 +324,7 @@ impl Widget for HoverCard {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(8.0 * s),
+            &martensite_core::shape::Shape::squircle(8.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let clip = kurbo::Rect::new(

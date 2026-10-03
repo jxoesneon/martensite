@@ -331,7 +331,7 @@ impl Widget for PadGrid {
                     f64::from(cell.max_x()),
                     f64::from(cell.max_y()),
                 ),
-                &martensite_core::shape::Shape::rounded(5.0 * s),
+                &martensite_core::shape::Shape::squircle(5.0 * s),
                 color,
             );
         }

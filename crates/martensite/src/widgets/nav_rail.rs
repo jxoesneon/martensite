@@ -721,7 +721,7 @@ impl Widget for NavRail {
                 );
                 cx.list.push_fill_shape(
                     pr,
-                    &martensite_core::shape::Shape::rounded(cx.pt(10.0)),
+                    &martensite_core::shape::Shape::squircle(cx.pt(10.0)),
                     if selected { accent } else { HOVER },
                 );
                 pr

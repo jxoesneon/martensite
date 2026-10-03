@@ -687,7 +687,7 @@ impl Widget for Tour {
             cx.list.push_fill_rect(f(b), dim);
         }
         // Card.
-        let card_shape = martensite_core::shape::Shape::rounded(cx.pt(8.0));
+        let card_shape = martensite_core::shape::Shape::squircle(cx.pt(8.0));
         cx.list.push_fill_shape(f(card), &card_shape, surface);
         cx.list
             .push_stroke_shape(f(card), &card_shape, 1.0_f32.max(cx.pt(0.5)), border);

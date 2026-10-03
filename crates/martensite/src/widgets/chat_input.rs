@@ -614,7 +614,7 @@ impl Widget for ChatInput {
                 f64::from(r.max_y()),
             )
         };
-        let shape = martensite_core::shape::Shape::rounded(RADIUS_PT * s);
+        let shape = martensite_core::shape::Shape::squircle(RADIUS_PT * s);
         // The draft field paints its own chrome (face, placeholder,
         // text, caret, selection) through the internal-child walk.
         let size = FONT_PT * s;

@@ -565,7 +565,7 @@ impl Widget for PropertyRow {
                 );
                 cx.list.push_stroke_shape(
                     bx,
-                    &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
+                    &Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
                     cx.pt(1.0),
                     cx.color(TokenKey::BorderColor, EDGE),
                 );

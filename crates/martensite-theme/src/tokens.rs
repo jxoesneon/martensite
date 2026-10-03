@@ -415,8 +415,8 @@ pub fn default_light() -> Theme {
         TokenKey::BackgroundColor,
         ThemeToken::Color(Oklab {
             l: 0.96,
-            a: 0.0,
-            b: 0.0,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
@@ -424,17 +424,17 @@ pub fn default_light() -> Theme {
         TokenKey::SurfaceColor,
         ThemeToken::Color(Oklab {
             l: 0.98,
-            a: 0.0,
-            b: 0.0,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::PrimaryColor,
         ThemeToken::Color(Oklab {
-            l: 0.8,
-            a: -0.08,
-            b: -0.10,
+            l: 0.515,
+            a: 0.0164,
+            b: -0.1737,
             alpha: 1.0,
         }),
     );
@@ -442,26 +442,26 @@ pub fn default_light() -> Theme {
         TokenKey::SecondaryColor,
         ThemeToken::Color(Oklab {
             l: 0.45,
-            a: -0.05,
-            b: 0.05,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::AccentColor,
         ThemeToken::Color(Oklab {
-            l: 0.42,
-            a: 0.1,
-            b: -0.12,
+            l: 0.476,
+            a: 0.0137,
+            b: -0.1759,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::TextColor,
         ThemeToken::Color(Oklab {
-            l: 0.20,
-            a: 0.0,
-            b: 0.0,
+            l: 0.2,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
@@ -469,8 +469,8 @@ pub fn default_light() -> Theme {
         TokenKey::TextMutedColor,
         ThemeToken::Color(Oklab {
             l: 0.38,
-            a: 0.0,
-            b: 0.0,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
@@ -478,26 +478,26 @@ pub fn default_light() -> Theme {
         TokenKey::TextInverseColor,
         ThemeToken::Color(Oklab {
             l: 0.96,
-            a: 0.0,
-            b: 0.0,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::BorderColor,
         ThemeToken::Color(Oklab {
-            l: 0.42,
-            a: 0.0,
-            b: 0.0,
+            l: 0.56,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::DividerColor,
         ThemeToken::Color(Oklab {
-            l: 0.59,
-            a: 0.0,
-            b: 0.0,
+            l: 0.6,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
@@ -505,8 +505,8 @@ pub fn default_light() -> Theme {
         TokenKey::RaisedColor,
         ThemeToken::Color(Oklab {
             l: 0.93,
-            a: 0.0,
-            b: 0.0,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
@@ -566,8 +566,8 @@ pub fn default_light() -> Theme {
         TokenKey::InsetColor,
         ThemeToken::Color(Oklab {
             l: 0.92,
-            a: 0.0,
-            b: 0.0,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
@@ -575,8 +575,8 @@ pub fn default_light() -> Theme {
         TokenKey::OverlayColor,
         ThemeToken::Color(Oklab {
             l: 1.0,
-            a: 0.0,
-            b: 0.0,
+            a: -0.002,
+            b: -0.008,
             alpha: 1.0,
         }),
     );
@@ -718,9 +718,9 @@ pub fn default_dark() -> Theme {
     theme.set(
         TokenKey::BackgroundColor,
         ThemeToken::Color(Oklab {
-            l: 0.20,
-            a: 0.0,
-            b: 0.0,
+            l: 0.2,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
@@ -728,17 +728,17 @@ pub fn default_dark() -> Theme {
         TokenKey::SurfaceColor,
         ThemeToken::Color(Oklab {
             l: 0.25,
-            a: 0.0,
-            b: 0.0,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::PrimaryColor,
         ThemeToken::Color(Oklab {
-            l: 0.65,
-            a: -0.08,
-            b: -0.10,
+            l: 0.662,
+            a: 0.018,
+            b: -0.154,
             alpha: 1.0,
         }),
     );
@@ -746,17 +746,17 @@ pub fn default_dark() -> Theme {
         TokenKey::SecondaryColor,
         ThemeToken::Color(Oklab {
             l: 0.68,
-            a: -0.05,
-            b: 0.05,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::AccentColor,
         ThemeToken::Color(Oklab {
-            l: 0.75,
-            a: 0.15,
-            b: -0.05,
+            l: 0.746,
+            a: 0.019,
+            b: -0.131,
             alpha: 1.0,
         }),
     );
@@ -764,8 +764,8 @@ pub fn default_dark() -> Theme {
         TokenKey::TextColor,
         ThemeToken::Color(Oklab {
             l: 0.96,
-            a: 0.0,
-            b: 0.0,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
@@ -773,44 +773,44 @@ pub fn default_dark() -> Theme {
         TokenKey::TextMutedColor,
         ThemeToken::Color(Oklab {
             l: 0.74,
-            a: 0.0,
-            b: 0.0,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::TextInverseColor,
         ThemeToken::Color(Oklab {
-            l: 0.20,
-            a: 0.0,
-            b: 0.0,
+            l: 0.2,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::BorderColor,
         ThemeToken::Color(Oklab {
-            l: 0.70,
-            a: 0.0,
-            b: 0.0,
+            l: 0.66,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::DividerColor,
         ThemeToken::Color(Oklab {
-            l: 0.64,
-            a: 0.0,
-            b: 0.0,
+            l: 0.62,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
     theme.set(
         TokenKey::RaisedColor,
         ThemeToken::Color(Oklab {
-            l: 0.30,
-            a: 0.0,
-            b: 0.0,
+            l: 0.3,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
@@ -870,8 +870,8 @@ pub fn default_dark() -> Theme {
         TokenKey::InsetColor,
         ThemeToken::Color(Oklab {
             l: 0.16,
-            a: 0.0,
-            b: 0.0,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
@@ -879,8 +879,8 @@ pub fn default_dark() -> Theme {
         TokenKey::OverlayColor,
         ThemeToken::Color(Oklab {
             l: 0.34,
-            a: 0.0,
-            b: 0.0,
+            a: -0.004,
+            b: -0.012,
             alpha: 1.0,
         }),
     );
@@ -1348,11 +1348,13 @@ mod tests {
                 overlay.l,
                 raised.l,
             );
-            // Same hue/chroma trajectory as the rest of the ramp.
+            // Same hue/chroma trajectory as the rest of the ramp —
+            // the ladder carries a shared cool tint, so the extension
+            // stops must match BackgroundColor's a/b signature.
             for (color, name) in [(inset, "InsetColor"), (overlay, "OverlayColor")] {
                 assert!(
-                    color.a.abs() < 1e-6 && color.b.abs() < 1e-6,
-                    "{} {name} drifted off the achromatic ladder",
+                    approx_eq(color.a, bg.a) && approx_eq(color.b, bg.b),
+                    "{} {name} drifted off the ladder's tint",
                     theme.name,
                 );
             }

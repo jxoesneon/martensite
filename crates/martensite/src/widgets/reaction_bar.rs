@@ -403,7 +403,7 @@ impl Widget for ReactionBar {
                 f64::from(r.max_y()),
             )
         };
-        let shape = martensite_core::shape::Shape::rounded(RADIUS_PT * s);
+        let shape = martensite_core::shape::Shape::squircle(RADIUS_PT * s);
         let size = FONT_PT * s;
         for (i, r) in self.reactions.iter().enumerate() {
             let rect = self.rects[i];

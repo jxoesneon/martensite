@@ -370,7 +370,7 @@ impl Widget for Candlestick {
         };
         cx.list.push_fill_shape(
             f(self.plot),
-            &martensite_core::shape::Shape::rounded(0.0),
+            &martensite_core::shape::Shape::squircle(0.0),
             cx.color(TokenKey::SurfaceColor, SURFACE),
         );
         let grid = cx.color(TokenKey::DividerColor, GRID);
@@ -391,7 +391,7 @@ impl Widget for Candlestick {
         }
         cx.list.push_stroke_shape(
             f(self.plot),
-            &martensite_core::shape::Shape::rounded(0.0),
+            &martensite_core::shape::Shape::squircle(0.0),
             cx.pt(0.75),
             cx.color(TokenKey::BorderColor, FRAME),
         );
@@ -430,8 +430,11 @@ impl Widget for Candlestick {
                 body_w,
                 (y_bot - y_top).max(cx.pt(1.0)),
             );
-            cx.list
-                .push_fill_shape(f(body), &martensite_core::shape::Shape::rounded(0.0), color);
+            cx.list.push_fill_shape(
+                f(body),
+                &martensite_core::shape::Shape::squircle(0.0),
+                color,
+            );
         }
     }
 }

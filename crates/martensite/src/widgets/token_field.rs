@@ -730,7 +730,7 @@ impl Widget for TokenField {
                 f64::from(r.max_x()),
                 f64::from(r.max_y()),
             );
-            let shape = martensite_core::shape::Shape::rounded(cx.pt(CHIP_RADIUS_PT));
+            let shape = martensite_core::shape::Shape::squircle(cx.pt(CHIP_RADIUS_PT));
             let face = if self.highlighted == Some(i) {
                 CHIP_HOVER
             } else {

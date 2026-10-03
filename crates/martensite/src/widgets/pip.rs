@@ -326,7 +326,7 @@ impl Widget for Pip {
                 if rect.width() <= 0.0 {
                     continue;
                 }
-                let shape = martensite_core::shape::Shape::rounded(4.0 * s);
+                let shape = martensite_core::shape::Shape::squircle(4.0 * s);
                 cx.list.push_fill_shape(r, &shape, face);
                 let cxm = (rect.min_x() + rect.max_x()) / 2.0;
                 let cym = (rect.min_y() + rect.max_y()) / 2.0;

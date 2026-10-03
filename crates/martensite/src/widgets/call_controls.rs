@@ -340,7 +340,7 @@ impl Widget for CallControls {
     fn paint(&self, cx: &mut PaintContext) {
         let s = cx.scale;
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        let shape = martensite_core::shape::Shape::rounded(BTN_PT * 0.5 * s);
+        let shape = martensite_core::shape::Shape::squircle(BTN_PT * 0.5 * s);
         for (i, c) in self.controls.iter().enumerate() {
             let r = self.rects[i];
             let kr = kurbo::Rect::new(

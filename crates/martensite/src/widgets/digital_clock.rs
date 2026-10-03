@@ -324,7 +324,7 @@ impl Widget for DigitalClock {
         let edge = cx.color(TokenKey::BorderColor, EDGE);
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         // Monospace-style block digits drawn as filled slots.
@@ -350,7 +350,7 @@ impl Widget for DigitalClock {
                             f64::from(x + colon_w / 2.0 + dot / 2.0),
                             f64::from(cy + dy + dot / 2.0),
                         ),
-                        &martensite_core::shape::Shape::rounded(dot / 2.0),
+                        &martensite_core::shape::Shape::squircle(dot / 2.0),
                         c,
                     );
                 }
@@ -368,7 +368,7 @@ impl Widget for DigitalClock {
                         f64::from(x + w),
                         f64::from(top + h),
                     ),
-                    &martensite_core::shape::Shape::rounded(cx.pt(1.5)),
+                    &martensite_core::shape::Shape::squircle(cx.pt(1.5)),
                     cx.color(TokenKey::SuccessColor, DIGIT),
                 );
                 x += w + cx.pt(1.0);
@@ -376,7 +376,7 @@ impl Widget for DigitalClock {
         }
         cx.list.push_stroke_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.pt(0.75),
             edge,
         );

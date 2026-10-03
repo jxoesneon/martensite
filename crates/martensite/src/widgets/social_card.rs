@@ -455,7 +455,7 @@ impl Widget for SocialCard {
             );
         }
         // Action bar.
-        let shape = martensite_core::shape::Shape::rounded(5.0 * s);
+        let shape = martensite_core::shape::Shape::squircle(5.0 * s);
         for (i, (a, r)) in self
             .actions
             .iter()

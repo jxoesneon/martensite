@@ -330,7 +330,7 @@ impl Widget for ToolbarOverflow {
             ),
             cx.color(TokenKey::BackgroundColor, FACE),
         );
-        let shape = martensite_core::shape::Shape::rounded(5.0 * s);
+        let shape = martensite_core::shape::Shape::squircle(5.0 * s);
         let fs = FONT_PT * s;
         for (i, r) in self.pill_rects.iter().enumerate() {
             let kr = kurbo::Rect::new(

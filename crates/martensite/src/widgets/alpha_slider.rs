@@ -289,7 +289,7 @@ impl Widget for AlphaSlider {
         let s = self.scale;
         cx.list.push_clip_shape(
             krect(self.rail),
-            &martensite_core::shape::Shape::rounded(self.rail.height() / 2.0),
+            &martensite_core::shape::Shape::squircle(self.rail.height() / 2.0),
         );
         // Checkerboard backing.
         let sq = (CHECK_PT * s).max(2.0);

@@ -294,7 +294,7 @@ impl Widget for Spectrum {
                 let frac = (seg as f32 + 1.0) * (seg_h + gap) / self.bounds.height();
                 cx.list.push_fill_shape(
                     f(Rect::new(x, y, bar_w, seg_h)),
-                    &martensite_core::shape::Shape::rounded(cx.pt(1.0)),
+                    &martensite_core::shape::Shape::squircle(cx.pt(1.0)),
                     Self::band_color(frac),
                 );
             }

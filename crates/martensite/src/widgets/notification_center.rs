@@ -468,7 +468,7 @@ impl Widget for NotificationCenter {
             let kr = krect(r);
             cx.list.push_fill_shape(
                 kr,
-                &martensite_core::shape::Shape::rounded(6.0 * s),
+                &martensite_core::shape::Shape::squircle(6.0 * s),
                 cx.color(TokenKey::BackgroundColor, CARD),
             );
             // Title/body anchor to the leading edge; the dismiss ✕

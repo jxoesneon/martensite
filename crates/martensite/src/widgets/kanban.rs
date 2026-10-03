@@ -484,7 +484,7 @@ impl Widget for Kanban {
         };
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let edge = cx.color(TokenKey::BorderColor, EDGE);
@@ -502,7 +502,7 @@ impl Widget for Kanban {
             );
             cx.list.push_fill_shape(
                 krect(lane),
-                &martensite_core::shape::Shape::rounded(cx.pt(3.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(3.0)),
                 LANE,
             );
             let name_w =
@@ -514,7 +514,7 @@ impl Widget for Kanban {
                     f64::from(x + 8.0 * self.scale + name_w),
                     f64::from(self.bounds.min_y() + pad + head / 2.0 + self.scale),
                 ),
-                &martensite_core::shape::Shape::rounded(self.scale),
+                &martensite_core::shape::Shape::squircle(self.scale),
                 muted,
             );
             // Cards (skip the one being dragged; it floats).
@@ -529,12 +529,12 @@ impl Widget for Kanban {
                 let r = self.card_rect(*x, *w, j);
                 cx.list.push_fill_shape(
                     krect(r),
-                    &martensite_core::shape::Shape::rounded(cx.pt(3.0)),
+                    &martensite_core::shape::Shape::squircle(cx.pt(3.0)),
                     CARD,
                 );
                 cx.list.push_stroke_shape(
                     krect(r),
-                    &martensite_core::shape::Shape::rounded(cx.pt(3.0)),
+                    &martensite_core::shape::Shape::squircle(cx.pt(3.0)),
                     cx.pt(0.5),
                     edge,
                 );
@@ -546,7 +546,7 @@ impl Widget for Kanban {
                         f64::from(r.min_x() + 5.0 * self.scale + tw),
                         f64::from(r.min_y() + r.height() / 2.0 + self.scale),
                     ),
-                    &martensite_core::shape::Shape::rounded(self.scale),
+                    &martensite_core::shape::Shape::squircle(self.scale),
                     glyph,
                 );
             }
@@ -569,7 +569,7 @@ impl Widget for Kanban {
             }
             cx.list.push_fill_shape(
                 krect(r),
-                &martensite_core::shape::Shape::rounded(cx.pt(3.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(3.0)),
                 cx.color(TokenKey::AccentColor, SLOT),
             );
             // Floating card under the pointer.
@@ -577,13 +577,13 @@ impl Widget for Kanban {
             let fr = Rect::new(d.pos.x - w / 2.0, d.pos.y - ch / 2.0, w - pad, ch);
             cx.list.push_fill_shape(
                 krect(fr),
-                &martensite_core::shape::Shape::rounded(cx.pt(3.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(3.0)),
                 CARD_HI,
             );
         }
         cx.list.push_stroke_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.pt(0.75),
             edge,
         );

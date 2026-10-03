@@ -4342,8 +4342,19 @@ pub(crate) fn paint_focus_ring(
     let accent = cx.color(martensite_core::TokenKey::AccentColor, FOCUS_RING_FALLBACK);
     cx.list.push_stroke_shape(
         r,
-        &martensite_core::shape::Shape::rounded(cx.pt(radius_pt)),
+        &martensite_core::shape::Shape::squircle(cx.pt(radius_pt)),
         cx.pt(thick_pt),
         accent,
     );
 }
+
+/// M3-style state-layer alphas (×255) — a fixed overlay opacity per
+/// interaction state, painted in the content/accent color over the
+/// face. One source of truth so every widget's hover, focus, press,
+/// and drag feedback reads identically (Material 3 state layers:
+/// hover 8%, focus/press 12%, drag 16%; selected wash 22%).
+pub(crate) const STATE_HOVER: u8 = 20;
+pub(crate) const STATE_FOCUS_WASH: u8 = 31;
+pub(crate) const STATE_SELECTED_WASH: u8 = 56;
+// M3's press layer is also 12% (31) and drag 16% (41) — add constants
+// here as widgets adopt them.

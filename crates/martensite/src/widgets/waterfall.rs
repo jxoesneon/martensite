@@ -374,7 +374,7 @@ impl Widget for Waterfall {
             let bar = Rect::new(x, y0, bar_w, (y1 - y0).max(1.5));
             cx.list.push_fill_shape(
                 f(bar),
-                &martensite_core::shape::Shape::rounded(cx.pt(1.5)),
+                &martensite_core::shape::Shape::squircle(cx.pt(1.5)),
                 color,
             );
 

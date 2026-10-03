@@ -380,7 +380,7 @@ impl Widget for Treemap {
         };
         cx.list.push_fill_shape(
             f(self.bounds),
-            &martensite_core::shape::Shape::rounded(0.0),
+            &martensite_core::shape::Shape::squircle(0.0),
             cx.color(TokenKey::SurfaceColor, SURFACE),
         );
         let gap = cx.pt(GAP_PT);
@@ -410,7 +410,7 @@ impl Widget for Treemap {
             }
             cx.list.push_fill_shape(
                 f(inner),
-                &martensite_core::shape::Shape::rounded(cx.pt(2.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(2.0)),
                 color,
             );
             // Label when the cell fits it.

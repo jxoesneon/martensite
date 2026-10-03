@@ -290,7 +290,7 @@ impl Widget for Odometer {
         let face = cx.color(TokenKey::SurfaceColor, FACE);
         let edge = cx.color(TokenKey::BorderColor, EDGE);
         let fg = cx.color(TokenKey::TextColor, FG);
-        let frame = martensite_core::shape::Shape::rounded(cx.pt(3.0));
+        let frame = martensite_core::shape::Shape::squircle(cx.pt(3.0));
         cx.list.push_fill_shape(f(self.bounds), &frame, edge);
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let size = 13.0 * cx.scale;
@@ -306,7 +306,7 @@ impl Widget for Odometer {
             let cell = Rect::new(x, inner.min_y(), digit_w, inner.height());
             cx.list.push_fill_shape(
                 f(cell),
-                &martensite_core::shape::Shape::rounded(cx.pt(2.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(2.0)),
                 face,
             );
             cx.list.push_clip(f(cell));

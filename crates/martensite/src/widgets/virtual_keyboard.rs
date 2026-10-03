@@ -379,7 +379,7 @@ impl Widget for VirtualKeyboard {
                     f64::from(rect.max_x()),
                     f64::from(rect.max_y()),
                 ),
-                &martensite_core::shape::Shape::rounded(4.0 * s),
+                &martensite_core::shape::Shape::squircle(4.0 * s),
                 fill,
             );
             let label = self.key_label(*kind);

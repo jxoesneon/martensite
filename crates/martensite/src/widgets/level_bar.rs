@@ -262,7 +262,7 @@ impl Widget for LevelBar {
             f64::from(cx.bounds.max_x()),
             f64::from(cx.bounds.max_y()),
         );
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(RADIUS_PT));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(RADIUS_PT));
         let ink = self.zone_ink(cx);
         let track_ink = cx.color(TokenKey::DividerColor, TRACK);
 
@@ -287,7 +287,7 @@ impl Widget for LevelBar {
         for i in 0..n {
             let x0 = track.x0 + i as f64 * (cell_w + gap);
             let cell = kurbo::Rect::new(x0, track.y0, x0 + cell_w, track.y1);
-            let cell_shape = martensite_core::shape::Shape::rounded(cx.pt(2.0));
+            let cell_shape = martensite_core::shape::Shape::squircle(cx.pt(2.0));
             cx.list
                 .push_fill_shape(cell, &cell_shape, if i < lit { ink } else { track_ink });
         }

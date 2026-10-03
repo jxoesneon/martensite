@@ -88,7 +88,6 @@ const ACCENT: [u8; 4] = [60, 110, 220, 255];
 /// Focus ring alpha (the accent colour at 50%).
 const FOCUS_RING: [u8; 4] = [60, 110, 220, 128];
 /// Hover wash alpha.
-const HOVER_ALPHA: u8 = 32;
 /// Disclosure triangle ink.
 const TRI_INK: [u8; 4] = [90, 95, 105, 255];
 
@@ -347,7 +346,7 @@ impl Widget for TreeItemRow {
             cx.list.push_fill_rect(rect, accent);
         } else if self.hovered {
             // Translucent wash of the accent colour.
-            let wash = [accent[0], accent[1], accent[2], HOVER_ALPHA];
+            let wash = [accent[0], accent[1], accent[2], crate::widgets::STATE_HOVER];
             cx.list.push_fill_rect(rect, wash);
         }
         if self.focused && self.has_focus {

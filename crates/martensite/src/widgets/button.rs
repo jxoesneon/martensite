@@ -16,7 +16,6 @@
 use crate::text_paint::{estimate_label_width, measure_label};
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
-use kurbo::Shape as _;
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     SemanticAction, Widget, WidgetEvent,
@@ -595,7 +594,8 @@ impl Widget for Button {
             )
         };
 
-        let rounded = kurbo::RoundedRect::from_rect(rect, cx.ptf(CORNER_RADIUS)).into_path(0.1);
+        let rounded =
+            martensite_core::shape::Shape::squircle(cx.pt(CORNER_RADIUS as f32)).to_path(rect);
         cx.list.push_path(rounded.clone(), face);
         // A filled primary face carries its own edge — a same-color
         // stroke would be invisible dead paint, so only the neutral

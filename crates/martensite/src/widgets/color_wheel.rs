@@ -325,7 +325,7 @@ impl Widget for ColorWheel {
         };
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let c = self.center();
@@ -403,7 +403,7 @@ impl Widget for ColorWheel {
         );
         cx.list.push_stroke_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.pt(0.75),
             edge,
         );

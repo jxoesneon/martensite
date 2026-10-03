@@ -103,7 +103,6 @@ const ACCENT: [u8; 4] = [60, 110, 220, 255];
 /// Focus ring alpha (the accent colour at 50%).
 const FOCUS_RING: [u8; 4] = [60, 110, 220, 128];
 /// Hover wash alpha.
-const HOVER_ALPHA: u8 = 32;
 /// Alternating-row stripe alpha.
 const STRIPE_ALPHA: u8 = 12;
 
@@ -461,7 +460,7 @@ impl Widget for ListItemRow {
             cx.list.push_fill_rect(rect, accent);
         } else if self.hovered {
             // Translucent wash of the accent colour.
-            let wash = [accent[0], accent[1], accent[2], HOVER_ALPHA];
+            let wash = [accent[0], accent[1], accent[2], crate::widgets::STATE_HOVER];
             cx.list.push_fill_rect(rect, wash);
         } else if self.alternate {
             let muted = cx.color(TokenKey::TextMutedColor, INK_DISABLED);

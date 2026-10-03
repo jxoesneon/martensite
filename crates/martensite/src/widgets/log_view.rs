@@ -386,7 +386,7 @@ impl Widget for LogView {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(6.0));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(6.0));
         let f = |r: Rect| {
             kurbo::Rect::new(
                 f64::from(r.min_x()),

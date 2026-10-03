@@ -425,12 +425,12 @@ impl Widget for WebView {
         );
         cx.list.push_fill_shape(
             rect,
-            &martensite_core::shape::Shape::rounded(8.0 * s),
+            &martensite_core::shape::Shape::squircle(8.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         cx.list.push_stroke_shape(
             rect,
-            &martensite_core::shape::Shape::rounded(8.0 * s),
+            &martensite_core::shape::Shape::squircle(8.0 * s),
             cx.pt(1.0),
             cx.color(TokenKey::BorderColor, EDGE),
         );

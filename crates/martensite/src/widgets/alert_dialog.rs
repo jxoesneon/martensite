@@ -611,7 +611,7 @@ impl Widget for AlertDialog {
             cx.pt(12.0),
             [0.0, 0.0, 0.0, 0.22],
         );
-        let shape = Shape::rounded(cx.dim(TokenKey::BorderRadiusLarge, 12.0));
+        let shape = Shape::squircle(cx.dim(TokenKey::BorderRadiusLarge, 12.0));
         cx.list
             .push_fill_shape(rect, &shape, cx.color(TokenKey::SurfaceColor, RAISED));
         // 1px `BorderColor` keyline — the WCAG 1.4.11 non-text edge: a
@@ -728,7 +728,7 @@ impl Widget for AlertDialog {
             );
             let primary = i == confirm;
             let destructive_primary = primary && self.destructive && *role == AlertRole::Confirm;
-            let bshape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+            let bshape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 6.0));
             cx.list.push_fill_shape(
                 br,
                 &bshape,

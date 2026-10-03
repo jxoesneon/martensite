@@ -257,7 +257,7 @@ impl Widget for Splash {
         );
         cx.list.push_fill_shape(
             lr,
-            &martensite_core::shape::Shape::rounded(logo * 0.22),
+            &martensite_core::shape::Shape::squircle(logo * 0.22),
             cx.color(TokenKey::AccentColor, self.logo_color),
         );
         let initial: String = self.name.chars().take(1).collect();
@@ -312,7 +312,7 @@ impl Widget for Splash {
             f64::from(cxm + bw / 2.0),
             f64::from(b.max_y() - b.height() * 0.2 + bh),
         );
-        let shape = martensite_core::shape::Shape::rounded(bh / 2.0);
+        let shape = martensite_core::shape::Shape::squircle(bh / 2.0);
         cx.list.push_fill_shape(bar, &shape, TRACK);
         if self.progress > 0.0 {
             let fill = kurbo::Rect::new(

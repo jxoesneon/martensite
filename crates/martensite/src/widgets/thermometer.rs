@@ -310,7 +310,7 @@ impl Widget for Thermometer {
         let edge = cx.color(TokenKey::BorderColor, EDGE);
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let tube_w = cx.pt(TUBE_PT);
@@ -323,7 +323,7 @@ impl Widget for Thermometer {
         // Tube outline + bulb outline.
         cx.list.push_stroke_shape(
             krect(tube),
-            &martensite_core::shape::Shape::rounded(tube_w / 2.0),
+            &martensite_core::shape::Shape::squircle(tube_w / 2.0),
             cx.pt(1.0),
             edge,
         );

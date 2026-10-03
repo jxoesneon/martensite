@@ -309,7 +309,7 @@ impl Widget for InkCanvas {
         let surface = cx.color(TokenKey::SurfaceColor, SURFACE);
         let grid = cx.color(TokenKey::DividerColor, GRID);
         let ink = cx.color(TokenKey::AccentColor, INK);
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(4.0));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(4.0));
         cx.list.push_fill_shape(f(self.canvas), &shape, surface);
         // Baseline hint — the signature line idiom.
         let base = self.canvas.min_y() + self.canvas.height() * 0.75;

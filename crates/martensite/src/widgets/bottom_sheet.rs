@@ -19,7 +19,6 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
-use kurbo::Shape as _;
 use martensite_core::widget::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Widget, WidgetEvent,
@@ -408,16 +407,12 @@ impl Widget for BottomSheet {
         let hh = cx.pt(HANDLE_H_PT);
         let hx = card.origin.x + (card.size.x - hw) / 2.0;
         let hy = card.origin.y + (GRAB_PT * cx.scale - hh) / 2.0;
-        let handle = kurbo::RoundedRect::from_rect(
-            kurbo::Rect::new(
-                f64::from(hx),
-                f64::from(hy),
-                f64::from(hx + hw),
-                f64::from(hy + hh),
-            ),
-            f64::from(hh / 2.0),
-        )
-        .into_path(0.1);
+        let handle = martensite_core::shape::Shape::PILL.to_path(kurbo::Rect::new(
+            f64::from(hx),
+            f64::from(hy),
+            f64::from(hx + hw),
+            f64::from(hy + hh),
+        ));
         cx.list
             .push_path(handle, cx.color(TokenKey::BorderColor, HANDLE));
 

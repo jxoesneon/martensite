@@ -226,7 +226,7 @@ fn btn(
             f64::from(rect.max_x()),
             f64::from(rect.max_y()),
         ),
-        &martensite_core::shape::Shape::rounded(4.0 * s),
+        &martensite_core::shape::Shape::squircle(4.0 * s),
         face,
     );
     let w = label.len() as f32 * fs * 0.55;
@@ -322,7 +322,7 @@ impl Widget for UpdatePrompt {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(6.0 * s),
+            &martensite_core::shape::Shape::squircle(6.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         cx.list.push_stroke_rect(
@@ -384,7 +384,7 @@ impl Widget for UpdatePrompt {
                     f64::from(br.max_x()),
                     f64::from(br.max_y()),
                 ),
-                &martensite_core::shape::Shape::rounded(2.0 * s),
+                &martensite_core::shape::Shape::squircle(2.0 * s),
                 BAR_BG,
             );
             cx.list.push_fill_shape(
@@ -394,7 +394,7 @@ impl Widget for UpdatePrompt {
                     f64::from(br.min_x() + br.width() * p),
                     f64::from(br.max_y()),
                 ),
-                &martensite_core::shape::Shape::rounded(2.0 * s),
+                &martensite_core::shape::Shape::squircle(2.0 * s),
                 cx.color(TokenKey::AccentColor, [90, 140, 220, 255]),
             );
         }

@@ -309,7 +309,7 @@ impl Widget for Barcode {
         // Light card face — barcodes need contrast to scan.
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             FACE,
         );
         if self.symbols.is_empty() {
@@ -356,13 +356,13 @@ impl Widget for Barcode {
                     f64::from((self.bounds.min_x() + self.bounds.max_x()) / 2.0 + tw / 2.0),
                     f64::from(bar_top + bar_h + 2.0 * self.scale + 2.0 * self.scale),
                 ),
-                &martensite_core::shape::Shape::rounded(self.scale),
+                &martensite_core::shape::Shape::squircle(self.scale),
                 ink,
             );
         }
         cx.list.push_stroke_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.pt(0.75),
             cx.color(TokenKey::BorderColor, EDGE),
         );

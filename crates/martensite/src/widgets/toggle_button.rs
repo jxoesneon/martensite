@@ -419,7 +419,7 @@ impl Widget for ToggleButton {
             )
         };
 
-        let shape = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, CORNER_RADIUS));
+        let shape = Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, CORNER_RADIUS));
         cx.list.push_fill_shape(rect, &shape, face);
         cx.list.push_stroke_shape(rect, &shape, cx.pt(1.0), edge);
 

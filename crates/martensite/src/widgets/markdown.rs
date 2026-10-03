@@ -1224,14 +1224,14 @@ impl Widget for Markdown {
                 Chrome::Panel(r) => {
                     cx.list.push_fill_shape(
                         k(*r),
-                        &martensite_core::shape::Shape::rounded(radius),
+                        &martensite_core::shape::Shape::squircle(radius),
                         surface,
                     );
                 }
                 Chrome::Chip(r) => {
                     cx.list.push_fill_shape(
                         k(*r),
-                        &martensite_core::shape::Shape::rounded(cx.pt(2.0)),
+                        &martensite_core::shape::Shape::squircle(cx.pt(2.0)),
                         surface,
                     );
                 }

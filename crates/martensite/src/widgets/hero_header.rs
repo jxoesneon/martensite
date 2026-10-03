@@ -340,7 +340,7 @@ impl Widget for HeroHeader {
                     f64::from(rect.max_x()),
                     f64::from(rect.max_y()),
                 ),
-                &martensite_core::shape::Shape::rounded(6.0 * s),
+                &martensite_core::shape::Shape::squircle(6.0 * s),
                 face,
             );
             let cfs = SUB_PT * s;

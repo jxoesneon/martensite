@@ -366,7 +366,7 @@ impl Widget for PricingTable {
             );
             cx.list.push_fill_shape(
                 card,
-                &martensite_core::shape::Shape::rounded(8.0 * s),
+                &martensite_core::shape::Shape::squircle(8.0 * s),
                 cx.color(TokenKey::SurfaceColor, FACE),
             );
             cx.list.push_stroke_rect(
@@ -464,7 +464,7 @@ impl Widget for PricingTable {
                     f64::from(cta.max_x()),
                     f64::from(cta.max_y()),
                 ),
-                &martensite_core::shape::Shape::rounded(5.0 * s),
+                &martensite_core::shape::Shape::squircle(5.0 * s),
                 face,
             );
             let cfs = FEATURE_PT * s;

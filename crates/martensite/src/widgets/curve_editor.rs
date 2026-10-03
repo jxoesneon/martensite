@@ -358,7 +358,7 @@ impl Widget for CurveEditor {
         let pt = |v: Vec2| (f64::from(v.x), f64::from(v.y));
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let edge = cx.color(TokenKey::BorderColor, EDGE);
@@ -434,7 +434,7 @@ impl Widget for CurveEditor {
         }
         cx.list.push_stroke_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.pt(0.75),
             edge,
         );

@@ -374,7 +374,7 @@ impl Widget for MindMap {
         };
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         if self.nodes.is_empty() {
@@ -410,12 +410,12 @@ impl Widget for MindMap {
             };
             cx.list.push_fill_shape(
                 krect(r),
-                &martensite_core::shape::Shape::rounded(nh / 2.0),
+                &martensite_core::shape::Shape::squircle(nh / 2.0),
                 fill,
             );
             cx.list.push_stroke_shape(
                 krect(r),
-                &martensite_core::shape::Shape::rounded(nh / 2.0),
+                &martensite_core::shape::Shape::squircle(nh / 2.0),
                 cx.pt(0.75),
                 edge,
             );
@@ -428,13 +428,13 @@ impl Widget for MindMap {
                     f64::from(n.pos.x + lw / 2.0),
                     f64::from(n.pos.y + 1.0 * self.scale),
                 ),
-                &martensite_core::shape::Shape::rounded(self.scale),
+                &martensite_core::shape::Shape::squircle(self.scale),
                 cx.color(TokenKey::TextColor, GLYPH),
             );
         }
         cx.list.push_stroke_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.pt(0.75),
             edge,
         );

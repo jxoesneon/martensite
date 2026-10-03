@@ -202,7 +202,7 @@ impl Widget for Battery {
         // Body outline.
         cx.list.push_stroke_shape(
             f(body),
-            &martensite_core::shape::Shape::rounded(cx.pt(3.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(3.0)),
             cx.pt(1.0),
             cx.color(TokenKey::TextColor, EDGE),
         );

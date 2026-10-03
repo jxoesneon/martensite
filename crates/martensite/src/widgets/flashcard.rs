@@ -300,7 +300,7 @@ impl Widget for Flashcard {
         } else {
             cx.color(TokenKey::SurfaceColor, FRONT)
         };
-        let shape = &martensite_core::shape::Shape::rounded(8.0 * s);
+        let shape = &martensite_core::shape::Shape::squircle(8.0 * s);
         cx.list.push_fill_shape(krect, shape, fill);
         cx.list
             .push_stroke_shape(krect, shape, s, cx.color(TokenKey::BorderColor, EDGE));

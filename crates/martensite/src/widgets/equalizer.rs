@@ -365,7 +365,7 @@ impl Widget for Equalizer {
         };
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let edge = cx.color(TokenKey::BorderColor, EDGE);
@@ -383,7 +383,7 @@ impl Widget for Equalizer {
             );
             cx.list.push_fill_shape(
                 krect(groove),
-                &martensite_core::shape::Shape::rounded(tw / 2.0),
+                &martensite_core::shape::Shape::squircle(tw / 2.0),
                 TRACK,
             );
             // Unity marker at 0.5.
@@ -404,19 +404,19 @@ impl Widget for Equalizer {
             };
             cx.list.push_fill_shape(
                 krect(thumb),
-                &martensite_core::shape::Shape::rounded(cx.pt(2.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(2.0)),
                 fill,
             );
             cx.list.push_stroke_shape(
                 krect(thumb),
-                &martensite_core::shape::Shape::rounded(cx.pt(2.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(2.0)),
                 cx.pt(0.75),
                 edge,
             );
         }
         cx.list.push_stroke_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.pt(0.75),
             edge,
         );

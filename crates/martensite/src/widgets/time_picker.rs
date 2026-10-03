@@ -751,7 +751,7 @@ impl Widget for TimePicker {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        let face = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
+        let face = Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
         cx.list
             .push_fill_shape(rect, &face, cx.color(TokenKey::SurfaceColor, FACE_BG));
         cx.list.push_stroke_shape(
@@ -780,7 +780,7 @@ impl Widget for TimePicker {
                     f64::from(r.max_x() - cx.pt(2.0)),
                     f64::from(r.max_y() - cx.pt(2.0)),
                 ),
-                &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
+                &Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
                 cx.color(TokenKey::AccentColor, FOCUS_BG),
             );
         }

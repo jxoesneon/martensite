@@ -549,7 +549,7 @@ impl Widget for AlarmPanel {
             let kr = krect(r);
             cx.list.push_fill_shape(
                 kr,
-                &martensite_core::shape::Shape::rounded(5.0 * s),
+                &martensite_core::shape::Shape::squircle(5.0 * s),
                 cx.color(TokenKey::BackgroundColor, ROW_ACKED),
             );
             // Muted edge — a pending row must never borrow a live
@@ -629,7 +629,7 @@ impl Widget for AlarmPanel {
             let acked = a.state == AlarmState::Acknowledged;
             cx.list.push_fill_shape(
                 kr,
-                &martensite_core::shape::Shape::rounded(5.0 * s),
+                &martensite_core::shape::Shape::squircle(5.0 * s),
                 cx.color(
                     TokenKey::BackgroundColor,
                     if acked { ROW_ACKED } else { ROW },
@@ -727,7 +727,7 @@ impl Widget for AlarmPanel {
                 );
                 cx.list.push_fill_shape(
                     krect(chip),
-                    &martensite_core::shape::Shape::rounded(4.0 * s),
+                    &martensite_core::shape::Shape::squircle(4.0 * s),
                     cx.color(TokenKey::RaisedColor, ACK_CHIP),
                 );
                 crate::text_paint::paint_label(

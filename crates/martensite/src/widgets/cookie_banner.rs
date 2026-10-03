@@ -355,7 +355,7 @@ impl Widget for CookieBanner {
                     f64::from(rect.max_x()),
                     f64::from(rect.max_y()),
                 ),
-                &martensite_core::shape::Shape::rounded(4.0 * s),
+                &martensite_core::shape::Shape::squircle(4.0 * s),
                 face,
             );
             let fs = LINK_PT * s;

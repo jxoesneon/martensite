@@ -451,12 +451,12 @@ impl Widget for Dock {
         );
         cx.list.push_fill_shape(
             krect(tray),
-            &martensite_core::shape::Shape::rounded(12.0 * s),
+            &martensite_core::shape::Shape::squircle(12.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         cx.list.push_stroke_shape(
             krect(tray),
-            &martensite_core::shape::Shape::rounded(12.0 * s),
+            &martensite_core::shape::Shape::squircle(12.0 * s),
             1.0 * s,
             cx.color(TokenKey::BorderColor, EDGE),
         );
@@ -470,7 +470,7 @@ impl Widget for Dock {
             let kr = krect(r);
             cx.list.push_fill_shape(
                 kr,
-                &martensite_core::shape::Shape::rounded(sz * 0.22),
+                &martensite_core::shape::Shape::squircle(sz * 0.22),
                 item.color,
             );
             if let Some(img) = &item.image {
@@ -479,7 +479,7 @@ impl Widget for Dock {
             if self.hovered == Some(i) {
                 cx.list.push_stroke_shape(
                     kr,
-                    &martensite_core::shape::Shape::rounded(sz * 0.22),
+                    &martensite_core::shape::Shape::squircle(sz * 0.22),
                     1.5 * s,
                     cx.color(TokenKey::AccentColor, TEXT),
                 );
@@ -521,7 +521,7 @@ impl Widget for Dock {
                 );
                 cx.list.push_fill_shape(
                     krect(tip),
-                    &martensite_core::shape::Shape::rounded(4.0 * s),
+                    &martensite_core::shape::Shape::squircle(4.0 * s),
                     cx.color(TokenKey::SurfaceColor, TIP),
                 );
                 crate::text_paint::paint_label_clipped(

@@ -485,7 +485,7 @@ impl Widget for ControlCenter {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(10.0 * s),
+            &martensite_core::shape::Shape::squircle(10.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let gfs = GLYPH_PT * s;
@@ -500,7 +500,7 @@ impl Widget for ControlCenter {
                 Item::Tile { on } => {
                     cx.list.push_fill_shape(
                         kr,
-                        &martensite_core::shape::Shape::rounded(8.0 * s),
+                        &martensite_core::shape::Shape::squircle(8.0 * s),
                         if *on { accent } else { TILE_BG },
                     );
                     // A hosted stroke icon paints itself at the
@@ -536,7 +536,7 @@ impl Widget for ControlCenter {
                 Item::Slider { value, .. } => {
                     cx.list.push_fill_shape(
                         kr,
-                        &martensite_core::shape::Shape::rounded(8.0 * s),
+                        &martensite_core::shape::Shape::squircle(8.0 * s),
                         TILE_BG,
                     );
                     if e.icon.is_none() {
@@ -565,7 +565,7 @@ impl Widget for ControlCenter {
                             f64::from(tx + tw),
                             f64::from(ty + 6.0 * s),
                         ),
-                        &martensite_core::shape::Shape::rounded(3.0 * s),
+                        &martensite_core::shape::Shape::squircle(3.0 * s),
                         TRACK,
                     );
                     cx.list.push_fill_shape(
@@ -575,7 +575,7 @@ impl Widget for ControlCenter {
                             f64::from(tx + tw * value),
                             f64::from(ty + 6.0 * s),
                         ),
-                        &martensite_core::shape::Shape::rounded(3.0 * s),
+                        &martensite_core::shape::Shape::squircle(3.0 * s),
                         accent,
                     );
                 }

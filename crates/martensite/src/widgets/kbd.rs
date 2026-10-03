@@ -151,7 +151,7 @@ impl Widget for Kbd {
             f64::from(b.max_x()),
             f64::from(b.max_y() - travel),
         );
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(4.0));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(4.0));
         // Travel edge under the face gives the keycap its 3-D hint.
         cx.list.push_fill_rect(
             kurbo::Rect::new(

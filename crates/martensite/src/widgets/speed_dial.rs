@@ -360,7 +360,7 @@ impl Widget for SpeedDial {
                 );
                 cx.list.push_fill_shape(
                     krect(chip),
-                    &martensite_core::shape::Shape::rounded(chip_h / 2.0),
+                    &martensite_core::shape::Shape::squircle(chip_h / 2.0),
                     cx.color(TokenKey::BackgroundColor, CHIP_BG),
                 );
                 crate::text_paint::paint_label(

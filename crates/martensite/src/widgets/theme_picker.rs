@@ -346,7 +346,7 @@ impl Widget for ThemePicker {
             ),
             cx.color(TokenKey::BackgroundColor, FACE),
         );
-        let card_shape = martensite_core::shape::Shape::rounded(8.0 * s);
+        let card_shape = martensite_core::shape::Shape::squircle(8.0 * s);
         for (i, o) in self.options.iter().enumerate() {
             let r = self.cards[i];
             let kr = kurbo::Rect::new(
@@ -398,7 +398,7 @@ impl Widget for ThemePicker {
                     kr.x0 + f64::from(34.0 * s),
                     kr.y1 - f64::from(6.0 * s),
                 ),
-                &martensite_core::shape::Shape::rounded(3.0 * s),
+                &martensite_core::shape::Shape::squircle(3.0 * s),
                 o.accent,
             );
             // Caption.

@@ -361,7 +361,7 @@ impl Widget for CardDeck {
             );
             cx.list.push_fill_shape(
                 krect(frame),
-                &martensite_core::shape::Shape::rounded(10.0 * s),
+                &martensite_core::shape::Shape::squircle(10.0 * s),
                 cx.color(TokenKey::SurfaceColor, FRAME),
             );
         }
@@ -369,7 +369,7 @@ impl Widget for CardDeck {
             let r = self.rects[0];
             cx.list.push_fill_shape(
                 krect(r),
-                &martensite_core::shape::Shape::rounded(10.0 * s),
+                &martensite_core::shape::Shape::squircle(10.0 * s),
                 cx.color(TokenKey::SurfaceColor, FRAME),
             );
         }

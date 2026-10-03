@@ -339,7 +339,7 @@ impl Widget for PageHeader {
                 );
                 cx.list.push_fill_shape(
                     r,
-                    &martensite_core::shape::Shape::rounded(cx.pt(6.0)),
+                    &martensite_core::shape::Shape::squircle(cx.pt(6.0)),
                     [30, 31, 36, 14],
                 );
             }

@@ -260,7 +260,7 @@ impl Widget for Keypad {
         let size = 15.0 * cx.scale;
         for (i, &key) in KEYS.iter().enumerate() {
             let cell = self.cell(i, cx.scale);
-            let shape = martensite_core::shape::Shape::rounded(cx.pt(4.0));
+            let shape = martensite_core::shape::Shape::squircle(cx.pt(4.0));
             let fill = if self.pressed == Some(i) {
                 down
             } else if self.hovered == Some(i) {

@@ -462,12 +462,12 @@ impl OrgChart {
             };
             cx.list.push_fill_shape(
                 kr,
-                &martensite_core::shape::Shape::rounded(6.0 * self.scale),
+                &martensite_core::shape::Shape::squircle(6.0 * self.scale),
                 fill,
             );
             cx.list.push_stroke_shape(
                 kr,
-                &martensite_core::shape::Shape::rounded(6.0 * self.scale),
+                &martensite_core::shape::Shape::squircle(6.0 * self.scale),
                 self.scale.max(0.75),
                 cx.color(TokenKey::BorderColor, WIRE),
             );

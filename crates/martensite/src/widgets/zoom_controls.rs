@@ -492,7 +492,7 @@ impl Widget for ZoomControls {
                 f64::from(rect.max_x()),
                 f64::from(rect.max_y()),
             );
-            let shape = &martensite_core::shape::Shape::rounded(4.0 * s);
+            let shape = &martensite_core::shape::Shape::squircle(4.0 * s);
             cx.list.push_fill_shape(krect, shape, fill);
             cx.list.push_stroke_shape(krect, shape, s, edge);
             let glyph = Self::glyph(*action);

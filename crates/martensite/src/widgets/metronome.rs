@@ -401,7 +401,7 @@ impl Widget for Metronome {
         };
         cx.list.push_fill_shape(
             f(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         // Beat lamps across the top.
@@ -480,7 +480,7 @@ impl Widget for Metronome {
         );
         cx.list.push_stroke_shape(
             f(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.pt(0.75),
             cx.color(TokenKey::BorderColor, EDGE),
         );

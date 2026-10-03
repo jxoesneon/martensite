@@ -303,7 +303,7 @@ impl Widget for Dialog {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        let shape = Shape::rounded(cx.dim(TokenKey::BorderRadiusLarge, 12.0));
+        let shape = Shape::squircle(cx.dim(TokenKey::BorderRadiusLarge, 12.0));
         cx.list
             .push_fill_shape(rect, &shape, cx.color(TokenKey::SurfaceColor, RAISED));
         cx.list.push_stroke_shape(
@@ -362,7 +362,7 @@ impl Widget for Dialog {
                 f64::from(r.max_y()),
             );
             let primary = i == last;
-            let bshape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+            let bshape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 6.0));
             cx.list.push_fill_shape(
                 br,
                 &bshape,

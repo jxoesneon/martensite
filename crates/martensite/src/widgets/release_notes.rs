@@ -319,7 +319,7 @@ impl Widget for ReleaseNotes {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(6.0 * s),
+            &martensite_core::shape::Shape::squircle(6.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let pad = PAD_PT * s;
@@ -360,7 +360,7 @@ impl Widget for ReleaseNotes {
                         f64::from(tr.max_x()),
                         f64::from(tr.max_y()),
                     ),
-                    &martensite_core::shape::Shape::rounded(3.0 * s),
+                    &martensite_core::shape::Shape::squircle(3.0 * s),
                     kind.color(),
                 );
                 let tfs = TAG_PT * s;

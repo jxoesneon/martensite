@@ -185,7 +185,7 @@ impl Widget for SignalStrength {
             let x = self.bounds.min_x() + i as f32 * slot_w + gap / 2.0;
             cx.list.push_fill_shape(
                 f(Rect::new(x, self.bounds.max_y() - h, bar_w, h)),
-                &martensite_core::shape::Shape::rounded(cx.pt(0.75)),
+                &martensite_core::shape::Shape::squircle(cx.pt(0.75)),
                 if (i as u8) < self.level { lit } else { dim },
             );
         }

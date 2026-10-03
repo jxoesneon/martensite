@@ -284,7 +284,7 @@ impl Widget for Waveform {
         let mid_y = self.bounds.min_y() + self.bounds.height() / 2.0;
         let half_h = (self.bounds.height() / 2.0 - cx.pt(2.0)).max(1.0);
         let bar_w = (col_w * 0.6).max(1.0).min(cx.pt(4.0));
-        let shape = martensite_core::shape::Shape::rounded(bar_w / 2.0);
+        let shape = martensite_core::shape::Shape::squircle(bar_w / 2.0);
         for (i, &amp) in self.peaks.iter().enumerate() {
             let x = self.bounds.min_x() + i as f32 * col_w + (col_w - bar_w) / 2.0;
             let h = (amp * half_h).max(cx.pt(1.0));

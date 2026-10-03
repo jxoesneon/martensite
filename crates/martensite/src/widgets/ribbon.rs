@@ -208,11 +208,11 @@ impl Widget for Ribbon {
         let (x0, shape) = match self.corner {
             RibbonCorner::TopEnd => (
                 f64::from(cb.max_x() - off - band_w),
-                martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+                martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             ),
             RibbonCorner::TopStart => (
                 f64::from(cb.min_x() + off),
-                martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+                martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             ),
         };
         let band = kurbo::Rect::new(

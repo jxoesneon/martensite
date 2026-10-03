@@ -377,7 +377,7 @@ impl Widget for XYPad {
         } else {
             cx.color(TokenKey::TextMutedColor, MUTED)
         };
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(6.0));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(6.0));
         cx.list.push_fill_shape(f(self.pad), &shape, surface);
         // Quarter grid.
         for i in 1..4 {
@@ -412,7 +412,7 @@ impl Widget for XYPad {
                 self.pad.width() + 4.0,
                 self.pad.height() + 4.0,
             );
-            let ring = martensite_core::shape::Shape::rounded(cx.pt(8.0));
+            let ring = martensite_core::shape::Shape::squircle(cx.pt(8.0));
             cx.list
                 .push_stroke_shape(f(inset), &ring, cx.pt(1.5), accent);
         }

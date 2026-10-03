@@ -383,7 +383,7 @@ impl Widget for ClipboardHistory {
             ),
             cx.color(TokenKey::BackgroundColor, FACE),
         );
-        let shape = martensite_core::shape::Shape::rounded(5.0 * s);
+        let shape = martensite_core::shape::Shape::squircle(5.0 * s);
         for (i, e) in self.entries.iter().enumerate() {
             let r = self.rows[i];
             let kr = kurbo::Rect::new(

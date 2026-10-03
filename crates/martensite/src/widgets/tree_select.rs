@@ -222,7 +222,7 @@ impl TreePopup {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        let popup_shape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 6.0));
         *self.painted_shape.lock().expect("popup shape poisoned") = popup_shape.clone();
         cx.list.push_fill_shape(
             rect,
@@ -1121,7 +1121,7 @@ impl Widget for TreeSelect {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        let face = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
+        let face = Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
         cx.list
             .push_fill_shape(rect, &face, cx.color(TokenKey::SurfaceColor, FACE_BG));
         cx.list.push_stroke_shape(

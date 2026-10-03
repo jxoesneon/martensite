@@ -391,7 +391,7 @@ impl Widget for Poll {
                 f64::from(r.max_y()),
             )
         };
-        let shape = martensite_core::shape::Shape::rounded(RADIUS_PT * s);
+        let shape = martensite_core::shape::Shape::squircle(RADIUS_PT * s);
         let text = cx.color(TokenKey::TextColor, TEXT);
         let muted = cx.color(TokenKey::TextMutedColor, MUTED);
         // Question.

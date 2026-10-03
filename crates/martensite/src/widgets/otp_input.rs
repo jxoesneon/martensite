@@ -615,7 +615,7 @@ impl Widget for OtpInput {
         let ink = cx.color(TokenKey::TextColor, INK);
         let chars: Vec<char> = self.value.chars().collect();
         let size = cx.pt(FONT_PT);
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(RADIUS_PT));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(RADIUS_PT));
 
         for (i, r) in self.cell_rects.iter().enumerate() {
             let kr = kurbo::Rect::new(

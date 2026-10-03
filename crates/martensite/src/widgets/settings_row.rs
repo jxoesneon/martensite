@@ -459,7 +459,7 @@ impl Widget for SettingsRow {
         if self.highlighted {
             cx.list.push_fill_shape(
                 r,
-                &martensite_core::shape::Shape::rounded(cx.pt(6.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(6.0)),
                 HOVER,
             );
         }
@@ -795,7 +795,7 @@ impl Widget for SettingsGroup {
         if self.carded {
             cx.list.push_fill_shape(
                 card,
-                &martensite_core::shape::Shape::rounded(cx.pt(GROUP_RADIUS_PT)),
+                &martensite_core::shape::Shape::squircle(cx.pt(GROUP_RADIUS_PT)),
                 cx.color(TokenKey::SurfaceColor, GROUP_FACE),
             );
         }

@@ -305,7 +305,7 @@ impl Widget for BreakoutRooms {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(6.0 * s),
+            &martensite_core::shape::Shape::squircle(6.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let nfs = NAME_PT * s;
@@ -364,7 +364,7 @@ impl Widget for BreakoutRooms {
                     f64::from(btn.max_x()),
                     f64::from(btn.max_y()),
                 ),
-                &martensite_core::shape::Shape::rounded(4.0 * s),
+                &martensite_core::shape::Shape::squircle(4.0 * s),
                 face,
             );
             let w = caption.len() as f32 * cfs * 0.6;

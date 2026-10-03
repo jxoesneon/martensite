@@ -263,7 +263,7 @@ impl Widget for BulletChart {
         let px = |v: f32| track_r.min_x() + (v / max).clamp(0.0, 1.0) * track_r.width();
 
         // Qualitative bands — darkest at the outside.
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(3.0));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(3.0));
         cx.list.push_fill_shape(f(track_r), &shape, track);
         let ok_r = Rect::new(
             track_r.min_x(),
@@ -292,7 +292,7 @@ impl Widget for BulletChart {
         );
         cx.list.push_fill_shape(
             f(bar),
-            &martensite_core::shape::Shape::rounded(cx.pt(1.5)),
+            &martensite_core::shape::Shape::squircle(cx.pt(1.5)),
             value_c,
         );
 

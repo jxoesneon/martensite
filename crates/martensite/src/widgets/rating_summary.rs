@@ -256,7 +256,7 @@ impl Widget for RatingSummary {
             MUTED_FG,
         );
         // Distribution bars, 5★ at top.
-        let shape = martensite_core::shape::Shape::rounded(BAR_H_PT * s / 2.0);
+        let shape = martensite_core::shape::Shape::squircle(BAR_H_PT * s / 2.0);
         let bars_x = b.min_x() + (PAD_PT + 60.0) * s;
         let bar_w = (b.max_x() - PAD_PT * s - bars_x - ROW_LABEL_PT * s).max(0.0);
         let mut y = b.min_y() + PAD_PT * s + 6.0 * s;

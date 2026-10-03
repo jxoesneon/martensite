@@ -437,7 +437,7 @@ impl Widget for Pagination {
                         f64::from(r.max_x()),
                         f64::from(r.max_y()),
                     ),
-                    &martensite_core::shape::Shape::rounded(cx.pt(RADIUS)),
+                    &martensite_core::shape::Shape::squircle(cx.pt(RADIUS)),
                     cx.color(TokenKey::AccentColor, SELECTED_FACE),
                 );
             } else if self.highlighted == Some(i) && enabled {
@@ -448,7 +448,7 @@ impl Widget for Pagination {
                         f64::from(r.max_x()),
                         f64::from(r.max_y()),
                     ),
-                    &martensite_core::shape::Shape::rounded(cx.pt(RADIUS)),
+                    &martensite_core::shape::Shape::squircle(cx.pt(RADIUS)),
                     HIGHLIGHT,
                 );
             }

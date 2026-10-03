@@ -259,7 +259,7 @@ impl Widget for CommandLink {
             f64::from(self.bounds.max_x()),
             f64::from(self.bounds.max_y()),
         );
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(RADIUS_PT));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(RADIUS_PT));
         let face = if !self.enabled {
             cx.color(TokenKey::SurfaceColor, FACE)
         } else if self.pressed {

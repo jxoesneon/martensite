@@ -389,7 +389,7 @@ impl Widget for PopoverSurface {
             cx.pt(8.0),
             [0.0, 0.0, 0.0, 0.18],
         );
-        let shape = Shape::rounded(cx.dim(TokenKey::BorderRadiusLarge, 10.0));
+        let shape = Shape::squircle(cx.dim(TokenKey::BorderRadiusLarge, 10.0));
         *self.painted_shape.lock().expect("popup shape poisoned") = shape.clone();
         let surface = cx.color(TokenKey::SurfaceColor, SURFACE);
         let edge = cx.color(TokenKey::BorderColor, EDGE);

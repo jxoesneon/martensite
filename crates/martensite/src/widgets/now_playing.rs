@@ -402,7 +402,7 @@ impl Widget for NowPlaying {
             self.bounds.width(),
             self.bounds.height() - (RAIL_H_PT + 4.0) * s,
         );
-        let shape = martensite_core::shape::Shape::rounded(RADIUS_PT * s);
+        let shape = martensite_core::shape::Shape::squircle(RADIUS_PT * s);
         cx.list
             .push_fill_shape(krect(card), &shape, cx.color(TokenKey::SurfaceColor, FACE));
         // Art swatch.

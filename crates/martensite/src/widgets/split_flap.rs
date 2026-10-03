@@ -273,12 +273,12 @@ impl Widget for SplitFlap {
             );
             cx.list.push_fill_shape(
                 f(r),
-                &martensite_core::shape::Shape::rounded(cx.pt(2.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(2.0)),
                 face,
             );
             cx.list.push_stroke_shape(
                 f(r),
-                &martensite_core::shape::Shape::rounded(cx.pt(2.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(2.0)),
                 cx.pt(0.5),
                 edge,
             );

@@ -269,7 +269,7 @@ impl Widget for Ticket {
                 f64::from(b.max_x()),
                 f64::from(if self.torn { b.max_y() } else { stub_y }),
             ),
-            &martensite_core::shape::Shape::rounded(8.0 * s),
+            &martensite_core::shape::Shape::squircle(8.0 * s),
             FACE,
         );
         // Title + caption, clipped to the card interior — never into

@@ -249,7 +249,7 @@ impl Widget for LedMatrix {
                 f64::from(self.bounds.max_x()),
                 f64::from(self.bounds.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let cw = self.bounds.width() / self.cols as f32;

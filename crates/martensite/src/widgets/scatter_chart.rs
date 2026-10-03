@@ -409,7 +409,7 @@ impl Widget for ScatterChart {
         };
         cx.list.push_fill_shape(
             f(self.plot),
-            &martensite_core::shape::Shape::rounded(0.0),
+            &martensite_core::shape::Shape::squircle(0.0),
             cx.color(TokenKey::SurfaceColor, SURFACE),
         );
         let grid = cx.color(TokenKey::DividerColor, GRID);
@@ -441,7 +441,7 @@ impl Widget for ScatterChart {
         // Frame.
         cx.list.push_stroke_shape(
             f(self.plot),
-            &martensite_core::shape::Shape::rounded(0.0),
+            &martensite_core::shape::Shape::squircle(0.0),
             cx.pt(0.75),
             cx.color(TokenKey::BorderColor, FRAME),
         );

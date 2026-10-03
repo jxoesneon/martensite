@@ -464,7 +464,7 @@ impl Widget for MessageList {
             };
             cx.list.push_fill_shape(
                 bubble,
-                &martensite_core::shape::Shape::rounded(bubble_pad),
+                &martensite_core::shape::Shape::squircle(bubble_pad),
                 fill,
             );
             // Outgoing bubbles are accent-filled — body ink must read

@@ -381,7 +381,7 @@ impl Widget for DevicePicker {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(6.0 * s),
+            &martensite_core::shape::Shape::squircle(6.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         cx.list.push_stroke_rect(

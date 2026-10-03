@@ -388,7 +388,7 @@ impl Widget for Legend {
                 f64::from(sy + swatch),
             );
             cx.list
-                .push_fill_shape(sw, &martensite_core::shape::Shape::rounded(2.0 * s), color);
+                .push_fill_shape(sw, &martensite_core::shape::Shape::squircle(2.0 * s), color);
             if entry.dimmed {
                 // Diagonal strike through the swatch.
                 let mut strike = kurbo::BezPath::new();

@@ -284,7 +284,7 @@ impl Widget for PerfOverlay {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(6.0 * s),
+            &martensite_core::shape::Shape::squircle(6.0 * s),
             FACE,
         );
         // Readout: fps + last ms.

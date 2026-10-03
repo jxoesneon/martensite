@@ -556,7 +556,7 @@ impl Widget for WeekView {
             let kr = krs[pos];
             cx.list.push_fill_shape(
                 kr,
-                &martensite_core::shape::Shape::rounded(3.0 * s),
+                &martensite_core::shape::Shape::squircle(3.0 * s),
                 e.color,
             );
             if !e.all_day {

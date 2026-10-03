@@ -388,7 +388,7 @@ impl Widget for DownloadItem {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(5.0 * s),
+            &martensite_core::shape::Shape::squircle(5.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         cx.list.push_stroke_rect(
@@ -413,7 +413,7 @@ impl Widget for DownloadItem {
         );
         cx.list.push_fill_shape(
             chip,
-            &martensite_core::shape::Shape::rounded(4.0 * s),
+            &martensite_core::shape::Shape::squircle(4.0 * s),
             ICON_BG,
         );
         crate::text_paint::paint_label_vcenter(
@@ -482,7 +482,7 @@ impl Widget for DownloadItem {
                     f64::from(rect.max_x()),
                     f64::from(rect.max_y()),
                 ),
-                &martensite_core::shape::Shape::rounded(4.0 * s),
+                &martensite_core::shape::Shape::squircle(4.0 * s),
                 ICON_BG,
             );
             // Native icon first — `glyph_for` is the fallback.

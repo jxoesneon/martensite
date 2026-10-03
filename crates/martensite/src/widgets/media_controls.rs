@@ -588,7 +588,7 @@ impl Widget for MediaControls {
         let track = cx.color(martensite_theme::TokenKey::DividerColor, TRACK);
         cx.list.push_fill_shape(
             f(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(6.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(6.0)),
             surface,
         );
 
@@ -627,7 +627,7 @@ impl Widget for MediaControls {
         // Seek bar: track + played fill + thumb.
         cx.list.push_fill_shape(
             f(self.seek_rect),
-            &martensite_core::shape::Shape::rounded(self.seek_rect.height() / 2.0),
+            &martensite_core::shape::Shape::squircle(self.seek_rect.height() / 2.0),
             track,
         );
         let frac = if self.duration > 0.0 {
@@ -643,7 +643,7 @@ impl Widget for MediaControls {
         );
         cx.list.push_fill_shape(
             f(played),
-            &martensite_core::shape::Shape::rounded(self.seek_rect.height() / 2.0),
+            &martensite_core::shape::Shape::squircle(self.seek_rect.height() / 2.0),
             accent,
         );
         let thumb_r = cx.pt(5.0);
@@ -718,7 +718,7 @@ impl Widget for MediaControls {
             // Slider.
             cx.list.push_fill_shape(
                 f(self.vol_rect),
-                &martensite_core::shape::Shape::rounded(self.vol_rect.height() / 2.0),
+                &martensite_core::shape::Shape::squircle(self.vol_rect.height() / 2.0),
                 track,
             );
             let vf = if self.muted { 0.0 } else { self.volume };
@@ -730,7 +730,7 @@ impl Widget for MediaControls {
             );
             cx.list.push_fill_shape(
                 f(vfill),
-                &martensite_core::shape::Shape::rounded(self.vol_rect.height() / 2.0),
+                &martensite_core::shape::Shape::squircle(self.vol_rect.height() / 2.0),
                 if self.muted { muted } else { accent },
             );
         }

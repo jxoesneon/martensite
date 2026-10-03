@@ -393,7 +393,7 @@ impl Widget for Filmstrip {
             let kr = krect(r);
             cx.list.push_fill_shape(
                 kr,
-                &martensite_core::shape::Shape::rounded(4.0 * s),
+                &martensite_core::shape::Shape::squircle(4.0 * s),
                 t.color,
             );
             if let Some(img) = &t.image {
@@ -406,7 +406,7 @@ impl Widget for Filmstrip {
                 let ew = 1.0 * s;
                 cx.list.push_stroke_shape(
                     kr.inset(-f64::from(ew)),
-                    &martensite_core::shape::Shape::rounded(4.0 * s),
+                    &martensite_core::shape::Shape::squircle(4.0 * s),
                     ew,
                     crate::text_paint::better_ink(
                         t.color,
@@ -430,7 +430,7 @@ impl Widget for Filmstrip {
                 // a light ring when the accent blends into the tile.
                 cx.list.push_stroke_shape(
                     kr,
-                    &martensite_core::shape::Shape::rounded(4.0 * s),
+                    &martensite_core::shape::Shape::squircle(4.0 * s),
                     2.0 * s,
                     crate::text_paint::better_ink(
                         t.color,

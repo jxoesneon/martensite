@@ -402,7 +402,7 @@ impl Widget for GroupBox {
             f64::from(f.max_x()),
             f64::from(f.max_y()),
         );
-        let shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        let shape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 6.0));
         cx.list.push_stroke_shape(
             frame,
             &shape,

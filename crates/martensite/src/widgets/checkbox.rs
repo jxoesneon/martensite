@@ -492,7 +492,7 @@ impl Widget for CheckBox {
         );
         cx.list.push_stroke_shape(
             bx,
-            &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
+            &Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
             cx.pt(1.0),
             cx.color(TokenKey::BorderColor, EDGE),
         );
@@ -520,7 +520,7 @@ impl Widget for CheckBox {
                 let half = f64::from(side / 2.0);
                 cx.list.push_fill_shape(
                     kurbo::Rect::new(cxm - half, cym - half, cxm + half, cym + half),
-                    &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 1.5)),
+                    &Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 1.5)),
                     cx.color(TokenKey::AccentColor, ACCENT),
                 );
             }

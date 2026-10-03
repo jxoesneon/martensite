@@ -285,7 +285,7 @@ impl Widget for HueSlider {
         let col_w = self.rail.width() / cols as f32;
         cx.list.push_clip_shape(
             krect(self.rail),
-            &martensite_core::shape::Shape::rounded(self.rail.height() / 2.0),
+            &martensite_core::shape::Shape::squircle(self.rail.height() / 2.0),
         );
         let rtl = cx.is_rtl();
         for i in 0..cols {

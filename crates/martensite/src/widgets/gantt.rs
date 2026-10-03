@@ -346,7 +346,7 @@ impl Widget for Gantt {
                 ];
             }
             let bar = Rect::new(x0, bar_y, (x1 - x0).max(1.0), bar_h);
-            let shape = martensite_core::shape::Shape::rounded(cx.pt(3.0));
+            let shape = martensite_core::shape::Shape::squircle(cx.pt(3.0));
             cx.list.push_fill_shape(f(bar), &shape, color);
             if task.progress > 0.0 {
                 let fill = Rect::new(

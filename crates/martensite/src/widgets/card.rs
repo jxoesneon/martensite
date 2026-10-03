@@ -464,7 +464,7 @@ impl Widget for Card {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        let shape = Shape::rounded(cx.dim(TokenKey::BorderRadiusLarge, 12.0));
+        let shape = Shape::squircle(cx.dim(TokenKey::BorderRadiusLarge, 12.0));
         let surface = cx.color(TokenKey::SurfaceColor, SURFACE);
 
         match self.variant {

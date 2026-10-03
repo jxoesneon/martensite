@@ -484,7 +484,7 @@ impl Widget for CheckList {
         let s = self.scale;
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(4.0 * s),
+            &martensite_core::shape::Shape::squircle(4.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
@@ -506,7 +506,7 @@ impl Widget for CheckList {
             if i == self.focus {
                 cx.list.push_fill_shape(
                     kr,
-                    &martensite_core::shape::Shape::rounded(4.0 * s),
+                    &martensite_core::shape::Shape::squircle(4.0 * s),
                     cx.color(TokenKey::SurfaceColor, ROW_HOT),
                 );
             }
@@ -520,14 +520,14 @@ impl Widget for CheckList {
             let kbx = krect(bx);
             cx.list.push_stroke_shape(
                 kbx,
-                &martensite_core::shape::Shape::rounded(3.0 * s),
+                &martensite_core::shape::Shape::squircle(3.0 * s),
                 s,
                 cx.color(TokenKey::BorderColor, EDGE),
             );
             if it.checked {
                 cx.list.push_fill_shape(
                     kbx,
-                    &martensite_core::shape::Shape::rounded(3.0 * s),
+                    &martensite_core::shape::Shape::squircle(3.0 * s),
                     cx.color(TokenKey::AccentColor, CHECK),
                 );
                 // Check mark.

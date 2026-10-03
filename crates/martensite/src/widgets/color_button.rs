@@ -322,7 +322,7 @@ impl Widget for ColorButton {
         } else {
             surface
         };
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(RADIUS_PT));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(RADIUS_PT));
         cx.list.push_fill_shape(f(self.bounds), &shape, face);
         cx.list
             .push_stroke_shape(f(self.bounds), &shape, cx.pt(0.5).max(1.0), border);
@@ -333,7 +333,7 @@ impl Widget for ColorButton {
                 (self.bounds.width() - 3.0).max(0.0),
                 (self.bounds.height() - 3.0).max(0.0),
             );
-            let ring = martensite_core::shape::Shape::rounded(cx.pt(RADIUS_PT - 1.0).max(0.0));
+            let ring = martensite_core::shape::Shape::squircle(cx.pt(RADIUS_PT - 1.0).max(0.0));
             cx.list.push_stroke_shape(
                 f(inset),
                 &ring,
@@ -352,7 +352,7 @@ impl Widget for ColorButton {
             s,
         );
         let half = s / 2.0;
-        let sw_shape = martensite_core::shape::Shape::rounded(cx.pt(3.0));
+        let sw_shape = martensite_core::shape::Shape::squircle(cx.pt(3.0));
         cx.list.push_fill_shape(f(sw), &sw_shape, CHECK_A);
         let q = |x: f32, y: f32| f(Rect::new(sw.min_x() + x, sw.min_y() + y, half, half));
         cx.list.push_fill_shape(q(half, 0.0), &sw_shape, CHECK_B);

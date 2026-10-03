@@ -671,7 +671,7 @@ impl Widget for CalendarSurface {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        let shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        let shape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 6.0));
         *self.painted_shape.lock().expect("popup shape poisoned") = shape.clone();
         cx.list
             .push_fill_shape(face, &shape, cx.color(TokenKey::SurfaceColor, POPUP_BG));
@@ -789,13 +789,13 @@ impl Widget for CalendarSurface {
                 if is_selected {
                     cx.list.push_fill_shape(
                         krect,
-                        &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
+                        &Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
                         accent,
                     );
                 } else if (in_span && in_month) || (is_hover && pickable) {
                     cx.list.push_fill_shape(
                         krect,
-                        &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
+                        &Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
                         cx.color(TokenKey::SecondaryColor, HOVER_BG),
                     );
                 }
@@ -1719,7 +1719,7 @@ impl Widget for DatePicker {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        let face = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
+        let face = Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
         cx.list
             .push_fill_shape(rect, &face, cx.color(TokenKey::SurfaceColor, FACE_BG));
         cx.list.push_stroke_shape(
@@ -1765,7 +1765,7 @@ impl Widget for DatePicker {
             f64::from(gy + s * 2.0),
         );
         let icon_ink = cx.color(TokenKey::TextColor, INK);
-        let icon_shape = Shape::rounded(cx.pt(1.5));
+        let icon_shape = Shape::squircle(cx.pt(1.5));
         cx.list
             .push_stroke_shape(icon, &icon_shape, cx.pt(1.0), icon_ink);
         // Header band.

@@ -113,14 +113,8 @@ const INK: [u8; 4] = [30, 30, 36, 255];
 const INK_DISABLED: [u8; 4] = [150, 150, 158, 255];
 /// Selection accent.
 const ACCENT: [u8; 4] = [60, 110, 220, 255];
-/// Hover wash alpha.
-const HOVER_ALPHA: u8 = 32;
-/// Selected-row wash alpha.
-const SELECTED_ALPHA: u8 = 56;
 /// Alternating-row stripe alpha.
 const STRIPE_ALPHA: u8 = 12;
-/// Focus ring alpha (the accent colour at 50%).
-const FOCUS_ALPHA: u8 = 128;
 
 /// Horizontal text alignment inside a [`Table`] cell or header.
 ///
@@ -2289,11 +2283,20 @@ impl Widget for Table {
                 continue;
             }
             if self.selected == Some(s) {
-                cx.list
-                    .push_fill_rect(rect, [accent[0], accent[1], accent[2], SELECTED_ALPHA]);
+                cx.list.push_fill_rect(
+                    rect,
+                    [
+                        accent[0],
+                        accent[1],
+                        accent[2],
+                        crate::widgets::STATE_SELECTED_WASH,
+                    ],
+                );
             } else if self.hovered == Some(s) {
-                cx.list
-                    .push_fill_rect(rect, [accent[0], accent[1], accent[2], HOVER_ALPHA]);
+                cx.list.push_fill_rect(
+                    rect,
+                    [accent[0], accent[1], accent[2], crate::widgets::STATE_HOVER],
+                );
             } else if self.striped && d % 2 == 1 {
                 cx.list
                     .push_fill_rect(rect, [muted[0], muted[1], muted[2], STRIPE_ALPHA]);
@@ -2351,7 +2354,12 @@ impl Widget for Table {
                 cx.list.push_stroke_rect(
                     rect,
                     cx.pt(2.0),
-                    [accent[0], accent[1], accent[2], FOCUS_ALPHA],
+                    [
+                        accent[0],
+                        accent[1],
+                        accent[2],
+                        crate::widgets::STATE_FOCUS_WASH,
+                    ],
                 );
             }
         }

@@ -530,7 +530,7 @@ impl Widget for ColorSurface {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        let shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        let shape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 6.0));
         *self.painted_shape.lock().expect("popup shape poisoned") = shape.clone();
         cx.list
             .push_fill_shape(face, &shape, cx.color(TokenKey::SurfaceColor, POPUP_BG));
@@ -741,7 +741,7 @@ impl Widget for ColorSurface {
             f64::from(self.ok_rect.max_x()),
             f64::from(self.ok_rect.max_y()),
         );
-        let ok_shape = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
+        let ok_shape = Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
         cx.list
             .push_fill_shape(ok, &ok_shape, cx.color(TokenKey::AccentColor, ACCENT));
         let ok_label_w = 2.0 * font_px * 0.6;
@@ -1355,7 +1355,7 @@ impl Widget for ColorPicker {
             }
             cy += check;
         }
-        let well = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
+        let well = Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
         cx.list.push_fill_shape(rect, &well, self.color.to_rgba8());
         cx.list.push_stroke_shape(
             rect,

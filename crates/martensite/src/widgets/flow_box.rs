@@ -415,7 +415,7 @@ impl Widget for FlowBox {
         let b = cx.bounds;
         let accent = cx.color(ACCENT, [50, 115, 230, 255]);
         let hover = cx.color(HOVER, [150, 150, 158, 255]);
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(5.0));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(5.0));
         for (i, cell) in self.cell_bounds.iter().enumerate() {
             let r = kurbo::Rect::new(
                 f64::from(b.min_x() + cell.min_x()),

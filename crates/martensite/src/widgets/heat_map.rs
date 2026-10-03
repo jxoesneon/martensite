@@ -311,7 +311,7 @@ impl Widget for HeatMap {
     fn paint(&self, cx: &mut PaintContext) {
         let max = self.max_value();
         let radius = cx.pt(RADIUS_PT);
-        let shape = martensite_core::shape::Shape::rounded(radius);
+        let shape = martensite_core::shape::Shape::squircle(radius);
         // Resolve the ramp once per paint: the zero state reads as the
         // inset well, the hot end is the theme's primary series ink.
         // (Resolving each cell through `AccentColor` — as this used to —

@@ -282,7 +282,7 @@ impl Widget for PasswordStrength {
             };
             cx.list.push_fill_shape(
                 krect(r),
-                &martensite_core::shape::Shape::rounded(bar_h / 2.0),
+                &martensite_core::shape::Shape::squircle(bar_h / 2.0),
                 color,
             );
         }

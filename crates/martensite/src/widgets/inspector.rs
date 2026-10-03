@@ -460,7 +460,7 @@ impl Widget for Inspector {
         // the edge don't emit text that sibling panels then cover or
         // the audit flags as escaping the container.
         cx.list.push_clip(kbounds);
-        let shape = martensite_core::shape::Shape::rounded(4.0 * s);
+        let shape = martensite_core::shape::Shape::squircle(4.0 * s);
         for (si, sec) in self.sections.iter().enumerate() {
             // `head_rects` is a layout-side cache — a widget painted
             // before its first layout (or rebuilt post-layout) has

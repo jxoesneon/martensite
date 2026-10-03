@@ -268,7 +268,7 @@ impl Widget for StreamGraph {
         let pt = |p: Vec2| (f64::from(p.x), f64::from(p.y));
         cx.list.push_fill_shape(
             f(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         let n = self.sample_count();
@@ -314,7 +314,7 @@ impl Widget for StreamGraph {
         }
         cx.list.push_stroke_shape(
             f(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.pt(0.75),
             edge,
         );

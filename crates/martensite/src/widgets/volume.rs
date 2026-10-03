@@ -581,7 +581,7 @@ impl Widget for Volume {
         let rail_h = RAIL_PT * s;
         let ry = self.rail.min_y() + (self.rail.height() - rail_h) / 2.0;
         let track = Rect::new(self.rail.min_x(), ry, self.rail.width(), rail_h);
-        let shape = &martensite_core::shape::Shape::rounded(rail_h / 2.0);
+        let shape = &martensite_core::shape::Shape::squircle(rail_h / 2.0);
         cx.list
             .push_fill_shape(krect(track), shape, cx.color(TokenKey::DividerColor, TRACK));
         let frac = self.display_gain() / self.max;

@@ -326,7 +326,7 @@ impl Widget for ToastHost {
 
     fn paint(&self, cx: &mut PaintContext) {
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        let shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 8.0));
+        let shape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 8.0));
         let Ok(toasts) = self.toasts.lock() else {
             return;
         };

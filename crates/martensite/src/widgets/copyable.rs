@@ -251,7 +251,7 @@ impl Widget for Copyable {
                 f64::from(b.max_x()),
                 f64::from(b.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(4.0 * s),
+            &martensite_core::shape::Shape::squircle(4.0 * s),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
         cx.list.push_stroke_rect(

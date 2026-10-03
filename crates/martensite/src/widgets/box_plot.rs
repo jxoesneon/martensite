@@ -356,7 +356,7 @@ impl Widget for BoxPlot {
                 box_w,
                 (y_of(s.q1) - y_of(s.q3)).max(1.0),
             );
-            let shape = martensite_core::shape::Shape::rounded(cx.pt(2.0));
+            let shape = martensite_core::shape::Shape::squircle(cx.pt(2.0));
             cx.list.push_fill_shape(f(box_r), &shape, dim);
             cx.list
                 .push_stroke_shape(f(box_r), &shape, cx.pt(1.0), color);

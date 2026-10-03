@@ -168,7 +168,7 @@ impl Avatar {
     /// (logical pt → device px for the rounded variant).
     fn silhouette(&self, scale: f32) -> Shape {
         match self.corner {
-            Some(r) => Shape::rounded(r * scale),
+            Some(r) => Shape::squircle(r * scale),
             None => Shape::ELLIPSE,
         }
     }
@@ -413,7 +413,7 @@ mod tests {
         };
         a.layout(&mut cx, Rect::new(0.0, 0.0, 32.0, 32.0));
         // Corner radius baked at the layout scale (8pt × 2 = 16px).
-        assert_eq!(a.clip_shape(), Some(Shape::rounded(16.0)));
+        assert_eq!(a.clip_shape(), Some(Shape::squircle(16.0)));
     }
 
     #[test]

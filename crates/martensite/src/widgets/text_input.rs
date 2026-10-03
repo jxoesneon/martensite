@@ -1754,7 +1754,7 @@ impl Widget for TextInput {
             f64::from(b.max_x()),
             f64::from(face_bottom),
         );
-        let face = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
+        let face = Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0));
         cx.list
             .push_fill_shape(rect, &face, cx.color(TokenKey::SurfaceColor, FACE));
         let edge = match self.validation {

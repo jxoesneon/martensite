@@ -364,7 +364,7 @@ impl Widget for FileChooserButton {
         } else {
             surface
         };
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(RADIUS_PT));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(RADIUS_PT));
         cx.list.push_fill_shape(f(self.bounds), &shape, face);
         cx.list
             .push_stroke_shape(f(self.bounds), &shape, cx.pt(0.5).max(1.0), border);
@@ -375,7 +375,7 @@ impl Widget for FileChooserButton {
                 (self.bounds.width() - 3.0).max(0.0),
                 (self.bounds.height() - 3.0).max(0.0),
             );
-            let ring = martensite_core::shape::Shape::rounded(cx.pt(RADIUS_PT - 1.0).max(0.0));
+            let ring = martensite_core::shape::Shape::squircle(cx.pt(RADIUS_PT - 1.0).max(0.0));
             cx.list.push_stroke_shape(
                 f(inset),
                 &ring,

@@ -444,7 +444,7 @@ impl Widget for AppGrid {
             ),
             cx.color(TokenKey::BackgroundColor, FACE),
         );
-        let shape = martensite_core::shape::Shape::rounded(10.0 * s);
+        let shape = martensite_core::shape::Shape::squircle(10.0 * s);
         for (cell, i) in &self.cells {
             let app = &self.apps[*i];
             let icon = Rect::new(

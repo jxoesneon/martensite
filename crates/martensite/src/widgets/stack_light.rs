@@ -417,7 +417,7 @@ impl Widget for StackLight {
         };
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(8.0 * self.scale),
+            &martensite_core::shape::Shape::squircle(8.0 * self.scale),
             cx.color(TokenKey::SurfaceColor, HOUSING),
         );
         let s = self.scale;
@@ -439,7 +439,7 @@ impl Widget for StackLight {
             // Lens base — the same slot outline as `paint`.
             cx.list.push_fill_shape(
                 krect(r),
-                &martensite_core::shape::Shape::rounded(6.0 * s),
+                &martensite_core::shape::Shape::squircle(6.0 * s),
                 cx.color(TokenKey::BackgroundColor, UNLIT),
             );
             // The etched label still rides the row in muted ink — the
@@ -476,7 +476,7 @@ impl Widget for StackLight {
         };
         cx.list.push_fill_shape(
             krect(self.bounds),
-            &martensite_core::shape::Shape::rounded(8.0 * self.scale),
+            &martensite_core::shape::Shape::squircle(8.0 * self.scale),
             cx.color(TokenKey::SurfaceColor, HOUSING),
         );
         let s = self.scale;
@@ -498,7 +498,7 @@ impl Widget for StackLight {
             // Lens base.
             cx.list.push_fill_shape(
                 krect(r),
-                &martensite_core::shape::Shape::rounded(6.0 * s),
+                &martensite_core::shape::Shape::squircle(6.0 * s),
                 cx.color(TokenKey::BackgroundColor, UNLIT),
             );
             let visible = l.lit && (!l.flashing || blink_on);
@@ -511,7 +511,7 @@ impl Widget for StackLight {
                 );
                 cx.list.push_fill_shape(
                     krect(lens),
-                    &martensite_core::shape::Shape::rounded(4.0 * s),
+                    &martensite_core::shape::Shape::squircle(4.0 * s),
                     l.color,
                 );
             }

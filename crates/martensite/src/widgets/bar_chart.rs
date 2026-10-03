@@ -392,7 +392,7 @@ impl Widget for BarChart {
                     f64::from(x + bar_w),
                     f64::from(baseline_y),
                 ),
-                &martensite_core::shape::Shape::rounded(cx.pt(2.0)),
+                &martensite_core::shape::Shape::squircle(cx.pt(2.0)),
                 bar.color.unwrap_or(bar_ink),
             );
         }

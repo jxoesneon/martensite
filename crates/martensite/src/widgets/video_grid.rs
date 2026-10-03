@@ -386,7 +386,7 @@ impl Widget for VideoGrid {
         // Speaking rings bleed 2.5pt past the tile edge — clip the
         // whole grid to bounds so nothing reaches a sibling's rect.
         cx.list.push_clip(wb);
-        let shape = martensite_core::shape::Shape::rounded(8.0 * s * fit);
+        let shape = martensite_core::shape::Shape::squircle(8.0 * s * fit);
         for (i, p) in self.participants.iter().enumerate() {
             let r = self.tiles[i];
             let kr = kurbo::Rect::new(

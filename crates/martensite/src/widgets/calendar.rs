@@ -848,7 +848,7 @@ impl Widget for Calendar {
         }
 
         // Day cells.
-        let shape = martensite_core::shape::Shape::rounded(cx.pt(6.0));
+        let shape = martensite_core::shape::Shape::squircle(cx.pt(6.0));
         let day_size = 12.0 * cx.scale;
         let span = self.active_span();
         for (i, cell) in self.cells.iter().enumerate() {

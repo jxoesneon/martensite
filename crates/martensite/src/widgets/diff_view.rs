@@ -345,7 +345,7 @@ impl Widget for DiffView {
         };
         cx.list.push_fill_shape(
             f(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::InsetColor, FACE),
         );
         let line_h = self.line_h();
@@ -396,7 +396,7 @@ impl Widget for DiffView {
         }
         cx.list.push_stroke_shape(
             f(self.bounds),
-            &martensite_core::shape::Shape::rounded(cx.pt(4.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.pt(0.75),
             cx.color(TokenKey::BorderColor, EDGE),
         );

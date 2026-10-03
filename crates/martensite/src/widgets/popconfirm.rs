@@ -267,7 +267,7 @@ impl Widget for PopconfirmSurface {
             cx.pt(6.0),
             [0.0, 0.0, 0.0, 0.15],
         );
-        let shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 8.0));
+        let shape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 8.0));
         *self.painted_shape.lock().expect("popup shape poisoned") = shape.clone();
         let surface = cx.color(TokenKey::SurfaceColor, SURFACE);
         let edge = cx.color(TokenKey::BorderColor, EDGE);
@@ -330,7 +330,7 @@ impl Widget for PopconfirmSurface {
                 f64::from(r.max_x()),
                 f64::from(r.max_y()),
             );
-            let bshape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 4.0));
+            let bshape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 4.0));
             cx.list.push_fill_shape(
                 br,
                 &bshape,

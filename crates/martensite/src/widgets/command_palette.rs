@@ -586,7 +586,7 @@ impl PalettePopup {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        let popup_shape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 6.0));
         *self.painted_shape.lock() = popup_shape.clone();
         cx.list.push_fill_shape(
             rect,

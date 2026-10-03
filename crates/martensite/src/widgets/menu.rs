@@ -1139,7 +1139,7 @@ impl Widget for MenuRow {
             );
             cx.list.push_fill_shape(
                 row,
-                &Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
+                &Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 3.0)),
                 cx.color(TokenKey::AccentColor, HIGHLIGHT_BG),
             );
         }
@@ -1662,7 +1662,7 @@ impl Widget for Menu {
             f64::from(b.max_x()),
             f64::from(b.max_y()),
         );
-        let popup_shape = Shape::rounded(cx.dim(TokenKey::BorderRadius, 6.0));
+        let popup_shape = Shape::squircle(cx.dim(TokenKey::BorderRadius, 6.0));
         *self.painted_shape.lock().expect("popup shape poisoned") = popup_shape.clone();
         cx.list.push_fill_shape(
             rect,

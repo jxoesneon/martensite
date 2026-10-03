@@ -343,7 +343,7 @@ impl Widget for ScrollIndicator {
                 f64::from(r.max_x()),
                 f64::from(r.max_y()),
             ),
-            &martensite_core::shape::Shape::rounded(radius),
+            &martensite_core::shape::Shape::squircle(radius),
             color,
         );
     }

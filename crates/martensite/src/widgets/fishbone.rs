@@ -312,7 +312,7 @@ impl Widget for Fishbone {
         );
         cx.list.push_fill_shape(
             hr,
-            &martensite_core::shape::Shape::rounded(6.0 * s),
+            &martensite_core::shape::Shape::squircle(6.0 * s),
             cx.color(TokenKey::AccentColor, EFFECT_BG),
         );
         crate::text_paint::paint_label_clipped(

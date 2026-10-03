@@ -665,7 +665,7 @@ impl Widget for MenuBar {
             let flagged = self.hovered == Some(i)
                 || (!self.is_open() && self.has_focus && self.focused == Some(i));
             let ink = if open {
-                let pill = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 4.0));
+                let pill = Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 4.0));
                 let fill = kurbo::Rect::new(
                     f64::from(r.min_x() + cx.pt(3.0)),
                     f64::from(r.min_y() + cx.pt(3.0)),
@@ -677,7 +677,7 @@ impl Widget for MenuBar {
                 cx.color(TokenKey::TextInverseColor, OPEN_INK)
             } else {
                 if flagged {
-                    let pill = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 4.0));
+                    let pill = Shape::squircle(cx.dim(TokenKey::BorderRadiusSmall, 4.0));
                     let fill = kurbo::Rect::new(
                         f64::from(r.min_x() + cx.pt(3.0)),
                         f64::from(r.min_y() + cx.pt(3.0)),

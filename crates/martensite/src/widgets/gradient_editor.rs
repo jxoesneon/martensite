@@ -439,7 +439,7 @@ impl Widget for GradientEditor {
         }
         cx.list.push_stroke_shape(
             f(bar),
-            &martensite_core::shape::Shape::rounded(cx.pt(3.0)),
+            &martensite_core::shape::Shape::squircle(cx.pt(3.0)),
             cx.pt(0.75),
             cx.color(TokenKey::BorderColor, EDGE),
         );

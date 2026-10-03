@@ -259,7 +259,7 @@ impl Widget for ColorPalette {
                 f64::from(b.min_x() + cell.max_x()),
                 f64::from(b.min_y() + cell.max_y()),
             );
-            let shape = martensite_core::shape::Shape::rounded(radius);
+            let shape = martensite_core::shape::Shape::squircle(radius);
             cx.list.push_fill_shape(r, &shape, *color);
             cx.list.push_stroke_shape(r, &shape, cx.pt(0.75), edge);
             if self.selected == Some(i) {

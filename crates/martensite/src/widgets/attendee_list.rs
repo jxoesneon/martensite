@@ -462,7 +462,7 @@ impl Widget for AttendeeList {
             ),
             cx.color(TokenKey::BackgroundColor, FACE),
         );
-        let shape = martensite_core::shape::Shape::rounded(6.0 * s);
+        let shape = martensite_core::shape::Shape::squircle(6.0 * s);
         for (i, a) in self.attendees.iter().enumerate() {
             let r = self.rows[i];
             let kr = kurbo::Rect::new(

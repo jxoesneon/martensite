@@ -403,7 +403,7 @@ impl Widget for ToolPalette {
                 f64::from(r.max_y()),
             )
         };
-        let shape = martensite_core::shape::Shape::rounded(RADIUS_PT * s);
+        let shape = martensite_core::shape::Shape::squircle(RADIUS_PT * s);
         let sel = self.current();
         for (i, rect) in self.rects.iter().enumerate() {
             let is_sel = sel == Some(i);
