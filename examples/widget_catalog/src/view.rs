@@ -11,12 +11,14 @@ use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect, Widget,
 };
 use martensite::reactive::Signal;
-use martensite::theme::tokens;
+use martensite::theme::{tokens, TokenKey};
 use martensite::widgets::button::Button;
 use martensite::widgets::dropdown::Dropdown;
+use martensite::widgets::flex::{CrossAxisAlignment, Flex};
 use martensite::widgets::list_view::ListView;
 use martensite::widgets::scrollview::ScrollView;
 use martensite::widgets::segmented::Segmented;
+use martensite::widgets::separator::Separator;
 use martensite::widgets::slider::Slider;
 use martensite::widgets::spinbox::SpinBox;
 use martensite::widgets::switch::Switch;
@@ -311,9 +313,23 @@ impl CatalogView {
         for spec in specs {
             let control: Box<dyn Widget> = match spec {
                 PropSpec::Header { label } => {
-                    // Section heading — a full-width muted label, no
-                    // paired control.
-                    rows.push(Box::new(Text::new(format!("— {label} —")).font_size(11.0)));
+                    // Section divider — small-caps muted label with a
+                    // trailing hairline (inspector-panel convention).
+                    let muted = tokens::default_dark()
+                        .color(TokenKey::TextMutedColor)
+                        .unwrap_or_else(|| martensite_theme::Oklab::from_srgb(0.55, 0.57, 0.62));
+                    rows.push(Box::new(
+                        Flex::row()
+                            .gap(8.0)
+                            .cross_axis_alignment(CrossAxisAlignment::Center)
+                            .child(
+                                Text::new(label.to_uppercase())
+                                    .font_size(10.0)
+                                    .letter_spacing(0.08)
+                                    .color(muted),
+                            )
+                            .child_flex(Separator::horizontal(), 1.0),
+                    ));
                     continue;
                 }
                 PropSpec::Bool { default, .. } => {

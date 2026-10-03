@@ -666,7 +666,6 @@ impl Widget for Flex {
             }
         }
 
-        eprintln!("FLEX layout dir={:?} bounds={:?}", cx.direction(), bounds);
         let children_main: f32 = self
             .child_sizes
             .iter()
