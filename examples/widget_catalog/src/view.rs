@@ -8,7 +8,8 @@ use std::collections::{HashMap, VecDeque};
 
 use glam::Vec2;
 use martensite::core::{
-    EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect, Widget,
+    EventContext, EventResponse, FontWeight, LayoutConstraints, LayoutContext, PaintContext, Rect,
+    Widget,
 };
 use martensite::reactive::Signal;
 use martensite::theme::{tokens, TokenKey};
@@ -24,26 +25,31 @@ use martensite::widgets::spinbox::SpinBox;
 use martensite::widgets::switch::Switch;
 use martensite::widgets::text::Text;
 use martensite::widgets::text_input::TextInput;
+use martensite_core::shape::Shape;
 
 use crate::dynamic_column::DynamicColumn;
 use crate::page::{Page, PropSpec, PropValue, PropValues};
 use crate::stage::{FramePreset, StageHost};
 
-const TOOLBAR_H: f32 = 46.0;
+const TOOLBAR_H: f32 = 48.0;
 const TOOLBAR_ITEM_H: f32 = 34.0;
-const RAIL_W: f32 = 236.0;
-const PROPS_W: f32 = 340.0;
-const BOTTOM_H: f32 = 196.0;
-const PAD: f32 = 8.0;
+const RAIL_W: f32 = 252.0;
+const PROPS_W: f32 = 344.0;
+const BOTTOM_H: f32 = 200.0;
+const PAD: f32 = 10.0;
+/// Panel card corner radius (squircles).
+const CARD_R: f32 = 10.0;
+/// Inset between a card's hairline and its content.
+const CARD_PAD: f32 = 10.0;
+/// Titled-panel header strip height (title + hairline).
+const HEAD_H: f32 = 28.0;
 const LOG_CAP: usize = 240;
-/// Toolbar left side: the search field's fixed width.
-const SEARCH_W: f32 = 220.0;
 /// Props panel label column width.
 const PROP_LABEL_W: f32 = 110.0;
 /// Prop row height.
 const PROP_ROW_H: f32 = 34.0;
 /// Number of internal children.
-const N_CHILDREN: usize = 7;
+const N_CHILDREN: usize = 6;
 /// Tool-cluster child indices — the right-aligned toolbar group.
 const TOOL_THEME: usize = 0;
 const TOOL_DIR: usize = 1;
@@ -137,16 +143,18 @@ pub struct CatalogView {
     last_sig_zoom: f64,
 
     // ---- children (fixed order for the child_* protocol) ----
-    /// Left cluster — the rail filter field.
-    nav_cluster: Cluster, // 0
-    /// Right-aligned cluster — the stage tools (theme, direction,
-    /// locale, frame, zoom controls).
-    tools_cluster: Cluster, // 1
-    rail: ListView,           // 2
-    stage: StageHost,         // 3
-    props_scroll: ScrollView, // 4
-    info: ScrollView,         // 5
-    log_list: ListView,       // 6
+    /// Toolbar row — brand block left, stage tools right-aligned.
+    toolbar_row: Flex, // 0
+    /// Nav card — search field over the widget rail.
+    rail_card: PanelCard, // 1
+    /// Canvas card — widget breadcrumb over the [`StageHost`].
+    canvas_card: PanelCard, // 2
+    /// Inspector card — "Properties" header over the prop rows.
+    props_card: PanelCard, // 3
+    /// Reference card — metadata + live snippet.
+    info_card: PanelCard, // 4
+    /// Event-log card.
+    log_card: PanelCard, // 5
 }
 
 impl CatalogView {
@@ -178,7 +186,24 @@ impl CatalogView {
             .icon_only(true);
         let reset_view = Button::new("Reset").tooltip("Reset zoom and pan");
 
-        let nav_cluster = Cluster::new("NavGroup", vec![Box::new(search)], false);
+        let rail_col = Flex::column()
+            .gap(6.0)
+            .child(search)
+            .child_flex(ListView::new().label("Widget rail"), 1.0);
+        let brand = Flex::row()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(
+                Text::new("MARTENSITE")
+                    .font_size(10.0)
+                    .letter_spacing(0.16)
+                    .color(muted_text()),
+            )
+            .child(
+                Text::new("Widget Catalog")
+                    .font_size(13.0)
+                    .font_weight(FontWeight::SEMIBOLD),
+            );
         let tools_cluster = Cluster::new(
             "ToolsGroup",
             vec![
@@ -217,17 +242,29 @@ impl CatalogView {
             last_sig_search: String::new(),
             last_sig_prop: String::new(),
             last_sig_zoom: 1.0,
-            nav_cluster,
-            tools_cluster,
-            rail: ListView::new().label("Widget rail"),
-            stage,
-            props_scroll: ScrollView::new(DynamicColumn::new().gap(6.0)),
+            toolbar_row: Flex::row()
+                .gap(12.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .child(brand)
+                .child_flex(tools_cluster, 1.0),
+            rail_card: PanelCard::untitled(rail_col),
+            canvas_card: PanelCard::titled(
+                &format!("{} / {}", pages[0].meta().family, pages[0].meta().name),
+                stage,
+            ),
+            props_card: PanelCard::titled(
+                "Properties",
+                ScrollView::new(DynamicColumn::new().gap(6.0)),
+            ),
             // `@prose` declares the reference pane's text as document
             // payload — NUREG-0700's packing cap targets at-a-glance
             // readouts, not manuals/snippets. The ScrollView keeps
             // overflow inside the pane (page bodies outgrow 196pt).
-            info: ScrollView::new(DynamicColumn::new().gap(3.0).named("InfoPane@prose")),
-            log_list: ListView::new().label("Event log"),
+            info_card: PanelCard::titled(
+                "Reference",
+                ScrollView::new(DynamicColumn::new().gap(3.0).named("InfoPane@prose")),
+            ),
+            log_card: PanelCard::titled("Event Log", ListView::new().label("Event log")),
             pages,
         };
         view.rebuild_rail();
@@ -248,8 +285,8 @@ impl CatalogView {
             self.log.pop_front();
         }
         self.log.push_back(line);
-        self.log_list
-            .set_items(self.log.iter().cloned().collect::<Vec<_>>());
+        let items: Vec<String> = self.log.iter().cloned().collect();
+        self.log_mut().set_items(items);
     }
 
     /// Rebuilds the rail rows for the current query — family header
@@ -274,26 +311,89 @@ impl CatalogView {
             items.push(meta.name.to_string());
             self.rail_map.push(Some(i));
         }
-        self.rail.set_items(items);
-        self.rail.set_headers(headers);
+        self.rail_list_mut().set_items(items);
+        self.rail_list_mut().set_headers(headers);
         // Keep the rail highlight on the staged page.
         if let Some(row) = self.rail_map.iter().position(|m| *m == Some(self.sel)) {
-            self.rail.set_selected(row);
+            self.rail_list_mut().set_selected(row);
         }
     }
 
-    /// The search field (nav cluster's only child).
+    /// The nav column (search over rail) inside the rail card.
+    fn rail_col_mut(&mut self) -> &mut Flex {
+        self.rail_card
+            .content_mut()
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<Flex>())
+            .expect("rail card content is the nav column")
+    }
+
+    /// The rail's `ListView` (nav column child 1).
+    fn rail_list_mut(&mut self) -> &mut ListView {
+        self.rail_col_mut()
+            .child_mut(1)
+            .and_then(Widget::as_any_mut)
+            .and_then(|a| a.downcast_mut::<ListView>())
+            .expect("rail column child 1 is the ListView")
+    }
+
+    /// The search field (nav column child 0).
     fn search_mut(&mut self) -> &mut TextInput {
-        self.nav_cluster
+        self.rail_col_mut()
             .child_mut(0)
             .and_then(Widget::as_any_mut)
             .and_then(|a| a.downcast_mut::<TextInput>())
-            .expect("nav cluster child 0 is the search TextInput")
+            .expect("rail column child 0 is the search TextInput")
+    }
+
+    /// The staged widget host inside the canvas card.
+    fn stage_mut(&mut self) -> &mut StageHost {
+        self.canvas_card
+            .content_mut()
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<StageHost>())
+            .expect("canvas card content is the StageHost")
+    }
+
+    /// The props scroll view inside the inspector card.
+    fn props_scroll_mut(&mut self) -> &mut ScrollView {
+        self.props_card
+            .content_mut()
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<ScrollView>())
+            .expect("inspector card content is the props ScrollView")
+    }
+
+    /// The reference scroll view inside the info card.
+    fn info_scroll_mut(&mut self) -> &mut ScrollView {
+        self.info_card
+            .content_mut()
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<ScrollView>())
+            .expect("info card content is the reference ScrollView")
+    }
+
+    /// The event-log list inside its card.
+    fn log_mut(&mut self) -> &mut ListView {
+        self.log_card
+            .content_mut()
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<ListView>())
+            .expect("log card content is the event ListView")
+    }
+
+    /// The tools cluster (toolbar row child 1).
+    fn tools_mut(&mut self) -> &mut Cluster {
+        self.toolbar_row
+            .child_mut(1)
+            .and_then(Widget::as_any_mut)
+            .and_then(|a| a.downcast_mut::<Cluster>())
+            .expect("toolbar row child 1 is the tools cluster")
     }
 
     /// A stage tool by [`TOOL_*`] index.
     fn tool_mut<T: 'static>(&mut self, i: usize) -> &mut T {
-        self.tools_cluster
+        self.tools_mut()
             .child_mut(i)
             .and_then(Widget::as_any_mut)
             .and_then(|a| a.downcast_mut::<T>())
@@ -302,7 +402,7 @@ impl CatalogView {
 
     /// The props-panel host (the column inside the scroll view).
     fn props_host_mut(&mut self) -> Option<&mut DynamicColumn> {
-        self.props_scroll
+        self.props_scroll_mut()
             .child_mut(0)?
             .as_any_mut()?
             .downcast_mut::<DynamicColumn>()
@@ -318,9 +418,7 @@ impl CatalogView {
                 PropSpec::Header { label } => {
                     // Section divider — small-caps muted label with a
                     // trailing hairline (inspector-panel convention).
-                    let muted = tokens::default_dark()
-                        .color(TokenKey::TextMutedColor)
-                        .unwrap_or_else(|| martensite_theme::Oklab::from_srgb(0.55, 0.57, 0.62));
+                    let muted = muted_text();
                     rows.push(Box::new(
                         Flex::row()
                             .gap(8.0)
@@ -457,7 +555,7 @@ impl CatalogView {
             ));
         }
         if let Some(col) = self
-            .info
+            .info_scroll_mut()
             .child_mut(0)
             .and_then(|c| c.as_any_mut())
             .and_then(|a| a.downcast_mut::<DynamicColumn>())
@@ -550,14 +648,14 @@ impl CatalogView {
             if let Some(&f) = FramePreset::ALL.get(sig_frame) {
                 if f != self.frame {
                     self.frame = f;
-                    self.stage.set_frame(f);
+                    self.stage_mut().set_frame(f);
                 }
             }
         }
         let sig_zoom = self.sig_zoom.get();
         if sig_zoom != self.last_sig_zoom {
             self.last_sig_zoom = sig_zoom;
-            self.stage.set_zoom(sig_zoom as f32);
+            self.stage_mut().set_zoom(sig_zoom as f32);
         }
         let sig_prop = self.sig_prop.get();
         if !sig_prop.is_empty() && sig_prop != self.last_sig_prop {
@@ -574,12 +672,12 @@ impl CatalogView {
             self.last_sig_search = v;
             self.rebuild_rail();
         }
-        if let Some(i) = self.rail.take_activated() {
+        if let Some(i) = self.rail_list_mut().take_activated() {
             if let Some(Some(page)) = self.rail_map.get(i).copied() {
                 self.select(page);
             }
         }
-        if let Some(row) = self.rail.selected() {
+        if let Some(row) = self.rail_list_mut().selected() {
             if let Some(Some(page)) = self.rail_map.get(row).copied() {
                 if page != self.sel {
                     self.select(page);
@@ -609,17 +707,19 @@ impl CatalogView {
         if let Some(&f) = FramePreset::ALL.get(frame_sel) {
             if f != self.frame {
                 self.frame = f;
-                self.stage.set_frame(f);
+                self.stage_mut().set_frame(f);
             }
         }
         if self.tool_mut::<Button>(TOOL_ZOOM_OUT).take_activated() {
-            self.stage.set_zoom(self.stage.zoom() * 0.8);
+            let z = self.stage_mut().zoom() * 0.8;
+            self.stage_mut().set_zoom(z);
         }
         if self.tool_mut::<Button>(TOOL_ZOOM_IN).take_activated() {
-            self.stage.set_zoom(self.stage.zoom() * 1.25);
+            let z = self.stage_mut().zoom() * 1.25;
+            self.stage_mut().set_zoom(z);
         }
         if self.tool_mut::<Button>(TOOL_RESET).take_activated() {
-            self.stage.reset_view();
+            self.stage_mut().reset_view();
         }
 
         // ---- prop controls → prop values ----
@@ -647,7 +747,8 @@ impl CatalogView {
         if self.stage_dirty {
             self.stage_dirty = false;
             let props = self.prop_values[&self.sel].clone();
-            self.stage.set_child(self.pages[self.sel].build(&props));
+            let w = self.pages[self.sel].build(&props);
+            self.stage_mut().set_child(w);
             self.rebuild_info();
         }
 
@@ -655,7 +756,15 @@ impl CatalogView {
         let page = &self.pages[self.sel];
         let mut lines = Vec::new();
         let mut state = Vec::new();
-        if let Some(staged) = self.stage.staged_mut() {
+        // Field-level borrow keeps `page` alive — `stage_mut` would
+        // take `&mut self` over the whole view.
+        if let Some(staged) = self
+            .canvas_card
+            .content_mut()
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<StageHost>())
+            .and_then(|s| s.staged_mut())
+        {
             page.poll_events(staged, &mut lines);
             state = page.describe_state(staged);
         }
@@ -695,12 +804,16 @@ impl CatalogView {
         self.sig_sel.set(page);
         self.last_sig[0] = page;
         let props = self.prop_values[&page].clone();
-        self.stage.set_child(self.pages[page].build(&props));
+        let w = self.pages[page].build(&props);
+        self.stage_mut().set_child(w);
+        let meta = self.pages[page].meta();
+        self.canvas_card
+            .set_title(&format!("{} / {}", meta.family, meta.name));
         self.rebuild_props_panel();
         self.rebuild_info();
         if let Some(row) = self.rail_map.iter().position(|m| *m == Some(page)) {
-            self.rail.set_selected(row);
-            self.rail.scroll_row_into_view(row);
+            self.rail_list_mut().set_selected(row);
+            self.rail_list_mut().scroll_row_into_view(row);
         }
         self.log_line(format!("page → {}", self.pages[page].meta().name));
     }
@@ -740,7 +853,7 @@ impl CatalogView {
     /// Sets the stage theme override.
     fn set_stage_theme(&mut self, theme: StageTheme) {
         self.stage_theme = theme;
-        self.stage.set_theme(match theme {
+        self.stage_mut().set_theme(match theme {
             StageTheme::Follow => None,
             StageTheme::Dark => Some(tokens::default_dark()),
             StageTheme::Light => Some(tokens::default_light()),
@@ -758,7 +871,7 @@ impl CatalogView {
     /// Sets the stage direction override.
     fn set_rtl(&mut self, rtl: bool) {
         self.rtl = rtl;
-        self.stage
+        self.stage_mut()
             .set_direction(rtl.then_some(martensite::core::LayoutDirection::Rtl));
         self.sig_rtl.set(rtl);
         self.last_sig[3] = usize::from(rtl);
@@ -769,7 +882,7 @@ impl CatalogView {
     /// Sets the stage locale override.
     fn set_locale(&mut self, idx: Option<usize>) {
         self.locale_idx = idx;
-        self.stage
+        self.stage_mut()
             .set_locale(idx.map(|i| martensite::core::Locale::new(LOCALE_TAGS[i])));
         self.sig_locale.set(idx.unwrap_or(usize::MAX));
         self.last_sig[2] = self.sig_locale.get();
@@ -777,21 +890,201 @@ impl CatalogView {
         self.tool_mut::<Dropdown>(TOOL_LOCALE).commit(sel);
     }
 
-    /// Toolbar child rects — the nav cluster pinned left, the tools
-    /// cluster filling the rest and right-aligning its own controls.
-    fn toolbar_child_rects(&self, strip: Rect, scale: f32) -> [Rect; 2] {
-        let item_h = TOOLBAR_ITEM_H * scale;
+    /// Card rects for the five panels — shared by `layout` so content
+    /// and [`PanelCard`] chrome can never disagree.
+    fn panel_rects(b: Rect, scale: f32) -> (Rect, Rect, Rect, Rect, Rect) {
         let pad = PAD * scale;
-        let item_y = strip.min_y() + (strip.height() - item_h) * 0.5;
-        let nav = Rect::new(strip.min_x() + pad, item_y, SEARCH_W * scale, item_h);
-        let tools_x = nav.max_x() + pad;
-        let tools = Rect::new(
-            tools_x,
-            item_y,
-            (strip.max_x() - pad - tools_x).max(0.0),
-            item_h,
+        let th = TOOLBAR_H * scale;
+        let body_y = b.min_y() + th + pad;
+        let body_h = (b.height() - th - pad - pad).max(0.0);
+        let rail = Rect::new(b.min_x() + pad, body_y, RAIL_W * scale, body_h);
+        let props = Rect::new(
+            b.max_x() - pad - PROPS_W * scale,
+            body_y,
+            PROPS_W * scale,
+            body_h,
         );
-        [nav, tools]
+        let cx0 = rail.max_x() + pad;
+        let cw = (props.min_x() - pad - cx0).max(0.0);
+        let canvas = Rect::new(cx0, body_y, cw, (body_h - BOTTOM_H * scale - pad).max(0.0));
+        let dock_y = body_y + canvas.height() + pad;
+        let info = Rect::new(cx0, dock_y, (cw - pad) * 0.5, BOTTOM_H * scale);
+        let log = Rect::new(
+            info.max_x() + pad,
+            dock_y,
+            (cw - pad) * 0.5,
+            BOTTOM_H * scale,
+        );
+        (rail, canvas, props, info, log)
+    }
+}
+
+/// Muted label color for catalog chrome (small-caps headers, brand).
+/// The catalog shell is dark-first; panel content still follows the
+/// ambient theme.
+fn muted_text() -> martensite_theme::Oklab {
+    tokens::default_dark()
+        .color(TokenKey::TextMutedColor)
+        .unwrap_or_else(|| martensite_theme::Oklab::from_srgb(0.55, 0.57, 0.62))
+}
+
+/// A catalog panel — squircle `SurfaceColor` card with a 1pt
+/// `BorderColor` hairline, an optional header strip (small-caps muted
+/// title with a trailing `Separator` rule — the same labeled-rule
+/// language as the props panel's section dividers), and padded content.
+/// Children: `[header]` when titled, then `content`.
+struct PanelCard {
+    header: Option<Flex>,
+    content: Box<dyn Widget>,
+    header_b: Rect,
+    content_b: Rect,
+}
+
+impl PanelCard {
+    fn untitled(content: impl Widget + 'static) -> Self {
+        Self {
+            header: None,
+            content: Box::new(content),
+            header_b: Rect::default(),
+            content_b: Rect::default(),
+        }
+    }
+
+    fn titled(title: &str, content: impl Widget + 'static) -> Self {
+        let header = Flex::row()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(
+                Text::new(title.to_uppercase())
+                    .font_size(10.0)
+                    .letter_spacing(0.08)
+                    .color(muted_text()),
+            )
+            .child_flex(Separator::horizontal(), 1.0);
+        Self {
+            header: Some(header),
+            content: Box::new(content),
+            header_b: Rect::default(),
+            content_b: Rect::default(),
+        }
+    }
+
+    /// Retitles the header strip (canvas breadcrumb on page switch).
+    fn set_title(&mut self, title: &str) {
+        if let Some(text) = self
+            .header
+            .as_mut()
+            .and_then(|h| h.child_mut(0))
+            .and_then(|c| c.as_any_mut())
+            .and_then(|a| a.downcast_mut::<Text>())
+        {
+            text.set_content(title.to_uppercase());
+        }
+    }
+
+    /// The panel's content widget.
+    fn content_mut(&mut self) -> &mut dyn Widget {
+        self.content.as_mut()
+    }
+}
+
+impl Widget for PanelCard {
+    fn measure(&mut self, cx: &mut LayoutContext, c: LayoutConstraints) -> Vec2 {
+        let chrome = cx.pt(CARD_PAD * 2.0 + if self.header.is_some() { HEAD_H } else { 0.0 });
+        let inner = LayoutConstraints {
+            min_size: Vec2::ZERO,
+            max_size: Vec2::new(
+                (c.max_size.x - cx.pt(CARD_PAD * 2.0)).max(0.0),
+                (c.max_size.y - chrome).max(0.0),
+            ),
+        };
+        if let Some(h) = self.header.as_mut() {
+            h.measure(cx, inner);
+        }
+        let cs = self.content.measure(cx, inner);
+        Vec2::new(
+            (cs.x + cx.pt(CARD_PAD * 2.0)).min(c.max_size.x),
+            (cs.y + chrome).min(c.max_size.y),
+        )
+    }
+
+    fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
+        let pad = cx.pt(CARD_PAD);
+        let head = cx.pt(HEAD_H);
+        let titled = self.header.is_some();
+        let content_y = bounds.min_y() + if titled { head } else { pad };
+        self.content_b = Rect::new(
+            bounds.min_x() + pad,
+            content_y,
+            (bounds.width() - pad * 2.0).max(0.0),
+            (bounds.max_y() - pad - content_y).max(0.0),
+        );
+        if let Some(h) = self.header.as_mut() {
+            self.header_b = Rect::new(
+                bounds.min_x() + pad,
+                bounds.min_y() + pad * 0.5,
+                (bounds.width() - pad * 2.0).max(0.0),
+                head - pad * 0.5,
+            );
+            cx.layout_child(h, self.header_b);
+        }
+        cx.layout_child(self.content.as_mut(), self.content_b);
+    }
+
+    fn paint(&self, cx: &mut PaintContext) {
+        let surface = cx.color(TokenKey::SurfaceColor, [34, 37, 45, 255]);
+        let line = cx.color(TokenKey::BorderColor, [64, 68, 78, 255]);
+        let b = kurbo::Rect::new(
+            f64::from(cx.bounds.min_x()),
+            f64::from(cx.bounds.min_y()),
+            f64::from(cx.bounds.max_x()),
+            f64::from(cx.bounds.max_y()),
+        );
+        let shape = Shape::squircle(cx.pt(CARD_R));
+        cx.list.push_fill_shape(b, &shape, surface);
+        cx.list.push_stroke_shape(b, &shape, cx.pt(1.0), line);
+    }
+
+    fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        self.forward_event_to_children(cx)
+    }
+
+    fn child_count(&self) -> usize {
+        if self.header.is_some() {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn child(&self, i: usize) -> Option<&dyn Widget> {
+        match (i, self.header.as_ref()) {
+            (0, Some(h)) => Some(h),
+            (1, Some(_)) => Some(self.content.as_ref()),
+            (0, None) => Some(self.content.as_ref()),
+            _ => None,
+        }
+    }
+
+    fn child_mut(&mut self, i: usize) -> Option<&mut dyn Widget> {
+        match (i, self.header.as_mut()) {
+            (0, Some(h)) => Some(h),
+            (1, Some(_)) => Some(self.content.as_mut()),
+            (0, None) => Some(self.content.as_mut()),
+            _ => None,
+        }
+    }
+
+    fn child_bounds(&self, i: usize) -> Option<Rect> {
+        match (i, self.header.is_some()) {
+            (0, true) => Some(self.header_b),
+            (1, true) | (0, false) => Some(self.content_b),
+            _ => None,
+        }
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "PanelCard"
     }
 }
 
@@ -983,6 +1276,10 @@ impl Widget for Cluster {
         self.rects.get(i).copied()
     }
 
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn debug_name(&self) -> &'static str {
         self.name
     }
@@ -994,68 +1291,33 @@ impl Widget for CatalogView {
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
-        let w = bounds.width();
-        let h = bounds.height();
-        let x0 = bounds.min_x();
-        let y0 = bounds.min_y();
-
-        // Toolbar strip: nav cluster left, tools cluster right-aligned.
-        // All chrome dimensions are logical pt — `cx.pt` carries them
-        // to device px so HiDPI scale doesn't shrink the bar.
         let th = cx.pt(TOOLBAR_H);
         let pad = cx.pt(PAD);
-        let strip = Rect::new(x0, y0, w, th);
-        let tool_rects = self.toolbar_child_rects(strip, cx.scale);
-        for (i, r) in tool_rects.iter().enumerate() {
-            self.last_child_bounds[i] = *r;
-            cx.layout_child(self.child_mut(i).unwrap(), *r);
-        }
+        let item_h = cx.pt(TOOLBAR_ITEM_H);
+        // Toolbar strip: brand block left, tools cluster right-aligned
+        // (the cluster packs its own controls at measured widths).
+        // All chrome dimensions are logical pt — `cx.pt` carries them
+        // to device px so HiDPI scale doesn't shrink the bar.
+        let tb = Rect::new(
+            bounds.min_x() + pad,
+            bounds.min_y() + (th - item_h) * 0.5,
+            (bounds.width() - pad * 2.0).max(0.0),
+            item_h,
+        );
+        self.last_child_bounds[0] = tb;
+        self.toolbar_row.measure(
+            cx,
+            LayoutConstraints {
+                min_size: Vec2::ZERO,
+                max_size: Vec2::new(tb.width(), tb.height()),
+            },
+        );
+        cx.layout_child(&mut self.toolbar_row, tb);
 
-        // Columns below the toolbar.
-        let body_y = y0 + th + pad;
-        let body_h = (h - th - pad - pad).max(0.0);
-        let rail = Rect::new(x0 + pad, body_y, cx.pt(RAIL_W), body_h);
-        let props = Rect::new(
-            x0 + w - pad - cx.pt(PROPS_W),
-            body_y,
-            cx.pt(PROPS_W),
-            body_h,
-        );
-        let center_x = rail.min_x() + rail.width() + pad;
-        let center_w = (props.min_x() - pad - center_x).max(0.0);
-        let stage_rect = Rect::new(
-            center_x,
-            body_y,
-            center_w,
-            (body_h - cx.pt(BOTTOM_H) - pad).max(0.0),
-        );
-        let bottom = Rect::new(
-            center_x,
-            body_y + stage_rect.height() + pad,
-            center_w,
-            cx.pt(BOTTOM_H),
-        );
-        let info_rect = Rect::new(
-            bottom.min_x(),
-            bottom.min_y(),
-            (center_w - pad) * 0.5,
-            bottom.height(),
-        );
-        let log_rect = Rect::new(
-            info_rect.min_x() + info_rect.width() + pad,
-            bottom.min_y(),
-            (center_w - pad) * 0.5,
-            bottom.height(),
-        );
-
-        let big: [(usize, Rect); 5] = [
-            (2, rail),
-            (3, stage_rect),
-            (4, props),
-            (5, info_rect),
-            (6, log_rect),
-        ];
-        for (i, r) in big {
+        // Panel cards below the toolbar.
+        let (rail, canvas, props, info, log) = Self::panel_rects(bounds, cx.scale);
+        for (i, r) in [rail, canvas, props, info, log].into_iter().enumerate() {
+            let i = i + 1;
             self.last_child_bounds[i] = r;
             let c = LayoutConstraints {
                 min_size: Vec2::ZERO,
@@ -1068,16 +1330,36 @@ impl Widget for CatalogView {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        // Toolbar + bottom-panel backplates.
-        let bg = cx.color(martensite::theme::TokenKey::SurfaceColor, [30, 33, 40, 255]);
+        // Window canvas — the deepest step of the surface ladder; the
+        // cards lift off it by one token.
         let b = cx.bounds;
-        let toolbar = kurbo::Rect::new(
+        let full = kurbo::Rect::new(
             f64::from(b.min_x()),
             f64::from(b.min_y()),
             f64::from(b.max_x()),
-            f64::from(b.min_y() + cx.pt(TOOLBAR_H)),
+            f64::from(b.max_y()),
         );
-        cx.list.push_fill_rect(toolbar, bg);
+        let bg = cx.color(TokenKey::BackgroundColor, [21, 23, 28, 255]);
+        cx.list.push_fill_rect(full, bg);
+
+        // Toolbar — raised strip with a divider hairline at its edge.
+        let raised = cx.color(TokenKey::RaisedColor, [30, 33, 40, 255]);
+        let line = cx.color(TokenKey::DividerColor, [52, 55, 64, 255]);
+        let th = cx.pt(TOOLBAR_H);
+        let strip = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.min_y() + th),
+        );
+        cx.list.push_fill_rect(strip, raised);
+        let hair = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y() + th - cx.pt(1.0)),
+            f64::from(b.max_x()),
+            f64::from(b.min_y() + th),
+        );
+        cx.list.push_fill_rect(hair, line);
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
@@ -1090,25 +1372,23 @@ impl Widget for CatalogView {
 
     fn child(&self, i: usize) -> Option<&dyn Widget> {
         Some(match i {
-            0 => &self.nav_cluster,
-            1 => &self.tools_cluster,
-            2 => &self.rail,
-            3 => &self.stage,
-            4 => &self.props_scroll,
-            5 => &self.info,
-            _ => &self.log_list,
+            0 => &self.toolbar_row,
+            1 => &self.rail_card,
+            2 => &self.canvas_card,
+            3 => &self.props_card,
+            4 => &self.info_card,
+            _ => &self.log_card,
         })
     }
 
     fn child_mut(&mut self, i: usize) -> Option<&mut dyn Widget> {
         Some(match i {
-            0 => &mut self.nav_cluster,
-            1 => &mut self.tools_cluster,
-            2 => &mut self.rail,
-            3 => &mut self.stage,
-            4 => &mut self.props_scroll,
-            5 => &mut self.info,
-            _ => &mut self.log_list,
+            0 => &mut self.toolbar_row,
+            1 => &mut self.rail_card,
+            2 => &mut self.canvas_card,
+            3 => &mut self.props_card,
+            4 => &mut self.info_card,
+            _ => &mut self.log_card,
         })
     }
 

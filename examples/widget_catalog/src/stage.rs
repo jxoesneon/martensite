@@ -305,6 +305,10 @@ impl Widget for StageHost {
     fn clips_children(&self) -> bool {
         true
     }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 #[cfg(test)]
