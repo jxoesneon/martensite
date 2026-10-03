@@ -58,6 +58,8 @@ pub struct ResizeHandle {
     drag_start: Option<Vec2>,
     /// Whether the pointer is hovering.
     hovered: bool,
+    /// Keyboard focus — paints the WCAG 2.4.13 accent ring.
+    focused: bool,
     /// Accumulated px delta since the last `take_moved` drain.
     pending: f32,
     /// Double-click reset seam.
@@ -114,6 +116,7 @@ impl ResizeHandle {
             scale: 1.0,
             drag_start: None,
             hovered: false,
+            focused: false,
             pending: 0.0,
             reset: false,
             enabled: true,
@@ -317,6 +320,15 @@ impl Widget for ResizeHandle {
                 }
                 EventResponse::Ignored
             }
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                self.hovered = false;
+                EventResponse::RequestRepaint
+            }
             WidgetEvent::PointerLeave => {
                 let had_hover = std::mem::take(&mut self.hovered);
                 if had_hover {
@@ -341,6 +353,10 @@ impl Widget for ResizeHandle {
             }
             _ => EventResponse::Ignored,
         }
+    }
+
+    fn focused(&self) -> bool {
+        self.focused
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -395,6 +411,9 @@ impl Widget for ResizeHandle {
                 grip,
             );
         }
+        if self.focused && self.enabled {
+            crate::widgets::paint_focus_ring(cx, b, 2.0, 2.0);
+        }
     }
 }
 
@@ -427,6 +446,35 @@ mod tests {
         })
     }
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+    fn stroke_count_paint(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn drag_reports_axis_delta() {
         let mut h = ResizeHandle::horizontal();
@@ -549,6 +597,34 @@ mod tests {
                 }
             ),
             EventResponse::Ignored
+        );
+    }
+
+    #[test]
+    fn resize_handle_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = ResizeHandle::new(SplitOrientation::Horizontal);
+        let unfocused = stroke_count_paint(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_paint(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_paint(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
         );
     }
 }

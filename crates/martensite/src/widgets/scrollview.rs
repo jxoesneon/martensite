@@ -279,6 +279,9 @@ pub struct ScrollView {
     /// Display scale from `layout` — bar width, min thumb, scroll step
     /// are logical pt.
     scale: f32,
+    /// Keyboard focus — paints the WCAG 2.4.13 ring over the content
+    /// via `paint_overlay` so opaque children cannot cover it.
+    focused: bool,
 }
 
 /// Which axis a [`ScrollView`] measures its content unbounded on —
@@ -323,6 +326,7 @@ impl ScrollView {
             thumb_drag: None,
             axis: ScrollAxis::Vertical,
             scale: 1.0,
+            focused: false,
         }
     }
 
@@ -353,7 +357,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let v = ScrollView::new(Text::new("x")).enabled(false);
+    /// let v = ScrollView::new(martensite_core::DummyWidget).enabled(false);
     /// assert!(!v.enabled);
     /// ```
     #[inline]
@@ -370,7 +374,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let v = ScrollView::new(Text::new("x"));
+    /// let v = ScrollView::new(martensite_core::DummyWidget);
     /// assert_eq!(v.scroll_offset(), glam::Vec2::ZERO);
     /// ```
     #[inline]
@@ -385,7 +389,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let v = ScrollView::new(Text::new("x"));
+    /// let v = ScrollView::new(martensite_core::DummyWidget);
     /// assert_eq!(v.content_size(), glam::Vec2::ZERO);
     /// ```
     #[inline]
@@ -400,7 +404,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let v = ScrollView::new(Text::new("x"));
+    /// let v = ScrollView::new(martensite_core::DummyWidget);
     /// assert_eq!(v.viewport().width(), 0.0);
     /// ```
     #[inline]
@@ -415,7 +419,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let v = ScrollView::new(Text::new("x"));
+    /// let v = ScrollView::new(martensite_core::DummyWidget);
     /// assert_eq!(v.max_offset(), glam::Vec2::ZERO);
     /// ```
     pub fn max_offset(&self) -> Vec2 {
@@ -432,7 +436,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let mut v = ScrollView::new(Text::new("x"));
+    /// let mut v = ScrollView::new(martensite_core::DummyWidget);
     /// v.set_scroll_offset(glam::Vec2::new(10.0, -5.0));
     /// assert_eq!(v.scroll_offset().y, 0.0); // clamped
     /// ```
@@ -452,7 +456,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let mut v = ScrollView::new(Text::new("x"));
+    /// let mut v = ScrollView::new(martensite_core::DummyWidget);
     /// let applied = v.scroll_by(glam::Vec2::new(0.0, 10.0));
     /// assert_eq!(applied, glam::Vec2::ZERO); // nothing to scroll
     /// ```
@@ -471,7 +475,7 @@ impl ScrollView {
     /// use martensite::widgets::{ScrollView, Text};
     /// use martensite_core::Rect;
     ///
-    /// let mut v = ScrollView::new(Text::new("x"));
+    /// let mut v = ScrollView::new(martensite_core::DummyWidget);
     /// v.scroll_rect_into_view(Rect::new(0.0, 0.0, 10.0, 10.0));
     /// ```
     pub fn scroll_rect_into_view(&mut self, rect: Rect) {
@@ -542,7 +546,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let mut v = ScrollView::new(Text::new("x"));
+    /// let mut v = ScrollView::new(martensite_core::DummyWidget);
     /// // 40px of content prepended above the viewport → shift down by 40.
     /// v.adjust_for_prepended(glam::Vec2::new(0.0, 40.0));
     /// ```
@@ -560,7 +564,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let v = ScrollView::new(Text::new("x"));
+    /// let v = ScrollView::new(martensite_core::DummyWidget);
     /// assert!(v.is_settled());
     /// ```
     #[inline]
@@ -576,7 +580,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let mut v = ScrollView::new(Text::new("x"));
+    /// let mut v = ScrollView::new(martensite_core::DummyWidget);
     /// assert!(!v.update(0.016));
     /// ```
     pub fn update(&mut self, dt: f32) -> bool {
@@ -606,7 +610,7 @@ impl ScrollView {
     /// ```
     /// use martensite::widgets::{ScrollView, Text};
     ///
-    /// let mut v = ScrollView::new(Text::new("x"));
+    /// let mut v = ScrollView::new(martensite_core::DummyWidget);
     /// v.poll_pending();
     /// ```
     pub fn poll_pending(&mut self) {
@@ -1166,7 +1170,25 @@ impl Widget for ScrollView {
                 SemanticAction::Focus => EventResponse::CaptureFocus,
                 _ => EventResponse::Ignored,
             },
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                EventResponse::RequestRepaint
+            }
             _ => EventResponse::Ignored,
+        }
+    }
+
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if self.focused && self.enabled {
+            crate::widgets::paint_focus_ring(cx, cx.bounds, 2.0, 2.0);
         }
     }
 
@@ -1276,6 +1298,36 @@ mod tests {
         v.event(&mut cx)
     }
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+
+    fn stroke_count_overlay(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint_overlay(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn wheel_scrolls_and_clamps() {
         let mut v = make_view(Vec2::new(80.0, 400.0), Vec2::new(100.0, 100.0));
@@ -1530,5 +1582,33 @@ mod tests {
         assert_eq!(bar_node.role(), accesskit::Role::ScrollBar);
         assert_eq!(bar_node.numeric_value(), Some(100.0));
         assert_eq!(bar_node.max_numeric_value(), Some(300.0));
+    }
+
+    #[test]
+    fn scrollview_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = ScrollView::new(martensite_core::DummyWidget);
+        let unfocused = stroke_count_overlay(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_overlay(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_overlay(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
     }
 }

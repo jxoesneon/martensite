@@ -67,6 +67,10 @@ pub struct ContextMenu {
     last_pointer: Option<Vec2>,
     /// Shared shaped-text painter — propagates into the popup.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Keyboard focus — the wrapper carries it for the menu's
+    /// keyboard contract; the WCAG 2.4.13 ring marks the wrapped
+    /// bounds via `paint_overlay`.
+    focused: bool,
 }
 
 impl ContextMenu {
@@ -90,6 +94,7 @@ impl ContextMenu {
             cached_bounds: Rect::default(),
             last_pointer: None,
             text_painter: None,
+            focused: false,
         }
     }
 
@@ -336,6 +341,14 @@ impl Widget for ContextMenu {
             WidgetEvent::SemanticAction(SemanticAction::Focus) => {
                 return EventResponse::CaptureFocus;
             }
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                return EventResponse::RequestRepaint;
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                return EventResponse::RequestRepaint;
+            }
             _ => {}
         }
         // Everything else belongs to the wrapped content.
@@ -349,6 +362,16 @@ impl Widget for ContextMenu {
 
     fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
         self.stack.sync(overlay);
+    }
+
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if self.focused {
+            crate::widgets::paint_focus_ring(cx, cx.bounds, 2.0, 2.0);
+        }
     }
 
     fn paint(&self, _cx: &mut PaintContext) {
@@ -414,6 +437,36 @@ mod tests {
         m.event(&mut cx)
     }
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+
+    fn stroke_count_overlay(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint_overlay(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn secondary_press_opens() {
         let mut m = menu();
@@ -507,5 +560,33 @@ mod tests {
         m.accessibility(&mut node);
         assert_eq!(node.has_popup(), Some(accesskit::HasPopup::Menu));
         assert!(node.supports_action(accesskit::Action::ShowContextMenu));
+    }
+
+    #[test]
+    fn context_menu_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = ContextMenu::new(Text::new("a"), vec![MenuItem::action("X")]);
+        let unfocused = stroke_count_overlay(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_overlay(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_overlay(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
     }
 }

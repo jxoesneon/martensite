@@ -72,6 +72,9 @@ pub struct Dialog {
     response_sink: Option<Arc<Mutex<Option<usize>>>>,
     /// Cached card bounds.
     cached_bounds: Rect,
+    /// Keyboard focus — the surface is a key sink (Escape/Enter);
+    /// the WCAG 2.4.13 ring marks it via `paint_overlay`.
+    focused: bool,
     /// Cached body rect for the child.
     body_rect: Rect,
     /// Cached button rects (device px).
@@ -100,6 +103,7 @@ impl Dialog {
             response: None,
             response_sink: None,
             cached_bounds: Rect::default(),
+            focused: false,
             body_rect: Rect::default(),
             button_rects: Vec::new(),
             text_painter: None,
@@ -269,7 +273,25 @@ impl Widget for Dialog {
             | WidgetEvent::PointerPressed { .. }
             | WidgetEvent::PointerReleased { .. }
             | WidgetEvent::Scroll { .. } => EventResponse::Handled,
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                EventResponse::RequestRepaint
+            }
             _ => EventResponse::Ignored,
+        }
+    }
+
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if self.focused {
+            crate::widgets::paint_focus_ring(cx, cx.bounds, 2.0, 2.0);
         }
     }
 
@@ -420,6 +442,36 @@ mod tests {
     use super::*;
     use martensite_core::{EventContext, HotNode};
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+
+    fn stroke_count_overlay(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint_overlay(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn dialog_button_response() {
         let mut hot = HotNode::default();
@@ -456,5 +508,33 @@ mod tests {
             scale: 1.0,
         };
         assert_eq!(d.event(&mut ecx), EventResponse::Handled);
+    }
+
+    #[test]
+    fn dialog_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = Dialog::new("T");
+        let unfocused = stroke_count_overlay(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_overlay(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_overlay(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
     }
 }

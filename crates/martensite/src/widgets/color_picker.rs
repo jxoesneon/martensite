@@ -827,6 +827,9 @@ pub struct ColorPicker {
     edited_pending: Option<Color>,
     /// Well bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Keyboard focus — paints the WCAG 2.4.13 accent ring on the
+    /// well.
+    focused: bool,
     /// The bounds the live popup was last anchored to.
     last_anchor: Option<Rect>,
     /// Shared shaped-text painter — propagated into the surface for
@@ -858,6 +861,7 @@ impl ColorPicker {
             selected_pending: None,
             edited_pending: None,
             cached_bounds: Rect::default(),
+            focused: false,
             last_anchor: None,
             text_painter: None,
         }
@@ -1298,8 +1302,20 @@ impl Widget for ColorPicker {
                 SemanticAction::Focus => EventResponse::CaptureFocus,
                 _ => EventResponse::Ignored,
             },
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                EventResponse::RequestRepaint
+            }
             _ => EventResponse::Ignored,
         }
+    }
+
+    fn focused(&self) -> bool {
+        self.focused
     }
 
     fn sync_overlay(&mut self, overlay: &mut OverlayLayer) {
@@ -1347,6 +1363,9 @@ impl Widget for ColorPicker {
             cx.pt(1.0),
             cx.color(TokenKey::BorderColor, WELL_BORDER),
         );
+        if self.focused && self.enabled {
+            crate::widgets::paint_focus_ring(cx, b, 3.0, 2.0);
+        }
     }
 }
 
@@ -1410,6 +1429,35 @@ mod tests {
         (a - b).abs() < 0.02
     }
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+    fn stroke_count_paint(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn hsv_roundtrip_primaries() {
         assert_eq!(hsv_to_rgb(0.0, 1.0, 1.0), (255, 0, 0));
@@ -1608,5 +1656,33 @@ mod tests {
         assert_eq!(node.is_expanded(), Some(true));
         let cv = node.color_value().expect("color value");
         assert_eq!((cv.red, cv.green, cv.blue, cv.alpha), (60, 110, 220, 128));
+    }
+
+    #[test]
+    fn color_picker_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = ColorPicker::new();
+        let unfocused = stroke_count_paint(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_paint(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_paint(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
     }
 }

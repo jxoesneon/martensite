@@ -100,6 +100,9 @@ pub struct Slider {
     value_text: Option<Box<dyn Fn(f64) -> String + Send + Sync>>,
     /// Whether the thumb is currently being dragged.
     dragging: bool,
+    /// Keyboard focus — paints the WCAG 2.4.13 accent ring on the
+    /// thumb.
+    focused: bool,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
     /// Display scale cached from `layout` so hit-math uses the same
@@ -131,6 +134,7 @@ impl Slider {
             value: min,
             value_text: None,
             dragging: false,
+            focused: false,
             cached_bounds: Rect::default(),
             scale: 1.0,
         }
@@ -509,6 +513,15 @@ impl Widget for Slider {
             return EventResponse::Ignored;
         }
         match cx.event {
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                self.dragging = false;
+                EventResponse::RequestRepaint
+            }
             WidgetEvent::PointerPressed {
                 position,
                 button: PointerButton::Primary,
@@ -579,6 +592,10 @@ impl Widget for Slider {
         }
     }
 
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
     fn paint(&self, cx: &mut PaintContext) {
         let b = cx.bounds;
         let (rail, fill, thumb) = match self.orientation {
@@ -636,6 +653,17 @@ impl Widget for Slider {
             cx.pt(1.0),
             cx.color(TokenKey::BorderColor, THUMB_EDGE),
         );
+
+        if self.focused && self.enabled {
+            let pad = cx.pt(3.0);
+            let ring = Rect::new(
+                thumb.x - cx.pt(THUMB / 2.0) - pad,
+                thumb.y - cx.pt(THUMB / 2.0) - pad,
+                cx.pt(THUMB) + pad * 2.0,
+                cx.pt(THUMB) + pad * 2.0,
+            );
+            crate::widgets::paint_focus_ring(cx, ring, cx.pt(THUMB / 2.0) + pad, 2.0);
+        }
     }
 }
 
@@ -681,6 +709,35 @@ mod tests {
         }
     }
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+    fn stroke_count_paint(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn new_clamps_inverted_range() {
         let s = Slider::new(10.0, -10.0);
@@ -922,5 +979,33 @@ mod tests {
         };
         assert_eq!(s.event(&mut ecx), EventResponse::Ignored);
         assert_eq!(s.value(), 0.0);
+    }
+
+    #[test]
+    fn slider_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = Slider::new(0.0, 100.0);
+        let unfocused = stroke_count_paint(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_paint(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_paint(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
     }
 }

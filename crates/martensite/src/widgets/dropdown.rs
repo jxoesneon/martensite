@@ -609,6 +609,8 @@ pub struct Dropdown {
     typeahead: String,
     /// Combobox bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Keyboard focus — paints the WCAG 2.4.13 accent ring on the face.
+    focused: bool,
     /// The bounds the live popup was last anchored to — `sync_overlay`
     /// re-anchors when `cached_bounds` moves (resize, scale change,
     /// relayout) so an open listbox tracks its face instead of
@@ -653,6 +655,7 @@ impl Dropdown {
             loading: false,
             typeahead: String::new(),
             cached_bounds: Rect::default(),
+            focused: false,
             last_anchor: None,
             text_painter: None,
         }
@@ -1255,6 +1258,15 @@ impl Widget for Dropdown {
                 }
                 _ => EventResponse::Ignored,
             },
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                self.typeahead.clear();
+                EventResponse::RequestRepaint
+            }
             WidgetEvent::SemanticAction(action) => match action {
                 SemanticAction::Expand => {
                     self.open();
@@ -1297,6 +1309,10 @@ impl Widget for Dropdown {
         Dropdown::sync_overlay(self, overlay);
     }
 
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
     fn paint(&self, cx: &mut PaintContext) {
         let b = cx.bounds;
         let rect = kurbo::Rect::new(
@@ -1314,6 +1330,9 @@ impl Widget for Dropdown {
             cx.pt(1.0),
             cx.color(TokenKey::BorderColor, FACE_BORDER),
         );
+        if self.focused && self.enabled {
+            crate::widgets::paint_focus_ring(cx, b, 3.0, 2.0);
+        }
         let ink = if self.enabled {
             cx.color(TokenKey::TextColor, INK)
         } else {
@@ -1409,6 +1428,35 @@ mod tests {
         dd.event(&mut cx)
     }
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+    fn stroke_count_paint(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn open_close_keys() {
         let mut dd = Dropdown::new(["A", "B", "C"]);
@@ -1724,5 +1772,33 @@ mod tests {
             .commands
             .iter()
             .any(|c| matches!(c, PaintCommand::FillLinearGradient(..))));
+    }
+
+    #[test]
+    fn dropdown_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = Dropdown::new(["A", "B"]);
+        let unfocused = stroke_count_paint(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_paint(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_paint(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
     }
 }

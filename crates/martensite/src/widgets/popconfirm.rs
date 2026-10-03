@@ -110,6 +110,9 @@ struct PopconfirmSurface {
     flow: AnchorEdge,
     /// Surface bounds from the last layout pass.
     bounds: Rect,
+    /// Keyboard focus — the surface is a key sink (Escape/Enter);
+    /// the WCAG 2.4.13 ring marks it via `paint_overlay`.
+    focused: bool,
     /// `[cancel, confirm]` button rects from the last layout pass.
     button_rects: [Rect; 2],
     /// The silhouette painted last frame — the single source of truth
@@ -223,7 +226,25 @@ impl Widget for PopconfirmSurface {
             | WidgetEvent::PointerPressed { .. }
             | WidgetEvent::PointerReleased { .. }
             | WidgetEvent::Scroll { .. } => EventResponse::Handled,
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                EventResponse::RequestRepaint
+            }
             _ => EventResponse::Ignored,
+        }
+    }
+
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if self.focused {
+            crate::widgets::paint_focus_ring(cx, cx.bounds, 2.0, 2.0);
         }
     }
 
@@ -713,6 +734,7 @@ impl Popconfirm {
                 shared: Arc::clone(&self.shared),
                 flow: self.preferred_edge,
                 bounds: Rect::default(),
+                focused: false,
                 button_rects: [Rect::default(); 2],
                 painted_shape: Mutex::new(Shape::RECT),
                 text_painter: self.text_painter.clone(),
@@ -1016,6 +1038,7 @@ mod tests {
             shared,
             flow: AnchorEdge::Bottom,
             bounds: Rect::default(),
+            focused: false,
             button_rects: [Rect::default(); 2],
             painted_shape: Mutex::new(Shape::RECT),
             text_painter: None,
@@ -1039,6 +1062,7 @@ mod tests {
             shared: Arc::new(Mutex::new(PopconfirmShared::default())),
             flow: AnchorEdge::Bottom,
             bounds: Rect::new(80.0, 130.0, 140.0, 80.0),
+            focused: false,
             button_rects: [Rect::default(); 2],
             painted_shape: Mutex::new(Shape::RECT),
             text_painter: None,
@@ -1065,5 +1089,58 @@ mod tests {
             list.commands[4],
             PaintCommand::StrokePath(_, 1.0, EDGE)
         ));
+    }
+
+    #[test]
+    fn surface_focus_ring_appears_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: the popup surface is a keyboard sink —
+        // its focused state must be visible.
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let bounds = Rect::new(80.0, 130.0, 140.0, 80.0);
+        let mut w = PopconfirmSurface {
+            question: "Sure?".to_string(),
+            confirm_label: "OK".to_string(),
+            cancel_label: "Cancel".to_string(),
+            shared: Arc::new(Mutex::new(PopconfirmShared::default())),
+            flow: AnchorEdge::Bottom,
+            bounds: Rect::default(),
+            focused: false,
+            button_rects: [Rect::default(); 2],
+            painted_shape: Mutex::new(Shape::RECT),
+            text_painter: None,
+        };
+        let strokes = |w: &PopconfirmSurface| -> usize {
+            let mut list = PaintList::new();
+            let theme = Theme::new("test");
+            let mut cx = PaintContext {
+                list: &mut list,
+                bounds,
+                theme: &theme,
+                scale: 1.0,
+                text_painter: None,
+            };
+            w.paint_overlay(&mut cx);
+            cx.list
+                .commands
+                .iter()
+                .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+                .count()
+        };
+        assert_eq!(strokes(&w), 0);
+        let ev = WidgetEvent::FocusGained;
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds,
+            scale: 1.0,
+        });
+        assert!(w.focused());
+        assert!(strokes(&w) > 0, "focused surface paints no ring");
+        let ev = WidgetEvent::FocusLost;
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds,
+            scale: 1.0,
+        });
+        assert_eq!(strokes(&w), 0, "focus ring lingered after FocusLost");
     }
 }

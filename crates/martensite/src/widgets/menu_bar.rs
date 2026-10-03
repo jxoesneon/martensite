@@ -159,6 +159,10 @@ pub struct MenuBar {
     active: Option<usize>,
     /// Keyboard navigation position while no menu is open.
     focused: Option<usize>,
+    /// Whether the bar itself holds keyboard focus — gates the
+    /// roving-item wash and focus ring so the highlight does not
+    /// linger after focus leaves (WCAG 2.4.7/2.4.13).
+    has_focus: bool,
     /// Pointer-hovered button index.
     hovered: Option<usize>,
     /// Button rects from the last layout pass.
@@ -200,6 +204,7 @@ impl MenuBar {
             buttons: Vec::new(),
             active: None,
             focused: None,
+            has_focus: false,
             hovered: None,
             button_bounds: Vec::new(),
             cached_bounds: Rect::default(),
@@ -582,6 +587,17 @@ impl Widget for MenuBar {
                 _ => EventResponse::Ignored,
             },
             WidgetEvent::SemanticAction(SemanticAction::Focus) => EventResponse::CaptureFocus,
+            WidgetEvent::FocusGained => {
+                self.has_focus = true;
+                if self.focused.is_none() && !self.menus.is_empty() {
+                    self.focused = Some(0);
+                }
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.has_focus = false;
+                EventResponse::RequestRepaint
+            }
             _ => {
                 // Forward to the buttons (default child-forwarding,
                 // bounds-gated).
@@ -646,7 +662,8 @@ impl Widget for MenuBar {
                 continue;
             };
             let open = self.active == Some(i);
-            let flagged = self.hovered == Some(i) || (!self.is_open() && self.focused == Some(i));
+            let flagged = self.hovered == Some(i)
+                || (!self.is_open() && self.has_focus && self.focused == Some(i));
             let ink = if open {
                 let pill = Shape::rounded(cx.dim(TokenKey::BorderRadiusSmall, 4.0));
                 let fill = kurbo::Rect::new(
@@ -690,7 +707,14 @@ impl Widget for MenuBar {
                 font_px,
                 ink,
             );
+            if self.has_focus && !self.is_open() && self.focused == Some(i) {
+                crate::widgets::paint_focus_ring(cx, *r, 3.0, 2.0);
+            }
         }
+    }
+
+    fn focused(&self) -> bool {
+        self.has_focus
     }
 
     fn child_count(&self) -> usize {
@@ -773,6 +797,35 @@ mod tests {
         event(bar, &press)
     }
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+    fn stroke_count_paint(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 200.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn press_opens_and_toggles() {
         let mut bar = bar();
@@ -903,5 +956,40 @@ mod tests {
         assert_eq!(node2.role(), accesskit::Role::MenuItem);
         assert_eq!(node2.has_popup(), Some(accesskit::HasPopup::Menu));
         assert_eq!(node2.label(), Some("File"));
+    }
+
+    #[test]
+    fn menu_bar_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: the roving-item highlight must not linger
+        // after the bar loses focus.
+        let bounds = Rect::new(0.0, 0.0, 200.0, 32.0);
+        let mut w = MenuBar::new().menu("File", vec![MenuItem::action("Open")]);
+        {
+            let mut hot = martensite_core::HotNode::default();
+            let mut lcx = LayoutContext {
+                hot: &mut hot,
+                scale: 1.0,
+            };
+            w.layout(&mut lcx, bounds);
+        }
+        let unfocused = stroke_count_paint(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_paint(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_paint(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
     }
 }

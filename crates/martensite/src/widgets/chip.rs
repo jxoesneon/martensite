@@ -102,6 +102,8 @@ pub struct Chip {
     selected_changed: Option<bool>,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
+    /// Keyboard focus — paints the WCAG 2.4.13 accent ring.
+    focused: bool,
     /// Cached close-button rect (device px).
     close_rect: Rect,
     /// Shared shaped-text painter.
@@ -131,6 +133,7 @@ impl Chip {
             deleted: false,
             selected_changed: None,
             cached_bounds: Rect::default(),
+            focused: false,
             close_rect: Rect::default(),
             text_painter: None,
         }
@@ -342,13 +345,34 @@ impl Widget for Chip {
                 self.selected_changed = Some(self.selected);
                 EventResponse::RequestRepaint
             }
-            WidgetEvent::KeyPressed { .. } | WidgetEvent::SemanticAction(SemanticAction::Click) => {
+            // APG: chips toggle on the activation keys only — a
+            // focused chip must not flip on an arrow key.
+            WidgetEvent::KeyPressed { key, repeat, .. }
+                if matches!(key.as_str(), "Enter" | "Space" | " ") && !*repeat =>
+            {
                 self.selected = !self.selected;
                 self.selected_changed = Some(self.selected);
                 EventResponse::RequestRepaint
             }
+            WidgetEvent::SemanticAction(SemanticAction::Click) => {
+                self.selected = !self.selected;
+                self.selected_changed = Some(self.selected);
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                EventResponse::RequestRepaint
+            }
             _ => EventResponse::Ignored,
         }
+    }
+
+    fn focused(&self) -> bool {
+        self.focused
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -382,6 +406,9 @@ impl Widget for Chip {
         };
         cx.list.push_fill_shape(rect, &pill, fill);
         cx.list.push_stroke_shape(rect, &pill, cx.pt(1.0), edge);
+        if self.focused && self.enabled {
+            crate::widgets::paint_focus_ring(cx, b, b.size.y / 2.0, 2.0);
+        }
 
         // Leading check mark for a selected filter chip.
         let mut text_x = b.origin.x + cx.pt(PAD_X);
@@ -458,6 +485,35 @@ mod tests {
         LayoutContext { hot, scale: 1.0 }
     }
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+    fn stroke_count_paint(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn chip_new() {
         let c = Chip::new("Tag");
@@ -579,5 +635,70 @@ mod tests {
         let debug = format!("{:?}", c);
         assert!(debug.contains("Chip"));
         assert!(debug.contains("Input"));
+    }
+
+    #[test]
+    fn chip_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = Chip::new("X").kind(ChipKind::Filter);
+        let unfocused = stroke_count_paint(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_paint(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_paint(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
+    }
+    #[test]
+    fn chip_enter_space_toggle_but_arrows_and_repeat_do_not() {
+        // APG: chips toggle on Enter/Space only — a stray arrow or a
+        // held key must not flip selection.
+        for key in ["ArrowDown", "ArrowLeft", "a"] {
+            let mut c = Chip::new("X").kind(ChipKind::Filter);
+            drive_event(&mut c, WidgetEvent::FocusGained);
+            drive_event(
+                &mut c,
+                WidgetEvent::KeyPressed {
+                    key: key.to_string(),
+                    repeat: false,
+                },
+            );
+            assert!(!c.selected, "{key} selected the chip");
+        }
+        let mut c = Chip::new("X").kind(ChipKind::Filter);
+        drive_event(
+            &mut c,
+            WidgetEvent::KeyPressed {
+                key: "Enter".to_string(),
+                repeat: true,
+            },
+        );
+        assert!(!c.selected, "key repeat selected the chip");
+        for key in ["Enter", "Space", " "] {
+            let mut c = Chip::new("X").kind(ChipKind::Filter);
+            drive_event(
+                &mut c,
+                WidgetEvent::KeyPressed {
+                    key: key.to_string(),
+                    repeat: false,
+                },
+            );
+            assert!(c.selected, "{key} did not select the chip");
+        }
     }
 }

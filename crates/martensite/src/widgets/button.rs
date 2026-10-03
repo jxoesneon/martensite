@@ -103,6 +103,8 @@ pub struct Button {
     /// face (or Enter/Space/AT Click fires) — drained by
     /// [`Button::take_activated`].
     activated: bool,
+    /// Keyboard focus — paints the WCAG 2.4.13 accent ring.
+    focused: bool,
     /// Shared shaped-text painter — when set, `paint` emits real
     /// `GlyphRun`s; without it the label falls back to `DrawText`
     /// placeholder boxes. See [`crate::text_paint`].
@@ -139,6 +141,7 @@ impl Button {
             held: false,
             inside: false,
             activated: false,
+            focused: false,
             text_painter: None,
             icon_d: None,
             icon_only: false,
@@ -530,7 +533,12 @@ impl Widget for Button {
                 self.activated = true;
                 EventResponse::Handled
             }
-            WidgetEvent::FocusLost if self.held => {
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                EventResponse::RequestRepaint
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
                 // A keyboard-armed button disarms on focus loss.
                 self.held = false;
                 self.inside = false;
@@ -545,6 +553,10 @@ impl Widget for Button {
             }
             _ => EventResponse::Ignored,
         }
+    }
+
+    fn focused(&self) -> bool {
+        self.focused
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -591,6 +603,9 @@ impl Widget for Button {
         if !(self.primary && self.enabled) {
             let edge = cx.color(TokenKey::BorderColor, EDGE);
             cx.list.push_stroke_path(rounded, cx.pt(1.0), edge);
+        }
+        if self.focused && self.enabled {
+            crate::widgets::paint_focus_ring(cx, b, CORNER_RADIUS as f32, 2.0);
         }
 
         // The label is left-aligned inside the face and vertically
@@ -660,6 +675,35 @@ mod tests {
         LayoutContext { hot, scale: 1.0 }
     }
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+    fn stroke_count_paint(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn button_new() {
         let btn = Button::new("Submit");
@@ -769,5 +813,33 @@ mod tests {
         let debug = format!("{:?}", btn);
         assert!(debug.contains("Button"));
         assert!(debug.contains("OK"));
+    }
+
+    #[test]
+    fn button_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = Button::new("OK");
+        let unfocused = stroke_count_paint(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_paint(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_paint(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
     }
 }

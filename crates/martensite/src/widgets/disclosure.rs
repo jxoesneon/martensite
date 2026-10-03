@@ -46,6 +46,9 @@ pub struct Disclosure {
     pub open: bool,
     /// The collapsible body widget.
     pub child: Option<Box<dyn Widget>>,
+    /// Keyboard focus — paints the WCAG 2.4.13 accent ring on the
+    /// header row.
+    focused: bool,
     /// Cached overall bounds.
     cached_bounds: Rect,
     /// Cached header rect (device px).
@@ -72,6 +75,7 @@ impl Disclosure {
             title: title.into(),
             open: false,
             child: None,
+            focused: false,
             cached_bounds: Rect::default(),
             header_rect: Rect::default(),
             body_rect: Rect::default(),
@@ -167,6 +171,17 @@ impl Widget for Disclosure {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        match cx.event {
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                return EventResponse::RequestRepaint;
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                return EventResponse::RequestRepaint;
+            }
+            _ => {}
+        }
         // Header toggles on release and on Space/Enter — the
         // activation keys of the APG disclosure pattern; other keys
         // fall through (previously any KeyPressed toggled).
@@ -200,8 +215,15 @@ impl Widget for Disclosure {
         EventResponse::Ignored
     }
 
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
     fn paint(&self, cx: &mut PaintContext) {
         let h = &self.header_rect;
+        if self.focused {
+            crate::widgets::paint_focus_ring(cx, *h, 3.0, 2.0);
+        }
         let cs = cx.pt(CHEVRON);
         let cy = h.origin.y + (h.size.y - cs) / 2.0;
         let cxl = h.origin.x + cx.pt(6.0);
@@ -286,6 +308,35 @@ mod tests {
     use super::*;
     use martensite_core::HotNode;
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+    fn stroke_count_paint(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn disclosure_closed_hides_child() {
         let d = Disclosure::new("More").child(crate::widgets::text::Text::new("x"));
@@ -352,5 +403,41 @@ mod tests {
         d.accessibility(&mut node);
         assert_eq!(node.role(), accesskit::Role::DisclosureTriangle);
         assert_eq!(node.is_expanded(), Some(true));
+    }
+
+    #[test]
+    fn disclosure_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = Disclosure::new("T");
+        {
+            let mut hot = martensite_core::HotNode::default();
+            let mut lcx = LayoutContext {
+                hot: &mut hot,
+                scale: 1.0,
+            };
+            w.layout(&mut lcx, bounds);
+        }
+        let unfocused = stroke_count_paint(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_paint(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_paint(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
     }
 }

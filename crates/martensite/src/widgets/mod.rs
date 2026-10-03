@@ -4311,3 +4311,39 @@ pub(crate) fn series_color(
 ) -> [u8; 4] {
     explicit.unwrap_or_else(|| cx.color(SERIES_TOKENS[index % SERIES_TOKENS.len()], fallback))
 }
+
+/// Fallback ring color when the theme carries no `AccentColor` —
+/// matches the `FOCUS_RING` literal the ring-painting widgets agreed
+/// on (`[60, 110, 220, 230]`).
+pub(crate) const FOCUS_RING_FALLBACK: [u8; 4] = [60, 110, 220, 230];
+
+/// WCAG 2.4.13 focus appearance — a solid accent perimeter stroke
+/// around the focused control. 2px at the control's own corner radius,
+/// inset by half the stroke so the ring lands on the face rather than
+/// spilling past `bounds` (the paint audit's `MissingFocusIndicator`
+/// check requires a visible stroke intersecting the focus rect).
+///
+/// `radius_pt` is the *logical* corner radius of the face — pass the
+/// same value the face was drawn with. `thick_pt` defaults to 2.0 in
+/// callers; WCAG's "2px perimeter" floor is the rationale.
+pub(crate) fn paint_focus_ring(
+    cx: &mut martensite_core::widget::PaintContext<'_>,
+    bounds: martensite_core::Rect,
+    radius_pt: f32,
+    thick_pt: f32,
+) {
+    let inset = cx.pt(thick_pt) / 2.0;
+    let r = kurbo::Rect::new(
+        f64::from(bounds.min_x() + inset),
+        f64::from(bounds.min_y() + inset),
+        f64::from(bounds.max_x() - inset),
+        f64::from(bounds.max_y() - inset),
+    );
+    let accent = cx.color(martensite_core::TokenKey::AccentColor, FOCUS_RING_FALLBACK);
+    cx.list.push_stroke_shape(
+        r,
+        &martensite_core::shape::Shape::rounded(cx.pt(radius_pt)),
+        cx.pt(thick_pt),
+        accent,
+    );
+}

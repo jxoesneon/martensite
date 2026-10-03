@@ -1555,6 +1555,35 @@ pub trait Widget: Send + Sync + 'static {
     /// implementation only needs to emit the widget's *own* chrome.
     fn paint(&self, _cx: &mut PaintContext) {}
 
+    /// Overlay painted *after* this widget's arena children — the
+    /// last emit inside the widget's scope, so it floats above the
+    /// whole subtree. Default is a no-op.
+    ///
+    /// Chrome from [`Widget::paint`] renders *under* arena children;
+    /// indicators that must stay visible over opaque content — a
+    /// container's keyboard-focus ring, a selection outline — go here.
+    /// The overlay honours the widget's `CLIPS_CHILDREN` clip and the
+    /// underflow policies like any other paint.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, PaintContext, PaintList, Rect, Theme, Widget};
+    ///
+    /// // The default emits nothing — the paint list stays empty.
+    /// let mut list = PaintList::new();
+    /// let theme = Theme::new("t");
+    /// DummyWidget.paint_overlay(&mut PaintContext {
+    ///     list: &mut list,
+    ///     bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+    ///     theme: &theme,
+    ///     scale: 1.0,
+    ///     text_painter: None,
+    /// });
+    /// assert!(list.commands.is_empty());
+    /// ```
+    fn paint_overlay(&self, _cx: &mut PaintContext) {}
+
     /// The widget's declared minimum render area and the policy applied
     /// when allocated bounds fall below it.
     ///

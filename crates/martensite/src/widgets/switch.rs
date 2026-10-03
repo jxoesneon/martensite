@@ -52,6 +52,8 @@ pub struct Switch {
     pub on: bool,
     /// Whether the switch is enabled.
     pub enabled: bool,
+    /// Keyboard focus — paints the WCAG 2.4.13 accent ring.
+    focused: bool,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
     /// Shared shaped-text painter (see [`crate::text_paint`]).
@@ -75,6 +77,7 @@ impl Switch {
             a11y_label: String::new(),
             on: false,
             enabled: true,
+            focused: false,
             cached_bounds: Rect::default(),
             text_painter: None,
         }
@@ -196,12 +199,29 @@ impl Widget for Switch {
         if !self.enabled {
             return EventResponse::Ignored;
         }
+        match cx.event {
+            WidgetEvent::FocusGained => {
+                self.focused = true;
+                return EventResponse::RequestRepaint;
+            }
+            WidgetEvent::FocusLost => {
+                self.focused = false;
+                return EventResponse::RequestRepaint;
+            }
+            _ => {}
+        }
+        // APG switch: Space/Enter toggle; other keys must not flip
+        // the track while it holds focus.
         let toggle = matches!(
             cx.event,
             WidgetEvent::PointerReleased {
                 button: PointerButton::Primary,
                 ..
-            } | WidgetEvent::KeyPressed { .. }
+            }
+        ) || matches!(
+            cx.event,
+            WidgetEvent::KeyPressed { key, repeat, .. }
+                if matches!(key.as_str(), " " | "Space" | "Enter") && !*repeat
         );
         if toggle {
             self.on = !self.on;
@@ -209,6 +229,10 @@ impl Widget for Switch {
         } else {
             EventResponse::Ignored
         }
+    }
+
+    fn focused(&self) -> bool {
+        self.focused
     }
 
     fn paint(&self, cx: &mut PaintContext) {
@@ -263,6 +287,10 @@ impl Widget for Switch {
             KNOB,
         );
 
+        if self.focused && self.enabled {
+            crate::widgets::paint_focus_ring(cx, b, 3.0, 2.0);
+        }
+
         // Clip the label to the widget bounds — a long label can't
         // spill past the right edge.
         let text_x = b.origin.x + tw + cx.pt(LABEL_GAP);
@@ -298,6 +326,35 @@ mod tests {
     use super::*;
     use martensite_core::HotNode;
 
+    // Counts `StrokePath` commands — the WCAG 2.4.13 focus ring lands
+    // as a stroke, so a focused control emits strictly more strokes
+    // than its unfocused twin.
+    fn stroke_count_paint(w: &impl Widget, bounds: Rect) -> usize {
+        use martensite_core::{PaintCommand, PaintList, Theme};
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        let mut cx = PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        };
+        w.paint(&mut cx);
+        cx.list
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PaintCommand::StrokePath(..)))
+            .count()
+    }
+
+    fn drive_event(w: &mut impl Widget, ev: WidgetEvent) -> EventResponse {
+        w.event(&mut EventContext {
+            event: &ev,
+            bounds: Rect::new(0.0, 0.0, 80.0, 32.0),
+            scale: 1.0,
+        })
+    }
     #[test]
     fn switch_toggle() {
         let mut sw = Switch::new("Live");
@@ -324,5 +381,62 @@ mod tests {
         let mut sw = Switch::new("Live").enabled(false);
         sw.layout(&mut cx, Rect::new(0.0, 0.0, 60.0, 24.0));
         assert!(!hot.flags.contains(NodeFlags::FOCUSABLE));
+    }
+
+    #[test]
+    fn switch_paints_focus_ring_only_while_focused() {
+        // WCAG 2.4.7/2.4.13: keyboard focus must be visible. The ring
+        // is emitted as a stroke, so focused paint adds strokes over
+        // the unfocused baseline.
+        let bounds = Rect::new(0.0, 0.0, 80.0, 32.0);
+        let mut w = Switch::new("T");
+        let unfocused = stroke_count_paint(&w, bounds);
+        assert!(!w.focused());
+        assert_eq!(
+            drive_event(&mut w, WidgetEvent::FocusGained),
+            EventResponse::RequestRepaint
+        );
+        assert!(w.focused());
+        let focused = stroke_count_paint(&w, bounds);
+        assert!(
+            focused > unfocused,
+            "no focus ring: {unfocused} strokes unfocused vs {focused} focused"
+        );
+        drive_event(&mut w, WidgetEvent::FocusLost);
+        assert!(!w.focused());
+        assert_eq!(
+            stroke_count_paint(&w, bounds),
+            unfocused,
+            "focus ring lingered after FocusLost"
+        );
+    }
+    #[test]
+    fn switch_space_and_enter_toggle_but_arrows_do_not() {
+        // APG switch: Space or Enter toggles; arrows are navigation —
+        // and a held key (repeat) must not re-toggle.
+        let mut sw = Switch::new("T");
+        let arrow = WidgetEvent::KeyPressed {
+            key: "ArrowDown".to_string(),
+            repeat: false,
+        };
+        drive_event(&mut sw, arrow);
+        assert!(!sw.on, "arrow toggled the switch");
+        let repeat = WidgetEvent::KeyPressed {
+            key: "Space".to_string(),
+            repeat: true,
+        };
+        drive_event(&mut sw, repeat);
+        assert!(!sw.on, "key repeat toggled the switch");
+        for key in ["Space", "Enter"] {
+            let mut sw = Switch::new("T");
+            drive_event(
+                &mut sw,
+                WidgetEvent::KeyPressed {
+                    key: key.to_string(),
+                    repeat: false,
+                },
+            );
+            assert!(sw.on, "{key} did not toggle the switch");
+        }
     }
 }

@@ -2432,6 +2432,21 @@ impl WidgetArena {
             list.pop_clip();
         }
 
+        // `paint_overlay` emits last inside the scope — a focus ring or
+        // selection outline stays visible over opaque arena children.
+        // It sits inside the `Clip` policy clip and under the `Scrim`
+        // veil, matching every other emit from this subtree.
+        {
+            let mut cx = PaintContext {
+                list,
+                bounds: hot.bounds,
+                theme,
+                scale: self.scale_factor,
+                text_painter: self.text_painter.as_deref(),
+            };
+            cold.widget.paint_overlay(&mut cx);
+        }
+
         if matches!(policy, Some(UnderflowPolicy::Clip)) {
             list.pop_clip();
         }
