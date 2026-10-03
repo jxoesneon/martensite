@@ -825,18 +825,7 @@ impl CatalogView {
             self.log_line(format!("prop {key}: unknown"));
             return;
         };
-        let parsed = match spec {
-            PropSpec::Bool { .. } => value.parse::<bool>().ok().map(PropValue::Bool),
-            PropSpec::Float { .. } => value.parse::<f64>().ok().map(PropValue::Float),
-            PropSpec::Int { .. } => value.parse::<i64>().ok().map(PropValue::Int),
-            PropSpec::Text { .. } => Some(PropValue::Text(value.to_string())),
-            PropSpec::Choice { options, .. } => value
-                .parse::<usize>()
-                .ok()
-                .or_else(|| options.iter().position(|o| *o == value))
-                .map(PropValue::Choice),
-            PropSpec::Header { .. } => None,
-        };
+        let parsed = spec.parse_value(value);
         match parsed {
             Some(v) => {
                 self.prop_values

@@ -123,6 +123,25 @@ impl PropSpec {
         }
     }
 
+    /// Parses a text value into the spec's [`PropValue`] type — the
+    /// same coercion the props panel applies to dev-channel `prop`
+    /// signals. `Choice` accepts an index or an option label. Returns
+    /// `None` for unparseable values and headers.
+    pub fn parse_value(&self, value: &str) -> Option<PropValue> {
+        match self {
+            Self::Bool { .. } => value.parse::<bool>().ok().map(PropValue::Bool),
+            Self::Float { .. } => value.parse::<f64>().ok().map(PropValue::Float),
+            Self::Int { .. } => value.parse::<i64>().ok().map(PropValue::Int),
+            Self::Text { .. } => Some(PropValue::Text(value.to_string())),
+            Self::Choice { options, .. } => value
+                .parse::<usize>()
+                .ok()
+                .or_else(|| options.iter().position(|o| *o == value))
+                .map(PropValue::Choice),
+            Self::Header { .. } => None,
+        }
+    }
+
     /// The spec's default value — headers carry `Bool(false)` as a
     /// placeholder and are skipped by [`PropValues::from_specs`].
     pub fn default_value(&self) -> PropValue {
