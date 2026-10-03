@@ -258,6 +258,7 @@ impl CatalogView {
         let query = self.search_mut().value.to_lowercase();
         self.rail_map.clear();
         let mut items = Vec::new();
+        let mut headers = Vec::new();
         let mut last_family = "";
         for (i, page) in self.pages.iter().enumerate() {
             let meta = page.meta();
@@ -266,13 +267,15 @@ impl CatalogView {
             }
             if query.is_empty() && meta.family != last_family {
                 last_family = meta.family;
-                items.push(format!("── {} ──", meta.family));
+                headers.push(items.len());
+                items.push(meta.family.to_string());
                 self.rail_map.push(None);
             }
             items.push(meta.name.to_string());
             self.rail_map.push(Some(i));
         }
         self.rail.set_items(items);
+        self.rail.set_headers(headers);
         // Keep the rail highlight on the staged page.
         if let Some(row) = self.rail_map.iter().position(|m| *m == Some(self.sel)) {
             self.rail.set_selected(row);

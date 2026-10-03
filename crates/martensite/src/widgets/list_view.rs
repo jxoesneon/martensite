@@ -51,6 +51,7 @@
 //! assert_eq!(list.item_count(), 3);
 //! ```
 
+use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
@@ -294,6 +295,9 @@ struct ListItemRow {
     /// row keeps its real index and geometry but paints a
     /// placeholder (ADR-0040 partial loading).
     pending: bool,
+    /// Whether this row is a section header — non-interactive, paints
+    /// a muted small-caps label with a trailing hairline.
+    header: bool,
     /// Parked `SemanticAction::Click` / pointer press for the owner.
     press_pending: bool,
     /// Parked `SemanticAction::Focus` for the owner.
@@ -314,6 +318,7 @@ impl ListItemRow {
             alternate: false,
             enabled: true,
             pending: false,
+            header: false,
             press_pending: false,
             focus_pending: false,
             text_painter: None,
@@ -343,11 +348,13 @@ impl Widget for ListItemRow {
         // `position_in_set` is zero-based (unlike ARIA's one-based
         // `aria-posinset`); `size_of_set` lives on the List container.
         node.set_position_in_set(self.item_index);
-        node.add_action(accesskit::Action::Click);
-        // Roving tabindex: only the row holding the tab stop
-        // advertises Focus — the list is a single tab stop.
-        if self.focused {
-            node.add_action(accesskit::Action::Focus);
+        if !self.header {
+            node.add_action(accesskit::Action::Click);
+            // Roving tabindex: only the row holding the tab stop
+            // advertises Focus — the list is a single tab stop.
+            if self.focused {
+                node.add_action(accesskit::Action::Focus);
+            }
         }
         if !self.enabled {
             node.set_disabled();
@@ -355,7 +362,7 @@ impl Widget for ListItemRow {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
-        if !self.enabled {
+        if !self.enabled || self.header {
             return EventResponse::Ignored;
         }
         match cx.event {
@@ -396,6 +403,51 @@ impl Widget for ListItemRow {
                 false,
                 None,
             );
+            return;
+        }
+        if self.header {
+            // Section header — muted small-caps label with a trailing
+            // hairline, the inspector-panel divider; no selection,
+            // hover, or focus chrome.
+            let pad = cx.pt(8.0);
+            let gap = cx.pt(8.0);
+            let font_px = cx.pt(10.0);
+            let ink = cx.color(TokenKey::TextMutedColor, INK_DISABLED);
+            let label = self.label.to_uppercase();
+            let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+            let text_x = b.min_x() + pad;
+            let text_w = painter
+                .and_then(|p| p.measure_text(&label, font_px))
+                .unwrap_or_else(|| label.chars().count() as f32 * cx.pt(6.0));
+            crate::text_paint::paint_label_vcenter(
+                painter,
+                cx.list,
+                kurbo::Rect::new(
+                    f64::from(text_x),
+                    f64::from(b.min_y()),
+                    f64::from(b.max_x() - pad),
+                    f64::from(b.max_y()),
+                ),
+                f64::from(text_x),
+                &label,
+                font_px,
+                ink,
+            );
+            let line_x0 = text_x + text_w + gap;
+            let line_x1 = b.max_x() - pad;
+            if line_x1 > line_x0 {
+                let half = cx.pt(0.5);
+                let y = b.min_y() + b.height() * 0.5;
+                cx.list.push_fill_rect(
+                    kurbo::Rect::new(
+                        f64::from(line_x0),
+                        f64::from(y - half),
+                        f64::from(line_x1),
+                        f64::from(y + half),
+                    ),
+                    cx.color(TokenKey::DividerColor, HAIRLINE),
+                );
+            }
             return;
         }
         let rect = kurbo::Rect::new(
@@ -481,6 +533,10 @@ pub struct ListView {
     pub selection_mode: SelectionMode,
     /// The item labels.
     items: Vec<String>,
+    /// Item indices rendered as non-interactive section headers —
+    /// muted small-caps label with a trailing hairline, skipped by
+    /// pointer, keyboard, typeahead, and selection.
+    headers: HashSet<usize>,
     /// Whether the whole list is pending — the arena substitutes
     /// [`paint_loading`](Widget::paint_loading) and suppresses the
     /// subtree's paint/input/a11y (ADR-0040).
@@ -562,6 +618,7 @@ impl ListView {
             alternating_rows: false,
             selection_mode: SelectionMode::Single,
             items: Vec::new(),
+            headers: HashSet::new(),
             loading: false,
             pending_tail: 0,
             row_height: ROW_H,
@@ -621,6 +678,7 @@ impl ListView {
     pub fn set_items(&mut self, items: impl IntoIterator<Item = impl Into<String>>) {
         self.items = items.into_iter().map(Into::into).collect();
         let n = self.items.len();
+        self.headers.retain(|&i| i < n);
         self.focused = self.focused.min(n.saturating_sub(1));
         self.hovered = self.hovered.filter(|&i| i < n);
         // Clamp stored ranges into the new bounds — the model holds
@@ -653,6 +711,66 @@ impl ListView {
     #[inline]
     pub fn item_count(&self) -> usize {
         self.items.len()
+    }
+
+    /// Marks `indices` as section-header rows — non-interactive group
+    /// labels painted as a muted small-caps label with a trailing
+    /// hairline. Builder form of [`set_headers`](Self::set_headers).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::ListView;
+    ///
+    /// let l = ListView::new()
+    ///     .items(["Fruit", "Apple", "Pear"])
+    ///     .headers([0]);
+    /// assert!(l.is_header(0));
+    /// ```
+    pub fn headers(mut self, indices: impl IntoIterator<Item = usize>) -> Self {
+        self.set_headers(indices);
+        self
+    }
+
+    /// Replaces the header-row index set. Header rows are skipped by
+    /// pointer presses, keyboard navigation, typeahead, and selection
+    /// and paint as section dividers. Indices outside the item range
+    /// are discarded; call again after changing item meaning via
+    /// [`set_items`](Self::set_items) (which only clamps, never
+    /// clears, the set).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::ListView;
+    ///
+    /// let mut l = ListView::new().items(["Fruit", "Apple"]);
+    /// l.set_headers([0, 7]);
+    /// assert!(l.is_header(0));
+    /// assert!(!l.is_header(1));
+    /// assert!(!l.is_header(7)); // out of range — discarded
+    /// ```
+    pub fn set_headers(&mut self, indices: impl IntoIterator<Item = usize>) {
+        let n = self.items.len();
+        self.headers = indices.into_iter().filter(|&i| i < n).collect();
+        self.sync_rows();
+    }
+
+    /// Whether item `index` renders as a non-interactive section
+    /// header.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::ListView;
+    ///
+    /// let l = ListView::new().items(["H", "A"]).headers([0]);
+    /// assert!(l.is_header(0));
+    /// assert!(!l.is_header(1));
+    /// ```
+    #[inline]
+    pub fn is_header(&self, index: usize) -> bool {
+        self.headers.contains(&index)
     }
 
     /// The label of item `index`, if in range.
@@ -1309,7 +1427,7 @@ impl ListView {
 
     /// Single-select `index` and move the roving tabindex to it.
     fn select_index(&mut self, index: usize) {
-        if index < self.items.len() {
+        if index < self.items.len() && !self.is_header(index) {
             self.focused = index;
             self.selection.select(index);
             self.ensure_visible(index);
@@ -1320,7 +1438,7 @@ impl ListView {
     /// Extends the selection range from its anchor to `index` and
     /// moves the roving tabindex (the `Multiple`-mode extend gesture).
     fn extend_selection_to(&mut self, index: usize) {
-        if index < self.items.len() {
+        if index < self.items.len() && !self.is_header(index) {
             self.focused = index;
             self.selection.extend_to(index);
             self.ensure_visible(index);
@@ -1328,15 +1446,40 @@ impl ListView {
         }
     }
 
+    /// Nearest non-header index from `index`, preferring direction
+    /// `dir` (`-1`/`+1`) then the reverse — arrow keys skip header
+    /// rows, and `Home`/`End` land on a selectable row even when a
+    /// boundary run is all headers. `None` when no selectable item
+    /// exists.
+    fn nearest_selectable(&self, index: usize, dir: isize) -> Option<usize> {
+        let n = self.items.len() as isize;
+        if n == 0 {
+            return None;
+        }
+        let start = (index as isize).min(n - 1).max(0);
+        for k in 0..n {
+            for cand in [start + dir * k, start - dir * k] {
+                if (0..n).contains(&cand) && !self.is_header(cand as usize) {
+                    return Some(cand as usize);
+                }
+            }
+        }
+        None
+    }
+
     /// Keyboard navigation: move the roving tabindex to `index`
-    /// (clamped), honouring the selection mode and `Shift` state, and
-    /// keep it visible.
+    /// (clamped to a non-header row), honouring the selection mode
+    /// and `Shift` state, and keep it visible.
     fn move_focus_to(&mut self, index: usize) {
         let n = self.items.len();
         if n == 0 {
             return;
         }
-        self.focused = index.min(n - 1);
+        let dir = if index < self.focused { -1 } else { 1 };
+        let Some(i) = self.nearest_selectable(index, dir) else {
+            return;
+        };
+        self.focused = i;
         if self.selection_mode == SelectionMode::Multiple && self.shift_held {
             self.selection.extend_to(self.focused);
         } else {
@@ -1358,7 +1501,7 @@ impl ListView {
     /// Records an activation for [`take_activated`](Self::take_activated)
     /// and the optional sink.
     fn activate(&mut self, index: usize) {
-        if index < self.items.len() {
+        if index < self.items.len() && !self.is_header(index) {
             self.activated = Some(index);
             if let Some(ref sink) = self.activated_sink {
                 *sink.lock().expect("activated sink poisoned") = Some(index);
@@ -1386,7 +1529,7 @@ impl ListView {
         ] {
             for offset in start..start + n {
                 let i = (self.focused + offset) % n;
-                if self.items[i].to_ascii_lowercase().starts_with(probe) {
+                if !self.is_header(i) && self.items[i].to_ascii_lowercase().starts_with(probe) {
                     self.focused = i;
                     self.selection.select(i);
                     self.ensure_visible(i);
@@ -1470,6 +1613,7 @@ impl ListView {
             row.hovered = self.hovered == Some(i);
             row.alternate = self.alternating_rows && i % 2 == 1;
             row.enabled = self.enabled;
+            row.header = self.headers.contains(&i);
             row.pending = i >= self.items.len().saturating_sub(self.pending_tail);
             row.text_painter = self.text_painter.clone();
         }
@@ -1647,6 +1791,9 @@ impl Widget for ListView {
                     return EventResponse::CapturePointer;
                 }
                 if let Some(i) = self.row_at(*position) {
+                    if self.is_header(i) {
+                        return EventResponse::Ignored;
+                    }
                     if *count >= 2 {
                         self.select_index(i);
                         self.activate(i);
@@ -1694,7 +1841,7 @@ impl Widget for ListView {
                     }
                     return EventResponse::RequestRepaint;
                 }
-                let hov = self.row_at(*position);
+                let hov = self.row_at(*position).filter(|&i| !self.is_header(i));
                 if hov != self.hovered {
                     self.hovered = hov;
                     self.sync_rows();
@@ -2460,5 +2607,76 @@ mod tests {
         laid_out(&mut l, 200.0, 240.0);
         assert_eq!(l.scroll_offset(), 0.0);
         assert_eq!(l.visible_range().start, 0);
+    }
+
+    #[test]
+    fn headers_clamp_and_report() {
+        let mut l = ListView::new().items(["A", "B", "C"]).headers([0, 2]);
+        assert!(l.is_header(0));
+        assert!(!l.is_header(1));
+        assert!(l.is_header(2));
+        // Out-of-range indices are discarded.
+        l.set_headers([0, 9]);
+        assert!(l.is_header(0));
+        assert!(!l.is_header(9));
+        // Shrinking items clamps stale header indices.
+        l.set_headers([0, 1, 2]);
+        l.set_items(["X"]);
+        assert!(l.is_header(0));
+        assert!(!l.is_header(1));
+    }
+
+    #[test]
+    fn header_rows_reject_pointer_and_programmatic_selection() {
+        let mut l = ListView::new()
+            .items(["Fruit", "Apple", "Pear"])
+            .headers([0]);
+        laid_out(&mut l, 200.0, 96.0);
+        // Pointer press on the header row selects nothing.
+        event(&mut l, &press_at(12.0));
+        assert_eq!(l.selected(), None);
+        // Programmatic selection of a header is a no-op.
+        l.set_selected(0);
+        assert_eq!(l.selected(), None);
+        // Enter cannot activate a header even if focus lands there.
+        l.activate(0);
+        assert_eq!(l.take_activated(), None);
+    }
+
+    #[test]
+    fn arrow_nav_skips_header_rows() {
+        let mut l = ListView::new()
+            .items(["Fruit", "Apple", "Veg", "Carrot"])
+            .headers([0, 2]);
+        laid_out(&mut l, 200.0, 120.0);
+        l.set_selected(1);
+        // Down from 1: row 2 is a header — lands on 3.
+        event(&mut l, &key("ArrowDown"));
+        assert_eq!(l.focused_index(), 3);
+        assert_eq!(l.selected(), Some(3));
+        // Up from 3 skips the header at 2 — lands on 1.
+        event(&mut l, &key("ArrowUp"));
+        assert_eq!(l.focused_index(), 1);
+        // Up from 1 hits the header block at 0 — stays selectable.
+        event(&mut l, &key("ArrowUp"));
+        assert_eq!(l.focused_index(), 1);
+        // Home skips the leading header — lands on 1.
+        event(&mut l, &key("Home"));
+        assert_eq!(l.focused_index(), 1);
+        // End lands on the last selectable row.
+        event(&mut l, &key("End"));
+        assert_eq!(l.focused_index(), 3);
+    }
+
+    #[test]
+    fn typeahead_skips_header_rows() {
+        let mut l = ListView::new()
+            .items(["Fruit", "Figs", "Apple"])
+            .headers([0]);
+        laid_out(&mut l, 200.0, 96.0);
+        // Typing "f" must land on "Figs", not the "Fruit" header.
+        assert!(l.typeahead_select('f'));
+        assert_eq!(l.focused_index(), 1);
+        assert_eq!(l.selected(), Some(1));
     }
 }
