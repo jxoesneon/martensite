@@ -1510,13 +1510,6 @@ page!(EqualizerPage {
             max: 16,
             default: 8
         },
-        PropSpec::Int {
-            key: "faders",
-            label: "Faders",
-            min: 0,
-            max: 100,
-            default: 0
-        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -1527,9 +1520,9 @@ page!(EqualizerPage {
         },
     ],
     build: |p| {
-        let mut eq = Equalizer::new();
+        let mut eq = Equalizer::new().faders(p.i64("bands") as usize);
         for i in 0..p.i64("bands") {
-            let gain = ((i * 5) % 7) as f32 - 3.0;
+            let gain = 0.5 + 0.45 * (i as f32 * 1.7).sin();
             eq.set_gain(i as usize, gain);
         }
         {
@@ -1537,20 +1530,14 @@ page!(EqualizerPage {
             if !p.str("a11y_label").is_empty() {
                 __w = __w.label(p.str("a11y_label"));
             }
-            if p.i64("faders") != 0 {
-                __w = __w.faders(p.i64("faders") as usize);
-            }
             Box::new(__w)
         }
     },
     snippet: |p| {
-        let mut __s = format!("Equalizer::new() /* {} bands */", p.i64("bands"));
+        let mut __s = format!("Equalizer::new().faders({})", p.i64("bands"));
         __s.push_str(&crate::pages::prop_snippet(
             p,
-            &[
-                ("faders", ".faders", SnipProp::Int(0)),
-                ("a11y_label", ".label", SnipProp::Text("")),
-            ],
+            &[("a11y_label", ".label", SnipProp::Text(""))],
         ));
         __s
     },

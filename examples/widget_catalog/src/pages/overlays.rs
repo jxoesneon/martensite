@@ -25,9 +25,10 @@ use martensite::widgets::tour::Tour;
 use crate::page::{Page, PropSpec};
 use crate::pages::{downcast_mut, meta, page, SnipProp};
 
-/// Stage-area anchor rect — center-ish, below the trigger zone.
+/// Stage-area anchor rect — a trigger-sized rect at upper-center so
+/// bubbles open inside the stage instead of hugging the left edge.
 fn anchor() -> Rect {
-    Rect::new(40.0, 40.0, 1.0, 1.0)
+    Rect::new(336.0, 140.0, 48.0, 24.0)
 }
 
 page!(TooltipPage {
@@ -700,6 +701,8 @@ page!(HoverCardPage {
         let mut h = HoverCard::new(p.str("title"), "Retained-mode widget toolkit")
             .with_delay(std::time::Duration::from_millis(p.i64("delay") as u64));
         h.set_hovered(true);
+        // Advance past the open delay so a static frame shows the card.
+        h.tick(std::time::Duration::from_millis(p.i64("delay") as u64 + 1));
         {
             let mut __w = h;
             if !p.str("a11y_label").is_empty() {

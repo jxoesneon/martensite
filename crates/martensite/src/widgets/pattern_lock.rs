@@ -120,6 +120,24 @@ impl PatternLock {
         &self.pattern
     }
 
+    /// Pre-fills a pattern without a drag — demo/snapshot staging and
+    /// "required pattern" display. Out-of-range indices are dropped.
+    ///
+    /// ```
+    /// use martensite::widgets::pattern_lock::PatternLock;
+    ///
+    /// let mut l = PatternLock::new();
+    /// l.set_pattern(&[0, 4, 8]);
+    /// assert_eq!(l.pattern(), &[0, 4, 8]);
+    /// ```
+    pub fn set_pattern(&mut self, pattern: &[usize]) {
+        self.pattern = pattern
+            .iter()
+            .copied()
+            .filter(|&i| i < self.dot_count())
+            .collect();
+    }
+
     /// Clears the current pattern.
     ///
     /// ```

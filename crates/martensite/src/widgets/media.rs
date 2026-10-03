@@ -651,6 +651,39 @@ impl Widget for MediaView {
                     [0, 0, 0, 255],
                 );
             }
+            return;
+        }
+        // Idle placeholder: a themed well with a muted play glyph so an
+        // unattached view reads as media surface, not a hole in the UI.
+        let b = cx.bounds;
+        let r = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        );
+        let well = cx.color(martensite_theme::TokenKey::InsetColor, [18, 20, 26, 255]);
+        let glyph = cx.color(
+            martensite_theme::TokenKey::TextMutedColor,
+            [120, 125, 140, 255],
+        );
+        cx.list.push_fill_shape(
+            r,
+            &martensite_core::shape::Shape::squircle(cx.pt(8.0)),
+            well,
+        );
+        // Play triangle centred on the video rect.
+        let v = self.cached_video_rect;
+        let cx0 = f64::from(v.origin.x + v.size.x * 0.5);
+        let cy0 = f64::from(v.origin.y + v.size.y * 0.5);
+        let s = f64::from(cx.pt(18.0).min(v.size.x).min(v.size.y) * 0.5);
+        if s > 2.0 {
+            let mut tri = kurbo::BezPath::new();
+            tri.move_to((cx0 - s * 0.5, cy0 - s * 0.72));
+            tri.line_to((cx0 - s * 0.5, cy0 + s * 0.72));
+            tri.line_to((cx0 + s * 0.85, cy0));
+            tri.close_path();
+            cx.list.push_path(tri, glyph);
         }
     }
 }

@@ -38,7 +38,9 @@ const GRID: [u8; 4] = [225, 227, 232, 255];
 const EDGE: [u8; 4] = [180, 183, 190, 255];
 const MUTED: [u8; 4] = [120, 124, 132, 255];
 const INK: [u8; 4] = [40, 42, 48, 255];
-const EVENT: [u8; 4] = [96, 165, 250, 255];
+/// Default event block color — the iris accent family, matching the
+/// dark theme's `AccentColor`. Per-event `.color(...)` overrides.
+const EVENT: [u8; 4] = [154, 163, 255, 255];
 
 /// One timed or all-day event — see [`WeekView`].
 ///

@@ -202,6 +202,23 @@ impl PullToRefresh {
         PTR_THRESHOLD_PT
     }
 
+    /// Sets the pull distance directly (device px) — demo/snapshot
+    /// staging without a drag gesture.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{PullToRefresh, Text};
+    ///
+    /// let mut p = PullToRefresh::new(Text::new("x"));
+    /// p.set_pull(48.0);
+    /// assert_eq!(p.pull(), 48.0);
+    /// ```
+    #[inline]
+    pub fn set_pull(&mut self, px: f32) {
+        self.pull = px.max(0.0);
+    }
+
     /// Takes the parked refresh request.
     ///
     /// # Examples

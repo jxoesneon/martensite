@@ -467,6 +467,7 @@ page!(SearchBarPage {
     ],
     build: |p| {
         let mut w = SearchBar::new().placeholder(p.str("placeholder"));
+        w.search_mode = true; // demo the revealed field, not the collapsed marker
         w.set_sanitizer(crate::pages::sanitize_cfg(p));
         {
             let mut __w = w;

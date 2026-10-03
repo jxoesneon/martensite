@@ -33,6 +33,13 @@ use martensite_theme::TokenKey;
 
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 8.0;
+/// Natural size reported when a parent measures a viewport unbounded
+/// (a canvas has no intrinsic size, so a modest default keeps nested
+/// viewports sane instead of echoing `f32::MAX`).
+const DEFAULT_CONTENT_SIZE: glam::Vec2 = glam::Vec2::new(640.0, 480.0);
+/// Ceiling for measured content extent — guards layout against
+/// content that echoes unbounded constraints back as its size.
+const MAX_CONTENT_EXTENT: f32 = 65536.0;
 const GRID_PT: f32 = 24.0;
 
 const GRID: [u8; 4] = [90, 92, 100, 90];
@@ -380,9 +387,9 @@ impl Viewport {
     /// Re-lays out the content at the current pan/zoom so
     /// `child_bounds` and hit-testing track the view.
     fn relayout_content(&mut self) {
-        if self.content_size == Vec2::ZERO {
-            return;
-        }
+        // Zero-extent content is still laid out — marker widgets like
+        // `Popover` measure zero by design and only function once
+        // `child_bounds` reports their rect.
         let mut hot = HotNode::default();
         let mut cx = LayoutContext {
             hot: &mut hot,
@@ -406,10 +413,21 @@ impl Widget for Viewport {
     }
 
     fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        // Fill whatever the parent offers (canvas idiom).
+        // Fill whatever the parent offers (canvas idiom). An unbounded
+        // offer — e.g. a viewport nested inside another viewport asking
+        // for a natural size — falls back to a finite default so the
+        // answer never echoes `f32::MAX` into `content_size`.
         Vec2::new(
-            constraints.max_size.x.max(80.0),
-            constraints.max_size.y.max(80.0),
+            if constraints.max_size.x.is_finite() {
+                constraints.max_size.x.max(80.0)
+            } else {
+                DEFAULT_CONTENT_SIZE.x
+            },
+            if constraints.max_size.y.is_finite() {
+                constraints.max_size.y.max(80.0)
+            } else {
+                DEFAULT_CONTENT_SIZE.y
+            },
         )
     }
 
@@ -427,16 +445,32 @@ impl Widget for Viewport {
         }
         // Measure the content unbounded at base scale to learn its
         // natural size — the zoom pass scales the layout context.
+        // "Fill" widgets echo the offer back; an answer at or above
+        // the extent ceiling means "fill the viewport on that axis",
+        // not a literal canvas extent — otherwise a centred widget
+        // would park its content tens of thousands of points away.
         let mut hot = HotNode::default();
         let mut base = LayoutContext {
             hot: &mut hot,
             scale: cx.scale,
         };
-        self.content_size = self.content.measure(
+        let measured = self.content.measure(
             &mut base,
             LayoutConstraints {
                 min_size: Vec2::ZERO,
                 max_size: Vec2::new(f32::MAX, f32::MAX),
+            },
+        );
+        self.content_size = Vec2::new(
+            if measured.x >= MAX_CONTENT_EXTENT {
+                bounds.size.x
+            } else {
+                measured.x.clamp(0.0, MAX_CONTENT_EXTENT)
+            },
+            if measured.y >= MAX_CONTENT_EXTENT {
+                bounds.size.y
+            } else {
+                measured.y.clamp(0.0, MAX_CONTENT_EXTENT)
             },
         );
         self.relayout_content();
@@ -877,5 +911,35 @@ mod tests {
             unfocused,
             "focus ring lingered after FocusLost"
         );
+    }
+
+    #[test]
+    fn nested_viewport_never_echoes_unbounded_measure() {
+        // A viewport measured under `f32::MAX` constraints must report
+        // a finite natural size — echoing the offer back produced an
+        // f32::MAX content rect and runaway downstream allocation.
+        let inner = Viewport::new().child(Stub(Vec2::new(100.0, 50.0)));
+        let mut outer = Viewport::new().child_boxed(Box::new(inner));
+        laid_out(&mut outer, 720.0, 540.0);
+        assert!(outer.content_size().x.is_finite());
+        assert!(outer.content_size().y.is_finite());
+        assert!(outer.content_size().x <= MAX_CONTENT_EXTENT);
+    }
+
+    #[test]
+    fn unbounded_content_fills_viewport() {
+        // A fill-idiom child that echoes the unbounded measure offer
+        // back is interpreted as "fill the viewport" — not a literal
+        // f32::MAX canvas that would park centred content offscreen.
+        struct Infinite;
+        impl Widget for Infinite {
+            fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+                Vec2::new(f32::MAX, f32::MAX)
+            }
+            fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+        }
+        let mut v = Viewport::new().child(Infinite);
+        laid_out(&mut v, 720.0, 540.0);
+        assert_eq!(v.content_size(), Vec2::new(720.0, 540.0));
     }
 }

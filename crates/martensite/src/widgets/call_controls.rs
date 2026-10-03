@@ -352,8 +352,10 @@ impl Widget for CallControls {
             let (face, ink) = if *c == CallControl::Hangup {
                 (cx.color(TokenKey::ErrorColor, HANGUP), TEXT)
             } else if self.is_on(*c) {
+                // Active chips ride the raised rung — `SecondaryColor`
+                // is a text-grade token, not a control fill.
                 (
-                    cx.color(TokenKey::SecondaryColor, FACE),
+                    cx.color(TokenKey::RaisedColor, FACE),
                     cx.color(TokenKey::TextColor, TEXT),
                 )
             } else {

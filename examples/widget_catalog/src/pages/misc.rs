@@ -1376,9 +1376,9 @@ page!(VideoGridPage {
     build: |p| {
         let mut vg = VideoGrid::new();
         let colors = [
-            [80, 140, 255, 255],
-            [240, 90, 160, 255],
-            [90, 200, 120, 255],
+            [124, 135, 240, 255],
+            [190, 132, 168, 255],
+            [92, 168, 142, 255],
         ];
         for i in 0..p.i64("count") as usize {
             vg = vg.participant(Participant::new(format!("P{}", i + 1), colors[i % 3]));
@@ -2457,7 +2457,11 @@ page!(PatternLockPage {
         false,
     ),
     props: &[],
-    build: |_p| Box::new(PatternLock::new().label("Pattern")),
+    build: |_p| {
+        let mut l = PatternLock::new().label("Pattern");
+        l.set_pattern(&[0, 1, 4, 6, 8]); // stage a drawn pattern
+        Box::new(l)
+    },
     snippet: |_p| "PatternLock::new()".to_string(),
     poll: |w, out| {
         if let Some(pl) = downcast_mut::<PatternLock>(w) {
@@ -2696,6 +2700,7 @@ page!(PullToRefreshPage {
         if !_p.str("a11y_label").is_empty() {
             __w = __w.label(_p.str("a11y_label"));
         }
+        __w.set_pull(56.0); // stage mid-pull for a static snapshot
         Box::new(__w)
     },
     snippet: |_p| {

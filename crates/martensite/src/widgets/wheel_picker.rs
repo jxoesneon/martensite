@@ -292,11 +292,11 @@ impl Widget for WheelPicker {
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let h = cx.pt(self.row_height) * (VISIBLE_HALF * 2 + 1) as f32;
+        // A wheel column has a natural width, not a fill width —
+        // unbounded offers (a canvas measuring natural size) get a
+        // compact column, not a full-width banner.
         Vec2::new(
-            constraints
-                .max_size
-                .x
-                .max(cx.pt(120.0).min(constraints.max_size.x)),
+            constraints.max_size.x.min(cx.pt(200.0)).max(cx.pt(120.0)),
             h.min(constraints.max_size.y.max(h)),
         )
     }
@@ -345,7 +345,6 @@ impl Widget for WheelPicker {
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let rh = self.row_h(cx.scale);
         let center = b.min_y() + b.height() / 2.0;
-        let clip = f(b);
         let size = 13.0 * cx.scale;
         for (i, item) in self.items.iter().enumerate() {
             // Row `i` sits `i - drag_row` rows below the window.
@@ -365,7 +364,11 @@ impl Widget for WheelPicker {
                 .and_then(|p| p.measure_text(item, size))
                 .unwrap_or(size * item.chars().count() as f32 * 0.5);
             let x = f64::from(b.min_x() + (b.width() - w.min(b.width())) / 2.0);
-            paint_label_vcenter(painter, cx.list, clip, x, item, size, ink);
+            // The strip rect doubles as the v-center reference — pass
+            // the row, not the whole widget, or every label stacks at
+            // the wheel's center.
+            let row_clip = f(Rect::new(b.min_x(), y, b.width(), rh));
+            paint_label_vcenter(painter, cx.list, row_clip, x, item, size, ink);
         }
     }
 

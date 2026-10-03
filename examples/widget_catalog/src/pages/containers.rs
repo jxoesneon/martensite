@@ -1189,10 +1189,14 @@ page!(MasonryPage {
     ],
     build: |p| {
         let mut m = Masonry::new().columns(p.i64("cols") as usize);
+        let raised = martensite_theme::Oklab::from_srgb(0.16, 0.17, 0.21);
         for (i, h) in [48.0f32, 72.0, 40.0, 88.0, 56.0, 64.0].iter().enumerate() {
             m = m.child(
                 Container::new()
-                    .padding_uniform(6.0)
+                    .background(raised)
+                    .padding(martensite_layout::geometry::EdgeInsets::new(
+                        8.0, 8.0, 8.0, *h,
+                    ))
                     .child(Text::new(format!("Tile {} ({}px)", i + 1, h))),
             );
         }

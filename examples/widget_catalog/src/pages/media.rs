@@ -41,9 +41,10 @@ fn demo_image() -> ImageData {
         for x in 0..64u32 {
             let i = ((y * 64 + x) * 4) as usize;
             let on = (x / 8 + y / 8) % 2 == 0;
-            px[i] = if on { 90 } else { 140 };
-            px[i + 1] = if on { 140 } else { 160 };
-            px[i + 2] = 255;
+            // Neutral steel checker — the transparency cue, in palette.
+            px[i] = if on { 62 } else { 34 };
+            px[i + 1] = if on { 66 } else { 37 };
+            px[i + 2] = if on { 80 } else { 46 };
             px[i + 3] = 255;
         }
     }

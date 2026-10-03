@@ -71,6 +71,9 @@ pub struct Confetti {
     seed: u32,
     bounds: Rect,
     scale: f32,
+    /// Burst staged before the first `layout` — particles hold their
+    /// normalized origin until bounds resolve them.
+    resolve_on_layout: bool,
 }
 
 impl std::fmt::Debug for Confetti {
@@ -98,6 +101,7 @@ impl Confetti {
             seed: 0x9E3779B9,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            resolve_on_layout: false,
         }
     }
 
@@ -137,10 +141,20 @@ impl Confetti {
     /// assert_eq!(c.particle_count(), 8);
     /// ```
     pub fn burst(&mut self, nx: f32, ny: f32) {
-        let origin = Vec2::new(
-            self.bounds.min_x() + self.bounds.width() * nx.clamp(0.0, 1.0),
-            self.bounds.min_y() + self.bounds.height() * ny.clamp(0.0, 1.0),
-        );
+        let known = self.bounds.width() > 0.0 && self.bounds.height() > 0.0;
+        if !known {
+            // Pre-layout staging — particles carry their normalized
+            // origin; `layout` resolves them to absolute positions.
+            self.resolve_on_layout = true;
+        }
+        let origin = if known {
+            Vec2::new(
+                self.bounds.min_x() + self.bounds.width() * nx.clamp(0.0, 1.0),
+                self.bounds.min_y() + self.bounds.height() * ny.clamp(0.0, 1.0),
+            )
+        } else {
+            Vec2::new(nx.clamp(0.0, 1.0), ny.clamp(0.0, 1.0))
+        };
         for _ in 0..self.count {
             let a = self.rand(); // palette pick
             let b = self.rand(); // speed
@@ -223,6 +237,20 @@ impl Widget for Confetti {
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.bounds = bounds;
         self.scale = cx.scale;
+        if self.resolve_on_layout {
+            self.resolve_on_layout = false;
+            for p in &mut self.particles {
+                p.pos = Vec2::new(
+                    self.bounds.min_x() + self.bounds.width() * p.pos.x,
+                    self.bounds.min_y() + self.bounds.height() * p.pos.y,
+                );
+            }
+            // Advance the staged burst so a static frame shows a
+            // spread cloud instead of the origin dot at t=0.
+            for _ in 0..10 {
+                self.tick(Duration::from_millis(50));
+            }
+        }
     }
 
     fn accessibility(&self, node: &mut AccessKitNode) {

@@ -1290,7 +1290,12 @@ page!(AppGridPage {
     build: |p| {
         let mut g = AppGrid::new();
         g.columns = p.i64("cols") as usize;
-        let colors = [[80, 140, 255, 255], [240, 90, 90, 255], [90, 200, 120, 255]];
+        // Quench-tuned app hues — iris family + muted steel-adjacent.
+        let colors = [
+            [124, 135, 240, 255],
+            [190, 132, 168, 255],
+            [92, 168, 142, 255],
+        ];
         for (i, name) in ["Mail", "Maps", "Music", "Photos", "Notes", "Files"]
             .iter()
             .enumerate()
@@ -1952,6 +1957,7 @@ page!(ScrollIndicatorPage {
     build: |p| {
         let mut si = ScrollIndicator::new(SplitOrientation::Horizontal);
         si.set_scroll(p.f64("fraction") as f32, 0.25);
+        si.flash(); // stage visible for a static snapshot
         {
             let mut __w = si;
             if !p.str("a11y_label").is_empty() {

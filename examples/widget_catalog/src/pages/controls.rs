@@ -2189,6 +2189,22 @@ page!(CrosshairPage {
             label: "Color",
             default: ""
         },
+        PropSpec::Float {
+            key: "pos_x",
+            label: "Position X",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 0.62
+        },
+        PropSpec::Float {
+            key: "pos_y",
+            label: "Position Y",
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            default: 0.42
+        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -2201,6 +2217,10 @@ page!(CrosshairPage {
     build: |p| {
         let mut c = Crosshair::new();
         c.show_readout = p.bool("readout");
+        c.set_position(glam::Vec2::new(
+            p.f64("pos_x") as f32,
+            p.f64("pos_y") as f32,
+        ));
         {
             let mut __w = c;
             if !p.str("a11y_label").is_empty() {
@@ -2501,7 +2521,7 @@ page!(ColorPalettePage {
         PropSpec::Text {
             key: "swatches",
             label: "Swatches",
-            default: ""
+            default: "154,163,255;124,135,240;86,81,217;74,79,208;96,196,140;240,178,66;224,92,92;120,124,140;168,172,190;40,42,52"
         },
         PropSpec::Header {
             label: "State & Accessibility"

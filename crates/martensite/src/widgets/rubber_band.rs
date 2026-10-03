@@ -136,6 +136,21 @@ impl RubberBand {
         self.finished.take()
     }
 
+    /// Stages a live band between two content-space points without a
+    /// drag — demo/snapshot staging. `cancel` clears it.
+    ///
+    /// ```
+    /// use martensite::widgets::rubber_band::RubberBand;
+    ///
+    /// let mut b = RubberBand::new();
+    /// b.preview(glam::Vec2::new(10.0, 10.0), glam::Vec2::new(60.0, 40.0));
+    /// assert!(b.active().is_some());
+    /// ```
+    pub fn preview(&mut self, from: Vec2, to: Vec2) {
+        self.anchor = Some(from);
+        self.current = Some(to);
+    }
+
     /// Cancels an in-progress drag.
     ///
     /// ```

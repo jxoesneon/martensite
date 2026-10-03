@@ -60,6 +60,10 @@ pub struct GraphView {
     pub edges: Vec<(usize, usize)>,
     /// Node centers in widget coords; `layout` seeds a ring.
     positions: Vec<Vec2>,
+    /// The bounds origin positions were last seeded/dragged under —
+    /// carried forward so a moved box (re-centering, pan, resize)
+    /// takes its nodes along instead of clamping them onto an edge.
+    layout_origin: Option<Vec2>,
     /// Nodes pinned by a drag (relax skips them).
     pinned: Vec<bool>,
     drag: Option<usize>,
@@ -100,6 +104,7 @@ impl GraphView {
             nodes: Vec::new(),
             edges: Vec::new(),
             positions: Vec::new(),
+            layout_origin: None,
             pinned: Vec::new(),
             drag: None,
             hover: None,
@@ -344,6 +349,19 @@ impl Widget for GraphView {
         if n == 0 {
             return;
         }
+        // Positions are stored in absolute coordinates; when the box
+        // moves between layouts (the stage re-centres content via pan,
+        // the window resizes) translate them by the origin delta so a
+        // stale coordinate space can't clamp every node onto an edge.
+        if let Some(prev) = self.layout_origin {
+            let delta = bounds.origin - prev;
+            if delta != Vec2::ZERO {
+                for p in &mut self.positions {
+                    *p += delta;
+                }
+            }
+        }
+        self.layout_origin = Some(bounds.origin);
         let c = Vec2::new(
             (bounds.min_x() + bounds.max_x()) / 2.0,
             (bounds.min_y() + bounds.max_y()) / 2.0,

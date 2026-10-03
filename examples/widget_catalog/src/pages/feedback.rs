@@ -1236,6 +1236,7 @@ page!(MarqueePage {
         if p.f64("gap") != 0.0 {
             __w = __w.gap(p.f64("gap") as f32);
         }
+        __w.set_scroll_offset(220.0); // stage mid-scroll for a static snapshot
         Box::new(__w)
     },
     snippet: |p| {

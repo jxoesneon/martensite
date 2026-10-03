@@ -176,6 +176,20 @@ impl Marquee {
         self.paused = paused;
     }
 
+    /// Sets the scroll offset directly (device px) — demo/snapshot
+    /// staging without running ticks.
+    ///
+    /// ```
+    /// use martensite::widgets::marquee::Marquee;
+    ///
+    /// let mut m = Marquee::new("x");
+    /// m.set_scroll_offset(32.0);
+    /// assert_eq!(m.scroll_offset(), 32.0);
+    /// ```
+    pub fn set_scroll_offset(&mut self, px: f32) {
+        self.offset = px.max(0.0);
+    }
+
     /// Scroll offset in device px.
     ///
     /// ```

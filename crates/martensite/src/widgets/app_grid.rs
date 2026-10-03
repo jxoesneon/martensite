@@ -495,7 +495,16 @@ impl Widget for AppGrid {
                 ),
                 kurbo::Point::new(
                     f64::from(cell.min_x() + (cell.width() - tw) / 2.0),
-                    f64::from(icon.max_y() + CAPTION_PT * s * 0.85),
+                    // Vertically center the caption's ink in the zone
+                    // between icon bottom and cell bottom — a raw
+                    // `icon.max_y + CAPTION` lands the baseline outside
+                    // the cell clip and the label culls itself.
+                    crate::text_paint::centered_label_top(
+                        painter,
+                        f64::from(icon.max_y() + (cell.max_y() - icon.max_y()) * 0.5),
+                        &app.name,
+                        fs,
+                    ),
                 ),
                 &app.name,
                 fs,

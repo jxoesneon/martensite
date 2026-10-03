@@ -1824,6 +1824,8 @@ page!(RubberBandPage {
         if _p.f64("threshold") != 0.0 {
             __w = __w.threshold(_p.f64("threshold") as f32);
         }
+        // Stage a live marquee band for a static snapshot.
+        __w.preview(glam::Vec2::new(60.0, 80.0), glam::Vec2::new(340.0, 300.0));
         Box::new(__w)
     },
     snippet: |_p| {

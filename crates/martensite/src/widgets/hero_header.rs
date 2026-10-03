@@ -31,6 +31,11 @@ const SUB_PT: f32 = 14.0;
 const BTN_PT_W: f32 = 120.0;
 const BTN_PT_H: f32 = 34.0;
 const GAP_PT: f32 = 12.0;
+/// Line-box rhythm — glyph extent plus breathing room per stack row.
+const LEAD_EYEBROW: f32 = 26.0;
+const LEAD_TITLE: f32 = 60.0;
+const LEAD_SUB: f32 = 32.0;
+const CTA_GAP: f32 = 20.0;
 
 const TEXT_FG: [u8; 4] = [235, 237, 240, 255];
 const MUTED_FG: [u8; 4] = [160, 164, 174, 255];
@@ -195,6 +200,24 @@ impl HeroHeader {
     pub fn take_action(&mut self) -> Option<HeroAction> {
         self.action.take()
     }
+
+    /// Height of the content stack: pad, eyebrow, title, subtitle,
+    /// CTA row, pad — shared by `measure` and `layout` so the two can
+    /// never drift apart.
+    fn content_h(&self, s: f32) -> f32 {
+        let mut h = 8.0;
+        if !self.eyebrow.is_empty() {
+            h += LEAD_EYEBROW;
+        }
+        h += LEAD_TITLE;
+        if !self.subtitle.is_empty() {
+            h += LEAD_SUB;
+        }
+        if !self.primary.is_empty() || !self.secondary.is_empty() {
+            h += CTA_GAP + BTN_PT_H;
+        }
+        (h + 8.0) * s
+    }
 }
 
 impl Widget for HeroHeader {
@@ -204,17 +227,10 @@ impl Widget for HeroHeader {
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let s = cx.scale;
-        let mut h = TITLE_PT + SUB_PT;
-        if !self.eyebrow.is_empty() {
-            h += EYEBROW_PT + GAP_PT * 0.5;
-        }
-        if !self.primary.is_empty() || !self.secondary.is_empty() {
-            h += BTN_PT_H + GAP_PT;
-        }
         Vec2::new(
             constraints.max_size.x.max(0.0),
-            (h * s).min(constraints.max_size.y.max(0.0)),
+            self.content_h(cx.scale)
+                .min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -229,7 +245,17 @@ impl Widget for HeroHeader {
         let bw = BTN_PT_W * s;
         let bh = BTN_PT_H * s;
         let gap = GAP_PT * s;
-        let by = bounds.max_y() - bh - gap;
+        // CTAs follow the text stack (eyebrow → title → subtitle) —
+        // the same flow `measure`/`content_h` accounts for.
+        let mut ty = bounds.min_y() + 8.0 * s;
+        if !self.eyebrow.is_empty() {
+            ty += LEAD_EYEBROW * s;
+        }
+        ty += LEAD_TITLE * s;
+        if !self.subtitle.is_empty() {
+            ty += LEAD_SUB * s;
+        }
+        let by = ty + CTA_GAP * s;
         let n = [!self.primary.is_empty(), !self.secondary.is_empty()]
             .iter()
             .filter(|v| **v)
@@ -293,7 +319,7 @@ impl Widget for HeroHeader {
                 fs,
                 accent,
             );
-            y += fs + GAP_PT * s;
+            y += LEAD_EYEBROW * s;
         }
         // Title.
         let tfs = TITLE_PT * s;
@@ -306,7 +332,7 @@ impl Widget for HeroHeader {
             tfs,
             cx.color(TokenKey::TextColor, TEXT_FG),
         );
-        y += tfs + 10.0 * s;
+        y += LEAD_TITLE * s;
         // Subtitle.
         if !self.subtitle.is_empty() {
             let sfs = SUB_PT * s;
