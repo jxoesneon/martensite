@@ -4,10 +4,13 @@
 //! subtree only, and supports resizable frame presets so under- and
 //! over-flow are visible.
 
+use std::collections::VecDeque;
+
 use glam::Vec2;
 use martensite::core::intl::install_ambient_intl;
 use martensite::core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, Rect, Widget,
+    WidgetEvent,
 };
 use martensite::core::{LayoutDirection, Locale};
 use martensite::theme::Theme;
@@ -83,18 +86,26 @@ pub struct StageHost {
     direction: Option<LayoutDirection>,
     locale: Option<Locale>,
     theme: Option<Theme>,
+    /// Formatted lines for events delivered to the staged subtree —
+    /// the catalog's event panel drains this so the log reports what
+    /// happens to the *displayed* widget, not app-wide traffic.
+    event_log: VecDeque<String>,
 }
 
 impl StageHost {
     /// New stage hosting `child` in a default viewport.
     pub fn new(child: Box<dyn Widget>) -> Self {
         Self {
-            viewport: Viewport::new().child_boxed(child),
+            // `backdrop(false)` — the stage paints its own surface +
+            // grid under the whole area; the viewport's built-in
+            // backdrop would double the grid and seam the fill.
+            viewport: Viewport::new().child_boxed(child).backdrop(false),
             viewport_bounds: Rect::default(),
             frame: FramePreset::Fill,
             direction: None,
             locale: None,
             theme: None,
+            event_log: VecDeque::new(),
         }
     }
 
@@ -102,7 +113,18 @@ impl StageHost {
     pub fn set_child(&mut self, child: Box<dyn Widget>) {
         let zoom = self.viewport.zoom_value();
         let pan = self.viewport.pan_offset();
-        self.viewport = Viewport::new().child_boxed(child).zoom(zoom).pan(pan);
+        self.viewport = Viewport::new()
+            .child_boxed(child)
+            .backdrop(false)
+            .zoom(zoom)
+            .pan(pan);
+        // Events about the previous widget are stale by definition.
+        self.event_log.clear();
+    }
+
+    /// Drains the staged subtree's event lines for the log panel.
+    pub fn take_event_log(&mut self) -> Vec<String> {
+        self.event_log.drain(..).collect()
     }
 
     /// The staged widget — inside the viewport. `Widget::child` is
@@ -162,6 +184,68 @@ impl StageHost {
             self.direction.unwrap_or_default(),
             self.locale.clone().unwrap_or_default(),
         ))
+    }
+
+    /// Appends a human-readable line for an event that actually
+    /// reached the staged widget. Pointer traffic is gated to the
+    /// widget's content rect (a press on bare canvas is a pan, not a
+    /// widget event); keys and IME only count while the staged subtree
+    /// holds focus. `PointerMoved` is pure chatter and never logged.
+    fn record(&mut self, event: &WidgetEvent) {
+        // The viewport's content rect — the staged widget's actual
+        // on-screen extent inside the pannable canvas.
+        let content = Widget::child_bounds(&self.viewport, 0);
+        let on_widget = |p: Vec2| content.is_some_and(|r| r.contains(p));
+        let focused = self.viewport.focused() || self.viewport.has_focused_descendant();
+        let line = match event {
+            WidgetEvent::PointerMoved { .. } | WidgetEvent::ImePreedit { .. } => return,
+            WidgetEvent::PointerPressed {
+                position,
+                button,
+                count,
+            } if on_widget(*position) => {
+                format!(
+                    "press {button:?}{}",
+                    if *count > 1 {
+                        format!(" ×{count}")
+                    } else {
+                        String::new()
+                    }
+                )
+            }
+            WidgetEvent::PointerReleased { position, button } if on_widget(*position) => {
+                format!("release {button:?}")
+            }
+            WidgetEvent::Scroll { position, delta } if on_widget(*position) => {
+                format!("scroll Δ{:.0},{:.0}", delta.x, delta.y)
+            }
+            WidgetEvent::KeyPressed { key, repeat } if focused && !repeat => {
+                format!("key {key}")
+            }
+            WidgetEvent::ImeCommitted { text } if focused => format!("commit {text:?}"),
+            WidgetEvent::FocusGained => "focus".to_string(),
+            WidgetEvent::FocusLost => "blur".to_string(),
+            _ => return,
+        };
+        // Coalesce a run of identical lines into `… ×n` — a held key
+        // or a drag shouldn't bury the log.
+        if let Some(back) = self.event_log.back_mut() {
+            if let Some((head, n)) = back.rsplit_once(" ×") {
+                if head == line {
+                    if let Ok(n) = n.parse::<u32>() {
+                        *back = format!("{line} ×{}", n + 1);
+                        return;
+                    }
+                }
+            } else if *back == line {
+                *back = format!("{line} ×2");
+                return;
+            }
+        }
+        if self.event_log.len() >= 256 {
+            self.event_log.pop_front();
+        }
+        self.event_log.push_back(line);
     }
 
     /// The rect the viewport is laid out into.
@@ -239,9 +323,12 @@ impl Widget for StageHost {
         );
         let step = f64::from(GRID_STEP * cx.scale);
         let dot_px = f64::from(cx.scale * 1.5);
-        let mut y = f64::from(b.min_y());
+        // Dots anchor to the global grid phase (`… mod step`), not the
+        // stage origin — a stage that moves a pixel between pages must
+        // not shift the backdrop pattern under the user's eyes.
+        let mut y = f64::from(b.min_y()) - f64::from(b.min_y()).rem_euclid(step);
         while y <= f64::from(b.max_y()) {
-            let mut x = f64::from(b.min_x());
+            let mut x = f64::from(b.min_x()) - f64::from(b.min_x()).rem_euclid(step);
             while x <= f64::from(b.max_x()) {
                 cx.list.push_fill_rect(
                     kurbo::Rect::new(x, y, x + dot_px, y + dot_px),
@@ -283,6 +370,7 @@ impl Widget for StageHost {
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         let _g = self.ambient_guard();
+        self.record(cx.event);
         self.forward_event_to_children(cx)
     }
 

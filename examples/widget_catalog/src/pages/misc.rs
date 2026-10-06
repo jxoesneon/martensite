@@ -89,6 +89,10 @@ page!(AccordionPage {
         for title in ["Profile", "Security", "Advanced"] {
             a = a.section(title, Text::new(format!("{title} content")));
         }
+        // Stage two opens — under exclusivity only the last survives,
+        // under `multi` both stay open, so the flag is visible.
+        a.open_section(0);
+        a.open_section(1);
         {
             let mut __w = a;
             if p.f64("gap") != 0.0 {
@@ -194,30 +198,54 @@ page!(CalendarPage {
             label: "Date",
             default: ""
         },
+        PropSpec::Probe {
+            key: "date",
+            value: "2024-06-15"
+        },
         PropSpec::Text {
             key: "today",
             label: "Today",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "today",
+            value: "2024-06-01"
         },
         PropSpec::Text {
             key: "min_date",
             label: "Min Date",
             default: ""
         },
+        PropSpec::Probe {
+            key: "min_date",
+            value: "2024-01-01"
+        },
         PropSpec::Text {
             key: "max_date",
             label: "Max Date",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "max_date",
+            value: "2000-01-15"
         },
         PropSpec::Text {
             key: "month_names",
             label: "Month Names",
             default: ""
         },
+        PropSpec::Probe {
+            key: "month_names",
+            value: "Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec"
+        },
         PropSpec::Text {
             key: "weekday_names",
             label: "Weekday Names",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "weekday_names",
+            value: "Dom,Lun,Mar,Mie,Jue,Vie,Sab"
         },
         PropSpec::Text {
             key: "range_start",
@@ -255,6 +283,22 @@ page!(CalendarPage {
                 1 => martensite::widgets::calendar::CalendarSelection::Range,
                 _ => martensite::widgets::calendar::CalendarSelection::Day,
             });
+            // Range mode only paints a committed span — seed one so
+            // the mode reads visually unless the user supplies dates.
+            if p.str("range_start").is_empty() && p.str("range_end").is_empty() {
+                __w = __w.range(
+                    martensite::widgets::date_picker::Date {
+                        year: 2024,
+                        month: 6,
+                        day: 10,
+                    },
+                    martensite::widgets::date_picker::Date {
+                        year: 2024,
+                        month: 6,
+                        day: 20,
+                    },
+                );
+            }
         }
         if let Some(v) = crate::pages::parse_date(p.str("date")) {
             __w = __w.date(v);
@@ -416,20 +460,36 @@ page!(DatePickerPage {
             label: "Date",
             default: ""
         },
+        PropSpec::Probe {
+            key: "date",
+            value: "2024-06-15"
+        },
         PropSpec::Text {
             key: "weekday_names",
             label: "Weekday Names",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "weekday_names",
+            value: "Dom,Lun,Mar,Mie,Jue,Vie,Sab"
         },
         PropSpec::Text {
             key: "month_names",
             label: "Month Names",
             default: ""
         },
+        PropSpec::Probe {
+            key: "month_names",
+            value: "Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec"
+        },
         PropSpec::Text {
             key: "min_date",
             label: "Min Date",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "min_date",
+            value: "2024-01-01"
         },
         PropSpec::Text {
             key: "max_date",
@@ -440,6 +500,10 @@ page!(DatePickerPage {
             key: "today",
             label: "Today",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "today",
+            value: "2024-06-01"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -467,9 +531,34 @@ page!(DatePickerPage {
             }
             if p.bool("range_mode") {
                 __w = __w.range_mode(p.bool("range_mode"));
+                // A committed span so the face shows "start – end"
+                // and the popup paints the wash — range mode is
+                // otherwise invisible until two clicks land.
+                __w.set_range((
+                    martensite::widgets::date_picker::Date {
+                        year: 2024,
+                        month: 6,
+                        day: 10,
+                    },
+                    martensite::widgets::date_picker::Date {
+                        year: 2024,
+                        month: 6,
+                        day: 20,
+                    },
+                ));
             }
             if let Some(v) = crate::pages::parse_date(p.str("date")) {
                 __w = __w.date(v);
+            }
+            // Seed a committed date so a non-default `format` has a
+            // value to render on the face — the pattern is otherwise
+            // invisible until a date lands.
+            if p.str("format") != "{year}-{month:02}-{day:02}" && __w.get_date().is_none() {
+                __w = __w.date(martensite::widgets::date_picker::Date {
+                    year: 2024,
+                    month: 6,
+                    day: 15,
+                });
             }
             if let Some(v) = crate::pages::str_arr::<7>(p.str("weekday_names")) {
                 __w = __w.weekday_names(v);
@@ -594,6 +683,10 @@ page!(TimePickerPage {
             label: "Time",
             default: ""
         },
+        PropSpec::Probe {
+            key: "time",
+            value: "09:30"
+        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -608,6 +701,12 @@ page!(TimePickerPage {
         __w = __w.enabled(p.bool("enabled"));
         if p.i64("minute_step") != 1 {
             __w = __w.minute_step(p.i64("minute_step") as u32);
+            // A step only repaints when the minute sits off-grid —
+            // seed a misaligned value so the snap reads (00:00
+            // aligns with every step).
+            if p.str("time").is_empty() {
+                __w = __w.time(martensite::widgets::time_picker::Time { hour: 9, minute: 7 });
+            }
         }
         if let Some(v) = crate::pages::parse_time(p.str("time")) {
             __w = __w.time(v);
@@ -661,10 +760,18 @@ page!(WeekViewPage {
             label: "Hour Range (csv)",
             default: ""
         },
+        PropSpec::Probe {
+            key: "hour_range",
+            value: "8,18"
+        },
         PropSpec::Text {
             key: "day_names",
             label: "Day Names (7 csv)",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "day_names",
+            value: "Dom,Lun,Mar,Mie,Jue,Vie,Sab"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -1023,6 +1130,10 @@ page!(SocialCardPage {
             label: "Avatar Color",
             default: ""
         },
+        PropSpec::Probe {
+            key: "avatar_color",
+            value: "90,140,220,255"
+        },
         PropSpec::Text {
             key: "with_actions",
             label: "With Actions",
@@ -1120,9 +1231,9 @@ page!(ReactionBarPage {
     ],
     build: |_p| {
         let mut __w = ReactionBar::new()
-            .reaction(Reaction::new("👍", 4))
-            .reaction(Reaction::new("🎉", 2))
-            .reaction(Reaction::new("🚀", 7));
+            .reaction(Reaction::new("status.thumbs-up", 4))
+            .reaction(Reaction::new("misc.sparkles", 2))
+            .reaction(Reaction::new("misc.rocket", 7));
         if !_p.str("a11y_label").is_empty() {
             __w = __w.label(_p.str("a11y_label"));
         }
@@ -1132,7 +1243,8 @@ page!(ReactionBarPage {
         Box::new(__w)
     },
     snippet: |_p| {
-        let mut __s = "ReactionBar::new().reaction(Reaction::new(\"👍\", 4))".to_string();
+        let mut __s =
+            "ReactionBar::new().reaction(Reaction::new(\"status.thumbs-up\", 4))".to_string();
         __s.push_str(&crate::pages::prop_snippet(
             _p,
             &[
@@ -1784,12 +1896,18 @@ page!(CascaderPage {
     ],
     build: |p| {
         {
-            let mut __w = Cascader::new().label(p.str("label")).options(vec![
-                CascaderOption::new("Europe", "eu")
-                    .child(CascaderOption::new("Portugal", "pt"))
-                    .child(CascaderOption::new("Spain", "es")),
-                CascaderOption::new("Asia", "as").child(CascaderOption::new("Japan", "jp")),
-            ]);
+            // A non-default placeholder only paints in the empty
+            // state, so stage an empty tree for it to name itself.
+            let mut __w = if p.str("placeholder") != "Select…" {
+                Cascader::new().label(p.str("label"))
+            } else {
+                Cascader::new().label(p.str("label")).options(vec![
+                    CascaderOption::new("Europe", "eu")
+                        .child(CascaderOption::new("Portugal", "pt"))
+                        .child(CascaderOption::new("Spain", "es")),
+                    CascaderOption::new("Asia", "as").child(CascaderOption::new("Japan", "jp")),
+                ])
+            };
             __w = __w.enabled(p.bool("enabled"));
             __w = __w.loading(p.bool("loading"));
             if p.str("placeholder") != "Select…" {
@@ -1859,11 +1977,10 @@ page!(ChessBoardPage {
         },
     ],
     build: |p| {
-        let mut b = ChessBoard::new().coordinates(true);
+        let mut b = ChessBoard::new()
+            .coordinates(true)
+            .flipped(p.bool("flipped"));
         b.reset();
-        if p.bool("flipped") {
-            // flip via flag when supported
-        }
         {
             let mut __w = b;
             if !p.str("a11y_label").is_empty() {
@@ -1879,13 +1996,11 @@ page!(ChessBoardPage {
         }
     },
     snippet: |p| {
-        let mut __s = format!(
-            "ChessBoard::new().coordinates(true) /* flipped={} */",
-            p.bool("flipped")
-        );
+        let mut __s = "ChessBoard::new().coordinates(true)".to_string();
         __s.push_str(&crate::pages::prop_snippet(
             p,
             &[
+                ("flipped", ".flipped", SnipProp::Bool(false)),
                 ("read_only", ".read_only", SnipProp::Bool(false)),
                 ("fen", ".fen", SnipProp::Text("")),
                 ("a11y_label", ".label", SnipProp::Text("")),
@@ -2141,8 +2256,10 @@ page!(FlashcardPage {
         if !p.str("a11y_label").is_empty() {
             __w = __w.label(p.str("a11y_label"));
         }
-        if p.bool("flipped") {
-            __w = __w.flipped(p.bool("flipped"));
+        // The back face only paints when the card is flipped — flip a
+        // non-default back so the text is what the frame shows.
+        if p.bool("flipped") || p.str("back") != "Retained-mode UI element" {
+            __w = __w.flipped(true);
         }
         Box::new(__w)
     },
@@ -2186,9 +2303,9 @@ page!(FretboardPage {
     props: &[
         PropSpec::Int {
             key: "mute",
-            label: "Mute",
+            label: "Mute String (0-5)",
             min: 0,
-            max: 100,
+            max: 5,
             default: 0
         },
         PropSpec::Header {
@@ -2553,7 +2670,7 @@ page!(PipsPagerPage {
             key: "max_visible",
             label: "Max Visible",
             min: 0,
-            max: 32,
+            max: 8,
             default: 0
         },
         PropSpec::Header {
@@ -2860,21 +2977,16 @@ page!(StopwatchPage {
         },
     ],
     build: |_p| {
-        let mut s = Stopwatch::new();
-        s.start();
         {
-            let mut __w = s;
+            let mut __w = Stopwatch::new().running(_p.bool("running"));
             if !_p.str("a11y_label").is_empty() {
                 __w = __w.label(_p.str("a11y_label"));
-            }
-            if _p.bool("running") {
-                __w = __w.running(_p.bool("running"));
             }
             Box::new(__w)
         }
     },
     snippet: |_p| {
-        let mut __s = "let mut s = Stopwatch::new();\ns.start();".to_string();
+        let mut __s = "Stopwatch::new()".to_string();
         __s.push_str(&crate::pages::prop_snippet(
             _p,
             &[
@@ -3077,6 +3189,9 @@ page!(WizardPage {
                 .cancelable(true)
                 .step("Welcome", Text::new("Step 1 — welcome"))
                 .step("Options", Text::new("Step 2 — options"));
+            // Last step — the next button becomes the finish button,
+            // which is where `finish_text` is painted.
+            __w.go_to(1);
             __w = __w.enabled(p.bool("enabled"));
             if !p.str("a11y_label").is_empty() {
                 __w = __w.label(p.str("a11y_label"));
@@ -3178,6 +3293,10 @@ page!(WorldClockPage {
             key: "with_utc",
             label: "With Utc",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "with_utc",
+            value: "12:30"
         },
         PropSpec::Header {
             label: "State & Accessibility"

@@ -51,7 +51,15 @@ page!(ContainerPage {
         PropSpec::Text {
             key: "background",
             label: "Background",
-            default: ""
+            // A visible tint by default — padding only reads against
+            // the container's edge; an unpainted box grows invisibly
+            // around the centered child, which is why the prop
+            // audited dead before this default existed.
+            default: "40,45,55,255"
+        },
+        PropSpec::Probe {
+            key: "background",
+            value: "40,80,60,255"
         },
     ],
     build: |p| {
@@ -135,10 +143,18 @@ page!(FlexPage {
             FlexDirection::Row
         };
         {
+            // `main_axis_size(Max)` claims the stage's main extent so
+            // alignment has slack to distribute; the tall middle child
+            // gives cross-axis alignment something to move.
             let mut __w = Flex::new(dir)
+                .main_axis_size(martensite::widgets::flex::MainAxisSize::Max)
                 .gap(p.f64("gap") as f32)
                 .child(Button::new("One"))
-                .child(Button::new("Two"))
+                .child(
+                    Container::new()
+                        .padding_uniform(20.0)
+                        .child(Button::new("Two")),
+                )
                 .child(Button::new("Three"));
             if p.choice("main_axis_alignment") != 0 {
                 __w = __w.main_axis_alignment(match p.choice("main_axis_alignment") {
@@ -383,14 +399,6 @@ page!(GroupBoxPage {
             default: false
         },
         PropSpec::Float {
-            key: "padding_uniform",
-            label: "Padding Uniform",
-            min: 0.0,
-            max: 64.0,
-            step: 0.5,
-            default: 0.0
-        },
-        PropSpec::Float {
             key: "padding",
             label: "Padding",
             min: 0.0,
@@ -400,7 +408,10 @@ page!(GroupBoxPage {
         },
     ],
     build: |p| {
-        let mut __w = GroupBox::new(p.str("title")).checkable(p.bool("checkable"));
+        // A checked box needs the checkbox — `checked` implies checkable.
+        let mut __w = GroupBox::new(p.str("title"))
+            .checkable(p.bool("checkable") || p.bool("checked"))
+            .checked(p.bool("checked"));
         if p.f64("padding") != 0.0 {
             __w = __w.padding(martensite_layout::geometry::EdgeInsets::uniform(
                 p.f64("padding") as f32,
@@ -412,8 +423,11 @@ page!(GroupBoxPage {
         let mut __s = format!(
             "GroupBox::new({:?})\n    .checkable({})\n    .child(Text::new(\"Grouped content\"))",
             p.str("title"),
-            p.bool("checkable"),
+            p.bool("checkable") || p.bool("checked"),
         );
+        if p.bool("checked") {
+            __s.push_str("\n    .checked(true)");
+        }
         __s.push_str(&crate::pages::prop_snippet(p, &[]));
         if p.f64("padding") != 0.0 {
             __s.push_str(&format!(
@@ -552,10 +566,18 @@ page!(ExpanderRowPage {
             label: "Icon D",
             default: ""
         },
+        PropSpec::Probe {
+            key: "icon_d",
+            value: "M4 4h16v16H4z"
+        },
         PropSpec::Text {
             key: "icon_named",
             label: "Icon Named",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "icon_named",
+            value: "media.play"
         },
         PropSpec::Bool {
             key: "expanded",
@@ -657,10 +679,18 @@ page!(SettingsRowPage {
             label: "Icon D",
             default: ""
         },
+        PropSpec::Probe {
+            key: "icon_d",
+            value: "M4 4h16v16H4z"
+        },
         PropSpec::Text {
             key: "icon_named",
             label: "Icon Named",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "icon_named",
+            value: "media.play"
         },
         PropSpec::Bool {
             key: "activatable",
@@ -808,17 +838,40 @@ page!(AspectFramePage {
         },
     ],
     build: |p| {
-        let mut __w = AspectFrame::new(p.f64("ratio") as f32).child(Text::new("16:9"));
-        if !p.str("a11y_label").is_empty() {
-            __w = __w.label(p.str("a11y_label"));
-        }
-        if p.f64("xalign") != 0.5 {
-            __w = __w.xalign(p.f64("xalign") as f32);
-        }
-        if p.f64("yalign") != 0.5 {
-            __w = __w.yalign(p.f64("yalign") as f32);
-        }
-        Box::new(__w)
+        // One frame can only letterbox one axis at a time: the top
+        // row's cells are narrower than `ratio` so they letterbox
+        // vertically (yalign live); the bottom wide cell is wider
+        // than `ratio` so it letterboxes horizontally (xalign live).
+        let frame = |xalign: f32, yalign: f32| {
+            let mut w = AspectFrame::new(p.f64("ratio") as f32).child(
+                Container::new()
+                    .background(martensite_theme::Oklab::from_srgb(0.10, 0.19, 0.34))
+                    .child(Text::new("16:9")),
+            );
+            if !p.str("a11y_label").is_empty() {
+                w = w.label(p.str("a11y_label"));
+            }
+            if xalign != 0.5 {
+                w = w.xalign(xalign);
+            }
+            if yalign != 0.5 {
+                w = w.yalign(yalign);
+            }
+            w
+        };
+        let top = Flex::row()
+            .gap(8.0)
+            .main_axis_size(martensite::widgets::flex::MainAxisSize::Max)
+            .child_flex(frame(0.5, p.f64("yalign") as f32), 1.0)
+            .child_flex(frame(0.5, p.f64("yalign") as f32), 1.0);
+        let bottom = frame(p.f64("xalign") as f32, 0.5);
+        Box::new(
+            Flex::column()
+                .gap(8.0)
+                .main_axis_size(martensite::widgets::flex::MainAxisSize::Max)
+                .child_flex(top, 1.0)
+                .child_flex(bottom, 1.0),
+        )
     },
     snippet: |p| {
         let mut __s = format!(
@@ -949,22 +1002,27 @@ page!(SplitViewPage {
     ],
     build: |p| {
         let (a, b) = (Text::new("Left pane"), Text::new("Right pane"));
-        let mut s = if p.choice("orientation") == 1 {
+        let s = if p.choice("orientation") == 1 {
             SplitView::vertical()
         } else {
             SplitView::horizontal()
         }
         .first(Container::new().padding_uniform(8.0).child(a))
         .second(Container::new().padding_uniform(8.0).child(b));
-        s.set_ratio(p.f64("ratio") as f32);
         {
             let mut __w = s;
             __w = __w.enabled(p.bool("enabled"));
+            // `minimums` must land before the staged split so the clamp
+            // bites; `default_ratio` is staged live so the reset
+            // target is what the divider shows.
+            if p.f64("minimums") != 0.0 {
+                __w = __w.minimums(p.f64("minimums") as f32 / 100.0);
+            }
             if p.f64("default_ratio") != 0.0 {
                 __w = __w.default_ratio(p.f64("default_ratio") as f32);
-            }
-            if p.f64("minimums") != 0.0 {
-                __w = __w.minimums(p.f64("minimums") as f32);
+                __w.set_ratio(p.f64("default_ratio") as f32);
+            } else {
+                __w.set_ratio(p.f64("ratio") as f32);
             }
             Box::new(__w)
         }
@@ -1033,8 +1091,15 @@ page!(ScrollViewPage {
         for i in 1..=p.i64("lines") {
             f = f.child(Text::new(format!("Scrollable row {i}")));
         }
+        // The stage viewport paints a decorative dot grid across the
+        // whole surface; the content needs its own opaque face so the
+        // rows read (and lint-probe) against a solid background.
+        let sheet = Container::new()
+            .background(martensite_theme::Oklab::from_srgb(0.15, 0.16, 0.19))
+            .padding_uniform(6.0)
+            .child(f);
         {
-            let mut __w = ScrollView::new(f);
+            let mut __w = ScrollView::new(sheet);
             __w = __w.enabled(p.bool("enabled"));
             Box::new(__w)
         }
@@ -1079,6 +1144,10 @@ page!(ViewportPage {
             key: "pan",
             label: "Pan",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "pan",
+            value: "40,40"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -1290,6 +1359,10 @@ page!(FlowBoxPage {
                     1 => martensite::widgets::flow_box::FlowSelection::Single,
                     _ => martensite::widgets::flow_box::FlowSelection::None,
                 });
+                // Stage a committed selection so the mode's accent
+                // ring is what the frame shows — selection is
+                // otherwise invisible until a click lands.
+                __w.select(1);
             }
             Box::new(__w)
         }

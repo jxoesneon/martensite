@@ -3,7 +3,7 @@
 
 use martensite::widgets::alpha_slider::AlphaSlider;
 use martensite::widgets::button::Button;
-use martensite::widgets::checkbox::CheckBox;
+use martensite::widgets::checkbox::{CheckBox, CheckState};
 use martensite::widgets::chip::{Chip, ChipKind};
 use martensite::widgets::chip_group::ChipGroup;
 use martensite::widgets::color_button::ColorButton;
@@ -82,10 +82,18 @@ page!(ButtonPage {
             label: "Icon D",
             default: ""
         },
+        PropSpec::Probe {
+            key: "icon_d",
+            value: "M4 4h16v16H4z"
+        },
         PropSpec::Text {
             key: "icon_named",
             label: "Icon Named",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "icon_named",
+            value: "media.play"
         },
         PropSpec::Bool {
             key: "icon_only",
@@ -111,6 +119,11 @@ page!(ButtonPage {
             }
             if p.bool("icon_only") {
                 __w = __w.icon_only(p.bool("icon_only"));
+                // Icon-only hides the label only when an icon paints —
+                // stage one so the toggle demonstrates itself.
+                if p.str("icon_d").is_empty() && p.str("icon_named").is_empty() {
+                    __w = __w.icon_named("media.play");
+                }
             }
             Box::new(__w)
         }
@@ -188,12 +201,18 @@ page!(CheckBoxPage {
             default: true
         },
     ],
-    build: |p| Box::new(
-        CheckBox::new(p.str("label"))
+    build: |p| {
+        let mut cb = CheckBox::new(p.str("label"))
             .checked(p.bool("checked"))
             .tristate(p.bool("tristate"))
-            .enabled(p.bool("enabled")),
-    ),
+            .enabled(p.bool("enabled"));
+        // The flag alone changes only click cycling — stage the third
+        // state so tristate demonstrates itself on the raster.
+        if p.bool("tristate") && !p.bool("checked") {
+            cb.set_state(CheckState::Indeterminate);
+        }
+        Box::new(cb)
+    },
     snippet: |p| {
         let mut s = format!("CheckBox::new({:?})", p.str("label"));
         if p.bool("checked") {
@@ -201,6 +220,9 @@ page!(CheckBoxPage {
         }
         if p.bool("tristate") {
             s.push_str("\n    .tristate(true)");
+            if !p.bool("checked") {
+                s.push_str(" /* staged CheckState::Indeterminate */");
+            }
         }
         if !p.bool("enabled") {
             s.push_str("\n    .enabled(false)");
@@ -980,6 +1002,9 @@ page!(DropdownPage {
         }
         if !p.str("placeholder").is_empty() {
             __w = __w.placeholder(p.str("placeholder"));
+            // The face only paints the placeholder while nothing is
+            // selected — clear the selection so the text shows.
+            __w.deselect();
         }
         Box::new(__w)
     },
@@ -992,6 +1017,9 @@ page!(DropdownPage {
                 .join(", ");
             format!("Dropdown::new([{opts}])")
         };
+        if !p.str("placeholder").is_empty() {
+            __s.push_str(" /* deselected — placeholder paints */");
+        }
         __s.push_str(&crate::pages::prop_snippet(
             p,
             &[
@@ -1038,7 +1066,7 @@ page!(RadioGroupPage {
         PropSpec::Choice {
             key: "direction",
             label: "Direction",
-            options: &["Row", "Column"],
+            options: &["Column", "Row"],
             default: 0
         },
         PropSpec::Header {
@@ -1063,9 +1091,8 @@ page!(RadioGroupPage {
         }
         if p.choice("direction") != 0 {
             __w = __w.direction(match p.choice("direction") {
-                0 => martensite::widgets::flex::FlexDirection::Row,
-                1 => martensite::widgets::flex::FlexDirection::Column,
-                _ => martensite::widgets::flex::FlexDirection::Row,
+                1 => martensite::widgets::flex::FlexDirection::Row,
+                _ => martensite::widgets::flex::FlexDirection::Column,
             });
         }
         Box::new(__w)
@@ -1086,8 +1113,8 @@ page!(RadioGroupPage {
                     "direction",
                     ".direction",
                     SnipProp::Choice(&[
-                        "martensite::widgets::flex::FlexDirection::Row",
                         "martensite::widgets::flex::FlexDirection::Column",
+                        "martensite::widgets::flex::FlexDirection::Row",
                     ]),
                 ),
                 ("enabled", ".enabled", SnipProp::Bool(true)),
@@ -1133,9 +1160,9 @@ page!(MenuButtonPage {
     },
     snippet: |p| {
         format!(
-        "MenuButton::new({:?}, vec![\n    MenuItem::action(\"Refresh\"),\n    MenuItem::action(\"Duplicate\"),\n    MenuItem::separator(),\n    MenuItem::action(\"Delete\"),\n])",
-        p.str("label"),
-    )
+            "MenuButton::new({:?}, vec![\n    MenuItem::action(\"Refresh\"),\n    MenuItem::action(\"Duplicate\"),\n    MenuItem::separator(),\n    MenuItem::action(\"Delete\"),\n])",
+            p.str("label"),
+        )
     },
     poll: |w, out| {
         if let Some(b) = downcast_mut::<MenuButton>(w) {
@@ -1240,7 +1267,7 @@ page!(ChipPage {
         PropSpec::Bool {
             key: "selected",
             label: "Selected",
-            default: false
+            default: true
         },
         PropSpec::Bool {
             key: "deletable",
@@ -1329,7 +1356,7 @@ page!(ChipGroupPage {
         PropSpec::Choice {
             key: "selection",
             label: "Selection",
-            options: &["None", "Single", "Multiple"],
+            options: &["Multiple", "Single", "None"],
             default: 0
         },
         PropSpec::Header {
@@ -1354,10 +1381,9 @@ page!(ChipGroupPage {
             }
             if p.choice("selection") != 0 {
                 __w = __w.selection(match p.choice("selection") {
-                    0 => martensite::widgets::chip_group::ChipSelection::None,
                     1 => martensite::widgets::chip_group::ChipSelection::Single,
-                    2 => martensite::widgets::chip_group::ChipSelection::Multiple,
-                    _ => martensite::widgets::chip_group::ChipSelection::None,
+                    2 => martensite::widgets::chip_group::ChipSelection::None,
+                    _ => martensite::widgets::chip_group::ChipSelection::Multiple,
                 });
             }
             Box::new(__w)
@@ -1380,9 +1406,9 @@ page!(ChipGroupPage {
                     "selection",
                     ".selection",
                     SnipProp::Choice(&[
-                        "martensite::widgets::chip_group::ChipSelection::None",
-                        "martensite::widgets::chip_group::ChipSelection::Single",
                         "martensite::widgets::chip_group::ChipSelection::Multiple",
+                        "martensite::widgets::chip_group::ChipSelection::Single",
+                        "martensite::widgets::chip_group::ChipSelection::None",
                     ]),
                 ),
                 ("enabled", ".enabled", SnipProp::Bool(true)),
@@ -1644,10 +1670,18 @@ page!(FloatButtonPage {
             label: "Icon D",
             default: ""
         },
+        PropSpec::Probe {
+            key: "icon_d",
+            value: "M4 4h16v16H4z"
+        },
         PropSpec::Text {
             key: "icon_named",
             label: "Icon Named",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "icon_named",
+            value: "media.play"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -2104,6 +2138,10 @@ page!(XyPadPage {
             label: "Value (csv)",
             default: ""
         },
+        PropSpec::Probe {
+            key: "value",
+            value: "0.3,0.7"
+        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -2188,6 +2226,10 @@ page!(CrosshairPage {
             key: "color",
             label: "Color",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "color",
+            value: "255,64,64,255"
         },
         PropSpec::Float {
             key: "pos_x",
@@ -2409,14 +2451,23 @@ page!(PadGridPage {
         if !p.str("a11y_label").is_empty() {
             __w = __w.label(p.str("a11y_label"));
         }
+        // Index props target one pad — clamp into the staged grid so
+        // every index lands somewhere visible.
+        let last = __w.pad_count() - 1;
         if p.i64("pad_color_index") != 0 || !p.str("pad_color_color").is_empty() {
             __w = __w.pad_color(
-                p.i64("pad_color_index") as usize,
+                (p.i64("pad_color_index") as usize).min(last),
                 crate::pages::parse_rgba(p.str("pad_color_color")).unwrap_or([0, 0, 0, 255]),
             );
         }
         if p.i64("pad_label_index") != 0 || !p.str("pad_label_label").is_empty() {
-            __w = __w.pad_label(p.i64("pad_label_index") as usize, p.str("pad_label_label"));
+            // An index without text is invisible — stage a placeholder
+            // so the index slider demonstrates itself.
+            let text = p.str("pad_label_label");
+            __w = __w.pad_label(
+                (p.i64("pad_label_index") as usize).min(last),
+                if text.is_empty() { "Pad" } else { text },
+            );
         }
         Box::new(__w)
     },
@@ -2605,6 +2656,10 @@ page!(ColorPickerPage {
             label: "Color",
             default: ""
         },
+        PropSpec::Probe {
+            key: "color",
+            value: "255,64,64,255"
+        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -2773,6 +2828,10 @@ page!(AlphaSliderPage {
             key: "color",
             label: "Color",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "color",
+            value: "255,64,64,255"
         },
         PropSpec::Header {
             label: "State & Accessibility"

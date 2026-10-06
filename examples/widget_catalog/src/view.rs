@@ -9,11 +9,12 @@ use std::collections::{HashMap, VecDeque};
 use glam::Vec2;
 use martensite::core::{
     EventContext, EventResponse, FontWeight, LayoutConstraints, LayoutContext, PaintContext, Rect,
-    Widget,
+    Widget, WidgetEvent,
 };
 use martensite::reactive::Signal;
 use martensite::theme::{tokens, TokenKey};
 use martensite::widgets::button::Button;
+use martensite::widgets::container::Container;
 use martensite::widgets::dropdown::Dropdown;
 use martensite::widgets::flex::{CrossAxisAlignment, Flex};
 use martensite::widgets::list_view::ListView;
@@ -44,6 +45,14 @@ const CARD_PAD: f32 = 10.0;
 /// Titled-panel header strip height (title + hairline).
 const HEAD_H: f32 = 28.0;
 const LOG_CAP: usize = 240;
+/// Width (logical pt) below which the catalog goes compact: narrower
+/// side rails and the reference/event dock spanning the full window
+/// under all three columns instead of slivers under the canvas.
+const COMPACT_W: f32 = 1060.0;
+/// Compact-mode rail width.
+const RAIL_W_COMPACT: f32 = 196.0;
+/// Compact-mode props width.
+const PROPS_W_COMPACT: f32 = 264.0;
 /// Props panel label column width.
 const PROP_LABEL_W: f32 = 110.0;
 /// Prop row height.
@@ -113,6 +122,9 @@ pub struct CatalogView {
     /// True when the staged widget must be rebuilt (page or props
     /// changed).
     stage_dirty: bool,
+    /// Compact breakpoint state — the brand subtitle and dock layout
+    /// follow it; updated in `layout`.
+    compact: bool,
     /// Child rects from the last `layout` — event hit-testing and
     /// `child_bounds` read these.
     last_child_bounds: [Rect; N_CHILDREN],
@@ -229,6 +241,7 @@ impl CatalogView {
             locale_idx: None,
             frame: FramePreset::Fill,
             stage_dirty: false,
+            compact: false,
             last_child_bounds: [Rect::default(); N_CHILDREN],
             sig_sel: Signal::new(0usize),
             sig_search: Signal::new(String::new()),
@@ -416,23 +429,12 @@ impl CatalogView {
         for spec in specs {
             let control: Box<dyn Widget> = match spec {
                 PropSpec::Header { label } => {
-                    // Section divider — small-caps muted label with a
-                    // trailing hairline (inspector-panel convention).
-                    let muted = muted_text();
-                    rows.push(Box::new(
-                        Flex::row()
-                            .gap(8.0)
-                            .cross_axis_alignment(CrossAxisAlignment::Center)
-                            .child(
-                                Text::new(label.to_uppercase())
-                                    .font_size(10.0)
-                                    .letter_spacing(0.08)
-                                    .color(muted),
-                            )
-                            .child_flex(Separator::horizontal(), 1.0),
-                    ));
+                    // Section divider — the shared labeled-rule
+                    // chrome (small-caps muted + trailing hairline).
+                    rows.push(Box::new(labeled_rule(label)));
                     continue;
                 }
+                PropSpec::Probe { .. } => continue,
                 PropSpec::Bool { default, .. } => {
                     let on = props
                         .get(spec.key())
@@ -524,36 +526,76 @@ impl CatalogView {
         }
     }
 
-    /// Rebuilds the reference pane: name/role/description/aliases plus
-    /// the live snippet lines.
+    /// Rebuilds the reference pane — title, kind line, description,
+    /// alias table, and the live snippet in a tinted code block, each
+    /// under the shared labeled-rule section chrome.
     fn rebuild_info(&mut self) {
         let meta = self.pages[self.sel].meta();
         let props = &self.prop_values[&self.sel];
         let snippet = self.pages[self.sel].snippet(props);
+        let muted = muted_text();
+        let secondary = secondary_text();
         let mut rows: Vec<Box<dyn Widget>> = Vec::new();
-        rows.push(Box::new(Text::new(meta.name.to_string()).font_size(18.0)));
-        rows.push(Box::new(Text::new(format!(
-            "Role: {}  ·  {}",
-            meta.role, meta.family
-        ))));
+
+        // Identity — name at display size, family · role as the
+        // subdued kind line underneath.
+        rows.push(Box::new(
+            Text::new(meta.name.to_string())
+                .font_size(18.0)
+                .font_weight(FontWeight::SEMIBOLD),
+        ));
+        rows.push(Box::new(
+            Text::new(format!("{} · {}", meta.family, meta.role))
+                .font_size(11.0)
+                .color(muted),
+        ));
+
+        rows.push(Box::new(labeled_rule("About")));
+        rows.push(Box::new(
+            Text::new(meta.description.to_string())
+                .font_size(12.0)
+                .color(secondary),
+        ));
+
         if !meta.aliases.is_empty() {
-            let aliases = meta
-                .aliases
-                .iter()
-                .map(|(fw, a)| format!("{fw}: {a}"))
-                .collect::<Vec<_>>()
-                .join("   |   ");
-            rows.push(Box::new(Text::new(format!("Aliases: {aliases}"))));
+            rows.push(Box::new(labeled_rule("Also known as")));
+            // One row per framework pair — a muted key with the
+            // equivalent name; a wrapped run of pipe-joined text
+            // buried the mapping in prose.
+            let mut list = Flex::column().gap(2.0);
+            for (fw, a) in meta.aliases {
+                list = list.child(
+                    Text::new(format!("{fw} — {a}"))
+                        .font_size(11.0)
+                        .color(secondary),
+                );
+            }
+            rows.push(Box::new(list));
         }
-        rows.push(Box::new(Text::new(meta.description.to_string())));
-        rows.push(Box::new(Text::new("Snippet:".to_string()).font_size(13.0)));
+
+        rows.push(Box::new(labeled_rule("Snippet")));
+        // Snippet sits on the raised surface so it reads as a code
+        // block, not stray prose — the tinted card carries the mono
+        // lines at tight leading.
+        let mut code = Flex::column().gap(1.0);
         for line in snippet.lines() {
-            rows.push(Box::new(
+            code = code.child(
                 Text::new(line.to_string())
-                    .font_size(12.0)
-                    .family("monospace"),
-            ));
+                    .font_size(11.5)
+                    .family("monospace")
+                    .color(secondary),
+            );
         }
+        let surface = tokens::default_dark()
+            .color(TokenKey::RaisedColor)
+            .unwrap_or_else(|| martensite_theme::Oklab::from_srgb(0.16, 0.17, 0.2));
+        rows.push(Box::new(
+            Container::new()
+                .padding_uniform(8.0)
+                .background(surface)
+                .child(code),
+        ));
+
         if let Some(col) = self
             .info_scroll_mut()
             .child_mut(0)
@@ -598,7 +640,7 @@ impl CatalogView {
                     Some(PropValue::Choice(dd.selected().min(options.len() - 1)))
                 }
             }
-            PropSpec::Header { .. } => None,
+            PropSpec::Header { .. } | PropSpec::Probe { .. } => None,
         }
     }
 
@@ -726,12 +768,19 @@ impl CatalogView {
         let specs = self.pages[self.sel].props().to_vec();
         let mut edits = Vec::new();
         if let Some(host) = self.props_host_mut() {
-            for (i, spec) in specs.iter().enumerate() {
-                if let Some(row) = host.child_mut(i) {
+            // Row indices ≠ spec indices: Header/Probe specs produce no
+            // row, so track the row counter separately.
+            let mut row_i = 0;
+            for spec in specs.iter() {
+                if matches!(spec, PropSpec::Header { .. } | PropSpec::Probe { .. }) {
+                    continue;
+                }
+                if let Some(row) = host.child_mut(row_i) {
                     if let Some(v) = Self::read_control(row, spec) {
                         edits.push((spec.key(), v));
                     }
                 }
+                row_i += 1;
             }
         }
         if !edits.is_empty() {
@@ -750,6 +799,14 @@ impl CatalogView {
             let w = self.pages[self.sel].build(&props);
             self.stage_mut().set_child(w);
             self.rebuild_info();
+        }
+
+        // ---- staged subtree event tap → log ----
+        // The stage records every event that reaches the widget's
+        // subtree; this keeps the panel about the displayed widget,
+        // not app traffic.
+        for line in self.stage_mut().take_event_log() {
+            self.log_line(line);
         }
 
         // ---- staged widget events + state diffs → log ----
@@ -801,6 +858,10 @@ impl CatalogView {
         }
         self.sel = page;
         self.last_state.clear();
+        // The log belongs to the displayed widget — a different page
+        // means a different widget, so stale lines must not bleed over.
+        self.log.clear();
+        self.log_mut().set_items(Vec::<String>::new());
         self.sig_sel.set(page);
         self.last_sig[0] = page;
         let props = self.prop_values[&page].clone();
@@ -880,19 +941,35 @@ impl CatalogView {
     }
 
     /// Card rects for the five panels — shared by `layout` so content
-    /// and [`PanelCard`] chrome can never disagree.
+    /// and [`PanelCard`] chrome can never disagree. Two geometries:
+    /// the wide layout docks reference+events under the canvas; under
+    /// [`COMPACT_W`] the dock spans the window's full width below all
+    /// three columns so no panel degenerates into a sliver with its
+    /// hairline edges overlapping its neighbours'.
     fn panel_rects(b: Rect, scale: f32) -> (Rect, Rect, Rect, Rect, Rect) {
         let pad = PAD * scale;
         let th = TOOLBAR_H * scale;
         let body_y = b.min_y() + th + pad;
         let body_h = (b.height() - th - pad - pad).max(0.0);
-        let rail = Rect::new(b.min_x() + pad, body_y, RAIL_W * scale, body_h);
-        let props = Rect::new(
-            b.max_x() - pad - PROPS_W * scale,
-            body_y,
-            PROPS_W * scale,
-            body_h,
-        );
+        let compact = b.width() < COMPACT_W * scale;
+        let rail_w = if compact { RAIL_W_COMPACT } else { RAIL_W } * scale;
+        let props_w = if compact { PROPS_W_COMPACT } else { PROPS_W } * scale;
+        if compact {
+            let dock_h = (BOTTOM_H * scale).min(body_h * 0.35);
+            let top_h = (body_h - dock_h - pad).max(0.0);
+            let rail = Rect::new(b.min_x() + pad, body_y, rail_w, top_h);
+            let props = Rect::new(b.max_x() - pad - props_w, body_y, props_w, top_h);
+            let cx0 = rail.max_x() + pad;
+            let cw = (props.min_x() - pad - cx0).max(0.0);
+            let canvas = Rect::new(cx0, body_y, cw, top_h);
+            let dock_y = body_y + top_h + pad;
+            let half = (b.width() - pad * 3.0) * 0.5;
+            let info = Rect::new(b.min_x() + pad, dock_y, half, dock_h);
+            let log = Rect::new(info.max_x() + pad, dock_y, half, dock_h);
+            return (rail, canvas, props, info, log);
+        }
+        let rail = Rect::new(b.min_x() + pad, body_y, rail_w, body_h);
+        let props = Rect::new(b.max_x() - pad - props_w, body_y, props_w, body_h);
         let cx0 = rail.max_x() + pad;
         let cw = (props.min_x() - pad - cx0).max(0.0);
         let canvas = Rect::new(cx0, body_y, cw, (body_h - BOTTOM_H * scale - pad).max(0.0));
@@ -915,6 +992,31 @@ fn muted_text() -> martensite_theme::Oklab {
     tokens::default_dark()
         .color(TokenKey::TextMutedColor)
         .unwrap_or_else(|| martensite_theme::Oklab::from_srgb(0.55, 0.57, 0.62))
+}
+
+/// Secondary body-text color — one step off full ink for paragraphs
+/// that should read softer than labels.
+fn secondary_text() -> martensite_theme::Oklab {
+    tokens::default_dark()
+        .color(TokenKey::TextColor)
+        .unwrap_or_else(|| martensite_theme::Oklab::from_srgb(0.82, 0.83, 0.86))
+}
+
+/// A labeled divider — small-caps muted label with a trailing
+/// hairline. One construction shared by props-panel section headers,
+/// card title strips, and the reference pane's section breaks so the
+/// language stays identical everywhere it appears.
+fn labeled_rule(label: &str) -> Flex {
+    Flex::row()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(
+            Text::new(label.to_uppercase())
+                .font_size(10.0)
+                .letter_spacing(0.08)
+                .color(muted_text()),
+        )
+        .child_flex(Separator::horizontal(), 1.0)
 }
 
 /// A catalog panel — squircle `SurfaceColor` card with a 1pt
@@ -940,16 +1042,7 @@ impl PanelCard {
     }
 
     fn titled(title: &str, content: impl Widget + 'static) -> Self {
-        let header = Flex::row()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .child(
-                Text::new(title.to_uppercase())
-                    .font_size(10.0)
-                    .letter_spacing(0.08)
-                    .color(muted_text()),
-            )
-            .child_flex(Separator::horizontal(), 1.0);
+        let header = labeled_rule(title);
         Self {
             header: Some(header),
             content: Box::new(content),
@@ -1303,6 +1396,24 @@ impl Widget for CatalogView {
         );
         cx.layout_child(&mut self.toolbar_row, tb);
 
+        // Compact breakpoint: the brand subtitle yields to the tools
+        // cluster rather than clipping mid-word.
+        let compact = bounds.width() < COMPACT_W * cx.scale;
+        if compact != self.compact {
+            self.compact = compact;
+            if let Some(sub) = self
+                .toolbar_row
+                .child_mut(0)
+                .and_then(|c| c.as_any_mut())
+                .and_then(|a| a.downcast_mut::<Flex>())
+                .and_then(|brand| brand.child_mut(1))
+                .and_then(|c| c.as_any_mut())
+                .and_then(|a| a.downcast_mut::<Text>())
+            {
+                sub.set_content(if compact { "" } else { "Widget Catalog" });
+            }
+        }
+
         // Panel cards below the toolbar.
         let (rail, canvas, props, info, log) = Self::panel_rects(bounds, cx.scale);
         for (i, r) in [rail, canvas, props, info, log].into_iter().enumerate() {
@@ -1352,6 +1463,43 @@ impl Widget for CatalogView {
     }
 
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
+        // Nav keys default to the widget rail. The unfocused key path
+        // is a topmost-first scan, so without this an ArrowDown feeds
+        // whichever list paints last — the event log, not the rail.
+        // Editing controls and the staged widget keep their keys:
+        // when one of those subtrees holds focus the normal focused
+        // path delivers, untouched.
+        if let WidgetEvent::KeyPressed { key, .. } = cx.event {
+            const NAV_KEYS: &[&str] = &[
+                "ArrowUp",
+                "ArrowDown",
+                "ArrowLeft",
+                "ArrowRight",
+                "PageUp",
+                "PageDown",
+                "Home",
+                "End",
+                "Enter",
+            ];
+            // Any held focus owns its keys — search caret moves, prop
+            // controls adjust, a clicked-into event log scrolls, the
+            // staged widget navigates. The intercept exists only for
+            // the no-focus path, where the topmost-first scan would
+            // feed nav keys to whichever list paints last.
+            if NAV_KEYS.contains(&key.as_str()) && !self.has_focused_descendant() {
+                let bounds = self
+                    .rail_card
+                    .child(0)
+                    .and_then(|col| col.child_bounds(1))
+                    .unwrap_or_default();
+                let mut key_cx = EventContext {
+                    event: cx.event,
+                    bounds,
+                    scale: cx.scale,
+                };
+                return self.rail_list_mut().event(&mut key_cx);
+            }
+        }
         self.forward_event_to_children(cx)
     }
 

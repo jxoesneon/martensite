@@ -96,13 +96,28 @@ pub enum PropSpec {
         /// Heading text.
         label: &'static str,
     },
+    /// Audit annotation, not a panel control: a semantically-valid
+    /// value for the prop `key` that the shape-generic prop audit
+    /// can't express (ISO dates, `"r,g,b,a"` colors, csv rows, icon
+    /// names, in-range indices). Place it immediately after the spec
+    /// it annotates. `--audit-props`/`--audit-gate` parse `value`
+    /// through that spec's [`PropSpec::parse_value`] and require the
+    /// render to change — so a wired prop proves itself rather than
+    /// living in the baseline file.
+    Probe {
+        /// Key of the prop spec this value targets.
+        key: &'static str,
+        /// A valid, non-default value in that prop's input syntax.
+        value: &'static str,
+    },
 }
 
 impl PropSpec {
-    /// The spec's stable key — `""` for headers, which carry no value.
+    /// The spec's stable key — `""` for headers and probes, which
+    /// carry no value of their own.
     pub fn key(&self) -> &'static str {
         match self {
-            Self::Header { .. } => "",
+            Self::Header { .. } | Self::Probe { .. } => "",
             Self::Bool { key, .. }
             | Self::Float { key, .. }
             | Self::Int { key, .. }
@@ -115,6 +130,7 @@ impl PropSpec {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Header { label } => label,
+            Self::Probe { .. } => "Audit Probe",
             Self::Bool { label, .. }
             | Self::Float { label, .. }
             | Self::Int { label, .. }
@@ -138,15 +154,16 @@ impl PropSpec {
                 .ok()
                 .or_else(|| options.iter().position(|o| *o == value))
                 .map(PropValue::Choice),
-            Self::Header { .. } => None,
+            Self::Header { .. } | Self::Probe { .. } => None,
         }
     }
 
-    /// The spec's default value — headers carry `Bool(false)` as a
-    /// placeholder and are skipped by [`PropValues::from_specs`].
+    /// The spec's default value — headers and probes carry
+    /// `Bool(false)` as a placeholder and are skipped by
+    /// [`PropValues::from_specs`].
     pub fn default_value(&self) -> PropValue {
         match *self {
-            Self::Header { .. } => PropValue::Bool(false),
+            Self::Header { .. } | Self::Probe { .. } => PropValue::Bool(false),
             Self::Bool { default, .. } => PropValue::Bool(default),
             Self::Float { default, .. } => PropValue::Float(default),
             Self::Int { default, .. } => PropValue::Int(default),
@@ -182,7 +199,7 @@ impl PropValues {
     pub fn from_specs(specs: &[PropSpec]) -> Self {
         let mut map = BTreeMap::new();
         for spec in specs {
-            if matches!(spec, PropSpec::Header { .. }) {
+            if matches!(spec, PropSpec::Header { .. } | PropSpec::Probe { .. }) {
                 continue;
             }
             map.insert(spec.key(), spec.default_value());

@@ -241,7 +241,7 @@ page!(PieChartPage {
     ],
     build: |p| {
         let slices = vec![
-            PieSlice::new(40.0, "Rust").color([230, 120, 60, 255]),
+            PieSlice::new(40.0, "Rust").color([235, 150, 60, 255]),
             PieSlice::new(30.0, "Go").color([80, 170, 230, 255]),
             PieSlice::new(30.0, "C++").color([90, 200, 120, 255]),
         ];
@@ -306,6 +306,10 @@ page!(CandlestickPage {
             key: "candles",
             label: "Candles",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "candles",
+            value: "10,14,8,12;12,15,11,13"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -401,6 +405,10 @@ page!(HistogramPage {
             label: "Samples",
             default: ""
         },
+        PropSpec::Probe {
+            key: "samples",
+            value: "1,2,3,4,5,4,3,2"
+        },
     ],
     build: |p| {
         let mut __w = Histogram::new()
@@ -472,18 +480,24 @@ page!(HeatMapPage {
             label: "Set (csv)",
             default: ""
         },
+        PropSpec::Probe {
+            key: "set",
+            value: "2,3,1.0"
+        },
         PropSpec::Int {
             key: "set_row",
             label: "Set Row",
             min: 0,
-            max: 32,
+            // One under the `rows` ceiling so probes stay in-grid.
+            max: 11,
             default: 0
         },
         PropSpec::Int {
             key: "set_col",
             label: "Set Col",
             min: 0,
-            max: 32,
+            // One under the `cols` ceiling so probes stay in-grid.
+            max: 23,
             default: 0
         },
         PropSpec::Float {
@@ -512,7 +526,9 @@ page!(HeatMapPage {
         let mut h = HeatMap::new(p.i64("rows") as usize, p.i64("cols") as usize);
         for r in 0..p.i64("rows") {
             for c in 0..p.i64("cols") {
-                h.set_cell(r as usize, c as usize, ((r * c) % 10) as f32 / 10.0);
+                // Every cell non-zero so a `set`/`set_*` write of 0.0
+                // still reads as a darkened cell.
+                h.set_cell(r as usize, c as usize, (((r * c) % 10) + 1) as f32 / 10.0);
             }
         }
         {
@@ -520,6 +536,11 @@ page!(HeatMapPage {
             __w = __w.enabled(p.bool("enabled"));
             if !p.str("a11y_label").is_empty() {
                 __w = __w.a11y_label(p.str("a11y_label"));
+            }
+            // One-shot "row,col,value" write — complements the
+            // set_row/set_col/set_value triplet below.
+            if let [r, c, v] = crate::pages::parse_f32s(p.str("set"))[..] {
+                __w = __w.set(r as usize, c as usize, v);
             }
             if p.i64("set_row") != 0 || p.i64("set_col") != 0 || p.f64("set_value") != 0.0 {
                 __w = __w.set(
@@ -544,6 +565,13 @@ page!(HeatMapPage {
                 ("a11y_label", ".a11y_label", SnipProp::Text("")),
             ],
         ));
+        __s.push_str(&crate::pages::snip_textmap(p, "set", ".set", "", |s| {
+            if let [r, c, v] = crate::pages::parse_f32s(s)[..] {
+                Some(format!("{}, {}, {v:?}", r as usize, c as usize))
+            } else {
+                None
+            }
+        }));
         if p.i64("set_row") != 0 || p.i64("set_col") != 0 || p.f64("set_value") != 0.0 {
             __s.push_str(&format!(
                 "\n    .set({}, {}, {})",
@@ -588,10 +616,18 @@ page!(ScatterChartPage {
             label: "X Range (csv)",
             default: ""
         },
+        PropSpec::Probe {
+            key: "x_range",
+            value: "0,100"
+        },
         PropSpec::Text {
             key: "y_range",
             label: "Y Range (csv)",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "y_range",
+            value: "0,100"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -1293,6 +1329,10 @@ page!(StripChartPage {
             key: "range",
             label: "Range (csv)",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "range",
+            value: "0,50"
         },
         PropSpec::Header {
             label: "State & Accessibility"

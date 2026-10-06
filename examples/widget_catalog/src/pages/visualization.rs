@@ -375,6 +375,9 @@ page!(OdometerPage {
             .digits(6)
             .value(p.i64("value") as u64)
             .speed(4.0);
+        // `value` is the roll target — reels start at zero and only
+        // animate on tick, so snap for a static frame.
+        __w.snap();
         if !p.str("a11y_label").is_empty() {
             __w = __w.label(p.str("a11y_label"));
         }
@@ -424,6 +427,10 @@ page!(DigitalClockPage {
             key: "time",
             label: "Time",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "time",
+            value: "12:34"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -597,6 +604,10 @@ page!(WeatherPage {
             key: "hi_lo",
             label: "Hi Lo (csv)",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "hi_lo",
+            value: "8,21"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -1228,6 +1239,10 @@ page!(VuMeterPage {
             label: "Levels",
             default: ""
         },
+        PropSpec::Probe {
+            key: "levels",
+            value: "0.3,0.6,0.9"
+        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -1426,6 +1441,10 @@ page!(RulerPage {
             label: "Ticks (csv)",
             default: ""
         },
+        PropSpec::Probe {
+            key: "ticks",
+            value: "20,5"
+        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -1548,6 +1567,10 @@ page!(GradientEditorPage {
             key: "stops",
             label: "Stops",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "stops",
+            value: "0,255,0,0,255;1,0,0,255,255"
         },
         PropSpec::Header {
             label: "State & Accessibility"

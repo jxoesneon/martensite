@@ -408,6 +408,32 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: stable
 
+  prop-audit:
+    name: Widget Prop-Effect Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Same system deps as build-tests: the workspace graph compiles
+      # decoder + pango/cairo backends on Linux. fonts-liberation keeps
+      # the headless text raster deterministic.
+      - name: Install Pango/Cairo + FFmpeg/libva + fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev \
+            libglib2.0-dev pkg-config fonts-liberation \
+            libva-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libavfilter-dev libavdevice-dev libavformat-dev
+      - name: Build widget catalog
+        run: cargo build -p widget_catalog
+      # Headless raster diff: every catalog page is re-rendered with
+      # each right-panel prop flipped; a prop changing zero pixels must
+      # be classified in examples/widget_catalog/audit_baseline.tsv or
+      # the gate fails. Panics and stale baseline entries also fail.
+      - name: Run prop-effect audit gate
+        run: ./target/debug/widget_catalog --audit-gate
+
   docs:
     name: Documentation Build
     runs-on: ubuntu-latest
@@ -818,6 +844,7 @@ jobs:
       - doc-tests-facade
       - ignored-tests
       - audit
+      - prop-audit
       - docs
       - benchmarks
       - performance-gates

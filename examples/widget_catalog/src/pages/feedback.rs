@@ -194,6 +194,10 @@ page!(BadgePage {
             label: "Color",
             default: ""
         },
+        PropSpec::Probe {
+            key: "color",
+            value: "255,64,64,255"
+        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -414,10 +418,18 @@ page!(EmptyStatePage {
             label: "Icon D",
             default: ""
         },
+        PropSpec::Probe {
+            key: "icon_d",
+            value: "M4 4h16v16H4z"
+        },
         PropSpec::Text {
             key: "icon_named",
             label: "Icon Named",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "icon_named",
+            value: "media.play"
         },
     ],
     build: |p| {
@@ -755,7 +767,10 @@ page!(ToastHostPage {
             t = t.ttl_secs(p.f64("ttl_secs") as f32);
         }
         host.push(t);
-        host.push(Toast::new(Severity::Warning, "Retry queued"));
+        // Pinned TTL — a live countdown bar jitters between frames,
+        // which destabilises the audit's noise floor. The `ttl_secs`
+        // prop still exercises the bar on the first toast.
+        host.push(Toast::new(Severity::Warning, "Retry queued").ttl_secs(0.0));
         Box::new(host)
     },
     snippet: |p| {
@@ -988,6 +1003,10 @@ page!(CountdownPage {
             label: "Warn Under",
             default: ""
         },
+        PropSpec::Probe {
+            key: "warn_under",
+            value: "3600"
+        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -1082,6 +1101,10 @@ page!(CountdownRingPage {
             key: "warn_under",
             label: "Warn Under",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "warn_under",
+            value: "3600"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -1236,7 +1259,9 @@ page!(MarqueePage {
         if p.f64("gap") != 0.0 {
             __w = __w.gap(p.f64("gap") as f32);
         }
-        __w.set_scroll_offset(220.0); // stage mid-scroll for a static snapshot
+        // Deep enough that the trailing repeat copy (spaced `gap` px
+        // behind) is inside the frame — otherwise Gap has nothing to move.
+        __w.set_scroll_offset(400.0);
         Box::new(__w)
     },
     snippet: |p| {
@@ -1706,10 +1731,25 @@ page!(TickerTapePage {
             if !p.str("a11y_label").is_empty() {
                 __w = __w.label(p.str("a11y_label"));
             }
-            if !p.str("ticker_sym").is_empty() {
+            // The custom item is staged whenever any of its fields is
+            // non-default — price/delta alone must still add a row.
+            if !p.str("ticker_sym").is_empty()
+                || !p.str("ticker_price").is_empty()
+                || p.f64("ticker_delta") != 0.0
+            {
+                let sym = if p.str("ticker_sym").is_empty() {
+                    "XYZW"
+                } else {
+                    p.str("ticker_sym")
+                };
+                let price = if p.str("ticker_price").is_empty() {
+                    "0.00"
+                } else {
+                    p.str("ticker_price")
+                };
                 __w = __w.item(martensite::widgets::ticker_tape::TickerItem::new(
-                    p.str("ticker_sym"),
-                    p.str("ticker_price"),
+                    sym,
+                    price,
                     p.f64("ticker_delta") as f32,
                 ));
             }
@@ -1722,11 +1762,22 @@ page!(TickerTapePage {
             p,
             &[("a11y_label", ".label", SnipProp::Text(""))],
         ));
-        if !p.str("ticker_sym").is_empty() {
+        if !p.str("ticker_sym").is_empty()
+            || !p.str("ticker_price").is_empty()
+            || p.f64("ticker_delta") != 0.0
+        {
+            let sym = if p.str("ticker_sym").is_empty() {
+                "XYZW"
+            } else {
+                p.str("ticker_sym")
+            };
+            let price = if p.str("ticker_price").is_empty() {
+                "0.00"
+            } else {
+                p.str("ticker_price")
+            };
             __s.push_str(&format!(
-                "\n    .item(TickerItem::new({:?}, {:?}, {}))",
-                p.str("ticker_sym"),
-                p.str("ticker_price"),
+                "\n    .item(TickerItem::new({sym:?}, {price:?}, {}))",
                 p.f64("ticker_delta")
             ));
         }

@@ -116,9 +116,9 @@ page!(PopoverPage {
     snippet: |p| {
         let mut __s = {
             format!(
-        "Popover::new()\n    .title({:?})\n    .preferred_edge(AnchorEdge::Bottom)\n    .anchor(rect)",
-        p.str("title"),
-    )
+                "Popover::new()\n    .title({:?})\n    .preferred_edge(AnchorEdge::Bottom)\n    .anchor(rect)",
+                p.str("title"),
+            )
         };
         __s.push_str(&crate::pages::prop_snippet(
             p,
@@ -359,9 +359,9 @@ page!(ActionSheetPage {
     snippet: |p| {
         let mut __s = {
             format!(
-        "ActionSheet::new()\n    .title({:?})\n    .action(\"Share\")\n    .destructive(\"Delete\")",
-        p.str("title"),
-    )
+                "ActionSheet::new()\n    .title({:?})\n    .action(\"Share\")\n    .destructive(\"Delete\")",
+                p.str("title"),
+            )
         };
         __s.push_str(&crate::pages::prop_snippet(
             p,
@@ -768,6 +768,9 @@ page!(PipPage {
         let mut pip = Pip::new(Text::new("PiP content"));
         pip.closable = p.bool("closable");
         pip.maximizable = true;
+        // Close/expand chrome only paints while hovered — stage the
+        // hover so `closable` toggles a visible button.
+        pip.set_hovered(true);
         {
             let mut __w = pip;
             if !p.str("a11y_label").is_empty() {

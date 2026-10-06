@@ -114,9 +114,9 @@ page!(ListViewPage {
     },
     snippet: |p| {
         let mut __s = format!(
-        "let mut lv = ListView::new();\nlv.set_items((1..={}).map(|i| format!(\"Item {{i}}\")));",
-        p.i64("count"),
-    );
+            "let mut lv = ListView::new();\nlv.set_items((1..={}).map(|i| format!(\"Item {{i}}\")));",
+            p.i64("count"),
+        );
         __s.push_str(&crate::pages::prop_snippet(
             p,
             &[
@@ -266,6 +266,11 @@ page!(TablePage {
                 },
             ]
         }));
+        // A sort indicator only paints once a sort is active — stage
+        // one so `sortable` toggles a visible difference.
+        if p.bool("sortable") {
+            t.set_sort(0, martensite::widgets::table::SortDir::Descending);
+        }
         {
             let mut __w = t;
             __w = __w.enabled(p.bool("enabled"));
@@ -294,11 +299,11 @@ page!(TablePage {
     },
     snippet: |p| {
         let mut __s = format!(
-        "Table::new()\n    .columns([…])\n    .striped({})\n    .grid_lines({})\n    /* {} rows */",
-        p.bool("striped"),
-        p.bool("grid"),
-        p.i64("rows"),
-    );
+            "Table::new()\n    .columns([…])\n    .striped({})\n    .grid_lines({})\n    /* {} rows */",
+            p.bool("striped"),
+            p.bool("grid"),
+            p.i64("rows"),
+        );
         __s.push_str(&crate::pages::prop_snippet(
             p,
             &[
@@ -311,6 +316,9 @@ page!(TablePage {
                 ("a11y_label", ".label", SnipProp::Text("")),
             ],
         ));
+        if p.bool("sortable") {
+            __s.push_str(" /* staged: t.set_sort(0, SortDir::Descending) */");
+        }
         __s.push_str(&crate::pages::snip_textmap(
             p,
             "row",
@@ -907,6 +915,11 @@ page!(LogViewPage {
     ],
     build: |p| {
         let mut lv = LogView::new();
+        // The ring cap trims on `push` — apply it before seeding so a
+        // small cap visibly drops the oldest lines.
+        if p.i64("max_lines") != 0 {
+            lv = lv.max_lines(p.i64("max_lines") as usize);
+        }
         for i in 1..=p.i64("lines") {
             let sev = match i % 4 {
                 0 => LogSeverity::Warning,
@@ -916,14 +929,16 @@ page!(LogViewPage {
             };
             lv.push(sev, format!("log line {i}"));
         }
+        // Follow mode pins to the newest line; scroll back so a
+        // capped buffer's trimmed head shows on screen.
+        if p.i64("max_lines") != 0 {
+            lv.set_scroll_offset(20.0);
+        }
         {
             let mut __w = lv;
             __w = __w.enabled(p.bool("enabled"));
             if !p.str("a11y_label").is_empty() {
                 __w = __w.a11y_label(p.str("a11y_label"));
-            }
-            if p.i64("max_lines") != 0 {
-                __w = __w.max_lines(p.i64("max_lines") as usize);
             }
             Box::new(__w)
         }
@@ -1033,9 +1048,9 @@ page!(PropertyGridPage {
     snippet: |p| {
         let mut __s = {
             format!(
-        "PropertyGrid::new()\n    .columns({:?})\n    .add_row(PropertyRow::text(\"Name\", \"alpha-7\"))",
-        p.f64("fraction") as f32,
-    )
+                "PropertyGrid::new()\n    .columns({:?})\n    .add_row(PropertyRow::text(\"Name\", \"alpha-7\"))",
+                p.f64("fraction") as f32,
+            )
         };
         __s.push_str(&crate::pages::prop_snippet(
             p,
@@ -1099,6 +1114,11 @@ page!(ClipboardHistoryPage {
     ],
     build: |_p| {
         let mut ch = ClipboardHistory::new();
+        // The retention cap evicts on `push` — apply it before seeding
+        // so a small cap visibly drops entries.
+        if _p.i64("max") != 50 {
+            ch = ch.max(_p.i64("max") as usize);
+        }
         ch.push("cargo test --workspace");
         ch.push("https://example.com/spec");
         ch.push("fn main() { … }");
@@ -1106,9 +1126,6 @@ page!(ClipboardHistoryPage {
             let mut __w = ch;
             if !_p.str("a11y_label").is_empty() {
                 __w = __w.label(_p.str("a11y_label"));
-            }
-            if _p.i64("max") != 50 {
-                __w = __w.max(_p.i64("max") as usize);
             }
             Box::new(__w)
         }

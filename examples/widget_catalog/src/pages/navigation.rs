@@ -218,7 +218,7 @@ page!(NavRailPage {
         },
     ],
     build: |p| {
-        let icons = ["home", "magnify", "bookshelf", "cog"];
+        let icons = ["nav.home", "nav.search", "status.bookmark", "nav.settings"];
         let mut rail = NavRail::new();
         for (i, d) in csv(p, "dests").iter().enumerate() {
             rail = rail.destination(icons.get(i).copied().unwrap_or("dot"), d.clone());
@@ -344,16 +344,20 @@ page!(NavStackPage {
         },
     ],
     build: |_p| {
-        let mut ns = NavStack::new(Text::new("Root page"));
-        ns.push(Text::new("Detail page"), "Detail");
+        let mut ns = NavStack::new(Text::new("Root page")).title("Root");
+        // The header shows the *top* page's title — the prop drives
+        // the pushed page, not the covered root.
+        let top_title = if _p.str("title").is_empty() {
+            "Detail"
+        } else {
+            _p.str("title")
+        };
+        ns.push(Text::new("Detail page"), top_title);
         {
             let mut __w = ns;
             __w = __w.enabled(_p.bool("enabled"));
             if !_p.str("a11y_label").is_empty() {
                 __w = __w.label(_p.str("a11y_label"));
-            }
-            if !_p.str("title").is_empty() {
-                __w = __w.title(_p.str("title"));
             }
             Box::new(__w)
         }
@@ -708,13 +712,15 @@ page!(DockPage {
         for (i, name) in ["Finder", "Editor", "Terminal"].iter().enumerate() {
             d = d.item(DockItem::new(name.to_string(), colors[i % 3]));
         }
-        if p.bool("magnify") {
-            // magnification is on by default; prop kept for parity
-        }
         {
             let mut __w = d;
             if !p.str("a11y_label").is_empty() {
                 __w = __w.label(p.str("a11y_label"));
+            }
+            // The Bool maps onto the peak: `1.0` disables proximity
+            // magnification (and shrinks the measured strip height).
+            if !p.bool("magnify") {
+                __w = __w.magnification(1.0);
             }
             if p.f64("magnification") != 0.0 {
                 __w = __w.magnification(p.f64("magnification") as f32);
@@ -954,7 +960,7 @@ page!(CommandPalettePage {
             key: "max_results",
             label: "Max Results",
             min: 0,
-            max: 100,
+            max: 8,
             default: 0
         },
         PropSpec::Choice {
@@ -993,10 +999,19 @@ page!(CommandPalettePage {
         },
     ],
     build: |_p| {
+        // `max_results` only reads when the staged list can overflow
+        // the cap — fill past the prop's largest probe value.
         let mut cp = CommandPalette::new()
             .action(CommandAction::new("open", "Open File"))
             .action(CommandAction::new("save", "Save All"))
-            .action(CommandAction::new("prefs", "Preferences"));
+            .action(CommandAction::new("prefs", "Preferences"))
+            .action(CommandAction::new("new", "New Window"))
+            .action(CommandAction::new("find", "Find in Files"))
+            .action(CommandAction::new("term", "Toggle Terminal"))
+            .action(CommandAction::new("ext", "Extensions"))
+            .action(CommandAction::new("settings", "Open Settings"))
+            .action(CommandAction::new("quit", "Quit All"))
+            .action(CommandAction::new("theme", "Toggle Theme"));
         cp.open();
         {
             let mut __w = cp;
@@ -1102,10 +1117,10 @@ page!(ToolPalettePage {
             .columns(p.i64("cols") as usize)
             .show_labels(true);
         for (glyph, label) in [
-            ("✏", "Brush"),
-            ("⬚", "Select"),
-            ("🗑", "Erase"),
-            ("⤢", "Move"),
+            ("edit.paintbrush", "Brush"),
+            ("edit.select", "Select"),
+            ("edit.trash", "Erase"),
+            ("arrow.move", "Move"),
         ] {
             tp = tp.tool(ToolItem::new(glyph, label));
         }
@@ -1364,6 +1379,10 @@ page!(DevicePickerPage {
             min: 0,
             max: 32,
             default: 0
+        },
+        PropSpec::Probe {
+            key: "active_index",
+            value: "1"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -1635,15 +1654,15 @@ page!(ControlCenterPage {
     ],
     build: |_p| {
         let mut __w = ControlCenter::new()
-            .tile("wifi", "Wi-Fi", true)
-            .tile("bluetooth", "Bluetooth", false)
-            .slider("sun", "Brightness", 0.7);
+            .tile("device.wifi", "Wi-Fi", true)
+            .tile("device.bluetooth", "Bluetooth", false)
+            .slider("misc.sun", "Brightness", 0.7);
         if !_p.str("a11y_label").is_empty() {
             __w = __w.label(_p.str("a11y_label"));
         }
         if !_p.str("tile_named_name").is_empty()
             || !_p.str("tile_named_title").is_empty()
-            || !_p.bool("tile_named_on")
+            || _p.bool("tile_named_on")
         {
             __w = __w.tile_named(
                 _p.str("tile_named_name"),
@@ -1665,7 +1684,7 @@ page!(ControlCenterPage {
     },
     snippet: |_p| {
         let mut __s = {
-            "ControlCenter::new()\n    .tile(\"wifi\", \"Wi-Fi\", true)\n    .slider(\"sun\", \"Brightness\", 0.7)".to_string()
+            "ControlCenter::new()\n    .tile(\"device.wifi\", \"Wi-Fi\", true)\n    .slider(\"misc.sun\", \"Brightness\", 0.7)".to_string()
         };
         __s.push_str(&crate::pages::prop_snippet(
             _p,
@@ -1673,7 +1692,7 @@ page!(ControlCenterPage {
         ));
         if !_p.str("tile_named_name").is_empty()
             || !_p.str("tile_named_title").is_empty()
-            || !_p.bool("tile_named_on")
+            || _p.bool("tile_named_on")
         {
             __s.push_str(&format!(
                 "\n    .tile_named({:?}, {:?}, {:?})",
@@ -1944,6 +1963,10 @@ page!(ScrollIndicatorPage {
             key: "scroll",
             label: "Scroll (csv)",
             default: ""
+        },
+        PropSpec::Probe {
+            key: "scroll",
+            value: "0.5,0.4"
         },
         PropSpec::Header {
             label: "State & Accessibility"

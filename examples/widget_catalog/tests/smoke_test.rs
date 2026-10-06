@@ -83,6 +83,70 @@ fn every_page_measures_and_lays_out_at_three_widths() {
     }
 }
 
+/// A widget that returns logical points from `measure` without
+/// scaling them under-reports by half on HiDPI and clips its own
+/// text — the page-level check for that bug class. Every page's
+/// staged widget must return ~double the px size at scale 2.0 that
+/// it returns at 1.0, on each axis where it reports a nonzero,
+/// non-fill size.
+#[test]
+fn every_page_measure_scales_with_dpi() {
+    let _guard = install_ambient_measurer(Arc::new(FixedShaper));
+    // Constraints are device px — the same logical stage offers twice
+    // as many px at 2x, so the offer must scale with `scale` or
+    // fill/aspect-fit widgets report a false constant.
+    let loose = |scale: f32| LayoutConstraints {
+        min_size: Vec2::ZERO,
+        max_size: Vec2::new(4000.0 * scale, 4000.0 * scale),
+    };
+    // Pages whose staged widget genuinely measures in device px —
+    // `ExternalEngine`'s intrinsic is the producer's physical
+    // framebuffer size, so the same logical widget is *expected* to
+    // report identical device px at any DPI (its `set_viewport` takes
+    // physical dimensions).
+    const DEVICE_PX_PAGES: &[&str] = &["ExternalEngine"];
+    let mut failures = Vec::new();
+    for page in &all_pages() {
+        if DEVICE_PX_PAGES.contains(&page.meta().name) {
+            continue;
+        }
+        let props = PropValues::from_specs(page.props());
+        let measure_at = |scale: f32| {
+            let mut widget = page.build(&props);
+            let mut hot = HotNode::default();
+            widget.measure(
+                &mut LayoutContext {
+                    hot: &mut hot,
+                    scale,
+                },
+                loose(scale),
+            )
+        };
+        let s1 = measure_at(1.0);
+        let s2 = measure_at(2.0);
+        for (axis, a, b) in [("x", s1.x, s2.x), ("y", s1.y, s2.y)] {
+            // Zero-extent and fill-echoing axes carry no scaleable
+            // content — nothing to check.
+            if a <= 0.0 || a >= 3900.0 {
+                continue;
+            }
+            // Rounding tolerance: sub-px padding snaps can pull a
+            // pixel or two at small sizes.
+            if b < a * 1.85 {
+                failures.push(format!(
+                    "{} (axis {axis}: {a:.0}px @1x vs {b:.0}px @2x)",
+                    page.meta().name
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "pages whose measure ignores the DPI scale:\n  {}",
+        failures.join("\n  ")
+    );
+}
+
 #[test]
 fn rail_matcher_finds_names_families_and_aliases() {
     use widget_catalog::view::matches_query;

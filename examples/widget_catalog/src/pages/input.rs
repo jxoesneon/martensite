@@ -106,7 +106,9 @@ page!(TextInputPage {
     build: |p| {
         let mut w = TextInput::new(p.str("label"))
             .placeholder(p.str("placeholder"))
-            .secure(p.bool("secure"))
+            // A reveal toggle only exists on a secure field — staging
+            // `revealable` alone implies `secure` so the eye appears.
+            .secure(p.bool("secure") || p.bool("revealable"))
             .clearable(p.bool("clearable"))
             .enabled(p.bool("enabled"));
         w.set_sanitizer(crate::pages::sanitize_cfg(p));
@@ -114,6 +116,10 @@ page!(TextInputPage {
             let mut __w = w;
             if !p.str("value").is_empty() {
                 __w = __w.value(p.str("value"));
+            } else if p.bool("secure") || p.bool("revealable") || p.bool("clearable") {
+                // Masking, the reveal eye, and the clear affordance all
+                // render over a non-empty value — stage a demo secret.
+                __w = __w.value("demo-pass");
             }
             if p.bool("read_only") {
                 __w = __w.read_only(p.bool("read_only"));
@@ -298,6 +304,20 @@ page!(TextAreaPage {
             }
             if !p.str("with_value").is_empty() {
                 __w = __w.with_value(p.str("with_value"));
+            } else if !p.bool("wrap") || p.i64("max_lines") != 0 {
+                // Soft-wrap and the line clamp only show over real
+                // content — stage overflowing rows so toggling them
+                // changes the frame.
+                __w = __w.with_value(
+                    (1..=40)
+                        .map(|i| {
+                            format!(
+                                "Row {i} — a deliberately long line that runs well past the viewport edge."
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
             }
             if p.i64("max_lines") != 0 {
                 __w = __w.max_lines(p.i64("max_lines") as usize);
@@ -528,7 +548,7 @@ page!(AutoCompletePage {
         PropSpec::Text {
             key: "suggestions",
             label: "Suggestions (csv)",
-            default: "Apple,Apricot,Banana,Cherry,Grape,Mango",
+            default: "Apple,Apricot,Banana,Cherry,Grape,Mango,Papaya,Guava,Peach,Orange",
         },
         PropSpec::Choice {
             key: "sanitize",
@@ -608,7 +628,20 @@ page!(AutoCompletePage {
                 }
                 if !p.str("with_value").is_empty() {
                     __w = __w.with_value(p.str("with_value"));
+                } else if p.choice("filter_mode") != 0 {
+                    // Prefix vs substring only differs on a real
+                    // query — stage one so the probe refilters.
+                    __w = __w.with_value("a");
+                } else if p.i64("min_chars") == 0 {
+                    // The popup opens only over an eligible query —
+                    // an empty field needs a zero threshold so the
+                    // staged list shows.
+                    __w = __w.min_chars(0);
                 }
+                // Stage the popup open like the catalog's other
+                // pickers — it stays shut whenever the field is
+                // ineligible, so closed states still read honestly.
+                __w.open();
                 Box::new(__w)
             }
         }
@@ -732,11 +765,11 @@ page!(ChatInputPage {
         let mut __s = {
             let base: String = {
                 format!(
-            "ChatInput::new()\n    .placeholder({:?})\n    .attachable({})\n    .emoji_button({})",
-            p.str("placeholder"),
-            p.bool("attachable"),
-            p.bool("emoji"),
-            )
+                    "ChatInput::new()\n    .placeholder({:?})\n    .attachable({})\n    .emoji_button({})",
+                    p.str("placeholder"),
+                    p.bool("attachable"),
+                    p.bool("emoji"),
+                )
             };
             base + crate::pages::sanitize_snippet(p)
         };
@@ -811,7 +844,14 @@ page!(InlineEditPage {
         },
     ],
     build: |p| {
-        let mut w = InlineEdit::new(p.str("value"));
+        // The placeholder only paints while the display value is
+        // empty — staging one implies an empty field.
+        let value = if p.str("placeholder").is_empty() {
+            p.str("value")
+        } else {
+            ""
+        };
+        let mut w = InlineEdit::new(value);
         w.set_sanitizer(crate::pages::sanitize_cfg(p));
         {
             let mut __w = w;
@@ -958,6 +998,10 @@ page!(OtpInputPage {
             label: "Value",
             default: ""
         },
+        PropSpec::Probe {
+            key: "value",
+            value: "1234"
+        },
         PropSpec::Bool {
             key: "alphabetic",
             label: "Alphabetic",
@@ -988,11 +1032,22 @@ page!(OtpInputPage {
             if !p.str("a11y_label").is_empty() {
                 __w = __w.a11y_label(p.str("a11y_label"));
             }
-            if !p.str("value").is_empty() {
-                __w = __w.value(p.str("value"));
-            }
+            // `.value()` runs the digit/letter filter at set time —
+            // `alphabetic` must land first or the letters never
+            // survive it.
             if p.bool("alphabetic") {
                 __w = __w.alphabetic(p.bool("alphabetic"));
+            }
+            if !p.str("value").is_empty() {
+                __w = __w.value(p.str("value"));
+            } else if p.bool("masked") {
+                // Masked cells only render over a filled code — stage
+                // one so the bullets show.
+                __w = __w.value("12345678");
+            } else if p.bool("alphabetic") {
+                // Letter acceptance is a filter-time gate — stage a
+                // mixed code so flipping Alphabetic fills the cells.
+                __w = __w.value("A1B2C3");
             }
             Box::new(__w)
         }
@@ -1229,7 +1284,18 @@ page!(MentionPage {
             let mut w = Mention::new()
                 .placeholder(p.str("placeholder"))
                 .trigger(trig)
-                .suggestions(["@ada", "@grace", "@linus", "@turing"]);
+                .suggestions([
+                    "@ada",
+                    "@alan",
+                    "@barbara",
+                    "@edsger",
+                    "@grace",
+                    "@katherine",
+                    "@linus",
+                    "@margaret",
+                    "@radia",
+                    "@turing",
+                ]);
             w.set_sanitizer(crate::pages::sanitize_cfg(p));
             {
                 let mut __w = w;
@@ -1246,7 +1312,16 @@ page!(MentionPage {
                 }
                 if !p.str("with_value").is_empty() {
                     __w = __w.with_value(p.str("with_value"));
+                } else if p.i64("min_chars") != 0 || p.i64("max_visible") != 0 || trig != '@' {
+                    // Popup-gated props need a live token in the
+                    // field — stage one under the current trigger so
+                    // the probe changes the frame.
+                    __w = __w.with_value(format!("{trig}a"));
                 }
+                // Stage the popup open like the catalog's other
+                // pickers — it stays shut whenever the token is
+                // ineligible, so closed states still read honestly.
+                __w.open();
                 Box::new(__w)
             }
         }
@@ -1453,16 +1528,20 @@ page!(FormFieldPage {
             });
         }
         if p.f64("label_width") != 0.0 {
-            __w = __w.label_width(p.f64("label_width") as f32);
+            // `label_width` only participates in the horizontal
+            // layout — staging a width implies the Left position.
+            __w = __w
+                .label_position(martensite::widgets::form_field::LabelPosition::Left)
+                .label_width(p.f64("label_width") as f32);
         }
         Box::new(__w)
     },
     snippet: |p| {
         let mut __s = format!(
-        "FormField::new()\n    .label({:?})\n    .hint({:?})\n    .child(Slider::new(0.0, 1.0))",
-        p.str("label"),
-        p.str("hint"),
-    );
+            "FormField::new()\n    .label({:?})\n    .hint({:?})\n    .child(Slider::new(0.0, 1.0))",
+            p.str("label"),
+            p.str("hint"),
+        );
         __s.push_str(&crate::pages::prop_snippet(
             p,
             &[
@@ -1523,9 +1602,9 @@ page!(PasswordStrengthPage {
         if !p.str("a11y_label").is_empty() {
             __w = __w.label(p.str("a11y_label"));
         }
-        if p.bool("label_visible") {
-            __w = __w.label_visible(p.bool("label_visible"));
-        }
+        // The widget defaults `label_visible(true)` — apply the prop
+        // unconditionally so `false` actually hides the score word.
+        __w = __w.label_visible(p.bool("label_visible"));
         Box::new(__w)
     },
     snippet: |p| {

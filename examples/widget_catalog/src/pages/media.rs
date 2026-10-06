@@ -2,16 +2,17 @@
 
 use glam::Vec2;
 use martensite::core::paint::ImageData;
-use martensite::core::SurfaceId;
 use martensite::widgets::attachment::Attachment;
 use martensite::widgets::captions::Captions;
 use martensite::widgets::code_view::CodeView;
+use martensite::widgets::container::Container;
 use martensite::widgets::coverflow::Coverflow;
 use martensite::widgets::crop_box::CropBox;
 use martensite::widgets::diff_view::{DiffKind, DiffView};
 use martensite::widgets::download_item::DownloadItem;
 use martensite::widgets::external::ExternalEngine;
 use martensite::widgets::filmstrip::{Filmstrip, Thumbnail};
+use martensite::widgets::flex::Flex;
 use martensite::widgets::hex_view::HexView;
 use martensite::widgets::image::Image;
 use martensite::widgets::image_viewer::ImageViewer;
@@ -51,6 +52,23 @@ fn demo_image() -> ImageData {
     ImageData::from_rgba(64, 64, px).expect("valid RGBA buffer")
 }
 
+/// 64×64 checkerboard with every third cell fully transparent — lets
+/// the [`ImageViewer`] transparency checkerboard show through.
+fn demo_image_alpha() -> ImageData {
+    let mut px = vec![0u8; 64 * 64 * 4];
+    for y in 0..64u32 {
+        for x in 0..64u32 {
+            let i = ((y * 64 + x) * 4) as usize;
+            let on = (x / 8 + y / 8) % 2 == 0;
+            px[i] = if on { 62 } else { 34 };
+            px[i + 1] = if on { 66 } else { 37 };
+            px[i + 2] = if on { 80 } else { 46 };
+            px[i + 3] = if (x / 8 + y / 8) % 3 == 0 { 0 } else { 255 };
+        }
+    }
+    ImageData::from_rgba(64, 64, px).expect("valid RGBA buffer")
+}
+
 page!(TextPage {
     meta: meta(
         "Text",
@@ -69,7 +87,9 @@ page!(TextPage {
         PropSpec::Text {
             key: "content",
             label: "Content",
-            default: "The quick brown fox"
+            // Two lines so `line_height` has visible work — a
+            // single-line demo renders identically at every leading.
+            default: "The quick brown fox\njumps over the lazy dog"
         },
         PropSpec::Float {
             key: "size",
@@ -122,9 +142,21 @@ page!(TextPage {
             label: "Color",
             default: ""
         },
+        PropSpec::Probe {
+            key: "color",
+            value: "255,64,64,255"
+        },
     ],
     build: |p| {
-        let mut t = Text::new(p.str("content")).font_size(p.f64("size") as f32);
+        // The base direction only reorders a bidirectional line —
+        // append an RTL-script segment when the flag is on so the
+        // flip reshapes the frame.
+        let content = if p.bool("rtl") {
+            format!("{} مرحبا", p.str("content"))
+        } else {
+            p.str("content").to_string()
+        };
+        let mut t = Text::new(content).font_size(p.f64("size") as f32);
         if p.bool("rtl") {
             t = t.rtl();
         }
@@ -296,12 +328,9 @@ page!(CodeViewPage {
         },
     ],
     build: |_p| {
-        let mut __w = CodeView::new().lines([
-            "fn main() {",
-            "    let app = App::new();",
-            "    app.run();",
-            "}",
-        ]);
+        // Enough lines that `current` probes land in range — the
+        // builder filters out-of-range indices to `None`.
+        let mut __w = CodeView::new().lines((1..=120).map(|i| format!("let line_{i:03} = {i};")));
         if !_p.str("a11y_label").is_empty() {
             __w = __w.label(_p.str("a11y_label"));
         }
@@ -310,11 +339,17 @@ page!(CodeViewPage {
         }
         if _p.i64("current") != 0 {
             __w = __w.current(Some(_p.i64("current") as usize));
+        } else {
+            // A highlighted mid-list line gives `follow` a scroll
+            // target — with no `current` the flag has nothing to keep
+            // visible.
+            __w = __w.current(Some(60));
         }
         Box::new(__w)
     },
     snippet: |_p| {
-        let mut __s = "CodeView::new().lines([\"fn main() {\", \"}\"])".to_string();
+        let mut __s = "CodeView::new().lines((1..=120).map(|i| format!(\"let line_{i} = {i};\")))"
+            .to_string();
         __s.push_str(&crate::pages::prop_snippet(
             _p,
             &[
@@ -470,7 +505,10 @@ page!(MergeViewPage {
         if !_p.str("a11y_label").is_empty() {
             __w = __w.label(_p.str("a11y_label"));
         }
-        if !_p.str("row_ours").is_empty() {
+        if !_p.str("row_ours").is_empty()
+            || !_p.str("row_result").is_empty()
+            || !_p.str("row_theirs").is_empty()
+        {
             __w = __w.row(martensite::widgets::merge_view::MergeRow::aligned(
                 _p.str("row_ours"),
                 _p.str("row_result"),
@@ -485,7 +523,10 @@ page!(MergeViewPage {
             _p,
             &[("a11y_label", ".label", SnipProp::Text(""))],
         ));
-        if !_p.str("row_ours").is_empty() {
+        if !_p.str("row_ours").is_empty()
+            || !_p.str("row_result").is_empty()
+            || !_p.str("row_theirs").is_empty()
+        {
             __s.push_str(&format!(
                 "\n    .row(MergeRow::aligned({:?}, {:?}, {:?}))",
                 _p.str("row_ours"),
@@ -598,6 +639,10 @@ page!(TerminalPage {
         let mut t = Terminal::new().lines(["$ cargo build", "   Compiling martensite…"]);
         t.set_sanitizer(crate::pages::sanitize_cfg(p));
         t.submit_line();
+        // Echo a line through the configured pipeline so the chosen
+        // profile is visible: Aggressive NFKC-folds the fullwidth
+        // text, Baseline/Raw keep it verbatim.
+        t.submit("ｅｃｈｏ　ｆｕｌｌｗｉｄｔｈ");
         {
             let mut __w = t;
             if !p.str("a11y_label").is_empty() {
@@ -704,7 +749,14 @@ page!(ImagePage {
                 _ => martensite::widgets::image::ImageFit::Contain,
             });
         }
-        Box::new(__w)
+        // Fit modes only differ when the bounds are not the image's
+        // natural size — stage it inside a wider column (the
+        // padding-only sibling stretches the cross axis invisibly).
+        Box::new(
+            Flex::column()
+                .child(__w)
+                .child(Container::new().padding_uniform(60.0)),
+        )
     },
     snippet: |_p| {
         let mut __s = "Image::new(image_data).alt(\"Checkerboard\")".to_string();
@@ -760,7 +812,9 @@ page!(ImageViewerPage {
         },
     ],
     build: |p| {
-        let mut __w = ImageViewer::new(demo_image()).checker(p.bool("checker"));
+        // Alpha cells let the checkerboard underlay show through —
+        // an opaque image would cover it either way.
+        let mut __w = ImageViewer::new(demo_image_alpha()).checker(p.bool("checker"));
         __w = __w.enabled(p.bool("enabled"));
         if !p.str("a11y_label").is_empty() {
             __w = __w.label(p.str("a11y_label"));
@@ -832,9 +886,7 @@ page!(MagnifierPage {
             if !p.str("a11y_label").is_empty() {
                 __w = __w.label(p.str("a11y_label"));
             }
-            if p.bool("zoom_caption") {
-                __w = __w.zoom_caption(p.bool("zoom_caption"));
-            }
+            __w = __w.zoom_caption(p.bool("zoom_caption"));
             Box::new(__w)
         }
     },
@@ -964,6 +1016,10 @@ page!(CropBoxPage {
             label: "Crop (csv)",
             default: ""
         },
+        PropSpec::Probe {
+            key: "crop",
+            value: "10,10,80,60"
+        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -974,18 +1030,22 @@ page!(CropBoxPage {
         },
     ],
     build: |p| {
+        // `min_size` applies through `crop`/`set_crop` clamping, so it
+        // must be set before the region — and the default region is
+        // kept small so a raised floor visibly grows it.
         let mut c = CropBox::new().aspect_ratio(p.f64("aspect") as f32);
-        c.set_crop(0.2, 0.2, 0.6, 0.6);
+        if p.f64("min_size") != 0.0 {
+            c = c.min_size(p.f64("min_size") as f32 / 100.0);
+        }
+        if let Some(v) = crate::pages::parse_quad(p.str("crop")) {
+            c = c.crop(v.0 as f32, v.1 as f32, v.2 as f32, v.3 as f32);
+        } else {
+            c.set_crop(0.4, 0.4, 0.2, 0.2);
+        }
         {
             let mut __w = c;
             if !p.str("a11y_label").is_empty() {
                 __w = __w.label(p.str("a11y_label"));
-            }
-            if p.f64("min_size") != 0.0 {
-                __w = __w.min_size(p.f64("min_size") as f32);
-            }
-            if let Some(v) = crate::pages::parse_quad(p.str("crop")) {
-                __w = __w.crop(v.0 as f32, v.1 as f32, v.2 as f32, v.3 as f32);
             }
             Box::new(__w)
         }
@@ -1055,7 +1115,14 @@ page!(InkCanvasPage {
         },
     ],
     build: |_p| {
-        let mut __w = InkCanvas::new();
+        // A committed stroke is staged so `pen` has ink to widen.
+        let mut __w = InkCanvas::new().stroke([
+            Vec2::new(80.0, 120.0),
+            Vec2::new(180.0, 90.0),
+            Vec2::new(300.0, 150.0),
+            Vec2::new(420.0, 100.0),
+            Vec2::new(560.0, 135.0),
+        ]);
         __w = __w.enabled(_p.bool("enabled"));
         if !_p.str("a11y_label").is_empty() {
             __w = __w.label(_p.str("a11y_label"));
@@ -1117,7 +1184,14 @@ page!(MediaViewPage {
         },
     ],
     build: |_p| {
-        let mut __w = MediaView::new();
+        // A mock surface makes the view paint its video rect — `fit`
+        // and `aspect_ratio` then resolve against real dimensions.
+        let mut __w =
+            MediaView::new().with_surface(martensite::media::surface::VideoSurface::new_mock(
+                1920,
+                1080,
+                martensite::media::surface::VideoPixelFormat::Nv12,
+            ));
         if _p.choice("with_fit") != 0 {
             __w = __w.with_fit(match _p.choice("with_fit") {
                 0 => martensite::widgets::media::VideoFit::Contain,
@@ -1133,7 +1207,7 @@ page!(MediaViewPage {
         Box::new(__w)
     },
     snippet: |_p| {
-        let mut __s = "MediaView::new().with_decoder(decoder)".to_string();
+        let mut __s = "MediaView::new().with_surface(surface)".to_string();
         __s.push_str(&crate::pages::prop_snippet(
             _p,
             &[
@@ -1332,6 +1406,10 @@ page!(NowPlayingPage {
             label: "Art Color",
             default: ""
         },
+        PropSpec::Probe {
+            key: "art_color",
+            value: "200,40,120,255"
+        },
         PropSpec::Header {
             label: "State & Accessibility"
         },
@@ -1483,10 +1561,12 @@ page!(FilmstripPage {
     ],
     build: |p| {
         let mut fs = Filmstrip::new();
-        for i in 0..p.i64("count") as u8 {
+        // Bounded channel math — plain `100 + i * 20` overflows u8 at
+        // i ≥ 8 in debug builds.
+        for i in 0..p.i64("count") {
             fs = fs.thumb(Thumbnail::new(
                 format!("Shot {}", i + 1),
-                [90, 100 + i * 20, 200, 255],
+                [90, 100 + (i % 8) as u8 * 18, 200, 255],
             ));
         }
         {
@@ -1731,7 +1811,7 @@ page!(AttachmentPage {
         PropSpec::Text {
             key: "glyph",
             label: "Glyph",
-            default: "📄"
+            default: "file.file"
         },
         PropSpec::Float {
             key: "uploading",
@@ -1755,7 +1835,7 @@ page!(AttachmentPage {
         if !p.str("a11y_label").is_empty() {
             __w = __w.label(p.str("a11y_label"));
         }
-        if p.str("glyph") != "📄" {
+        if p.str("glyph") != "file.file" {
             __w = __w.glyph(p.str("glyph"));
         }
         if p.f64("uploading") != 0.0 {
@@ -1768,7 +1848,7 @@ page!(AttachmentPage {
         __s.push_str(&crate::pages::prop_snippet(
             p,
             &[
-                ("glyph", ".glyph", SnipProp::Text("📄")),
+                ("glyph", ".glyph", SnipProp::Text("file.file")),
                 ("uploading", ".uploading", SnipProp::Float(0.0)),
                 ("a11y_label", ".label", SnipProp::Text("")),
             ],
@@ -1813,7 +1893,7 @@ page!(DownloadItemPage {
         PropSpec::Text {
             key: "glyph",
             label: "Glyph",
-            default: "⬇"
+            default: "edit.download"
         },
         PropSpec::Header {
             label: "State & Accessibility"
@@ -1836,7 +1916,7 @@ page!(DownloadItemPage {
             if p.f64("progress") != 0.0 {
                 __w = __w.progress(p.f64("progress") as f32);
             }
-            if p.str("glyph") != "⬇" {
+            if p.str("glyph") != "edit.download" {
                 __w = __w.glyph(p.str("glyph"));
             }
             Box::new(__w)
@@ -1848,7 +1928,7 @@ page!(DownloadItemPage {
             p,
             &[
                 ("progress", ".progress", SnipProp::Float(0.0)),
-                ("glyph", ".glyph", SnipProp::Text("⬇")),
+                ("glyph", ".glyph", SnipProp::Text("edit.download")),
                 ("a11y_label", ".label", SnipProp::Text("")),
             ],
         ));
@@ -1919,6 +1999,66 @@ page!(WebViewPage {
         }
     },
 });
+
+#[cfg(test)]
+mod scratch_tests {
+    use crate::stage::StageHost;
+    use crate::{Page, PropValues};
+    use glam::Vec2;
+    use martensite::core::{LayoutConstraints, LayoutContext, PaintList};
+    use martensite::prelude::*;
+    use martensite_render::RenderBackend;
+
+    fn raster(p: &dyn Page, props: &PropValues) -> Vec<u8> {
+        let host = StageHost::new(p.build(props));
+        let mut arena = WidgetArena::new();
+        arena.set_theme(martensite::theme::tokens::default_dark());
+        arena.set_scale_factor(1.0);
+        arena.set_text_painter(martensite::text_paint::shared_painter());
+        let _m = arena
+            .text_painter_shared()
+            .map(martensite::core::paint::install_ambient_measurer);
+        let mut hot = HotNode::default();
+        hot.flags |= NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
+        let root = arena.insert_with_widget(hot, Box::new(host));
+        let bounds = Rect::new(0.0, 0.0, 720.0, 540.0);
+        if let Some((hot, cold)) = arena.get_both_mut(root) {
+            cold.widget.measure(
+                &mut LayoutContext { hot, scale: 1.0 },
+                LayoutConstraints {
+                    min_size: Vec2::ZERO,
+                    max_size: Vec2::new(720.0, 540.0),
+                },
+            );
+            hot.bounds = bounds;
+            cold.widget
+                .layout(&mut LayoutContext { hot, scale: 1.0 }, bounds);
+        }
+        let mut list = PaintList::new();
+        arena.build_paint_list(root, &mut list);
+        eprintln!("commands: {}", list.commands.len());
+        for c in &list.commands {
+            eprintln!("  {c:?}");
+        }
+        let mut backend = martensite_render::TinySkiaBackend::new(720, 540).expect("pixmap alloc");
+        RenderBackend::render(&mut backend, &list);
+        backend.pixels().to_vec()
+    }
+
+    #[test]
+    fn media_view_aspect_scratch() {
+        let pages = super::pages();
+        let p = &pages[14]; // MediaView
+        eprintln!("page = {}", p.meta().name);
+        let base = PropValues::from_specs(p.props());
+        let a = raster(p.as_ref(), &base);
+        let mut probe = base.clone();
+        probe.set("with_aspect_ratio", crate::PropValue::Float(1.0));
+        let b = raster(p.as_ref(), &probe);
+        let diff = a.iter().zip(&b).filter(|(x, y)| x != y).count();
+        eprintln!("diff = {diff}");
+    }
+}
 
 /// All Media pages, in rail order.
 pub(super) fn pages() -> Vec<Box<dyn Page>> {
@@ -1997,8 +2137,21 @@ page!(ExternalEnginePage {
     ],
     build: |_p| {
         let handle = BridgeHandle::new();
+        let surface = handle.lock().register();
+        let mut w = ExternalEngine::new(handle.clone(), surface);
         {
-            let mut __w = ExternalEngine::new(handle, SurfaceId(1));
+            // Publish one sized frame so the widget has a real
+            // intrinsic size — with zero intrinsic it measures zero
+            // and neither `fit` nor `aspect_ratio` can paint.
+            let mut reg = handle.lock();
+            if let Ok((slot, _)) = reg.acquire(surface) {
+                let _ = reg.mark_ready_sized(surface, slot, (1920, 1080));
+            }
+            reg.drain_ready();
+        }
+        let _ = w.poll_frame();
+        {
+            let mut __w = w;
             if _p.f64("with_scale_factor") != 1.0 {
                 __w = __w.with_scale_factor(_p.f64("with_scale_factor"));
             }
@@ -2017,12 +2170,19 @@ page!(ExternalEnginePage {
             if _p.f64("with_aspect_ratio") != 0.0 {
                 __w = __w.with_aspect_ratio(_p.f64("with_aspect_ratio") as f32);
             }
-            Box::new(__w)
+            // Width-clamp forces bounds (500×540) narrower than the
+            // 16:9 frame — under mismatched aspect each `fit` mode
+            // resolves to a different destination rect.
+            Box::new(
+                martensite::widgets::clamp::Clamp::new()
+                    .maximum(500.0)
+                    .child(__w),
+            )
         }
     },
     snippet: |_p| {
         let mut __s = {
-            "let handle = BridgeHandle::new();\nExternalEngine::new(handle, SurfaceId(1))"
+            "let handle = BridgeHandle::new();\nlet surface = handle.lock().register();\nExternalEngine::new(handle, surface)"
                 .to_string()
         };
         __s.push_str(&crate::pages::prop_snippet(

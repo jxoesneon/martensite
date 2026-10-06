@@ -47,6 +47,7 @@ struct App {
     recovery: RecoveryMachine,
     dev_session: Option<Arc<martensite::devtools::dev_session::DevSession>>,
     /// Held only for its `Drop` (stops the listener, unlinks the sock).
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     _dev_server: Option<martensite::dev_channel::DevChannelServer>,
     /// In-memory log ring attached to the dev session — powers
     /// `martensite_logs` (paint-lint findings included).
@@ -72,6 +73,7 @@ impl App {
             orchestrator: None,
             recovery: RecoveryMachine::new(),
             dev_session: None,
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
             _dev_server: None,
             log_ring: Arc::new(martensite::devtools::dev_session::log_ring::LogRing::new(
                 512,
@@ -112,6 +114,7 @@ impl App {
         self.focus.lock().unwrap().set_focus_unchecked(root);
 
         let arena = Arc::new(Mutex::new(arena));
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         match martensite::dev_channel::serve_dev_session_from_env(Arc::clone(&arena)) {
             Ok(Some((server, session))) => {
                 session.attach_focus_manager(Arc::clone(&self.focus));
