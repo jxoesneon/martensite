@@ -709,6 +709,10 @@ impl RefFrameCtrlAV1 {
 pub struct AV1EncPictureFlags(bindings::_VAEncPictureParameterBufferAV1__bindgen_ty_1);
 
 impl AV1EncPictureFlags {
+    // `allow_screen_content_tools`/`force_integer_mv` are consumed only
+    // under `cfg(libva_1_21_or_higher)`; on older headers they are
+    // intentionally unused.
+    #[allow(unused_variables)]
     pub fn new(
         frame_type: u32,
         error_resilient_mode: bool,

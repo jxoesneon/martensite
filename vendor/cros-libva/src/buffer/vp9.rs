@@ -220,7 +220,9 @@ impl SliceParameterBufferVP9 {
     }
 }
 
-pub struct CodedBufferVP9Status(Box<bindings::VACodedBufferVP9Status>);
+// The boxed status buffer is owned for its lifetime — the VA driver
+// writes through it — but no accessor reads the field back yet.
+pub struct CodedBufferVP9Status(#[allow(dead_code)] Box<bindings::VACodedBufferVP9Status>);
 
 impl CodedBufferVP9Status {
     pub fn new(
