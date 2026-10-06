@@ -13,6 +13,9 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 [policy.cargo-martensite]
 audit-as-crates-io = false
 
+[policy.cros-libva]
+audit-as-crates-io = false
+
 [policy.martensite]
 audit-as-crates-io = false
 
@@ -286,6 +289,10 @@ criteria = "safe-to-deploy"
 version = "0.22.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.base64]]
+version = "0.23.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.base64ct]]
 version = "1.8.3"
 criteria = "safe-to-deploy"
@@ -384,6 +391,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.chacha20]]
 version = "0.10.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.chrono]]
+version = "0.4.45"
 criteria = "safe-to-deploy"
 
 [[exemptions.ciborium]]
@@ -514,6 +525,18 @@ criteria = "safe-to-deploy"
 version = "0.1.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.darling]]
+version = "0.24.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.darling_core]]
+version = "0.24.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.darling_macro]]
+version = "0.24.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.der]]
 version = "0.7.10"
 criteria = "safe-to-deploy"
@@ -584,6 +607,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.dtor]]
 version = "0.8.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.dyn-clone]]
+version = "1.0.20"
 criteria = "safe-to-deploy"
 
 [[exemptions.ed25519]]
@@ -834,6 +861,14 @@ criteria = "safe-to-deploy"
 version = "0.2.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.iana-time-zone]]
+version = "0.1.65"
+criteria = "safe-to-deploy"
+
+[[exemptions.iana-time-zone-haiku]]
+version = "0.1.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.icu_collections]]
 version = "2.3.0"
 criteria = "safe-to-deploy"
@@ -864,6 +899,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.id-arena]]
 version = "2.3.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.ident_case]]
+version = "1.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.idna]]
@@ -1274,6 +1313,10 @@ criteria = "safe-to-deploy"
 version = "0.9.12"
 criteria = "safe-to-deploy"
 
+[[exemptions.pastey]]
+version = "0.2.3"
+criteria = "safe-to-deploy"
+
 [[exemptions.peniko]]
 version = "0.6.1"
 criteria = "safe-to-deploy"
@@ -1482,6 +1525,14 @@ criteria = "safe-to-deploy"
 version = "0.4.6"
 criteria = "safe-to-deploy"
 
+[[exemptions.ref-cast]]
+version = "1.0.27"
+criteria = "safe-to-deploy"
+
+[[exemptions.ref-cast-impl]]
+version = "1.0.27"
+criteria = "safe-to-deploy"
+
 [[exemptions.regex]]
 version = "1.13.1"
 criteria = "safe-to-deploy"
@@ -1496,6 +1547,14 @@ criteria = "safe-to-deploy"
 
 [[exemptions.renderdoc-sys]]
 version = "1.1.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.rmcp]]
+version = "3.4.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.rmcp-macros]]
+version = "3.4.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.roxmltree]]
@@ -1530,6 +1589,14 @@ criteria = "safe-to-run"
 version = "1.0.6"
 criteria = "safe-to-deploy"
 
+[[exemptions.schemars]]
+version = "1.2.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.schemars_derive]]
+version = "1.2.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.scoped-tls]]
 version = "1.0.1"
 criteria = "safe-to-deploy"
@@ -1552,6 +1619,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.serde_derive]]
 version = "1.0.229"
+criteria = "safe-to-deploy"
+
+[[exemptions.serde_derive_internals]]
+version = "0.30.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde_json]]
@@ -1636,6 +1707,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.strict-num]]
 version = "0.1.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.strsim]]
+version = "0.11.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.subtle]]
@@ -1730,6 +1805,18 @@ criteria = "safe-to-deploy"
 version = "1.53.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.tokio-macros]]
+version = "2.7.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.tokio-stream]]
+version = "0.1.19"
+criteria = "safe-to-deploy"
+
+[[exemptions.tokio-util]]
+version = "0.7.19"
+criteria = "safe-to-deploy"
+
 [[exemptions.toml]]
 version = "0.9.12+spec-1.1.0"
 criteria = "safe-to-deploy"
@@ -1788,6 +1875,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.unicode-ident]]
 version = "1.0.24"
+criteria = "safe-to-deploy"
+
+[[exemptions.unicode-normalization]]
+version = "0.1.25"
 criteria = "safe-to-deploy"
 
 [[exemptions.unicode-script]]

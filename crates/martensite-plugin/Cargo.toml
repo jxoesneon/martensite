@@ -14,8 +14,8 @@ description = "Wasmtime sandboxed plugin runtime for Martensite."
 readme = "README.md"
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
-wasmtime = "=48.0.1"
-wasmtime-wasi = "=48.0.1"
+wasmtime = "=48.0.5"
+wasmtime-wasi = "=48.0.5"
 martensite-core = { workspace = true }
 martensite-render = { workspace = true }
 martensite-reactive = { workspace = true }
