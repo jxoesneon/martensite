@@ -187,6 +187,9 @@ fn command_output_line(bin: &str, args: &[&str]) -> Option<String> {
 }
 
 /// Whether `bin` resolves and executes at all (no panic on missing binaries).
+///
+/// Only the Linux `vulkaninfo` fallback calls this today.
+#[cfg(target_os = "linux")]
 fn binary_on_path(bin: &str) -> bool {
     Command::new(bin).arg("--version").output().is_ok()
 }

@@ -49,6 +49,9 @@ use crate::transport::{ChannelTransport, FrameTransport, TcpTransport};
 /// - `auto_readback` — pull a frame every `_process` when `true`.
 /// - `max_in_flight` — bound on outstanding async reads (default 2).
 /// - `flip_y` — vertically flip shipped frames.
+// The `#[class(init)]` derive expands to `Self { base: base, .. }`,
+// tripping `clippy::redundant_field_names` on toolchains ≥1.99.
+#[allow(clippy::redundant_field_names)]
 #[derive(GodotClass)]
 #[class(init, base = Node)]
 pub struct MartensiteViewport {
