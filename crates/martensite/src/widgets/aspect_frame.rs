@@ -176,8 +176,7 @@ impl std::fmt::Debug for AspectFrame {
 
 impl Widget for AspectFrame {
     fn debug_name(&self) -> &'static str {
-        // letterboxed media content is payload color.
-        "AspectFrame@lint:saturated-area-cap"
+        "AspectFrame"
     }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {

@@ -172,8 +172,18 @@ fn run(scene: &LintScene, config: &LintConfig, rules: &[&'static dyn LintRule]) 
 
             if let Some(decl_path) = inline_allow(&finding, *rule, &by_path) {
                 let specs = allow_specs(&finding, *rule, &by_path);
+                // Inline markers are widget-global — the same
+                // `debug_name` on every instance — so bookkeeping keys
+                // on the declaring widget's name, not its path: a
+                // marker counts as live when it suppressed the rule on
+                // ANY instance. Per-path keys would flag every quiet
+                // sibling of a legitimately-suppressed instance.
+                let decl_name = by_path
+                    .get(decl_path.as_str())
+                    .map(|n| n.name.clone())
+                    .unwrap_or_else(|| decl_path.clone());
                 for spec in &specs {
-                    used_inline.insert((decl_path.clone(), spec.clone()));
+                    used_inline.insert((decl_name.clone(), spec.clone()));
                 }
                 // Same descriptor grammar as `unused_allows` — the
                 // two read as a ledger.
@@ -205,10 +215,17 @@ fn run(scene: &LintScene, config: &LintConfig, rules: &[&'static dyn LintRule]) 
             report.unused_allows.push(desc);
         }
     }
+    let mut seen_inline: HashSet<(String, String)> = HashSet::new();
     for node in scene.walk() {
         for spec in &node.own_allows {
-            let desc = format!("inline @lint:{spec} on {}", node.path);
-            if used_inline.contains(&(node.path.clone(), spec.clone())) {
+            // One ledger line per (widget, spec) — see the `used_inline`
+            // comment above. Instances share `debug_name`, so paths
+            // would duplicate identical entries N times.
+            if !seen_inline.insert((node.name.clone(), spec.clone())) {
+                continue;
+            }
+            let desc = format!("inline @lint:{spec} on {}", node.name);
+            if used_inline.contains(&(node.name.clone(), spec.clone())) {
                 report.used_allows.push(desc);
             } else {
                 report.unused_allows.push(desc);

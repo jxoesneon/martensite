@@ -24,6 +24,52 @@ use crate::scene::{visible_fill_area, LintNode, LintScene, NodeKind};
 use crate::severity::Severity;
 use crate::standard::Standard;
 
+/// The clip edge's owner scrolls its content — a cut there is a
+/// scroll sliver the user can reveal, not a permanent truncation.
+/// `None` (clip pushed outside every scope — a frame clip) and
+/// non-scrolling panes report false so their cuts flag.
+pub(crate) fn scroll_clip_owner(owner: Option<&str>) -> bool {
+    const SCROLLERS: &[&str] = &[
+        "scrollview",
+        "listview",
+        "treeview",
+        "datagrid",
+        "tableview",
+        "gridview",
+        "virtuallist",
+        "textarea",
+        "codeview",
+        "pdfview",
+        "imageviewer",
+        "mapview",
+        "terminal",
+        "marquee",
+        "tickertape",
+        "ticker",
+        "viewport",
+        "webview",
+    ];
+    owner.is_some_and(|o| {
+        let o = o.to_ascii_lowercase();
+        let o = o.replace('_', "");
+        SCROLLERS.iter().any(|s| o.contains(s))
+    })
+}
+
+/// True when an ancestor clip cuts the node's bounds on an edge whose
+/// owner scrolls — the hidden region is revealable, so what the frame
+/// shows isn't the node's full surface and content-based rules can't
+/// judge it from the visible remainder alone.
+pub(crate) fn clipped_by_scroller(n: &LintNode) -> bool {
+    let Some(c) = n.clip else { return false };
+    let o = &n.clip_owners;
+    const TOL: f64 = 1.0;
+    (c.x0 > n.bounds.x0 + TOL && scroll_clip_owner(o[0].as_deref()))
+        || (c.y0 > n.bounds.y0 + TOL && scroll_clip_owner(o[1].as_deref()))
+        || (c.x1 < n.bounds.x1 - TOL && scroll_clip_owner(o[2].as_deref()))
+        || (c.y1 < n.bounds.y1 - TOL && scroll_clip_owner(o[3].as_deref()))
+}
+
 /// A node's effective kind — config `classify` overrides beat the
 /// name heuristic.
 pub(crate) fn kind_of(n: &LintNode, cfg: &LintConfig) -> NodeKind {
@@ -1569,6 +1615,13 @@ impl LintRule for ColorOnlyInfo {
                 .skip(1)
                 .any(|d| kind_of(d, cfg) == NodeKind::Interactive);
             if has_text || has_control {
+                continue;
+            }
+            // A scroller-clipped node is partially visible — the
+            // label or control that encodes it may sit in the
+            // scrolled-off region this frame can't show, so the bare
+            // patch can't be called color-only from what painted.
+            if clipped_by_scroller(n) {
                 continue;
             }
             out.push(

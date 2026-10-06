@@ -1643,8 +1643,7 @@ impl Default for ListView {
 
 impl Widget for ListView {
     fn debug_name(&self) -> &'static str {
-        // a list control is inherently a dense display.
-        "ListView@lint:packing-density"
+        "ListView"
     }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {

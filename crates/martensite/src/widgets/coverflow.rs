@@ -242,8 +242,7 @@ impl Coverflow {
 
 impl Widget for Coverflow {
     fn debug_name(&self) -> &'static str {
-        // focused title clips to widget bounds by design.
-        "Coverflow@lint:text-truncation"
+        "Coverflow"
     }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {

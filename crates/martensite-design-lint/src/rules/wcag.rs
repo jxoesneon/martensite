@@ -13,7 +13,8 @@ use crate::fix::{FixOp, FixSafety, LintFix};
 use crate::report::Finding;
 use crate::rule::{param, Confidence, LintRule};
 use crate::rules::{
-    background_at, contrast_ratio, interactive_leaves, kind_of, luminance, surface_nodes,
+    background_at, contrast_ratio, interactive_leaves, kind_of, luminance, scroll_clip_owner,
+    surface_nodes,
 };
 use crate::scene::{LintNode, LintScene, NodeKind};
 use crate::severity::Severity;
@@ -398,37 +399,6 @@ impl LintRule for TextTruncation {
         "clipped text fails WCAG 1.4.4 resize expectations and reads as a defect"
     }
     fn check(&self, scene: &LintScene, cfg: &LintConfig) -> Vec<Finding> {
-        /// The clip edge's owner scrolls its content — a cut there is a
-        /// scroll sliver the user can reveal, not a permanent truncation.
-        /// `None` (clip pushed outside every scope — a frame clip) and
-        /// non-scrolling panes report false so their cuts flag.
-        fn scroll_clip_owner(owner: Option<&str>) -> bool {
-            const SCROLLERS: &[&str] = &[
-                "scrollview",
-                "listview",
-                "treeview",
-                "datagrid",
-                "tableview",
-                "gridview",
-                "virtuallist",
-                "textarea",
-                "codeview",
-                "pdfview",
-                "imageviewer",
-                "mapview",
-                "terminal",
-                "marquee",
-                "tickertape",
-                "ticker",
-                "viewport",
-                "webview",
-            ];
-            owner.is_some_and(|o| {
-                let o = o.to_ascii_lowercase();
-                let o = o.replace('_', "");
-                SCROLLERS.iter().any(|s| o.contains(s))
-            })
-        }
         let tol = param(cfg, self.id(), "tolerance_px", 2.0);
         let char_w = param(cfg, self.id(), "char_width_ratio", 0.55);
         let elide_fill = param(cfg, self.id(), "elide_fill_ratio", 0.8);
