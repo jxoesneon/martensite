@@ -2403,6 +2403,7 @@ impl WidgetArena {
             self.text_painter.as_deref(),
             body_visible,
             self.loading_phase(),
+            false,
         );
 
         // Arena children honour the node's `CLIPS_CHILDREN` flag: their
@@ -2586,6 +2587,7 @@ pub(crate) fn paint_widget_recursive(
         text_painter,
         visible,
         phase,
+        true,
     );
     list.pop_scope();
 }
@@ -2594,7 +2596,10 @@ pub(crate) fn paint_widget_recursive(
 /// [`WidgetArena::paint_node`] manages the scope itself so it can also
 /// cover arena children. [`Widget::clips_children`] wraps the internal
 /// children in a clip pair, matching the arena-level `CLIPS_CHILDREN`
-/// behaviour.
+/// behaviour. `emit_overlay` emits [`Widget::paint_overlay`] after the
+/// internal-children walk — `true` on this recursive entry point
+/// (nobody else emits it for internal children); `paint_node` passes
+/// `false` and emits it itself after the arena-children loop.
 #[allow(clippy::too_many_arguments)]
 fn paint_widget_body(
     widget: &dyn crate::Widget,
@@ -2605,6 +2610,7 @@ fn paint_widget_body(
     text_painter: Option<&(dyn crate::paint::TextShaper + Send + Sync)>,
     visible: Option<crate::Rect>,
     phase: Option<f32>,
+    emit_overlay: bool,
 ) {
     let mut cx = PaintContext {
         list,
@@ -2667,12 +2673,17 @@ fn paint_widget_body(
         if let Some(c) = extra_clip {
             cx.list.push_clip(rect_to_kurbo(c));
         }
+        // A container may lay a child out at a different context scale
+        // (zoom canvases) — the child's text/strokes need that scale
+        // too, not the parent's, or magnified geometry gets unzoomed
+        // text.
+        let child_scale = widget.child_paint_scale(i).unwrap_or(scale);
         paint_underflowed_child(
             child,
             child_bounds,
             &mut *cx.list,
             theme,
-            scale,
+            child_scale,
             text_painter,
             child_visible,
             phase,
@@ -2683,6 +2694,14 @@ fn paint_widget_body(
     }
     if clip {
         cx.list.pop_clip();
+    }
+    // `paint_overlay` emits last inside the widget's subtree — the same
+    // post-children contract `WidgetArena::paint_node` gives arena
+    // nodes (which pass `emit_overlay = false` because they emit it
+    // themselves after the arena-children loop), so overlay chrome —
+    // focus rings, disabled veils — also renders for internal children.
+    if emit_overlay {
+        widget.paint_overlay(&mut cx);
     }
 }
 

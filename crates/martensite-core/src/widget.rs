@@ -1534,6 +1534,21 @@ pub trait Widget: Send + Sync + 'static {
         None
     }
 
+    /// The [`PaintContext::scale`] internal child `index` paints with
+    /// — `None` (the default) inherits the parent's scale.
+    ///
+    /// A container that lays a child out at a different context scale
+    /// than its own reports that scale here so the child's text,
+    /// strokes, and padding magnify with its geometry. [`Viewport`]
+    /// is the canonical user: it lays content out at `scale * zoom`,
+    /// and without this hook the child would lay out magnified but
+    /// still paint text at the unzoomed size.
+    ///
+    /// [`Viewport`]: https://docs.rs/martensite
+    fn child_paint_scale(&self, _index: usize) -> Option<f32> {
+        None
+    }
+
     /// The region this widget's paint legitimately covers — `None`
     /// (the default) means the layout bounds.
     ///
