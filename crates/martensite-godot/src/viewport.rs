@@ -49,11 +49,12 @@ use crate::transport::{ChannelTransport, FrameTransport, TcpTransport};
 /// - `auto_readback` — pull a frame every `_process` when `true`.
 /// - `max_in_flight` — bound on outstanding async reads (default 2).
 /// - `flip_y` — vertically flip shipped frames.
-// The `#[class(init)]` derive expands to `Self { base: base, .. }`,
-// tripping `clippy::redundant_field_names` on toolchains ≥1.99.
-#[allow(clippy::redundant_field_names)]
+// Manual `INode::init` rather than `#[class(init)]` — the derive's
+// generated initializer expands to `base: base`, tripping
+// clippy::redundant_field_names on newer toolchains, and an
+// item-level allow can't reach into the expansion's span.
 #[derive(GodotClass)]
-#[class(init, base = Node)]
+#[class(base = Node)]
 pub struct MartensiteViewport {
     #[base]
     base: Base<Node>,
@@ -68,12 +69,10 @@ pub struct MartensiteViewport {
     transport_addr: GString,
 
     /// Pull a frame every `_process` callback.
-    #[init(val = true)]
     #[export]
     auto_readback: bool,
 
     /// Maximum outstanding `texture_get_data_async` requests.
-    #[init(val = 2)]
     #[export]
     max_in_flight: i64,
 
@@ -237,6 +236,23 @@ impl MartensiteViewport {
 
 #[godot_api]
 impl INode for MartensiteViewport {
+    fn init(base: Base<Node>) -> Self {
+        Self {
+            base,
+            subviewport_path: NodePath::default(),
+            transport_addr: GString::new(),
+            // Field defaults the `#[init(val = …)]` attributes carried
+            // under derive-init.
+            auto_readback: true,
+            max_in_flight: 2,
+            flip_y: false,
+            viewport_texture: None,
+            subviewport: None,
+            rendering_device: None,
+            readback: Readback::default(),
+        }
+    }
+
     fn ready(&mut self) {
         // Keep the readback in-flight bound in sync with the exported
         // property before the first request.
