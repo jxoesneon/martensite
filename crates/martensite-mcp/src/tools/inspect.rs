@@ -502,10 +502,13 @@ pub struct InspectTreeParams {
     /// Target `WidgetId` to scope subtree inspection; defaults to arena root.
     pub root_id: Option<String>,
     /// Maximum vertical recursion depth (default 4, max 32).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub max_depth: Option<u32>,
     /// Maximum direct children returned per parent (default 50, max 200).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub child_limit: Option<u32>,
     /// Child pagination offset (default 0).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub offset: Option<u32>,
     /// Filter nodes by semantic marker (e.g. `@alarm`, `@kpi`, `@level:1`).
     pub filter_marker: Option<String>,
@@ -813,6 +816,7 @@ pub struct SetLoadingOutput {
     pub loading: Option<bool>,
     /// Mutation revision stamped by the dev session, when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u64")]
     pub revision: Option<u64>,
     /// Server mode that produced the answer (`live` on success).
     pub mode: Provenance,

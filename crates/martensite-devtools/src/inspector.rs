@@ -1255,20 +1255,22 @@ pub fn hit_test_select(
 ///
 /// let mut badges = NodeBadges::default();
 /// badges.has_active_lints = true;
-/// assert_eq!(badges.format_badges(), "⚠");
+/// assert_eq!(badges.format_badges(), "lint");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct NodeBadges {
-    /// `⚠` Active design lint findings or layout violations.
+    /// `lint` Active design lint findings or layout violations.
     pub has_active_lints: bool,
-    /// `↻` Signals fired or updated during the current frame.
+    /// `signal` Signals fired or updated during the current frame.
     pub signal_fired: bool,
-    /// `⛔` Suppressed lint findings (`@lint:allow` / `@lint:...`).
+    /// `suppressed` Suppressed lint findings (`@lint:allow` /
+    /// `@lint:...`).
     pub has_suppressed_lints: bool,
 }
 
 impl NodeBadges {
-    /// Formats the active badges into an indicator string (e.g. `"⚠ ↻ ⛔"`).
+    /// Formats the active badges into an indicator string (e.g.
+    /// `"lint signal"`).
     ///
     /// # Examples
     ///
@@ -1280,18 +1282,18 @@ impl NodeBadges {
     ///     signal_fired: true,
     ///     has_suppressed_lints: false,
     /// };
-    /// assert_eq!(badges.format_badges(), "⚠ ↻");
+    /// assert_eq!(badges.format_badges(), "lint signal");
     /// ```
     pub fn format_badges(&self) -> String {
         let mut parts = Vec::new();
         if self.has_active_lints {
-            parts.push("⚠");
+            parts.push("lint");
         }
         if self.signal_fired {
-            parts.push("↻");
+            parts.push("signal");
         }
         if self.has_suppressed_lints {
-            parts.push("⛔");
+            parts.push("suppressed");
         }
         parts.join(" ")
     }
@@ -1353,7 +1355,7 @@ pub struct InspectorTreeNode {
     pub depth: usize,
     /// Total number of children in arena.
     pub child_count: usize,
-    /// Active badges (⚠, ↻, ⛔).
+    /// Active badges (`lint`, `signal`, `suppressed`).
     pub badges: NodeBadges,
     /// Number of active reactive signals bound to this widget.
     pub active_signal_count: usize,

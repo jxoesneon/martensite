@@ -66,6 +66,7 @@ pub struct DispatchEventOutput {
     /// (`Handled`, `Ignored`, `RequestFocus`, `RequestRepaint`, ...).
     pub response: String,
     /// Resolved hit-test path of widget ids, root-first.
+    #[schemars(schema_with = "crate::types::schema_strip::u64v")]
     pub hit_path: Vec<u64>,
 }
 
@@ -177,6 +178,7 @@ impl AsyncTool<MartensiteMcp> for DispatchEventTool {
 #[serde(default)]
 pub struct EventLedgerParams {
     /// Maximum ledger entries to return (default 50, max 200).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub limit: Option<u32>,
 }
 
@@ -297,6 +299,7 @@ pub struct TimemachineParams {
     /// `"restore_checkpoint"`.
     pub action: String,
     /// Specific frame checkpoint to restore (with `restore_checkpoint`).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u64")]
     pub checkpoint_id: Option<u64>,
 }
 
@@ -321,13 +324,16 @@ pub struct TimemachineOutput {
     /// Action that was applied (echoed back for correlation).
     pub action: String,
     /// Frame timestamp / commit counter reported after the action.
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub frame_timestamp: u64,
     /// `WidgetArena::state_fingerprint` after the action.
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub arena_fingerprint: u64,
     /// Hash of the captured source-signal snapshot.
     pub signal_state_hash: String,
     /// Checkpoint restored or produced by the action, when applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u64")]
     pub checkpoint_id: Option<u64>,
 }
 

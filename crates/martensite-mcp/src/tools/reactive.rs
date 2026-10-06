@@ -41,8 +41,10 @@ pub struct InspectSignalsParams {
     /// Only signals flagged dirty this evaluation tick (default false).
     pub only_dirty: Option<bool>,
     /// Maximum signals returned (default 50, max 200).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub limit: Option<u32>,
     /// Pagination offset (default 0).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub offset: Option<u32>,
 }
 
@@ -221,6 +223,7 @@ pub struct TriggerSignalOutput {
     pub applied: bool,
     /// Widget ids marked dirty for the next frame.
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::u64v")]
     pub invalidated_widgets: Vec<u64>,
     /// Rejection or type-check detail reported by the app, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]

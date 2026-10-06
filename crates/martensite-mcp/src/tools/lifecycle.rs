@@ -449,6 +449,7 @@ pub struct ReloadStatusOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_reload_timestamp: Option<String>,
     /// Total successful hot swaps in the active session.
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub total_reloads: u64,
     /// Active rustc warnings/errors reported by background file watching.
     #[serde(default)]

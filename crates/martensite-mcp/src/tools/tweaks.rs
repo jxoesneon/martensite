@@ -117,6 +117,7 @@ pub struct SetTweakOutput {
     /// Whether the running app confirmed the value application.
     pub applied: bool,
     /// Dev-channel round-trip latency in microseconds.
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub latency_us: u64,
     /// Dev-channel round-trip latency in milliseconds (target < 1.0ms).
     pub latency_ms: f64,

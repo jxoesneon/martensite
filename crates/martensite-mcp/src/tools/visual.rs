@@ -59,6 +59,7 @@ pub struct CaptureNodeOutput {
     /// Logical `[width, height]` in density-independent pixels.
     pub logical_size: [f32; 2],
     /// Physical `[width, height]` in device pixels.
+    #[schemars(schema_with = "crate::types::schema_strip::u32p")]
     pub physical_size: [u32; 2],
     /// Inline base64 image payload — only populated when the caller passed
     /// `include_base64: true`.
@@ -227,8 +228,10 @@ pub struct RenderHeadlessParams {
     /// Target package or example name (`^[a-zA-Z0-9_-]+$`).
     pub crate_target: String,
     /// `[width, height]` viewport in physical pixels.
+    #[schemars(schema_with = "crate::types::schema_strip::u32p")]
     pub viewport_size: [u32; 2],
     /// Advance the virtual clock by N ms before capture.
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u64")]
     pub virtual_time_ms: Option<u64>,
 }
 

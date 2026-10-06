@@ -39,8 +39,10 @@ pub struct LintSceneParams {
     /// Substring filter on widget `debug_name` lineage.
     pub node_path_filter: Option<String>,
     /// Maximum findings returned (default 50, max 250).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub limit: Option<u32>,
     /// Pagination offset (default 0).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub offset: Option<u32>,
 }
 
@@ -276,6 +278,7 @@ pub struct ApplyLintFixOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub patch: Option<String>,
     /// Active findings remaining on the post-fix scene.
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub remaining_findings: usize,
     /// Execution mode (`live` or `offline`).
     pub mode: String,
@@ -506,6 +509,7 @@ pub struct AuditPaintOutput {
     /// dev app.
     pub keylines: Value,
     /// Total findings across all audit sections.
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub finding_count: usize,
     /// Verbatim dev-app response payload.
     pub raw: Value,

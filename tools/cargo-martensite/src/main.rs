@@ -6,8 +6,10 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use cargo_martensite::cli::{parse_args, run_command};
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let cmd = match parse_args(&args) {
@@ -119,4 +121,9 @@ mod api_surface {
         let _ = cargo_martensite::MARTENSITE_VERSION;
         let _ = cargo_martensite::discover_socket as fn(_) -> _;
     }
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn main() {
+    eprintln!("cargo-martensite is a host-only developer tool.");
 }

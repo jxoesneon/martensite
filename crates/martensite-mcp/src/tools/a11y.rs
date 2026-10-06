@@ -408,6 +408,7 @@ pub struct InvokeA11yActionOutput {
     pub target: Option<String>,
     /// Dispatch path of widget ids, root-first, when reported.
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::u64v")]
     pub hit_path: Vec<u64>,
     /// Server mode that produced the answer (`live` on success).
     pub mode: String,

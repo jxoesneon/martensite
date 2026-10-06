@@ -12,7 +12,7 @@ homepage.workspace = true
 description = "First-party Model Context Protocol (MCP) server for AI-assisted Martensite development."
 readme = "README.md"
 
-[dependencies]
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 rmcp = { version = "3.3", features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -27,7 +27,7 @@ martensite-design-lint = { workspace = true }
 martensite-reactive = { workspace = true }
 martensite-access = { workspace = true }
 
-[dev-dependencies]
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
 rmcp = { version = "3.3", features = ["client", "transport-io"] }
 martensite-host = { workspace = true, features = ["dev-channel"] }
 

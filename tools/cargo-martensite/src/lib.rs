@@ -8,6 +8,11 @@
 //! coordinates file watching, build triggering, versioned-path generation, and
 //! reload-timing measurement.
 #![forbid(unsafe_code)]
+//! The developer toolchain requires the host filesystem, real processes,
+//! and Unix-socket IPC — it cannot operate inside a browser wasm runtime.
+//! On `wasm32-unknown-unknown` this library is empty and the bin's
+//! `main` prints a host-only notice; all deps are target-gated.
+#![cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 
 /// Composite pre-commit check command executing format, clippy, and design lint.
 pub mod check;

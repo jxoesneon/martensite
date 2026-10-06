@@ -200,8 +200,10 @@ pub struct ExplainOverflowParams {
     /// Target `WidgetId` to diagnose; omitted scans the whole scene.
     pub node_id: Option<String>,
     /// Maximum diagnostics returned (default 50, max 250).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub limit: Option<u32>,
     /// Pagination offset (default 0).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub offset: Option<u32>,
 }
 

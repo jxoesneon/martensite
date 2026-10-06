@@ -29,6 +29,11 @@
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+//! The MCP server drives a live Martensite session over stdio — a
+//! host-side development tool boundary. On `wasm32-unknown-unknown`
+//! the crate compiles to an empty library and its deps (rmcp, tokio)
+//! are target-gated to match.
+#![cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 
 pub mod client;
 pub mod error;

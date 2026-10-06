@@ -45,6 +45,7 @@ const LOG_LEVELS: &[&str] = &["trace", "debug", "info", "warn", "warning", "erro
 #[serde(default)]
 pub struct RuntimeErrorsParams {
     /// Maximum error records to return (default 50, max 500).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub limit: Option<u32>,
     /// Severity filter: `info`, `warning`, `error`, `critical`, `fatal`.
     pub severity: Option<String>,
@@ -107,6 +108,7 @@ pub struct RuntimeErrorsOutput {
     /// Structured error records (most recent first as reported by the app).
     pub errors: Vec<RuntimeErrorDescriptor>,
     /// Total error records available before `limit` clamping.
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub total: usize,
     /// Whether a panic is currently captured/active in the session.
     pub panic_active: bool,
@@ -215,6 +217,7 @@ impl AsyncTool<MartensiteMcp> for RuntimeErrorsTool {
 #[serde(default)]
 pub struct LogsParams {
     /// Maximum log records to return (default 100, max 1000).
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub limit: Option<u32>,
     /// Minimum severity: `trace`, `debug`, `info`, `warn`, `error`.
     pub level: Option<String>,
@@ -270,6 +273,7 @@ pub struct LogsOutput {
     /// Log records matching the filters (capture order, oldest first).
     pub logs: Vec<LogRecordDescriptor>,
     /// Total records held in the session ring buffer.
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub total_buffered: usize,
     /// Server mode that produced the answer (`live` on success).
     pub mode: String,

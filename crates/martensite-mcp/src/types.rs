@@ -11,6 +11,63 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// JSON-Schema emitters that strip the `format` annotation schemars puts
+/// on integer widths (`uint`, `uint64`, ...). opencode's Ajv only accepts
+/// `int32`/`int64`/`float`/`double`; every other width formats as an error
+/// and the field falls back to an unusable schema.
+pub(crate) mod schema_strip {
+    use schemars::{JsonSchema, Schema, SchemaGenerator};
+    use serde_json::Value;
+
+    fn strip_value(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                map.remove("format");
+                for inner in map.values_mut() {
+                    strip_value(inner);
+                }
+            }
+            Value::Array(items) => {
+                for item in items.iter_mut() {
+                    strip_value(item);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn stripped<T: JsonSchema>(generator: &mut SchemaGenerator) -> Schema {
+        let mut schema = T::json_schema(generator);
+        if let Some(map) = schema.as_object_mut() {
+            map.remove("format");
+            for inner in map.values_mut() {
+                strip_value(inner);
+            }
+        }
+        schema
+    }
+
+    macro_rules! wrappers {
+        ($($name:ident => $ty:ty),* $(,)?) => {$(
+            pub fn $name(generator: &mut SchemaGenerator) -> Schema {
+                stripped::<$ty>(generator)
+            }
+        )*};
+    }
+
+    wrappers! {
+        u32s => u32,
+        u64s => u64,
+        usize_s => usize,
+        i32s => i32,
+        u64v => Vec<u64>,
+        u32p => [u32; 2],
+        opt_u32 => Option<u32>,
+        opt_u64 => Option<u64>,
+        opt_usize => Option<usize>,
+    }
+}
+
 /// Version of the MCP protocol implemented by this crate.
 pub const MCP_PROTOCOL_VERSION: u32 = 1;
 
@@ -34,13 +91,17 @@ pub const MARTENSITE_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Pagination {
     /// Maximum entries requested for this page.
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub limit: usize,
     /// Offset into the full result set.
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub offset: usize,
     /// Total entries available before pagination.
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub total: usize,
     /// Offset to request for the next page, or `null` when exhausted.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_usize")]
     pub next_offset: Option<usize>,
 }
 
@@ -94,6 +155,7 @@ impl Pagination {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct TreeNodeDescriptor {
     /// Widget arena identifier.
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub id: u64,
     /// Debug name registered on the widget, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,18 +168,22 @@ pub struct TreeNodeDescriptor {
     pub bounds: [f32; 4],
     /// Total number of direct children (before `child_limit` clamping).
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub child_count: usize,
     /// Depth rank in the hierarchy (0 = root).
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub depth: usize,
     /// State badges (`has_lint_warnings`, `signal_dirty`, ...).
     #[serde(default)]
     pub badges: Vec<String>,
     /// Count of active reactive signals bound to this widget.
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub active_signal_count: usize,
     /// Number of virtualized rows elided per D7 (`+N virtualized rows`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_usize")]
     pub virtualized_rows: Option<usize>,
     /// Materialized children after depth/breadth clamping.
     #[serde(default)]
@@ -156,9 +222,11 @@ impl TreeNodeDescriptor {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeDescriptor {
     /// Widget arena identifier.
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub id: u64,
     /// Generational index of the arena slot, if reported by the host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub generation: Option<u32>,
     /// Node kind classification (e.g. `Flex`, `Container`, `Text`, `Button`).
     #[serde(default)]
@@ -177,6 +245,7 @@ pub struct NodeDescriptor {
     pub clip_rect: Option<[f32; 4]>,
     /// Paint-order z index.
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::i32s")]
     pub z_index: i32,
     /// Semantic markers attached to the node (`@alarm`, `@kpi`, ...).
     #[serde(default)]
@@ -216,8 +285,10 @@ pub struct SourceSpan {
     /// Workspace-relative source file path.
     pub file: String,
     /// 1-based line number.
+    #[schemars(schema_with = "crate::types::schema_strip::u32s")]
     pub line: u32,
     /// 1-based column number.
+    #[schemars(schema_with = "crate::types::schema_strip::u32s")]
     pub column: u32,
 }
 
@@ -247,6 +318,7 @@ pub struct LayoutStepDescriptor {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LayoutChainDescriptor {
     /// The node whose layout chain is described.
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub node_id: u64,
     /// Inbound constraints received from the parent.
     #[serde(default)]
@@ -282,6 +354,7 @@ pub enum OverflowAxis {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct OverflowDiagnostic {
     /// Node whose content exceeds its allocated bounds.
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub offending_node: u64,
     /// Debug name of the offending node, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -331,6 +404,7 @@ pub struct SignalDescriptor {
     /// Number of subscribers (consumers) of this signal — absent when
     /// the runtime does not expose subscriber bookkeeping.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_usize")]
     pub subscriber_count: Option<usize>,
     /// Producer signal dependencies feeding this signal. The session
     /// wire names this `dependencies`.
@@ -343,6 +417,7 @@ pub struct SignalDescriptor {
     /// Topological scheduler rank in the push-pull DAG — absent when
     /// the runtime does not expose scheduler metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_usize")]
     pub scheduler_rank: Option<usize>,
     /// Whether the signal is flagged dirty this evaluation tick.
     #[serde(default)]
@@ -372,6 +447,7 @@ pub struct LintFindingDescriptor {
     pub severity: String,
     /// Widget node the finding is attributed to, when applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u64")]
     pub node_id: Option<u64>,
     /// `debug_name` lineage path of the node, when applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -391,18 +467,23 @@ pub struct LintFindingDescriptor {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct LintSummaryCounts {
     /// Active (non-suppressed) findings.
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub active: usize,
     /// Suppressed findings.
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub suppressed: usize,
     /// Findings at `forbid` severity.
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub forbid: usize,
     /// Findings at `warn` severity.
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub warn: usize,
     /// Findings at `info` severity.
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::usize_s")]
     pub info: usize,
 }
 
@@ -425,6 +506,7 @@ pub struct TweakDescriptor {
     pub source_file: Option<String>,
     /// 1-based line of the tweak declaration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub source_line: Option<u32>,
     /// Optimistic concurrency token for `martensite_sync_tweaks_to_source`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -438,6 +520,7 @@ pub struct TweakDescriptor {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EventRecordDescriptor {
     /// Monotonic sequence number in the ledger.
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub seq: u64,
     /// ISO 8601 timestamp of dispatch.
     #[serde(default)]
@@ -447,9 +530,11 @@ pub struct EventRecordDescriptor {
     pub event_type: String,
     /// Hit-test target widget id, when resolved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u64")]
     pub target_id: Option<u64>,
     /// Bubbling ancestry of widget ids, target-first.
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::u64v")]
     pub ancestry: Vec<u64>,
     /// Response produced by the router (`Handled`, `Ignored`, ...).
     #[serde(default)]
@@ -499,6 +584,7 @@ pub struct RuntimeErrorDescriptor {
     /// Monotonic sequence number of the record (assigned by array index when
     /// the wire payload omits it).
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub seq: u64,
     /// Severity (`info`, `warning`, `error`, `critical`, `fatal`).
     #[serde(default, alias = "level")]
@@ -511,6 +597,7 @@ pub struct RuntimeErrorDescriptor {
     pub message: String,
     /// Widget node the error is attributed to, when applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u64")]
     pub node_id: Option<u64>,
     /// ISO 8601 capture timestamp, when reported.
     #[serde(
@@ -544,6 +631,7 @@ pub struct RuntimeErrorDescriptor {
 pub struct LogRecordDescriptor {
     /// Monotonic capture sequence in the session log ring.
     #[serde(default)]
+    #[schemars(schema_with = "crate::types::schema_strip::u64s")]
     pub seq: u64,
     /// Event level (`TRACE`/`DEBUG`/`INFO`/`WARN`/`ERROR`).
     #[serde(default)]
@@ -559,6 +647,7 @@ pub struct LogRecordDescriptor {
     pub file: Option<String>,
     /// Source line, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::types::schema_strip::opt_u32")]
     pub line: Option<u32>,
     /// RFC 3339 capture timestamp.
     #[serde(default)]
@@ -584,8 +673,10 @@ pub struct AuditRecord {
     /// Workspace-relative file path written.
     pub file_path: String,
     /// First modified line (1-based).
+    #[schemars(schema_with = "crate::types::schema_strip::u32s")]
     pub span_start: u32,
     /// Last modified line (1-based, inclusive).
+    #[schemars(schema_with = "crate::types::schema_strip::u32s")]
     pub span_end: u32,
     /// Unified diff applied to the file.
     #[serde(default)]
