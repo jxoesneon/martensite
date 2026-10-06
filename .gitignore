@@ -26,3 +26,6 @@ tests/snapshots/diffs/
 # Web example build artifacts (trunk dist/ and wasm-bindgen pkg/ output)
 examples/web/dist/
 examples/web/pkg/
+
+# Launch-video build output (final cut lives in docs/assets/)
+brag-output*/

@@ -7,6 +7,12 @@
 
 > **A retained-mode, GPU-accelerated graphical user interface framework for Rust.**
 
+<p align="center">
+  <a href="docs/assets/martensite-launch.mp4">
+    <img src="docs/assets/martensite-launch.gif" alt="Martensite widget catalog: 275 widgets rendered on the GPU, live prop tweaking, charts, and RTL mirroring" width="800">
+  </a>
+</p>
+
 ---
 
 ## What is Martensite?
