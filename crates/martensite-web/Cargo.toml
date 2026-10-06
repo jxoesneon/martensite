@@ -1,0 +1,51 @@
+[package]
+name = "martensite-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Consolidated wasm32-unknown-unknown entry point for Martensite: one-import access to the web backends (canvas, event loop, DPI, IME, clipboard, DnD, a11y)."
+publish = false
+readme = "README.md"
+
+[lib]
+# `cdylib` for downstream wasm-bindgen consumers; `rlib` keeps
+# `cargo check`/`cargo test` usable without a wasm-bindgen host.
+crate-type = ["cdylib", "rlib"]
+
+# The whole crate body is `#![cfg(all(target_arch = "wasm32",
+# target_os = "unknown"))]`; gating the deps the same way keeps
+# `cargo check --workspace` on the host from compiling anything here.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+martensite-wgpu = { workspace = true }
+martensite-window = { workspace = true }
+martensite-text = { workspace = true }
+martensite-clipboard = { workspace = true }
+martensite-dnd = { workspace = true }
+martensite-access = { workspace = true }
+accesskit = { workspace = true }
+winit = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = [
+    "console",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "File",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "Node",
+    "Window",
+] }
+console_error_panic_hook = "0.1"
+
+[lints]
+workspace = true

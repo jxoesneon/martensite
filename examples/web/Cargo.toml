@@ -22,14 +22,7 @@ crate-type = ["cdylib", "rlib"]
 # target-gated keeps `cargo check --workspace` on the host from building
 # anything for this crate at all.
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-martensite-wgpu = { workspace = true }
-martensite-window = { workspace = true }
-martensite-text = { workspace = true }
-martensite-clipboard = { workspace = true }
-martensite-dnd = { workspace = true }
-martensite-access = { workspace = true }
-accesskit = { workspace = true }
-winit = { workspace = true }
+martensite-web = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 js-sys = { workspace = true }

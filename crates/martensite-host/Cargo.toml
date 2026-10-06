@@ -12,7 +12,11 @@ homepage.workspace = true
 description = "Lightweight host binary support for dynamically loading and hot-reloading Martensite guest cdylibs."
 readme = "README.md"
 
-[dependencies]
+# Everything this crate links is host-only: dynamic library loading
+# and the dev-channel Unix-socket IPC server have no web meaning.
+# Target-gating the deps mirrors the empty-crate cfg in `lib.rs`, so a
+# `--workspace --target wasm32-unknown-unknown` check needs nothing here.
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 libloading = { workspace = true }
 martensite-core = { workspace = true, optional = true }
 martensite-devtools = { workspace = true, optional = true }

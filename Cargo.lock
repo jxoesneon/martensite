@@ -2500,12 +2500,14 @@ dependencies = [
  "martensite-render",
  "martensite-share",
  "martensite-wgpu",
+ "martensite-window",
  "parking_lot",
  "png",
  "pollster",
  "serde",
  "serde_json",
  "tracing-subscriber",
+ "web-time",
  "wgpu",
  "winit",
 ]
@@ -3520,7 +3522,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "martensite-web-example"
+name = "martensite-web"
 version = "0.20.1"
 dependencies = [
  "accesskit",
@@ -3536,6 +3538,18 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "winit",
+]
+
+[[package]]
+name = "martensite-web-example"
+version = "0.20.1"
+dependencies = [
+ "console_error_panic_hook",
+ "js-sys",
+ "martensite-web",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -3684,6 +3698,7 @@ dependencies = [
  "martensite",
  "martensite-devtools",
  "martensite-wgpu",
+ "martensite-window",
  "pollster",
  "serde",
  "serde_json",
@@ -6996,6 +7011,7 @@ dependencies = [
  "martensite-render",
  "martensite-theme",
  "martensite-wgpu",
+ "martensite-window",
  "pollster",
  "serde",
  "serde_json",

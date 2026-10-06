@@ -9,6 +9,11 @@
 //! The crate is written entirely in safe Rust.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+//! Wasmtime is a native embedding API; third-party WASM plugin
+//! instances can never execute inside a browser wasm sandbox. This
+//! crate is host-only — on `wasm32-unknown-unknown` it compiles to an
+//! empty library, and its dependencies are target-gated accordingly.
+#![cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 
 /// Zero-allocation shared-memory ring buffer for paint commands.
 pub mod ring_buffer;

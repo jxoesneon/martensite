@@ -7,17 +7,24 @@
 // individually documented; allow missing docs for the generated functions only.
 #![allow(missing_docs)]
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::sync::Arc;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::{Duration, Instant};
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use martensite_core::{ColdNode, HotNode, WidgetArena, WidgetId};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use martensite_reactive::{Memo, ReactiveRuntime, Signal};
 
 /// Benchmark 1: 10,000-node linear DAG signal propagation latency.
 ///
 /// Exit Gate: Propagation latency < 1.0ms across a 10,000-node linear dependency chain.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn bench_signal_propagation_10k(c: &mut Criterion) {
     let runtime = ReactiveRuntime::new();
     let root = runtime.create_signal(0u64);
@@ -87,6 +94,7 @@ fn bench_signal_propagation_10k(c: &mut Criterion) {
 }
 
 /// Helper function to construct a 10,000-node 4-ary hierarchical tree in WidgetArena.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn setup_arena_tree() -> (WidgetArena, Vec<WidgetId>) {
     let mut arena = WidgetArena::with_capacity(10_000);
     let mut ids = Vec::with_capacity(10_000);
@@ -117,6 +125,7 @@ fn setup_arena_tree() -> (WidgetArena, Vec<WidgetId>) {
 /// Exit Gate: Full lifecycle completes in < 25ms on CI runners (reference
 /// target < 1.14ms on dedicated hardware). Enforced when
 /// `MARTENSITE_STRICT_BENCH=1`.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn bench_arena_operations_10k(c: &mut Criterion) {
     // Pre-verify complete lifecycle correctness before running benchmark loop.
     {
@@ -237,6 +246,7 @@ fn bench_arena_operations_10k(c: &mut Criterion) {
 /// mutates root signals inside a transactional batch, and measures topological evaluation latency.
 ///
 /// Exit Gate: Evaluation executes with zero glitches and zero redundant evaluations.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn bench_diamond_reactive_network(c: &mut Criterion) {
     let runtime = ReactiveRuntime::new();
 
@@ -391,6 +401,7 @@ fn bench_diamond_reactive_network(c: &mut Criterion) {
 /// WidgetIds are minted directly with `WidgetId::from_parts` — the engine
 /// only needs the id as a map key, no `WidgetArena` is required for a
 /// pure layout-throughput measurement.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn setup_layout_tree() -> (martensite_layout::LayoutEngine, taffy::NodeId) {
     use martensite_layout::{Display, LayoutEngine};
     use taffy::prelude::*;
@@ -468,6 +479,7 @@ fn setup_layout_tree() -> (martensite_layout::LayoutEngine, taffy::NodeId) {
 /// Comparable workload: a full retained/immediate layout pass over a
 /// realistic panel (50 rows × 20 cells). egui re-layouts every widget
 /// every frame; iced recomputes its widget-tree layout on each view pass.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn bench_layout_1k_widget_tree(c: &mut Criterion) {
     use martensite_layout::{constraints_to_available, Constraints};
     let mut group = c.benchmark_group("competitive_layout_1k");
@@ -515,6 +527,7 @@ fn bench_layout_1k_widget_tree(c: &mut Criterion) {
 /// dashboard's per-frame state propagation (vs. the 10k-node milestone
 /// gate). Comparable workload: iced's update→view re-evaluation per
 /// message, egui's per-frame immediate re-run.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn bench_signal_fan_out_200(c: &mut Criterion) {
     let runtime = ReactiveRuntime::new();
     let root = runtime.create_signal(0u64);
@@ -552,6 +565,7 @@ fn bench_signal_fan_out_200(c: &mut Criterion) {
 /// paragraph. Note iced 0.13 also sits on cosmic-text, so this is the
 /// closest-to-apples comparison in the suite — remaining differences are
 /// harness overhead and cache layers, not the shaper.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn bench_text_shaping(c: &mut Criterion) {
     use martensite_text::{shape_text, FontManager};
     let mut manager = FontManager::new();
@@ -602,6 +616,7 @@ fn bench_text_shaping(c: &mut Criterion) {
 /// Comparable workload: egui `ScrollArea`/`Grid` visible-row culling and
 /// iced `scrollable` viewport math. The Martensite claim is O(1) per
 /// scroll step with zero allocation in `visible_rows`.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn bench_virtualized_scroll_1m(c: &mut Criterion) {
     use martensite_blessed::DataTable;
     let mut table = DataTable::new(vec![0_u64; 1_000_000], 22.0);
@@ -626,6 +641,7 @@ fn bench_virtualized_scroll_1m(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 criterion_group!(
     benches,
     bench_signal_propagation_10k,
@@ -636,4 +652,10 @@ criterion_group!(
     bench_text_shaping,
     bench_virtualized_scroll_1m
 );
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 criterion_main!(benches);
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn main() {
+    eprintln!("bench_suite is host-only (criterion); noting to run on wasm32-unknown-unknown");
+}

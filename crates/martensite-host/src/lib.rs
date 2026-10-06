@@ -55,6 +55,11 @@
 
 #![allow(unsafe_code)]
 #![deny(missing_docs)]
+//! Dynamic library loading and the dev-channel IPC server are host-only:
+//! both need real OS services (`dlopen`, Unix sockets). On
+//! `wasm32-unknown-unknown` the whole crate compiles to an empty
+//! library and every dependency below is target-gated to match.
+#![cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 
 #[cfg(feature = "dev-channel")]
 pub mod auto;

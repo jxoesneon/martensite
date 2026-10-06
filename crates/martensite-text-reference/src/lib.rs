@@ -41,6 +41,10 @@
 //! is a deliberate, permanent exclusion — not a portability TODO.
 
 #![forbid(unsafe_code)]
+//! Pango/Cairo are native system libraries; the reference renderer is
+//! a host-side DSSIM comparison harness. On `wasm32-unknown-unknown`
+//! the crate compiles to an empty library and its deps are gated to match.
+#![cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #![deny(missing_docs)]
 
 use cairo::{Context, Format, ImageSurface};

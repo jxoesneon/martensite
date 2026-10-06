@@ -643,7 +643,7 @@ jobs:
           - name: wasm32
             os: ubuntu-latest
             target: wasm32-unknown-unknown
-            crates: -p martensite-window -p martensite-access -p martensite-dnd -p martensite-clipboard -p martensite-text -p martensite-wgpu -p martensite
+            crates: -p martensite-window -p martensite-access -p martensite-dnd -p martensite-clipboard -p martensite-text -p martensite-wgpu -p martensite -p martensite-web -p martensite-web-example
           - name: ios-sim
             os: macos-latest
             target: aarch64-apple-ios-sim

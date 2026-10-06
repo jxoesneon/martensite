@@ -4796,14 +4796,14 @@ fn sel_doc(m: &PlantModel) -> Option<crate::domain::DocEntry> {
 /// `docs` store signature — re-seat key for the chooser/artifacts.
 fn docs_sig(m: &PlantModel) -> usize {
     let docs = m.docs.get();
-    let mut h = 0xcbf29ce484222325usize;
+    let mut h = 0xcbf29ce484222325u64;
     for d in &docs {
         for b in d.title.bytes().chain(d.body.bytes()) {
-            h = (h ^ b as usize).wrapping_mul(0x100000001b3);
+            h = (h ^ u64::from(b)).wrapping_mul(0x100000001b3);
         }
-        h = (h ^ d.id as usize).wrapping_mul(0x100000001b3);
+        h = (h ^ d.id as u64).wrapping_mul(0x100000001b3);
     }
-    h ^ docs.len()
+    (h ^ docs.len() as u64) as usize
 }
 
 /// A shift-log entry as a `MessageList` row.

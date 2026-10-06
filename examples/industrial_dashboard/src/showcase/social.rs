@@ -223,9 +223,9 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             "Reaction Bar",
             Box::new(
                 ReactionBar::new()
-                    .reaction(Reaction::new("👍", 6).mine(true))
-                    .reaction(Reaction::new("🎉", 3))
-                    .reaction(Reaction::new("⚠️", 1))
+                    .reaction(Reaction::new("status.thumbs-up", 6).mine(true))
+                    .reaction(Reaction::new("misc.sparkles", 3))
+                    .reaction(Reaction::new("status.warning", 1))
                     .addable(true),
             ),
         ),

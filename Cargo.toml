@@ -12,6 +12,7 @@ members = [
     "crates/martensite-access-platform",
     "crates/martensite-accesskit-winit",
     "crates/martensite-window",
+    "crates/martensite-web",
     "crates/martensite-focus",
     "crates/martensite-clipboard",
     "crates/martensite-dialog",
@@ -101,6 +102,7 @@ martensite-access-platform = { version = "0.20.1", path = "crates/martensite-acc
 martensite-design-lint = { version = "0.20.1", path = "crates/martensite-design-lint" }
 martensite-mcp = { version = "0.20.1", path = "crates/martensite-mcp" }
 martensite-window = { version = "0.20.1", path = "crates/martensite-window" }
+martensite-web = { version = "0.20.1", path = "crates/martensite-web" }
 martensite-focus = { version = "0.20.1", path = "crates/martensite-focus" }
 martensite-clipboard = { version = "0.20.1", path = "crates/martensite-clipboard" }
 martensite-dialog = { version = "0.20.1", path = "crates/martensite-dialog" }

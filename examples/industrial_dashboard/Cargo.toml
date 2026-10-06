@@ -35,15 +35,10 @@ vaapi = ["martensite/decoder-vaapi"]
 martensite = { workspace = true, features = [
     "decoder-videotoolbox",
     "decoder-mf",
-    # Dev-channel socket server (ADR-0038) — the app opts in at
-    # runtime via `MARTENSITE_DEV_CHANNEL=1`; the feature only gates
-    # the `martensite::dev_channel` API surface.
-    "dev-channel",
-    # Reactive-runtime signal enumeration + TimeMachine stepping for
-    # the dev channel — `inspect_signals`/`step_timemachine` answer
-    # with real signal ids instead of declining.
-    "devtools-timemachine",
+    # Signal enumeration for `signals_list`/`signal_trigger`.
+    "devtools-timemachine"
 ] }
+
 # Direct dep to enable devtools' `render` feature — feature unification
 # gives the dev-session probe the TinySkia raster path, so
 # `capture_node`/`audit_paint` rasterize real paint lists in
@@ -101,8 +96,23 @@ accesskit = { workspace = true }
 parking_lot = { workspace = true }
 glam = { workspace = true }
 kurbo = { workspace = true }
+# On wasm, winit-web uses `web_time::Instant` for ControlFlow deadlines;
+# on desktop this crate re-exports std::time types, so use it unconditionally.
+web-time = "1.1"
 pollster = "1.0"
 tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
+
+# The dev-channel socket server is host-only (ADR-0038): on wasm it is
+# gated out of the facade, so only request the feature on host targets.
+
+# The event-ledger API used by the panel abort/resume flow lives behind
+# martensite-window/devtools (normally pulled in transitively by the
+# host-only dev-channel feature). Pull it in directly for the web build.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+martensite-window = { workspace = true, features = ["devtools"] }
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+martensite = { workspace = true, features = ["dev-channel"] }
 
 [lints]
 workspace = true

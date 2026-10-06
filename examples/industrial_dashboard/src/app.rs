@@ -12,7 +12,10 @@
 //! surface" (GPU pipeline, accessibility, focus).
 
 use std::sync::Arc;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::{Duration, Instant};
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+use web_time::{Duration, Instant};
 
 use accesskit::{ActionRequest, TreeUpdate};
 use parking_lot::Mutex;
@@ -297,9 +300,11 @@ pub(crate) struct App {
     /// Dev-channel socket server — `Some` only when
     /// `MARTENSITE_DEV_CHANNEL` opted in (debug builds). Held for the
     /// app's lifetime; dropping unlinks the socket.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     dev_server: Option<martensite::dev_channel::DevChannelServer>,
     /// The served session — fed `on_frame`/`absorb_events` each frame
     /// so the MCP lint/event surfaces see live data.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     dev_session: Option<Arc<martensite::dev_channel::DevSession>>,
     /// Bounded tracing sink attached to the session (when served) —
     /// `martensite_logs` reads it.
@@ -447,7 +452,9 @@ impl App {
             theme_fade: None,
             installed_mode: ThemeMode::Dark,
             arena: None,
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
             dev_server: None,
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
             dev_session: None,
             log_ring: Arc::new(LogRing::new(512)),
             root: None,
@@ -786,6 +793,7 @@ impl App {
         // build serves this arena over the session socket so
         // `cargo martensite mcp` can inspect/mutate the live tree
         // (docs/dx/MCP.md §3.1). A bind failure never sinks the app.
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         match martensite::dev_channel::serve_dev_session_from_env(Arc::clone(&arena)) {
             Ok(Some((server, session))) => {
                 session.set_log_ring(Arc::clone(&self.log_ring));
@@ -1835,6 +1843,7 @@ impl App {
         // Feed the dev session: the recorded paint list drives MCP
         // lint/capture surfaces; real routed input merges into the
         // event ledger alongside MCP-injected events.
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         if let Some(session) = &self.dev_session {
             if let Some(arena) = self.arena.as_ref() {
                 session
@@ -2625,6 +2634,7 @@ impl App {
             .lock()
             .unwrap()
             .build_paint_list(self.root.expect("root"), &mut list);
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         if let Some(session) = &self.dev_session {
             session
                 .lint
@@ -2726,6 +2736,7 @@ pub fn run_live_headless(
     app.scale.set(1.0);
     app.build_arena();
     app.apply_layout_at(1600, 1000);
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     if app.dev_server.is_some() {
         eprintln!(
             "live-headless: dev channel serving (pid {})",

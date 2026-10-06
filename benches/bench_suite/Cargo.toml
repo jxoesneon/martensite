@@ -26,6 +26,11 @@ martensite-layout = { workspace = true }
 martensite-text = { workspace = true }
 martensite-blessed = { workspace = true }
 taffy = { workspace = true }
+
+# Criterion depends on platform-only pieces (getrandom's host backend,
+# terminal control) that do not build for wasm32-unknown-unknown; the
+# bench binary is host-only, so its dep is target-gated to match.
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 criterion = { workspace = true }
 
 [lints]

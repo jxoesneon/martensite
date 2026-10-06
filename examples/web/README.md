@@ -53,12 +53,14 @@ above locally before touching the web backends.
 ### Headless-browser gate (spec §5)
 
 `tests/browser_gate.rs` is the §5 Web gate artifact: a `#[ignore]`-gated
-test that `trunk serve`s the example and drives headless Chromium via
-playwright, asserting the wasm entry point starts, a GPU backend is
-selected, the a11y mirror exists, and the `aria-live` announcement
-lands. It runs only with `MARTENSITE_WEB_BROWSER=1` in the environment
-(and `trunk`, `node`/`npm` installed) — the same opt-in convention as
-`MARTENSITE_MEDIA_4K120`:
+test that builds the wasm example, regenerates the wasm-bindgen glue,
+statically serves `examples/web` with `python3 http.server`, and drives
+headless Chromium via playwright, asserting the wasm entry point starts,
+a GPU backend is selected, the a11y mirror exists, and the `aria-live`
+announcement lands. It runs only with `MARTENSITE_WEB_BROWSER=1` in the
+environment (and `wasm-bindgen`, `python3`, `node`/`npm` installed) —
+the same opt-in convention as `MARTENSITE_MEDIA_4K120`. (Trunk is not
+required: its pinned `libdeflate-sys` does not build against GCC 16.)
 
 ```sh
 MARTENSITE_WEB_BROWSER=1 cargo test -p martensite-web-example \

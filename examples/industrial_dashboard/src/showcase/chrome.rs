@@ -242,8 +242,8 @@ pub fn entries() -> Vec<(&'static str, Box<dyn Widget>)> {
             Box::new(
                 ToolPalette::new()
                     .tool(ToolItem::new("⌀", "Measure"))
-                    .tool(ToolItem::new("✚", "Annotate"))
-                    .tool(ToolItem::new("⚙", "Calibrate"))
+                    .tool(ToolItem::new("edit.pencil", "Annotate"))
+                    .tool(ToolItem::new("nav.settings", "Calibrate"))
                     .columns(3)
                     .selected(0)
                     .show_labels(true),

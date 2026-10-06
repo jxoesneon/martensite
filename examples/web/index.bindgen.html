@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Martensite — web smoke test (wasm-bindgen)</title>
+    <!--
+      Static-serve variant of index.html for the wasm-bindgen-cli flow
+      (README Option B). Build the glue with:
+
+        cargo build -p martensite-web-example --target wasm32-unknown-unknown --release
+        wasm-bindgen --target web --out-dir examples/web/pkg \
+          target/wasm32-unknown-unknown/release/martensite_web_example.wasm
+        python3 -m http.server --directory examples/web 8080
+
+      then open http://127.0.0.1:8080/index.bindgen.html
+    -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #101014; }
+      #martensite-canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <canvas id="martensite-canvas" width="800" height="600"></canvas>
+    <script type="module">
+      import init from './pkg/martensite_web_example.js';
+      await init();
+    </script>
+  </body>
+</html>

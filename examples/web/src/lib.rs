@@ -42,24 +42,22 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use accesskit::{Action, Node, NodeId, Role, TreeId, TreeInfo, TreeUpdate};
-use martensite_access::web::WebA11yBridge;
-use martensite_clipboard::web::WebClipboard;
-use martensite_dnd::web::{read_file_text, WebDropListener};
-use martensite_text::web as text_web;
-use martensite_text::FontManager;
-use martensite_wgpu::device::GpuContext;
-use martensite_wgpu::web as gpu;
-use martensite_wgpu::wgpu;
-use martensite_window::web as win_web;
+use martensite_web::access::WebA11yBridge;
+use martensite_web::accesskit::{Action, Node, NodeId, Role, TreeId, TreeInfo, TreeUpdate};
+use martensite_web::clipboard::WebClipboard;
+use martensite_web::dnd::{read_file_text, WebDropListener};
+use martensite_web::gpu;
+use martensite_web::text as text_web;
+use martensite_web::window as win_web;
+use martensite_web::winit::application::ApplicationHandler;
+use martensite_web::winit::event::WindowEvent;
+use martensite_web::winit::event_loop::{ActiveEventLoop, EventLoop};
+use martensite_web::winit::window::{Window, WindowAttributes, WindowId};
+use martensite_web::{wgpu, FontManager, GpuContext};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::HtmlCanvasElement;
-use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::window::{Window, WindowAttributes, WindowId};
 
 /// Logical (CSS-pixel) size the canvas is laid out at. The backing store
 /// is `LOGICAL_* devicePixelRatio` physical pixels.
@@ -142,15 +140,17 @@ impl ApplicationHandler for App {
     ) {
         match event {
             WindowEvent::SurfaceResized(size) => {
-                let scale = web_sys::window()
-                    .map(|w| w.device_pixel_ratio())
-                    .unwrap_or(1.0);
-                if let Some(canvas) = &self.canvas {
-                    win_web::sync_canvas_backing_store(canvas, size.width, size.height, scale);
-                }
+                // winit-web reports the canvas's *device pixel content box*:
+                // `size` is already physical (it reflects the backing-store
+                // attributes that `sync_canvas_backing_store` set), and winit
+                // owns the CSS size. Multiplying by devicePixelRatio again
+                // here — or feeding `size` back into
+                // `sync_canvas_backing_store` — compounds the scale on every
+                // ResizeObserver tick until the swapchain exceeds the
+                // maximum texture size. Reconfigure with `size` as-is.
                 if let Some(state) = &mut *self.gpu.borrow_mut() {
-                    state.config.width = (f64::from(size.width) * scale).round().max(1.0) as u32;
-                    state.config.height = (f64::from(size.height) * scale).round().max(1.0) as u32;
+                    state.config.width = size.width.max(1);
+                    state.config.height = size.height.max(1);
                     state
                         .surface
                         .configure(&state.context.device, &state.config);

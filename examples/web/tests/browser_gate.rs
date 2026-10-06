@@ -11,11 +11,19 @@
 //!
 //! # Prerequisites (self-hosted runner / local run)
 //!
-//! * `trunk` (`cargo install trunk`) — builds and serves the example.
+//! * `cargo` with the `wasm32-unknown-unknown` target installed.
+//! * `wasm-bindgen` CLI matching the lockfile's wasm-bindgen
+//!   (`cargo install wasm-bindgen-cli --version 0.2.128 --locked`).
+//! * `python3` — static file server for the smoke-test page.
 //! * `node` + `npm` — used to install a pinned `playwright` into a temp
-//!   dir and drive headless Chromium (`npm install playwright` also
-//!   fetches the browser binary on first run).
-//! * `rustup target add wasm32-unknown-unknown`.
+//!   dir and drive Chromium (`npm install playwright` also fetches the
+//!   browser binary on first run; a system Chromium/Chrome on PATH is
+//!   used directly when present).
+//!
+//! Trunk is intentionally not required: this machine cannot build
+//! `trunk` (its pinned `libdeflate-sys 1.23.1` fails against GCC 16 and
+//! has no AVX512 fallback), and the static serve flow exercises the
+//! exact same wasm boundary.
 //!
 //! # What it verifies
 //!
@@ -41,7 +49,7 @@ use std::time::{Duration, Instant};
 /// Skipped (not failed) unless `MARTENSITE_WEB_BROWSER` is set — the same
 /// skip-if-unset convention as the media 4K120 gate.
 #[test]
-#[ignore = "requires trunk + node/npm + playwright Chromium — set MARTENSITE_WEB_BROWSER=1"]
+#[ignore = "requires static wasm build + node/npm + python3 — set MARTENSITE_WEB_BROWSER=1"]
 fn web_headless_browser_gate() {
     if std::env::var_os("MARTENSITE_WEB_BROWSER").is_none() {
         eprintln!("MARTENSITE_WEB_BROWSER not set; gate skipped");
@@ -49,10 +57,16 @@ fn web_headless_browser_gate() {
     }
 
     let example_dir = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
+    let workspace_dir = example_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("examples/web has a workspace grandparent")
+        .to_path_buf();
     for (tool, args) in [
-        ("trunk", ["--version"].as_slice()),
         ("node", ["--version"].as_slice()),
         ("npm", ["--version"].as_slice()),
+        ("python3", ["--version"].as_slice()),
+        ("wasm-bindgen", ["--version"].as_slice()),
     ] {
         let ok = Command::new(tool)
             .args(args)
@@ -64,31 +78,71 @@ fn web_headless_browser_gate() {
         assert!(
             ok,
             "web browser gate: `{tool}` not found on PATH — install it \
-             (cargo install trunk; node + npm) or unset MARTENSITE_WEB_BROWSER"
+             (cargo install wasm-bindgen-cli; node + npm + python3) \
+             or unset MARTENSITE_WEB_BROWSER"
         );
     }
 
-    // Pick a free port, then release it for `trunk serve`.
+    // Build the wasm example, regenerate the JS glue, and statically
+    // serve examples/web — the same flow README Option B documents.
+    let build = Command::new("cargo")
+        .args([
+            "build",
+            "-p",
+            "martensite-web-example",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--release",
+        ])
+        .current_dir(&workspace_dir)
+        .status()
+        .expect("spawn cargo build");
+    assert!(
+        build.success(),
+        "web browser gate: wasm release build failed"
+    );
+
+    let glue = Command::new("wasm-bindgen")
+        .args([
+            "--target",
+            "web",
+            "--out-dir",
+            example_dir.join("pkg").to_str().expect("utf8 path"),
+            workspace_dir
+                .join("target/wasm32-unknown-unknown/release/martensite_web_example.wasm")
+                .to_str()
+                .expect("utf8 path"),
+        ])
+        .status()
+        .expect("spawn wasm-bindgen");
+    assert!(glue.success(), "web browser gate: wasm-bindgen failed");
+
+    // Pick a free port, then release it for the static server.
     let port = TcpListener::bind("127.0.0.1:0")
         .expect("bind ephemeral port")
         .local_addr()
         .expect("local addr")
         .port();
-    let url = format!("http://127.0.0.1:{port}");
+    let url = format!("http://127.0.0.1:{port}/index.bindgen.html");
 
-    let mut trunk = Command::new("trunk")
-        .args(["serve", "--port", &port.to_string()])
-        .current_dir(&example_dir)
+    let mut server = Command::new("python3")
+        .args([
+            "-m",
+            "http.server",
+            &port.to_string(),
+            "--bind",
+            "127.0.0.1",
+            "--directory",
+            example_dir.to_str().expect("utf8 path"),
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("spawn trunk serve");
-    let _trunk_guard = ChildGuard(&mut trunk);
+        .expect("spawn python3 http.server");
+    let _server_guard = ChildGuard(&mut server);
 
-    // First `trunk serve` run builds the wasm crate — allow generously.
-    wait_for_port(port, Duration::from_secs(240)).unwrap_or_else(|| {
-        panic!("trunk serve did not open {url} — is the wasm target installed?")
-    });
+    wait_for_port(port, Duration::from_secs(30))
+        .unwrap_or_else(|| panic!("python3 http.server did not open port {port}"));
 
     let temp = std::env::temp_dir().join(format!("martensite-web-gate-{}", std::process::id()));
     std::fs::create_dir_all(&temp).expect("create gate temp dir");
@@ -121,7 +175,8 @@ impl Drop for ChildGuard<'_> {
     }
 }
 
-/// Polls until `trunk serve` accepts connections or the deadline passes.
+/// Polls until the static server accepts connections or the deadline
+/// passes.
 fn wait_for_port(port: u16, timeout: Duration) -> Option<()> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -154,10 +209,24 @@ fn install_playwright(dir: &Path) {
 /// its path.
 fn write_check_script(dir: &Path) -> PathBuf {
     const SCRIPT: &str = r#"import { chromium } from 'playwright';
+import fs from 'node:fs';
 
 const url = process.argv[2];
 const logs = [];
-const browser = await chromium.launch();
+// Prefer a system Chromium/Chrome when present — `npm install
+// playwright` then does not need to download its own browser build.
+const candidates = [
+  process.env.CHROMIUM_PATH,
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/google-chrome',
+].filter((p) => p && fs.existsSync(p));
+const launchArgs = {
+  headless: true,
+  args: ['--no-sandbox', '--enable-unsafe-webgpu'],
+  ...(candidates.length ? { executablePath: candidates[0] } : {}),
+};
+const browser = await chromium.launch(launchArgs);
 try {
   const page = await browser.newPage();
   page.on('console', (m) => logs.push(m.text()));

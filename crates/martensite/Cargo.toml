@@ -43,7 +43,7 @@ martensite-design-lint = { workspace = true }
 # Optional: OS-native font fallback providers (DirectWrite, CoreText, Fontconfig).
 martensite-font-fallback = { workspace = true, optional = true }
 # Optional: dev-channel IPC server (ADR-0038) for devtools/MCP attach.
-martensite-host = { workspace = true, optional = true }
+
 accesskit = { workspace = true }
 glam = { workspace = true }
 kurbo = { workspace = true }
@@ -57,6 +57,11 @@ tiny-skia = { workspace = true }
 
 # `martensite-plugin` pulls wasmtime (the plugin host runtime), which
 # cannot build for wasm32-unknown-unknown — plugins are host-side.
+# Dev-channel IPC server is host-only; gated to the same targets on which
+# martensite-host itself carries the dev_channel modules.
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+martensite-host = { workspace = true, optional = true }
+
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
 martensite-plugin = { workspace = true }
 

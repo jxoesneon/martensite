@@ -120,7 +120,10 @@ pub use martensite_window as window;
 /// `MARTENSITE_DEV_CHANNEL=1` and call
 /// [`serve_dev_session_from_env`](dev_channel::serve_dev_session_from_env)
 /// once with the app's arena to serve the session socket.
-#[cfg(feature = "dev-channel")]
+#[cfg(all(
+    feature = "dev-channel",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 pub mod dev_channel {
     pub use martensite_devtools::dev_session::DevSession;
     pub use martensite_host::auto::{serve_dev_session_from_env, DevChannelError};

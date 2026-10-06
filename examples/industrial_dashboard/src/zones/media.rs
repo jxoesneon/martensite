@@ -155,7 +155,7 @@ const LOOP_SECS: f64 = 540.0;
 /// owns the viewport-edge clip itself.
 const STILLS_W_PT: f32 = 478.0;
 /// Ack emoji the ReactionBar counts in the shift log.
-const REACTIONS: [&str; 3] = ["👍", "⚠️", "✅"];
+const REACTIONS: [&str; 3] = ["status.thumbs-up", "status.warning", "status.check"];
 /// MIDI note names for the tone readouts.
 const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
@@ -382,7 +382,7 @@ fn drain_chat_input(c: &mut ChatInput, m: &PlantModel) {
         }
     }
     if c.take_attach() {
-        m.log(0, "📎 attachment");
+        m.log(0, "attachment");
     }
     c.take_emoji(); // opens the widget's own picker — nothing to publish
 }
@@ -773,9 +773,9 @@ fn comms_page(model: &PlantModel) -> Page {
     // Acks are log entries — the bar counts them, clicking posts one.
     let reactions = Bound::new(
         ReactionBar::new()
-            .reaction(Reaction::new("👍", 0))
-            .reaction(Reaction::new("⚠️", 0))
-            .reaction(Reaction::new("✅", 0))
+            .reaction(Reaction::new("status.thumbs-up", 0))
+            .reaction(Reaction::new("status.warning", 0))
+            .reaction(Reaction::new("status.check", 0))
             .label("ACKS"),
         model,
     )
