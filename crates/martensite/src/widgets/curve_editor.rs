@@ -35,7 +35,7 @@ const EDGE: [u8; 4] = [70, 70, 76, 255];
 const GRID: [u8; 4] = [60, 60, 68, 255];
 const CURVE: [u8; 4] = [110, 170, 230, 255];
 const ARM: [u8; 4] = [140, 140, 150, 255];
-const HANDLE: [u8; 4] = [230, 150, 90, 255];
+const HANDLE: [u8; 4] = [235, 165, 85, 255]; // amber — off the alarm-red hue window
 const ACTIVE: [u8; 4] = [240, 180, 100, 255];
 
 /// A cubic-bezier easing editor — see the module docs.

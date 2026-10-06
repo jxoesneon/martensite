@@ -9,7 +9,7 @@
 //! the tag-input convention). `Backspace` on an empty input deletes
 //! the last token, and `ArrowLeft`/`ArrowRight` on an empty input
 //! walk a highlight across the chips so `Backspace`/`Delete` remove
-//! the highlighted one instead. Clicking a chip's `×` removes it and
+//! the highlighted one instead. Clicking a chip's close icon removes it and
 //! a press anywhere else in the field focuses the embedded input.
 //! The widget composes a [`TextInput`] child for the in-progress
 //! entry — the child's `take_edited` drives token commit decisions.
@@ -56,14 +56,18 @@ const REMOVE_W_PT: f32 = 14.0;
 /// Minimum input width, logical points.
 const MIN_INPUT_PT: f32 = 60.0;
 
-/// Chip face.
-const CHIP_FACE: [u8; 4] = [222, 225, 231, 255];
-/// Chip ink.
-const CHIP_INK: [u8; 4] = [30, 31, 36, 255];
-/// Remove affordance ink.
-const REMOVE_INK: [u8; 4] = [110, 114, 123, 255];
-/// Hovered chip face.
-const CHIP_HOVER: [u8; 4] = [205, 210, 220, 255];
+/// Chip face — `RaisedColor` fallback (the token's dark-theme
+/// resolved value). `DividerColor`, the old binding, resolves to a
+/// mid-gray hairline tint that crushed label ink to ~3.2:1.
+const CHIP_FACE: [u8; 4] = [41, 46, 52, 255];
+/// Chip ink — `TextColor` fallback, dark-theme resolved value.
+const CHIP_INK: [u8; 4] = [236, 243, 250, 255];
+/// Remove affordance ink — `TextMutedColor` fallback, dark-theme
+/// resolved value.
+const REMOVE_INK: [u8; 4] = [165, 172, 179, 255];
+/// Hovered chip face — `OverlayColor` fallback (one rung above
+/// `RaisedColor`), dark-theme resolved value.
+const CHIP_HOVER: [u8; 4] = [51, 57, 62, 255];
 
 /// A chip-ized token entry field.
 ///
@@ -732,9 +736,9 @@ impl Widget for TokenField {
             );
             let shape = martensite_core::shape::Shape::squircle(cx.pt(CHIP_RADIUS_PT));
             let face = if self.highlighted == Some(i) {
-                CHIP_HOVER
+                cx.color(TokenKey::OverlayColor, CHIP_HOVER)
             } else {
-                cx.color(TokenKey::DividerColor, CHIP_FACE)
+                cx.color(TokenKey::RaisedColor, CHIP_FACE)
             };
             cx.list.push_fill_shape(kr, &shape, face);
             // Label — under RTL the remove zone sits on the chip's
@@ -747,8 +751,7 @@ impl Widget for TokenField {
             };
             let label_right = if rtl { r.max_x() } else { r.max_x() - remove_w };
             let label_left = if rtl { r.min_x() + remove_w } else { r.min_x() };
-            let ly = r.origin.y + (r.size.y - font) / 2.0;
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
@@ -757,47 +760,26 @@ impl Widget for TokenField {
                     f64::from(label_right),
                     f64::from(r.max_y()),
                 ),
-                kurbo::Point::new(f64::from(lx), f64::from(ly)),
+                f64::from(lx),
                 token,
                 font,
                 cx.color(TokenKey::TextColor, CHIP_INK),
             );
-            // Remove affordance — native close icon, `×` fallback.
+            // Remove affordance — native close icon, ambient-resolved.
             let rx = if rtl {
                 r.min_x() + cx.pt(2.0)
             } else {
                 r.max_x() - remove_w + cx.pt(2.0)
             };
             let ink = cx.color(TokenKey::TextMutedColor, REMOVE_INK);
-            let icon_ok = crate::icons::builtin()
-                .lookup("status.close")
-                .is_some_and(|d| {
-                    let side = font;
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(rx, r.min_y() + (r.height() - side) / 2.0, side, side),
-                        d,
-                        cx.scale,
-                        ink,
-                    )
-                });
-            if !icon_ok {
-                let zone = if rtl { r.min_x() } else { r.max_x() - remove_w };
-                crate::text_paint::paint_label_clipped(
-                    painter,
-                    cx.list,
-                    kurbo::Rect::new(
-                        f64::from(zone),
-                        f64::from(r.min_y()),
-                        f64::from(zone + remove_w),
-                        f64::from(r.max_y()),
-                    ),
-                    kurbo::Point::new(f64::from(rx), f64::from(ly)),
-                    "×",
-                    font,
-                    ink,
-                );
-            }
+            let side = font;
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(rx, r.min_y() + (r.height() - side) / 2.0, side, side),
+                "status.close",
+                cx.scale,
+                ink,
+            );
         }
     }
 

@@ -149,8 +149,8 @@ impl Button {
 
     /// An icon-only button: `label` is the accessible name (and the
     /// measured fallback should `name` fail to resolve), `name` the
-    /// native-pack icon painted on the face
-    /// ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// icon painted on the face — resolved through the ambient icon
+    /// family ([`icons::resolve_icon`](crate::icons::resolve_icon)) —
     /// `"arrow.left"`, `"status.plus"`, …
     ///
     /// # Examples
@@ -184,8 +184,8 @@ impl Button {
         self
     }
 
-    /// [`icon_d`](Self::icon_d) resolving `name` through the native
-    /// icon pack — `"status.check"`, `"edit.pen"`, … An unknown name
+    /// [`icon_d`](Self::icon_d) resolving `name` through the ambient
+    /// icon family — `"status.check"`, `"edit.pen"`, … An unknown name
     /// drops the icon; the label stays the whole button.
     ///
     /// # Examples
@@ -241,8 +241,8 @@ impl Button {
     /// assert!(!b.set_icon_named("bogus.name"));
     /// ```
     pub fn set_icon_named(&mut self, name: &str) -> bool {
-        match crate::icons::builtin().lookup(name) {
-            Some(d) => self.set_icon_d(d),
+        match crate::icons::resolve_icon(name) {
+            Some(d) => self.set_icon_d(&d),
             None => false,
         }
     }

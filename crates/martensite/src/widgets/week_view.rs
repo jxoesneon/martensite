@@ -360,6 +360,10 @@ impl WeekView {
 }
 
 impl Widget for WeekView {
+    /// Day/hour labels clip at the grid edge by design.
+    fn debug_name(&self) -> &'static str {
+        "WeekView@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -448,7 +452,7 @@ impl Widget for WeekView {
             let name = &self.day_names[d];
             let w = painter
                 .and_then(|p| p.measure_text(name, hdr_sz))
-                .unwrap_or(name.len() as f32 * hdr_sz * 0.55);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(name, hdr_sz, 0.55));
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,

@@ -509,7 +509,9 @@ impl Widget for Dock {
                 let size = 10.0 * s;
                 let w = painter
                     .and_then(|p| p.measure_text(&item.label, size))
-                    .unwrap_or(item.label.len() as f32 * size * 0.55);
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(&(item.label), size, 0.55)
+                    });
                 let cxm = self.icon_center_x(i);
                 let icon_top = bottom - self.icon_size(i);
                 let pad = 5.0 * s;

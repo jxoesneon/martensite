@@ -200,7 +200,7 @@ impl WordCloud {
 
     /// Estimated word width without a painter (≈0.55em per char).
     fn est_width(&self, text: &str, size_pt: f32) -> f32 {
-        text.chars().count() as f32 * size_pt * 0.55 * self.scale
+        crate::text_paint::estimate_text_width_px(text, size_pt, 0.55) * self.scale
     }
 
     /// Measured word width via the painter when available.

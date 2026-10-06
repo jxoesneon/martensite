@@ -280,20 +280,25 @@ impl GradientEditor {
         self.stops.sort_by(|a, b| a.position.total_cmp(&b.position));
     }
 
-    /// Gradient bar rect.
+    /// Gradient bar rect — inset by half a handle on each side so the
+    /// end-stop handles (diamonds centred on positions 0 and 1) paint
+    /// inside the widget bounds.
     fn bar(&self) -> Rect {
+        let r = HANDLE_PT * self.scale / 2.0;
         Rect::new(
-            self.bounds.min_x(),
+            self.bounds.min_x() + r,
             self.bounds.min_y(),
-            self.bounds.width(),
+            (self.bounds.width() - r * 2.0).max(0.0),
             BAR_PT * self.scale,
         )
     }
 
-    /// Handle center for stop `i`.
+    /// Handle center for stop `i` — position 0/1 land on the bar's
+    /// (inset) ends.
     fn handle_center(&self, i: usize) -> Vec2 {
+        let bar = self.bar();
         Vec2::new(
-            self.bounds.min_x() + self.stops[i].position * self.bounds.width(),
+            bar.min_x() + self.stops[i].position * bar.width(),
             self.bounds.min_y() + BAR_PT * self.scale + HANDLE_PT * self.scale / 2.0,
         )
     }
@@ -309,6 +314,12 @@ impl GradientEditor {
 }
 
 impl Widget for GradientEditor {
+    /// Stop colors are user payloads — a gradient may contain red.
+    /// `reserved-hue` cannot apply to a gradient surface.
+    fn debug_name(&self) -> &'static str {
+        // The gradient bar IS the payload — no label needed.
+        "GradientEditor@lint:reserved-hue,color-only-info"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -362,8 +373,8 @@ impl Widget for GradientEditor {
                 }
                 if self.bar().contains(*position) {
                     // Click on empty rail — insert a sampled stop.
-                    let t = ((position.x - self.bounds.min_x()) / self.bounds.width().max(1.0))
-                        .clamp(0.0, 1.0);
+                    let bar = self.bar();
+                    let t = ((position.x - bar.min_x()) / bar.width().max(1.0)).clamp(0.0, 1.0);
                     let color = self.color_at(t);
                     self.stops.push(GradientStop::new(t, color));
                     self.sort_stops();
@@ -381,8 +392,8 @@ impl Widget for GradientEditor {
             }
             WidgetEvent::PointerMoved { position } => {
                 if let Some(i) = self.dragging {
-                    let t = ((position.x - self.bounds.min_x()) / self.bounds.width().max(1.0))
-                        .clamp(0.0, 1.0);
+                    let bar = self.bar();
+                    let t = ((position.x - bar.min_x()) / bar.width().max(1.0)).clamp(0.0, 1.0);
                     if (self.stops[i].position - t).abs() > 0.0001 {
                         self.stops[i].position = t;
                         self.sort_stops();
@@ -464,6 +475,12 @@ impl Widget for GradientEditor {
                     cx.color(TokenKey::TextColor, FG)
                 },
             );
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
         }
     }
 }

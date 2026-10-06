@@ -255,16 +255,25 @@ impl Widget for Splash {
             f64::from(cxm + logo / 2.0),
             f64::from(ly + logo),
         );
+        let logo_face = cx.color(TokenKey::AccentColor, self.logo_color);
         cx.list.push_fill_shape(
             lr,
             &martensite_core::shape::Shape::squircle(logo * 0.22),
-            cx.color(TokenKey::AccentColor, self.logo_color),
+            logo_face,
         );
         let initial: String = self.name.chars().take(1).collect();
         let ifs = logo * 0.5;
         let iw = painter
             .and_then(|p| p.measure_text(&initial, ifs))
             .unwrap_or(ifs * 0.5);
+        // The mark sits on the accent logo plate — pick the legible
+        // side of the text/inverse pair for whatever `logo_face`
+        // resolved to.
+        let logo_ink = crate::text_paint::better_ink(
+            logo_face,
+            cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]),
+            cx.color(TokenKey::TextColor, TEXT),
+        );
         crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
@@ -272,13 +281,13 @@ impl Widget for Splash {
             f64::from(cxm - iw / 2.0),
             &initial,
             ifs,
-            TEXT,
+            logo_ink,
         );
         // Name.
         let nfs = NAME_PT * s;
         let nw = painter
             .and_then(|p| p.measure_text(&self.name, nfs))
-            .unwrap_or(self.name.len() as f32 * nfs * 0.5);
+            .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(self.name), nfs, 0.5));
         let ny = ly + logo + 20.0 * s;
         crate::text_paint::paint_label(
             painter,
@@ -293,7 +302,9 @@ impl Widget for Splash {
             let vfs = SMALL_PT * s;
             let vw = painter
                 .and_then(|p| p.measure_text(&self.version, vfs))
-                .unwrap_or(self.version.len() as f32 * vfs * 0.5);
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(self.version), vfs, 0.5)
+                });
             crate::text_paint::paint_label(
                 painter,
                 cx.list,
@@ -329,7 +340,9 @@ impl Widget for Splash {
             let sfs = SMALL_PT * s;
             let sw = painter
                 .and_then(|p| p.measure_text(&self.status, sfs))
-                .unwrap_or(self.status.len() as f32 * sfs * 0.5);
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(self.status), sfs, 0.5)
+                });
             crate::text_paint::paint_label(
                 painter,
                 cx.list,

@@ -240,6 +240,10 @@ impl Lightbox {
 }
 
 impl Widget for Lightbox {
+    fn debug_name(&self) -> &'static str {
+        // zoomed media content is payload color.
+        "Lightbox@lint:saturated-area-cap"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -379,7 +383,9 @@ impl Widget for Lightbox {
                 let counter = format!("{} / {}", i + 1, self.items.len());
                 let w = painter
                     .and_then(|p| p.measure_text(&counter, FONT_PT * s))
-                    .unwrap_or(counter.len() as f32 * FONT_PT * 0.6 * s);
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(&(counter), FONT_PT * s, 0.6)
+                    });
                 let o = kurbo::Point::new(
                     f64::from(self.bounds.min_x() + self.bounds.width() / 2.0 - w / 2.0),
                     f64::from(self.bounds.min_y() + PAD_PT * s + FONT_PT * s),
@@ -394,50 +400,35 @@ impl Widget for Lightbox {
                 );
             }
         }
-        // Nav + close buttons — native-pack icons first, glyphs as
-        // the fallback.
+        // Nav + close buttons — native icons, ambient-resolved.
         let shape = martensite_core::shape::Shape::ELLIPSE;
-        // Glyphs follow the mirrored rects: prev points right under
-        // RTL because it sits on the right edge.
-        let (prev_icon, next_icon, prev_glyph, next_glyph) = if cx.is_rtl() {
-            ("nav.chevron-right", "nav.chevron-left", "›", "‹")
+        // Chevrons follow the mirrored rects: prev points right
+        // under RTL because it sits on the right edge.
+        let (prev_icon, next_icon) = if cx.is_rtl() {
+            ("nav.chevron-right", "nav.chevron-left")
         } else {
-            ("nav.chevron-left", "nav.chevron-right", "‹", "›")
+            ("nav.chevron-left", "nav.chevron-right")
         };
-        for (rect, icon, glyph) in [
-            (self.prev_rect, prev_icon, prev_glyph),
-            (self.next_rect, next_icon, next_glyph),
-            (self.close_rect, "status.close", "×"),
+        for (rect, icon) in [
+            (self.prev_rect, prev_icon),
+            (self.next_rect, next_icon),
+            (self.close_rect, "status.close"),
         ] {
             cx.list.push_fill_shape(krect(rect), &shape, BTN_FACE);
-            let gsize = FONT_PT * 1.4 * s;
             let ink = cx.color(TokenKey::TextColor, TEXT);
-            let side = gsize;
-            let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
-                crate::widgets::morph_icon::paint_icon_d(
-                    cx.list,
-                    Rect::new(
-                        rect.min_x() + (rect.width() - side) / 2.0,
-                        rect.min_y() + (rect.height() - side) / 2.0,
-                        side,
-                        side,
-                    ),
-                    d,
-                    s,
-                    ink,
-                )
-            });
-            if icon_ok {
-                continue;
-            }
-            let gw = painter
-                .and_then(|p| p.measure_text(glyph, gsize))
-                .unwrap_or(gsize * 0.5);
-            let o = kurbo::Point::new(
-                f64::from(rect.min_x() + (rect.width() - gw) / 2.0),
-                f64::from(rect.min_y() + rect.height() / 2.0),
+            let side = FONT_PT * 1.4 * s;
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(
+                    rect.min_x() + (rect.width() - side) / 2.0,
+                    rect.min_y() + (rect.height() - side) / 2.0,
+                    side,
+                    side,
+                ),
+                icon,
+                s,
+                ink,
             );
-            crate::text_paint::paint_label(painter, cx.list, o, glyph, gsize, ink);
         }
     }
 }

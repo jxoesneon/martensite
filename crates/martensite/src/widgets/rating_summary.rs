@@ -180,6 +180,11 @@ impl RatingSummary {
 }
 
 impl Widget for RatingSummary {
+    /// Poor ratings paint the warn/error channel deliberately — the
+    /// alarm channel is the semantics here, so `@alarm`.
+    fn debug_name(&self) -> &'static str {
+        "RatingSummary@alarm"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -261,16 +266,31 @@ impl Widget for RatingSummary {
         let bar_w = (b.max_x() - PAD_PT * s - bars_x - ROW_LABEL_PT * s).max(0.0);
         let mut y = b.min_y() + PAD_PT * s + 6.0 * s;
         for i in 0..5 {
-            // Star label.
+            // Star label — digit text + native star icon.
+            let digit = (5 - i).to_string();
+            let lx = b.min_x() + b.width() * 0.32;
             crate::text_paint::paint_label(
                 painter,
                 cx.list,
-                kurbo::Point::new(
-                    f64::from(b.min_x() + b.width() * 0.32),
-                    f64::from(y + BAR_H_PT * s * 0.95),
-                ),
-                &format!("{}★", 5 - i),
+                kurbo::Point::new(f64::from(lx), f64::from(y + BAR_H_PT * s * 0.95)),
+                &digit,
                 FONT_PT * s,
+                MUTED_FG,
+            );
+            let dw = painter
+                .and_then(|p| p.measure_text(&digit, FONT_PT * s))
+                .unwrap_or(FONT_PT * s * 0.55);
+            let side = FONT_PT * s;
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(
+                    lx + dw + 1.5 * s,
+                    y + (BAR_H_PT * s - side) / 2.0,
+                    side,
+                    side,
+                ),
+                "status.star",
+                s,
                 MUTED_FG,
             );
             // Track + fill.

@@ -46,18 +46,21 @@ const ACTION_HOVER: [u8; 4] = [255, 255, 255, 14];
 /// ```
 /// use martensite::widgets::social_card::CardAction;
 ///
-/// let a = CardAction::new("♥", 12);
+/// let a = CardAction::new("status.heart", 12);
 /// assert_eq!(a.count, 12);
 /// ```
 #[derive(Clone, Debug)]
 pub struct CardAction {
-    /// Glyph or short label — the fallback when no native icon is
-    /// installed (or its name fails to resolve).
+    /// Glyph or short label — a namespaced icon name (`"status.heart"`,
+    /// …) paints as a vector icon through the ambient icon family;
+    /// anything else is a text mark. Also the visible fallback when a
+    /// `named` action's icon fails to resolve.
     pub glyph: String,
     /// Display count (0 hides the number).
     pub count: u32,
-    /// Resolved native-pack icon `d` painted in place of `glyph`.
-    icon_d: Option<String>,
+    /// Icon name resolved through the ambient family at paint time,
+    /// painted in place of `glyph`.
+    icon_name: Option<String>,
 }
 
 impl CardAction {
@@ -66,21 +69,21 @@ impl CardAction {
     /// ```
     /// use martensite::widgets::social_card::CardAction;
     ///
-    /// assert_eq!(CardAction::new("♥", 3).count, 3);
+    /// assert_eq!(CardAction::new("status.heart", 3).count, 3);
     /// ```
     pub fn new(glyph: impl Into<String>, count: u32) -> Self {
         Self {
             glyph: glyph.into(),
             count,
-            icon_d: None,
+            icon_name: None,
         }
     }
 
-    /// An action with a native-pack stroke icon
-    /// ([`icons::BUILTIN`](crate::icons::BUILTIN)) — `"status.heart"`,
-    /// `"comms.message-circle"`, `"arrow.share"`, … painted in
-    /// place of the glyph. An unknown name leaves `glyph` — the
-    /// default `"↗"` — as the visible fallback.
+    /// An action whose icon resolves by name through the ambient icon
+    /// family ([`icons::resolve_icon`](crate::icons::resolve_icon)) —
+    /// `"status.heart"`, `"comms.message-circle"`, `"arrow.share"`, …
+    /// painted in place of the glyph. An unknown name leaves `glyph` —
+    /// the default `"↗"` — as the visible fallback.
     ///
     /// ```
     /// use martensite::widgets::social_card::CardAction;
@@ -91,7 +94,7 @@ impl CardAction {
         Self {
             glyph: "↗".to_string(),
             count,
-            icon_d: crate::icons::builtin().lookup(name).map(str::to_string),
+            icon_name: Some(name.to_string()),
         }
     }
 }
@@ -186,7 +189,7 @@ impl SocialCard {
     /// use martensite::widgets::social_card::{CardAction, SocialCard};
     ///
     /// let c = SocialCard::new("A", "@a", "1h", "x")
-    ///     .with_actions(vec![CardAction::new("♥", 5)]);
+    ///     .with_actions(vec![CardAction::new("status.heart", 5)]);
     /// assert_eq!(c.action_count(), 1);
     /// ```
     pub fn with_actions(mut self, actions: Vec<CardAction>) -> Self {
@@ -317,7 +320,12 @@ impl Widget for SocialCard {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
         let lines = self.body.lines().count().max(1) as f32;
-        let h = PAD_PT * 2.0 + AVATAR_PT + 8.0 + lines * BODY_PT * 1.3 + ACTION_PT;
+        // The paint stack is pad → avatar row → 12pt gap → body lines
+        // at BODY_PT·1.3 pitch (each block top lands 0.75·pitch into
+        // its slot) → the action strip pinned to the bottom pad.
+        // Reserve one extra pitch so the last line's descenders clear
+        // the strip instead of clipping to a sliver.
+        let h = PAD_PT * 2.0 + AVATAR_PT + 12.0 + (lines + 1.0) * BODY_PT * 1.3 + ACTION_PT;
         Vec2::new(
             (340.0 * s).min(constraints.max_size.x.max(0.0)),
             (h * s).min(constraints.max_size.y.max(0.0)),
@@ -479,23 +487,23 @@ impl Widget for SocialCard {
             } else {
                 MUTED_FG
             };
-            // Native stroke icon when the action carries one — the
-            // shared `paint_icon_d` seam paints it under MorphIcon's
-            // transform; a rejected `d` falls back to the glyph.
-            let icon_ok = a.icon_d.as_deref().is_some_and(|d| {
-                crate::widgets::morph_icon::paint_icon_d(
-                    cx.list,
-                    Rect::new(
-                        r.min_x() + 8.0 * s,
-                        r.min_y() + (r.height() - 14.0 * s) / 2.0,
-                        14.0 * s,
-                        14.0 * s,
-                    ),
-                    d,
-                    s,
-                    fg,
-                )
-            });
+            // Stroke icon when the action carries one — ambient-
+            // resolved; a `named` action falls back to its glyph when
+            // the name doesn't resolve, a `new` action's own glyph
+            // string doubles as the icon-name candidate.
+            let mark = a.icon_name.as_deref().unwrap_or(a.glyph.as_str());
+            let icon_ok = crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(
+                    r.min_x() + 8.0 * s,
+                    r.min_y() + (r.height() - 14.0 * s) / 2.0,
+                    14.0 * s,
+                    14.0 * s,
+                ),
+                mark,
+                s,
+                fg,
+            );
             let (tx, label) = if icon_ok {
                 (
                     r.min_x() + 8.0 * s + 14.0 * s + 4.0 * s,

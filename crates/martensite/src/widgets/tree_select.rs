@@ -1171,6 +1171,11 @@ impl Widget for TreeSelect {
         ]);
         cx.list.push_stroke_path(tri, cx.pt(1.6), ink);
     }
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
+        }
+    }
 }
 
 impl std::fmt::Debug for TreeSelect {

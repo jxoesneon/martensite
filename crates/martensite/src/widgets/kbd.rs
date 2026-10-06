@@ -120,6 +120,14 @@ impl Kbd {
     pub fn text(&self) -> &str {
         &self.text
     }
+
+    /// Estimated legend width at `size` px — the fallback `paint` and
+    /// `measure` share, and `min_render` declares, so a squeezed
+    /// allocation reads as underflow instead of silently clipping.
+    /// One-char floor: an empty legend still gets a key-shaped cap.
+    fn text_width_estimate(&self, size: f32) -> f32 {
+        crate::text_paint::estimate_text_width_px(&self.text, size, 0.6).max(size * 0.6)
+    }
 }
 
 impl Widget for Kbd {
@@ -128,11 +136,18 @@ impl Widget for Kbd {
         Some(self)
     }
 
-    fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
-        // No painter in LayoutContext — estimate at 0.6em/char (keycap
-        // legends are short and mostly wide glyphs).
-        let w = PAD_X * 2.0 + self.text.chars().count().max(1) as f32 * 11.0 * 0.6;
-        Vec2::new(w.max(CAP_H), CAP_H)
+    fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
+        // Real glyph advance when the ambient measurer is installed —
+        // the 0.6em estimate under-reads wide legends like `⌘`, which
+        // then clip inside a cap sized by the estimate. Sizes are
+        // logical points; the returned size must be device px.
+        let text_px = cx
+            .measure_text(&self.text, 11.0)
+            .unwrap_or_else(|| self.text_width_estimate(11.0) * cx.scale);
+        Vec2::new(
+            (text_px + cx.pt(PAD_X * 2.0)).max(cx.pt(CAP_H)),
+            cx.pt(CAP_H),
+        )
     }
 
     fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}
@@ -169,7 +184,10 @@ impl Widget for Kbd {
         let size = 11.0 * cx.scale;
         let w = painter
             .and_then(|p| p.measure_text(&self.text, size))
-            .unwrap_or(size * self.text.chars().count() as f32 * 0.6);
+            .unwrap_or_else(|| self.text_width_estimate(size));
+        // `paint_label_vcenter` clips to the face — a squeezed cap
+        // (below `min_render`, so a lint flag) truncates inside its
+        // chrome rather than painting the legend over neighbours.
         crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
@@ -195,7 +213,14 @@ impl Widget for Kbd {
     }
 
     fn min_render(&self) -> RenderMinimum {
-        RenderMinimum::new(Vec2::new(CAP_H, CAP_H)).with_policy(UnderflowPolicy::Lint)
+        // The cap's whole purpose is the legend — a minimum narrower
+        // than the text declares "fine" for a render that clips
+        // mid-glyph. Declare the same width `measure` asks for.
+        RenderMinimum::new(Vec2::new(
+            (PAD_X * 2.0 + self.text_width_estimate(11.0)).max(CAP_H),
+            CAP_H,
+        ))
+        .with_policy(UnderflowPolicy::Lint)
     }
 }
 
@@ -239,5 +264,51 @@ mod tests {
             scale: 1.0,
         };
         assert_eq!(k.event(&mut cx), EventResponse::Ignored);
+    }
+
+    #[test]
+    fn min_render_tracks_legend() {
+        // A cap whose legend needs ~75pt must not declare a 20pt
+        // minimum — underflow consumers would treat a squeezed
+        // allocation as adequate while the legend clips mid-glyph.
+        let wide = Kbd::new("Shift+Enter").min_render().size;
+        let narrow = Kbd::new("x").min_render().size;
+        assert!(wide.x > narrow.x);
+        assert_eq!(narrow.x, CAP_H);
+        assert_eq!(wide.y, CAP_H);
+    }
+
+    #[test]
+    fn squeezed_kbd_flags_text_truncation() {
+        use martensite_core::{PaintList, Theme};
+        let k = Kbd::new("Shift+Enter");
+        // Squeeze to 30pt — the ~75pt legend cannot fit. The arena walk
+        // wraps every widget in a scope; a bare `PaintList` attributes
+        // stats to no node, so the test reproduces the wrapper.
+        let bounds = Rect::new(0.0, 0.0, 30.0, 20.0);
+        let mut list = PaintList::new();
+        let theme = Theme::new("test");
+        list.push_scope(None, "Kbd", kurbo::Rect::new(0.0, 0.0, 30.0, 20.0));
+        k.paint(&mut PaintContext {
+            list: &mut list,
+            bounds,
+            theme: &theme,
+            scale: 1.0,
+            text_painter: None,
+        });
+        list.pop_scope();
+        let scene = martensite_design_lint::LintScene::from_paint_list(&list);
+        let findings =
+            martensite_design_lint::lint(&scene, &martensite_design_lint::LintConfig::default());
+        for f in &findings.findings {
+            eprintln!("FINDING {} {:?}", f.rule, f.severity);
+        }
+        assert!(
+            findings
+                .findings
+                .iter()
+                .any(|f| f.rule == "text-truncation"),
+            "expected text-truncation on a squeezed Kbd"
+        );
     }
 }

@@ -250,17 +250,19 @@ impl Widget for PageHeader {
             max_child_h = max_child_h.max(a.measure(cx, constraints).y);
         }
         let text_h = if self.subtitle.is_some() {
-            TITLE_PT + SUB_PT + 3.0
+            cx.pt(TITLE_PT + SUB_PT + 3.0)
         } else {
-            TITLE_PT
+            cx.pt(TITLE_PT)
         };
         Vec2::new(
             constraints
                 .max_size
                 .x
                 .min(constraints.max_size.x)
-                .max(160.0),
-            (max_child_h + PAD_PT).max(text_h + PAD_PT).max(HEIGHT_PT),
+                .max(cx.pt(160.0)),
+            (max_child_h + cx.pt(PAD_PT))
+                .max(text_h + cx.pt(PAD_PT))
+                .max(cx.pt(HEIGHT_PT)),
         )
     }
 
@@ -397,20 +399,37 @@ impl Widget for PageHeader {
                 f64::from(b.max_y()),
             )
         };
-        // Text paints at the clip's leading edge — the strip's right
-        // side under RTL.
-        if rtl {
-            x = clip.x0 as f32;
-        }
+        // Text paints at the clip's leading edge — LTR that is the
+        // clip's left; under RTL the leading side is the clip's RIGHT
+        // (next to the mirrored back chevron), so each line anchors
+        // `clip.x1 - measured width`, i.e. visually right-aligned.
+        let tx = |p: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
+                  text: &str,
+                  size_px: f32| {
+            if rtl {
+                let w = p
+                    .and_then(|p| p.measure_text(text, size_px))
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(text, size_px, 0.55)
+                    });
+                clip.x1 - f64::from(w)
+            } else {
+                f64::from(x)
+            }
+        };
         if let Some(sub) = &self.subtitle {
             let sub_size = cx.pt(SUB_PT);
-            let total = title_size + cx.pt(3.0) + sub_size;
-            let ty = b.min_y() + (b.height() - total) / 2.0;
+            // Line slots are the painter's `size·1.25` line box —
+            // sizing by the raw font sinks the pair below centre.
+            let title_lh = title_size * 1.25;
+            let sub_lh = sub_size * 1.25;
+            let total = title_lh + cx.pt(3.0) + sub_lh;
+            let ty = b.min_y() + (b.height() - total).max(0.0) / 2.0;
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
                 clip,
-                kurbo::Point::new(f64::from(x), f64::from(ty)),
+                kurbo::Point::new(tx(painter, &self.title, title_size), f64::from(ty)),
                 &self.title,
                 title_size,
                 cx.color(TokenKey::TextColor, TITLE_INK),
@@ -419,7 +438,10 @@ impl Widget for PageHeader {
                 painter,
                 cx.list,
                 clip,
-                kurbo::Point::new(f64::from(x), f64::from(ty + title_size + cx.pt(3.0))),
+                kurbo::Point::new(
+                    tx(painter, sub, sub_size),
+                    f64::from(ty + title_lh + cx.pt(3.0)),
+                ),
                 sub,
                 sub_size,
                 cx.color(TokenKey::TextMutedColor, SUB_INK),
@@ -434,7 +456,7 @@ impl Widget for PageHeader {
                     clip.x1,
                     f64::from(b.min_y() + (b.height())),
                 ),
-                f64::from(x),
+                tx(painter, &self.title, title_size),
                 &self.title,
                 title_size,
                 cx.color(TokenKey::TextColor, TITLE_INK),

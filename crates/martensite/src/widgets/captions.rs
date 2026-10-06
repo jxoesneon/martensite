@@ -256,6 +256,10 @@ impl Captions {
 }
 
 impl Widget for Captions {
+    fn debug_name(&self) -> &'static str {
+        // cue text clips to the caption strip by design.
+        "Captions@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -265,7 +269,9 @@ impl Widget for Captions {
         let s = cx.scale;
         Vec2::new(
             (320.0 * s).min(constraints.max_size.x.max(0.0)),
-            ((self.font_size + PAD_Y_PT * 2.0 + BAND_BOTTOM_PT) * s)
+            // Line pitch is 1.25× the font size — budget for it so the
+            // band isn't taller than the widget.
+            ((self.font_size * 1.25 + PAD_Y_PT * 2.0 + BAND_BOTTOM_PT) * s)
                 .min(constraints.max_size.y.max(0.0)),
         )
     }
@@ -305,15 +311,15 @@ impl Widget for Captions {
             .iter()
             .filter_map(|l| painter.and_then(|p| p.measure_text(l, fs)))
             .fold(0.0_f32, f32::max)
-            .max(
-                lines
-                    .iter()
-                    .fold(0.0_f32, |w, l| w.max(l.len() as f32 * fs * 0.5)),
-            );
+            .max(lines.iter().fold(0.0_f32, |w, l| {
+                w.max(crate::text_paint::estimate_text_width_px(l, fs, 0.5))
+            }));
         let band_w = (widest + PAD_X_PT * 2.0 * s).min(self.bounds.width() * 0.9);
         let band_h = line_h * lines.len() as f32 + PAD_Y_PT * 2.0 * s;
         let bx = self.bounds.min_x() + (self.bounds.width() - band_w) / 2.0;
-        let by = self.bounds.max_y() - BAND_BOTTOM_PT * s - band_h;
+        // An under-tall widget pulls the band up to its top edge — the
+        // pill never paints outside the widget's own bounds.
+        let by = (self.bounds.max_y() - BAND_BOTTOM_PT * s - band_h).max(self.bounds.min_y());
         let br = kurbo::Rect::new(
             f64::from(bx),
             f64::from(by),

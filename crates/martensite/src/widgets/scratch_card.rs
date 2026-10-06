@@ -22,7 +22,7 @@ use accesskit::Node as AccessKitNode;
 use glam::Vec2;
 use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
-    Rect, RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
+    Rect, RenderMinimum, TokenKey, UnderflowPolicy, Widget, WidgetEvent,
 };
 
 const COLS: usize = 12;
@@ -33,6 +33,7 @@ const BRUSH: f32 = 1.6;
 const FOIL: [u8; 4] = [168, 172, 180, 255];
 const FOIL_ALT: [u8; 4] = [146, 150, 158, 255];
 const EDGE: [u8; 4] = [110, 114, 122, 255];
+const PANEL: [u8; 4] = [29, 34, 40, 255];
 
 /// The scratch card — see the module docs.
 ///
@@ -265,10 +266,34 @@ impl Widget for ScratchCard {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
+        let b = self.content_rect;
+        // The revealed content reads on a themed panel — this is also
+        // the ancestor fill the paint audit resolves under the child.
+        cx.list.push_fill_rect(
+            kurbo::Rect::new(
+                f64::from(b.min_x()),
+                f64::from(b.min_y()),
+                f64::from(b.max_x()),
+                f64::from(b.max_y()),
+            ),
+            cx.color(TokenKey::SurfaceColor, PANEL),
+        );
         if !self.covered {
             return;
         }
-        let b = self.content_rect;
+        // The foil *covers* the child; it is not the child's backdrop.
+        // Keeping it in its own sibling scope stops the audit from
+        // treating it as a background fill beneath the hidden content.
+        cx.list.push_scope(
+            None,
+            "ScratchFoil",
+            kurbo::Rect::new(
+                f64::from(b.min_x()),
+                f64::from(b.min_y()),
+                f64::from(b.max_x()),
+                f64::from(b.max_y()),
+            ),
+        );
         let cw = b.width() / COLS as f32;
         let ch = b.height() / ROWS as f32;
         for y in 0..ROWS {
@@ -304,6 +329,7 @@ impl Widget for ScratchCard {
             f64::from(b.min_y() + b.height() * 0.22),
         );
         cx.list.push_fill_rect(sheen, [255, 255, 255, 18]);
+        cx.list.pop_scope();
     }
 
     fn clips_children(&self) -> bool {

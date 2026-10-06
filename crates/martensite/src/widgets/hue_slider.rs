@@ -182,6 +182,12 @@ impl HueSlider {
 }
 
 impl Widget for HueSlider {
+    /// The hue ramp is the payload — it must paint red.
+    /// `reserved-hue` cannot apply to a picker.
+    fn debug_name(&self) -> &'static str {
+        // The hue strip IS the payload — no label needed.
+        "HueSlider@lint:reserved-hue,color-only-info"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)

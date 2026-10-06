@@ -2,7 +2,7 @@
 //! Meet device-menu idiom).
 //!
 //! Sections by [`DeviceKind`] (`Microphone`, `Speaker`, `Camera`)
-//! list device names as checkable rows with a small kind glyph.
+//! list device names as checkable rows with a small kind icon.
 //! Clicking a row parks `(kind, index)` in
 //! [`DevicePicker::take_selected`] and marks it active; the host
 //! owns the actual device switch.
@@ -44,7 +44,7 @@ const HOVER_BG: [u8; 4] = [255, 255, 255, 14];
 /// ```
 /// use martensite::widgets::device_picker::DeviceKind;
 ///
-/// assert_eq!(DeviceKind::Microphone.glyph(), "🎙");
+/// assert_eq!(DeviceKind::Microphone.glyph(), "media.mic");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceKind {
@@ -57,23 +57,20 @@ pub enum DeviceKind {
 }
 
 impl DeviceKind {
-    /// Display glyph for the section header.
+    /// The section header's icon name — resolves through the ambient
+    /// icon family ([`crate::icons::resolve_icon`]); an installed
+    /// pack can shadow the builtin glyph.
     ///
     /// ```
     /// use martensite::widgets::device_picker::DeviceKind;
     ///
-    /// assert!(!DeviceKind::Camera.glyph().is_empty());
+    /// assert_eq!(DeviceKind::Camera.glyph(), "media.video");
     /// ```
     pub fn glyph(self) -> &'static str {
-        match self {
-            Self::Microphone => "🎙",
-            Self::Speaker => "🔊",
-            Self::Camera => "📷",
-        }
+        self.icon_name()
     }
 
-    /// The native-pack icon for this device kind — the preferred
-    /// renderer; [`glyph`](Self::glyph) is the fallback.
+    /// The native-pack icon for this device kind.
     pub fn icon_name(self) -> &'static str {
         match self {
             Self::Microphone => "media.mic",
@@ -398,26 +395,17 @@ impl Widget for DevicePicker {
         let fs = FONT_PT * s;
         let mut y = b.min_y() + pad;
         for (si, sec) in self.sections.iter().enumerate() {
-            // Section header — native icon + caption; the glyph
-            // prefix stays as fallback.
+            // Section header — native icon + caption, ambient-
+            // resolved.
             let hx = b.min_x() + pad;
-            let icon_ok = crate::icons::builtin()
-                .lookup(sec.kind.icon_name())
-                .is_some_and(|d| {
-                    let side = fs;
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(hx, y + (HEADER_PT * s - side) / 2.0, side, side),
-                        d,
-                        s,
-                        MUTED_FG,
-                    )
-                });
-            let header = if icon_ok {
-                sec.kind.title().to_string()
-            } else {
-                format!("{} {}", sec.kind.glyph(), sec.kind.title())
-            };
+            let icon_ok = crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(hx, y + (HEADER_PT * s - fs) / 2.0, fs, fs),
+                sec.kind.icon_name(),
+                s,
+                MUTED_FG,
+            );
+            let header = sec.kind.title().to_string();
             let tx = hx + if icon_ok { fs + 6.0 * s } else { 0.0 };
             crate::text_paint::paint_label_vcenter(
                 painter,
@@ -448,28 +436,16 @@ impl Widget for DevicePicker {
                     );
                 }
                 if sec.active == Some(i) {
-                    // Check mark — native icon, hand-drawn tick as
-                    // fallback.
+                    // Check mark — native icon.
                     let cy = r.min_y() + r.height() / 2.0;
                     let ck = CHECK_PT * s;
-                    let icon_ok = crate::icons::builtin()
-                        .lookup("status.check")
-                        .is_some_and(|d| {
-                            crate::widgets::morph_icon::paint_icon_d(
-                                cx.list,
-                                Rect::new(r.min_x(), cy - ck / 2.0, ck, ck),
-                                d,
-                                s,
-                                accent,
-                            )
-                        });
-                    if !icon_ok {
-                        let mut p = kurbo::BezPath::new();
-                        p.move_to((f64::from(r.min_x()), f64::from(cy)));
-                        p.line_to((f64::from(r.min_x() + ck * 0.35), f64::from(cy + ck * 0.35)));
-                        p.line_to((f64::from(r.min_x() + ck), f64::from(cy - ck * 0.45)));
-                        cx.list.push_stroke_path(p, 1.6 * s, accent);
-                    }
+                    crate::widgets::morph_icon::paint_icon_named(
+                        cx.list,
+                        Rect::new(r.min_x(), cy - ck / 2.0, ck, ck),
+                        "status.check",
+                        s,
+                        accent,
+                    );
                 }
                 crate::text_paint::paint_label_vcenter(
                     painter,

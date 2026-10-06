@@ -431,6 +431,12 @@ impl Widget for FlowBox {
         }
     }
 
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
+        }
+    }
+
     fn event(&mut self, cx: &mut EventContext) -> EventResponse {
         if !self.enabled {
             return EventResponse::Ignored;

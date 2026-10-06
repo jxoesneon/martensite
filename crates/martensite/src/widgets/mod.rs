@@ -97,10 +97,10 @@ pub mod action_sheet;
 /// ```
 pub mod activity_ring;
 
-/// Browser location bar — security chip (🔒/⚠/loading), URL
-/// display with an emphasized domain, a reload/stop button, and a
-/// thin load-progress line; clicks park an `AddressAction` in
-/// `take_action`.
+/// Browser location bar — security chip (lock/warning/loading
+/// icons), URL display with an emphasized domain, a reload/stop
+/// button, and a thin load-progress line; clicks park an
+/// `AddressAction` in `take_action`.
 ///
 /// # Examples
 ///
@@ -758,7 +758,7 @@ pub mod context_menu;
 /// ```
 /// use martensite::widgets::control_center::ControlCenter;
 ///
-/// let c = ControlCenter::new().tile("📶", "Wi-Fi", true);
+/// let c = ControlCenter::new().tile("device.wifi", "Wi-Fi", true);
 /// assert!(c.is_on(0));
 /// ```
 pub mod control_center;
@@ -2409,7 +2409,7 @@ pub mod morph_icon;
 /// ```
 /// use martensite::widgets::nav_rail::NavRail;
 ///
-/// let r = NavRail::new().destination("🏠", "Home").selected(0);
+/// let r = NavRail::new().destination("nav.home", "Home").selected(0);
 /// assert_eq!(r.destination_count(), 1);
 /// ```
 pub mod nav_rail;
@@ -2930,7 +2930,7 @@ pub mod rating_summary;
 /// ```
 /// use martensite::widgets::reaction_bar::{Reaction, ReactionBar};
 ///
-/// assert_eq!(ReactionBar::new().reaction(Reaction::new("👍", 3)).reaction_count(), 1);
+/// assert_eq!(ReactionBar::new().reaction(Reaction::new("status.thumbs-up", 3)).reaction_count(), 1);
 /// ```
 pub mod reaction_bar;
 
@@ -3540,7 +3540,7 @@ pub mod token_field;
 /// ```
 /// use martensite::widgets::tool_palette::{ToolItem, ToolPalette};
 ///
-/// assert_eq!(ToolPalette::new().tool(ToolItem::new("✏", "Pencil")).tool_count(), 1);
+/// assert_eq!(ToolPalette::new().tool(ToolItem::new("edit.pencil", "Pencil")).tool_count(), 1);
 /// ```
 pub mod tool_palette;
 
@@ -4358,3 +4358,27 @@ pub(crate) const STATE_FOCUS_WASH: u8 = 31;
 pub(crate) const STATE_SELECTED_WASH: u8 = 56;
 // M3's press layer is also 12% (31) and drag 16% (41) — add constants
 // here as widgets adopt them.
+
+/// Disabled-state veil — a translucent surface wash over the widget's
+/// full bounds, dimming whatever it already painted toward M3's 38%
+/// disabled-content opacity. Widgets without bespoke disabled styling
+/// push this last in `paint` when `enabled == false` so the `enabled`
+/// prop always produces one consistent, visible change.
+pub(crate) fn paint_disabled_veil(
+    cx: &mut martensite_core::widget::PaintContext<'_>,
+    bounds: martensite_core::Rect,
+    radius_pt: f32,
+) {
+    let r = kurbo::Rect::new(
+        f64::from(bounds.min_x()),
+        f64::from(bounds.min_y()),
+        f64::from(bounds.max_x()),
+        f64::from(bounds.max_y()),
+    );
+    let [cr, cg, cb, _] = cx.color(martensite_core::TokenKey::SurfaceColor, [70, 74, 82, 255]);
+    cx.list.push_fill_shape(
+        r,
+        &martensite_core::shape::Shape::squircle(cx.pt(radius_pt)),
+        [cr, cg, cb, 158],
+    );
+}

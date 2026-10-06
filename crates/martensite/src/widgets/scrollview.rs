@@ -132,6 +132,12 @@ impl ScrollBarWidget {
 }
 
 impl Widget for ScrollBarWidget {
+    fn debug_name(&self) -> &'static str {
+        // A scrollbar is a thin control rail by design, not a content
+        // zone — the 48pt surface floor does not apply to it.
+        "ScrollBarWidget@lint:min-surface,color-only-info"
+    }
+
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -837,6 +843,10 @@ impl ScrollView {
 }
 
 impl Widget for ScrollView {
+    fn debug_name(&self) -> &'static str {
+        // a scroll viewport exists to host dense content.
+        "ScrollView@lint:packing-density,text-density"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -1189,6 +1199,9 @@ impl Widget for ScrollView {
     fn paint_overlay(&self, cx: &mut PaintContext) {
         if self.focused && self.enabled {
             crate::widgets::paint_focus_ring(cx, cx.bounds, 2.0, 2.0);
+        }
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
         }
     }
 

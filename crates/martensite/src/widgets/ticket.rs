@@ -261,13 +261,16 @@ impl Widget for Ticket {
         let b = self.bounds;
         let pad = PAD_PT * s;
         let stub_y = self.stub_rect.min_y();
-        // Main face.
+        // Main face — the whole card including the stub strip: the
+        // perforation marks the tear line, but the stub is part of the
+        // ticket. Leaving it unpainted let the page backdrop show
+        // through and stranded the barcode/STUB label on a dark field.
         cx.list.push_fill_shape(
             kurbo::Rect::new(
                 f64::from(b.min_x()),
                 f64::from(b.min_y()),
                 f64::from(b.max_x()),
-                f64::from(if self.torn { b.max_y() } else { stub_y }),
+                f64::from(b.max_y()),
             ),
             &martensite_core::shape::Shape::squircle(8.0 * s),
             FACE,
@@ -348,8 +351,20 @@ impl Widget for Ticket {
             );
         }
         if !self.torn {
-            // Perforated edge: notch circles + dashed line.
+            // Perforated edge: notch circles + dashed line. The notches
+            // are centred on the card edge — the outer half is clipped
+            // to the card silhouette so it never paints a dark disc on
+            // the content behind the ticket.
             let nr = 6.0 * s;
+            cx.list.push_clip_rounded(
+                kurbo::Rect::new(
+                    f64::from(b.min_x()),
+                    f64::from(b.min_y()),
+                    f64::from(b.max_x()),
+                    f64::from(b.max_y()),
+                ),
+                8.0 * s,
+            );
             for nx in [b.min_x(), b.max_x()] {
                 cx.list.push_fill_shape(
                     kurbo::Rect::new(
@@ -362,6 +377,7 @@ impl Widget for Ticket {
                     cx.color(TokenKey::BackgroundColor, [20, 22, 28, 255]),
                 );
             }
+            cx.list.pop_clip();
             let mut x = b.min_x() + nr + 4.0 * s;
             while x < b.max_x() - nr - 4.0 * s {
                 cx.list.push_stroke_path(
@@ -371,9 +387,25 @@ impl Widget for Ticket {
                 );
                 x += 12.0 * s;
             }
-            // Stub: barcode strip.
-            let mid = stub_y + self.stub_rect.height() / 2.0;
-            let bh = self.stub_rect.height() * 0.5;
+            // Stub: the "STUB" tag pins to the top of the strip and the
+            // barcode band sits below it — sharing the band painted the
+            // label's ink straight over the leading bars.
+            crate::text_paint::paint_label_clipped(
+                painter,
+                cx.list,
+                kurbo::Rect::new(
+                    f64::from(self.stub_rect.min_x()),
+                    f64::from(self.stub_rect.min_y()),
+                    f64::from(self.stub_rect.max_x()),
+                    f64::from(self.stub_rect.max_y()),
+                ),
+                kurbo::Point::new(f64::from(b.min_x() + pad), f64::from(stub_y + 4.0 * s)),
+                "STUB",
+                LABEL_PT * s,
+                MUTED_FG,
+            );
+            let bar_top = stub_y + 20.0 * s;
+            let bar_bot = self.stub_rect.max_y() - 6.0 * s;
             let mut bx = b.min_x() + pad;
             let bytes = self.code.as_bytes();
             let mut i = 0usize;
@@ -386,29 +418,15 @@ impl Widget for Ticket {
                 cx.list.push_fill_rect(
                     kurbo::Rect::new(
                         f64::from(bx),
-                        f64::from(mid - bh / 2.0),
+                        f64::from(bar_top),
                         f64::from(bx + w),
-                        f64::from(mid + bh / 2.0),
+                        f64::from(bar_bot),
                     ),
                     INK,
                 );
                 bx += w + 2.0 * s;
                 i += 1;
             }
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                kurbo::Rect::new(
-                    f64::from(self.stub_rect.min_x()),
-                    f64::from(self.stub_rect.min_y()),
-                    f64::from(self.stub_rect.max_x()),
-                    f64::from(self.stub_rect.max_y()),
-                ),
-                kurbo::Point::new(f64::from(b.min_x() + pad), f64::from(stub_y + 12.0 * s)),
-                "STUB",
-                LABEL_PT * s,
-                MUTED_FG,
-            );
         }
     }
 }

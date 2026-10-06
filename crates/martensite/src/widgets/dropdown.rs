@@ -188,15 +188,9 @@ impl Widget for OptionItem {
                 .push_fill_rect(rect, cx.color(TokenKey::AccentColor, HIGHLIGHT_BG));
         }
         let font_px = cx.pt(14.0);
-        let row_strip = kurbo::Rect::new(
-            f64::from(b.min_x()),
-            f64::from(b.min_y()),
-            f64::from(b.max_x()),
-            f64::from(b.max_y()),
-        );
         if self.index == state.selected && !highlighted {
-            // Selected but not highlighted: a native check icon —
-            // `✓` stays the fallback glyph.
+            // Selected but not highlighted: a native check icon,
+            // resolved through the ambient icon family.
             let ink = cx.color(TokenKey::AccentColor, CHECK);
             let side = font_px;
             // The check hugs the leading edge — the right edge under
@@ -206,28 +200,13 @@ impl Widget for OptionItem {
             } else {
                 b.min_x() + cx.pt(6.0)
             };
-            let icon_ok = crate::icons::builtin()
-                .lookup("status.check")
-                .is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(check_x, b.min_y() + (b.height() - side) / 2.0, side, side),
-                        d,
-                        cx.scale,
-                        ink,
-                    )
-                });
-            if !icon_ok {
-                crate::text_paint::paint_label_vcenter(
-                    crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
-                    cx.list,
-                    row_strip,
-                    f64::from(check_x),
-                    "✓",
-                    font_px,
-                    ink,
-                );
-            }
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(check_x, b.min_y() + (b.height() - side) / 2.0, side, side),
+                "status.check",
+                cx.scale,
+                ink,
+            );
         }
         let ink = if highlighted {
             cx.color(TokenKey::TextInverseColor, HIGHLIGHT_INK)
@@ -891,6 +870,27 @@ impl Dropdown {
     pub fn close(&mut self) {
         self.open = false;
         self.typeahead.clear();
+    }
+
+    /// Clears the selection so the [`placeholder`](Self::placeholder)
+    /// paints on the face — GTK's `GTK_INVALID_LIST_POSITION`. Any
+    /// later pick (popup commit, typeahead, AT `SetValue`) restores a
+    /// real index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Dropdown;
+    ///
+    /// let mut dd = Dropdown::new(["A", "B"]).placeholder("Pick…");
+    /// dd.deselect();
+    /// assert_eq!(dd.selected_text(), None);
+    /// dd.commit(1);
+    /// assert_eq!(dd.selected_text(), Some("B"));
+    /// ```
+    pub fn deselect(&mut self) {
+        self.selected = usize::MAX;
+        self.push_shared();
     }
 
     /// Selects `index` and closes the popup.

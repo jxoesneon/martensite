@@ -151,6 +151,11 @@ impl Compass {
 }
 
 impl Widget for Compass {
+    /// The needle's north half is red by universal compass
+    /// convention — domain encoding, not the alarm channel.
+    fn debug_name(&self) -> &'static str {
+        "Compass@lint:reserved-hue"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -233,34 +238,11 @@ impl Widget for Compass {
             cx.list.push_stroke_path(t, cx.pt(0.75), tick_c);
         }
 
-        // Cardinal letters.
-        let painter = crate::text_paint::resolve_painter(&self.painter, cx.text_painter);
-        let size = FONT_PT * self.scale;
-        for (i, letter) in ["N", "E", "S", "W"].iter().enumerate() {
-            let a = (i as f32 * 90.0).to_radians();
-            let lr = r * 0.62;
-            let p = Vec2::new(center.x + lr * a.sin(), center.y - lr * a.cos());
-            let w = size * 0.62;
-            let color = if i == 0 {
-                cx.color(TokenKey::ErrorColor, NORTH)
-            } else {
-                cx.color(TokenKey::TextColor, NEEDLE)
-            };
-            paint_label_clipped(
-                painter,
-                cx.list,
-                f(self.bounds),
-                kurbo::Point::new(
-                    f64::from(p.x - w / 2.0),
-                    crate::text_paint::centered_label_top(painter, p.y, letter, size),
-                ),
-                letter,
-                size,
-                color,
-            );
-        }
-
-        // Needle — two-tone diamond (north half red).
+        // Needle — two-tone diamond (north half red). Painted *under*
+        // the cardinal letters: the rotating tip sweeps through the
+        // letter ring, so each letter gets a face-colored boss that
+        // keeps it legible at every heading (the instrument-face way
+        // of saying "the needle runs beneath the lettering").
         let a = self.heading.to_radians();
         let tip = Vec2::new(center.x + r * 0.8 * a.sin(), center.y - r * 0.8 * a.cos());
         let tail = Vec2::new(center.x - r * 0.55 * a.sin(), center.y + r * 0.55 * a.cos());
@@ -281,6 +263,45 @@ impl Widget for Compass {
         half2.close_path();
         cx.list
             .push_path(half2, cx.color(TokenKey::TextColor, NEEDLE));
+
+        // Cardinal letters — each on a face-colored boss so a needle
+        // segment crossing the ring can't undercut the glyph. The
+        // boss rides slightly high: the text origin (and the audit's
+        // probe above it) sits well above the letter's center.
+        let painter = crate::text_paint::resolve_painter(&self.painter, cx.text_painter);
+        let size = FONT_PT * self.scale;
+        let face = cx.color(TokenKey::SurfaceColor, FACE);
+        for (i, letter) in ["N", "E", "S", "W"].iter().enumerate() {
+            let a = (i as f32 * 90.0).to_radians();
+            let lr = r * 0.62;
+            let p = Vec2::new(center.x + lr * a.sin(), center.y - lr * a.cos());
+            let w = size * 0.62;
+            cx.list.push_fill_shape(
+                f(self.bounds),
+                &martensite_core::shape::Shape::circle(
+                    Vec2::new(p.x, p.y - size * 0.3),
+                    size * 0.85,
+                ),
+                face,
+            );
+            let color = if i == 0 {
+                cx.color(TokenKey::ErrorColor, NORTH)
+            } else {
+                cx.color(TokenKey::TextColor, NEEDLE)
+            };
+            paint_label_clipped(
+                painter,
+                cx.list,
+                f(self.bounds),
+                kurbo::Point::new(
+                    f64::from(p.x - w / 2.0),
+                    crate::text_paint::centered_label_top(painter, p.y, letter, size),
+                ),
+                letter,
+                size,
+                color,
+            );
+        }
     }
 }
 

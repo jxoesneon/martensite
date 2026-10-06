@@ -391,7 +391,8 @@ impl Widget for Dialog {
                 label,
                 cx.pt(13.0),
                 if primary {
-                    [255, 255, 255, 255]
+                    // `AccentColor` primary button → inverse ink.
+                    cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255])
                 } else {
                     cx.color(TokenKey::TextColor, INK)
                 },

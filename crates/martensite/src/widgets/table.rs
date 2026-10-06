@@ -1829,15 +1829,11 @@ impl Table {
                 TableAlign::End => cell.x1 - pad - f64::from(title_w),
                 TableAlign::Center => cell.x0 + ((cell.x1 - cell.x0) - f64::from(title_w)) / 2.0,
             };
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 clip,
-                kurbo::Point::new(
-                    x0,
-                    f64::from(self.header_rect.min_y())
-                        + (hr.height() - f64::from(header_font)) / 2.0,
-                ),
+                x0,
                 &col.title,
                 header_font,
                 ink,
@@ -2336,17 +2332,8 @@ impl Widget for Table {
                     TableAlign::End => cell.x1 - pad - f64::from(text_w),
                     TableAlign::Center => cell.x0 + ((cell.x1 - cell.x0) - f64::from(text_w)) / 2.0,
                 };
-                crate::text_paint::paint_label_clipped(
-                    painter,
-                    cx.list,
-                    cell,
-                    kurbo::Point::new(
-                        x0,
-                        f64::from(r.min_y()) + (rect.height() - f64::from(font_px)) / 2.0,
-                    ),
-                    text,
-                    font_px,
-                    ink,
+                crate::text_paint::paint_label_vcenter(
+                    painter, cx.list, cell, x0, text, font_px, ink,
                 );
             }
             // Roving focus indicator.

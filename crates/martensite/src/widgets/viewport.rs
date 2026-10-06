@@ -71,6 +71,12 @@ pub struct Viewport {
     /// Keyboard focus — paints the WCAG 2.4.13 ring over the content
     /// via `paint_overlay`.
     focused: bool,
+    /// Paints the default canvas chrome — surface fill plus the
+    /// pan/zoom dot grid. Hosts that supply their own backdrop (the
+    /// widget catalog's stage paints one uniform grid under the whole
+    /// stage area) set this `false` so the two grids can't moiré and
+    /// the fill doesn't seam against the surrounding surface.
+    backdrop: bool,
 }
 
 impl std::fmt::Debug for Viewport {
@@ -108,6 +114,7 @@ impl Viewport {
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
             panning: None,
+            backdrop: true,
             changed: None,
             enabled: true,
             focused: false,
@@ -169,6 +176,20 @@ impl Viewport {
     /// ```
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = label.into();
+        self
+    }
+
+    /// Paints the canvas chrome — surface fill plus the pan/zoom dot
+    /// grid (default `true`). Hosts supplying their own backdrop set
+    /// this `false` so the two surfaces can't seam or moiré.
+    ///
+    /// ```
+    /// use martensite::widgets::viewport::Viewport;
+    ///
+    /// let v = Viewport::new().backdrop(false);
+    /// ```
+    pub fn backdrop(mut self, show: bool) -> Self {
+        self.backdrop = show;
         self
     }
 
@@ -613,9 +634,15 @@ impl Widget for Viewport {
         if self.focused && self.enabled {
             crate::widgets::paint_focus_ring(cx, cx.bounds, 2.0, 2.0);
         }
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
+        }
     }
 
     fn paint(&self, cx: &mut PaintContext) {
+        if !self.backdrop {
+            return;
+        }
         let krect = |r: Rect| {
             kurbo::Rect::new(
                 f64::from(r.min_x()),
@@ -670,6 +697,13 @@ impl Widget for Viewport {
 
     fn child_bounds(&self, index: usize) -> Option<Rect> {
         (index == 0).then_some(self.content_rect).flatten()
+    }
+
+    fn child_paint_scale(&self, index: usize) -> Option<f32> {
+        // Content lays out at `scale * zoom`; its paint pass needs the
+        // same scale or text/strokes render unzoomed inside magnified
+        // geometry.
+        (index == 0).then_some(self.scale * self.zoom)
     }
 }
 

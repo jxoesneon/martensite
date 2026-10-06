@@ -401,40 +401,32 @@ impl Widget for Statistic {
             );
         }
         y += value_px + cx.pt(GAP_PT);
-        // Trend line — a native trending icon for up/down, ▲/▼
-        // glyph prefix as fallback.
+        // Trend line — a native trending icon for up/down,
+        // ambient-resolved.
         if let Some((dir, ref t)) = self.trend {
-            let (mark, icon, col) = match dir {
+            let (icon, col) = match dir {
                 Trend::Up => (
-                    "▲",
-                    "data.trending-up",
+                    Some("data.trending-up"),
                     cx.color(TokenKey::SuccessColor, [60, 160, 90, 255]),
                 ),
                 Trend::Down => (
-                    "▼",
-                    "data.trending-down",
+                    Some("data.trending-down"),
                     cx.color(TokenKey::ErrorColor, [200, 60, 60, 255]),
                 ),
-                Trend::Neutral => ("", "", muted),
+                Trend::Neutral => (None, muted),
             };
             let size = cx.pt(TREND_PT);
             let mut lx = b.min_x();
-            let mut trend_text = t.clone();
-            if !mark.is_empty() {
-                let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(lx, y, size, size),
-                        d,
-                        cx.scale,
-                        col,
-                    )
-                });
-                if icon_ok {
-                    lx += size + 4.0 * cx.scale;
-                } else {
-                    trend_text = format!("{mark} {t}");
-                }
+            let trend_text = t.clone();
+            if let Some(icon) = icon {
+                crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    Rect::new(lx, y, size, size),
+                    icon,
+                    cx.scale,
+                    col,
+                );
+                lx += size + 4.0 * cx.scale;
             }
             crate::text_paint::paint_label_clipped(
                 painter,

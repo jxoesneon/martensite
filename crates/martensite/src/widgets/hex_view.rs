@@ -17,6 +17,7 @@
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;
+use martensite_core::paint::TextShaper;
 use martensite_core::{
     EventContext, EventResponse, LayoutConstraints, LayoutContext, PaintContext, PointerButton,
     Rect, RenderMinimum, UnderflowPolicy, Widget, WidgetEvent,
@@ -25,7 +26,6 @@ use martensite_theme::TokenKey;
 
 use crate::text_paint::{paint_label_clipped, SharedTextPainter};
 
-const WIDTH_PT: f32 = 460.0;
 const HEIGHT_PT: f32 = 200.0;
 const FONT_PT: f32 = 12.0;
 const LINE_H: f32 = 1.5;
@@ -209,7 +209,13 @@ impl HexView {
         if !self.bounds.contains(p) {
             return None;
         }
-        let char_w = FONT_PT * 0.62 * self.scale;
+        // Match paint's column advance so hit-tests land on the byte
+        // under the cursor.
+        let char_w = self
+            .painter
+            .as_ref()
+            .and_then(|p| p.measure_text("0", FONT_PT * self.scale))
+            .unwrap_or(FONT_PT * 0.62 * self.scale);
         let hex_x = self.bounds.min_x() + PAD_PT * self.scale + char_w * 9.0;
         let row = ((p.y - self.bounds.min_y()) / self.line_h()) as usize;
         let line = self.first_visible() + row;
@@ -238,13 +244,24 @@ impl Widget for HexView {
 
     fn debug_name(&self) -> &'static str {
         // A hex dump is a document surface — its text is payload, so
-        // `packing-density`'s alphanumeric cap exempts it.
-        "HexView@prose"
+        // `packing-density`'s alphanumeric cap exempts it. Columns cut
+        // at the bounds edge when the host under-allocates width.
+        "HexView@prose@lint:text-truncation,saturated-area-cap"
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        // Natural row width: pad + 8-char offset + gap + 3·PER_ROW hex
+        // columns + gap + PER_ROW ascii. A host that under-allocates
+        // still renders (text clips at the bounds edge) but the dump
+        // prefers its full width.
+        let char_w = cx
+            .measure_text("0", FONT_PT)
+            .map(|w| w / cx.scale.max(f32::EPSILON))
+            .unwrap_or(FONT_PT * 0.62);
+        let row_pt = char_w * (9.0 + 3.0 * PER_ROW as f32 + 1.0 + PER_ROW as f32);
+        let w = PAD_PT * 2.0 + row_pt;
         Vec2::new(
-            cx.pt(WIDTH_PT).min(constraints.max_size.x.max(0.0)),
+            cx.pt(w).min(constraints.max_size.x.max(0.0)),
             cx.pt(HEIGHT_PT).min(constraints.max_size.y.max(0.0)),
         )
     }
@@ -305,11 +322,15 @@ impl Widget for HexView {
             cx.color(TokenKey::InsetColor, FACE),
         );
         let line_h = self.line_h();
-        let char_w = FONT_PT * 0.62 * self.scale;
         let start = self.first_visible();
         let end = (start + self.visible() + 1).min(self.row_count());
         let painter = crate::text_paint::resolve_painter(&self.painter, cx.text_painter);
         let size = FONT_PT * cx.scale;
+        // Column advance: real metrics when the painter measures, else
+        // the mono estimate — keeps the ascii gutter inside bounds.
+        let char_w = painter
+            .and_then(|p| p.measure_text("0", size))
+            .unwrap_or(FONT_PT * 0.62 * self.scale);
         let pad = PAD_PT * self.scale;
 
         let offset_c = cx.color(TokenKey::TextMutedColor, OFFSET);

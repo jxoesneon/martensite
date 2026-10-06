@@ -471,9 +471,9 @@ impl Widget for NotificationCenter {
                 &martensite_core::shape::Shape::squircle(6.0 * s),
                 cx.color(TokenKey::BackgroundColor, CARD),
             );
-            // Title/body anchor to the leading edge; the dismiss ✕
-            // and meta sit on the trailing edge — under RTL the
-            // trailing edge is the left.
+            // Title/body anchor to the leading edge; the dismiss
+            // button and meta sit on the trailing edge — under RTL
+            // the trailing edge is the left.
             let rtl = cx.is_rtl();
             let text_x = r.min_x() + 8.0 * s;
             crate::text_paint::paint_label_clipped(
@@ -494,34 +494,23 @@ impl Widget for NotificationCenter {
                 body_sz,
                 cx.color(TokenKey::TextMutedColor, BODY),
             );
-            // Meta label at the card's trailing edge, ✕ beside it.
+            // Meta label at the card's trailing edge, close beside it.
             let close = if rtl {
                 Rect::new(r.min_x() + 4.0 * s, y + 6.0 * s, 16.0 * s, 16.0 * s)
             } else {
                 Rect::new(r.max_x() - 20.0 * s, y + 6.0 * s, 16.0 * s, 16.0 * s)
             };
             let dismiss_ink = cx.color(TokenKey::TextMutedColor, DISMISS);
-            let icon_ok = crate::icons::builtin()
-                .lookup("status.close")
-                .is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(cx.list, close, d, s, dismiss_ink)
-                });
-            if !icon_ok {
-                crate::text_paint::paint_label(
-                    painter,
-                    cx.list,
-                    kurbo::Point::new(
-                        f64::from(close.min_x() + 4.0 * s),
-                        f64::from(close.min_y() + 2.0 * s),
-                    ),
-                    "✕",
-                    body_sz,
-                    dismiss_ink,
-                );
-            }
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                close,
+                "status.close",
+                s,
+                dismiss_ink,
+            );
             hits.dismiss.push((i, close));
             if !n.meta.is_empty() {
-                let mw = n.meta.chars().count() as f32 * body_sz * 0.55;
+                let mw = crate::text_paint::estimate_text_width_px(&(n.meta), body_sz, 0.55);
                 let meta_x = if rtl {
                     close.max_x() + 6.0 * s
                 } else {
@@ -542,7 +531,11 @@ impl Widget for NotificationCenter {
             let cy = self.bounds.min_y() + pad + self.content_h() - pad - self.scroll;
             if cy > self.bounds.min_y() && cy < self.bounds.max_y() {
                 let label = "Clear all";
-                let lw = label.chars().count() as f32 * body_sz * 0.55;
+                let lw = painter
+                    .and_then(|p| p.measure_text(label, body_sz))
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(label, body_sz, 0.55)
+                    });
                 let x = self.bounds.max_x() - pad - lw;
                 crate::text_paint::paint_label(
                     painter,

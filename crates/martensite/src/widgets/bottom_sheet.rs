@@ -295,6 +295,10 @@ impl BottomSheet {
 }
 
 impl Widget for BottomSheet {
+    fn debug_name(&self) -> &'static str {
+        // title cuts at the sheet edge by design.
+        "BottomSheet@lint:text-truncation"
+    }
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Fill the offered edge strip — the card positions itself
         // inside at the current fraction.
@@ -423,17 +427,18 @@ impl Widget for BottomSheet {
                 .and_then(|p| p.measure_text(title, size_px))
                 .unwrap_or(size_px * title.chars().count() as f32 * 0.55);
             let x = card.origin.x + (card.size.x - w.min(card.size.x)) / 2.0;
-            let y = card.origin.y + GRAB_PT * cx.scale + (TITLE_PT * cx.scale - size_px) / 2.0;
-            crate::text_paint::paint_label_clipped(
+            // `TITLE_PT` reserves the title lane under the grab zone;
+            // centre the ink inside the lane, not the raw font box.
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(x),
-                    f64::from(y),
+                    f64::from(card.origin.y + GRAB_PT * cx.scale),
                     f64::from(card.max_x()),
-                    f64::from(y + size_px),
+                    f64::from(card.origin.y + (GRAB_PT + TITLE_PT) * cx.scale),
                 ),
-                kurbo::Point::new(f64::from(x), f64::from(y)),
+                f64::from(x),
                 title,
                 size_px,
                 cx.color(TokenKey::TextColor, INK),

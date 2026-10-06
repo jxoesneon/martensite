@@ -34,7 +34,9 @@ const COUNT_PT: f32 = 10.0;
 const FACE: [u8; 4] = [34, 36, 44, 255];
 const EDGE: [u8; 4] = [70, 74, 84, 255];
 const TEXT_FG: [u8; 4] = [235, 237, 240, 255];
-const MUTED_FG: [u8; 4] = [150, 154, 164, 255];
+/// `TextMutedColor` fallback — the token's dark-theme resolved
+/// value; the raw 150-gray it replaced was ~4.2:1 on `BTN_FACE`.
+const MUTED_FG: [u8; 4] = [165, 172, 179, 255];
 const BTN_FACE: [u8; 4] = [52, 55, 66, 255];
 const OK: [u8; 4] = [70, 180, 100, 255];
 
@@ -298,6 +300,11 @@ impl Widget for BreakoutRooms {
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let b = self.bounds;
         let accent = cx.color(TokenKey::AccentColor, [90, 140, 220, 255]);
+        // `AccentColor` join buttons take the inverse ink; muted
+        // captions resolve through `TextMutedColor` so they clear
+        // 4.5:1 on `FACE`/`BTN_FACE` (the raw 150-gray was ~4.2:1).
+        let accent_ink = cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]);
+        let muted_fg = cx.color(TokenKey::TextMutedColor, MUTED_FG);
         cx.list.push_fill_shape(
             kurbo::Rect::new(
                 f64::from(b.min_x()),
@@ -347,15 +354,15 @@ impl Widget for BreakoutRooms {
                 ),
                 &format!("{cap} · {}", if room.current { "you" } else { "joined" }),
                 cfs,
-                if room.current { OK } else { MUTED_FG },
+                if room.current { OK } else { muted_fg },
             );
             // Join button (or "Full"/"Here" caption).
             let (caption, face, fg) = if room.current {
                 ("Here", BTN_FACE, OK)
             } else if room.is_full() {
-                ("Full", BTN_FACE, MUTED_FG)
+                ("Full", BTN_FACE, muted_fg)
             } else {
-                ("Join", accent, [255, 255, 255, 255])
+                ("Join", accent, accent_ink)
             };
             cx.list.push_fill_shape(
                 kurbo::Rect::new(
@@ -367,7 +374,7 @@ impl Widget for BreakoutRooms {
                 &martensite_core::shape::Shape::squircle(4.0 * s),
                 face,
             );
-            let w = caption.len() as f32 * cfs * 0.6;
+            let w = crate::text_paint::estimate_text_width_px(caption, cfs, 0.6);
             crate::text_paint::paint_label(
                 painter,
                 cx.list,

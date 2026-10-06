@@ -30,7 +30,7 @@ const PAD_PT: f32 = 6.0;
 const ICON_PT: f32 = 14.0;
 const GAP_PT: f32 = 4.0;
 const FONT_PT: f32 = 12.0;
-/// Seconds the ✓ flash stays visible.
+/// Seconds the check flash stays visible.
 const FLASH_S: f32 = 1.2;
 
 const FACE: [u8; 4] = [40, 43, 52, 255];
@@ -140,7 +140,7 @@ impl Copyable {
         self
     }
 
-    /// Whether the ✓ flash is visible.
+    /// Whether the check flash is visible.
     ///
     /// ```
     /// use martensite::widgets::copyable::Copyable;
@@ -176,7 +176,7 @@ impl Widget for Copyable {
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.scale;
-        let w = self.text.len() as f32 * FONT_PT * 0.55 * s
+        let w = crate::text_paint::estimate_text_width_px(&(self.text), FONT_PT, 0.55) * s
             + (PAD_PT * 2.0 + GAP_PT + ICON_PT + PAD_PT) * s;
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
@@ -282,41 +282,13 @@ impl Widget for Copyable {
             fs,
             cx.color(TokenKey::TextColor, TEXT_FG),
         );
-        // Copy icon: overlapping squares, or ✓ while flashing.
+        // Copy affordance — ambient-resolved: `file.copy`, or
+        // `status.check` while the copied flash is up.
         let r = self.icon_rect;
         if self.copied_flash > 0.0 {
-            let mut p = kurbo::BezPath::new();
-            p.move_to((
-                f64::from(r.min_x() + r.width() * 0.2),
-                f64::from(r.min_y() + r.height() * 0.55),
-            ));
-            p.line_to((
-                f64::from(r.min_x() + r.width() * 0.45),
-                f64::from(r.min_y() + r.height() * 0.8),
-            ));
-            p.line_to((
-                f64::from(r.min_x() + r.width() * 0.85),
-                f64::from(r.min_y() + r.height() * 0.25),
-            ));
-            cx.list.push_stroke_path(p, 1.6 * s, OK);
+            crate::widgets::morph_icon::paint_icon_named(cx.list, r, "status.check", s, OK);
         } else {
-            let q = r.width() * 0.28;
-            let back = kurbo::Rect::new(
-                f64::from(r.min_x()),
-                f64::from(r.min_y() + q),
-                f64::from(r.max_x() - q),
-                f64::from(r.max_y()),
-            );
-            let front = kurbo::Rect::new(
-                f64::from(r.min_x() + q),
-                f64::from(r.min_y()),
-                f64::from(r.max_x()),
-                f64::from(r.max_y() - q),
-            );
-            cx.list.push_stroke_rect(back, 1.2 * s, MUTED_FG);
-            cx.list
-                .push_fill_rect(front, cx.color(TokenKey::SurfaceColor, FACE));
-            cx.list.push_stroke_rect(front, 1.2 * s, MUTED_FG);
+            crate::widgets::morph_icon::paint_icon_named(cx.list, r, "file.copy", s, MUTED_FG);
         }
     }
 }

@@ -352,13 +352,15 @@ impl Widget for Gauge {
         let w = painter
             .and_then(|p| p.measure_text(&text, size))
             .unwrap_or(size * text.chars().count() as f32 * 0.55);
+        // Dial-centre readout — centre the shaped ink on the dial's
+        // midpoint, not the font box.
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
             r,
             kurbo::Point::new(
                 center.x - f64::from(w) / 2.0,
-                center.y - f64::from(size) / 4.0,
+                crate::text_paint::centered_label_top(painter, center.y, &text, size),
             ),
             &text,
             size,

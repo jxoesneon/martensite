@@ -38,9 +38,11 @@ const TITLE_INK: [u8; 4] = [30, 31, 36, 255];
 /// Description ink.
 const DESC_INK: [u8; 4] = [105, 109, 118, 255];
 
-/// The icon lane content — a text glyph or a hosted stroke icon.
+/// The icon lane content — a text glyph / icon name or a hosted
+/// stroke icon.
 enum EmptyIcon {
-    /// A short string (emoji, symbol, icon-font glyph) painted large.
+    /// A short string painted large — a namespaced icon name paints
+    /// through the ambient icon family; anything else stays text.
     Glyph(String),
     /// A hosted [`MorphIcon`] stroke icon — a real internal child, so
     /// it ticks with the arena (`morph_to_named` animates) and reports
@@ -64,7 +66,7 @@ enum EmptyIcon {
 /// ```
 /// use martensite::widgets::empty_state::EmptyState;
 ///
-/// let e = EmptyState::new("Inbox zero").icon("✓");
+/// let e = EmptyState::new("Inbox zero").icon("status.check");
 /// assert_eq!(e.title(), "Inbox zero");
 /// ```
 pub struct EmptyState {
@@ -113,15 +115,18 @@ impl EmptyState {
         }
     }
 
-    /// Sets the icon glyph — a short string painted large above the
-    /// title (an emoji, a glyph from an icon font, or a symbol).
+    /// Sets the icon mark — a short string painted large above the
+    /// title. An icon name (`"comms.mail"`, `"file.inbox"`, …)
+    /// resolves through the ambient icon family
+    /// ([`crate::icons::resolve_icon`]); any other string stays a
+    /// text glyph (a symbol, an icon-font codepoint, …).
     ///
     /// # Examples
     ///
     /// ```
     /// use martensite::widgets::empty_state::EmptyState;
     ///
-    /// let e = EmptyState::new("No mail").icon("✉");
+    /// let e = EmptyState::new("No mail").icon("comms.mail");
     /// ```
     #[must_use]
     pub fn icon(mut self, glyph: impl Into<String>) -> Self {
@@ -317,17 +322,21 @@ impl EmptyState {
             .unwrap_or(size_px * text.chars().count() as f32 * 0.5);
         let max_w = cx.pt(max_w_pt).min(b.size.x);
         let x = b.origin.x + (b.size.x - w.min(max_w)) / 2.0;
-        let y = y_center - size_px / 2.0;
+        // `y_center` is the slot's optical centre — centre the shaped
+        // ink on it (`centered_label_top`) rather than using the font
+        // size as the ink height. The clip band is `2·size` tall so
+        // descenders and line-box leading aren't sheared off.
+        let top = crate::text_paint::centered_label_top(painter, y_center, text, size_px);
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
             kurbo::Rect::new(
                 f64::from(x),
-                f64::from(y),
+                f64::from(y_center - size_px),
                 f64::from(x + max_w),
-                f64::from(y + size_px),
+                f64::from(y_center + size_px),
             ),
-            kurbo::Point::new(f64::from(x), f64::from(y)),
+            kurbo::Point::new(f64::from(x), top),
             text,
             size_px,
             ink,
@@ -336,6 +345,11 @@ impl EmptyState {
 }
 
 impl Widget for EmptyState {
+    /// Centered title/body fade-clip at the column edge — truncation
+    /// is the designed degradation for overlong strings.
+    fn debug_name(&self) -> &'static str {
+        "EmptyState@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -398,14 +412,31 @@ impl Widget for EmptyState {
             // A hosted stroke icon paints itself at `icon_rect` as an
             // internal child — the arena emits it after this pass.
             if let EmptyIcon::Glyph(glyph) = icon {
-                self.paint_centered(
-                    cx,
+                // A namespaced icon name resolves through the ambient
+                // icon family; any other string stays a text glyph.
+                let side = cx.pt(ICON_PT);
+                let painted = crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    martensite_core::Rect::new(
+                        b.origin.x + (b.size.x - side) / 2.0,
+                        y_center - side / 2.0,
+                        side,
+                        side,
+                    ),
                     glyph,
-                    ICON_PT,
-                    ICON_PT * 2.0,
-                    y_center,
+                    cx.scale,
                     cx.color(TokenKey::TextMutedColor, ICON_INK),
                 );
+                if !painted {
+                    self.paint_centered(
+                        cx,
+                        glyph,
+                        ICON_PT,
+                        ICON_PT * 2.0,
+                        y_center,
+                        cx.color(TokenKey::TextMutedColor, ICON_INK),
+                    );
+                }
             }
             y_center += cx.pt(ICON_PT) / 2.0 + cx.pt(GAP_PT);
         }

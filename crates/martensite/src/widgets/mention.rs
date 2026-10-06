@@ -214,10 +214,7 @@ impl Widget for SuggestionItem {
             cx.list
                 .push_fill_rect(rect, cx.color(TokenKey::AccentColor, HIGHLIGHT_BG));
         }
-        // `DrawText` positions by the run's top edge — centre the 14 pt
-        // font box inside the row.
         let font_px = cx.pt(14.0);
-        let text_y = b.min_y() + (b.height() - font_px) / 2.0;
         let ink = if highlighted {
             cx.color(TokenKey::TextInverseColor, HIGHLIGHT_INK)
         } else {
@@ -227,7 +224,7 @@ impl Widget for SuggestionItem {
             // Clip the option label to the row — a long suggestion
             // can't spill past the popup's right edge.
             let text_x = b.min_x() + cx.pt(10.0);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
                 cx.list,
                 kurbo::Rect::new(
@@ -236,7 +233,7 @@ impl Widget for SuggestionItem {
                     f64::from(b.max_x() - cx.pt(6.0)),
                     f64::from(b.max_y()),
                 ),
-                kurbo::Point::new(f64::from(text_x), f64::from(text_y)),
+                f64::from(text_x),
                 label.as_str(),
                 font_px,
                 ink,
@@ -1106,6 +1103,28 @@ impl Mention {
     #[inline]
     pub fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// Opens the suggestion popup when a live token is eligible —
+    /// the programmatic counterpart of the AT `Expand` action. Unlike
+    /// the automatic open paths (`set_value`, focus-with-token),
+    /// `open` does not require focus, so builders and showcases can
+    /// stage the listbox without simulating input.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Mention;
+    ///
+    /// let mut m = Mention::new()
+    ///     .suggestions(["@ada"])
+    ///     .with_value("@a");
+    /// assert!(!m.is_open()); // unfocused writes never pop
+    /// m.open();
+    /// assert!(m.is_open());
+    /// ```
+    pub fn open(&mut self) {
+        self.expand();
     }
 
     /// The highlighted filtered index (the `aria-activedescendant`

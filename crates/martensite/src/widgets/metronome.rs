@@ -466,7 +466,11 @@ impl Widget for Metronome {
             painter,
             cx.list,
             kurbo::Point::new(
-                f64::from(self.bounds.max_x() - pad - sub.len() as f32 * size * 0.42),
+                f64::from(
+                    self.bounds.max_x()
+                        - pad
+                        - crate::text_paint::estimate_text_width_px(&(sub), size, 0.42),
+                ),
                 crate::text_paint::centered_label_top(
                     painter,
                     f64::from(self.bounds.max_y() - pad - size * 0.35),

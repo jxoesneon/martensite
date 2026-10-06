@@ -667,8 +667,7 @@ impl Widget for MediaControls {
         let elapsed = Self::fmt_time(self.position);
         let total = Self::fmt_time(self.duration);
         let time_w = cx.pt(34.0);
-        let y = self.bounds.min_y() + (self.bounds.height() - size) / 2.0;
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             f(Rect::new(
@@ -677,13 +676,13 @@ impl Widget for MediaControls {
                 time_w,
                 self.bounds.height(),
             )),
-            kurbo::Point::new(f64::from(self.play_rect.max_x() + cx.pt(4.0)), f64::from(y)),
+            f64::from(self.play_rect.max_x() + cx.pt(4.0)),
             &elapsed,
             size,
             muted,
         );
         let end_x = self.seek_rect.max_x() + cx.pt(4.0);
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             f(Rect::new(
@@ -692,7 +691,7 @@ impl Widget for MediaControls {
                 time_w,
                 self.bounds.height(),
             )),
-            kurbo::Point::new(f64::from(end_x), f64::from(y)),
+            f64::from(end_x),
             &total,
             size,
             muted,

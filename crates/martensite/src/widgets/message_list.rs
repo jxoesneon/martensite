@@ -441,7 +441,9 @@ impl Widget for MessageList {
             // a painter is resolved, per-char estimate otherwise.
             let body_w = painter
                 .and_then(|p| p.measure_text(&m.body, text_sz))
-                .unwrap_or_else(|| m.body.chars().count() as f32 * text_sz * 0.52);
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(m.body), text_sz, 0.52)
+                });
             let bw = (body_w + bubble_pad * 2.0)
                 .min(max_bubble)
                 .max(bubble_pad * 4.0);

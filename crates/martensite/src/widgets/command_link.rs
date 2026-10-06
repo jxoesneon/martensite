@@ -294,12 +294,14 @@ impl Widget for CommandLink {
         let mut muted = cx.color(TokenKey::TextMutedColor, MUTED);
         muted[3] = alpha;
 
-        // Label + note stack, vertically centered as a unit.
-        let label_h = label_font;
+        // Label + note stack, vertically centered as a unit. Line
+        // slots are the painter's `size·1.25` line box, not the raw
+        // font size — sizing by the font sinks the pair.
+        let label_h = label_font * 1.25;
         let note_h = if self.note.is_empty() {
             0.0
         } else {
-            cx.pt(GAP_Y_PT) + note_font
+            cx.pt(GAP_Y_PT) + note_font * 1.25
         };
         let stack_h = label_h + note_h;
         let y0 = self.bounds.origin.y + (self.bounds.size.y - stack_h) / 2.0;
@@ -341,31 +343,17 @@ impl Widget for CommandLink {
         };
         let chev_y = self.bounds.origin.y + (self.bounds.size.y - label_font) / 2.0;
         let ink = cx.color(TokenKey::TextMutedColor, CHEV_INK);
-        let icon_ok = crate::icons::builtin()
-            .lookup(if rtl {
+        crate::widgets::morph_icon::paint_icon_named(
+            cx.list,
+            Rect::new(chev_x, chev_y, label_font, label_font),
+            if rtl {
                 "nav.chevron-left"
             } else {
                 "nav.chevron-right"
-            })
-            .is_some_and(|d| {
-                crate::widgets::morph_icon::paint_icon_d(
-                    cx.list,
-                    Rect::new(chev_x, chev_y, label_font, label_font),
-                    d,
-                    cx.scale,
-                    ink,
-                )
-            });
-        if !icon_ok {
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                kurbo::Point::new(f64::from(chev_x), f64::from(chev_y)),
-                if rtl { "‹" } else { "›" },
-                label_font,
-                ink,
-            );
-        }
+            },
+            cx.scale,
+            ink,
+        );
     }
 }
 

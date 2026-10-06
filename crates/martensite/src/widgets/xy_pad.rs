@@ -457,7 +457,9 @@ impl Widget for XYPad {
         let muted = cx.color(TokenKey::TextMutedColor, MUTED);
         let xw = painter
             .and_then(|p| p.measure_text(&self.x_label, size))
-            .unwrap_or(self.x_label.chars().count() as f32 * size * 0.55);
+            .unwrap_or_else(|| {
+                crate::text_paint::estimate_text_width_px(&(self.x_label), size, 0.55)
+            });
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,

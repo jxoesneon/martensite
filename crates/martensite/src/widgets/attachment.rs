@@ -1,6 +1,6 @@
 //! `Attachment` — a file-attachment chip (email composer / chat
-//! attach idiom): type glyph + file name + size, an optional upload
-//! progress bar, and a × remove affordance.
+//! attach idiom): type icon + file name + size, an optional upload
+//! progress bar, and a close/remove affordance.
 //!
 //! Clicking × parks `true` in [`Attachment::take_removed`]; the
 //! upload fraction is display-driven via
@@ -54,7 +54,10 @@ pub struct Attachment {
     pub name: String,
     /// File size in bytes.
     pub size_bytes: u64,
-    /// Type glyph (emoji or short text like "PDF").
+    /// Type mark — an icon name (`"file.file"`, `"file.archive"`, …)
+    /// resolves through the ambient icon family
+    /// ([`crate::icons::resolve_icon`]); any other string paints as a
+    /// short text glyph (e.g. `"PDF"`).
     pub glyph: String,
     /// Upload progress `0.0..=1.0`; `None` hides the bar.
     pub upload: Option<f32>,
@@ -98,7 +101,7 @@ impl Attachment {
             label: "Attachment".to_string(),
             name: name.into(),
             size_bytes,
-            glyph: "📄".to_string(),
+            glyph: "file.file".to_string(),
             upload: None,
             removed: false,
             close_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
@@ -109,12 +112,13 @@ impl Attachment {
         }
     }
 
-    /// Type glyph override.
+    /// Type mark override — an icon name resolves through the ambient
+    /// icon family; any other string paints as a text glyph.
     ///
     /// ```
     /// use martensite::widgets::attachment::Attachment;
     ///
-    /// assert_eq!(Attachment::new("a.zip", 1).glyph("🗜").glyph, "🗜");
+    /// assert_eq!(Attachment::new("a.zip", 1).glyph("file.archive").glyph, "file.archive");
     /// ```
     pub fn glyph(mut self, glyph: impl Into<String>) -> Self {
         self.glyph = glyph.into();
@@ -182,6 +186,11 @@ impl Attachment {
 }
 
 impl Widget for Attachment {
+    /// The name column is fixed-width — long filenames truncate by
+    /// design.
+    fn debug_name(&self) -> &'static str {
+        "Attachment@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -280,30 +289,56 @@ impl Widget for Attachment {
             &martensite_core::shape::Shape::squircle(4.0 * s),
             ICON_BG,
         );
-        let ifs = SIZE_PT * s;
-        crate::text_paint::paint_label_vcenter(
-            painter,
+        // The type mark — icon names paint as vector icons through
+        // the ambient family; other strings stay text glyphs.
+        let iside = ic * 0.62;
+        let icon_painted = crate::widgets::morph_icon::paint_icon_named(
             cx.list,
-            chip,
-            f64::from(b.min_x() + pad + ic * 0.18),
+            Rect::new(
+                b.min_x() + pad + (ic - iside) / 2.0,
+                iy + (ic - iside) / 2.0,
+                iside,
+                iside,
+            ),
             &self.glyph,
-            ifs,
+            s,
             TEXT_FG,
         );
-        // Name + size.
+        if !icon_painted {
+            let ifs = SIZE_PT * s;
+            crate::text_paint::paint_label_vcenter(
+                painter,
+                cx.list,
+                chip,
+                f64::from(b.min_x() + pad + ic * 0.18),
+                &self.glyph,
+                ifs,
+                TEXT_FG,
+            );
+        }
+        // Name + size — clipped to the text column; a long filename
+        // must not spill past the chip's edge.
         let tx = b.min_x() + pad + ic + GAP_PT * s;
         let nfs = NAME_PT * s;
-        crate::text_paint::paint_label(
+        let text_clip = kurbo::Rect::new(
+            f64::from(tx),
+            f64::from(b.min_y()),
+            f64::from(b.max_x() - pad),
+            f64::from(b.max_y()),
+        );
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
+            text_clip,
             kurbo::Point::new(f64::from(tx), f64::from(b.min_y() + pad + nfs)),
             &self.name,
             nfs,
             cx.color(TokenKey::TextColor, TEXT_FG),
         );
-        crate::text_paint::paint_label(
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
+            text_clip,
             kurbo::Point::new(
                 f64::from(tx),
                 f64::from(b.min_y() + pad + nfs + 2.0 * s + SIZE_PT * s),
@@ -334,15 +369,21 @@ impl Widget for Attachment {
                 cx.color(TokenKey::AccentColor, [90, 140, 220, 255]),
             );
         }
-        // Close ×.
+        // Close affordance — native close icon.
         let cr = self.close_rect;
-        let q = cr.width() * 0.22;
-        let mut p = kurbo::BezPath::new();
-        p.move_to((f64::from(cr.min_x() + q), f64::from(cr.min_y() + q)));
-        p.line_to((f64::from(cr.max_x() - q), f64::from(cr.max_y() - q)));
-        p.move_to((f64::from(cr.max_x() - q), f64::from(cr.min_y() + q)));
-        p.line_to((f64::from(cr.min_x() + q), f64::from(cr.max_y() - q)));
-        cx.list.push_stroke_path(p, 1.4 * s, MUTED_FG);
+        let cside = cr.width() * 0.6;
+        crate::widgets::morph_icon::paint_icon_named(
+            cx.list,
+            Rect::new(
+                cr.min_x() + (cr.width() - cside) / 2.0,
+                cr.min_y() + (cr.height() - cside) / 2.0,
+                cside,
+                cside,
+            ),
+            "status.close",
+            s,
+            MUTED_FG,
+        );
     }
 }
 

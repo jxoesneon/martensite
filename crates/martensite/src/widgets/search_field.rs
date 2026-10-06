@@ -3,7 +3,7 @@
 //!
 //! The widget embeds a [`TextInput`] internal child configured with a
 //! magnifier [`prefix`](TextInput::prefix) and the
-//! [`clearable`](TextInput::clearable) ✕ target, so caret, selection,
+//! [`clearable`](TextInput::clearable) clear target, so caret, selection,
 //! IME, and clipboard editing all come for free through the
 //! `child_count`/`child_bounds` forwarding protocol. On top it adds:
 //!
@@ -13,7 +13,7 @@
 //!   the field text from the moment `Enter` was pressed — gated on
 //!   field focus so a stray `Enter` cannot submit an unfocused search;
 //! - an `Escape` clear — the `<input type="search">` / `NSSearchField`
-//!   convention and the keyboard equivalent of the ✕ target. The
+//!   convention and the keyboard equivalent of the clear target. The
 //!   embedded field's own `Escape` (collapsing an active selection)
 //!   gets first claim; an empty or unfocused field lets the key fall
 //!   through so a containing widget (e.g.
@@ -54,9 +54,11 @@ const CAPTION_PT: f32 = 16.0;
 const CAPTION_FONT_PT: f32 = 12.0;
 /// Caption ink.
 const CAPTION_INK: [u8; 4] = [110, 112, 120, 255];
-/// The magnifier glyph painted muted ahead of the value — the search
-/// field's platform-standard leading adornment.
-const SEARCH_GLYPH: &str = "🔍";
+/// The magnifier icon painted muted ahead of the value — the search
+/// field's platform-standard leading adornment. A namespaced icon
+/// name, resolved through the ambient icon family by the embedded
+/// field's prefix lane.
+const SEARCH_GLYPH: &str = "nav.search";
 /// Fallback accessible name when no [`SearchField::label`] is set.
 const DEFAULT_LABEL: &str = "Search";
 
@@ -81,7 +83,7 @@ pub struct SearchField {
     /// Placeholder text shown while the value is empty.
     pub placeholder: String,
     /// The embedded text field (internal child) — carries the
-    /// magnifier prefix and the ✕ clear target.
+    /// magnifier prefix and the clear target.
     field: TextInput,
     /// Field bounds assigned in `layout` (below the caption strip).
     field_rect: Rect,
@@ -101,7 +103,7 @@ pub struct SearchField {
 
 impl SearchField {
     /// Creates a search field with an empty value, a `"Search…"`
-    /// placeholder, the magnifier prefix, and the ✕ clear target.
+    /// placeholder, the magnifier prefix, and the clear target.
     ///
     /// # Examples
     ///
@@ -364,7 +366,7 @@ impl SearchField {
     /// `true` when a user-driven edit mutated the value since the
     /// last call — forwards the embedded field's
     /// [`take_edited`](TextInput::take_edited) flag (typing, deletion,
-    /// paste, cut, the ✕ clear, undo/redo; programmatic
+    /// paste, cut, the clear, undo/redo; programmatic
     /// [`set_value`](Self::set_value) writes do not set it).
     ///
     /// # Examples
@@ -422,7 +424,7 @@ impl SearchField {
 
     /// Clears the field through its own event seam — `SelectAll`
     /// then `Backspace` — so the edit records one undo step and
-    /// raises the `take_edited` flag, matching what the ✕ clear
+    /// raises the `take_edited` flag, matching what the clear
     /// target does.
     fn clear_field(&mut self, scale: f32) {
         for name in ["SelectAll", "Backspace"] {
@@ -548,7 +550,7 @@ impl Widget for SearchField {
                 // selection — let it win first. Otherwise a focused,
                 // non-empty search field clears (the
                 // `<input type="search">` convention — the keyboard
-                // equivalent of the ✕ target). An empty or unfocused
+                // equivalent of the clear target). An empty or unfocused
                 // field returns the field's `Ignored` so a container
                 // can still use the key.
                 let response = self.forward(cx);
@@ -697,7 +699,7 @@ mod tests {
     fn clear_button_edit_propagates() {
         let mut field = SearchField::new().with_value("abc");
         laid_out(&mut field, 200.0, FIELD_PT);
-        // Press the ✕ clear target at the field's right edge.
+        // Press the clear target at the field's right edge.
         let press = WidgetEvent::PointerPressed {
             position: Vec2::new(200.0 - 9.0, 12.0),
             button: martensite_core::PointerButton::Primary,
@@ -831,7 +833,7 @@ mod tests {
     fn escape_clears_focused_text() {
         // The `<input type="search">` convention: Escape on a focused,
         // non-empty search field clears it — the keyboard equivalent
-        // of the ✕ clear target, so the `edited` seam fires and the
+        // of the clear target, so the `edited` seam fires and the
         // clear is a single undo step.
         let mut field = SearchField::new().with_value("query");
         laid_out(&mut field, 200.0, FIELD_PT);

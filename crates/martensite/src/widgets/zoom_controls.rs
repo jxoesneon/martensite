@@ -361,8 +361,19 @@ impl Widget for ZoomControls {
         let btn = cx.pt(BTN_PT);
         if self.horizontal {
             let gap = cx.pt(GAP_PT) * (self.button_count() as f32 - 1.0).max(0.0);
+            let mut w = btn * self.button_count() as f32 + gap;
+            if self.zoom.is_some() && self.show_readout {
+                // The trailing "N%" readout rides past the last button —
+                // reserve its ink or a measured-size layout clips it
+                // against the widget's own bounds.
+                let readout = format!("{:.0}%", self.zoom.unwrap_or(0.0) * 100.0);
+                let rw =
+                    crate::text_paint::measure_label(&self.text_painter, cx.scale, &readout, 10.0)
+                        .unwrap_or_else(|| cx.pt(readout.chars().count() as f32 * 5.5));
+                w += cx.pt(GAP_PT) + rw;
+            }
             return Vec2::new(
-                (btn * self.button_count() as f32 + gap).min(constraints.max_size.x.max(0.0)),
+                w.min(constraints.max_size.x.max(0.0)),
                 btn.min(constraints.max_size.y.max(0.0)),
             );
         }
@@ -498,7 +509,7 @@ impl Widget for ZoomControls {
             let glyph = Self::glyph(*action);
             let gw = painter
                 .and_then(|p| p.measure_text(glyph, size))
-                .unwrap_or(glyph.chars().count() as f32 * size * 0.55);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(glyph, size, 0.55));
             crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
@@ -534,7 +545,9 @@ impl Widget for ZoomControls {
             let small = 10.0 * s;
             let rw = painter
                 .and_then(|p| p.measure_text(&readout, small))
-                .unwrap_or(readout.chars().count() as f32 * small * 0.55);
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(readout), small, 0.55)
+                });
             let rx = if self.horizontal {
                 self.rects
                     .last()

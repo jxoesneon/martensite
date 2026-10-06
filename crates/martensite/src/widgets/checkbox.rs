@@ -392,7 +392,9 @@ impl Widget for CheckBox {
         let w = cx.pt(20.0 + LABEL_GAP + 8.0 * self.label.chars().count() as f32);
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
-            cx.pt(20.0).min(constraints.max_size.y.max(0.0)),
+            // 24pt row — WCAG 2.5.5 target-size floor; the box stays
+            // 16pt but the hit row meets the minimum.
+            cx.pt(24.0).min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -548,6 +550,12 @@ impl Widget for CheckBox {
             cx.pt(14.0),
             cx.color(TokenKey::TextColor, INK),
         );
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 4.0);
+        }
     }
 }
 

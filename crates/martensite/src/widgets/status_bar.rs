@@ -785,6 +785,12 @@ impl Widget for StatusBar {
         }
     }
 
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
+        }
+    }
+
     fn child_count(&self) -> usize {
         self.zones.len() + self.permanents.len()
     }

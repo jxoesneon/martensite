@@ -424,17 +424,23 @@ impl Widget for Chip {
             text_x += cx.pt(CHECK_W + GLYPH_GAP);
         }
 
-        // Trailing delete ✕ — label clips before it.
+        // Trailing delete target — an ambient close icon; the label
+        // clips before it.
         let text_right = if self.deletable {
             let cr = self.close_rect;
-            let arm = 4.0 * cx.scale;
-            let mid = cr.origin + cr.size / 2.0;
-            let mut x = kurbo::BezPath::new();
-            x.move_to((f64::from(mid.x - arm), f64::from(mid.y - arm)));
-            x.line_to((f64::from(mid.x + arm), f64::from(mid.y + arm)));
-            x.move_to((f64::from(mid.x + arm), f64::from(mid.y - arm)));
-            x.line_to((f64::from(mid.x - arm), f64::from(mid.y + arm)));
-            cx.list.push_stroke_path(x, cx.pt(1.5), ink);
+            let side = cr.width().min(cr.height()) * 0.55;
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(
+                    cr.min_x() + (cr.width() - side) / 2.0,
+                    cr.min_y() + (cr.height() - side) / 2.0,
+                    side,
+                    side,
+                ),
+                "status.close",
+                cx.scale,
+                ink,
+            );
             cr.origin.x - cx.pt(GLYPH_GAP)
         } else {
             b.max_x() - cx.pt(PAD_X)

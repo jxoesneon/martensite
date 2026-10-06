@@ -302,6 +302,11 @@ impl Candlestick {
 }
 
 impl Widget for Candlestick {
+    /// Down candles are red by market convention — domain encoding,
+    /// not the alarm channel.
+    fn debug_name(&self) -> &'static str {
+        "Candlestick@lint:reserved-hue"
+    }
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             cx.pt(W_PT).min(constraints.max_size.x.max(0.0)),
@@ -435,6 +440,12 @@ impl Widget for Candlestick {
                 &martensite_core::shape::Shape::squircle(0.0),
                 color,
             );
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
         }
     }
 }

@@ -225,19 +225,19 @@ impl Widget for HeaderBar {
             max_child_h = max_child_h.max(s.y);
         }
         let text_h = if self.subtitle.is_some() {
-            TITLE_PT + SUB_PT + 2.0
+            cx.pt(TITLE_PT + SUB_PT + 2.0)
         } else {
-            TITLE_PT
+            cx.pt(TITLE_PT)
         };
         Vec2::new(
             constraints
                 .max_size
                 .x
-                .max(120.0)
+                .max(cx.pt(120.0))
                 .min(constraints.max_size.x),
-            (max_child_h + 2.0 * PAD_PT)
-                .max(text_h + 2.0 * PAD_PT)
-                .max(HEIGHT_PT),
+            (max_child_h + 2.0 * cx.pt(PAD_PT))
+                .max(text_h + 2.0 * cx.pt(PAD_PT))
+                .max(cx.pt(HEIGHT_PT)),
         )
     }
 
@@ -289,8 +289,13 @@ impl Widget for HeaderBar {
         );
         if let Some(sub) = &self.subtitle {
             let sub_size = cx.pt(SUB_PT);
-            let total = title_size + cx.pt(2.0) + sub_size;
-            let ty = b.min_y() + (b.height() - total) / 2.0;
+            // Stack height uses the painter's line box (`size·1.25`),
+            // not the raw font size — sizing by the font alone sinks
+            // the pair below the bar's centre.
+            let title_lh = title_size * 1.25;
+            let sub_lh = sub_size * 1.25;
+            let total = title_lh + cx.pt(2.0) + sub_lh;
+            let ty = b.min_y() + (b.height() - total).max(0.0) / 2.0;
             let w = painter
                 .and_then(|p| p.measure_text(&self.title, title_size))
                 .unwrap_or(title_size * self.title.len() as f32 * 0.5);
@@ -312,7 +317,7 @@ impl Widget for HeaderBar {
                 clip,
                 kurbo::Point::new(
                     mid_x - f64::from(sw) / 2.0,
-                    f64::from(ty + title_size + cx.pt(2.0)),
+                    f64::from(ty + title_lh + cx.pt(2.0)),
                 ),
                 sub,
                 sub_size,

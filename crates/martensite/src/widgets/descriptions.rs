@@ -355,10 +355,14 @@ impl Widget for Descriptions {
         };
         let h = title_h + self.flow() as f32 * cx.pt(ROW_PT);
         let max_w = constraints.max_size.x.max(0.0);
-        Vec2::new(
-            cx.pt(200.0).min(max_w).max(cx.pt(80.0).min(max_w)),
-            h.max(cx.pt(ROW_PT)).min(constraints.max_size.y.max(0.0)),
-        )
+        // Block-level list: fill the offered width so cell text gets
+        // room before the column clips engage.
+        let w = if max_w.is_finite() {
+            max_w.max(cx.pt(80.0).min(max_w))
+        } else {
+            cx.pt(400.0)
+        };
+        Vec2::new(w, h.max(cx.pt(ROW_PT)).min(constraints.max_size.y.max(0.0)))
     }
 
     fn min_render(&self) -> RenderMinimum {
@@ -493,6 +497,12 @@ impl Widget for Descriptions {
             );
         }
         cx.list.pop_clip();
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
+        }
     }
 
     fn child_count(&self) -> usize {

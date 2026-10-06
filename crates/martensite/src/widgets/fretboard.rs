@@ -320,43 +320,23 @@ impl Widget for Fretboard {
         }
         // Finger dots + nut markers.
         let dot_r = ss * DOT_FRAC;
-        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let mark = cx.color(TokenKey::TextColor, MARK);
         let mark_size = 10.0 * self.scale;
         for (s, fing) in self.fingering.iter().enumerate() {
             let x = left + ss * s as f32;
             match fing {
-                // Muted string — native close icon, ✕ fallback.
+                // Muted string — native close icon.
                 None => {
                     let side = mark_size;
-                    let icon_ok = crate::icons::builtin()
-                        .lookup("status.close")
-                        .is_some_and(|d| {
-                            crate::widgets::morph_icon::paint_icon_d(
-                                cx.list,
-                                Rect::new(x - side / 2.0, top - mark_size * 1.3, side, side),
-                                d,
-                                self.scale,
-                                mark,
-                            )
-                        });
-                    if !icon_ok {
-                        crate::text_paint::paint_label(
-                            painter,
-                            cx.list,
-                            kurbo::Point::new(
-                                f64::from(x - mark_size * 0.35),
-                                f64::from(top - mark_size * 1.3),
-                            ),
-                            "✕",
-                            mark_size,
-                            mark,
-                        );
-                    }
+                    crate::widgets::morph_icon::paint_icon_named(
+                        cx.list,
+                        Rect::new(x - side / 2.0, top - mark_size * 1.3, side, side),
+                        "status.close",
+                        self.scale,
+                        mark,
+                    );
                 }
-                // Open string — a stroked circle shape; the ○ glyph
-                // stays as fallback so a missing shape path never
-                // strands the mark.
+                // Open string — a stroked circle shape.
                 Some(0) => {
                     let d = mark_size * 0.72;
                     cx.list.push_stroke_shape(

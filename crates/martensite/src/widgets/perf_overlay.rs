@@ -237,7 +237,8 @@ impl Widget for PerfOverlay {
     /// `BAD` paints the reserved alarm hue deliberately. The `@alarm`
     /// marker declares that to the design-lint lineage walk.
     fn debug_name(&self) -> &'static str {
-        "PerfOverlay@alarm"
+        // HUD rows clip at the overlay edge by design.
+        "PerfOverlay@alarm@lint:text-truncation"
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {

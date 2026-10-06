@@ -368,7 +368,9 @@ impl Widget for TaskSwitcher {
                 let label = &item.label;
                 let lw = painter
                     .and_then(|p| p.measure_text(label, LABEL_PT * s))
-                    .unwrap_or(label.len() as f32 * LABEL_PT * 0.6 * s);
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(label, LABEL_PT * s, 0.6)
+                    });
                 let lx = (tile.min_x() + (tile.width() - lw) / 2.0).clamp(
                     self.bounds.min_x(),
                     (self.bounds.max_x() - lw).max(self.bounds.min_x()),

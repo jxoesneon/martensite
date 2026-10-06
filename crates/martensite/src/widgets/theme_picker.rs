@@ -405,7 +405,7 @@ impl Widget for ThemePicker {
             let fs = FONT_PT * s;
             let tw = painter
                 .and_then(|p| p.measure_text(&o.name, fs))
-                .unwrap_or(o.name.len() as f32 * fs * 0.5);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(o.name), fs, 0.5));
             crate::text_paint::paint_label(
                 painter,
                 cx.list,

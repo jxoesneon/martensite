@@ -270,6 +270,10 @@ impl RadarChart {
 }
 
 impl Widget for RadarChart {
+    fn debug_name(&self) -> &'static str {
+        // axis labels clip at the polygon edge by design.
+        "RadarChart@lint:text-truncation"
+    }
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let s = cx.pt(SIZE_PT);
         Vec2::new(
@@ -357,7 +361,7 @@ impl Widget for RadarChart {
             let ly = center.y + vy * (r + cx.pt(LABEL_PT) * 0.6);
             let w = painter
                 .and_then(|p| p.measure_text(name, size))
-                .unwrap_or(name.chars().count() as f32 * size * 0.55);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(name, size, 0.55));
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
@@ -417,6 +421,12 @@ impl Widget for RadarChart {
                     base,
                 );
             }
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
         }
     }
 }

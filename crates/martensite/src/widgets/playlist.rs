@@ -523,38 +523,24 @@ impl Widget for Playlist {
                     );
                 }
             }
-            // Now-playing marker — native play icon, `▶` fallback.
+            // Now-playing marker — native play icon.
             let x = self.bounds.min_x() + pad + 4.0 * s;
             if self.current == Some(i) {
                 let ink = cx.color(TokenKey::AccentColor, NOW);
                 let side = sub_sz;
-                let ok = crate::icons::builtin()
-                    .lookup("media.play")
-                    .is_some_and(|d| {
-                        crate::widgets::morph_icon::paint_icon_d(
-                            cx.list,
-                            Rect::new(x, y + (row - side) / 2.0, side, side),
-                            d,
-                            s,
-                            ink,
-                        )
-                    });
-                if !ok {
-                    crate::text_paint::paint_label(
-                        painter,
-                        cx.list,
-                        kurbo::Point::new(f64::from(x), f64::from(y + row * 0.3)),
-                        "▶",
-                        sub_sz,
-                        ink,
-                    );
-                }
+                crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    Rect::new(x, y + (row - side) / 2.0, side, side),
+                    "media.play",
+                    s,
+                    ink,
+                );
             }
             // The clock is right-aligned; title/subtitle clip short of
             // it so long names truncate instead of overprinting.
             let text_l = x + 14.0 * s;
             let clock_w = if t.secs > 0 {
-                t.clock().chars().count() as f32 * sub_sz * 0.55 + 8.0 * s
+                crate::text_paint::estimate_text_width_px(t.clock(), sub_sz, 0.55) + 8.0 * s
             } else {
                 0.0
             };
@@ -584,7 +570,7 @@ impl Widget for Playlist {
             );
             if t.secs > 0 {
                 let clock = t.clock();
-                let w = clock.chars().count() as f32 * sub_sz * 0.55;
+                let w = crate::text_paint::estimate_text_width_px(&(clock), sub_sz, 0.55);
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,

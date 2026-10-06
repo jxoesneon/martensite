@@ -307,15 +307,22 @@ impl Widget for HeroHeader {
         let accent = cx.color(TokenKey::AccentColor, [90, 140, 220, 255]);
         let cxm = b.min_x() + b.width() / 2.0;
         let mut y = b.min_y() + 8.0 * s;
+        // `y + fs` tops are intentional leading: each line starts one
+        // font-size below its slot top so the eyebrow/title/subtitle
+        // rhythm breathes — centring them in the slot would crowd the
+        // stack upward.
         // Eyebrow.
         if !self.eyebrow.is_empty() {
             let fs = EYEBROW_PT * s;
-            let w = self.eyebrow.len() as f32 * fs * 0.62;
+            let upper = self.eyebrow.to_uppercase();
+            let w = painter
+                .and_then(|p| p.measure_text(&upper, fs))
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(upper), fs, 0.62));
             crate::text_paint::paint_label(
                 painter,
                 cx.list,
                 kurbo::Point::new(f64::from(cxm - w / 2.0), f64::from(y + fs)),
-                &self.eyebrow.to_uppercase(),
+                &upper,
                 fs,
                 accent,
             );
@@ -323,7 +330,9 @@ impl Widget for HeroHeader {
         }
         // Title.
         let tfs = TITLE_PT * s;
-        let tw = self.title.len() as f32 * tfs * 0.55;
+        let tw = painter
+            .and_then(|p| p.measure_text(&self.title, tfs))
+            .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(self.title), tfs, 0.55));
         crate::text_paint::paint_label(
             painter,
             cx.list,
@@ -336,7 +345,11 @@ impl Widget for HeroHeader {
         // Subtitle.
         if !self.subtitle.is_empty() {
             let sfs = SUB_PT * s;
-            let sw = self.subtitle.len() as f32 * sfs * 0.55;
+            let sw = painter
+                .and_then(|p| p.measure_text(&self.subtitle, sfs))
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(self.subtitle), sfs, 0.55)
+                });
             crate::text_paint::paint_label(
                 painter,
                 cx.list,
@@ -355,7 +368,11 @@ impl Widget for HeroHeader {
                 continue;
             }
             let (face, fg) = if primary {
-                (accent, [255, 255, 255, 255])
+                // `AccentColor` plate → `TextInverseColor` ink.
+                (
+                    accent,
+                    cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]),
+                )
             } else {
                 (BTN_FACE, TEXT_FG)
             };
@@ -370,7 +387,7 @@ impl Widget for HeroHeader {
                 face,
             );
             let cfs = SUB_PT * s;
-            let w = caption.len() as f32 * cfs * 0.55;
+            let w = crate::text_paint::estimate_text_width_px(caption, cfs, 0.55);
             crate::text_paint::paint_label(
                 painter,
                 cx.list,

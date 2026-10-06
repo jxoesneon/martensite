@@ -457,17 +457,20 @@ impl Widget for StepSequencer {
             )
         };
         let edge = cx.color(TokenKey::DividerColor, EDGE);
-        // Lane labels.
+        // Lane labels — clipped to the label lane left of the first
+        // cell so a long name cannot run under the grid.
         for (r, lane) in self.lanes.iter().take(self.rows).enumerate() {
             if let Some(row) = self.cells.get(r).and_then(|r| r.first()) {
-                let o = kurbo::Point::new(
-                    f64::from(self.bounds.min_x()),
-                    f64::from(row.min_y() + row.height() / 2.0),
-                );
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    o,
+                    kurbo::Rect::new(
+                        f64::from(self.bounds.min_x()),
+                        f64::from(row.min_y()),
+                        f64::from(row.min_x()),
+                        f64::from(row.max_y()),
+                    ),
+                    f64::from(self.bounds.min_x()),
                     lane,
                     FONT_PT * s,
                     cx.color(TokenKey::TextMutedColor, MUTED),

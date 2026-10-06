@@ -191,7 +191,7 @@ impl Widget for ColorButton {
         let title_w = self
             .title
             .as_deref()
-            .map(|t| t.chars().count() as f32 * FONT_PT * 0.55 * cx.scale)
+            .map(|t| crate::text_paint::estimate_text_width_px(t, FONT_PT, 0.55) * cx.scale)
             .unwrap_or(0.0);
         let w = cx.pt(PAD_PT + SWATCH_PT + PAD_PT + PAD_PT) + title_w;
         Vec2::new(

@@ -340,27 +340,39 @@ impl Widget for WorldClock {
         );
         let mut y = self.bounds.min_y();
         for (i, z) in self.zones.iter().enumerate() {
-            let row_mid = y + ROW_PT * s * 0.62;
+            // Row strip shared by the name and the right-aligned time —
+            // vcentering inside it lands their baselines together. The
+            // zone label is a deliberate second line: its ink centres
+            // at 0.9·ROW (the old code fed a *baseline* fraction —
+            // 0.95·ROW — as a block top, pushing the label's ink onto
+            // the row divider).
+            let row = kurbo::Rect::new(
+                f64::from(self.bounds.min_x()),
+                f64::from(y),
+                f64::from(self.bounds.max_x()),
+                f64::from(y + ROW_PT * s),
+            );
             // City name.
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                kurbo::Point::new(
-                    f64::from(self.bounds.min_x() + PAD_PT * s),
-                    f64::from(row_mid),
-                ),
+                row,
+                f64::from(self.bounds.min_x() + PAD_PT * s),
                 &z.name,
                 NAME_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),
             );
             // Zone offset under the name.
+            let zone_top = crate::text_paint::centered_label_top(
+                painter,
+                f64::from(y + ROW_PT * s * 0.9),
+                &z.zone_label(),
+                ZONE_PT * s,
+            );
             crate::text_paint::paint_label(
                 painter,
                 cx.list,
-                kurbo::Point::new(
-                    f64::from(self.bounds.min_x() + PAD_PT * s),
-                    f64::from(y + ROW_PT * s * 0.95),
-                ),
+                kurbo::Point::new(f64::from(self.bounds.min_x() + PAD_PT * s), zone_top),
                 &z.zone_label(),
                 ZONE_PT * s,
                 cx.color(TokenKey::TextMutedColor, MUTED),
@@ -371,7 +383,7 @@ impl Widget for WorldClock {
                 let fs = TIME_PT * s;
                 let tw = painter
                     .and_then(|p| p.measure_text(&t, fs))
-                    .unwrap_or(t.len() as f32 * fs * 0.6);
+                    .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(t), fs, 0.6));
                 let shift = self.day_shift(i).unwrap_or(0);
                 let shift_txt = if self.show_day_shift && shift != 0 {
                     format!("{:+}d ", shift)
@@ -380,21 +392,25 @@ impl Widget for WorldClock {
                 };
                 let sw = painter
                     .and_then(|p| p.measure_text(&shift_txt, ZONE_PT * s))
-                    .unwrap_or(shift_txt.len() as f32 * ZONE_PT * 0.6 * s);
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(&(shift_txt), ZONE_PT * s, 0.6)
+                    });
                 let right = self.bounds.max_x() - PAD_PT * s;
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
-                    kurbo::Point::new(f64::from(right - tw), f64::from(row_mid)),
+                    row,
+                    f64::from(right - tw),
                     &t,
                     fs,
                     cx.color(TokenKey::TextColor, TEXT),
                 );
                 if !shift_txt.is_empty() {
-                    crate::text_paint::paint_label(
+                    crate::text_paint::paint_label_vcenter(
                         painter,
                         cx.list,
-                        kurbo::Point::new(f64::from(right - tw - sw - 4.0 * s), f64::from(row_mid)),
+                        row,
+                        f64::from(right - tw - sw - 4.0 * s),
                         &shift_txt,
                         ZONE_PT * s,
                         SHIFT,

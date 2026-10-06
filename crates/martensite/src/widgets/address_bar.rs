@@ -1,6 +1,6 @@
 //! `AddressBar` — a browser-style location bar: security chip
-//! (🔒/⚠), URL with the registrable domain emphasized, a reload/go
-//! button, and a thin page-load progress line.
+//! (lock/warning/loader icons), URL with the registrable domain
+//! emphasized, a reload/go button, and a thin page-load progress line.
 //!
 //! The bar is display-driven: the host sets the URL via
 //! [`AddressBar::set_url`], the load fraction via
@@ -45,7 +45,7 @@ const WARN: [u8; 4] = [220, 160, 40, 255];
 /// ```
 /// use martensite::widgets::address_bar::SecurityState;
 ///
-/// assert_eq!(SecurityState::Secure.glyph(), "🔒");
+/// assert_eq!(SecurityState::Secure.glyph(), "status.lock");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SecurityState {
@@ -58,27 +58,20 @@ pub enum SecurityState {
 }
 
 impl SecurityState {
-    /// Chip glyph.
+    /// The chip's icon name — resolves through the ambient icon family
+    /// ([`crate::icons::resolve_icon`]), so an installed pack can
+    /// shadow the builtin glyph.
     ///
     /// ```
     /// use martensite::widgets::address_bar::SecurityState;
     ///
-    /// assert_eq!(SecurityState::Insecure.glyph(), "⚠");
+    /// assert_eq!(SecurityState::Insecure.glyph(), "status.warning");
     /// ```
     pub fn glyph(self) -> &'static str {
         match self {
-            Self::Secure => "🔒",
-            Self::Insecure => "⚠",
-            Self::Loading => "◌",
-        }
-    }
-
-    /// The native-pack icon for this state.
-    fn icon_name(self) -> Option<&'static str> {
-        match self {
-            Self::Secure => Some("status.lock"),
-            Self::Insecure => Some("status.warning"),
-            Self::Loading => Some("status.loader"),
+            Self::Secure => "status.lock",
+            Self::Insecure => "status.warning",
+            Self::Loading => "status.loader",
         }
     }
 }
@@ -373,41 +366,18 @@ impl Widget for AddressBar {
             SecurityState::Loading => MUTED_FG,
         };
         let cfs = FONT_PT * s;
-        let chip_icon_ok = self
-            .state
-            .icon_name()
-            .and_then(|n| crate::icons::builtin().lookup(n))
-            .is_some_and(|d| {
-                let side = cfs;
-                crate::widgets::morph_icon::paint_icon_d(
-                    cx.list,
-                    Rect::new(
-                        cr.min_x() + (cr.width() - side) / 2.0,
-                        cr.min_y() + (cr.height() - side) / 2.0,
-                        side,
-                        side,
-                    ),
-                    d,
-                    s,
-                    chip_fg,
-                )
-            });
-        if !chip_icon_ok {
-            crate::text_paint::paint_label_vcenter(
-                painter,
-                cx.list,
-                kurbo::Rect::new(
-                    f64::from(cr.min_x()),
-                    f64::from(cr.min_y()),
-                    f64::from(cr.max_x()),
-                    f64::from(cr.max_y()),
-                ),
-                f64::from(cr.min_x() + cr.width() * 0.15),
-                self.state.glyph(),
+        crate::widgets::morph_icon::paint_icon_named(
+            cx.list,
+            Rect::new(
+                cr.min_x() + (cr.width() - cfs) / 2.0,
+                cr.min_y() + (cr.height() - cfs) / 2.0,
                 cfs,
-                chip_fg,
-            );
-        }
+                cfs,
+            ),
+            self.state.glyph(),
+            s,
+            chip_fg,
+        );
         // URL.
         let fs = FONT_PT * s;
         crate::text_paint::paint_label(
@@ -426,8 +396,7 @@ impl Widget for AddressBar {
             fs,
             cx.color(TokenKey::TextColor, TEXT_FG),
         );
-        // Reload / stop button — native icons first, the hand-drawn
-        // marks stay as fallback.
+        // Reload / stop button — native icon, ambient-resolved.
         let rr = self.reload_rect;
         let loading =
             self.state == SecurityState::Loading || self.progress.is_some_and(|p| p < 1.0);
@@ -436,49 +405,19 @@ impl Widget for AddressBar {
         } else {
             "arrow.rotate-cw"
         };
-        let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
-            let side = rr.width() * 0.6;
-            crate::widgets::morph_icon::paint_icon_d(
-                cx.list,
-                Rect::new(
-                    rr.min_x() + (rr.width() - side) / 2.0,
-                    rr.min_y() + (rr.height() - side) / 2.0,
-                    side,
-                    side,
-                ),
-                d,
-                s,
-                MUTED_FG,
-            )
-        });
-        if !icon_ok && loading {
-            // ✕ stop glyph while loading.
-            let q = rr.width() * 0.25;
-            let mut p = kurbo::BezPath::new();
-            p.move_to((f64::from(rr.min_x() + q), f64::from(rr.min_y() + q)));
-            p.line_to((f64::from(rr.max_x() - q), f64::from(rr.max_y() - q)));
-            p.move_to((f64::from(rr.max_x() - q), f64::from(rr.min_y() + q)));
-            p.line_to((f64::from(rr.min_x() + q), f64::from(rr.max_y() - q)));
-            cx.list.push_stroke_path(p, 1.4 * s, MUTED_FG);
-        } else if !icon_ok {
-            // ↻ reload: arc + arrowhead.
-            let mut p = kurbo::BezPath::new();
-            let c = Vec2::new(
-                rr.min_x() + rr.width() / 2.0,
-                rr.min_y() + rr.height() / 2.0,
-            );
-            let r = rr.width() * 0.3;
-            for i in 0..=12 {
-                let a = -0.6 + (i as f32 / 12.0) * std::f32::consts::TAU * 0.8;
-                let pt = Vec2::new(c.x + a.cos() * r, c.y + a.sin() * r);
-                if i == 0 {
-                    p.move_to((f64::from(pt.x), f64::from(pt.y)));
-                } else {
-                    p.line_to((f64::from(pt.x), f64::from(pt.y)));
-                }
-            }
-            cx.list.push_stroke_path(p, 1.4 * s, MUTED_FG);
-        }
+        let side = rr.width() * 0.6;
+        crate::widgets::morph_icon::paint_icon_named(
+            cx.list,
+            Rect::new(
+                rr.min_x() + (rr.width() - side) / 2.0,
+                rr.min_y() + (rr.height() - side) / 2.0,
+                side,
+                side,
+            ),
+            icon,
+            s,
+            MUTED_FG,
+        );
         // Load progress line.
         if let Some(f) = self.progress {
             cx.list.push_fill_rect(

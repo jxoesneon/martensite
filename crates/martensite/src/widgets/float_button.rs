@@ -4,8 +4,8 @@
 //! A leaf meant for [`Stack`] layering: position it via its bounds
 //! (the consumer decides the corner/margin), or use
 //! [`FloatButton::back_top`] for the scroll-to-top idiom — a
-//! circular ↑ that parks a `take_activated` request the consumer
-//! maps onto a `ScrollView`.
+//! circular arrow-up FAB that parks a `take_activated` request the
+//! consumer maps onto a `ScrollView`.
 //!
 //! # Examples
 //!
@@ -62,8 +62,9 @@ pub struct FloatButton {
 }
 
 impl FloatButton {
-    /// Creates a FAB with `text` (usually an icon glyph or short
-    /// label).
+    /// Creates a FAB with `text` — a namespaced icon name
+    /// (`"status.plus"`, …) paints as a vector icon through the
+    /// ambient icon family; anything else is a short text glyph.
     ///
     /// # Examples
     ///
@@ -88,8 +89,8 @@ impl FloatButton {
         }
     }
 
-    /// The BackTop idiom — an ↑ FAB, hidden by default; the consumer
-    /// flips `visible` when the scroll offset leaves the top.
+    /// The BackTop idiom — an arrow-up FAB, hidden by default; the
+    /// consumer flips `visible` when the scroll offset leaves the top.
     ///
     /// # Examples
     ///
@@ -99,7 +100,7 @@ impl FloatButton {
     /// assert!(!FloatButton::back_top().visible);
     /// ```
     pub fn back_top() -> Self {
-        let mut b = Self::new("↑").icon_named("arrow.up");
+        let mut b = Self::new("arrow.up").icon_named("arrow.up");
         b.visible = false;
         b.label = Some("Back to top".to_string());
         b
@@ -199,10 +200,10 @@ impl FloatButton {
         self
     }
 
-    /// [`icon_d`](Self::icon_d) resolving `name` through the native
-    /// icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
-    /// `"status.plus"`, `"edit.pen"`, … An unknown name keeps the text
-    /// glyph — same fallback contract as a rejected `d`.
+    /// [`icon_d`](Self::icon_d) resolving `name` through the ambient
+    /// icon family ([`icons::resolve_icon`](crate::icons::resolve_icon))
+    /// — `"status.plus"`, `"edit.pen"`, … An unknown name keeps the
+    /// text glyph — same fallback contract as a rejected `d`.
     ///
     /// # Examples
     ///
@@ -316,7 +317,10 @@ impl Widget for FloatButton {
         }
         let b = cx.bounds;
         let accent = cx.color(TokenKey::AccentColor, [0, 122, 204, 255]);
-        let fg = [255, 255, 255, 255];
+        // The FAB face resolves to `AccentColor` — its pair ink is
+        // `TextInverseColor` (dark on the accent, still ≥4.5:1 when
+        // the disabled state falls back to the muted face).
+        let fg = cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]);
         let face = if !self.enabled {
             cx.color(TokenKey::TextMutedColor, [120, 120, 120, 255])
         } else if self.pressed {
@@ -354,20 +358,35 @@ impl Widget for FloatButton {
         // A hosted stroke icon paints itself at `icon_rect` as an
         // internal child — the arena emits it after this pass.
         if self.icon.is_none() {
-            let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-            let size = 16.0 * cx.scale;
-            let w = painter
-                .and_then(|p| p.measure_text(&self.text, size))
-                .unwrap_or(size * self.text.chars().count() as f32 * 0.5);
-            paint_label_vcenter(
-                painter,
-                cx.list,
-                r,
-                f64::from(b.min_x() + (b.width() - w.min(b.width())) / 2.0),
-                &self.text,
-                size,
-                fg,
+            // A namespaced icon name resolves through the ambient
+            // family and paints in the icon box; other strings are
+            // text glyphs.
+            let side = cx.pt(ICON_PT);
+            let icon_rect = Rect::new(
+                b.origin.x + (b.size.x - side) / 2.0,
+                b.origin.y + (b.size.y - side) / 2.0,
+                side,
+                side,
             );
+            if !crate::widgets::morph_icon::paint_icon_named(
+                cx.list, icon_rect, &self.text, cx.scale, fg,
+            ) {
+                let painter =
+                    crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+                let size = 16.0 * cx.scale;
+                let w = painter
+                    .and_then(|p| p.measure_text(&self.text, size))
+                    .unwrap_or(size * self.text.chars().count() as f32 * 0.5);
+                paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    r,
+                    f64::from(b.min_x() + (b.width() - w.min(b.width())) / 2.0),
+                    &self.text,
+                    size,
+                    fg,
+                );
+            }
         }
     }
 

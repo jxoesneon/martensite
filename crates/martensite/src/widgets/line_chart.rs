@@ -414,7 +414,16 @@ impl Widget for LineChart {
             for i in 0..=TICK_COUNT {
                 let v = lo + (hi - lo) * i as f32 / TICK_COUNT as f32;
                 let label = format!("{v:.1}");
-                let tx = plot.origin.x + plot.size.x * i as f32 / TICK_COUNT as f32;
+                // Edge ticks center on their mark but clamp inward —
+                // an end label must not clip mid-glyph at the plot
+                // edge.
+                let tw = painter
+                    .and_then(|p| p.measure_text(&label, font))
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(&(label), font, 0.5)
+                    });
+                let tx = (plot.origin.x + plot.size.x * i as f32 / TICK_COUNT as f32 - tw / 2.0)
+                    .clamp(plot.min_x(), (plot.max_x() - tw).max(plot.min_x()));
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
@@ -424,7 +433,7 @@ impl Widget for LineChart {
                         f64::from(plot.max_x()),
                         f64::from(self.bounds.max_y()),
                     ),
-                    kurbo::Point::new(f64::from(tx - font * 0.5), f64::from(ty)),
+                    kurbo::Point::new(f64::from(tx), f64::from(ty)),
                     &label,
                     font,
                     cx.color(TokenKey::TextMutedColor, FALLBACK_TICK),
@@ -492,6 +501,12 @@ impl Widget for LineChart {
                     );
                 }
             }
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
         }
     }
 }

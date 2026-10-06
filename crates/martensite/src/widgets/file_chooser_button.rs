@@ -234,7 +234,8 @@ impl Widget for FileChooserButton {
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let text_w = self.face_text().chars().count() as f32 * FONT_PT * 0.55 * cx.scale;
+        let text_w =
+            crate::text_paint::estimate_text_width_px(self.face_text(), FONT_PT, 0.55) * cx.scale;
         let w = text_w + cx.pt(2.0 * PAD_PT + GLYPH_PT + 6.0);
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)).max(cx.pt(80.0)),
@@ -448,6 +449,12 @@ impl Widget for FileChooserButton {
             size,
             if self.file_name.is_some() { fg } else { muted },
         );
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
+        }
     }
 }
 

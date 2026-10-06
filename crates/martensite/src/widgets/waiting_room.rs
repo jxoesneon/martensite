@@ -3,8 +3,8 @@
 //! buttons plus an *admit all* affordance.
 //!
 //! Rows are pushed host-side via [`WaitingRoom::queue`]; clicking
-//! a row's ✓ parks its index in [`WaitingRoom::take_admitted`],
-//! ✕ parks it in [`WaitingRoom::take_denied`], and the header
+//! a row's check button parks its index in [`WaitingRoom::take_admitted`],
+//! its close button parks it in [`WaitingRoom::take_denied`], and the header
 //! button parks `usize::MAX` in `take_admitted` (admit all). The
 //! host removes admitted rows with
 //! [`WaitingRoom::remove`]. Companion to
@@ -240,6 +240,11 @@ impl WaitingRoom {
 }
 
 impl Widget for WaitingRoom {
+    /// The deny/leave control paints `ErrorColor` — the alarm channel
+    /// is the semantics here, so the lineage carries `@alarm`.
+    fn debug_name(&self) -> &'static str {
+        "WaitingRoom@alarm"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -370,6 +375,9 @@ impl Widget for WaitingRoom {
         );
         cx.list
             .push_fill_shape(akr, &shape, cx.color(TokenKey::SuccessColor, ADMIT));
+        // `SuccessColor` is a light signal fill — pair it with the
+        // inverse ink (~7.9:1) instead of the foreground ink (~1.9:1).
+        let on_fill_ink = cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]);
         crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
@@ -377,7 +385,7 @@ impl Widget for WaitingRoom {
             akr.x0 + f64::from(8.0 * s),
             "Admit all",
             FONT_PT * 0.85 * s,
-            TEXT,
+            on_fill_ink,
         );
         if self.waiting.is_empty() {
             crate::text_paint::paint_label(
@@ -412,12 +420,12 @@ impl Widget for WaitingRoom {
                 FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),
             );
-            // Admit/deny — native check/close icons, ✓/✕ fallback.
+            // Admit/deny — native check/close icons, ambient-resolved.
             let a = self.admit_rects[i];
             let d = self.deny_rects[i];
-            for (rect, tint, face, icon, glyph) in [
-                (a, TokenKey::SuccessColor, ADMIT, "status.check", "✓"),
-                (d, TokenKey::ErrorColor, DENY, "status.close", "✕"),
+            for (rect, tint, face, icon) in [
+                (a, TokenKey::SuccessColor, ADMIT, "status.check"),
+                (d, TokenKey::ErrorColor, DENY, "status.close"),
             ] {
                 cx.list.push_fill_shape(
                     kurbo::Rect::new(
@@ -430,36 +438,18 @@ impl Widget for WaitingRoom {
                     cx.color(tint, face),
                 );
                 let side = FONT_PT * s;
-                let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(
-                            rect.min_x() + (rect.width() - side) / 2.0,
-                            rect.min_y() + (rect.height() - side) / 2.0,
-                            side,
-                            side,
-                        ),
-                        d,
-                        s,
-                        TEXT,
-                    )
-                });
-                if !icon_ok {
-                    crate::text_paint::paint_label_vcenter(
-                        painter,
-                        cx.list,
-                        kurbo::Rect::new(
-                            f64::from(rect.min_x()),
-                            f64::from(rect.min_y()),
-                            f64::from(rect.max_x()),
-                            f64::from(rect.max_y()),
-                        ),
-                        f64::from(rect.min_x() + rect.width() * 0.25),
-                        glyph,
-                        FONT_PT * s,
-                        TEXT,
-                    );
-                }
+                crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    Rect::new(
+                        rect.min_x() + (rect.width() - side) / 2.0,
+                        rect.min_y() + (rect.height() - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    icon,
+                    s,
+                    on_fill_ink,
+                );
             }
         }
     }

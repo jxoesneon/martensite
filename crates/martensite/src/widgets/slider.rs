@@ -665,6 +665,12 @@ impl Widget for Slider {
             crate::widgets::paint_focus_ring(cx, ring, cx.pt(THUMB / 2.0) + pad, 2.0);
         }
     }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 4.0);
+        }
+    }
 }
 
 impl std::fmt::Debug for Slider {

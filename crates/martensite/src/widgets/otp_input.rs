@@ -610,9 +610,17 @@ impl Widget for OtpInput {
     fn paint(&self, cx: &mut PaintContext) {
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let face = cx.color(TokenKey::SurfaceColor, FACE);
-        let border = cx.color(TokenKey::BorderColor, BORDER);
+        let border = if self.enabled {
+            cx.color(TokenKey::BorderColor, BORDER)
+        } else {
+            cx.color(TokenKey::TextMutedColor, BORDER)
+        };
         let active = cx.color(TokenKey::AccentColor, ACTIVE_EDGE);
-        let ink = cx.color(TokenKey::TextColor, INK);
+        let ink = if self.enabled {
+            cx.color(TokenKey::TextColor, INK)
+        } else {
+            cx.color(TokenKey::TextMutedColor, INK)
+        };
         let chars: Vec<char> = self.value.chars().collect();
         let size = cx.pt(FONT_PT);
         let shape = martensite_core::shape::Shape::squircle(cx.pt(RADIUS_PT));
@@ -629,7 +637,11 @@ impl Widget for OtpInput {
                 kr,
                 &shape,
                 cx.pt(BORDER_PT),
-                if i == self.caret { active } else { border },
+                if i == self.caret && self.enabled {
+                    active
+                } else {
+                    border
+                },
             );
             if let Some(c) = chars.get(i) {
                 let glyph = if self.masked {
@@ -641,17 +653,16 @@ impl Widget for OtpInput {
                     .and_then(|p| p.measure_text(&glyph, size))
                     .unwrap_or(size * 0.6);
                 let x = r.origin.x + (r.size.x - w) / 2.0;
-                let y = r.origin.y + (r.size.y - size) / 2.0;
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
                     kr,
-                    kurbo::Point::new(f64::from(x), f64::from(y)),
+                    f64::from(x),
                     &glyph,
                     size,
                     ink,
                 );
-            } else if i == self.caret {
+            } else if i == self.caret && self.enabled {
                 // Caret in the empty active cell.
                 let cxr = r.origin.x + r.size.x / 2.0 - cx.pt(CARET_PT) / 2.0;
                 cx.list.push_fill_rect(

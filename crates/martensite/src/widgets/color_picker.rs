@@ -390,6 +390,11 @@ impl ColorSurface {
 }
 
 impl Widget for ColorSurface {
+    /// The hue is the payload — the saturation/value field must paint
+    /// reds. `reserved-hue` cannot apply to a picker.
+    fn debug_name(&self) -> &'static str {
+        "ColorSurface@lint:reserved-hue,saturated-area-cap"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -1192,6 +1197,11 @@ impl Default for ColorPicker {
 }
 
 impl Widget for ColorPicker {
+    /// The hue is the payload — `reserved-hue` cannot apply to a
+    /// picker.
+    fn debug_name(&self) -> &'static str {
+        "ColorPicker@lint:reserved-hue,saturated-area-cap"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -1365,6 +1375,11 @@ impl Widget for ColorPicker {
         );
         if self.focused && self.enabled {
             crate::widgets::paint_focus_ring(cx, b, 3.0, 2.0);
+        }
+    }
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
         }
     }
 }

@@ -261,6 +261,11 @@ impl CodeView {
 }
 
 impl Widget for CodeView {
+    fn debug_name(&self) -> &'static str {
+        // code lines cut at the view edge (horizontal scroll surface);
+        // syntax highlighting is payload color on a document surface.
+        "CodeView@lint:text-truncation,saturated-area-cap"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -338,10 +343,16 @@ impl Widget for CodeView {
         let code_x = self.bounds.min_x() + gutter_w;
         let pad = PAD_PT * self.scale;
 
-        // Current-line wash.
+        // Current-line wash — a *translucent* accent tint. `cx.color`
+        // replaces the whole fallback (alpha included) when the token
+        // resolves, so re-apply the wash alpha afterwards: an opaque
+        // `AccentColor` slab would invert the line into a blue bar
+        // and crush both gutter digits and code text to ~1–2:1.
         if let Some(c) = self.current {
             if c >= start && c < end {
                 let y = self.bounds.min_y() + (c - start) as f32 * line_h;
+                let mut wash = cx.color(TokenKey::AccentColor, HOT);
+                wash[3] = HOT[3];
                 cx.list.push_fill_rect(
                     f(Rect::new(
                         self.bounds.min_x(),
@@ -349,7 +360,7 @@ impl Widget for CodeView {
                         self.bounds.width(),
                         line_h,
                     )),
-                    cx.color(TokenKey::AccentColor, HOT),
+                    wash,
                 );
             }
         }
@@ -357,7 +368,7 @@ impl Widget for CodeView {
             let y = self.bounds.min_y() + row as f32 * line_h + (line_h - size) * 0.5;
             // Gutter number (right-aligned edge estimate).
             let num = (i + 1).to_string();
-            let num_w = num.len() as f32 * size * 0.62;
+            let num_w = crate::text_paint::estimate_text_width_px(&(num), size, 0.62);
             paint_label_clipped(
                 painter,
                 cx.list,

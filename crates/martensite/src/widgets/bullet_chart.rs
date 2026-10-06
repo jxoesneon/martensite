@@ -314,12 +314,11 @@ impl Widget for BulletChart {
             label_w - cx.pt(6.0),
             self.bounds.height(),
         );
-        let ly = label_r.min_y() + (label_r.height() - size * 1.2) / 2.0;
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             f(label_r),
-            kurbo::Point::new(f64::from(label_r.min_x()), f64::from(ly)),
+            f64::from(label_r.min_x()),
             &self.label,
             size,
             muted,
@@ -327,7 +326,7 @@ impl Widget for BulletChart {
         let val = format!("{:.0}", self.value);
         let vw = painter
             .and_then(|p| p.measure_text(&val, size))
-            .unwrap_or(val.chars().count() as f32 * size * 0.6);
+            .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(val), size, 0.6));
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,

@@ -452,7 +452,11 @@ impl Widget for WebView {
             );
         }
 
-        // Body: title + URL centered, or error, or placeholder.
+        // Body: title + URL centered, or error, or placeholder. `cy`
+        // is the stack's anchor: the error line sits a sub-size above
+        // it, the title on it, and URL/preview lines are stepped below
+        // by explicit `fs` gaps — deliberate stack offsets, not
+        // centring.
         let cy = b.min_y() + b.height() * 0.5;
         let fs_title = TITLE_PT * s;
         let fs_sub = SUB_PT * s;

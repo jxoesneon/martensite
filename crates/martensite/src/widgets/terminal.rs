@@ -518,7 +518,8 @@ impl Widget for Terminal {
             text,
         );
         if self.caret_on {
-            let cxp = px + poff + self.input.chars().count() as f32 * size * 0.62;
+            let cxp =
+                px + poff + crate::text_paint::estimate_text_width_px(&(self.input), size, 0.62);
             cx.list.push_fill_shape(
                 kurbo::Rect::new(
                     f64::from(cxp),

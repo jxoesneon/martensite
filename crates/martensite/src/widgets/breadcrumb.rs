@@ -62,6 +62,11 @@ struct Plan {
     seg_widths: Vec<f32>,
     /// Width the plan was computed for — replan on change.
     width: f32,
+    /// Ambient direction at the last paint — under RTL the trail
+    /// mirrors (leaf leftmost, root rightmost, ellipsis trailing),
+    /// and `rects` follow that painted order, so `hit` must pair
+    /// them against the reversed segment list.
+    rtl: bool,
 }
 
 /// A breadcrumb path strip.
@@ -290,6 +295,11 @@ impl Breadcrumb {
 }
 
 impl Widget for Breadcrumb {
+    /// Crumbs clip at the trail's edge by design — truncation is how
+    /// breadcrumbs degrade, not a defect.
+    fn debug_name(&self) -> &'static str {
+        "Breadcrumb@lint:text-truncation"
+    }
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(cx.pt(80.0)),
@@ -382,6 +392,8 @@ impl Widget for Breadcrumb {
         let plan = &mut *self.plan.lock();
         plan.rects.clear();
         plan.ellipsis_rect = None;
+        let rtl = cx.is_rtl();
+        plan.rtl = rtl;
         let size_px = cx.pt(FONT_PT);
         let pad = cx.pt(PAD_PT);
         let sep_w = cx.pt(SEP_PAD_PT) * 2.0 + size_px * 0.6;
@@ -391,7 +403,16 @@ impl Widget for Breadcrumb {
         let pill_y = b.origin.y + (b.size.y - pill_h) / 2.0;
         let mut x = b.origin.x;
 
-        if !plan.hidden.is_empty() {
+        // Under RTL the whole trail mirrors: the leaf paints leftmost
+        // and the root rightmost, so the ellipsis (collapsed leaders)
+        // trails the row instead of leading it.
+        let display: Vec<usize> = if rtl {
+            plan.visible.iter().rev().copied().collect()
+        } else {
+            plan.visible.clone()
+        };
+
+        if !rtl && !plan.hidden.is_empty() {
             let ew = cx.pt(ELLIPSIS_W_PT);
             let r = Rect::new(x, pill_y, ew, pill_h);
             plan.ellipsis_rect = Some(r);
@@ -406,16 +427,16 @@ impl Widget for Breadcrumb {
                     HIGHLIGHT,
                 );
             }
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(x),
-                    f64::from(y),
+                    f64::from(pill_y),
                     f64::from((x + ew).min(b.max_x())),
-                    f64::from(y + size_px),
+                    f64::from(pill_y + pill_h),
                 ),
-                kurbo::Point::new(f64::from(x + pad), f64::from(y)),
+                f64::from(x + pad),
                 "…",
                 size_px,
                 cx.color(TokenKey::TextMutedColor, SEP_INK),
@@ -423,7 +444,7 @@ impl Widget for Breadcrumb {
             x += ew + sep_w;
         }
 
-        for (vi, &seg) in plan.visible.iter().enumerate() {
+        for (vi, &seg) in display.iter().enumerate() {
             // Trailing crumbs truncate to the remaining width rather
             // than painting past the widget's right edge.
             let remaining = (b.origin.x + b.size.x - x).max(0.0);
@@ -450,16 +471,16 @@ impl Widget for Breadcrumb {
                     );
                 }
             }
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
                     f64::from(x + pad),
-                    f64::from(y),
+                    f64::from(pill_y),
                     f64::from(x + w - pad),
-                    f64::from(y + size_px),
+                    f64::from(pill_y + pill_h),
                 ),
-                kurbo::Point::new(f64::from(x + pad), f64::from(y)),
+                f64::from(x + pad),
                 &self.segments[seg],
                 size_px,
                 if is_current {
@@ -469,57 +490,66 @@ impl Widget for Breadcrumb {
                 },
             );
             x += w;
-            if vi + 1 < plan.visible.len() {
+            if vi + 1 < display.len() {
                 // No room for the separator → no separator; a
                 // clipped sliver at the edge reads worse than none.
                 if x + sep_w <= b.max_x() {
                     let ink = cx.color(TokenKey::TextMutedColor, SEP_INK);
-                    // Native chevron — the `›`/`‹` glyph is the
-                    // fallback; forward points left under RTL.
+                    // Native chevron — forward points left under RTL.
                     let rtl = cx.is_rtl();
                     let side = size_px * 0.8;
-                    let icon_ok = crate::icons::builtin()
-                        .lookup(if rtl {
+                    crate::widgets::morph_icon::paint_icon_named(
+                        cx.list,
+                        Rect::new(
+                            x + (sep_w - side) / 2.0,
+                            y + (size_px - side) / 2.0,
+                            side,
+                            side,
+                        ),
+                        if rtl {
                             "nav.chevron-left"
                         } else {
                             "nav.chevron-right"
-                        })
-                        .is_some_and(|d| {
-                            crate::widgets::morph_icon::paint_icon_d(
-                                cx.list,
-                                Rect::new(
-                                    x + (sep_w - side) / 2.0,
-                                    y + (size_px - side) / 2.0,
-                                    side,
-                                    side,
-                                ),
-                                d,
-                                cx.scale,
-                                ink,
-                            )
-                        });
-                    if !icon_ok {
-                        crate::text_paint::paint_label_clipped(
-                            painter,
-                            cx.list,
-                            kurbo::Rect::new(
-                                f64::from(x),
-                                f64::from(y),
-                                f64::from(x + sep_w),
-                                f64::from(y + size_px),
-                            ),
-                            kurbo::Point::new(
-                                f64::from(x + sep_w / 2.0 - size_px * 0.3),
-                                f64::from(y),
-                            ),
-                            if rtl { "‹" } else { "›" },
-                            size_px,
-                            ink,
-                        );
-                    }
+                        },
+                        cx.scale,
+                        ink,
+                    );
                     x += sep_w;
                 }
             }
+        }
+
+        // RTL trailing ellipsis — the collapsed leaders sit at the
+        // row's right edge.
+        if rtl && !plan.hidden.is_empty() {
+            let ew = cx.pt(ELLIPSIS_W_PT);
+            let r = Rect::new(x, pill_y, ew, pill_h);
+            plan.ellipsis_rect = Some(r);
+            if self.highlighted == Some(usize::MAX) {
+                cx.list.push_fill_rect(
+                    kurbo::Rect::new(
+                        f64::from(r.min_x()),
+                        f64::from(r.min_y()),
+                        f64::from(r.max_x()),
+                        f64::from(r.max_y()),
+                    ),
+                    HIGHLIGHT,
+                );
+            }
+            crate::text_paint::paint_label_vcenter(
+                painter,
+                cx.list,
+                kurbo::Rect::new(
+                    f64::from(x),
+                    f64::from(pill_y),
+                    f64::from((x + ew).min(b.max_x())),
+                    f64::from(pill_y + pill_h),
+                ),
+                f64::from(x + pad),
+                "…",
+                size_px,
+                cx.color(TokenKey::TextMutedColor, SEP_INK),
+            );
         }
     }
 }
@@ -532,13 +562,17 @@ impl Breadcrumb {
         if plan.ellipsis_rect.is_some_and(|r| r.contains(position)) {
             return Some(usize::MAX);
         }
-        // rects[i] pairs with the i-th navigable visible segment.
-        let navigable: Vec<usize> = plan
+        // rects[i] pairs with the i-th navigable segment in painted
+        // order — under RTL the trail mirrors, so the pairing reverses.
+        let mut navigable: Vec<usize> = plan
             .visible
             .iter()
             .copied()
             .filter(|s| *s != self.segments.len() - 1)
             .collect();
+        if plan.rtl {
+            navigable.reverse();
+        }
         for (i, r) in plan.rects.iter().enumerate() {
             if r.contains(position) {
                 return navigable.get(i).copied();
@@ -547,20 +581,28 @@ impl Breadcrumb {
         None
     }
 
-    /// Keyboard traversal order: ellipsis first, then navigable
-    /// segments left to right.
+    /// Keyboard traversal order — the visual left-to-right sequence:
+    /// ellipsis first then root→leaf under LTR; leaf→root then the
+    /// trailing ellipsis under RTL (where the whole row mirrors).
     fn keyboard_targets(&self) -> Vec<usize> {
         let plan = self.plan.lock();
+        let mut nav: Vec<usize> = plan
+            .visible
+            .iter()
+            .copied()
+            .filter(|s| *s != self.segments.len() - 1)
+            .collect();
+        if plan.rtl {
+            nav.reverse();
+        }
         let mut t = Vec::new();
-        if !plan.hidden.is_empty() {
+        if !plan.hidden.is_empty() && !plan.rtl {
             t.push(usize::MAX);
         }
-        t.extend(
-            plan.visible
-                .iter()
-                .copied()
-                .filter(|s| *s != self.segments.len() - 1),
-        );
+        t.extend(nav);
+        if !plan.hidden.is_empty() && plan.rtl {
+            t.push(usize::MAX);
+        }
         t
     }
 }
@@ -684,5 +726,68 @@ mod tests {
         };
         b.event(&mut ev(&enter));
         assert_eq!(b.take_navigated(), Some(0));
+    }
+
+    #[test]
+    fn rtl_mirrors_trail_and_hit_order() {
+        let _g = martensite_core::intl::install_ambient_intl(
+            martensite_core::LayoutDirection::Rtl,
+            martensite_core::Locale::new("ar"),
+        );
+        let mut b = Breadcrumb::new().segments(["root", "mid", "leaf"]);
+        paint(&mut b, 600.0);
+        // Painted order under RTL is leaf → mid → root, so the leftmost
+        // navigable pill is "mid" (index 1), not "root" (index 0).
+        let rects: Vec<Rect> = b.plan.lock().rects.clone();
+        let left = rects.iter().map(|r| r.origin.x).fold(f32::MAX, f32::min);
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(left + 2.0, rects[0].origin.y + 2.0),
+            button: PointerButton::Primary,
+            count: 1,
+        };
+        assert_eq!(b.event(&mut ev(&press)), EventResponse::Handled);
+        assert_eq!(b.take_navigated(), Some(1));
+    }
+
+    #[test]
+    fn rtl_ellipsis_trails_the_row() {
+        let _g = martensite_core::intl::install_ambient_intl(
+            martensite_core::LayoutDirection::Rtl,
+            martensite_core::Locale::new("ar"),
+        );
+        let mut b =
+            Breadcrumb::new().segments(["a_long_segment", "another_long", "third_long", "current"]);
+        paint(&mut b, 130.0);
+        let plan = b.plan.lock();
+        let ellipsis = plan.ellipsis_rect.expect("leaders collapse");
+        let rightmost_seg = plan
+            .rects
+            .iter()
+            .map(|r| r.origin.x + r.size.x)
+            .fold(0.0_f32, f32::max);
+        assert!(ellipsis.origin.x >= rightmost_seg);
+    }
+
+    #[test]
+    fn rtl_keyboard_targets_follow_visual_order() {
+        let _g = martensite_core::intl::install_ambient_intl(
+            martensite_core::LayoutDirection::Rtl,
+            martensite_core::Locale::new("ar"),
+        );
+        let mut b = Breadcrumb::new().segments(["root", "mid", "leaf"]);
+        paint(&mut b, 600.0);
+        // ArrowRight steps through targets in visual order — under RTL
+        // the leftmost target is "mid" (index 1).
+        let right = WidgetEvent::KeyPressed {
+            key: "ArrowRight".into(),
+            repeat: false,
+        };
+        b.event(&mut ev(&right));
+        let enter = WidgetEvent::KeyPressed {
+            key: "Enter".into(),
+            repeat: false,
+        };
+        b.event(&mut ev(&enter));
+        assert_eq!(b.take_navigated(), Some(1));
     }
 }

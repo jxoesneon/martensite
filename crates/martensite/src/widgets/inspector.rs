@@ -476,50 +476,29 @@ impl Widget for Inspector {
             );
             cx.list.push_fill_shape(khr, &shape, HEAD_BG);
             let head_clip = khr.intersect(kbounds);
-            // Disclosure chevron — the native pack's icon under
-            // `MorphIcon`'s paint conventions; the ▾/▸ glyph stays as
-            // the no-pack fallback. Under RTL it sits on the leading
-            // (right) edge and points left.
+            // Disclosure chevron — native icon, ambient-resolved.
+            // Under RTL it sits on the leading (right) edge and
+            // points left.
             let rtl = cx.is_rtl();
-            let chevron = crate::icons::builtin().lookup(if sec.open {
-                "nav.chevron-down"
-            } else if rtl {
-                "nav.chevron-left"
-            } else {
-                "nav.chevron-right"
-            });
             let side = HEAD_FONT_PT * s * 0.9;
             let chev_x = if rtl {
                 hr.max_x() - 6.0 * s - side
             } else {
                 hr.min_x() + 6.0 * s
             };
-            let icon_ok = chevron.is_some_and(|d| {
-                crate::widgets::morph_icon::paint_icon_d(
-                    cx.list,
-                    Rect::new(chev_x, hr.min_y() + (hr.size.y - side) / 2.0, side, side),
-                    d,
-                    s,
-                    MUTED_FG,
-                )
-            });
-            if !icon_ok {
-                crate::text_paint::paint_label_vcenter(
-                    painter,
-                    cx.list,
-                    head_clip,
-                    f64::from(chev_x),
-                    if sec.open {
-                        "▾"
-                    } else if rtl {
-                        "◂"
-                    } else {
-                        "▸"
-                    },
-                    HEAD_FONT_PT * s,
-                    MUTED_FG,
-                );
-            }
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(chev_x, hr.min_y() + (hr.size.y - side) / 2.0, side, side),
+                if sec.open {
+                    "nav.chevron-down"
+                } else if rtl {
+                    "nav.chevron-left"
+                } else {
+                    "nav.chevron-right"
+                },
+                s,
+                MUTED_FG,
+            );
             // Title sits after the chevron on the leading edge; under
             // RTL its clip excludes the right-edge chevron box.
             let title_clip = if rtl {

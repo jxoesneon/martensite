@@ -458,29 +458,41 @@ impl ExternalEngine {
     }
 
     /// Computes the destination rectangle for `fit` inside `bounds`,
-    /// matching [`MediaView`](super::media::MediaView)'s behavior.
+    /// matching [`MediaView`](super::media::MediaView)'s behavior —
+    /// the effective aspect ratio (explicit override, then intrinsic
+    /// frame size, then widescreen default) drives letterboxing, and
+    /// `Fixed` keeps the native frame size.
     fn compute_dest_rect(&self, bounds: Rect, fit: VideoFit) -> Rect {
-        let iw = self.intrinsic_size.x.max(1.0);
-        let ih = self.intrinsic_size.y.max(1.0);
+        let aspect = self.effective_aspect_ratio();
         let bw = bounds.size.x.max(0.0);
         let bh = bounds.size.y.max(0.0);
         if bw <= 0.0 || bh <= 0.0 {
             return bounds;
         }
+        let bounds_aspect = bw / bh;
         let (w, h) = match fit {
             VideoFit::Fill => (bw, bh),
             // Native size unclamped — the clip rect confines overflow,
             // matching `MediaView::compute_dest_rect`.
-            VideoFit::Fixed => (iw, ih),
+            VideoFit::Fixed => (
+                self.intrinsic_size.x.max(0.0),
+                self.intrinsic_size.y.max(0.0),
+            ),
             VideoFit::Contain => {
-                let scale = (bw / iw).min(bh / ih);
-                (iw * scale, ih * scale)
+                if bounds_aspect > aspect {
+                    (bh * aspect, bh)
+                } else {
+                    (bw, bw / aspect)
+                }
             }
             // Cover overflows the bounds intentionally — the paint
             // command's clip rect confines it.
             VideoFit::Cover => {
-                let scale = (bw / iw).max(bh / ih);
-                (iw * scale, ih * scale)
+                if bounds_aspect > aspect {
+                    (bw, bw / aspect)
+                } else {
+                    (bh * aspect, bh)
+                }
             }
         };
         Rect::new(
@@ -1104,6 +1116,25 @@ mod tests {
         assert!((dest.size.x - 1000.0).abs() < 1e-3);
         assert!((dest.size.y - 562.5).abs() < 1e-3);
         assert!((dest.origin.y - 218.75).abs() < 1e-3);
+    }
+
+    #[test]
+    fn explicit_aspect_ratio_drives_dest_rect() {
+        // Same contract as `MediaView::compute_dest_rect` — the
+        // explicit override, not the frame's native ratio, letterboxes.
+        let (mut w, _h, _s) = widget_with_frame((1920, 1080));
+        w = w.with_aspect_ratio(1.0);
+        let mut hot = HotNode::new(taffy::NodeId::new(1));
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        w.layout(&mut cx, Rect::new(0.0, 0.0, 1000.0, 500.0));
+        let dest = w.dest_rect();
+        assert!((dest.size.x - 500.0).abs() < 1e-3);
+        assert!((dest.size.y - 500.0).abs() < 1e-3);
+        assert!((dest.origin.x - 250.0).abs() < 1e-3);
+        assert!((dest.origin.y - 0.0).abs() < 1e-3);
     }
 
     #[test]

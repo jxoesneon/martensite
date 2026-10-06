@@ -314,6 +314,11 @@ fn row_h(scale: f32) -> f32 {
 }
 
 impl Widget for CommentThread {
+    /// Comment bodies clip to their row — long text truncates by
+    /// design until expanded.
+    fn debug_name(&self) -> &'static str {
+        "CommentThread@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)

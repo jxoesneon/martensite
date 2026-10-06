@@ -799,6 +799,12 @@ impl Widget for RangeSlider {
             }
         }
     }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 4.0);
+        }
+    }
 }
 
 impl std::fmt::Debug for RangeSlider {

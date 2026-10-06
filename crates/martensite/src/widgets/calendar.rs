@@ -736,8 +736,8 @@ impl Widget for Calendar {
         Some(self)
     }
 
-    fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
-        Vec2::new(280.0, HEADER_H + WEEKDAY_H + 6.0 * 34.0)
+    fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
+        Vec2::new(cx.pt(280.0), cx.pt(HEADER_H + WEEKDAY_H + 6.0 * 34.0))
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {

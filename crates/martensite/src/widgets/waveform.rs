@@ -307,6 +307,12 @@ impl Widget for Waveform {
         cx.list
             .push_stroke_path(line, cx.pt(1.0), cx.color(TokenKey::TextColor, FG));
     }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
+        }
+    }
 }
 
 impl std::fmt::Debug for Waveform {

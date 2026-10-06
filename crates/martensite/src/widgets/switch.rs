@@ -309,6 +309,12 @@ impl Widget for Switch {
             cx.color(TokenKey::TextColor, INK),
         );
     }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, TRACK_H);
+        }
+    }
 }
 
 impl std::fmt::Debug for Switch {

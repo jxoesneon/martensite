@@ -37,10 +37,14 @@ const TAG_PT: f32 = 9.0;
 const FACE: [u8; 4] = [34, 36, 44, 255];
 const TEXT_FG: [u8; 4] = [235, 237, 240, 255];
 const MUTED_FG: [u8; 4] = [150, 154, 164, 255];
-const ADDED: [u8; 4] = [70, 160, 100, 255];
-const CHANGED: [u8; 4] = [90, 140, 220, 255];
-const FIXED: [u8; 4] = [220, 160, 40, 255];
-const REMOVED: [u8; 4] = [200, 90, 90, 255];
+// Badge fallbacks mirror the dark-theme resolved semantic fills —
+// added→Success, changed→Info, fixed→Warning, removed→Error. Each
+// resolved color is light enough that `TextInverseColor` clears
+// 4.5:1 on the badge (white ink reached only ~2.9–3.4:1).
+const ADDED: [u8; 4] = [9, 198, 69, 255];
+const CHANGED: [u8; 4] = [0, 180, 243, 255];
+const FIXED: [u8; 4] = [255, 150, 70, 255];
+const REMOVED: [u8; 4] = [255, 91, 53, 255];
 
 /// Change category with its tag color.
 ///
@@ -78,7 +82,19 @@ impl ChangeKind {
         }
     }
 
-    fn color(self) -> [u8; 4] {
+    /// Semantic token for the tag's fill — the badge colors are the
+    /// kind's meaning (success/info/warning/error), so they resolve
+    /// through the theme like every other semantic surface.
+    fn token(self) -> TokenKey {
+        match self {
+            Self::Added => TokenKey::SuccessColor,
+            Self::Changed => TokenKey::InfoColor,
+            Self::Fixed => TokenKey::WarningColor,
+            Self::Removed => TokenKey::ErrorColor,
+        }
+    }
+
+    fn fallback(self) -> [u8; 4] {
         match self {
             Self::Added => ADDED,
             Self::Changed => CHANGED,
@@ -325,24 +341,29 @@ impl Widget for ReleaseNotes {
         let pad = PAD_PT * s;
         let mut y = b.min_y() + pad;
         for rel in &self.releases {
-            // Version + date header.
+            // Version + date header. `paint_label` origins are line-box
+            // tops, not baselines — `y + vfs` would drop the header a
+            // full ascent into the first badge row, which the audit
+            // (correctly) reads as text overlapping the tag's fill. The
+            // date stays baseline-aligned by offsetting its top by the
+            // size delta (same family ⇒ ascent scales with pt size).
             let vfs = VERSION_PT * s;
             crate::text_paint::paint_label(
                 painter,
                 cx.list,
-                kurbo::Point::new(f64::from(b.min_x() + pad), f64::from(y + vfs)),
+                kurbo::Point::new(f64::from(b.min_x() + pad), f64::from(y)),
                 &format!("v{}", rel.version),
                 vfs,
                 cx.color(TokenKey::TextColor, TEXT_FG),
             );
             if !rel.date.is_empty() {
-                let vw = rel.version.len() as f32 * vfs * 0.6 + vfs;
+                let vw = crate::text_paint::estimate_text_width_px(&(rel.version), vfs, 0.6) + vfs;
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,
                     kurbo::Point::new(
                         f64::from(b.min_x() + pad + vw + 8.0 * s),
-                        f64::from(y + vfs),
+                        f64::from(y + vfs - DATE_PT * s),
                     ),
                     &rel.date,
                     DATE_PT * s,
@@ -361,10 +382,10 @@ impl Widget for ReleaseNotes {
                         f64::from(tr.max_y()),
                     ),
                     &martensite_core::shape::Shape::squircle(3.0 * s),
-                    kind.color(),
+                    cx.color(kind.token(), kind.fallback()),
                 );
                 let tfs = TAG_PT * s;
-                let tw = kind.tag().len() as f32 * tfs * 0.62;
+                let tw = crate::text_paint::estimate_text_width_px(kind.tag(), tfs, 0.62);
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,
@@ -379,7 +400,9 @@ impl Widget for ReleaseNotes {
                     ),
                     kind.tag(),
                     tfs,
-                    [255, 255, 255, 255],
+                    // Semantic-fill badges take the inverse ink —
+                    // white reached only ~3:1 on the green/blue tags.
+                    cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]),
                 );
                 crate::text_paint::paint_label(
                     painter,

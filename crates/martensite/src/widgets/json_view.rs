@@ -591,43 +591,22 @@ impl Widget for JsonView {
             } else {
                 self.bounds.min_x() + pad + *depth as f32 * indent
             };
-            // Disclosure chevron — native-pack icon first, ▾/▸ glyph
-            // as the fallback.
+            // Disclosure chevron — native icon, ambient-resolved.
             if n.value.is_container() {
-                let chevron = crate::icons::builtin().lookup(if n.expanded {
-                    "nav.chevron-down"
-                } else if rtl {
-                    "nav.chevron-left"
-                } else {
-                    "nav.chevron-right"
-                });
                 let cx0 = if rtl { x - size } else { x };
-                let ok = chevron.is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(cx0, y + (row - size) / 2.0, size, size),
-                        d,
-                        self.scale.max(1e-6),
-                        cx.color(TokenKey::TextMutedColor, META),
-                    )
-                });
-                if !ok {
-                    crate::text_paint::paint_label_clipped(
-                        painter,
-                        cx.list,
-                        row_clip,
-                        kurbo::Point::new(f64::from(cx0), f64::from(y + row * 0.18)),
-                        if n.expanded {
-                            "▾"
-                        } else if rtl {
-                            "◂"
-                        } else {
-                            "▸"
-                        },
-                        size,
-                        cx.color(TokenKey::TextMutedColor, META),
-                    );
-                }
+                crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    Rect::new(cx0, y + (row - size) / 2.0, size, size),
+                    if n.expanded {
+                        "nav.chevron-down"
+                    } else if rtl {
+                        "nav.chevron-left"
+                    } else {
+                        "nav.chevron-right"
+                    },
+                    self.scale.max(1e-6),
+                    cx.color(TokenKey::TextMutedColor, META),
+                );
             }
             x += if rtl { -indent } else { indent };
             // Key then value. Under RTL `x` is a right-edge cursor
@@ -635,7 +614,7 @@ impl Widget for JsonView {
             // the same char-width approximation as the LTR advance.
             let (key, val) = self.row_text(n);
             if !key.is_empty() {
-                let kw = key.chars().count() as f32 * size * 0.55;
+                let kw = crate::text_paint::estimate_text_width_px(&(key), size, 0.55);
                 let kx = if rtl { x - kw } else { x };
                 crate::text_paint::paint_label_clipped(
                     painter,
@@ -656,7 +635,7 @@ impl Widget for JsonView {
                 _ => META,
             };
             let vx = if rtl {
-                x - val.chars().count() as f32 * size * 0.55
+                x - crate::text_paint::estimate_text_width_px(&(val), size, 0.55)
             } else {
                 x
             };

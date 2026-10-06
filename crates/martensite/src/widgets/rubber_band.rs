@@ -179,6 +179,10 @@ fn band_rect(a: Vec2, c: Vec2) -> Rect {
 }
 
 impl Widget for RubberBand {
+    fn debug_name(&self) -> &'static str {
+        // a selection marquee is a transient affordance, not an info patch.
+        "RubberBand@lint:color-only-info"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)

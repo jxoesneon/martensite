@@ -241,7 +241,12 @@ impl Widget for Crosshair {
         let Some(p) = self.pos else { return };
         let s = cx.scale;
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        let hair = cx.color(TokenKey::ErrorColor, self.color.unwrap_or(HAIR));
+        // An explicit color override wins over the theme token. The
+        // reticle is a pointing aid, not an abnormal-state signal, so
+        // it tracks the accent — not the reserved alarm-red channel.
+        let hair = self
+            .color
+            .unwrap_or_else(|| cx.color(TokenKey::AccentColor, HAIR));
         let x = self.bounds.min_x() + p.x * self.bounds.width();
         let y = self.bounds.min_y() + p.y * self.bounds.height();
         let w = 1.0f32.max(s);
@@ -270,7 +275,7 @@ impl Widget for Crosshair {
             let fs = FONT_PT * s;
             let tw = painter
                 .and_then(|pt| pt.measure_text(&text, fs))
-                .unwrap_or(text.len() as f32 * fs * 0.6);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(text), fs, 0.6));
             let pad = CHIP_PAD_PT * s;
             let mut cx0 = x + pad * 2.0;
             let mut cy0 = y + pad * 2.0;

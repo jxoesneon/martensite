@@ -42,9 +42,17 @@ const EDGE: [u8; 4] = [90, 70, 50, 255];
 const SELECT: [u8; 4] = [96, 165, 250, 110];
 const LAST: [u8; 4] = [250, 204, 21, 70];
 const FOCUS: [u8; 4] = [96, 165, 250, 255];
-const WHITE_GLYPH: [u8; 4] = [250, 250, 250, 255];
+/// Piece ink on dark squares — pure white reaches ~3.15:1 on the
+/// walnut square, clearing the 3:1 large-glyph floor (the old
+/// #FAFAFA sat at ~3.01, one rounding step from a flag).
+const WHITE_GLYPH: [u8; 4] = [255, 255, 255, 255];
+/// Piece ink on light squares — ~12:1 on the maple square.
 const BLACK_GLYPH: [u8; 4] = [30, 30, 32, 255];
-const COORD: [u8; 4] = [120, 100, 80, 255];
+/// `TextMutedColor` fallback for the coordinate margin — the token's
+/// dark-theme resolved value (must clear 4.5:1 on the margin wash).
+const COORD: [u8; 4] = [165, 172, 179, 255];
+/// `SurfaceColor` fallback for the margin wash behind the board.
+const FRAME: [u8; 4] = [29, 34, 40, 255];
 
 /// The kind of chess piece — see [`ChessBoard`].
 ///
@@ -737,6 +745,12 @@ impl Widget for ChessBoard {
         let br = self.board_rect();
         let s = br.width().min(br.height()) / 8.0;
 
+        // Frame wash behind the board — the coordinate margin would
+        // otherwise float on whatever the host stage paints (a grid
+        // dot under a rank digit was ~1.6:1).
+        cx.list
+            .push_fill_rect(krect(self.bounds), cx.color(TokenKey::SurfaceColor, FRAME));
+
         for sq in 0..64 {
             let r = self.sq_rect(sq);
             let light = (sq % 8 + sq / 8) % 2 == 0;
@@ -746,26 +760,46 @@ impl Widget for ChessBoard {
                 cx.list.push_fill_rect(krect(r), LAST);
             }
             if self.selected == Some(sq) {
-                cx.list
-                    .push_fill_rect(krect(r), cx.color(TokenKey::AccentColor, SELECT));
+                // Translucent accent wash, not a slab: `cx.color`
+                // resolves the token opaquely, so the wash alpha is
+                // re-applied afterwards — otherwise the square turns
+                // solid accent and any piece on it loses the square
+                // as its readable background.
+                let mut sel = cx.color(TokenKey::AccentColor, SELECT);
+                sel[3] = SELECT[3];
+                cx.list.push_fill_rect(krect(r), sel);
             }
             if let Some((piece, side)) = self.cells[sq] {
-                let color = match side {
-                    Side::White => WHITE_GLYPH,
-                    Side::Black => BLACK_GLYPH,
-                };
+                // Side is carried by the glyph set — outline for
+                // white, filled for black — so the ink is free to
+                // serve contrast alone: dark ink on light squares,
+                // light ink on dark squares.
+                let color = if light { BLACK_GLYPH } else { WHITE_GLYPH };
                 let size = s * 0.72;
                 let text = if painter.is_some() {
-                    piece.glyph().to_string()
+                    match side {
+                        Side::White => piece.glyph().to_string(),
+                        // U+265A..U+265F is the filled set — the
+                        // mirror of `Piece::glyph`'s outline set.
+                        Side::Black => char::from_u32(piece.glyph() as u32 + 6)
+                            .unwrap_or_else(|| piece.glyph())
+                            .to_string(),
+                    }
                 } else {
-                    piece.letter().to_string()
+                    match side {
+                        Side::White => piece.letter().to_string(),
+                        Side::Black => piece.letter().to_ascii_lowercase().to_string(),
+                    }
                 };
+                let pw = painter
+                    .and_then(|p| p.measure_text(&text, size))
+                    .unwrap_or(size * 0.6);
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
                     krect(r),
                     kurbo::Point::new(
-                        f64::from(r.min_x() + s * 0.5 - size * 0.3),
+                        f64::from(r.min_x() + (s - pw) / 2.0),
                         crate::text_paint::centered_label_top(
                             painter,
                             r.min_y() + s * 0.5,
@@ -799,10 +833,14 @@ impl Widget for ChessBoard {
             let m = COORD_PT * self.scale;
             let size = 9.0 * self.scale;
             for i in 0..8 {
-                // File letters along the bottom edge.
+                // File letters along the bottom edge — `m * 0.2` is a
+                // deliberate gap below the board, not a centering.
                 let file = if self.flip { 7 - i } else { i };
                 let ch = ((b'a' + file as u8) as char).to_string();
-                let x = br.min_x() + i as f32 * s + s * 0.5 - size * 0.3;
+                let fw = painter
+                    .and_then(|p| p.measure_text(&ch, size))
+                    .unwrap_or(size * 0.6);
+                let x = br.min_x() + i as f32 * s + (s - fw) / 2.0;
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,
@@ -811,14 +849,21 @@ impl Widget for ChessBoard {
                     size,
                     cx.color(TokenKey::TextMutedColor, COORD),
                 );
-                // Rank numbers in the left margin.
+                // Rank numbers in the left margin — `m * 0.25` insets
+                // them from the widget edge; vertically they centre on
+                // the square's midpoint.
                 let rank = if self.flip { i } else { 7 - i };
                 let ch = (rank + 1).to_string();
-                let y = br.min_y() + i as f32 * s + s * 0.5 - size * 0.62;
+                let y = crate::text_paint::centered_label_top(
+                    painter,
+                    f64::from(br.min_y() + i as f32 * s + s * 0.5),
+                    &ch,
+                    size,
+                );
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,
-                    kurbo::Point::new(f64::from(self.bounds.min_x() + m * 0.25), f64::from(y)),
+                    kurbo::Point::new(f64::from(self.bounds.min_x() + m * 0.25), y),
                     &ch,
                     size,
                     cx.color(TokenKey::TextMutedColor, COORD),

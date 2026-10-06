@@ -241,6 +241,10 @@ impl Coverflow {
 }
 
 impl Widget for Coverflow {
+    fn debug_name(&self) -> &'static str {
+        // focused title clips to widget bounds by design.
+        "Coverflow@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -389,8 +393,14 @@ impl Widget for Coverflow {
             // hide is dead output the paint audit flags, so skip it.
             let strip = kurbo::Rect::new(kr.x0, kr.y1 - f64::from(18.0 * s), kr.x1, kr.y1);
             let later: Vec<kurbo::Rect> = order[pos + 1..].iter().map(|(_, r)| *r).collect();
-            if !crate::text_paint::fully_occluded(strip, &later) {
-                cx.list.push_fill_rect(strip, [0, 0, 0, 120]);
+            // Caption bar: near-opaque black. A translucent scrim
+            // reads through to the caller-chosen cover color — a
+            // mid-luminance cover like #4678DC leaves *no* ink that
+            // clears 4.5:1, so the bar must be dark enough to host
+            // the label itself.
+            let strip_shows = !crate::text_paint::fully_occluded(strip, &later);
+            if strip_shows {
+                cx.list.push_fill_rect(strip, [0, 0, 0, 224]);
             }
             let o = kurbo::Point::new(kr.x0 + f64::from(6.0 * s), kr.y1 - f64::from(6.0 * s));
             let size = (TITLE_PT * s * (if is_sel { 1.0 } else { 0.8 })).max(12.0 * s);
@@ -409,14 +419,12 @@ impl Widget for Coverflow {
             let covered = ink_b.is_some_and(|ink| {
                 crate::text_paint::fully_occluded(ink.intersect(*kr).intersect(wb), &later)
             });
-            if !covered {
-                // The label strip is translucent — the audit resolves
-                // the opaque cover beneath, so ink must read on *it*.
-                let label_ink = crate::text_paint::better_ink(
-                    item.color,
-                    cx.color(TokenKey::TextColor, TEXT),
-                    cx.color(TokenKey::TextInverseColor, [22, 22, 26, 255]),
-                );
+            // The label's audit probe lands on the caption bar only
+            // when the bar itself paints — no bar, no label.
+            if !covered && strip_shows {
+                // The label sits on the opaque caption bar — light
+                // ink reads ~20:1 there regardless of cover color.
+                let label_ink = cx.color(TokenKey::TextColor, TEXT);
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
@@ -435,14 +443,22 @@ impl Widget for Coverflow {
                 let size = TITLE_PT * s;
                 let w = painter
                     .and_then(|p| p.measure_text(&item.label, size))
-                    .unwrap_or(item.label.len() as f32 * size * 0.6);
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(&(item.label), size, 0.6)
+                    });
                 let o = kurbo::Point::new(
                     f64::from(self.bounds.min_x() + self.bounds.width() / 2.0 - w / 2.0),
                     f64::from(self.bounds.max_y() - size * 1.2 - 4.0 * s),
                 );
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
+                    kurbo::Rect::new(
+                        f64::from(self.bounds.min_x()),
+                        f64::from(self.bounds.min_y()),
+                        f64::from(self.bounds.max_x()),
+                        f64::from(self.bounds.max_y()),
+                    ),
                     o,
                     &item.label,
                     size,

@@ -25,7 +25,7 @@ use martensite_core::{
 };
 use martensite_theme::TokenKey;
 
-const WIDTH_PT: f32 = 40.0;
+const WIDTH_PT: f32 = 56.0;
 const HEIGHT_PT: f32 = 140.0;
 const TUBE_PT: f32 = 8.0;
 const BULB_PT: f32 = 16.0;

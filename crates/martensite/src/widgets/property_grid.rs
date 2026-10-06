@@ -473,7 +473,6 @@ impl Widget for PropertyRow {
         let name_w =
             (b.width() * self.name_fraction).clamp(cx.pt(40.0).min(b.width()), b.width().max(0.0));
         let font_px = cx.pt(FONT_PT);
-        let ty = f64::from(b.min_y() + (b.height() - font_px) / 2.0);
 
         // Name column (muted), clipped.
         let name_clip = kurbo::Rect::new(
@@ -482,11 +481,11 @@ impl Widget for PropertyRow {
             f64::from(b.min_x() + name_w - pad / 2.0),
             f64::from(b.max_y()),
         );
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             name_clip,
-            kurbo::Point::new(f64::from(b.min_x() + pad), ty),
+            f64::from(b.min_x() + pad),
             &self.name,
             font_px,
             muted,
@@ -515,11 +514,11 @@ impl Widget for PropertyRow {
                     f64::from(vright),
                     f64::from(b.max_y()),
                 );
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
                     clip,
-                    kurbo::Point::new(f64::from(vx), ty),
+                    f64::from(vx),
                     &self.value,
                     font_px,
                     ink,
@@ -542,11 +541,11 @@ impl Widget for PropertyRow {
                     cx0 - f64::from(cx.pt(4.0)),
                     f64::from(b.max_y()),
                 );
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
                     clip,
-                    kurbo::Point::new(f64::from(vx), ty),
+                    f64::from(vx),
                     &self.value,
                     font_px,
                     ink,

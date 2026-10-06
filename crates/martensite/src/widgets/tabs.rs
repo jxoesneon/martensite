@@ -63,7 +63,7 @@ const FOCUS_RING: [u8; 4] = [60, 110, 220, 230];
 /// Tab face hover/selected background.
 const TAB_BG: [u8; 4] = [240, 242, 246, 255];
 
-/// Width reserved for the `×` affordance on a closable tab.
+/// Width reserved for the close affordance on a closable tab.
 const CLOSE_W: f32 = 18.0;
 
 /// Natural tab width in device px at `scale`: the label's real glyph
@@ -139,7 +139,7 @@ pub struct TabItem {
     activation_pending: bool,
     /// Parked `SemanticAction::Focus` for the owner to apply.
     focus_pending: bool,
-    /// Whether the trailing `×` affordance is shown (mirrored from
+    /// Whether the trailing close affordance is shown (mirrored from
     /// the owning `Tabs::closable`).
     closable: bool,
     /// Optional badge annotation painted beside the label and folded
@@ -319,51 +319,29 @@ impl Widget for TabItem {
             f64::from(text_x),
             &label,
             font_px,
-            cx.color(TokenKey::TextColor, INK),
+            if self.enabled {
+                cx.color(TokenKey::TextColor, INK)
+            } else {
+                cx.color(TokenKey::TextMutedColor, INK)
+            },
         );
         if self.closable {
             let glyph_px = cx.pt(11.0);
-            let close_clip = kurbo::Rect::new(
-                f64::from(b.max_x() - close_w - cx.pt(4.0)),
-                f64::from(b.min_y()),
-                f64::from(b.max_x()),
-                f64::from(b.max_y()),
-            );
             let ink = cx.color(TokenKey::TextMutedColor, INK);
-            // Native close icon first — `×` stays the fallback glyph.
+            // Native close icon, ambient-resolved.
             let side = glyph_px;
-            let icon_ok = crate::icons::builtin()
-                .lookup("status.close")
-                .is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(
-                            b.max_x() - close_w - cx.pt(2.0),
-                            b.min_y() + (b.height() - side) / 2.0,
-                            side,
-                            side,
-                        ),
-                        d,
-                        cx.scale,
-                        ink,
-                    )
-                });
-            if !icon_ok {
-                crate::text_paint::paint_label_vcenter(
-                    painter,
-                    cx.list,
-                    kurbo::Rect::new(
-                        close_clip.x0,
-                        f64::from(b.min_y()),
-                        close_clip.x1,
-                        f64::from(b.min_y() + (b.height())),
-                    ),
-                    f64::from(b.max_x() - close_w - cx.pt(2.0)),
-                    "×",
-                    glyph_px,
-                    ink,
-                );
-            }
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(
+                    b.max_x() - close_w - cx.pt(2.0),
+                    b.min_y() + (b.height() - side) / 2.0,
+                    side,
+                    side,
+                ),
+                "status.close",
+                cx.scale,
+                ink,
+            );
         }
         if let (Some(spec), Some(pill)) = (&self.badge, pill) {
             crate::widgets::badge::paint_spec_pill(spec, painter, cx, pill);
@@ -693,7 +671,7 @@ pub struct Tabs {
     pub enabled: bool,
     /// Activation mode.
     pub activation: TabActivation,
-    /// Whether tabs show a trailing `×` affordance. Pressing it (or
+    /// Whether tabs show a trailing close affordance. Pressing it (or
     /// middle-clicking the tab) parks a request readable via
     /// [`take_close_requested`](Self::take_close_requested); the app
     /// decides whether to honour it with [`close_tab`](Self::close_tab).
@@ -718,7 +696,7 @@ pub struct Tabs {
     /// Shared shaped-text painter — propagated to tabs in
     /// `sync_children`. See [`crate::text_paint`].
     text_painter: Option<crate::text_paint::SharedTextPainter>,
-    /// Parked close request (tab index) from a `×` or middle-click.
+    /// Parked close request (tab index) from a close-affordance or middle-click.
     close_requested: Option<usize>,
     /// Parked reorder notification `(from, to)` from the last drag move.
     moved: Option<(usize, usize)>,
@@ -923,7 +901,7 @@ impl Tabs {
         self
     }
 
-    /// Sets whether tabs show a trailing `×` affordance. Pressing it
+    /// Sets whether tabs show a trailing close affordance. Pressing it
     /// (or middle-clicking a tab) parks a close request the app reads
     /// via [`take_close_requested`](Self::take_close_requested) and
     /// honours — or vetoes — with [`close_tab`](Self::close_tab).
@@ -1070,7 +1048,7 @@ impl Tabs {
     }
 
     /// Takes the parked close request, if any. The request identifies
-    /// the tab whose `×` affordance was pressed (or that was
+    /// the tab whose close affordance was pressed (or that was
     /// middle-clicked); the app decides whether to call
     /// [`close_tab`](Self::close_tab), show a confirmation, or ignore it.
     ///

@@ -204,17 +204,23 @@ impl Marquee {
     /// Text advance width — measured or a char estimate.
     fn text_width(
         &self,
-        painter: Option<&dyn martensite_core::paint::TextShaper>,
+        painter: Option<&(dyn martensite_core::paint::TextShaper + Send + Sync)>,
         scale: f32,
     ) -> f32 {
         let size = 11.0 * scale;
         painter
             .and_then(|p| p.measure_text(&self.text, size))
-            .unwrap_or(self.text.chars().count() as f32 * size * 0.55)
+            .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(self.text), size, 0.55))
     }
 }
 
 impl Widget for Marquee {
+    /// The scrolling run is *meant* to spill past the clip — that is
+    /// the widget's entire mechanism, so truncation findings would be
+    /// noise.
+    fn debug_name(&self) -> &'static str {
+        "Marquee@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -261,10 +267,11 @@ impl Widget for Marquee {
             return false;
         }
         self.offset += self.speed * dt.as_secs_f32();
-        // Wrap once the tail clears the left edge.
-        let width = self.text_width(None, 1.0) + self.bounds.width() + 100.0;
-        if self.offset > width {
-            self.offset = -(self.bounds.width().max(0.0));
+        // Copies tile every `tw + gap`, so wrap the offset by the
+        // period once the lead copy's tail clears the left edge.
+        let tw = self.text_width(None, 1.0);
+        if self.offset > tw + self.bounds.width() {
+            self.offset = self.offset.rem_euclid((tw + self.gap).max(1.0));
         }
         true
     }
@@ -282,22 +289,39 @@ impl Widget for Marquee {
         let size = 11.0 * cx.scale;
         let clip = f(self.bounds);
         cx.list.push_clip(clip);
-        let x = self.bounds.max_x() - self.offset;
-        crate::text_paint::paint_label_vcenter(
-            painter,
-            cx.list,
-            kurbo::Rect::new(
-                clip.x0,
-                f64::from(self.bounds.min_y()),
-                clip.x1,
-                f64::from(self.bounds.min_y() + (self.bounds.height())),
-            ),
-            f64::from(x),
-            &self.text,
-            size,
-            cx.color(TokenKey::TextColor, FG),
+        // Repeating copies spaced `gap` pt apart — as one copy exits
+        // left the next trails in from the right.
+        let tw = self.text_width(painter, cx.scale);
+        let period = (tw + self.gap * cx.scale).max(1.0);
+        let strip = kurbo::Rect::new(
+            clip.x0,
+            f64::from(self.bounds.min_y()),
+            clip.x1,
+            f64::from(self.bounds.min_y() + (self.bounds.height())),
         );
+        let mut x = f64::from(self.bounds.max_x() - self.offset);
+        while x + f64::from(tw) < clip.x0 {
+            x += f64::from(period);
+        }
+        while x < clip.x1 {
+            crate::text_paint::paint_label_vcenter(
+                painter,
+                cx.list,
+                strip,
+                x,
+                &self.text,
+                size,
+                cx.color(TokenKey::TextColor, FG),
+            );
+            x += f64::from(period);
+        }
         cx.list.pop_clip();
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
+        }
     }
 }
 
@@ -387,6 +411,6 @@ mod tests {
         laid_out(&mut m, 200.0, 22.0);
         m.speed = 1_000_000.0;
         m.tick(Duration::from_secs(1));
-        assert!(m.scroll_offset() < 0.0);
+        assert!(m.scroll_offset() < m.text_width(None, 1.0) + m.gap + 1.0);
     }
 }

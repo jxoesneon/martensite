@@ -258,6 +258,11 @@ impl Legend {
 }
 
 impl Widget for Legend {
+    /// Entries truncate at the widget edge rather than overlap the
+    /// next entry — designed clipping.
+    fn debug_name(&self) -> &'static str {
+        "Legend@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -292,7 +297,9 @@ impl Widget for Legend {
         for entry in &self.entries {
             let tw = painter
                 .and_then(|p| p.measure_text(&entry.label, size))
-                .unwrap_or(entry.label.chars().count() as f32 * size * 0.55);
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(entry.label), size, 0.55)
+                });
             let w = swatch + gap + tw;
             if x + w > bounds.max_x() && x > bounds.min_x() {
                 x = bounds.min_x();
@@ -402,7 +409,8 @@ impl Widget for Legend {
                 ));
                 cx.list.push_stroke_path(strike, s, dim);
             }
-            // Label.
+            // Label — clipped to the widget bounds: an entry wider
+            // than the legend can't spill its text past the edge.
             let label_color = if entry.dimmed { dim } else { fg };
             crate::text_paint::paint_label_vcenter(
                 painter,
@@ -410,7 +418,7 @@ impl Widget for Legend {
                 kurbo::Rect::new(
                     f64::from(rect.min_x()),
                     f64::from(rect.min_y()),
-                    f64::from(rect.max_x()),
+                    f64::from(rect.max_x().min(self.bounds.max_x())),
                     f64::from(rect.min_y() + (rect.height())),
                 ),
                 f64::from(rect.min_x() + swatch + gap),

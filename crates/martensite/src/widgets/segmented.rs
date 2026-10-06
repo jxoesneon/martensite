@@ -860,6 +860,18 @@ impl Widget for Segmented {
             let rect = if self.direction.is_row() {
                 let x0 = bounds.min_x() + bounds.width() * start;
                 let x1 = bounds.min_x() + bounds.width() * acc;
+                // Under RTL the strip mirrors: option order follows the
+                // reading direction, so the first option anchors to the
+                // trailing (right) edge. Keyboard traversal already
+                // flips via `is_rtl`; the geometry must match it.
+                let (x0, x1) = if cx.is_rtl() {
+                    (
+                        bounds.max_x() - (x1 - bounds.min_x()),
+                        bounds.max_x() - (x0 - bounds.min_x()),
+                    )
+                } else {
+                    (x0, x1)
+                };
                 Rect::new(x0, bounds.min_y(), (x1 - x0).max(0.0), bounds.height())
             } else {
                 let y0 = bounds.min_y() + bounds.height() * start;
@@ -1020,7 +1032,15 @@ impl Widget for Segmented {
                     continue;
                 }
                 let line = if self.direction.is_row() {
-                    let x = f64::from(seg_bounds.min_x());
+                    // Segment bounds mirror under RTL — the divider
+                    // paired with index i sits at its max_x edge there
+                    // (still the i-1|i boundary), so the skip set and
+                    // iteration order carry over unchanged.
+                    let x = if cx.is_rtl() {
+                        f64::from(seg_bounds.max_x()) - cx.ptf(1.0)
+                    } else {
+                        f64::from(seg_bounds.min_x())
+                    };
                     kurbo::Rect::new(
                         x,
                         f64::from(b.min_y()) + f64::from(inset),
@@ -1250,6 +1270,22 @@ mod tests {
         // AccessKit positions are zero-based.
         assert_eq!(node.position_in_set(), Some(1));
         assert_eq!(node.size_of_set(), Some(3));
+    }
+
+    #[test]
+    fn rtl_mirrors_option_order() {
+        let _g = martensite_core::intl::install_ambient_intl(
+            martensite_core::LayoutDirection::Rtl,
+            martensite_core::Locale::new("ar"),
+        );
+        let mut seg = strip(&["A", "B", "C"]);
+        laid_out(&mut seg, 300.0, 28.0);
+        let a = seg.child_bounds(0).unwrap();
+        let c = seg.child_bounds(2).unwrap();
+        // Option 0 anchors to the trailing edge — rightmost under RTL.
+        assert!(a.origin.x > c.origin.x);
+        assert!((a.origin.x + a.size.x - 300.0).abs() < 1.0);
+        assert!(c.origin.x.abs() < 1.0);
     }
 
     #[test]

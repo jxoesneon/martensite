@@ -424,10 +424,11 @@ impl Widget for MenuButton {
         }
         let text_w = painter
             .and_then(|p| p.measure_text(&self.label, font))
-            .unwrap_or(self.label.len() as f32 * font * 0.55);
+            .unwrap_or_else(|| {
+                crate::text_paint::estimate_text_width_px(&(self.label), font, 0.55)
+            });
         let lx = self.cached_bounds.min_x() + pad;
-        let ly = self.cached_bounds.min_y() + (self.cached_bounds.height() - font) / 2.0;
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
@@ -436,21 +437,23 @@ impl Widget for MenuButton {
                 f64::from((lx + text_w).min(self.cached_bounds.max_x() - chev_w)),
                 f64::from(self.cached_bounds.max_y()),
             ),
-            kurbo::Point::new(f64::from(lx), f64::from(ly)),
+            f64::from(lx),
             &self.label,
             font,
             ink,
         );
-        // `▾` affordance.
-        crate::text_paint::paint_label(
-            painter,
+        // Chevron affordance.
+        let side = font;
+        crate::widgets::morph_icon::paint_icon_named(
             cx.list,
-            kurbo::Point::new(
-                f64::from(self.cached_bounds.max_x() - pad - chev_w * 0.6),
-                f64::from(ly),
+            Rect::new(
+                self.cached_bounds.max_x() - pad - chev_w * 0.6,
+                self.cached_bounds.min_y() + (self.cached_bounds.height() - side) / 2.0,
+                side,
+                side,
             ),
-            "▾",
-            font,
+            "nav.chevron-down",
+            cx.scale,
             cx.color(TokenKey::TextMutedColor, MUTED),
         );
     }

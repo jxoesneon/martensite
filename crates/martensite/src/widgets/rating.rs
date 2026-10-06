@@ -446,9 +446,7 @@ impl Widget for Rating {
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        let glyph = "★";
-        // Glyph tracks the laid-out cell size, but never drops below
+        // Icon tracks the laid-out cell size, but never drops below
         // the 12pt readable floor — a squeezed widget clips honestly.
         let size = self
             .cell_rects
@@ -457,12 +455,10 @@ impl Widget for Rating {
             .unwrap_or_else(|| cx.pt(GLYPH_PT));
         let shown = self.preview.unwrap_or(self.value);
         // Native stroke star — fill level rides on the ink, so the
-        // same icon serves on/half/off cells. Resolved once per paint;
-        // `paint_icon_d` answers `false` on a rejected path and the
-        // cell falls back to the ★ glyph.
-        let star_d = crate::icons::builtin().lookup("status.star");
+        // same icon serves on/half/off cells; resolved through the
+        // ambient icon family.
         for (i, r) in self.cell_rects.iter().enumerate() {
-            // A cell squeezed to nothing has no room for a glyph —
+            // A cell squeezed to nothing has no room for an icon —
             // emit nothing rather than paint clipped-out microtext.
             if r.size.x < cx.pt(4.0) || r.size.y < cx.pt(4.0) {
                 continue;
@@ -479,40 +475,17 @@ impl Widget for Rating {
             } else {
                 cx.color(TokenKey::BorderColor, STAR_OFF)
             };
-            let painted = star_d.is_some_and(|d| {
-                let side = size.min(r.size.x).min(r.size.y);
-                crate::widgets::morph_icon::paint_icon_d(
-                    cx.list,
-                    Rect::new(
-                        r.origin.x + (r.size.x - side) / 2.0,
-                        r.origin.y + (r.size.y - side) / 2.0,
-                        side,
-                        side,
-                    ),
-                    d,
-                    cx.scale,
-                    ink,
-                )
-            });
-            if painted {
-                continue;
-            }
-            let w = painter
-                .and_then(|p| p.measure_text(glyph, size))
-                .unwrap_or(size);
-            let x = r.origin.x + (r.size.x - w) / 2.0;
-            crate::text_paint::paint_label_vcenter(
-                painter,
+            let side = size.min(r.size.x).min(r.size.y);
+            crate::widgets::morph_icon::paint_icon_named(
                 cx.list,
-                kurbo::Rect::new(
-                    f64::from(r.min_x()),
-                    f64::from(r.min_y()),
-                    f64::from(r.max_x()),
-                    f64::from(r.max_y()),
+                Rect::new(
+                    r.origin.x + (r.size.x - side) / 2.0,
+                    r.origin.y + (r.size.y - side) / 2.0,
+                    side,
+                    side,
                 ),
-                f64::from(x),
-                glyph,
-                size,
+                "status.star",
+                cx.scale,
                 ink,
             );
         }

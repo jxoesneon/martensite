@@ -148,6 +148,10 @@ impl Battery {
 }
 
 impl Widget for Battery {
+    fn debug_name(&self) -> &'static str {
+        // charge level is conveyed by fill extent; hue is the payload.
+        "Battery@lint:color-only-info"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)

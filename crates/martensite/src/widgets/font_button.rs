@@ -191,7 +191,8 @@ impl FontButton {
 
 impl Widget for FontButton {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let text_w = self.face_text().chars().count() as f32 * FONT_PT * 0.55 * cx.scale;
+        let text_w =
+            crate::text_paint::estimate_text_width_px(self.face_text(), FONT_PT, 0.55) * cx.scale;
         let max = constraints.max_size.x.max(0.0);
         // Narrowest width that still paints a (clipped) face label —
         // padding, the chevron slot, and a few glyph cells. Reported

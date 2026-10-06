@@ -84,7 +84,7 @@ enum RowIcon {
 /// ```
 /// use martensite::widgets::settings_row::SettingsRow;
 ///
-/// let r = SettingsRow::new("Appearance").icon("🎨").activatable(true);
+/// let r = SettingsRow::new("Appearance").icon("edit.palette").activatable(true);
 /// ```
 pub struct SettingsRow {
     /// Optional leading icon — a text glyph or a hosted stroke icon.
@@ -141,14 +141,21 @@ impl SettingsRow {
         }
     }
 
-    /// Sets the leading icon glyph.
+    /// Sets the leading icon mark.
+    ///
+    /// An icon name (`"device.wifi"`, `"status.bell"`, …) resolves
+    /// through the ambient icon family
+    /// ([`crate::icons::resolve_icon`]); any other string stays a
+    /// short text glyph (a symbol, an icon-font codepoint, …). Prefer
+    /// [`icon_named`](Self::icon_named) for a hosted, morphable
+    /// [`MorphIcon`](crate::widgets::morph_icon::MorphIcon) child.
     ///
     /// # Examples
     ///
     /// ```
     /// use martensite::widgets::settings_row::SettingsRow;
     ///
-    /// let r = SettingsRow::new("Airplane Mode").icon("✈");
+    /// let r = SettingsRow::new("Airplane Mode").icon("device.wifi");
     /// ```
     #[must_use]
     pub fn icon(mut self, glyph: impl Into<String>) -> Self {
@@ -181,8 +188,8 @@ impl SettingsRow {
         self
     }
 
-    /// [`icon_d`](Self::icon_d) resolving `name` through the native
-    /// icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// [`icon_d`](Self::icon_d) resolving `name` through the ambient
+    /// icon family ([`icons::resolve_icon`](crate::icons::resolve_icon)) —
     /// `"device.wifi"`, `"status.warning"`, … An unknown name leaves
     /// the row iconless — same fallback contract as a rejected `d`.
     ///
@@ -466,27 +473,43 @@ impl Widget for SettingsRow {
         let pad = cx.pt(PAD_PT);
         let mut x = cx.bounds.min_x() + pad;
         // Icon slot — a hosted stroke icon paints itself at
-        // `icon_rect` as an internal child; a glyph is centred here.
+        // `icon_rect` as an internal child; a resolvable icon name
+        // paints inline in the same slot; any other string is centred
+        // here as a text glyph.
         match &self.icon {
             Some(RowIcon::Glyph(glyph)) => {
                 let size = cx.pt(ICON_FONT_PT);
-                let w = painter
-                    .and_then(|p| p.measure_text(glyph, size))
-                    .unwrap_or(size);
-                crate::text_paint::paint_label_vcenter(
-                    painter,
+                let painted = crate::widgets::morph_icon::paint_icon_named(
                     cx.list,
-                    kurbo::Rect::new(
-                        f64::from(x),
-                        f64::from(cx.bounds.min_y()),
-                        f64::from(x + cx.pt(ICON_PT)),
-                        f64::from(cx.bounds.max_y()),
+                    martensite_core::Rect::new(
+                        x + (cx.pt(ICON_PT) - size) / 2.0,
+                        cx.bounds.min_y() + (cx.bounds.size.y - size) / 2.0,
+                        size,
+                        size,
                     ),
-                    f64::from(x + (cx.pt(ICON_PT) - w) / 2.0),
                     glyph,
-                    size,
+                    cx.scale,
                     cx.color(TokenKey::TextColor, TITLE_INK),
                 );
+                if !painted {
+                    let w = painter
+                        .and_then(|p| p.measure_text(glyph, size))
+                        .unwrap_or(size);
+                    crate::text_paint::paint_label_vcenter(
+                        painter,
+                        cx.list,
+                        kurbo::Rect::new(
+                            f64::from(x),
+                            f64::from(cx.bounds.min_y()),
+                            f64::from(x + cx.pt(ICON_PT)),
+                            f64::from(cx.bounds.max_y()),
+                        ),
+                        f64::from(x + (cx.pt(ICON_PT) - w) / 2.0),
+                        glyph,
+                        size,
+                        cx.color(TokenKey::TextColor, TITLE_INK),
+                    );
+                }
                 x += cx.pt(ICON_PT) + cx.pt(4.0);
             }
             Some(RowIcon::Stroke(_)) => {
@@ -539,6 +562,12 @@ impl Widget for SettingsRow {
                 title_size,
                 cx.color(TokenKey::TextColor, TITLE_INK),
             );
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
         }
     }
 
@@ -874,7 +903,7 @@ mod tests {
 
     #[test]
     fn row_builder() {
-        let r = SettingsRow::new("Wi-Fi").icon("📶").subtitle("On");
+        let r = SettingsRow::new("Wi-Fi").icon("device.wifi").subtitle("On");
         assert_eq!(r.title(), "Wi-Fi");
         assert_eq!(Widget::child_count(&r), 0);
     }

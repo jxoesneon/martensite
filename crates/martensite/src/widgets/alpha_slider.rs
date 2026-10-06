@@ -191,6 +191,10 @@ impl AlphaSlider {
 }
 
 impl Widget for AlphaSlider {
+    fn debug_name(&self) -> &'static str {
+        // the hue strip IS the payload — no label needed.
+        "AlphaSlider@lint:color-only-info"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)

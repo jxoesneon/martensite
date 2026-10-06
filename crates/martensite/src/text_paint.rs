@@ -696,6 +696,16 @@ pub(crate) fn estimate_label_width(label: &str) -> f32 {
         .sum()
 }
 
+/// Painter-fallback text width at `size_px` device px — the shared
+/// `chars × em` estimate dozens of widgets inlined by hand.
+/// Centralized so the heuristic improves in one place (and so
+/// `measure`/`paint`/`min_render` that must agree share one number).
+/// `em` is the average-advance factor: `0.6` suits generic UI text,
+/// narrower factors (~`0.5`–`0.55`) digits and symbols.
+pub(crate) fn estimate_text_width_px(text: impl AsRef<str>, size_px: f32, em: f32) -> f32 {
+    text.as_ref().chars().count() as f32 * size_px * em
+}
+
 /// Emits `text` through `painter` when present, else falls back to
 /// [`PaintList::push_text`]'s placeholder boxes. `pub(crate)` — the
 /// facade widgets share this so the opt-in is one line in each `paint`.
@@ -962,7 +972,7 @@ fn paint_label_vertical_upright(
     for (i, g) in clusters.iter().enumerate() {
         let w = painter
             .and_then(|p| p.measure_text(g, size_px))
-            .unwrap_or(g.chars().count() as f32 * size_px * 0.55)
+            .unwrap_or_else(|| estimate_text_width_px(g, size_px, 0.55))
             .max(size_px * 0.5);
         let x = strip.x0 + (strip.width() - f64::from(w)).max(0.0) / 2.0;
         paint_label(

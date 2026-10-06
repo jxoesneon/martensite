@@ -246,6 +246,11 @@ fn line_path(a: Vec2, b: Vec2) -> kurbo::BezPath {
 }
 
 impl Widget for Quadrant {
+    /// Dot labels annotate edge data — they clip at the plot edge
+    /// rather than spill.
+    fn debug_name(&self) -> &'static str {
+        "Quadrant@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -389,11 +394,20 @@ impl Widget for Quadrant {
                 mid.y + 12.0 * s,
             ),
         ];
+        // Labels clip to the widget bounds — dots near an edge must
+        // not spill text past it.
+        let text_clip = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        );
         for (label, o) in self.region_labels.iter().zip(region_origin.iter()) {
             if !label.is_empty() {
-                crate::text_paint::paint_label(
+                crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,
+                    text_clip,
                     kurbo::Point::new(f64::from(o.x), f64::from(o.y)),
                     label,
                     fs,
@@ -402,20 +416,22 @@ impl Widget for Quadrant {
             }
         }
         // Axis names.
-        crate::text_paint::paint_label(
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
+            text_clip,
             kurbo::Point::new(f64::from(mid.x + 4.0 * s), f64::from(b.max_y() - 6.0 * s)),
             &self.axes.0,
             fs,
             MUTED_FG,
         );
-        crate::text_paint::paint_label(
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
+            text_clip,
             kurbo::Point::new(
                 f64::from(b.min_x() + 2.0 * s),
-                f64::from(plot.min_y() - 4.0 * s),
+                f64::from(plot.min_y() - 4.0 * s).max(f64::from(b.min_y())),
             ),
             &self.axes.1,
             fs,
@@ -439,9 +455,10 @@ impl Widget for Quadrant {
                 &martensite_core::shape::Shape::ELLIPSE,
                 color,
             );
-            crate::text_paint::paint_label(
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                text_clip,
                 kurbo::Point::new(f64::from(c.x + r * 0.7), f64::from(c.y + 3.0 * s)),
                 &it.label,
                 fs,

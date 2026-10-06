@@ -432,6 +432,17 @@ impl Widget for Dial {
         cx.list
             .push_stroke_path(needle, cx.pt(2.0), cx.color(TokenKey::TextColor, NEEDLE));
     }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(
+                cx,
+                cx.bounds,
+                (cx.bounds.max_x() - cx.bounds.min_x()).min(cx.bounds.max_y() - cx.bounds.min_y())
+                    / 2.0,
+            );
+        }
+    }
 }
 
 impl std::fmt::Debug for Dial {

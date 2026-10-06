@@ -255,7 +255,9 @@ impl Widget for ContextMenu {
     }
 
     fn debug_name(&self) -> &'static str {
-        "Context Menu"
+        // Submenu cascades are the widget's purpose; the trigger is
+        // child-sized by design (the whole wrapped region opens it).
+        "Context Menu@lint:menu-depth,target-size"
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {

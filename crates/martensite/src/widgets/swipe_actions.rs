@@ -27,8 +27,6 @@ use martensite_core::{
 };
 use martensite_theme::TokenKey;
 
-use crate::text_paint::paint_label_clipped;
-
 /// Fraction of the widget width that triggers the outermost action
 /// on release (iOS full-swipe).
 const FULL_SWIPE: f32 = 0.75;
@@ -534,13 +532,23 @@ impl Widget for SwipeActions {
                 let w = painter
                     .and_then(|p| p.measure_text(&action.label, size))
                     .unwrap_or(size * action.label.chars().count() as f32 * 0.5);
-                let origin = kurbo::Point::new(
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    f(r),
                     f64::from(r.min_x() + (r.width() - w.min(r.width())) / 2.0),
-                    f64::from(r.min_y() + (r.height() - size) / 2.0),
+                    &action.label,
+                    size,
+                    fg,
                 );
-                paint_label_clipped(painter, cx.list, f(r), origin, &action.label, size, fg);
                 let _ = surface;
             }
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
         }
     }
 

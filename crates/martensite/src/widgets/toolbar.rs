@@ -80,8 +80,17 @@ const FOCUS_RING: [u8; 4] = [60, 110, 220, 200];
 /// of its own.
 enum ToolbarEntry {
     /// A [`Button`] added via [`Toolbar::item`] — its activation is
-    /// polled by [`Toolbar::take_activated`].
-    Button(Button),
+    /// polled by [`Toolbar::take_activated`]. `item_enabled` is the
+    /// caller's own flag; `button.enabled` carries the *effective*
+    /// state (item flag AND-ed with the strip's `enabled`), the way a
+    /// disabled `QToolBar` inerts its actions without losing their
+    /// individual enabled settings.
+    Button {
+        /// The item widget.
+        button: Button,
+        /// The item's own enabled flag (pre-strip).
+        item_enabled: bool,
+    },
     /// An arbitrary widget added via [`Toolbar::item_widget`].
     Widget(Box<dyn Widget>),
     /// A [`Separator::vertical`] added via [`Toolbar::separator`].
@@ -95,7 +104,7 @@ impl ToolbarEntry {
     /// The widget this entry carries, if any.
     fn as_widget(&self) -> Option<&dyn Widget> {
         match self {
-            Self::Button(b) => Some(b),
+            Self::Button { button, .. } => Some(button),
             Self::Widget(w) => Some(w.as_ref()),
             Self::Separator(s) => Some(s),
             Self::Spacer => None,
@@ -105,7 +114,7 @@ impl ToolbarEntry {
     /// Mutable form of [`as_widget`](Self::as_widget).
     fn as_widget_mut(&mut self) -> Option<&mut dyn Widget> {
         match self {
-            Self::Button(b) => Some(b),
+            Self::Button { button, .. } => Some(button),
             Self::Widget(w) => Some(w.as_mut()),
             Self::Separator(s) => Some(s),
             Self::Spacer => None,
@@ -228,11 +237,18 @@ impl Toolbar {
     /// ```
     #[must_use]
     pub fn item(mut self, button: Button) -> Self {
-        let button = match &self.text_painter {
+        let mut button = match &self.text_painter {
             Some(p) => button.with_text_painter(p.clone()),
             None => button,
         };
-        self.entries.push(ToolbarEntry::Button(button));
+        let item_enabled = button.enabled;
+        // An item appended while the strip is disabled is inert; its
+        // own flag is preserved so a later `enabled(true)` restores it.
+        button.enabled = item_enabled && self.enabled;
+        self.entries.push(ToolbarEntry::Button {
+            button,
+            item_enabled,
+        });
         self
     }
 
@@ -326,6 +342,20 @@ impl Toolbar {
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        // A disabled strip dims and inerts its `Button` items without
+        // losing their own enabled flags — re-enabling restores them.
+        // Generic `item_widget` children keep their own state (the
+        // strip's event gate still shields them).
+        for entry in &mut self.entries {
+            if let ToolbarEntry::Button {
+                button,
+                item_enabled,
+            } = entry
+            {
+                button.enabled = enabled && *item_enabled;
+            }
+        }
+        self.overflow.enabled = enabled;
         self
     }
 
@@ -421,15 +451,21 @@ impl Toolbar {
     #[must_use]
     pub fn with_text_painter(mut self, painter: crate::text_paint::SharedTextPainter) -> Self {
         self.text_painter = Some(painter.clone());
+        let overflow_enabled = self.overflow.enabled;
         self.overflow = Button::new("»")
             .tooltip("More items")
             .with_text_painter(painter.clone());
+        self.overflow.enabled = overflow_enabled;
         self.entries = std::mem::take(&mut self.entries)
             .into_iter()
             .map(|e| match e {
-                ToolbarEntry::Button(b) => {
-                    ToolbarEntry::Button(b.with_text_painter(painter.clone()))
-                }
+                ToolbarEntry::Button {
+                    button,
+                    item_enabled,
+                } => ToolbarEntry::Button {
+                    button: button.with_text_painter(painter.clone()),
+                    item_enabled,
+                },
                 other => other,
             })
             .collect();
@@ -473,7 +509,7 @@ impl Toolbar {
     /// ```
     pub fn poll_signals(&mut self) {
         for (i, entry) in self.entries.iter_mut().enumerate() {
-            if let ToolbarEntry::Button(button) = entry {
+            if let ToolbarEntry::Button { button, .. } = entry {
                 if button.take_activated() {
                     self.activated = Some(i);
                 }

@@ -370,7 +370,11 @@ impl Widget for ResizeHandle {
         };
         let s = self.scale;
         let hot = self.drag_start.is_some() || self.hovered;
-        let line = cx.color(TokenKey::DividerColor, if hot { LINE_HOT } else { LINE });
+        let line = if !self.enabled {
+            cx.color(TokenKey::TextMutedColor, LINE)
+        } else {
+            cx.color(TokenKey::DividerColor, if hot { LINE_HOT } else { LINE })
+        };
         let b = cx.bounds;
         // Centered 2px divider line.
         let lw = 2.0 * s;

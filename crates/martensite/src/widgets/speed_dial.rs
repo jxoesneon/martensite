@@ -351,7 +351,7 @@ impl Widget for SpeedDial {
                 // Label chip left of the mini button.
                 let chip_h = CHIP_PT * s;
                 let sz = 10.5 * s;
-                let tw = a.chars().count() as f32 * sz * 0.58;
+                let tw = crate::text_paint::estimate_text_width_px(a, sz, 0.58);
                 let chip = Rect::new(
                     mini.min_x() - tw - 16.0 * s,
                     my + (mini_d - chip_h) / 2.0,
@@ -409,48 +409,25 @@ impl Widget for SpeedDial {
             &martensite_core::shape::Shape::ELLIPSE,
             cx.color(TokenKey::AccentColor, FAB_BG),
         );
-        // FAB mark — native plus/close icons, +/× glyphs as fallback.
+        // FAB mark — native plus/close icons, ambient-resolved.
         let ink = cx.color(TokenKey::TextInverseColor, FAB_FG);
         let gsz = 24.0 * s;
-        let icon_ok = crate::icons::builtin()
-            .lookup(if self.open {
+        crate::widgets::morph_icon::paint_icon_named(
+            cx.list,
+            Rect::new(
+                fab.min_x() + fab_d / 2.0 - gsz / 2.0,
+                fab.min_y() + fab_d / 2.0 - gsz / 2.0,
+                gsz,
+                gsz,
+            ),
+            if self.open {
                 "status.close"
             } else {
                 "status.plus"
-            })
-            .is_some_and(|d| {
-                crate::widgets::morph_icon::paint_icon_d(
-                    cx.list,
-                    Rect::new(
-                        fab.min_x() + fab_d / 2.0 - gsz / 2.0,
-                        fab.min_y() + fab_d / 2.0 - gsz / 2.0,
-                        gsz,
-                        gsz,
-                    ),
-                    d,
-                    s,
-                    ink,
-                )
-            });
-        if !icon_ok {
-            let glyph = if self.open { "×" } else { "+" };
-            crate::text_paint::paint_label(
-                painter,
-                cx.list,
-                kurbo::Point::new(
-                    f64::from(fab.min_x() + fab_d / 2.0 - gsz * 0.3),
-                    crate::text_paint::centered_label_top(
-                        painter,
-                        fab.min_y() + fab_d / 2.0,
-                        glyph,
-                        gsz,
-                    ),
-                ),
-                glyph,
-                gsz,
-                ink,
-            );
-        }
+            },
+            s,
+            ink,
+        );
     }
 }
 

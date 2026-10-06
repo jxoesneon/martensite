@@ -58,7 +58,7 @@ pub struct ChatInput {
     pub label: String,
     /// Placeholder shown for an empty draft.
     pub placeholder: String,
-    /// Show an attach (📎) button.
+    /// Show an attach (paperclip) button.
     pub attachable: bool,
     /// Show an emoji button.
     pub emoji_button: bool,
@@ -618,19 +618,24 @@ impl Widget for ChatInput {
         // The draft field paints its own chrome (face, placeholder,
         // text, caret, selection) through the internal-child walk.
         let size = FONT_PT * s;
-        // Aux buttons: 📎 / ☺ glyphs as labels.
-        for (rect, glyph) in [(self.attach_rect, "📎"), (self.emoji_rect, "☺")] {
+        // Aux buttons: paperclip / smile icons, ambient-resolved.
+        // (Decorative paint — the widget carries its own a11y label.)
+        for (rect, icon) in [
+            (self.attach_rect, "file.paperclip"),
+            (self.emoji_rect, "misc.smile"),
+        ] {
             if rect.width() > 0.0 {
-                let g = kurbo::Point::new(
-                    f64::from(rect.min_x() + rect.width() / 2.0 - size * 0.4),
-                    f64::from(rect.min_y() + rect.height() / 2.0),
-                );
-                crate::text_paint::paint_label(
-                    painter,
+                let side = size;
+                crate::widgets::morph_icon::paint_icon_named(
                     cx.list,
-                    g,
-                    glyph,
-                    size,
+                    Rect::new(
+                        rect.min_x() + (rect.width() - side) / 2.0,
+                        rect.min_y() + (rect.height() - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    icon,
+                    s,
                     cx.color(TokenKey::TextMutedColor, MUTED),
                 );
             }
@@ -642,14 +647,14 @@ impl Widget for ChatInput {
             cx.color(TokenKey::SecondaryColor, SEND_DIM)
         };
         cx.list.push_fill_shape(krect(self.send_rect), &shape, send);
-        let st = kurbo::Point::new(
-            f64::from(self.send_rect.min_x() + self.send_rect.width() / 2.0 - size * 0.9),
-            f64::from(self.send_rect.min_y() + self.send_rect.height() / 2.0),
-        );
-        crate::text_paint::paint_label(
+        let send_w = painter
+            .and_then(|p| p.measure_text("Send", size))
+            .unwrap_or(4.0 * size * 0.55);
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            st,
+            krect(self.send_rect),
+            f64::from(self.send_rect.min_x() + (self.send_rect.width() - send_w) / 2.0),
             "Send",
             size,
             // Inverse ink — the send face is a chromatic fill

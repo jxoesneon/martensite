@@ -266,6 +266,11 @@ impl Waterfall {
 }
 
 impl Widget for Waterfall {
+    /// Negative deltas are red by financial convention — domain
+    /// encoding, not the alarm channel.
+    fn debug_name(&self) -> &'static str {
+        "Waterfall@lint:reserved-hue"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -392,7 +397,7 @@ impl Widget for Waterfall {
             let name = e.name();
             let nw = painter
                 .and_then(|p| p.measure_text(name, size))
-                .unwrap_or(name.chars().count() as f32 * size * 0.55);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(name, size, 0.55));
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
@@ -417,7 +422,7 @@ impl Widget for Waterfall {
             };
             let vw = painter
                 .and_then(|p| p.measure_text(&val, size))
-                .unwrap_or(val.chars().count() as f32 * size * 0.6);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(val), size, 0.6));
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,

@@ -215,7 +215,12 @@ fn btn(
 ) {
     let accent = cx.color(TokenKey::AccentColor, [90, 140, 220, 255]);
     let (face, fg) = if primary {
-        (accent, [255, 255, 255, 255])
+        // Primary CTAs ride `AccentColor` — pair them with the
+        // inverse ink so the label stays ≥4.5:1 on the accent.
+        (
+            accent,
+            cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]),
+        )
     } else {
         (BTN_FACE, TEXT)
     };
@@ -229,15 +234,19 @@ fn btn(
         &martensite_core::shape::Shape::squircle(4.0 * s),
         face,
     );
-    let w = label.len() as f32 * fs * 0.55;
-    let o = Vec2::new(
-        rect.min_x() + (rect.width() - w) / 2.0,
-        rect.min_y() + rect.height() / 2.0 + fs * 0.35,
-    );
-    crate::text_paint::paint_label(
+    let w = painter
+        .and_then(|p| p.measure_text(label, fs))
+        .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(label, fs, 0.55));
+    crate::text_paint::paint_label_vcenter(
         painter,
         cx.list,
-        kurbo::Point::new(f64::from(o.x), f64::from(o.y)),
+        kurbo::Rect::new(
+            f64::from(rect.min_x()),
+            f64::from(rect.min_y()),
+            f64::from(rect.max_x()),
+            f64::from(rect.max_y()),
+        ),
+        f64::from(rect.min_x() + (rect.width() - w) / 2.0),
         label,
         fs,
         fg,

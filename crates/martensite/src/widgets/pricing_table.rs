@@ -288,8 +288,19 @@ impl Widget for PricingTable {
             .map(|p| p.features.len())
             .max()
             .unwrap_or(0) as f32;
-        let h =
-            PAD_PT * 2.0 + TITLE_PT + PRICE_PT + max_feats * (FEATURE_PT + 6.0) + CTA_PT_H + 20.0;
+        // Match the paint walk: top pad×1.6, name row, price row,
+        // one row per feature, a gap, then the bottom-pinned CTA.
+        // Under-measuring let the last feature row's ink overlap the
+        // CTA strip (text-on-accent contrast violation).
+        let h = PAD_PT * 1.6
+            + TITLE_PT
+            + 8.0
+            + PRICE_PT
+            + 12.0
+            + max_feats * (FEATURE_PT + 6.0)
+            + 6.0
+            + CTA_PT_H
+            + PAD_PT;
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
             (h * s).min(constraints.max_size.y.max(0.0)),
@@ -394,7 +405,7 @@ impl Widget for PricingTable {
                 PRICE_PT * s,
                 cx.color(TokenKey::TextColor, TEXT_FG),
             );
-            let pw = plan.price.len() as f32 * PRICE_PT * 0.6 * s;
+            let pw = crate::text_paint::estimate_text_width_px(&(plan.price), PRICE_PT, 0.6) * s;
             crate::text_paint::paint_label(
                 painter,
                 cx.list,
@@ -407,32 +418,18 @@ impl Widget for PricingTable {
                 MUTED_FG,
             );
             y += PRICE_PT * s + 12.0 * s;
-            // Features — native check/close marks, ✓/✕ fallback.
+            // Features — native check/close marks, ambient-resolved.
             for (fi, feat) in plan.features.iter().enumerate() {
                 let ok = plan.included.get(fi).copied().unwrap_or(true);
                 let mark_ink = if ok { OK } else { MUTED_FG };
                 let side = FEATURE_PT * s;
-                let icon_ok = crate::icons::builtin()
-                    .lookup(if ok { "status.check" } else { "status.close" })
-                    .is_some_and(|d| {
-                        crate::widgets::morph_icon::paint_icon_d(
-                            cx.list,
-                            Rect::new(x + pad, y + FEATURE_PT * s, side, side),
-                            d,
-                            s,
-                            mark_ink,
-                        )
-                    });
-                if !icon_ok {
-                    crate::text_paint::paint_label(
-                        painter,
-                        cx.list,
-                        kurbo::Point::new(f64::from(x + pad), f64::from(y + FEATURE_PT * s)),
-                        if ok { "✓" } else { "✕" },
-                        FEATURE_PT * s,
-                        mark_ink,
-                    );
-                }
+                crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    Rect::new(x + pad, y + FEATURE_PT * s, side, side),
+                    if ok { "status.check" } else { "status.close" },
+                    s,
+                    mark_ink,
+                );
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,
@@ -453,7 +450,11 @@ impl Widget for PricingTable {
             // CTA.
             let cta = self.cta_rects[i];
             let (face, fg) = if plan.recommended {
-                (accent, [255, 255, 255, 255])
+                // `AccentColor` CTA → inverse ink (white was ~2.3:1).
+                (
+                    accent,
+                    cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]),
+                )
             } else {
                 ([60, 64, 76, 255], TEXT_FG)
             };
@@ -468,7 +469,7 @@ impl Widget for PricingTable {
                 face,
             );
             let cfs = FEATURE_PT * s;
-            let w = plan.cta.len() as f32 * cfs * 0.55;
+            let w = crate::text_paint::estimate_text_width_px(&(plan.cta), cfs, 0.55);
             crate::text_paint::paint_label(
                 painter,
                 cx.list,

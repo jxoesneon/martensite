@@ -82,9 +82,12 @@ pub struct Pagination {
     selected: Option<usize>,
     /// The resolved cell list from the last `layout`.
     cells: Vec<Cell>,
-    /// Hit rect per interactive cell (`cells` and `rects` align;
-    /// ellipsis cells get a zero rect).
+    /// Hit rect per interactive cell (`cells` and `rects` align) —
+    /// zero-sized for ellipsis cells so they stay non-interactive.
     rects: Vec<Rect>,
+    /// Paint rects — every cell's real slot (ellipsis included), so
+    /// "…" paints in place rather than at `Rect::default()`'s origin.
+    paint_rects: Vec<Rect>,
     /// Cached bounds from the last layout pass.
     cached_bounds: Rect,
     /// Shared shaped-text painter. See [`crate::text_paint`].
@@ -116,6 +119,7 @@ impl Pagination {
             selected: None,
             cells: Vec::new(),
             rects: Vec::new(),
+            paint_rects: Vec::new(),
             cached_bounds: Rect::default(),
             text_painter: None,
             a11y_label: None,
@@ -313,6 +317,7 @@ impl Widget for Pagination {
         self.cached_bounds = bounds;
         self.cells = self.build_cells();
         self.rects.clear();
+        self.paint_rects.clear();
         let cell = cx.pt(CELL_PT);
         let gap = cx.pt(GAP_PT);
         let total_w = self.cells.len() as f32 * cell + (self.cells.len() - 1) as f32 * gap;
@@ -327,12 +332,11 @@ impl Widget for Pagination {
         };
         for c in &self.cells {
             // Ellipses get a display slot but no hit target.
+            let slot = Rect::new(x, y, cell, cell);
+            self.paint_rects.push(slot);
             let interactive = !matches!(c, Cell::Ellipsis);
-            self.rects.push(if interactive {
-                Rect::new(x, y, cell, cell)
-            } else {
-                Rect::default()
-            });
+            self.rects
+                .push(if interactive { slot } else { Rect::default() });
             x += if rtl { -(cell + gap) } else { cell + gap };
         }
     }
@@ -424,7 +428,7 @@ impl Widget for Pagination {
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let font = cx.pt(FONT_PT);
         for (i, cell) in self.cells.iter().enumerate() {
-            let r = self.rects.get(i).copied().unwrap_or_default();
+            let r = self.paint_rects.get(i).copied().unwrap_or_default();
             let page = self.cell_page(*cell);
             let is_current = matches!(cell, Cell::Page(n) if *n == self.current);
             let enabled = page.is_some() && !is_current;
@@ -478,93 +482,48 @@ impl Widget for Pagination {
                 Cell::Page(_) => None,
             };
             if let Some(name) = icon_name {
+                // Prev/next/ellipsis cells paint a native icon,
+                // ambient-resolved.
                 let side = (r.size.y * 0.5).min(r.size.x * 0.5);
-                let ok = crate::icons::builtin().lookup(name).is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(
-                            r.origin.x + (r.size.x - side) / 2.0,
-                            r.origin.y + (r.size.y - side) / 2.0,
-                            side,
-                            side,
-                        ),
-                        d,
-                        cx.scale,
-                        ink,
-                    )
-                });
-                if ok {
-                    continue;
-                }
+                crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    Rect::new(
+                        r.origin.x + (r.size.x - side) / 2.0,
+                        r.origin.y + (r.size.y - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    name,
+                    cx.scale,
+                    ink,
+                );
+                continue;
             }
-            let label = match cell {
-                Cell::Prev => {
-                    if rtl {
-                        "›"
+            if let Cell::Page(n) = cell {
+                let s = n.to_string();
+                let w = painter
+                    .and_then(|p| p.measure_text(&s, font))
+                    .unwrap_or(font * s.len() as f32 * 0.55);
+                let x = r.origin.x + (r.size.x - w.min(r.size.x)) / 2.0;
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    kurbo::Rect::new(
+                        f64::from(r.min_x()),
+                        f64::from(r.min_y()),
+                        f64::from(r.max_x()),
+                        f64::from(r.max_y()),
+                    ),
+                    f64::from(x),
+                    &s,
+                    font,
+                    if is_current {
+                        cx.color(TokenKey::TextInverseColor, SELECTED_INK)
                     } else {
-                        "‹"
-                    }
-                }
-                Cell::Next => {
-                    if rtl {
-                        "‹"
-                    } else {
-                        "›"
-                    }
-                }
-                Cell::Ellipsis => "…",
-                Cell::Page(n) => {
-                    let s = n.to_string();
-                    let w = painter
-                        .and_then(|p| p.measure_text(&s, font))
-                        .unwrap_or(font * s.len() as f32 * 0.55);
-                    let x = r.origin.x + (r.size.x - w.min(r.size.x)) / 2.0;
-                    let y = r.origin.y + (r.size.y - font) / 2.0;
-                    crate::text_paint::paint_label_clipped(
-                        painter,
-                        cx.list,
-                        kurbo::Rect::new(
-                            f64::from(r.min_x()),
-                            f64::from(r.min_y()),
-                            f64::from(r.max_x()),
-                            f64::from(r.max_y()),
-                        ),
-                        kurbo::Point::new(f64::from(x), f64::from(y)),
-                        &s,
-                        font,
-                        if is_current {
-                            cx.color(TokenKey::TextInverseColor, SELECTED_INK)
-                        } else {
-                            cx.color(TokenKey::TextColor, INK)
-                        },
-                    );
-                    continue;
-                }
-            };
-            let w = painter
-                .and_then(|p| p.measure_text(label, font))
-                .unwrap_or(font * 0.6);
-            // Ellipses center in their slot; arrows in their cells.
-            let slot_x = if matches!(cell, Cell::Ellipsis) {
-                r.origin.x + r.size.x / 2.0 - w / 2.0
-            } else {
-                r.origin.x + (r.size.x - w) / 2.0
-            };
-            let y = r.origin.y + (r.size.y - font) / 2.0;
-            crate::text_paint::paint_label_clipped(
-                painter,
-                cx.list,
-                kurbo::Rect::new(
-                    f64::from(r.min_x()),
-                    f64::from(r.min_y()),
-                    f64::from(r.max_x()),
-                    f64::from(r.max_y()),
-                ),
-                kurbo::Point::new(f64::from(slot_x), f64::from(y)),
-                label,
-                font,
-                ink,
-            );
+                        cx.color(TokenKey::TextColor, INK)
+                    },
+                );
+            }
         }
     }
 }

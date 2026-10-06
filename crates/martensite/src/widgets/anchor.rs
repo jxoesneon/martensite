@@ -294,8 +294,8 @@ impl Widget for Anchor {
         Some(self)
     }
 
-    fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
-        Vec2::new(180.0, self.items.len() as f32 * ROW_H + 8.0)
+    fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
+        Vec2::new(cx.pt(180.0), cx.pt(self.items.len() as f32 * ROW_H + 8.0))
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {

@@ -327,7 +327,20 @@ impl Widget for DigitalClock {
             &martensite_core::shape::Shape::squircle(cx.pt(4.0)),
             cx.color(TokenKey::SurfaceColor, FACE),
         );
-        // Monospace-style block digits drawn as filled slots.
+        // Seven-segment digits — the face must actually encode the
+        // value, so each digit paints its own segment pattern.
+        const SEGS: [u8; 10] = [
+            0b0111111, // 0
+            0b0000110, // 1
+            0b1011011, // 2
+            0b1001111, // 3
+            0b1100110, // 4
+            0b1101101, // 5
+            0b1111101, // 6
+            0b0000111, // 7
+            0b1111111, // 8
+            0b1101111, // 9
+        ];
         let text = self.text();
         let pad = PAD_PT * self.scale;
         let digit_w = DIGIT_PT * self.scale;
@@ -336,10 +349,11 @@ impl Widget for DigitalClock {
         let mut x = self.bounds.min_x() + pad;
         let top = self.bounds.min_y() + pad;
         let colon_lit = self.colon_lit();
+        let ink = cx.color(TokenKey::SuccessColor, DIGIT);
         for ch in text.chars() {
             if ch == ':' {
                 // Colon = two dots, dimmed when blink phase is off.
-                let c = if colon_lit { DIGIT } else { DIM };
+                let c = if colon_lit { ink } else { DIM };
                 let dot = colon_w * 0.4;
                 let cy = top + h / 2.0;
                 for dy in [-h * 0.15, h * 0.15] {
@@ -355,12 +369,56 @@ impl Widget for DigitalClock {
                     );
                 }
                 x += colon_w;
+            } else if let Some(d) = ch.to_digit(10) {
+                // Segment bit order: a b c d e f g (top, upper-right,
+                // lower-right, bottom, lower-left, upper-left, middle).
+                let segs = SEGS[d as usize];
+                let t = (digit_w * 0.22).max(1.0);
+                let half = h / 2.0;
+                let bars = [
+                    // a — top horizontal
+                    (x + t, top, x + digit_w - t, top + t),
+                    // b — upper-right vertical
+                    (x + digit_w - t, top + t / 2.0, x + digit_w, top + half),
+                    // c — lower-right vertical
+                    (
+                        x + digit_w - t,
+                        top + half + t / 2.0,
+                        x + digit_w,
+                        top + h - t / 2.0,
+                    ),
+                    // d — bottom horizontal
+                    (x + t, top + h - t, x + digit_w - t, top + h),
+                    // e — lower-left vertical
+                    (x, top + half + t / 2.0, x + t, top + h - t / 2.0),
+                    // f — upper-left vertical
+                    (x, top + t / 2.0, x + t, top + half),
+                    // g — middle horizontal
+                    (
+                        x + t,
+                        top + half - t / 2.0,
+                        x + digit_w - t,
+                        top + half + t / 2.0,
+                    ),
+                ];
+                for (i, &(x0, y0, x1, y1)) in bars.iter().enumerate() {
+                    if segs & (1 << i) == 0 {
+                        continue;
+                    }
+                    cx.list.push_fill_shape(
+                        kurbo::Rect::new(
+                            f64::from(x0),
+                            f64::from(y0),
+                            f64::from(x1),
+                            f64::from(y1),
+                        ),
+                        &martensite_core::shape::Shape::squircle(t / 2.0),
+                        ink,
+                    );
+                }
+                x += digit_w + cx.pt(1.0);
             } else {
-                let w = if ch.is_ascii_digit() {
-                    digit_w
-                } else {
-                    digit_w * 0.6
-                };
+                let w = digit_w * 0.6;
                 cx.list.push_fill_shape(
                     kurbo::Rect::new(
                         f64::from(x),
@@ -369,7 +427,7 @@ impl Widget for DigitalClock {
                         f64::from(top + h),
                     ),
                     &martensite_core::shape::Shape::squircle(cx.pt(1.5)),
-                    cx.color(TokenKey::SuccessColor, DIGIT),
+                    ink,
                 );
                 x += w + cx.pt(1.0);
             }

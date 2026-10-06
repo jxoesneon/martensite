@@ -260,6 +260,11 @@ impl CallControls {
 }
 
 impl Widget for CallControls {
+    /// The hang-up control paints `ErrorColor` — the alarm channel is
+    /// the semantics here, so the lineage carries `@alarm`.
+    fn debug_name(&self) -> &'static str {
+        "CallControls@alarm"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -350,7 +355,13 @@ impl Widget for CallControls {
                 f64::from(r.max_y()),
             );
             let (face, ink) = if *c == CallControl::Hangup {
-                (cx.color(TokenKey::ErrorColor, HANGUP), TEXT)
+                // `ErrorColor` is a light signal fill — the inverse
+                // (dark) ink reads ~5.8:1 on it where the foreground
+                // ink sat at ~2.6:1.
+                (
+                    cx.color(TokenKey::ErrorColor, HANGUP),
+                    cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]),
+                )
             } else if self.is_on(*c) {
                 // Active chips ride the raised rung — `SecondaryColor`
                 // is a text-grade token, not a control fill.
@@ -366,7 +377,7 @@ impl Widget for CallControls {
             let fs = FONT_PT * s;
             let w = painter
                 .and_then(|p| p.measure_text(label, fs))
-                .unwrap_or(label.len() as f32 * fs * 0.6);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(label, fs, 0.6));
             crate::text_paint::paint_label(
                 painter,
                 cx.list,

@@ -2086,8 +2086,10 @@ impl Widget for TextArea {
             cx.pt(1.0),
             if self.focused {
                 cx.color(TokenKey::AccentColor, EDGE_FOCUSED)
-            } else {
+            } else if self.enabled {
                 cx.color(TokenKey::BorderColor, EDGE)
+            } else {
+                cx.color(TokenKey::TextMutedColor, EDGE)
             },
         );
 
@@ -2149,7 +2151,11 @@ impl Widget for TextArea {
         let empty = self.editor.text().is_empty();
         let content_x = lay.view.min_x() - sx;
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        let ink = cx.color(TokenKey::TextColor, INK);
+        let ink = if self.enabled {
+            cx.color(TokenKey::TextColor, INK)
+        } else {
+            cx.color(TokenKey::TextMutedColor, INK_PLACEHOLDER)
+        };
 
         let mut y = lay.view.min_y() - sy;
         for (i, row) in lay.rows.iter().enumerate() {

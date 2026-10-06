@@ -88,7 +88,7 @@ impl ResultStatus {
         }
     }
 
-    /// The native-pack icon painted for this status — `None` for the
+    /// The namespaced icon painted for this status — `None` for the
     /// HTTP-code statuses, which keep their numeric glyphs.
     fn icon_name(self) -> Option<&'static str> {
         match self {
@@ -319,17 +319,21 @@ impl ResultPage {
             .unwrap_or(size_px * text.chars().count() as f32 * 0.5);
         let max_w = cx.pt(TEXT_MAX_W_PT).min(b.size.x);
         let x = b.origin.x + (b.size.x - w.min(max_w)) / 2.0;
-        let y = y_center - size_px / 2.0;
+        // `y_center` is the slot's optical centre — centre the shaped
+        // ink on it (`centered_label_top`) rather than using the font
+        // size as the ink height. The clip band is `2·size` tall so
+        // descenders and line-box leading aren't sheared off.
+        let top = crate::text_paint::centered_label_top(painter, y_center, text, size_px);
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
             kurbo::Rect::new(
                 f64::from(x),
-                f64::from(y),
+                f64::from(y_center - size_px),
                 f64::from(x + max_w),
-                f64::from(y + size_px),
+                f64::from(y_center + size_px),
             ),
-            kurbo::Point::new(f64::from(x), f64::from(y)),
+            kurbo::Point::new(f64::from(x), top),
             text,
             size_px,
             ink,
@@ -338,6 +342,11 @@ impl ResultPage {
 }
 
 impl Widget for ResultPage {
+    /// Centered title/body fade-clip at the column edge — truncation
+    /// is the designed degradation for overlong strings.
+    fn debug_name(&self) -> &'static str {
+        "ResultPage@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -399,28 +408,24 @@ impl Widget for ResultPage {
         let content_h = cx.pt(self.content_height_pt());
         let mut y_center = b.origin.y + (b.size.y - content_h).max(0.0) / 2.0;
 
-        // Status mark in its accent colour — a native-pack icon when
-        // one maps, the status glyph otherwise.
+        // Status mark in its accent colour — an ambient-resolved
+        // icon when one maps, the status glyph otherwise.
         y_center += cx.pt(ICON_PT) / 2.0;
         let side = cx.pt(ICON_PT);
-        let icon_ok = self
-            .status
-            .icon_name()
-            .and_then(|n| crate::icons::builtin().lookup(n))
-            .is_some_and(|d| {
-                crate::widgets::morph_icon::paint_icon_d(
-                    cx.list,
-                    Rect::new(
-                        b.origin.x + (b.size.x - side) / 2.0,
-                        y_center - side / 2.0,
-                        side,
-                        side,
-                    ),
-                    d,
-                    cx.scale,
-                    self.status.color(),
-                )
-            });
+        let icon_ok = self.status.icon_name().is_some_and(|n| {
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(
+                    b.origin.x + (b.size.x - side) / 2.0,
+                    y_center - side / 2.0,
+                    side,
+                    side,
+                ),
+                n,
+                cx.scale,
+                self.status.color(),
+            )
+        });
         if !icon_ok {
             self.paint_centered(
                 cx,

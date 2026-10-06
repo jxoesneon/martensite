@@ -240,6 +240,11 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [u8; 4] {
 }
 
 impl Widget for ColorWheel {
+    /// The hue ring is the payload — it must paint red.
+    /// `reserved-hue` cannot apply to a picker.
+    fn debug_name(&self) -> &'static str {
+        "ColorWheel@lint:reserved-hue"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)

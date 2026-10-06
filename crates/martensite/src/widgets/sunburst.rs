@@ -321,6 +321,10 @@ impl Sunburst {
 }
 
 impl Widget for Sunburst {
+    fn debug_name(&self) -> &'static str {
+        // chart wedges are data payload color.
+        "Sunburst@lint:color-only-info,saturated-area-cap"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -432,7 +436,7 @@ impl Widget for Sunburst {
                 let size = 10.0 * cx.scale;
                 let w = painter
                     .and_then(|p| p.measure_text(name, size))
-                    .unwrap_or(name.chars().count() as f32 * size * 0.55);
+                    .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(name, size, 0.55));
                 crate::text_paint::paint_label_clipped(
                     painter,
                     cx.list,

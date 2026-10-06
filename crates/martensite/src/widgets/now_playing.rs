@@ -133,12 +133,14 @@ impl NowPlaying {
         self
     }
 
-    /// Art text override (glyph or short initials).
+    /// Art mark override — an icon name (`"media.music"`, …) resolves
+    /// through the ambient icon family and paints as a vector icon;
+    /// any other string stays a text glyph (short initials, …).
     ///
     /// ```
     /// use martensite::widgets::now_playing::NowPlaying;
     ///
-    /// assert_eq!(NowPlaying::new("t", "a").art_text("♪").art_text.as_deref(), Some("♪"));
+    /// assert_eq!(NowPlaying::new("t", "a").art_text("media.music").art_text.as_deref(), Some("media.music"));
     /// ```
     pub fn art_text(mut self, text: impl Into<String>) -> Self {
         self.art_text = Some(text.into());
@@ -414,29 +416,60 @@ impl Widget for NowPlaying {
             d,
         );
         cx.list.push_fill_shape(krect(art), &shape, self.art_color);
-        let glyph = self.art_text.clone().unwrap_or_else(|| {
-            self.title
-                .chars()
-                .next()
-                .map(|c| c.to_ascii_uppercase().to_string())
-                .unwrap_or_else(|| "♪".to_string())
-        });
-        let gsize = TITLE_PT * 1.4 * s;
-        let gw = painter
-            .and_then(|p| p.measure_text(&glyph, gsize))
-            .unwrap_or(glyph.chars().count() as f32 * gsize * 0.6);
-        let go = kurbo::Point::new(
-            f64::from(art.min_x() + (d - gw) / 2.0),
-            f64::from(art.min_y() + d / 2.0),
+        // `art_color` is caller-supplied — light or dark — so pick
+        // whichever of the text/inverse pair wins on it rather than
+        // assuming a light swatch (dark ink on dark art was ~1.6:1).
+        let art_ink = crate::text_paint::better_ink(
+            self.art_color,
+            cx.color(TokenKey::TextColor, TEXT),
+            cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]),
         );
-        crate::text_paint::paint_label(
-            painter,
-            cx.list,
-            go,
-            &glyph,
-            gsize,
-            cx.color(TokenKey::TextInverseColor, TEXT),
+        // `art_text` doubles as an icon-name slot: a name that
+        // resolves through the ambient icon family paints as a
+        // vector icon; any other string stays a text glyph. No art
+        // text + no title initial → the `media.music` icon.
+        let iside = d * 0.55;
+        let icon_rect = Rect::new(
+            art.min_x() + (d - iside) / 2.0,
+            art.min_y() + (d - iside) / 2.0,
+            iside,
+            iside,
         );
+        let icon_painted = match self.art_text.as_deref() {
+            Some(name) => {
+                crate::widgets::morph_icon::paint_icon_named(cx.list, icon_rect, name, s, art_ink)
+            }
+            None if self.title.is_empty() => crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                icon_rect,
+                "media.music",
+                s,
+                art_ink,
+            ),
+            None => false,
+        };
+        if !icon_painted {
+            let glyph = self.art_text.clone().unwrap_or_else(|| {
+                self.title
+                    .chars()
+                    .next()
+                    .map(|c| c.to_ascii_uppercase().to_string())
+                    .unwrap_or_default()
+            });
+            if !glyph.is_empty() {
+                let gsize = TITLE_PT * 1.4 * s;
+                let gw = painter
+                    .and_then(|p| p.measure_text(&glyph, gsize))
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(&(glyph), gsize, 0.6)
+                    });
+                let go = kurbo::Point::new(
+                    f64::from(art.min_x() + (d - gw) / 2.0),
+                    f64::from(art.min_y() + d / 2.0),
+                );
+                crate::text_paint::paint_label(painter, cx.list, go, &glyph, gsize, art_ink);
+            }
+        }
         // Title + artist — album. Text is clipped to the zone right of
         // the art swatch — a narrow card must truncate, not let the
         // runs underflow over the swatch or past the card edge.
@@ -453,27 +486,19 @@ impl Widget for NowPlaying {
         let block_h = (TITLE_PT + SUB_PT + 6.0) * s;
         let title_y = card.min_y() + (card.height() - block_h).max(0.0) / 2.0;
         let sub_y = title_y + (TITLE_PT * 1.35) * s;
-        // Playing marker — a native play icon in its own lane, the
-        // `▶` prefix as fallback.
+        // Playing marker — a native play icon in its own lane.
         let title_ink = cx.color(TokenKey::TextColor, TEXT);
         let side = TITLE_PT * s;
         let icon_ok = self.playing
-            && crate::icons::builtin()
-                .lookup("media.play")
-                .is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(tx, title_y + (side * 1.25 - side) / 2.0, side, side),
-                        d,
-                        s,
-                        title_ink,
-                    )
-                });
-        let (title, title_x) = match (self.playing, icon_ok) {
-            (true, true) => (self.title.clone(), tx + side + 4.0 * s),
-            (true, false) => (format!("▶ {}", self.title), tx),
-            (false, _) => (self.title.clone(), tx),
-        };
+            && crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(tx, title_y + (side * 1.25 - side) / 2.0, side, side),
+                "media.play",
+                s,
+                title_ink,
+            );
+        let title_x = if icon_ok { tx + side + 4.0 * s } else { tx };
+        let title = self.title.clone();
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
@@ -494,7 +519,9 @@ impl Widget for NowPlaying {
         );
         let tw = painter
             .and_then(|p| p.measure_text(&times, SUB_PT * s))
-            .unwrap_or(times.len() as f32 * SUB_PT * 0.6 * s);
+            .unwrap_or_else(|| {
+                crate::text_paint::estimate_text_width_px(&(times), SUB_PT * s, 0.6)
+            });
         let times_x = card.max_x() - PAD_PT * s - tw;
         let times_fits = tx + tw + GAP_PT * s <= card.max_x() - PAD_PT * s;
         let sub = match &self.album {

@@ -315,12 +315,21 @@ impl Widget for Odometer {
             let frac = reel - base;
             for d in -1..=1 {
                 let digit = ((base as i32 + d).rem_euclid(10)) as u32;
-                let y = cell.min_y() + cell.height() / 2.0 - size / 2.0
-                    + (d as f32 - frac) * cell.height();
+                let s = digit.to_string();
+                // Reel offset translates the digit by whole cell heights;
+                // `centered_label_top` keeps the ink — not the font box —
+                // centred in the window before the roll offset applies.
+                let y = crate::text_paint::centered_label_top(
+                    painter,
+                    f64::from(
+                        cell.min_y() + cell.height() / 2.0 + (d as f32 - frac) * cell.height(),
+                    ),
+                    &s,
+                    size,
+                ) as f32;
                 if y > cell.max_y() || y + size < cell.min_y() {
                     continue;
                 }
-                let s = digit.to_string();
                 let w = painter
                     .and_then(|p| p.measure_text(&s, size))
                     .unwrap_or(size * 0.6);

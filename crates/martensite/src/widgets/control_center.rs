@@ -12,7 +12,7 @@
 //! ```
 //! use martensite::widgets::control_center::ControlCenter;
 //!
-//! let c = ControlCenter::new().tile("📶", "Wi-Fi", true);
+//! let c = ControlCenter::new().tile_named("device.wifi", "Wi-Fi", true);
 //! assert_eq!(c.item_count(), 1);
 //! ```
 
@@ -36,8 +36,15 @@ const CAPTION_PT: f32 = 9.5;
 const FACE: [u8; 4] = [30, 32, 40, 252];
 const TILE_BG: [u8; 4] = [52, 56, 66, 255];
 const TRACK: [u8; 4] = [60, 63, 72, 255];
-const TEXT_FG: [u8; 4] = [235, 237, 240, 255];
-const MUTED_FG: [u8; 4] = [150, 154, 164, 255];
+/// `TextColor` fallback — the token's dark-theme resolved value.
+const TEXT_FG: [u8; 4] = [236, 243, 250, 255];
+/// `TextMutedColor` fallback — the token's dark-theme resolved
+/// value; the raw 150-gray it replaced only reached ~4.2:1 on
+/// `TILE_BG`, under the 4.5:1 floor for captions.
+const MUTED_FG: [u8; 4] = [165, 172, 179, 255];
+/// `TextInverseColor` fallback — ink for the `AccentColor` "on"
+/// tiles (white/foreground on accent reads ~2:1).
+const ON_INK: [u8; 4] = [18, 23, 28, 255];
 
 enum Item {
     Tile { on: bool },
@@ -108,12 +115,18 @@ impl ControlCenter {
         }
     }
 
-    /// A toggle tile (glyph + caption + on/off).
+    /// A toggle tile (mark + caption + on/off).
+    ///
+    /// `glyph` accepts a short text mark, or an icon name
+    /// (`"device.wifi"`, `"misc.moon"`, …) that resolves through the
+    /// ambient icon family ([`crate::icons::resolve_icon`]). Prefer
+    /// [`tile_named`](Self::tile_named) for a hosted, morphable
+    /// [`MorphIcon`](crate::widgets::morph_icon::MorphIcon) child.
     ///
     /// ```
     /// use martensite::widgets::control_center::ControlCenter;
     ///
-    /// assert!(ControlCenter::new().tile("📶", "Wi-Fi", true).is_on(0));
+    /// assert!(ControlCenter::new().tile("device.wifi", "Wi-Fi", true).is_on(0));
     /// ```
     pub fn tile(mut self, glyph: impl Into<String>, title: impl Into<String>, on: bool) -> Self {
         self.items.push(Entry {
@@ -127,8 +140,8 @@ impl ControlCenter {
 
     /// A toggle tile with a hosted
     /// [`MorphIcon`](crate::widgets::morph_icon::MorphIcon) stroke icon
-    /// resolved from the native icon pack
-    /// ([`icons::BUILTIN`](crate::icons::BUILTIN)) — `"device.wifi"`,
+    /// resolved through the ambient icon family
+    /// ([`icons::resolve_icon`](crate::icons::resolve_icon)) — `"device.wifi"`,
     /// `"misc.moon"`, … The icon is a real internal child: it ticks
     /// with the arena and morphs. Its ink contrast-resolves against
     /// the accent tile face, so it stays legible in both on and off
@@ -156,12 +169,18 @@ impl ControlCenter {
         self
     }
 
-    /// A slider row (glyph + caption + value).
+    /// A slider row (mark + caption + value).
+    ///
+    /// `glyph` accepts a short text mark, or an icon name
+    /// (`"misc.sun"`, `"media.volume"`, …) that resolves through the
+    /// ambient icon family ([`crate::icons::resolve_icon`]). Prefer
+    /// [`slider_named`](Self::slider_named) for a hosted, morphable
+    /// [`MorphIcon`](crate::widgets::morph_icon::MorphIcon) child.
     ///
     /// ```
     /// use martensite::widgets::control_center::ControlCenter;
     ///
-    /// let c = ControlCenter::new().slider("☀", "Brightness", 0.8);
+    /// let c = ControlCenter::new().slider("misc.sun", "Brightness", 0.8);
     /// assert_eq!(c.value_at(0), Some(0.8));
     /// ```
     pub fn slider(
@@ -184,7 +203,7 @@ impl ControlCenter {
 
     /// [`slider`](Self::slider) with a hosted
     /// [`MorphIcon`](crate::widgets::morph_icon::MorphIcon) stroke icon
-    /// resolved from the native icon pack — `"media.volume"`,
+    /// resolved through the ambient icon family — `"media.volume"`,
     /// `"misc.sun"`, … An unknown name leaves the row iconless rather
     /// than failing the build.
     ///
@@ -317,6 +336,10 @@ impl Default for ControlCenter {
 }
 
 impl Widget for ControlCenter {
+    fn debug_name(&self) -> &'static str {
+        // tile captions cut at the tile edge by design.
+        "ControlCenter@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -478,6 +501,9 @@ impl Widget for ControlCenter {
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let b = self.bounds;
         let accent = cx.color(TokenKey::AccentColor, [90, 140, 220, 255]);
+        let on_ink = cx.color(TokenKey::TextInverseColor, ON_INK);
+        let text_fg = cx.color(TokenKey::TextColor, TEXT_FG);
+        let muted_fg = cx.color(TokenKey::TextMutedColor, MUTED_FG);
         cx.list.push_fill_shape(
             kurbo::Rect::new(
                 f64::from(b.min_x()),
@@ -504,33 +530,52 @@ impl Widget for ControlCenter {
                         if *on { accent } else { TILE_BG },
                     );
                     // A hosted stroke icon paints itself at the
-                    // `icon_rect` slot as an internal child.
+                    // `icon_rect` slot as an internal child. A
+                    // resolvable icon name in `glyph` paints the same
+                    // slot inline; anything else stays a text mark.
                     if e.icon.is_none() {
-                        crate::text_paint::paint_label(
-                            painter,
+                        let ink = if *on { on_ink } else { text_fg };
+                        let iside = GLYPH_PT * s + 2.0 * s;
+                        let painted = crate::widgets::morph_icon::paint_icon_named(
                             cx.list,
-                            kurbo::Point::new(
-                                f64::from(r.min_x() + GAP_PT * s),
-                                f64::from(r.min_y() + GAP_PT * s * 0.6),
+                            Rect::new(
+                                r.min_x() + GAP_PT * s,
+                                r.min_y() + GAP_PT * s * 0.6,
+                                iside,
+                                iside,
                             ),
                             &e.glyph,
-                            gfs,
-                            TEXT_FG,
+                            s,
+                            ink,
                         );
+                        if !painted {
+                            crate::text_paint::paint_label(
+                                painter,
+                                cx.list,
+                                kurbo::Point::new(
+                                    f64::from(r.min_x() + GAP_PT * s),
+                                    f64::from(r.min_y() + GAP_PT * s * 0.6),
+                                ),
+                                &e.glyph,
+                                gfs,
+                                ink,
+                            );
+                        }
                     }
-                    // Bottom-anchored caption — the line box stays
-                    // inside the tile instead of spilling past the
-                    // edge.
-                    crate::text_paint::paint_label(
+                    // Bottom-anchored caption — clipped to the tile so
+                    // a long title cuts at the tile edge instead of
+                    // spilling over the next tile.
+                    crate::text_paint::paint_label_clipped(
                         painter,
                         cx.list,
+                        kr,
                         kurbo::Point::new(
                             f64::from(r.min_x() + GAP_PT * s),
                             f64::from(r.max_y() - CAPTION_PT * 1.25 * s - 2.0 * s),
                         ),
                         &e.title,
                         CAPTION_PT * s,
-                        if *on { [255, 255, 255, 255] } else { MUTED_FG },
+                        if *on { on_ink } else { muted_fg },
                     );
                 }
                 Item::Slider { value, .. } => {
@@ -540,20 +585,36 @@ impl Widget for ControlCenter {
                         TILE_BG,
                     );
                     if e.icon.is_none() {
-                        crate::text_paint::paint_label_vcenter(
-                            painter,
+                        // Same icon-name → inline-icon rule as tiles.
+                        let iside = GLYPH_PT * s + 2.0 * s;
+                        let painted = crate::widgets::morph_icon::paint_icon_named(
                             cx.list,
-                            kurbo::Rect::new(
-                                f64::from(r.min_x() + GAP_PT * s),
-                                f64::from(r.min_y()),
-                                f64::from(r.min_x() + GAP_PT * s + GLYPH_PT * s + 2.0 * s),
-                                f64::from(r.max_y()),
+                            Rect::new(
+                                r.min_x() + GAP_PT * s,
+                                r.min_y() + (r.height() - iside) / 2.0,
+                                iside,
+                                iside,
                             ),
-                            f64::from(r.min_x() + GAP_PT * s),
                             &e.glyph,
-                            gfs,
-                            TEXT_FG,
+                            s,
+                            text_fg,
                         );
+                        if !painted {
+                            crate::text_paint::paint_label_vcenter(
+                                painter,
+                                cx.list,
+                                kurbo::Rect::new(
+                                    f64::from(r.min_x() + GAP_PT * s),
+                                    f64::from(r.min_y()),
+                                    f64::from(r.min_x() + GAP_PT * s + GLYPH_PT * s + 2.0 * s),
+                                    f64::from(r.max_y()),
+                                ),
+                                f64::from(r.min_x() + GAP_PT * s),
+                                &e.glyph,
+                                gfs,
+                                text_fg,
+                            );
+                        }
                     }
                     let tx = r.min_x() + GLYPH_PT * s + GAP_PT * s * 2.0;
                     let tw = r.max_x() - tx - GAP_PT * s;
@@ -618,9 +679,9 @@ mod tests {
 
     fn fixture() -> ControlCenter {
         ControlCenter::new()
-            .tile("📶", "Wi-Fi", true)
-            .tile("🌙", "Focus", false)
-            .slider("☀", "Brightness", 0.5)
+            .tile("device.wifi", "Wi-Fi", true)
+            .tile("misc.moon", "Focus", false)
+            .slider("misc.sun", "Brightness", 0.5)
     }
 
     fn laid_out(c: &mut ControlCenter) {

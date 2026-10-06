@@ -351,8 +351,8 @@ impl Widget for BarChart {
         Some(self)
     }
 
-    fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
-        Vec2::new(160.0, 80.0)
+    fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
+        Vec2::new(cx.pt(160.0), cx.pt(80.0))
     }
 
     fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}

@@ -295,7 +295,7 @@ impl GraphView {
     fn clamp_inside(&mut self, i: usize) {
         let r = self.node_r();
         let size = 12.0 * self.scale;
-        let half_w = self.nodes[i].chars().count() as f32 * size * 0.32;
+        let half_w = crate::text_paint::estimate_text_width_px(&(self.nodes[i]), size, 0.32);
         let inset_x = r.max(half_w);
         let top = r;
         let bottom = r * 1.2 + size * 1.3;
@@ -502,7 +502,9 @@ impl Widget for GraphView {
         }
         for (i, p) in self.positions.iter().enumerate() {
             let origin = kurbo::Point::new(
-                f64::from(p.x - self.nodes[i].chars().count() as f32 * size * 0.28),
+                f64::from(
+                    p.x - crate::text_paint::estimate_text_width_px(&(self.nodes[i]), size, 0.28),
+                ),
                 f64::from(p.y + r * 1.2),
             );
             // Captions dragged outside the enclosing clip are dead

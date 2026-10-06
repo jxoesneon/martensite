@@ -181,6 +181,29 @@ pub enum CrossAxisAlignment {
     Center,
 }
 
+/// How much of the offered main-axis extent the flex should claim.
+///
+/// `Min` shrink-wraps the children (the default, matching Martensite's
+/// historical measure contract); `Max` fills the bounded main-axis
+/// maximum — the Flutter `MainAxisSize.max` behavior — which gives
+/// [`MainAxisAlignment`] leftover space to distribute.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::widgets::flex::MainAxisSize;
+///
+/// assert_eq!(MainAxisSize::default(), MainAxisSize::Min);
+/// ```
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MainAxisSize {
+    /// Size to the children plus gaps.
+    #[default]
+    Min,
+    /// Fill the offered main-axis extent when it is bounded.
+    Max,
+}
+
 /// A flex container widget that arranges children in a row or column.
 ///
 /// # Examples
@@ -203,6 +226,8 @@ pub struct Flex {
     pub direction: FlexDirection,
     /// How to distribute children along the main axis.
     pub main_axis_alignment: MainAxisAlignment,
+    /// How much of the offered main-axis extent to claim.
+    pub main_axis_size: MainAxisSize,
     /// How to align children on the cross axis.
     pub cross_axis_alignment: CrossAxisAlignment,
     /// Gap between children in logical pixels.
@@ -237,6 +262,7 @@ impl Flex {
         Self {
             direction,
             main_axis_alignment: MainAxisAlignment::default(),
+            main_axis_size: MainAxisSize::default(),
             cross_axis_alignment: CrossAxisAlignment::default(),
             gap: 0.0,
             children: Vec::new(),
@@ -294,6 +320,24 @@ impl Flex {
     #[must_use]
     pub fn main_axis_alignment(mut self, alignment: MainAxisAlignment) -> Self {
         self.main_axis_alignment = alignment;
+        self
+    }
+
+    /// Sets how much of the offered main-axis extent to claim.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::Flex;
+    /// use martensite::widgets::flex::MainAxisSize;
+    ///
+    /// let flex = Flex::row().main_axis_size(MainAxisSize::Max);
+    /// assert_eq!(flex.main_axis_size, MainAxisSize::Max);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn main_axis_size(mut self, size: MainAxisSize) -> Self {
+        self.main_axis_size = size;
         self
     }
 
@@ -438,8 +482,10 @@ impl Flex {
     }
 
     /// Computes the main-axis offset for each child given the total
-    /// main-axis size and the total children main-axis size.
-    fn compute_main_offsets(&self, total_main: f32, children_main: f32) -> Vec<f32> {
+    /// main-axis size and the total children main-axis size. `gap` is
+    /// the inter-child spacing in device px (`cx.pt(self.gap)` at the
+    /// call site) — the stored gap is logical pt.
+    fn compute_main_offsets(&self, total_main: f32, children_main: f32, gap: f32) -> Vec<f32> {
         let n = self.children.len();
         if n == 0 {
             return vec![];
@@ -459,7 +505,7 @@ impl Flex {
                     cursor += self
                         .direction
                         .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO));
-                    cursor += self.gap;
+                    cursor += gap;
                 }
                 offsets
             }
@@ -471,7 +517,7 @@ impl Flex {
                     cursor += self
                         .direction
                         .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO));
-                    cursor += self.gap;
+                    cursor += gap;
                 }
                 offsets
             }
@@ -483,7 +529,7 @@ impl Flex {
                     cursor += self
                         .direction
                         .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO));
-                    cursor += self.gap;
+                    cursor += gap;
                 }
                 offsets
             }
@@ -500,7 +546,7 @@ impl Flex {
                     cursor += self
                         .direction
                         .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO));
-                    cursor += self.gap + space_between;
+                    cursor += gap + space_between;
                 }
                 offsets
             }
@@ -520,7 +566,7 @@ impl Flex {
                     cursor += self
                         .direction
                         .main(self.child_sizes.get(i).copied().unwrap_or(Vec2::ZERO));
-                    cursor += self.gap + space;
+                    cursor += gap + space;
                 }
                 offsets
             }
@@ -545,7 +591,7 @@ impl Widget for Flex {
 
         let mut total_main = 0.0f32;
         let mut max_cross = 0.0f32;
-        let total_gap = self.gap * (n.saturating_sub(1)) as f32;
+        let total_gap = cx.pt(self.gap) * (n.saturating_sub(1)) as f32;
         let max_main = self.direction.main(constraints.max_size);
         let cross_limit = self.direction.cross(constraints.max_size);
 
@@ -620,7 +666,11 @@ impl Widget for Flex {
 
         total_main += total_gap;
 
-        self.direction.vec(total_main, max_cross)
+        if self.main_axis_size == MainAxisSize::Max && max_main.is_finite() {
+            self.direction.vec(max_main, max_cross)
+        } else {
+            self.direction.vec(total_main, max_cross)
+        }
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
@@ -647,7 +697,7 @@ impl Widget for Flex {
         }
         let total_flex = self.total_flex();
         if total_flex > 0.0 {
-            let total_gap = self.gap * (n.saturating_sub(1)) as f32;
+            let total_gap = cx.pt(self.gap) * (n.saturating_sub(1)) as f32;
             let intrinsic_main: f32 = (0..n)
                 .filter(|&i| self.flex.get(i).copied().unwrap_or(0.0) <= 0.0)
                 .map(|i| {
@@ -671,9 +721,9 @@ impl Widget for Flex {
             .iter()
             .map(|s| self.direction.main(*s))
             .sum::<f32>()
-            + self.gap * (n.saturating_sub(1)) as f32;
+            + cx.pt(self.gap) * (n.saturating_sub(1)) as f32;
 
-        let main_offsets = self.compute_main_offsets(total_main, children_main);
+        let main_offsets = self.compute_main_offsets(total_main, children_main, cx.pt(self.gap));
         let cross_alignment = self.cross_axis_alignment;
         let direction = self.direction;
 

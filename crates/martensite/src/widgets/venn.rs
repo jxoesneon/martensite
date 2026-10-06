@@ -156,7 +156,18 @@ impl Venn {
         let n = self.sets.len().clamp(1, 3);
         let cx = self.bounds.origin.x + self.bounds.size.x / 2.0;
         let cy = self.bounds.origin.y + self.bounds.size.y / 2.0;
-        let r = self.bounds.width().min(self.bounds.height()) * 0.32;
+        let w = self.bounds.width();
+        let h = self.bounds.height();
+        // Radius must keep every circle inside bounds: the farthest
+        // reach is `off + r` from centre in each direction.
+        let r = match n {
+            1 => w.min(h) * 0.5,
+            // off = 0.8r → 1.8r ≤ w/2 and r ≤ h/2.
+            2 => (w / 3.6).min(h / 2.0),
+            // off = 0.7r → top circle reaches cy − 1.7r → r ≤ h/3.4;
+            // side circles reach cx ± 1.7r → r ≤ w/3.4.
+            _ => w.min(h) / 3.4,
+        };
         match n {
             1 => vec![(Vec2::new(cx, cy), r)],
             2 => {
@@ -255,10 +266,16 @@ impl Widget for Venn {
         for (i, (c, r)) in self.circles().iter().enumerate() {
             let base = PALETTE[i % PALETTE.len()];
             let boost = self.hovered == Some(i) || self.hovered == Some(usize::MAX);
-            let color = cx.color(
+            // Venn fills are translucent washes. `cx.color` replaces
+            // the whole fallback when the token resolves — alpha
+            // included — so re-apply the intended alpha afterwards.
+            // An opaque `AccentColor` disc would crush each label to
+            // ~2:1 and erase the overlap blending entirely.
+            let mut color = cx.color(
                 TokenKey::AccentColor,
                 [base[0], base[1], base[2], if boost { 140 } else { base[3] }],
             );
+            color[3] = if boost { 140 } else { base[3] };
             cx.list.push_fill_shape(
                 f(self.bounds),
                 &martensite_core::shape::Shape::circle(*c, *r),
@@ -281,7 +298,7 @@ impl Widget for Venn {
         for ((c, r), name) in self.circles().iter().zip(&self.sets) {
             let dir = (*c - mid).normalize_or(Vec2::new(0.0, -1.0));
             let p = *c + dir * (r * 0.55);
-            let w = name.len() as f32 * size * 0.55;
+            let w = crate::text_paint::estimate_text_width_px(name, size, 0.55);
             paint_label_clipped(
                 painter,
                 cx.list,

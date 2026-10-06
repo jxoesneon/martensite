@@ -266,8 +266,9 @@ impl Widget for GroupBox {
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let title_h = cx.pt(TITLE_H);
         let inset = cx.pt(FRAME_INSET);
-        let pad_h = self.padding.horizontal();
-        let pad_v = self.padding.vertical();
+        // EdgeInsets are logical pt — scale to device px.
+        let pad_h = cx.pt(self.padding.horizontal());
+        let pad_v = cx.pt(self.padding.vertical());
 
         self.checkbox_size = if let Some(cb) = &mut self.checkbox {
             cb.measure(cx, constraints)
@@ -330,12 +331,13 @@ impl Widget for GroupBox {
             self.checkbox_rect = Rect::default();
         }
 
-        let pad = &self.padding;
+        let pad_l = cx.pt(self.padding.left);
+        let pad_t = cx.pt(self.padding.top);
         self.content_rect = Rect::new(
-            self.frame_rect.origin.x + inset + pad.left,
-            self.frame_rect.origin.y + inset + pad.top,
-            (self.frame_rect.size.x - inset * 2.0 - pad.horizontal()).max(0.0),
-            (self.frame_rect.size.y - inset * 2.0 - pad.vertical()).max(0.0),
+            self.frame_rect.origin.x + inset + pad_l,
+            self.frame_rect.origin.y + inset + pad_t,
+            (self.frame_rect.size.x - inset * 2.0 - cx.pt(self.padding.horizontal())).max(0.0),
+            (self.frame_rect.size.y - inset * 2.0 - cx.pt(self.padding.vertical())).max(0.0),
         );
         if let Some(child) = &mut self.child {
             cx.layout_child(child.as_mut(), self.content_rect);

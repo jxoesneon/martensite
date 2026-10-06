@@ -479,7 +479,8 @@ impl Widget for StatusDot {
         let text_w = if self.text.is_empty() {
             0.0
         } else {
-            self.text.chars().count() as f32 * FONT_PT * 0.55 * cx.scale + cx.pt(GAP_PT)
+            crate::text_paint::estimate_text_width_px(&(self.text), FONT_PT, 0.55) * cx.scale
+                + cx.pt(GAP_PT)
         };
         let slot = if self.pulse { DOT_PT * 1.8 } else { DOT_PT };
         Vec2::new(

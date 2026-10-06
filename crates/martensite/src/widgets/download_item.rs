@@ -124,7 +124,10 @@ pub struct DownloadItem {
     pub name: String,
     /// Total bytes.
     pub total_bytes: u64,
-    /// Type glyph.
+    /// Type mark — an icon name (`"edit.download"`, `"file.package"`,
+    /// …) resolves through the ambient icon family
+    /// ([`crate::icons::resolve_icon`]); any other string paints as a
+    /// short text glyph.
     pub glyph: String,
     /// Lifecycle state.
     pub state: DownloadState,
@@ -162,7 +165,7 @@ impl DownloadItem {
             label: "Download".to_string(),
             name: name.into(),
             total_bytes,
-            glyph: "⬇".to_string(),
+            glyph: "edit.download".to_string(),
             state: DownloadState::Downloading,
             fraction: 0.0,
             rate: 0.0,
@@ -187,12 +190,13 @@ impl DownloadItem {
         self
     }
 
-    /// Type glyph override.
+    /// Type mark override — an icon name resolves through the ambient
+    /// icon family; any other string paints as a text glyph.
     ///
     /// ```
     /// use martensite::widgets::download_item::DownloadItem;
     ///
-    /// assert_eq!(DownloadItem::new("a", 1).glyph("📦").glyph, "📦");
+    /// assert_eq!(DownloadItem::new("a", 1).glyph("file.package").glyph, "file.package");
     /// ```
     pub fn glyph(mut self, glyph: impl Into<String>) -> Self {
         self.glyph = glyph.into();
@@ -285,18 +289,8 @@ impl DownloadItem {
     }
 }
 
-fn glyph_for(action: DownloadAction) -> &'static str {
-    match action {
-        DownloadAction::Pause => "⏸",
-        DownloadAction::Resume => "▶",
-        DownloadAction::Cancel => "✕",
-        DownloadAction::ShowInFolder => "📂",
-        DownloadAction::Retry => "↻",
-    }
-}
-
-/// The native-pack icon for an action — paired with [`glyph_for`]
-/// so a missing name can't strand the button iconless.
+/// The icon name for an action — resolves through the ambient icon
+/// family.
 fn icon_for(action: DownloadAction) -> &'static str {
     match action {
         DownloadAction::Pause => "media.pause",
@@ -416,15 +410,32 @@ impl Widget for DownloadItem {
             &martensite_core::shape::Shape::squircle(4.0 * s),
             ICON_BG,
         );
-        crate::text_paint::paint_label_vcenter(
-            painter,
+        // The type mark — icon names paint as vector icons through
+        // the ambient family; other strings stay text glyphs.
+        let iside = ic * 0.62;
+        let icon_painted = crate::widgets::morph_icon::paint_icon_named(
             cx.list,
-            chip,
-            f64::from(b.min_x() + pad + ic * 0.2),
+            Rect::new(
+                b.min_x() + pad + (ic - iside) / 2.0,
+                iy + (ic - iside) / 2.0,
+                iside,
+                iside,
+            ),
             &self.glyph,
-            INFO_PT * s,
+            s,
             TEXT_FG,
         );
+        if !icon_painted {
+            crate::text_paint::paint_label_vcenter(
+                painter,
+                cx.list,
+                chip,
+                f64::from(b.min_x() + pad + ic * 0.2),
+                &self.glyph,
+                INFO_PT * s,
+                TEXT_FG,
+            );
+        }
         // Name + info line.
         let tx = b.min_x() + pad + ic + GAP_PT * s;
         let nfs = NAME_PT * s;
@@ -485,41 +496,18 @@ impl Widget for DownloadItem {
                 &martensite_core::shape::Shape::squircle(4.0 * s),
                 ICON_BG,
             );
-            // Native icon first — `glyph_for` is the fallback.
+            // Native icon, ambient-resolved.
             let side = bfs;
-            let icon_ok = crate::icons::builtin()
-                .lookup(icon_for(*action))
-                .is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(
-                            rect.min_x() + (rect.width() - side) / 2.0,
-                            rect.min_y() + (rect.height() - side) / 2.0,
-                            side,
-                            side,
-                        ),
-                        d,
-                        s,
-                        TEXT_FG,
-                    )
-                });
-            if icon_ok {
-                continue;
-            }
-            let g = glyph_for(*action);
-            let w = g.len() as f32 * bfs * 0.7;
-            crate::text_paint::paint_label_vcenter(
-                painter,
+            crate::widgets::morph_icon::paint_icon_named(
                 cx.list,
-                kurbo::Rect::new(
-                    f64::from(rect.min_x()),
-                    f64::from(rect.min_y()),
-                    f64::from(rect.max_x()),
-                    f64::from(rect.max_y()),
+                Rect::new(
+                    rect.min_x() + (rect.width() - side) / 2.0,
+                    rect.min_y() + (rect.height() - side) / 2.0,
+                    side,
+                    side,
                 ),
-                f64::from(rect.min_x() + (rect.width() - w) / 2.0),
-                g,
-                bfs,
+                icon_for(*action),
+                s,
                 TEXT_FG,
             );
         }

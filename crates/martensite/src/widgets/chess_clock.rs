@@ -499,7 +499,7 @@ impl Widget for ChessClock {
             };
             let w = painter
                 .and_then(|p| p.measure_text(&face, size))
-                .unwrap_or(face.chars().count() as f32 * size * 0.55);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(face), size, 0.55));
             crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
@@ -520,7 +520,7 @@ impl Widget for ChessClock {
             let small = 9.0 * s;
             let tw = painter
                 .and_then(|p| p.measure_text(tag, small))
-                .unwrap_or(tag.chars().count() as f32 * small * 0.55);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(tag, small, 0.55));
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
@@ -533,6 +533,12 @@ impl Widget for ChessClock {
                 small,
                 cx.color(TokenKey::TextMutedColor, DIM),
             );
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
         }
     }
 }

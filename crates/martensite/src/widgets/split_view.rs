@@ -543,6 +543,12 @@ impl Widget for SplitView {
         cx.list.push_fill_rect(stripe, ink);
     }
 
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
+        }
+    }
+
     fn child_count(&self) -> usize {
         self.first.is_some() as usize + self.second.is_some() as usize
     }

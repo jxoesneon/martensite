@@ -338,7 +338,7 @@ impl Widget for Grid {
         let gap = cx.pt(self.gap);
         let h = self.used_rows as f32 * row_h + self.used_rows.saturating_sub(1) as f32 * gap;
         let _ = constraints;
-        Vec2::new(240.0, h.max(row_h))
+        Vec2::new(cx.pt(240.0), h.max(row_h))
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
@@ -372,6 +372,12 @@ impl Widget for Grid {
         node.set_label(self.label.as_str());
         if !self.enabled {
             node.set_disabled();
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
         }
     }
 

@@ -74,6 +74,11 @@ pub struct MindMap {
     pending: Option<usize>,
     bounds: Rect,
     scale: f32,
+    /// Effective node size after the layout pass's zoom-to-fit —
+    /// `NODE_W_PT`/`NODE_H_PT` scaled down when the tree's nominal
+    /// extent exceeds the bounds.
+    node_w: f32,
+    node_h: f32,
 }
 
 impl Default for MindMap {
@@ -98,6 +103,8 @@ impl MindMap {
             pending: None,
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            node_w: NODE_W_PT,
+            node_h: NODE_H_PT,
         }
     }
 
@@ -225,7 +232,7 @@ impl MindMap {
 
     /// Node rect under a point.
     fn node_at(&self, p: Vec2) -> Option<usize> {
-        let (w, h) = (NODE_W_PT * self.scale, NODE_H_PT * self.scale);
+        let (w, h) = (self.node_w, self.node_h);
         (0..self.nodes.len()).find(|&i| {
             let c = self.nodes[i].pos;
             Rect::new(c.x - w / 2.0, c.y - h / 2.0, w, h).contains(p)
@@ -258,8 +265,31 @@ impl MindMap {
             side_load[usize::from(s < 0)] += self.nodes[k].leaves;
             self.set_side(k, s);
         }
-        let (nw, nh) = (NODE_W_PT * self.scale, NODE_H_PT * self.scale);
-        let leaf_h = nh + V_GAP_PT * self.scale;
+        let (mut nw, mut nh) = (NODE_W_PT * self.scale, NODE_H_PT * self.scale);
+        let mut pitch = (NODE_W_PT + COL_GAP_PT) * self.scale;
+        let mut leaf_h = nh + V_GAP_PT * self.scale;
+        // Zoom-to-fit: the nominal fan overflows the bounds once the
+        // tree is deeper or wider than the stage, so shrink every
+        // metric by one uniform factor — proportions (and node
+        // separation) are preserved and nothing paints outside.
+        let max_depth = self.nodes.iter().map(|n| n.depth).max().unwrap_or(0) as f32;
+        let mut side_leaves = [0usize; 2]; // [right, left]
+        for &k in &kids {
+            side_leaves[usize::from(self.nodes[k].side < 0)] += self.nodes[k].leaves;
+        }
+        let need_half_w = (max_depth * pitch + nw / 2.0).max(1.0);
+        let need_half_h = (side_leaves.into_iter().max().unwrap_or(0) as f32 * leaf_h / 2.0)
+            .max(nh / 2.0)
+            .max(1.0);
+        let fit = ((self.bounds.width() / 2.0) / need_half_w)
+            .min((self.bounds.height() / 2.0) / need_half_h)
+            .clamp(0.05, 1.0);
+        nw *= fit;
+        nh *= fit;
+        pitch *= fit;
+        leaf_h *= fit;
+        self.node_w = nw;
+        self.node_h = nh;
         let cx = (self.bounds.min_x() + self.bounds.max_x()) / 2.0;
         let cy = (self.bounds.min_y() + self.bounds.max_y()) / 2.0;
         self.nodes[0].pos = Vec2::new(cx, cy);
@@ -275,13 +305,7 @@ impl MindMap {
             for k in side_kids {
                 let slot_h = self.nodes[k].leaves as f32 * leaf_h;
                 let slot_mid = y + slot_h / 2.0;
-                self.place(
-                    k,
-                    cx + s as f32 * (nw + COL_GAP_PT * self.scale),
-                    slot_mid,
-                    leaf_h,
-                    s,
-                );
+                self.place(k, cx + s as f32 * pitch, slot_mid, leaf_h, pitch, s);
                 y += slot_h;
             }
         }
@@ -297,18 +321,18 @@ impl MindMap {
     }
 
     /// Place a node at `x`/center-y, stacking children in its slot.
-    fn place(&mut self, i: usize, x: f32, mid_y: f32, leaf_h: f32, s: i32) {
+    /// `pitch` is the fit-adjusted column pitch from `compute_layout`.
+    fn place(&mut self, i: usize, x: f32, mid_y: f32, leaf_h: f32, pitch: f32, s: i32) {
         self.nodes[i].pos = Vec2::new(x, mid_y);
         let kids = self.nodes[i].children.clone();
         if kids.is_empty() {
             return;
         }
-        let col_pitch = (NODE_W_PT + COL_GAP_PT) * self.scale;
         let total: usize = kids.iter().map(|&k| self.nodes[k].leaves).sum();
         let mut y = mid_y - total as f32 * leaf_h / 2.0;
         for k in kids {
             let slot_h = self.nodes[k].leaves as f32 * leaf_h;
-            self.place(k, x + s as f32 * col_pitch, y + slot_h / 2.0, leaf_h, s);
+            self.place(k, x + s as f32 * pitch, y + slot_h / 2.0, leaf_h, pitch, s);
             y += slot_h;
         }
     }
@@ -382,7 +406,7 @@ impl Widget for MindMap {
         }
         let edge = cx.color(TokenKey::BorderColor, EDGE);
         let link = cx.color(TokenKey::TextMutedColor, LINK);
-        let (nw, nh) = (NODE_W_PT * self.scale, NODE_H_PT * self.scale);
+        let (nw, nh) = (self.node_w, self.node_h);
         // Elbow links first so nodes overlay the joins.
         for n in &self.nodes {
             let Some(p) = n.parent else { continue };

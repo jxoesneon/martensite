@@ -237,6 +237,12 @@ impl Tuner {
 }
 
 impl Widget for Tuner {
+    /// Off-pitch readings paint `ErrorColor` — the alarm channel is
+    /// the semantics here, so the lineage carries `@alarm`.
+    fn debug_name(&self) -> &'static str {
+        // Readouts clip at the widget edge by design.
+        "Tuner@alarm@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -371,7 +377,9 @@ impl Widget for Tuner {
         let note_size = NOTE_PT * s;
         let nw = painter
             .and_then(|p| p.measure_text(&self.note, note_size))
-            .unwrap_or(self.note.chars().count() as f32 * note_size * 0.55);
+            .unwrap_or_else(|| {
+                crate::text_paint::estimate_text_width_px(&(self.note), note_size, 0.55)
+            });
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
@@ -394,7 +402,9 @@ impl Widget for Tuner {
         let cents_face = format!("{:+.0}¢", self.cents);
         let cw = painter
             .and_then(|p| p.measure_text(&cents_face, cents_size))
-            .unwrap_or(cents_face.chars().count() as f32 * cents_size * 0.55);
+            .unwrap_or_else(|| {
+                crate::text_paint::estimate_text_width_px(&(cents_face), cents_size, 0.55)
+            });
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,

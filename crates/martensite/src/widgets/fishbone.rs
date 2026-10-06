@@ -205,6 +205,11 @@ fn line_path(x0: f32, y0: f32, x1: f32, y1: f32) -> kurbo::BezPath {
 }
 
 impl Widget for Fishbone {
+    /// Tip labels clip to their rib's spine share by design — they
+    /// truncate rather than collide with neighbours.
+    fn debug_name(&self) -> &'static str {
+        "Fishbone@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -315,11 +320,11 @@ impl Widget for Fishbone {
             &martensite_core::shape::Shape::squircle(6.0 * s),
             cx.color(TokenKey::AccentColor, EFFECT_BG),
         );
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             hr,
-            kurbo::Point::new(hr.x0 + f64::from(8.0 * s), f64::from(mid + 4.0 * s)),
+            hr.x0 + f64::from(8.0 * s),
             &self.effect,
             FONT_PT * s,
             // The head box is accent-filled — inverse ink reads on the
@@ -350,7 +355,9 @@ impl Widget for Fishbone {
             let fs = FONT_PT * s;
             let tw = painter
                 .and_then(|p| p.measure_text(&bone.category, fs))
-                .unwrap_or(bone.category.len() as f32 * fs * 0.5);
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(bone.category), fs, 0.5)
+                });
             // Origin is the ink box's top edge — an upper rib's label
             // must sit a full line-height above the tip, not a hair,
             // or its ink lands on the rib's last cause label.

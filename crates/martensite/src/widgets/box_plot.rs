@@ -376,7 +376,9 @@ impl Widget for BoxPlot {
             );
             let nw = painter
                 .and_then(|p| p.measure_text(&s.name, size))
-                .unwrap_or(s.name.chars().count() as f32 * size * 0.55);
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(s.name), size, 0.55)
+                });
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
@@ -394,7 +396,7 @@ impl Widget for BoxPlot {
             let med = format!("{:.0}", s.median);
             let mw = painter
                 .and_then(|p| p.measure_text(&med, size))
-                .unwrap_or(med.chars().count() as f32 * size * 0.6);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(med), size, 0.6));
             crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,

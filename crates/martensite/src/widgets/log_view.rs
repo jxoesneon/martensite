@@ -336,8 +336,10 @@ impl LogView {
 impl Widget for LogView {
     fn debug_name(&self) -> &'static str {
         // A log stream is a document surface — its text is payload, so
-        // `packing-density`'s alphanumeric cap exempts it.
-        "LogView@prose"
+        // `packing-density`'s alphanumeric cap exempts it. Error rows
+        // paint `ErrorColor` deliberately: `@alarm` declares the
+        // reserved-hue use is the alarm channel itself.
+        "LogView@prose@alarm"
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
@@ -440,6 +442,12 @@ impl Widget for LogView {
                 size,
                 self.severity_color(cx, line.severity),
             );
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
         }
     }
 }

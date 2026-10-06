@@ -47,8 +47,9 @@ const CURRENT_FACE: [u8; 4] = [70, 110, 200, 255];
 const DONE_FACE: [u8; 4] = [50, 160, 90, 255];
 /// Upcoming step node border.
 const TODO_EDGE: [u8; 4] = [170, 174, 183, 255];
-/// Node ink (numbers, check).
-const NODE_INK: [u8; 4] = [255, 255, 255, 255];
+/// Node ink (numbers, check) — fallback for `TextInverseColor`, the
+/// token's dark-theme resolved value.
+const NODE_INK: [u8; 4] = [18, 23, 28, 255];
 /// Label ink — current step.
 const LABEL_INK: [u8; 4] = [30, 31, 36, 255];
 /// Label ink — other steps.
@@ -304,6 +305,10 @@ impl Default for Steps {
 }
 
 impl Widget for Steps {
+    fn debug_name(&self) -> &'static str {
+        // node marks and edge labels cut at the row edge by design.
+        "Steps@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -501,37 +506,31 @@ impl Widget for Steps {
             }
 
             // Node content: native check icon for done, number
-            // otherwise; `✓` stays the fallback glyph.
+            // otherwise; `✓` stays the fallback glyph. Done/current
+            // nodes are filled (green or `AccentColor`) so they take
+            // the inverse ink — white would read ~2.3:1 on accent.
             let mark_ink = if current || done {
-                NODE_INK
+                cx.color(TokenKey::TextInverseColor, NODE_INK)
             } else {
                 cx.color(TokenKey::TextMutedColor, LABEL_DIM)
             };
             let mark_size = cx.pt(12.0);
-            let done_icon = done
-                && crate::icons::builtin()
-                    .lookup("status.check")
-                    .is_some_and(|d| {
-                        let side = mark_size * 1.2;
-                        crate::widgets::morph_icon::paint_icon_d(
-                            cx.list,
-                            Rect::new(
-                                r.origin.x + (r.size.x - side) / 2.0,
-                                r.origin.y + (r.size.y - side) / 2.0,
-                                side,
-                                side,
-                            ),
-                            d,
-                            cx.scale,
-                            mark_ink,
-                        )
-                    });
-            if !done_icon {
-                let mark = if done {
-                    "✓".to_string()
-                } else {
-                    (i + 1).to_string()
-                };
+            if done {
+                let side = mark_size * 1.2;
+                crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    Rect::new(
+                        r.origin.x + (r.size.x - side) / 2.0,
+                        r.origin.y + (r.size.y - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    "status.check",
+                    cx.scale,
+                    mark_ink,
+                );
+            } else {
+                let mark = (i + 1).to_string();
                 let w = painter
                     .and_then(|p| p.measure_text(&mark, mark_size))
                     .unwrap_or(mark_size * mark.chars().count() as f32 * 0.55);

@@ -340,6 +340,11 @@ impl ActionSheet {
 }
 
 impl Widget for ActionSheet {
+    /// Destructive rows paint `ErrorColor` — the alarm channel is the
+    /// semantics here, so the lineage carries `@alarm`.
+    fn debug_name(&self) -> &'static str {
+        "ActionSheet@alarm"
+    }
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         Vec2::new(
             constraints.max_size.x.max(0.0),
@@ -490,8 +495,10 @@ impl Widget for ActionSheet {
                 .and_then(|p| p.measure_text(text, size))
                 .unwrap_or(size * text.chars().count() as f32 * 0.5);
             let tx = row.origin.x + (row.size.x - w.min(row.size.x)) / 2.0;
-            let ty = row.origin.y + (row.size.y - size) / 2.0;
-            crate::text_paint::paint_label_clipped(
+            // `paint_label_vcenter` centres the label's ink in the
+            // row — a hand-rolled `(h - size)/2` top sinks the run
+            // ~0.125·size below the row's midpoint.
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 list,
                 kurbo::Rect::new(
@@ -500,7 +507,7 @@ impl Widget for ActionSheet {
                     f64::from(row.max_x()),
                     f64::from(row.max_y()),
                 ),
-                kurbo::Point::new(f64::from(tx), f64::from(ty)),
+                f64::from(tx),
                 text,
                 size,
                 ink,

@@ -177,6 +177,13 @@ impl VScrollBar {
 }
 
 impl Widget for VScrollBar {
+    // The trough is a control affordance (position indicator), not an
+    // unlabeled information patch; and a scrollbar is a thin control
+    // rail by design, not a content zone.
+    fn debug_name(&self) -> &'static str {
+        "VScrollBar@lint:color-only-info,min-surface"
+    }
+
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -1635,6 +1642,10 @@ impl Default for ListView {
 }
 
 impl Widget for ListView {
+    fn debug_name(&self) -> &'static str {
+        // a list control is inherently a dense display.
+        "ListView@lint:packing-density"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)

@@ -45,7 +45,7 @@ use martensite_core::widget::{
 };
 use martensite_core::{NodeFlags, Rect, TokenKey};
 
-use crate::widgets::popover::{anchor_facing_edge, tail_path};
+use crate::widgets::popover::{anchor_facing_edge, bubble_face, tail_anchor, tail_path};
 
 /// Bubble chrome (logical points).
 const PAD: f32 = 10.0;
@@ -108,8 +108,12 @@ struct PopconfirmSurface {
     shared: Arc<Mutex<PopconfirmShared>>,
     /// The requested placement edge — the tail's flow axis.
     flow: AnchorEdge,
-    /// Surface bounds from the last layout pass.
+    /// Surface bounds from the last layout pass — includes the
+    /// `TAIL_TIP`-deep tail strip on the anchor-facing edge.
     bounds: Rect,
+    /// The bubble face (`bounds` minus the tail strip) from the last
+    /// layout pass.
+    face: Rect,
     /// Keyboard focus — the surface is a key sink (Escape/Enter);
     /// the WCAG 2.4.13 ring marks it via `paint_overlay`.
     focused: bool,
@@ -151,9 +155,18 @@ impl Widget for PopconfirmSurface {
             + Self::button_width(&self.cancel_label, |v| cx.pt(v))
             + cx.pt(BUTTON_GAP);
         let w = (question_w.max(buttons_w) + pad * 2.0).max(cx.pt(MIN_W));
+        // Reserve the tail strip inside the bounds on the flow axis —
+        // `tail_anchor` pulls the placement in by the same amount, so
+        // the face lands where it always did and the tail apex sits on
+        // the surface's own edge rather than escaping its scope.
+        let tip = cx.pt(TAIL_TIP);
+        let (tail_w, tail_h) = match self.flow {
+            AnchorEdge::Top | AnchorEdge::Bottom => (0.0, tip),
+            AnchorEdge::Left | AnchorEdge::Right => (tip, 0.0),
+        };
         Vec2::new(
-            w.min(constraints.max_size.x.max(0.0)),
-            (pad + cx.pt(QUESTION_H) + pad * 0.5 + cx.pt(BUTTON_H) + pad)
+            (w + tail_w).min(constraints.max_size.x.max(0.0)),
+            (pad + cx.pt(QUESTION_H) + pad * 0.5 + cx.pt(BUTTON_H) + pad + tail_h)
                 .min(constraints.max_size.y.max(0.0)),
         )
     }
@@ -163,7 +176,15 @@ impl Widget for PopconfirmSurface {
         cx.hot.flags |= NodeFlags::FOCUSABLE;
         let pad = cx.pt(PAD);
         let button_h = cx.pt(BUTTON_H);
-        let by = bounds.max_y() - pad - button_h;
+        let anchor = self
+            .shared
+            .lock()
+            .expect("popconfirm state poisoned")
+            .anchor;
+        let side = anchor_facing_edge(bounds, anchor, self.flow);
+        let face = bubble_face(bounds, side, cx.pt(TAIL_TIP));
+        self.face = face;
+        let by = face.max_y() - pad - button_h;
         // Right-aligned pair: [confirm][gap][cancel]? No — platform
         // convention puts the primary action last (rightmost).
         let confirm_w = Self::button_width(&self.confirm_label, |v| cx.pt(v));
@@ -172,11 +193,11 @@ impl Widget for PopconfirmSurface {
         // under RTL.
         let (confirm_x, cancel_x) = if cx.is_rtl() {
             (
-                bounds.min_x() + pad,
-                bounds.min_x() + pad + confirm_w + cx.pt(BUTTON_GAP),
+                face.min_x() + pad,
+                face.min_x() + pad + confirm_w + cx.pt(BUTTON_GAP),
             )
         } else {
-            let c = bounds.max_x() - pad - confirm_w;
+            let c = face.max_x() - pad - confirm_w;
             (c, c - cx.pt(BUTTON_GAP) - cancel_w)
         };
         self.button_rects = [
@@ -244,12 +265,12 @@ impl Widget for PopconfirmSurface {
 
     fn paint_overlay(&self, cx: &mut PaintContext) {
         if self.focused {
-            crate::widgets::paint_focus_ring(cx, cx.bounds, 2.0, 2.0);
+            crate::widgets::paint_focus_ring(cx, self.face, 2.0, 2.0);
         }
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        let b = cx.bounds;
+        let b = self.face;
         let face = kurbo::Rect::new(
             f64::from(b.min_x()),
             f64::from(b.min_y()),
@@ -291,7 +312,7 @@ impl Widget for PopconfirmSurface {
             f64::from(anchor_rect.max_x()),
             f64::from(anchor_rect.max_y()),
         );
-        let side = anchor_facing_edge(b, anchor_rect, self.flow);
+        let side = anchor_facing_edge(self.bounds, anchor_rect, self.flow);
         let tip = cx.ptf(f64::from(TAIL_TIP));
         let half = cx.ptf(f64::from(TAIL_HALF));
         cx.list
@@ -439,6 +460,9 @@ pub struct Popconfirm {
     result_sink: Option<Arc<Mutex<Option<ConfirmResult>>>>,
     /// Shared shaped-text painter — propagated into the surface.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Scale factor from the last layout pass — converts `TAIL_TIP`
+    /// into the window-space units the placement anchor lives in.
+    scale: f32,
 }
 
 impl Popconfirm {
@@ -468,6 +492,7 @@ impl Popconfirm {
             result: None,
             result_sink: None,
             text_painter: None,
+            scale: 1.0,
         }
     }
 
@@ -643,10 +668,17 @@ impl Popconfirm {
         self
     }
 
-    /// The anchor the bubble would open at right now.
+    /// The anchor the bubble would open at right now — shrunk by
+    /// `TAIL_TIP` on the flow axis so the surface (which reserves that
+    /// strip for its tail inside its own bounds) parks the face at the
+    /// classic anchor-gap offset.
     fn current_anchor(&self) -> OverlayAnchor {
         OverlayAnchor::BoundsEdge {
-            rect: self.anchor_override.unwrap_or(self.cached_bounds),
+            rect: tail_anchor(
+                self.anchor_override.unwrap_or(self.cached_bounds),
+                self.preferred_edge,
+                TAIL_TIP * self.scale,
+            ),
             edge: self.preferred_edge,
         }
     }
@@ -734,6 +766,7 @@ impl Popconfirm {
                 shared: Arc::clone(&self.shared),
                 flow: self.preferred_edge,
                 bounds: Rect::default(),
+                face: Rect::default(),
                 focused: false,
                 button_rects: [Rect::default(); 2],
                 painted_shape: Mutex::new(Shape::RECT),
@@ -778,6 +811,7 @@ impl Widget for Popconfirm {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        self.scale = cx.scale;
         // The marker carries keyboard focus so `Escape`/`Enter` work
         // for ownerless-embedded use.
         cx.hot.flags |= NodeFlags::FOCUSABLE;
@@ -919,12 +953,20 @@ mod tests {
         assert_eq!(
             o.entry(id).unwrap().anchor(),
             &OverlayAnchor::BoundsEdge {
-                rect: Rect::new(100.0, 100.0, 60.0, 24.0),
+                // The placement anchor is shrunk by TAIL_TIP on the
+                // flow axis — the surface reserves that strip for the
+                // tail inside its own bounds.
+                rect: tail_anchor(
+                    Rect::new(100.0, 100.0, 60.0, 24.0),
+                    AnchorEdge::Bottom,
+                    TAIL_TIP,
+                ),
                 edge: AnchorEdge::Bottom,
             }
         );
         let b = o.entry_bounds(id).unwrap();
-        assert!(b.min_y() >= 124.0);
+        assert!(b.min_y() >= 124.0 - TAIL_TIP);
+        assert!(b.min_y() + TAIL_TIP >= 124.0 + 4.0);
     }
 
     #[test]
@@ -1038,6 +1080,7 @@ mod tests {
             shared,
             flow: AnchorEdge::Bottom,
             bounds: Rect::default(),
+            face: Rect::default(),
             focused: false,
             button_rects: [Rect::default(); 2],
             painted_shape: Mutex::new(Shape::RECT),
@@ -1062,6 +1105,7 @@ mod tests {
             shared: Arc::new(Mutex::new(PopconfirmShared::default())),
             flow: AnchorEdge::Bottom,
             bounds: Rect::new(80.0, 130.0, 140.0, 80.0),
+            face: Rect::new(80.0, 137.0, 140.0, 73.0),
             focused: false,
             button_rects: [Rect::default(); 2],
             painted_shape: Mutex::new(Shape::RECT),
@@ -1104,6 +1148,7 @@ mod tests {
             shared: Arc::new(Mutex::new(PopconfirmShared::default())),
             flow: AnchorEdge::Bottom,
             bounds: Rect::default(),
+            face: bounds,
             focused: false,
             button_rects: [Rect::default(); 2],
             painted_shape: Mutex::new(Shape::RECT),

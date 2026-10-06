@@ -32,8 +32,6 @@ use martensite_core::{
 };
 use martensite_theme::TokenKey;
 
-use crate::text_paint::paint_label_clipped;
-
 /// Pull distance (points) that arms a refresh on release.
 const PTR_THRESHOLD_PT: f32 = 64.0;
 /// Top-edge strip (points) where a downward drag may begin.
@@ -385,12 +383,27 @@ impl Widget for PullToRefresh {
                     .and_then(|p| p.measure_text(text, size))
                     .unwrap_or(size * text.chars().count() as f32 * 0.5)
                     .min(ind.width());
-                let origin = kurbo::Point::new(
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    f(ind),
                     f64::from(ind.min_x() + (ind.width() - w) / 2.0),
-                    f64::from(ind.min_y() + (ind.height() - size) / 2.0),
+                    text,
+                    size,
+                    muted,
                 );
-                paint_label_clipped(painter, cx.list, f(ind), origin, text, size, muted);
             }
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(
+                cx,
+                cx.bounds,
+                (cx.bounds.max_x() - cx.bounds.min_x()).min(cx.bounds.max_y() - cx.bounds.min_y())
+                    / 2.0,
+            );
         }
     }
 

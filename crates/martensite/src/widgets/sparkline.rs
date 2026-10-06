@@ -212,8 +212,8 @@ impl Widget for Sparkline {
         Some(self)
     }
 
-    fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
-        Vec2::new(100.0, 24.0)
+    fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
+        Vec2::new(cx.pt(100.0), cx.pt(24.0))
     }
 
     fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}

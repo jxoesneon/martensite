@@ -219,16 +219,21 @@ impl Default for ColorPalette {
 }
 
 impl Widget for ColorPalette {
+    /// The hue is the payload — every swatch family must paint,
+    /// including reds. `reserved-hue` cannot apply to a picker.
+    fn debug_name(&self) -> &'static str {
+        "ColorPalette@lint:reserved-hue"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }
 
-    fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
+    fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
         let rows = self.swatches.len().div_ceil(PER_ROW).max(1) as f32;
         Vec2::new(
-            PER_ROW as f32 * (SWATCH + GAP) - GAP,
-            rows * (SWATCH + GAP) - GAP,
+            cx.pt(PER_ROW as f32 * (SWATCH + GAP) - GAP),
+            cx.pt(rows * (SWATCH + GAP) - GAP),
         )
     }
 
@@ -267,6 +272,12 @@ impl Widget for ColorPalette {
             } else if self.enabled && self.hover == Some(i) {
                 cx.list.push_stroke_shape(r, &shape, cx.pt(1.5), hover);
             }
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
         }
     }
 

@@ -199,11 +199,15 @@ impl Widget for Image {
         Some(self)
     }
 
-    fn measure(&mut self, _cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        // Natural pixel size, clamped to the available space.
+    fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
+        // Natural size in logical points (1 image px = 1pt at scale 1,
+        // matching every other widget's pt→px contract), clamped to
+        // the available space.
         Vec2::new(
-            (self.image.width() as f32).min(constraints.max_size.x.max(0.0)),
-            (self.image.height() as f32).min(constraints.max_size.y.max(0.0)),
+            cx.pt(self.image.width() as f32)
+                .min(constraints.max_size.x.max(0.0)),
+            cx.pt(self.image.height() as f32)
+                .min(constraints.max_size.y.max(0.0)),
         )
     }
 

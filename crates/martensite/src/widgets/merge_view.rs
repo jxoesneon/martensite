@@ -535,18 +535,18 @@ impl Widget for MergeView {
                     );
                 }
             }
-            // Accept buttons on conflict rows — native chevron icons
-            // first, ‹/› glyphs as the fallback.
+            // Accept buttons on conflict rows — native chevron
+            // icons, ambient-resolved.
             if row.is_conflict() {
                 let (l, rr) = self.accept_rects[i];
                 // Pane order mirrors under RTL — the chevrons that
                 // pull a side's change into the merge follow suit.
-                let (li, ri, lg, rg) = if cx.is_rtl() {
-                    ("nav.chevron-right", "nav.chevron-left", "›", "‹")
+                let (li, ri) = if cx.is_rtl() {
+                    ("nav.chevron-right", "nav.chevron-left")
                 } else {
-                    ("nav.chevron-left", "nav.chevron-right", "‹", "›")
+                    ("nav.chevron-left", "nav.chevron-right")
                 };
-                for (rect, icon, glyph) in [(l, li, lg), (rr, ri, rg)] {
+                for (rect, icon) in [(l, li), (rr, ri)] {
                     cx.list.push_stroke_rect(
                         krect(rect),
                         s.max(1.0),
@@ -554,31 +554,18 @@ impl Widget for MergeView {
                     );
                     let ink = cx.color(TokenKey::TextColor, TEXT);
                     let side = FONT_PT * s;
-                    let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
-                        crate::widgets::morph_icon::paint_icon_d(
-                            cx.list,
-                            Rect::new(
-                                rect.min_x() + (rect.width() - side) / 2.0,
-                                rect.min_y() + (rect.height() - side) / 2.0,
-                                side,
-                                side,
-                            ),
-                            d,
-                            s,
-                            ink,
-                        )
-                    });
-                    if !icon_ok {
-                        crate::text_paint::paint_label_vcenter(
-                            painter,
-                            cx.list,
-                            krect(rect),
-                            f64::from(rect.min_x() + rect.width() * 0.3),
-                            glyph,
-                            FONT_PT * s,
-                            ink,
-                        );
-                    }
+                    crate::widgets::morph_icon::paint_icon_named(
+                        cx.list,
+                        Rect::new(
+                            rect.min_x() + (rect.width() - side) / 2.0,
+                            rect.min_y() + (rect.height() - side) / 2.0,
+                            side,
+                            side,
+                        ),
+                        icon,
+                        s,
+                        ink,
+                    );
                 }
             }
         }

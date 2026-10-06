@@ -166,6 +166,20 @@ impl Pip {
         std::mem::take(&mut self.expanded)
     }
 
+    /// Forces the hover state — the chrome (close/expand buttons) and
+    /// their hit zones are hover-gated, so headless staging and tests
+    /// set this directly instead of synthesizing a `PointerMoved`.
+    ///
+    /// ```
+    /// use martensite::widgets::Pip;
+    ///
+    /// let mut p = Pip::new(martensite_core::DummyWidget);
+    /// p.set_hovered(true);
+    /// ```
+    pub fn set_hovered(&mut self, hovered: bool) {
+        self.hovered = hovered;
+    }
+
     /// Button hit zones — visible only while hovered.
     fn button_at(&self, p: Vec2) -> Option<&'static str> {
         if !self.hovered {
@@ -182,6 +196,11 @@ impl Pip {
 }
 
 impl Widget for Pip {
+    /// The close button's hover face paints a danger red — the alarm
+    /// channel is the semantics here, so the lineage carries `@alarm`.
+    fn debug_name(&self) -> &'static str {
+        "Pip@alarm"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -209,8 +228,10 @@ impl Widget for Pip {
             (bounds.width() - inset * 2.0).max(0.0),
             (bounds.height() - inset * 2.0).max(0.0),
         );
-        let btn = BTN_PT * cx.scale;
         let pad = BTN_PAD_PT * cx.scale;
+        // Shrink the buttons rather than let them spill past the
+        // frame when the host under-sizes the window.
+        let btn = (BTN_PT * cx.scale).min((bounds.height() - pad * 2.0).max(0.0));
         let y = bounds.min_y() + pad;
         if self.closable {
             self.close_rect = Rect::new(bounds.max_x() - pad - btn, y, btn, btn);

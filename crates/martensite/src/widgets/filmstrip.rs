@@ -266,6 +266,11 @@ impl Filmstrip {
 }
 
 impl Widget for Filmstrip {
+    fn debug_name(&self) -> &'static str {
+        // caption bands cut at the tile edge by design; tile art is
+        // payload color.
+        "Filmstrip@lint:text-truncation,saturated-area-cap"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -546,6 +551,20 @@ mod tests {
             scale: 1.0,
         });
         assert_eq!(f.selected(), Some(1));
+    }
+
+    #[test]
+    fn many_thumbs_lay_out_and_paint_without_panic() {
+        let mut f = Filmstrip::new();
+        for i in 0..32u8 {
+            f = f.thumb(Thumbnail::new(
+                format!("t{i}"),
+                [90, 100u8.saturating_add(i % 8 * 18), 200, 255],
+            ));
+        }
+        laid_out(&mut f, 320.0, 96.0);
+        painted(&f);
+        assert_eq!(f.thumb_count(), 32);
     }
 
     #[test]

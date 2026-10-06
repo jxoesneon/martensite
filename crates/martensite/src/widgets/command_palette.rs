@@ -402,11 +402,10 @@ impl Widget for CommandItem {
             cx.list
                 .push_fill_rect(rect, cx.color(TokenKey::AccentColor, HIGHLIGHT_BG));
         }
-        // `DrawText` positions by the run's top edge — centre the
-        // font box inside the row.
+        // `DrawText` positions by the run's top edge — the shared
+        // `paint_label_vcenter` centres each label's ink in the row.
         let font_px = cx.pt(14.0);
         let sub_px = cx.pt(12.0);
-        let text_y = b.min_y() + (b.height() - font_px) / 2.0;
         let ink = if highlighted {
             cx.color(TokenKey::TextInverseColor, HIGHLIGHT_INK)
         } else {
@@ -430,7 +429,7 @@ impl Widget for CommandItem {
             // Clip the title to the row minus the subtitle lane — a
             // long command can't spill past the popup's right edge.
             let text_x = b.min_x() + cx.pt(10.0);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
                 kurbo::Rect::new(
@@ -439,7 +438,7 @@ impl Widget for CommandItem {
                     f64::from(b.max_x() - cx.pt(6.0) - sub_w),
                     f64::from(b.max_y()),
                 ),
-                kurbo::Point::new(f64::from(text_x), f64::from(text_y)),
+                f64::from(text_x),
                 row.title.as_str(),
                 font_px,
                 ink,
@@ -448,13 +447,12 @@ impl Widget for CommandItem {
                 let sub_w = painter
                     .and_then(|p| p.measure_text(subtitle, sub_px))
                     .unwrap_or_else(|| subtitle.chars().count() as f32 * cx.pt(6.0));
-                let sub_y = b.min_y() + (b.height() - sub_px) / 2.0;
                 let sx = (b.max_x() - cx.pt(10.0) - sub_w).max(text_x);
-                crate::text_paint::paint_label_clipped(
+                crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,
                     rect,
-                    kurbo::Point::new(f64::from(sx), f64::from(sub_y)),
+                    f64::from(sx),
                     subtitle.as_str(),
                     sub_px,
                     muted,

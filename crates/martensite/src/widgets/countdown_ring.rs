@@ -432,7 +432,7 @@ impl Widget for CountdownRing {
         };
         let w = painter
             .and_then(|p| p.measure_text(&face, size))
-            .unwrap_or(face.chars().count() as f32 * size * 0.55);
+            .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(face), size, 0.55));
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,

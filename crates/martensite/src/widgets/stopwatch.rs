@@ -356,10 +356,9 @@ impl Widget for Stopwatch {
         let face = self.face();
         let w = painter
             .and_then(|p| p.measure_text(&face, size))
-            .unwrap_or(face.len() as f32 * size * 0.6);
+            .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(face), size, 0.6));
         let x = self.bounds.min_x() + (self.bounds.width() - w).max(0.0) / 2.0;
-        let y = self.bounds.min_y() + (self.bounds.height() - size).max(0.0) / 2.0;
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
@@ -368,10 +367,14 @@ impl Widget for Stopwatch {
                 f64::from(self.bounds.max_x()),
                 f64::from(self.bounds.max_y()),
             ),
-            kurbo::Point::new(f64::from(x), f64::from(y)),
+            f64::from(x),
             &face,
             size,
-            cx.color(TokenKey::TextColor, if self.running { FG } else { DIM }),
+            if self.running {
+                cx.color(TokenKey::TextColor, FG)
+            } else {
+                cx.color(TokenKey::TextMutedColor, DIM)
+            },
         );
         // Lap pips along the bottom — one dot per recorded split.
         if !self.laps.is_empty() {

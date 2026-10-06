@@ -312,6 +312,17 @@ impl Widget for AnalogClock {
             ink,
         );
     }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(
+                cx,
+                cx.bounds,
+                (cx.bounds.max_x() - cx.bounds.min_x()).min(cx.bounds.max_y() - cx.bounds.min_y())
+                    / 2.0,
+            );
+        }
+    }
 }
 
 impl std::fmt::Debug for AnalogClock {

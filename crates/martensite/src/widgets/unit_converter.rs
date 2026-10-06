@@ -1,11 +1,13 @@
 //! `UnitConverter` — the GNOME-Calculator unit converter: a
 //! category picker, `from`/`to` unit cells, a numeric value
-//! field, and a `⇅` swap button over a computed result line.
+//! field, and an `arrow.up-down` swap button over a computed
+//! result line.
 //!
 //! Ships [`UnitCategory`] tables for length, mass, volume, and
 //! temperature. Clicking a unit cell cycles to the next unit in
-//! the category; digit keys edit the value; `⇅` or `x` swaps the
-//! sides. Every mutation parks [`UnitConverter::take_changed`].
+//! the category; digit keys edit the value; the swap button or `x`
+//! swaps the sides. Every mutation parks
+//! [`UnitConverter::take_changed`].
 //!
 //! # Examples
 //!
@@ -34,8 +36,12 @@ const FONT_PT: f32 = 13.0;
 const RESULT_PT: f32 = 16.0;
 
 const FACE: [u8; 4] = [38, 40, 48, 255];
-const CELL: [u8; 4] = [50, 52, 62, 255];
+/// `RaisedColor` fallback — a dark rung above `FACE`, matching the
+/// original intent. `SecondaryColor`, the previous binding,
+/// resolves to a light gray that crushed the cell ink to ~2.6:1.
+const CELL: [u8; 4] = [41, 46, 52, 255];
 const TEXT: [u8; 4] = [235, 237, 240, 255];
+const MUTED: [u8; 4] = [150, 154, 164, 255];
 const ACCENT: [u8; 4] = [110, 140, 230, 255];
 
 /// Conversion kind for a unit.
@@ -514,18 +520,37 @@ impl Widget for UnitConverter {
         cx.list
             .push_fill_rect(krect(self.bounds), cx.color(TokenKey::SurfaceColor, FACE));
         // Category pill.
-        cx.list.push_fill_rect(
-            krect(self.cat_rect),
-            cx.color(TokenKey::SecondaryColor, CELL),
-        );
+        cx.list
+            .push_fill_rect(krect(self.cat_rect), cx.color(TokenKey::RaisedColor, CELL));
+        let cat = self.cat_rect;
+        let name = self.category.name();
+        let font = FONT_PT * s;
         crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            krect(self.cat_rect),
-            f64::from(self.cat_rect.min_x() + PAD_PT * 0.6 * s),
-            &format!("{} ▾", self.category.name()),
-            FONT_PT * s,
+            krect(cat),
+            f64::from(cat.min_x() + PAD_PT * 0.6 * s),
+            name,
+            font,
             cx.color(TokenKey::TextColor, TEXT),
+        );
+        // Dropdown affordance — native chevron at the pill's
+        // trailing edge.
+        let nw = painter
+            .and_then(|p| p.measure_text(name, font))
+            .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(name, font, 0.55));
+        let side = font;
+        crate::widgets::morph_icon::paint_icon_named(
+            cx.list,
+            Rect::new(
+                (cat.min_x() + PAD_PT * 0.6 * s + nw + 2.0 * s).min(cat.max_x() - side - 2.0 * s),
+                cat.min_y() + (cat.height() - side) / 2.0,
+                side,
+                side,
+            ),
+            "nav.chevron-down",
+            s,
+            cx.color(TokenKey::TextMutedColor, MUTED),
         );
         // From/to cells.
         for (rect, text) in [
@@ -536,7 +561,7 @@ impl Widget for UnitConverter {
             (self.to_rect, self.to_unit().to_string()),
         ] {
             cx.list
-                .push_fill_rect(krect(rect), cx.color(TokenKey::SecondaryColor, CELL));
+                .push_fill_rect(krect(rect), cx.color(TokenKey::RaisedColor, CELL));
             crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
@@ -554,15 +579,22 @@ impl Widget for UnitConverter {
             s.max(1.0),
             cx.color(TokenKey::BorderColor, ACCENT),
         );
-        crate::text_paint::paint_label_vcenter(
-            painter,
-            cx.list,
-            krect(r),
-            f64::from(r.min_x() + r.width() * 0.28),
-            "⇅",
-            FONT_PT * s,
-            cx.color(TokenKey::AccentColor, ACCENT),
-        );
+        {
+            // Swap affordance — vertical two-headed arrow icon.
+            let side = FONT_PT * s;
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(
+                    r.min_x() + (r.width() - side) / 2.0,
+                    r.min_y() + (r.height() - side) / 2.0,
+                    side,
+                    side,
+                ),
+                "arrow.up-down",
+                s,
+                cx.color(TokenKey::AccentColor, ACCENT),
+            );
+        }
         // Result line.
         if let Some(v) = self.convert() {
             let result = format!("= {} {}", trim_num(v), self.to_unit());

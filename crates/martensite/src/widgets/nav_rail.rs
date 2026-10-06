@@ -23,8 +23,8 @@
 //! use martensite::widgets::nav_rail::{NavDestination, NavRail};
 //!
 //! let r = NavRail::new()
-//!     .destination("🏠", "Home")
-//!     .destination("⚙", "Settings");
+//!     .destination("nav.home", "Home")
+//!     .destination("nav.settings", "Settings");
 //! assert_eq!(r.destination_count(), 2);
 //! ```
 
@@ -73,13 +73,14 @@ const HOVER: [u8; 4] = [30, 31, 36, 12];
 /// ```
 /// use martensite::widgets::nav_rail::NavDestination;
 ///
-/// let d = NavDestination::new("★", "Starred");
+/// let d = NavDestination::new("status.star", "Starred");
 /// assert_eq!(d.label, "Starred");
 /// ```
 #[derive(Clone, Debug)]
 pub struct NavDestination {
-    /// Icon glyph (a short string — emoji or a single character).
-    /// Unused when `icon_d` carries a stroke icon.
+    /// Icon mark (a short string — a namespaced icon name like
+    /// `"nav.home"`, a symbol, or a single character). Unused when
+    /// `icon_d` carries a stroke icon.
     pub icon: String,
     /// The destination label.
     pub label: String,
@@ -90,14 +91,17 @@ pub struct NavDestination {
 }
 
 impl NavDestination {
-    /// Creates a destination with a text-glyph icon.
+    /// Creates a destination with a text-glyph icon — a namespaced
+    /// icon name (`"nav.home"`, …) resolves through the ambient icon
+    /// family when the rail hosts it; any other string paints as a
+    /// text glyph.
     ///
     /// # Examples
     ///
     /// ```
     /// use martensite::widgets::nav_rail::NavDestination;
     ///
-    /// let d = NavDestination::new("📁", "Files");
+    /// let d = NavDestination::new("file.folder", "Files");
     /// ```
     #[must_use]
     pub fn new(icon: impl Into<String>, label: impl Into<String>) -> Self {
@@ -133,14 +137,13 @@ impl NavDestination {
         }
     }
 
-    /// Creates a destination whose icon is looked up by *name* in the
-    /// native icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// Creates a destination whose icon resolves by *name* through
+    /// the ambient icon family
+    /// ([`icons::resolve_icon`](crate::icons::resolve_icon)) —
     /// `"nav.menu"`, `"data.grid"`, `"media.play"`, … The resolved `d`
     /// is stored, so the value stays plain data; an unknown name
     /// yields an iconless destination (the rail tolerates it like a
-    /// rejected `d`). Overlay-pack names resolve through the app's
-    /// [`IconSet`](crate::icons::IconSet) — pass the resulting `d` to
-    /// [`icon`](Self::icon).
+    /// rejected `d`).
     ///
     /// # Examples
     ///
@@ -157,7 +160,7 @@ impl NavDestination {
         Self {
             icon: String::new(),
             label: label.into(),
-            icon_d: crate::icons::BUILTIN.lookup(name).map(str::to_string),
+            icon_d: crate::icons::resolve_icon(name),
         }
     }
 
@@ -183,7 +186,7 @@ impl NavDestination {
 /// ```
 /// use martensite::widgets::nav_rail::NavRail;
 ///
-/// let r = NavRail::new().destination("🏠", "Home").selected(0);
+/// let r = NavRail::new().destination("nav.home", "Home").selected(0);
 /// assert_eq!(r.selected_index(), Some(0));
 /// ```
 pub struct NavRail {
@@ -241,19 +244,29 @@ impl NavRail {
         }
     }
 
-    /// Appends a destination (icon glyph + label).
+    /// Appends a destination (icon mark + label).
+    ///
+    /// An icon name (`"nav.home"`, `"nav.settings"`, …) resolves
+    /// through the ambient icon family and hosts a
+    /// [`MorphIcon`](crate::widgets::MorphIcon) exactly like
+    /// [`destination_named`](Self::destination_named); any other
+    /// string stays a text glyph.
     ///
     /// # Examples
     ///
     /// ```
     /// use martensite::widgets::nav_rail::NavRail;
     ///
-    /// let r = NavRail::new().destination("🏠", "Home");
+    /// let r = NavRail::new().destination("nav.home", "Home");
     /// ```
     #[must_use]
     pub fn destination(mut self, icon: impl Into<String>, label: impl Into<String>) -> Self {
-        self.destinations.push(NavDestination::new(icon, label));
-        self.icons.push(None);
+        let mut d = NavDestination::new(icon, label);
+        Self::resolve_glyph_icon(&mut d);
+        let icon = d.icon_d().and_then(|d| Self::build_icon(d, self.enabled));
+        self.destinations.push(d);
+        self.icons.push(icon);
+        self.sync_icon_inks();
         self
     }
 
@@ -296,17 +309,14 @@ impl NavRail {
         self
     }
 
-    /// Appends a destination whose icon resolves by *name* through the
-    /// native icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// Appends a destination whose icon resolves by *name* through
+    /// the ambient icon family
+    /// ([`icons::resolve_icon`](crate::icons::resolve_icon)) —
     /// `"nav.menu"`, `"data.grid"`, `"media.play"`, … The resolved
     /// shape is hosted exactly like [`destination_icon`](Self::destination_icon)'s
     /// (internal `MorphIcon` child, decorative a11y, pill-contrast
     /// ink); an unknown name degrades to an iconless destination
     /// rather than failing the build — same contract as a rejected `d`.
-    ///
-    /// Apps carrying overlay packs resolve names through their own
-    /// [`IconSet`](crate::icons::IconSet) and pass the `d` to
-    /// [`destination_icon`](Self::destination_icon).
     ///
     /// # Examples
     ///
@@ -329,6 +339,18 @@ impl NavRail {
         self.icons.push(icon);
         self.sync_icon_inks();
         self
+    }
+
+    /// When `d.icon` is a namespaced icon name that resolves through
+    /// the ambient icon family, stores the resolved `d` as the
+    /// destination's stroke icon — the mark then paints as a hosted
+    /// [`MorphIcon`], not a text glyph.
+    fn resolve_glyph_icon(d: &mut NavDestination) {
+        if d.icon_d.is_none() {
+            if let Some(resolved) = crate::icons::resolve_icon(&d.icon) {
+                d.icon_d = Some(resolved);
+            }
+        }
     }
 
     /// Builds the hosted icon for a stroke `d` — `decorative` (the
@@ -368,7 +390,7 @@ impl NavRail {
     ///
     /// let r = NavRail::new()
     ///     .destination_named("data.grid", "Grid")
-    ///     .destination("⚙", "Settings");
+    ///     .destination("nav.settings", "Settings");
     /// assert!(r.icon_widget(0).is_some());
     /// assert!(r.icon_widget(1).is_none()); // glyph destination
     /// ```
@@ -404,10 +426,14 @@ impl NavRail {
     /// ```
     /// use martensite::widgets::nav_rail::{NavDestination, NavRail};
     ///
-    /// let r = NavRail::new().destinations(vec![NavDestination::new("★", "Favs")]);
+    /// let r = NavRail::new().destinations(vec![NavDestination::new("status.star", "Favs")]);
     /// ```
     #[must_use]
     pub fn destinations(mut self, destinations: Vec<NavDestination>) -> Self {
+        let mut destinations = destinations;
+        for d in &mut destinations {
+            Self::resolve_glyph_icon(d);
+        }
         self.icons = destinations
             .iter()
             .map(|d| d.icon_d().and_then(|d| Self::build_icon(d, self.enabled)))
@@ -425,7 +451,7 @@ impl NavRail {
     /// ```
     /// use martensite::widgets::nav_rail::NavRail;
     ///
-    /// let r = NavRail::new().destination("🏠", "Home").selected(0);
+    /// let r = NavRail::new().destination("nav.home", "Home").selected(0);
     /// ```
     #[must_use]
     pub fn selected(mut self, index: usize) -> Self {
@@ -476,7 +502,7 @@ impl NavRail {
     /// ```
     /// use martensite::widgets::nav_rail::NavRail;
     ///
-    /// let mut r = NavRail::new().destination("🏠", "Home");
+    /// let mut r = NavRail::new().destination("nav.home", "Home");
     /// r.set_selected(Some(0));
     /// assert_eq!(r.selected_index(), Some(0));
     /// ```
@@ -524,7 +550,7 @@ impl NavRail {
     /// ```
     /// use martensite::widgets::nav_rail::NavRail;
     ///
-    /// let w = NavRail::new().destination("🏠", "Home").selected(0).a11y_label("Custom name");
+    /// let w = NavRail::new().destination("nav.home", "Home").selected(0).a11y_label("Custom name");
     /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));
     /// ```
     #[must_use]
@@ -823,9 +849,9 @@ mod tests {
 
     fn rail() -> NavRail {
         let mut r = NavRail::new()
-            .destination("🏠", "Home")
-            .destination("🔍", "Search")
-            .destination("⚙", "Settings");
+            .destination("nav.home", "Home")
+            .destination("nav.search", "Search")
+            .destination("nav.settings", "Settings");
         let mut hot = HotNode::default();
         r.layout(&mut make_cx(&mut hot), Rect::new(0.0, 0.0, 72.0, 400.0));
         r
@@ -949,7 +975,7 @@ mod tests {
     fn icon_rail() -> NavRail {
         let mut r = NavRail::new()
             .destination_named("data.grid", "Grid")
-            .destination("⚙", "Settings")
+            .destination("S", "Settings")
             .destination_icon("M3 3h18v18H3z", "Box");
         let mut hot = HotNode::default();
         r.layout(&mut make_cx(&mut hot), Rect::new(0.0, 0.0, 72.0, 400.0));

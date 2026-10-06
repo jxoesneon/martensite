@@ -328,8 +328,9 @@ impl Widget for Card {
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let h_inset = self.padding.horizontal();
-        let v_inset = self.padding.vertical();
+        // EdgeInsets are logical pt — scale to device px.
+        let h_inset = cx.pt(self.padding.horizontal());
+        let v_inset = cx.pt(self.padding.vertical());
         let title_h = if self.title.is_some() {
             cx.pt(TITLE_H)
         } else {
@@ -390,10 +391,10 @@ impl Widget for Card {
         self.child_rects.clear();
 
         let inner = Rect::new(
-            bounds.origin.x + self.padding.left,
-            bounds.origin.y + self.padding.top,
-            (bounds.size.x - self.padding.horizontal()).max(0.0),
-            (bounds.size.y - self.padding.vertical()).max(0.0),
+            bounds.origin.x + cx.pt(self.padding.left),
+            bounds.origin.y + cx.pt(self.padding.top),
+            (bounds.size.x - cx.pt(self.padding.horizontal())).max(0.0),
+            (bounds.size.y - cx.pt(self.padding.vertical())).max(0.0),
         );
 
         // Title band at the top of the interior.

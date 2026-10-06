@@ -280,6 +280,12 @@ impl DiffView {
 }
 
 impl Widget for DiffView {
+    /// Removed lines are red by diff convention — domain encoding,
+    /// not the alarm channel.
+    fn debug_name(&self) -> &'static str {
+        // Add/remove tints are diff convention, not alarm.
+        "DiffView@lint:reserved-hue"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -358,14 +364,19 @@ impl Widget for DiffView {
         for (row, i) in (start..end).enumerate() {
             let (kind, text) = &self.lines[i];
             let y = self.bounds.min_y() + row as f32 * line_h;
-            // Row wash for added/removed.
+            // Row wash for added/removed. The token only supplies the
+            // hue — the wash must stay a translucent tint (ADD_BG/
+            // DEL_BG alpha): an opaque token fill would flood the
+            // surface and sit the same-hue line text on an identical
+            // background.
             match kind {
                 DiffKind::Added | DiffKind::Removed => {
-                    let wash = if *kind == DiffKind::Added {
+                    let mut wash = if *kind == DiffKind::Added {
                         cx.color(TokenKey::SuccessColor, ADD_BG)
                     } else {
                         cx.color(TokenKey::ErrorColor, DEL_BG)
                     };
+                    wash[3] = wash[3].min(ADD_BG[3]);
                     cx.list.push_fill_rect(
                         f(Rect::new(
                             self.bounds.min_x(),

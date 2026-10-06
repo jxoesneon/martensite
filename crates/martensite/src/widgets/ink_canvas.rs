@@ -123,6 +123,26 @@ impl InkCanvas {
         self
     }
 
+    /// Appends an already-committed stroke — device-space points in
+    /// canvas coords, matching the coordinate space the pointer path
+    /// records. Strokes shorter than two points are dropped, matching
+    /// the release-commit rule in [`Widget::event`].
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite::widgets::ink_canvas::InkCanvas;
+    ///
+    /// let canvas = InkCanvas::new().stroke([Vec2::new(4.0, 4.0), Vec2::new(40.0, 20.0)]);
+    /// assert_eq!(canvas.stroke_count(), 1);
+    /// ```
+    pub fn stroke(mut self, points: impl IntoIterator<Item = Vec2>) -> Self {
+        let s: Stroke = points.into_iter().collect();
+        if s.len() >= 2 {
+            self.strokes.push(s);
+        }
+        self
+    }
+
     /// Committed stroke count.
     ///
     /// ```
@@ -339,6 +359,12 @@ impl Widget for InkCanvas {
                 path.line_to((f64::from(p.x), f64::from(p.y)));
             }
             cx.list.push_stroke_path(path, w, ink);
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
         }
     }
 }

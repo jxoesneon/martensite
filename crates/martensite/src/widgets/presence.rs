@@ -287,7 +287,8 @@ impl Widget for Presence {
     /// not the alarm channel, so no `@alarm` marker: nothing in this
     /// widget paints the reserved alarm-red family.
     fn debug_name(&self) -> &'static str {
-        "Presence"
+        // Name/initials clip to the widget bounds by design.
+        "Presence@lint:text-truncation"
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
@@ -298,7 +299,9 @@ impl Widget for Presence {
                 .text_painter
                 .as_ref()
                 .map(|p| p.measure(&self.name, NAME_PT * s))
-                .unwrap_or_else(|| self.name.chars().count() as f32 * NAME_PT * 0.6 * s);
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(self.name), NAME_PT, 0.6) * s
+                });
             let sub = self
                 .status_text
                 .clone()
@@ -307,7 +310,9 @@ impl Widget for Presence {
                 .text_painter
                 .as_ref()
                 .map(|p| p.measure(&sub, SUB_PT * s))
-                .unwrap_or_else(|| sub.chars().count() as f32 * SUB_PT * 0.6 * s);
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(sub), SUB_PT, 0.6) * s
+                });
             name_w.max(sub_w) + GAP_PT * s
         } else {
             0.0
@@ -371,23 +376,33 @@ impl Widget for Presence {
         let size = NAME_PT * s;
         let iw = painter
             .and_then(|p| p.measure_text(&initials, size))
-            .unwrap_or(initials.len() as f32 * size * 0.6);
+            .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(initials), size, 0.6));
         let io = kurbo::Point::new(
             f64::from(self.bounds.min_x() + (d - iw) / 2.0),
             f64::from(self.bounds.min_y() + d / 2.0),
         );
-        crate::text_paint::paint_label(
+        // Clip to the widget — wide initials cut at the bounds edge
+        // rather than painting over siblings.
+        crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
+            kurbo::Rect::new(
+                f64::from(self.bounds.min_x()),
+                f64::from(self.bounds.min_y()),
+                f64::from(self.bounds.max_x()),
+                f64::from(self.bounds.max_y()),
+            ),
             io,
             &initials,
             size,
             cx.color(TokenKey::TextInverseColor, TEXT),
         );
-        // Status dot, bottom-right with a surface ring.
+        // Status dot, bottom-right with a surface ring. The ring
+        // straddles the disc edge by design, but must stay inside the
+        // widget bounds — clamp so the ring's far edge never spills.
         let dd = DOT_PT * s;
-        let dx = self.bounds.min_x() + d - dd * 0.9;
-        let dy = self.bounds.min_y() + d - dd * 0.9;
+        let dx = (self.bounds.min_x() + d - dd * 0.9).min(self.bounds.max_x() - dd - s);
+        let dy = (self.bounds.min_y() + d - dd * 0.9).min(self.bounds.max_y() - dd - s);
         let ring = kurbo::Rect::new(
             f64::from(dx - s),
             f64::from(dy - s),

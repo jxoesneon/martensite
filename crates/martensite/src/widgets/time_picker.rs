@@ -61,7 +61,9 @@ const INK_MUTED: [u8; 4] = [150, 150, 158, 255];
 /// Focused-segment highlight wash.
 const FOCUS_BG: [u8; 4] = [60, 110, 220, 255];
 /// Focused-segment ink.
-const FOCUS_INK: [u8; 4] = [255, 255, 255, 255];
+/// `TextInverseColor` fallback — the token's dark-theme resolved
+/// value (inverse ink is *dark* on the accent focus plate).
+const FOCUS_INK: [u8; 4] = [18, 23, 28, 255];
 /// Inner horizontal padding of the field (logical points).
 const INNER_PAD: f32 = 8.0;
 
@@ -812,7 +814,7 @@ impl Widget for TimePicker {
             };
             let w = painter
                 .and_then(|p| p.measure_text(text, font_px))
-                .unwrap_or(text.len() as f32 * font_px * 0.55);
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(text, font_px, 0.55));
             let tx = r.min_x() + (r.width() - w).max(0.0) / 2.0;
             let wclip = kurbo::Rect::new(
                 f64::from(b.min_x()),
@@ -849,7 +851,10 @@ impl Widget for TimePicker {
                     f64::from(r.max_x() - font_px * 0.2),
                     ":",
                     font_px,
-                    ink,
+                    // The glyph sits inside the focused segment's
+                    // accent inset — follow the segment's ink or it
+                    // reads ~2:1 on the highlight.
+                    seg_ink,
                 );
             }
         }

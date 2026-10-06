@@ -419,6 +419,11 @@ impl InlineEdit {
 }
 
 impl Widget for InlineEdit {
+    /// Field contents scroll horizontally — overflow past the clip is
+    /// revealable by scrolling/caret, not permanent truncation.
+    fn debug_name(&self) -> &'static str {
+        "InlineEdit@lint:text-truncation"
+    }
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         let _ = self.input.measure(cx, constraints);
         Vec2::new(
@@ -571,7 +576,11 @@ impl Widget for InlineEdit {
         } else {
             (
                 self.value.as_str(),
-                cx.color(TokenKey::TextColor, [30, 30, 34, 255]),
+                if self.enabled {
+                    cx.color(TokenKey::TextColor, [30, 30, 34, 255])
+                } else {
+                    cx.color(TokenKey::TextMutedColor, [120, 120, 128, 255])
+                },
             )
         };
         if text.is_empty() {
@@ -579,8 +588,7 @@ impl Widget for InlineEdit {
         }
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let font = cx.pt(FONT_PT);
-        let ly = self.bounds.origin.y + (self.bounds.size.y - font) / 2.0;
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
@@ -589,7 +597,7 @@ impl Widget for InlineEdit {
                 f64::from(self.bounds.max_x()),
                 f64::from(self.bounds.max_y()),
             ),
-            kurbo::Point::new(f64::from(self.bounds.min_x()), f64::from(ly)),
+            f64::from(self.bounds.min_x()),
             text,
             font,
             ink,

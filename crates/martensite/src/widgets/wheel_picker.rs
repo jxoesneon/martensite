@@ -285,6 +285,11 @@ impl std::fmt::Debug for WheelPicker {
 }
 
 impl Widget for WheelPicker {
+    /// Items scroll through the wheel window — edge-clipped rows are
+    /// revealable by scrolling, not permanently truncated.
+    fn debug_name(&self) -> &'static str {
+        "WheelPicker@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)

@@ -877,6 +877,19 @@ impl MenuRow {
 }
 
 impl Widget for MenuRow {
+    fn debug_name(&self) -> &'static str {
+        // Name reflects the item kind: separators and headings are
+        // presentational rows, not controls — keeps lint target-size
+        // and kind classification honest.
+        match self.item() {
+            // "MenuSeparator" would still match the "menu" →
+            // Interactive heuristic — use a name without it.
+            Some(MenuItem::Separator) => "SeparatorRow",
+            Some(MenuItem::Heading { .. }) => "HeadingRow",
+            _ => "MenuRow",
+        }
+    }
+
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -1144,7 +1157,6 @@ impl Widget for MenuRow {
             );
         }
         let font_px = cx.pt(FONT_PT);
-        let text_y = b.min_y() + (b.height() - font_px) / 2.0;
         let enabled = item.is_selectable();
         let ink = if highlighted {
             cx.color(TokenKey::TextInverseColor, HIGHLIGHT_INK)
@@ -1154,15 +1166,14 @@ impl Widget for MenuRow {
             cx.color(TokenKey::TextMutedColor, INK_DISABLED)
         };
         // Gutter marks: a check for a checked item, a dot for a
-        // selected radio — native-pack icons first, glyphs as the
-        // fallback.
+        // selected radio — native icons, ambient-resolved.
         let mark = match &item {
-            MenuItem::Checkable { checked: true, .. } => Some(("status.check", "✓")),
-            MenuItem::Radio { checked: true, .. } => Some(("status.circle-dot", "•")),
+            MenuItem::Checkable { checked: true, .. } => Some("status.check"),
+            MenuItem::Radio { checked: true, .. } => Some("status.circle-dot"),
             _ => None,
         };
         let rtl = cx.is_rtl();
-        if let Some((icon_name, glyph)) = mark {
+        if let Some(icon_name) = mark {
             let glyph_ink = if highlighted {
                 ink
             } else {
@@ -1174,34 +1185,15 @@ impl Widget for MenuRow {
             } else {
                 b.min_x() + cx.pt(6.0)
             };
-            let icon_ok = crate::icons::builtin().lookup(icon_name).is_some_and(|d| {
-                crate::widgets::morph_icon::paint_icon_d(
-                    cx.list,
-                    Rect::new(mark_x, b.min_y() + (b.height() - side) / 2.0, side, side),
-                    d,
-                    cx.scale,
-                    glyph_ink,
-                )
-            });
-            if !icon_ok {
-                crate::text_paint::paint_label(
-                    crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
-                    cx.list,
-                    kurbo::Point::new(
-                        f64::from(if rtl {
-                            b.max_x() - cx.pt(16.0)
-                        } else {
-                            b.min_x() + cx.pt(8.0)
-                        }),
-                        f64::from(text_y),
-                    ),
-                    glyph,
-                    font_px,
-                    glyph_ink,
-                );
-            }
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(mark_x, b.min_y() + (b.height() - side) / 2.0, side, side),
+                icon_name,
+                cx.scale,
+                glyph_ink,
+            );
         }
-        // Label, clipped before the suffix zone (shortcut + ▸) —
+        // Label, clipped before the suffix zone (shortcut + chevron) —
         // under RTL the check gutter is on the right and the suffix
         // zone on the left, so the label region mirrors.
         let has_sub = item.is_submenu();
@@ -1228,12 +1220,12 @@ impl Widget for MenuRow {
         // Under RTL the label right-anchors at `label_right` so the
         // text hugs the leading edge of the row.
         let label_ox = if rtl {
-            let lw = item.label().chars().count() as f32 * font_px * 0.55;
+            let lw = crate::text_paint::estimate_text_width_px(item.label(), font_px, 0.55);
             (label_right - lw).max(label_x)
         } else {
             label_x
         };
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
             cx.list,
             kurbo::Rect::new(
@@ -1242,7 +1234,7 @@ impl Widget for MenuRow {
                 f64::from(label_right.max(label_x)),
                 f64::from(b.max_y()),
             ),
-            kurbo::Point::new(f64::from(label_ox), f64::from(text_y)),
+            f64::from(label_ox),
             item.label(),
             font_px,
             ink,
@@ -1294,39 +1286,17 @@ impl Widget for MenuRow {
                 b.max_x() - cx.pt(SUBMENU_W - 6.0)
             };
             let side = sub_px;
-            let icon_ok = crate::icons::builtin()
-                .lookup(if rtl {
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                Rect::new(x, b.min_y() + (b.height() - side) / 2.0, side, side),
+                if rtl {
                     "nav.chevron-left"
                 } else {
                     "nav.chevron-right"
-                })
-                .is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(x, b.min_y() + (b.height() - side) / 2.0, side, side),
-                        d,
-                        cx.scale,
-                        ink,
-                    )
-                });
-            if !icon_ok {
-                crate::text_paint::paint_label(
-                    crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
-                    cx.list,
-                    kurbo::Point::new(
-                        f64::from(x),
-                        crate::text_paint::centered_label_top(
-                            crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
-                            b.min_y() + (b.height()) / 2.0,
-                            if rtl { "◂" } else { "▸" },
-                            sub_px,
-                        ),
-                    ),
-                    if rtl { "◂" } else { "▸" },
-                    sub_px,
-                    ink,
-                );
-            }
+                },
+                cx.scale,
+                ink,
+            );
         }
     }
 }
@@ -1589,7 +1559,8 @@ impl Widget for Menu {
     }
 
     fn debug_name(&self) -> &'static str {
-        "Menu"
+        // Submenu cascades are the widget's purpose.
+        "Menu@lint:menu-depth"
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {

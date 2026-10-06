@@ -8,7 +8,7 @@
 //! Beyond plain editing the widget supports a password echo mode
 //! ([`TextInput::secure`]) with an optional reveal toggle
 //! ([`TextInput::revealable`]), `prefix`/`suffix` adornments, a
-//! `clearable` ✕ target,
+//! `clearable` close target,
 //! [`ValidationState`](crate::widgets::text_input::ValidationState)
 //! border/message visuals,
 //! word-jump editing keys, and a bounded undo/redo stack.
@@ -246,7 +246,7 @@ pub struct TextInput {
     /// `secure` — pressing it toggles the masked/plain display (see
     /// [`is_revealed`](Self::is_revealed)).
     pub revealable: bool,
-    /// Shows an ✕ clear target at the field's right edge while the
+    /// Shows a close clear target at the field's right edge while the
     /// value is non-empty and the field is editable — pressing it
     /// clears `value` and records the edit for undo and
     /// [`take_edited`](Self::take_edited).
@@ -756,7 +756,7 @@ impl TextInput {
         self
     }
 
-    /// Sets whether an ✕ clear target shows at the right edge while
+    /// Sets whether a close clear target shows at the right edge while
     /// the value is non-empty and the field is editable — pressing it
     /// clears `value`, records the edit for undo, and sets the
     /// [`take_edited`](Self::take_edited) flag.
@@ -836,7 +836,7 @@ impl TextInput {
     /// `true` when a user-driven edit mutated `value` since the last
     /// call — the widget's change out-seam (mirrors
     /// `Banner::take_dismissed`). Fires on typing, deletion, paste,
-    /// cut, the ✕ clear, and undo/redo; programmatic
+    /// cut, the clear, and undo/redo; programmatic
     /// [`set_value`](Self::set_value) writes do not set it.
     ///
     /// # Examples
@@ -1004,7 +1004,7 @@ impl TextInput {
         true
     }
 
-    /// Empties the field — the ✕ clear target's action. Records the
+    /// Empties the field — the clear target's action. Records the
     /// edit so `"Undo"` restores the cleared value.
     fn clear_value(&mut self) {
         if self.value.is_empty() {
@@ -1235,7 +1235,7 @@ impl TextInput {
         self.secure && self.revealable
     }
 
-    /// Whether the ✕ clear target occupies the right edge.
+    /// Whether the clear target occupies the right edge.
     fn show_clear(&self) -> bool {
         self.clearable && !self.read_only && !self.value.is_empty()
     }
@@ -1274,7 +1274,7 @@ impl TextInput {
         })
     }
 
-    /// The ✕ target's hit zone — the `ZONE_PT` strip just left of the
+    /// The clear target's hit zone — the `ZONE_PT` strip just left of the
     /// reveal zone, `None` unless `clearable` and the field holds a
     /// clearable value.
     fn clear_zone(&self, b: Rect, scale: f32) -> Option<Rect> {
@@ -1314,10 +1314,15 @@ impl TextInput {
         // `scroll_x` shifts the painted run left — add it back so a
         // click lands on the glyph under the pointer. The prefix
         // shifts the run's origin right.
-        let prefix_w = self
-            .prefix
-            .as_deref()
-            .map_or(0.0, |s| painter.measure(s, font_px));
+        let prefix_w = self.prefix.as_deref().map_or(0.0, |s| {
+            // An icon-name prefix occupies a font-sized square lane,
+            // matching `adorn_width`/`paint`.
+            if crate::icons::resolve_icon(s).is_some() {
+                font_px
+            } else {
+                painter.measure(s, font_px)
+            }
+        });
         let text_x = bounds.origin.x + TEXT_PAD_X * self.scale + prefix_w - scroll_x;
         let display = painter.byte_at(text, font_px, x - text_x);
         self.real_byte(display)
@@ -1356,8 +1361,13 @@ impl TextInput {
 
     /// Advance width of an adornment string in device px through the
     /// resolved painter, or the per-char estimate when shaping is
-    /// absent (the same fallback `offset_x` documents).
+    /// absent (the same fallback `offset_x` documents). A namespaced
+    /// icon name occupies a font-sized square lane — it paints as a
+    /// vector icon, not as text.
     fn adorn_width(&self, cx: &PaintContext, s: &str, font_px: f32) -> f32 {
+        if crate::icons::resolve_icon(s).is_some() {
+            return font_px;
+        }
         crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter)
             .and_then(|p| p.measure_text(s, font_px))
             .unwrap_or_else(|| s.chars().count() as f32 * cx.pt(7.0))
@@ -1540,11 +1550,14 @@ impl Widget for TextInput {
     /// `@labeled` declares the accessible name to design-lint's
     /// `icon-only-control` rule — the paint list can't see the
     /// AccessKit label, so the scope marker carries it.
+    /// `@lint:text-truncation` because field contents scroll
+    /// horizontally — overflow past the clip is revealable, not
+    /// permanent truncation.
     fn debug_name(&self) -> &'static str {
         if self.label.is_empty() {
-            "TextInput"
+            "TextInput@lint:text-truncation"
         } else {
-            "TextInput@labeled"
+            "TextInput@labeled@lint:text-truncation"
         }
     }
 
@@ -1602,7 +1615,7 @@ impl Widget for TextInput {
                 // `FocusLost` the forwarding helper broadcasts.
                 self.focused = true;
                 // Right-edge affordance zones win over caret
-                // placement — a press on the eye or ✕ is not a text
+                // placement — a press on the eye or close icon is not a text
                 // gesture and must not move the caret or open a drag.
                 if *count == 1 {
                     if let Some(zone) = self.reveal_zone(cx.bounds, self.scale) {
@@ -1761,6 +1774,7 @@ impl Widget for TextInput {
             Some(ValidationState::Error) => cx.color(TokenKey::ErrorColor, EDGE_ERROR),
             Some(ValidationState::Warning) => cx.color(TokenKey::WarningColor, EDGE_WARNING),
             Some(ValidationState::Valid) => cx.color(TokenKey::SuccessColor, EDGE_VALID),
+            None if !self.enabled => cx.color(TokenKey::TextMutedColor, EDGE),
             None if self.focused => cx.color(TokenKey::AccentColor, EDGE_FOCUSED),
             None => cx.color(TokenKey::BorderColor, EDGE),
         };
@@ -1847,14 +1861,27 @@ impl Widget for TextInput {
         }
 
         if let Some(prefix) = &self.prefix {
-            crate::text_paint::paint_label(
-                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
-                cx.list,
-                kurbo::Point::new(f64::from(b.origin.x + pad), text_y),
-                prefix,
-                font_px,
-                muted,
+            // A namespaced icon name paints as a vector icon in a
+            // font-sized square lane; anything else is a text glyph.
+            let side = font_px * 0.9;
+            let icon_rect = Rect::new(
+                b.origin.x + pad,
+                b.origin.y + (face_h - side) / 2.0,
+                side,
+                side,
             );
+            if !crate::widgets::morph_icon::paint_icon_named(
+                cx.list, icon_rect, prefix, scale, muted,
+            ) {
+                crate::text_paint::paint_label(
+                    crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                    cx.list,
+                    kurbo::Point::new(f64::from(b.origin.x + pad), text_y),
+                    prefix,
+                    font_px,
+                    muted,
+                );
+            }
         }
 
         let display;
@@ -1880,20 +1907,30 @@ impl Widget for TextInput {
                 kurbo::Point::new(f64::from(text_x), text_y),
                 run,
                 font_px,
-                cx.color(TokenKey::TextColor, INK),
+                if self.enabled {
+                    cx.color(TokenKey::TextColor, INK)
+                } else {
+                    muted
+                },
             );
         }
 
         if let Some(suffix) = &self.suffix {
             let sx = b.max_x() - zones_w - pad - suffix_w;
-            crate::text_paint::paint_label(
-                crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
-                cx.list,
-                kurbo::Point::new(f64::from(sx), text_y),
-                suffix,
-                font_px,
-                muted,
-            );
+            let side = font_px * 0.9;
+            let icon_rect = Rect::new(sx, b.origin.y + (face_h - side) / 2.0, side, side);
+            if !crate::widgets::morph_icon::paint_icon_named(
+                cx.list, icon_rect, suffix, scale, muted,
+            ) {
+                crate::text_paint::paint_label(
+                    crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter),
+                    cx.list,
+                    kurbo::Point::new(f64::from(sx), text_y),
+                    suffix,
+                    font_px,
+                    muted,
+                );
+            }
         }
 
         // Caret at the shaped boundary for `self.cursor` — measured
@@ -1938,37 +1975,42 @@ impl Widget for TextInput {
         }
 
         // Right-edge affordances — the eye toggles masked ↔ plain on
-        // secure fields; the ✕ clears the value. Painted inside the
-        // face clip so narrow bounds crop them cleanly.
+        // secure fields; the close icon clears the value. Painted
+        // inside the face clip so narrow bounds crop them cleanly.
         let mid_y = f64::from(b.origin.y + face_h / 2.0);
+        let zone_side = cx.pt(11.0);
         if let Some(zone) = self.reveal_zone(b, scale) {
-            let cxp = f64::from(zone.origin.x + zone.size.x / 2.0);
-            let rx = cx.ptf(5.5);
-            let ry = cx.ptf(3.2);
-            let lens = kurbo::Rect::new(cxp - rx, mid_y - ry, cxp + rx, mid_y + ry);
-            cx.list
-                .push_stroke_shape(lens, &Shape::ELLIPSE, cx.pt(1.1), muted);
-            let pr = cx.ptf(1.5);
-            let pupil = kurbo::Rect::new(cxp - pr, mid_y - pr, cxp + pr, mid_y + pr);
-            cx.list.push_fill_shape(pupil, &Shape::ELLIPSE, muted);
-            if self.masked() {
-                // Slashed pupil — the password is hidden; the affordance
-                // offers to reveal it.
-                let mut slash = kurbo::BezPath::new();
-                slash.move_to((cxp - rx * 0.7, mid_y + ry * 0.7));
-                slash.line_to((cxp + rx * 0.7, mid_y - ry * 0.7));
-                cx.list.push_stroke_path(slash, cx.pt(1.1), muted);
-            }
+            let cxp = zone.origin.x + zone.size.x / 2.0;
+            let icon_rect = Rect::new(
+                cxp - zone_side / 2.0,
+                mid_y as f32 - zone_side / 2.0,
+                zone_side,
+                zone_side,
+            );
+            // Masked fields offer reveal (the slashed eye); visible
+            // fields offer to hide again.
+            let name = if self.masked() {
+                "status.eye-off"
+            } else {
+                "status.eye"
+            };
+            crate::widgets::morph_icon::paint_icon_named(cx.list, icon_rect, name, scale, muted);
         }
         if let Some(zone) = self.clear_zone(b, scale) {
-            let cxp = f64::from(zone.origin.x + zone.size.x / 2.0);
-            let r = cx.ptf(3.5);
-            let mut mark = kurbo::BezPath::new();
-            mark.move_to((cxp - r, mid_y - r));
-            mark.line_to((cxp + r, mid_y + r));
-            mark.move_to((cxp + r, mid_y - r));
-            mark.line_to((cxp - r, mid_y + r));
-            cx.list.push_stroke_path(mark, cx.pt(1.3), muted);
+            let cxp = zone.origin.x + zone.size.x / 2.0;
+            let icon_rect = Rect::new(
+                cxp - zone_side / 2.0,
+                mid_y as f32 - zone_side / 2.0,
+                zone_side,
+                zone_side,
+            );
+            crate::widgets::morph_icon::paint_icon_named(
+                cx.list,
+                icon_rect,
+                "status.close",
+                scale,
+                muted,
+            );
         }
         cx.list.pop_clip();
 
@@ -3179,7 +3221,7 @@ mod tests {
             .read_only(true);
         focus(&mut input);
         input.event(&mut ev(&key("Home")));
-        // No ✕ zone exists on a read-only field — the press falls
+        // No clear zone exists on a read-only field — the press falls
         // through to the text and places the caret like any click.
         assert_eq!(press(&mut input, 190.0, 1), EventResponse::CapturePointer);
         assert_eq!(input.value, "query");

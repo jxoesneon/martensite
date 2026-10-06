@@ -32,7 +32,9 @@ const NUM_PT: f32 = 11.0;
 const PAGE: [u8; 4] = [244, 240, 228, 255];
 const INK: [u8; 4] = [40, 38, 34, 255];
 const GUTTER: [u8; 4] = [120, 112, 96, 255];
-const MUTED: [u8; 4] = [120, 112, 96, 255];
+/// Counter/footer ink on the cream `PAGE` — darkened from the
+/// gutter brown; the shared tone only reached ~4.3:1.
+const MUTED: [u8; 4] = [110, 103, 88, 255];
 
 /// The reader — see the module docs.
 ///
@@ -229,6 +231,10 @@ impl PageFlip {
 }
 
 impl Widget for PageFlip {
+    fn debug_name(&self) -> &'static str {
+        // page body and counter clip to the page bounds by design.
+        "PageFlip@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -389,9 +395,10 @@ impl Widget for PageFlip {
                     rows.push(cur);
                 }
                 for (li, line) in rows.iter().take(max_lines).enumerate() {
-                    crate::text_paint::paint_label(
+                    crate::text_paint::paint_label_clipped(
                         painter,
                         cx.list,
+                        krect(rect),
                         kurbo::Point::new(
                             f64::from(inner_x),
                             f64::from(rect.min_y() + PAD_PT * s + li as f32 * LINE_PT * s),
@@ -424,10 +431,13 @@ impl Widget for PageFlip {
             );
             let w = painter
                 .and_then(|p| p.measure_text(&counter, NUM_PT * s))
-                .unwrap_or(counter.len() as f32 * NUM_PT * 0.6 * s);
-            crate::text_paint::paint_label(
+                .unwrap_or_else(|| {
+                    crate::text_paint::estimate_text_width_px(&(counter), NUM_PT * s, 0.6)
+                });
+            crate::text_paint::paint_label_clipped(
                 painter,
                 cx.list,
+                krect(self.bounds),
                 kurbo::Point::new(
                     f64::from(self.bounds.min_x() + (self.bounds.width() - w) / 2.0),
                     f64::from(self.bounds.max_y() - PAD_PT * 0.5 * s),

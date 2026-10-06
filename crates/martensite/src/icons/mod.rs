@@ -419,6 +419,84 @@ pub fn builtin() -> &'static IconPack {
     &BUILTIN
 }
 
+thread_local! {
+    /// The ambient icon-resolution chain for the current pass — see
+    /// [`install_ambient_icons`].
+    static AMBIENT_ICONS: std::cell::RefCell<Option<IconSet>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// RAII guard restoring the previous ambient [`IconSet`] on drop —
+/// see [`install_ambient_icons`].
+#[must_use = "the ambient icon set is uninstalled when the guard drops"]
+pub struct AmbientIconsGuard(Option<IconSet>);
+
+impl std::fmt::Debug for AmbientIconsGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("AmbientIconsGuard").field(&self.0).finish()
+    }
+}
+
+impl Drop for AmbientIconsGuard {
+    fn drop(&mut self) {
+        let prior = self.0.take();
+        AMBIENT_ICONS.with(|s| *s.borrow_mut() = prior);
+    }
+}
+
+/// Installs `set` as this thread's ambient icon-resolution chain until
+/// the returned guard drops — thread-local and re-entrant, the same
+/// contract as [`install_ambient_intl`](martensite_core::intl::install_ambient_intl).
+///
+/// This is the default icon-family setting: widgets resolving an icon
+/// *name* consult the ambient set first — overlay packs (a morph pack,
+/// an app-private family, a themed variant set) shadow the builtin
+/// lucide-style pack, which remains the fallback tail. Code that
+/// paints icons from raw `d` data is unaffected.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::icons::{ambient_icons, install_ambient_icons, IconEntry, IconPack, IconSet};
+///
+/// assert!(ambient_icons().packs().is_empty());
+/// {
+///     let set = IconSet::new()
+///         .with_pack(IconPack::new("app", &[IconEntry::new("app.logo", "M4 4l8 8-8 8")]));
+///     let _guard = install_ambient_icons(set);
+///     assert_eq!(ambient_icons().resolve("app.logo"), Some("M4 4l8 8-8 8"));
+/// }
+/// ```
+pub fn install_ambient_icons(set: IconSet) -> AmbientIconsGuard {
+    let prior = AMBIENT_ICONS.with(|s| s.replace(Some(set)));
+    AmbientIconsGuard(prior)
+}
+
+/// The ambient [`IconSet`] for this pass — an empty overlay chain
+/// (builtin pack only) when nothing is installed. Cloned out of the
+/// thread-local so callers hold no borrow across widget calls.
+pub fn ambient_icons() -> IconSet {
+    AMBIENT_ICONS
+        .with(|s| s.borrow().clone())
+        .unwrap_or_default()
+}
+
+/// Resolves `name` through the ambient [`IconSet`] — the single seam
+/// name-based icon consumers share so an installed family shadows the
+/// builtin pack everywhere at once.
+///
+/// # Examples
+///
+/// ```
+/// use martensite::icons::resolve_icon;
+///
+/// assert!(resolve_icon("nav.search").is_some());
+/// assert!(resolve_icon("bogus.name").is_none());
+/// ```
+pub fn resolve_icon(name: &str) -> Option<String> {
+    ambient_icons().resolve(name).map(str::to_string)
+}
+
 /// An ordered resolution chain over [`IconPack`]s ending at
 /// [`BUILTIN`].
 ///

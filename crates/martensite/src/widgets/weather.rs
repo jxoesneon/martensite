@@ -548,6 +548,9 @@ impl Widget for Weather {
                     f64::from(self.bounds.max_x()),
                     f64::from(self.bounds.max_y()),
                 ),
+                // Second line: `cy + temp·0.45` drops the hi-lo strip a
+                // half-temp-cap-height below the readout's centre — a
+                // deliberate stack offset, not a centring attempt.
                 kurbo::Point::new(f64::from(tx), f64::from(cy + temp_sz * 0.45)),
                 &t,
                 hl_sz,

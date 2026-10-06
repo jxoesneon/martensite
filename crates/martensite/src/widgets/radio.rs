@@ -103,10 +103,12 @@ impl Widget for RadioOption {
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        // Approximate label width — real text shaping lives in the
-        // `martensite-text` pipeline; this is a coarse per-grapheme
-        // estimate sufficient for row layout.
-        let w = cx.pt(DOT + LABEL_GAP + 8.0 * self.label.chars().count() as f32);
+        // Prefer real shaping when the ambient measurer is installed;
+        // fall back to a coarse per-grapheme estimate.
+        let label_w = cx
+            .measure_text(&self.label, 14.0)
+            .unwrap_or_else(|| cx.pt(8.0 * self.label.chars().count() as f32));
+        let w = cx.pt(DOT + LABEL_GAP) + label_w;
         Vec2::new(
             w.min(constraints.max_size.x.max(0.0)),
             cx.pt(ROW_H).min(constraints.max_size.y.max(0.0)),
@@ -205,6 +207,12 @@ impl Widget for RadioOption {
             cx.pt(14.0),
             cx.color(TokenKey::TextColor, INK),
         );
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
+        }
     }
 }
 

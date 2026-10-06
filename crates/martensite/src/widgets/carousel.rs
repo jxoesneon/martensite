@@ -360,14 +360,14 @@ impl Widget for Carousel {
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
         // Widest/tallest page plus the dot strip.
-        let mut size = Vec2::new(200.0, 140.0);
+        let mut size = Vec2::new(cx.pt(200.0), cx.pt(140.0));
         for p in self.pages.iter_mut() {
             let want = p.measure(cx, constraints);
             size.x = size.x.max(want.x);
             size.y = size.y.max(want.y);
         }
         if self.pages.len() > 1 {
-            size.y += DOTS_H;
+            size.y += cx.pt(DOTS_H);
         }
         size
     }
@@ -465,6 +465,12 @@ impl Widget for Carousel {
                 arrow_ink
             };
             paint_chev(cx.list, strip, next_x, rtl, ink);
+        }
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 0.0);
         }
     }
 

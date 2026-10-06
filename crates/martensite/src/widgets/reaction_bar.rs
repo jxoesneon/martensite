@@ -14,8 +14,8 @@
 //! use martensite::widgets::reaction_bar::{Reaction, ReactionBar};
 //!
 //! let r = ReactionBar::new()
-//!     .reaction(Reaction::new("👍", 3))
-//!     .reaction(Reaction::new("🎉", 1));
+//!     .reaction(Reaction::new("status.thumbs-up", 3))
+//!     .reaction(Reaction::new("misc.sparkles", 1));
 //! assert_eq!(r.reaction_count(), 2);
 //! ```
 
@@ -47,12 +47,15 @@ const MUTED: [u8; 4] = [139, 148, 158, 255];
 /// ```
 /// use martensite::widgets::reaction_bar::Reaction;
 ///
-/// let r = Reaction::new("👍", 4);
+/// let r = Reaction::new("status.thumbs-up", 4);
 /// assert_eq!(r.count, 4);
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reaction {
-    /// Emoji glyph.
+    /// Reaction mark — an emoji or other short text, or an icon name
+    /// (`"status.thumbs-up"`, …) that resolves through the ambient
+    /// icon family ([`crate::icons::resolve_icon`]) and paints as a
+    /// vector icon.
     pub emoji: String,
     /// Total reactor count (includes the user when `mine`).
     pub count: u32,
@@ -66,7 +69,7 @@ impl Reaction {
     /// ```
     /// use martensite::widgets::reaction_bar::Reaction;
     ///
-    /// assert!(!Reaction::new("🎉", 2).mine);
+    /// assert!(!Reaction::new("misc.sparkles", 2).mine);
     /// ```
     pub fn new(emoji: impl Into<String>, count: u32) -> Self {
         Self {
@@ -81,7 +84,7 @@ impl Reaction {
     /// ```
     /// use martensite::widgets::reaction_bar::Reaction;
     ///
-    /// assert!(Reaction::new("👍", 1).mine(true).mine);
+    /// assert!(Reaction::new("status.thumbs-up", 1).mine(true).mine);
     /// ```
     pub fn mine(mut self, mine: bool) -> Self {
         self.mine = mine;
@@ -157,7 +160,7 @@ impl ReactionBar {
     /// ```
     /// use martensite::widgets::reaction_bar::{Reaction, ReactionBar};
     ///
-    /// assert_eq!(ReactionBar::new().reaction(Reaction::new("👍", 1)).reaction_count(), 1);
+    /// assert_eq!(ReactionBar::new().reaction(Reaction::new("status.thumbs-up", 1)).reaction_count(), 1);
     /// ```
     pub fn reaction(mut self, reaction: Reaction) -> Self {
         self.reactions.push(reaction);
@@ -207,7 +210,7 @@ impl ReactionBar {
     /// use martensite::widgets::reaction_bar::{Reaction, ReactionBar};
     ///
     /// let mut r = ReactionBar::new();
-    /// r.set_reactions(vec![Reaction::new("👍", 2)]);
+    /// r.set_reactions(vec![Reaction::new("status.thumbs-up", 2)]);
     /// assert_eq!(r.reaction_count(), 1);
     /// ```
     pub fn set_reactions(&mut self, reactions: Vec<Reaction>) {
@@ -230,7 +233,7 @@ impl ReactionBar {
     /// ```
     /// use martensite::widgets::reaction_bar::{Reaction, ReactionBar};
     ///
-    /// let r = ReactionBar::new().reaction(Reaction::new("👍", 3));
+    /// let r = ReactionBar::new().reaction(Reaction::new("status.thumbs-up", 3));
     /// assert_eq!(r.reaction_at(0).unwrap().count, 3);
     /// ```
     pub fn reaction_at(&self, index: usize) -> Option<&Reaction> {
@@ -242,8 +245,8 @@ impl ReactionBar {
     /// ```
     /// use martensite::widgets::reaction_bar::{Reaction, ReactionBar};
     ///
-    /// let mut r = ReactionBar::new().reaction(Reaction::new("👍", 1));
-    /// r.set_reaction(0, Reaction::new("👍", 5).mine(true));
+    /// let mut r = ReactionBar::new().reaction(Reaction::new("status.thumbs-up", 1));
+    /// r.set_reaction(0, Reaction::new("status.thumbs-up", 5).mine(true));
     /// assert_eq!(r.reaction_at(0).unwrap().count, 5);
     /// ```
     pub fn set_reaction(&mut self, index: usize, reaction: Reaction) {
@@ -298,12 +301,23 @@ impl ReactionBar {
     fn chip_width(&self, r: &Reaction) -> f32 {
         let s = self.scale;
         let size = FONT_PT * s;
+        // An icon-name mark occupies a font-sized square lane plus a
+        // small gap; only the count is measured text.
+        if crate::icons::resolve_icon(&r.emoji).is_some() {
+            let count = r.count.to_string();
+            let cw = self
+                .text_painter
+                .as_ref()
+                .map(|p| p.measure(&count, size))
+                .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(count), size, 0.6));
+            return CHIP_PAD_PT * 2.0 * s + size + 4.0 * s + cw;
+        }
         let text = format!("{} {}", r.emoji, r.count);
         let w = self
             .text_painter
             .as_ref()
             .map(|p| p.measure(&text, size))
-            .unwrap_or_else(|| text.chars().count() as f32 * size * 0.6);
+            .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(text), size, 0.6));
         w + CHIP_PAD_PT * 2.0 * s
     }
 }
@@ -422,44 +436,76 @@ impl Widget for ReactionBar {
                 cx.list
                     .push_stroke_shape(krect(rect), &shape, 1.0 * s, edge);
             }
-            let label = format!("{} {}", r.emoji, r.count);
             let color = if r.mine {
                 cx.color(TokenKey::AccentColor, ACCENT)
             } else {
                 cx.color(TokenKey::TextColor, TEXT)
             };
-            // Origin is the block top — centre the ink box in the chip.
-            let origin = kurbo::Point::new(
-                f64::from(rect.min_x() + CHIP_PAD_PT * s),
-                f64::from(rect.min_y() + (rect.height() - size * 1.25) / 2.0),
-            );
-            crate::text_paint::paint_label_clipped(
-                painter,
+            let lx = rect.min_x() + CHIP_PAD_PT * s;
+            // A namespaced mark paints as a vector icon in a square
+            // lane with the count beside it; any other string stays
+            // a text glyph inline with the count.
+            if crate::widgets::morph_icon::paint_icon_named(
                 cx.list,
-                krect(rect),
-                origin,
-                &label,
-                size,
+                Rect::new(lx, rect.min_y() + (rect.height() - size) / 2.0, size, size),
+                &r.emoji,
+                s,
                 color,
-            );
+            ) {
+                let count = r.count.to_string();
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    krect(rect),
+                    f64::from(lx + size + 4.0 * s),
+                    &count,
+                    size,
+                    color,
+                );
+            } else {
+                let label = format!("{} {}", r.emoji, r.count);
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    krect(rect),
+                    f64::from(lx),
+                    &label,
+                    size,
+                    color,
+                );
+            }
         }
         if self.addable && self.add_rect.width() > 0.0 {
             let edge = cx.color(TokenKey::DividerColor, EDGE);
             cx.list
                 .push_stroke_shape(krect(self.add_rect), &shape, 1.0 * s, edge);
-            let origin = kurbo::Point::new(
-                f64::from(self.add_rect.min_x() + self.add_rect.width() / 2.0 - size * 0.35),
-                f64::from(self.add_rect.min_y() + (self.add_rect.height() - size * 1.25) / 2.0),
-            );
-            crate::text_paint::paint_label_clipped(
-                painter,
+            let muted = cx.color(TokenKey::TextMutedColor, MUTED);
+            let side = self.add_rect.height() * 0.5;
+            if !crate::widgets::morph_icon::paint_icon_named(
                 cx.list,
-                krect(self.add_rect),
-                origin,
-                "+",
-                size,
-                cx.color(TokenKey::TextMutedColor, MUTED),
-            );
+                Rect::new(
+                    self.add_rect.min_x() + (self.add_rect.width() - side) / 2.0,
+                    self.add_rect.min_y() + (self.add_rect.height() - side) / 2.0,
+                    side,
+                    side,
+                ),
+                "status.plus",
+                s,
+                muted,
+            ) {
+                let plus_w = painter
+                    .and_then(|p| p.measure_text("+", size))
+                    .unwrap_or(size * 0.7);
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    krect(self.add_rect),
+                    f64::from(self.add_rect.min_x() + (self.add_rect.width() - plus_w) / 2.0),
+                    "+",
+                    size,
+                    muted,
+                );
+            }
         }
     }
 }
@@ -510,7 +556,7 @@ mod tests {
 
     #[test]
     fn click_toggles_mine_and_count() {
-        let mut b = ReactionBar::new().reaction(Reaction::new("👍", 3));
+        let mut b = ReactionBar::new().reaction(Reaction::new("status.thumbs-up", 3));
         laid_out(&mut b);
         let chip = b.rects[0];
         tap(&mut b, chip);
@@ -527,7 +573,7 @@ mod tests {
 
     #[test]
     fn count_saturates_at_zero() {
-        let mut b = ReactionBar::new().reaction(Reaction::new("👍", 0).mine(false));
+        let mut b = ReactionBar::new().reaction(Reaction::new("status.thumbs-up", 0).mine(false));
         laid_out(&mut b);
         let chip = b.rects[0];
         tap(&mut b, chip);
@@ -552,7 +598,7 @@ mod tests {
 
     #[test]
     fn release_off_ignores() {
-        let mut b = ReactionBar::new().reaction(Reaction::new("👍", 1));
+        let mut b = ReactionBar::new().reaction(Reaction::new("status.thumbs-up", 1));
         laid_out(&mut b);
         let r = b.rects[0];
         ev(
@@ -577,8 +623,8 @@ mod tests {
     #[test]
     fn paint_without_painter() {
         let mut b = ReactionBar::new()
-            .reaction(Reaction::new("👍", 3).mine(true))
-            .reaction(Reaction::new("🎉", 1));
+            .reaction(Reaction::new("status.thumbs-up", 3).mine(true))
+            .reaction(Reaction::new("misc.sparkles", 1));
         laid_out(&mut b);
         let mut list = martensite_core::PaintList::default();
         let theme = martensite_theme::Theme::new("test");

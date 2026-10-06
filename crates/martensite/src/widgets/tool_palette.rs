@@ -5,8 +5,8 @@
 //! is a *modal tool choice* — one tool is always active (accent
 //! face) and clicks park the index in
 //! [`ToolPalette::take_selected`]. Arrows navigate the grid,
-//! `Home`/`End` jump. Each [`ToolItem`] is a glyph + label; the
-//! label feeds accessibility and can be shown under the glyph.
+//! `Home`/`End` jump. Each [`ToolItem`] is a mark + label; the
+//! label feeds accessibility and can be shown under the mark.
 //!
 //! # Examples
 //!
@@ -14,8 +14,8 @@
 //! use martensite::widgets::tool_palette::{ToolItem, ToolPalette};
 //!
 //! let p = ToolPalette::new()
-//!     .tool(ToolItem::new("✏", "Pencil"))
-//!     .tool(ToolItem::new("🧽", "Eraser"));
+//!     .tool(ToolItem::new("edit.pencil", "Pencil"))
+//!     .tool(ToolItem::new("edit.eraser", "Eraser"));
 //! assert_eq!(p.tool_count(), 2);
 //! ```
 
@@ -38,21 +38,25 @@ const RADIUS_PT: f32 = 6.0;
 
 const FACE: [u8; 4] = [36, 38, 44, 255];
 const HOT: [u8; 4] = [50, 52, 60, 255];
-const SEL: [u8; 4] = [44, 62, 92, 255];
+/// `RaisedColor` fallback for the selected cell — the token's
+/// dark-theme resolved value.
+const SEL: [u8; 4] = [41, 46, 52, 255];
 const ACCENT: [u8; 4] = [88, 130, 247, 255];
 const TEXT: [u8; 4] = [220, 222, 228, 255];
 const MUTED: [u8; 4] = [139, 148, 158, 255];
 
-/// One palette tool — glyph + accessible label.
+/// One palette tool — mark + accessible label.
 ///
 /// ```
 /// use martensite::widgets::tool_palette::ToolItem;
 ///
-/// assert_eq!(ToolItem::new("✏", "Pencil").label, "Pencil");
+/// assert_eq!(ToolItem::new("edit.pencil", "Pencil").label, "Pencil");
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolItem {
-    /// Display glyph (emoji or icon char).
+    /// Display mark — a namespaced icon name (`"edit.pencil"`, …)
+    /// paints as a vector icon through the ambient icon family;
+    /// anything else is a text glyph.
     pub glyph: String,
     /// Tool name — accessibility + optional caption.
     pub label: String,
@@ -280,6 +284,10 @@ impl ToolPalette {
 }
 
 impl Widget for ToolPalette {
+    fn debug_name(&self) -> &'static str {
+        // glyphs/captions cut at the tile edge by design.
+        "ToolPalette@lint:text-truncation"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -408,7 +416,11 @@ impl Widget for ToolPalette {
         for (i, rect) in self.rects.iter().enumerate() {
             let is_sel = sel == Some(i);
             let face = if is_sel {
-                cx.color(TokenKey::SecondaryColor, SEL)
+                // `RaisedColor` lifts the selected cell off the pad
+                // while keeping the accent glyph (~6:1) and muted
+                // caption (~6:1) legible — `SecondaryColor` resolves
+                // to a light gray that crushed both to ~1.2:1.
+                cx.color(TokenKey::RaisedColor, SEL)
             } else if self.hovered == Some(i) {
                 cx.color(TokenKey::SurfaceColor, HOT)
             } else {
@@ -421,32 +433,57 @@ impl Widget for ToolPalette {
                     .push_stroke_shape(krect(*rect), &shape, 1.2 * s, accent);
             }
             let t = &self.tools[i];
-            // Glyph centered (or upper when labels show).
+            // Mark centered (or upper when labels show).
             let gsize = GLYPH_PT * s;
-            let gw = painter
-                .and_then(|p| p.measure_text(&t.glyph, gsize))
-                .unwrap_or(t.glyph.chars().count() as f32 * gsize * 0.6);
             let gy = if self.show_labels {
                 rect.min_y() + CELL_PT * s * 0.5
             } else {
                 rect.min_y() + rect.height() / 2.0
             };
-            let go = kurbo::Point::new(
-                f64::from(rect.min_x() + (rect.width() - gw) / 2.0),
-                f64::from(gy),
-            );
             let color = if is_sel {
                 cx.color(TokenKey::AccentColor, ACCENT)
             } else {
                 cx.color(TokenKey::TextColor, TEXT)
             };
-            crate::text_paint::paint_label(painter, cx.list, go, &t.glyph, gsize, color);
+            // Icon-name marks paint as ambient-resolved vector icons
+            // centred in the glyph slot; other strings are text
+            // clipped to the tile — a wide glyph must cut at its own
+            // cell rather than paint over a neighbour.
+            let icon_rect = Rect::new(
+                rect.min_x() + (rect.width() - gsize) / 2.0,
+                gy,
+                gsize,
+                gsize,
+            );
+            if !crate::widgets::morph_icon::paint_icon_named(cx.list, icon_rect, &t.glyph, s, color)
+            {
+                let gw = painter
+                    .and_then(|p| p.measure_text(&t.glyph, gsize))
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(&(t.glyph), gsize, 0.6)
+                    });
+                let go = kurbo::Point::new(
+                    f64::from(rect.min_x() + (rect.width() - gw) / 2.0),
+                    f64::from(gy),
+                );
+                crate::text_paint::paint_label_clipped(
+                    painter,
+                    cx.list,
+                    krect(*rect),
+                    go,
+                    &t.glyph,
+                    gsize,
+                    color,
+                );
+            }
             // Caption.
             if self.show_labels {
                 let lsize = LABEL_PT * s;
                 let lw = painter
                     .and_then(|p| p.measure_text(&t.label, lsize))
-                    .unwrap_or(t.label.len() as f32 * lsize * 0.6);
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(&(t.label), lsize, 0.6)
+                    });
                 let lo = kurbo::Point::new(
                     f64::from(rect.min_x() + (rect.width() - lw) / 2.0),
                     f64::from(rect.max_y() - lsize * 0.4),

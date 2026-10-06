@@ -23,11 +23,14 @@ use martensite_core::{
 };
 use martensite_theme::TokenKey;
 
+use crate::text_paint::SharedTextPainter;
+
 const PAD_PT: f32 = 40.0;
 const GAP_PT: f32 = 6.0;
 
 const FACE: [u8; 4] = [30, 32, 40, 255];
 const PAD_OFF: [u8; 4] = [70, 74, 84, 255];
+const PAD_INK: [u8; 4] = [235, 238, 245, 255];
 
 struct Pad {
     color: [u8; 4],
@@ -56,6 +59,7 @@ pub struct PadGrid {
     cells: Vec<Rect>,
     bounds: Rect,
     scale: f32,
+    text_painter: Option<SharedTextPainter>,
 }
 
 impl std::fmt::Debug for PadGrid {
@@ -94,6 +98,7 @@ impl PadGrid {
             cells: Vec::new(),
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
+            text_painter: None,
         }
     }
 
@@ -112,7 +117,7 @@ impl PadGrid {
         self
     }
 
-    /// Sets a pad's label (shown centered when the painter exists).
+    /// Sets a pad's label — painted centered in the pad cell.
     ///
     /// ```
     /// use martensite::widgets::pad_grid::PadGrid;
@@ -135,6 +140,21 @@ impl PadGrid {
     /// ```
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = label.into();
+        self
+    }
+
+    /// Shares a [`crate::text_paint::TextPainter`] so pad labels emit
+    /// real glyph runs instead of `DrawText` placeholder boxes.
+    ///
+    /// ```
+    /// use martensite::text_paint::shared_painter;
+    /// use martensite::widgets::pad_grid::PadGrid;
+    ///
+    /// let g = PadGrid::new(2, 2).with_text_painter(shared_painter());
+    /// ```
+    #[must_use]
+    pub fn with_text_painter(mut self, painter: SharedTextPainter) -> Self {
+        self.text_painter = Some(painter);
         self
     }
 
@@ -310,6 +330,8 @@ impl Widget for PadGrid {
             ),
             cx.color(TokenKey::BackgroundColor, FACE),
         );
+        let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
+        let ink = cx.color(TokenKey::TextColor, PAD_INK);
         for (i, cell) in self.cells.iter().enumerate() {
             let p = &self.pads[i];
             let lit = self.pressed == Some(i) || p.flash > 0.0;
@@ -324,16 +346,35 @@ impl Widget for PadGrid {
                     p.color[3],
                 ]
             };
+            let kcell = kurbo::Rect::new(
+                f64::from(cell.min_x()),
+                f64::from(cell.min_y()),
+                f64::from(cell.max_x()),
+                f64::from(cell.max_y()),
+            );
             cx.list.push_fill_shape(
-                kurbo::Rect::new(
-                    f64::from(cell.min_x()),
-                    f64::from(cell.min_y()),
-                    f64::from(cell.max_x()),
-                    f64::from(cell.max_y()),
-                ),
+                kcell,
                 &martensite_core::shape::Shape::squircle(5.0 * s),
                 color,
             );
+            // Centered pad label, clipped to the cell.
+            if !p.label.is_empty() {
+                let size = 11.0 * s;
+                let w = painter
+                    .and_then(|pt| pt.measure_text(&p.label, size))
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(&(p.label), size, 0.6)
+                    });
+                crate::text_paint::paint_label_vcenter(
+                    painter,
+                    cx.list,
+                    kcell,
+                    f64::from(cell.min_x() + (cell.width() - w).max(0.0) / 2.0),
+                    &p.label,
+                    size,
+                    ink,
+                );
+            }
         }
     }
 }

@@ -375,8 +375,10 @@ impl Widget for KeyCapture {
         let face = cx.color(TokenKey::SurfaceColor, FACE);
         let edge = if self.armed {
             cx.color(TokenKey::AccentColor, ARMED_EDGE)
-        } else {
+        } else if self.enabled {
             cx.color(TokenKey::BorderColor, BORDER)
+        } else {
+            cx.color(TokenKey::TextMutedColor, BORDER)
         };
         let r = kurbo::Rect::new(
             f64::from(cx.bounds.min_x()),
@@ -418,10 +420,14 @@ impl Widget for KeyCapture {
         } else {
             (self.shortcut.clone(), cx.color(TokenKey::TextColor, INK))
         };
+        let ink = if self.enabled {
+            ink
+        } else {
+            cx.color(TokenKey::TextMutedColor, INK_DIM)
+        };
         let size = cx.pt(FONT_PT);
         let x = cx.bounds.min_x() + cx.pt(PAD_PT);
-        let y = cx.bounds.min_y() + (cx.bounds.size.y - size) / 2.0;
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
@@ -430,7 +436,7 @@ impl Widget for KeyCapture {
                 f64::from(cx.bounds.max_x() - cx.pt(PAD_PT)),
                 f64::from(cx.bounds.max_y()),
             ),
-            kurbo::Point::new(f64::from(x), f64::from(y)),
+            f64::from(x),
             &text,
             size,
             ink,

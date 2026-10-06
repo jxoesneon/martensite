@@ -93,6 +93,25 @@ pub(crate) fn paint_icon_d(
     true
 }
 
+/// Paints the icon `name` resolves to in the ambient
+/// [`IconSet`](crate::icons::IconSet) — [`paint_icon_d`] with name
+/// resolution through [`resolve_icon`](crate::icons::resolve_icon), so
+/// an installed icon family shadows the builtin pack at every call
+/// site at once. Returns `false` for unknown names; the caller falls
+/// back to its own text/glyph path.
+pub(crate) fn paint_icon_named(
+    list: &mut martensite_core::PaintList,
+    bounds: Rect,
+    name: &str,
+    scale: f32,
+    ink: [u8; 4],
+) -> bool {
+    let Some(d) = crate::icons::resolve_icon(name) else {
+        return false;
+    };
+    paint_icon_d(list, bounds, &d, scale, ink)
+}
+
 /// A stroke-icon widget that morphs between arbitrary `d`-string icons
 /// under a [`SpringConfig`] (ADR-0041).
 ///
@@ -187,8 +206,13 @@ impl MorphIcon {
     /// let icon = MorphIcon::named("status.lock").unwrap();
     /// assert!(MorphIcon::named("bogus").is_err());
     /// ```
+    /// Resolves `name` through the ambient
+    /// [`IconSet`](crate::icons::IconSet) — installed overlay packs
+    /// (the default icon-family setting, see
+    /// [`install_ambient_icons`](crate::icons::install_ambient_icons))
+    /// shadow the builtin pack.
     pub fn named(name: &str) -> Result<Self, IconError> {
-        Self::named_in(name, &IconSet::new())
+        Self::named_in(name, &crate::icons::ambient_icons())
     }
 
     /// Like [`named`](Self::named) but resolves `name` through an

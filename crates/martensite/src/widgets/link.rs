@@ -234,6 +234,10 @@ impl Link {
 }
 
 impl Widget for Link {
+    fn debug_name(&self) -> &'static str {
+        // an inline text link — WCAG target-size exempts targets inside sentences.
+        "Link@lint:target-size"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -268,17 +272,22 @@ impl Widget for Link {
             .unwrap_or(size * self.text.len() as f32 * 0.55)
             .min(b.width());
         let x = b.min_x();
-        let y = b.min_y() + (b.height() - size) / 2.0;
+        let strip = kurbo::Rect::new(
+            f64::from(b.min_x()),
+            f64::from(b.min_y()),
+            f64::from(b.max_x()),
+            f64::from(b.max_y()),
+        );
+        // Same origin computation as `paint_label_vcenter`, kept inline
+        // because the underline below keys off the run's top.
+        let y = painter
+            .and_then(|p| crate::text_paint::ink_vcenter_origin_y(p, strip, &self.text, size))
+            .unwrap_or_else(|| crate::text_paint::vcenter_origin_y(strip, size));
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,
-            kurbo::Rect::new(
-                f64::from(b.min_x()),
-                f64::from(b.min_y()),
-                f64::from(b.max_x()),
-                f64::from(b.max_y()),
-            ),
-            kurbo::Point::new(f64::from(x), f64::from(y)),
+            strip,
+            kurbo::Point::new(f64::from(x), y),
             &self.text,
             size,
             ink,
@@ -290,7 +299,9 @@ impl Widget for Link {
         } else {
             cx.pt(1.0)
         };
-        let underline_y = y + size + cx.pt(1.0);
+        // One font-size below the run's top lands just under the
+        // baseline — the offset is a descender gap, not a centre.
+        let underline_y = y as f32 + size + cx.pt(1.0);
         cx.list.push_fill_rect(
             kurbo::Rect::new(
                 f64::from(x),

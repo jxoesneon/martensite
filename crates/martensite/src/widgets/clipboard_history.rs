@@ -429,37 +429,22 @@ impl Widget for ClipboardHistory {
                 FONT_PT * s,
                 cx.color(TokenKey::TextColor, TEXT),
             );
-            // Pin marker — native pin icon, `●` dot as fallback.
+            // Pin marker — native pin icon, ambient-resolved.
             if e.pinned {
                 let ink = cx.color(TokenKey::WarningColor, PIN);
                 let side = PIN_PT * s;
-                let icon_ok = crate::icons::builtin()
-                    .lookup("status.pin")
-                    .is_some_and(|d| {
-                        crate::widgets::morph_icon::paint_icon_d(
-                            cx.list,
-                            Rect::new(
-                                r.max_x() - PIN_PT * s - 4.0 * s,
-                                r.min_y() + (r.height() - side) / 2.0,
-                                side,
-                                side,
-                            ),
-                            d,
-                            s,
-                            ink,
-                        )
-                    });
-                if !icon_ok {
-                    crate::text_paint::paint_label_vcenter(
-                        painter,
-                        cx.list,
-                        kr,
-                        f64::from(r.max_x() - PIN_PT * s - 4.0 * s),
-                        "●",
-                        FONT_PT * 0.8 * s,
-                        ink,
-                    );
-                }
+                crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    Rect::new(
+                        r.max_x() - PIN_PT * s - 4.0 * s,
+                        r.min_y() + (r.height() - side) / 2.0,
+                        side,
+                        side,
+                    ),
+                    "status.pin",
+                    s,
+                    ink,
+                );
             }
         }
     }

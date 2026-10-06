@@ -94,12 +94,15 @@ impl ExpanderRow {
         self
     }
 
-    /// Sets the header icon glyph.
+    /// Sets the header icon mark — forwarded to
+    /// [`SettingsRow::icon`](crate::widgets::settings_row::SettingsRow::icon):
+    /// an icon name resolves through the ambient icon family, any
+    /// other string stays a text glyph.
     ///
     /// ```
     /// use martensite::widgets::expander_row::ExpanderRow;
     ///
-    /// let row = ExpanderRow::new("Net").icon("🌐");
+    /// let row = ExpanderRow::new("Net").icon("map.globe");
     /// assert_eq!(row.title(), "Net");
     /// ```
     pub fn icon(mut self, glyph: impl Into<String>) -> Self {
@@ -127,8 +130,9 @@ impl ExpanderRow {
         self
     }
 
-    /// [`icon_d`](Self::icon_d) resolving `name` through the native
-    /// icon pack ([`icons::BUILTIN`](crate::icons::BUILTIN)) —
+    /// [`icon_d`](Self::icon_d) resolving `name` through the ambient
+    /// icon family
+    /// ([`icons::resolve_icon`](crate::icons::resolve_icon)) —
     /// `"status.warning"`, `"file.folder"`, … An unknown name leaves
     /// the header iconless rather than failing the build.
     ///
@@ -490,6 +494,12 @@ impl Widget for ExpanderRow {
         }
         cx.list
             .push_stroke_path(caret, cx.pt(1.5), cx.color(TokenKey::TextMutedColor, MUTED));
+    }
+
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
+        }
     }
 
     fn child_count(&self) -> usize {

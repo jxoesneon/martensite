@@ -214,6 +214,8 @@ struct TreeItemRow {
     label: String,
     /// Nesting depth (drives indent and `level`).
     depth: usize,
+    /// Per-depth indent in logical points — mirrored from the owner.
+    indent: f32,
     /// Whether the node has children.
     has_children: bool,
     /// Whether the node is expanded.
@@ -244,6 +246,7 @@ impl TreeItemRow {
             flat_index: 0,
             label: String::new(),
             depth: 0,
+            indent: INDENT,
             has_children: false,
             expanded: false,
             selected: false,
@@ -353,7 +356,7 @@ impl Widget for TreeItemRow {
             let wash = [accent[0], accent[1], accent[2], FOCUS_RING[3]];
             cx.list.push_stroke_rect(rect, cx.pt(2.0), wash);
         }
-        let indent_px = cx.pt(INDENT) * self.depth as f32;
+        let indent_px = cx.pt(self.indent) * self.depth as f32;
         let tri_px = cx.pt(TRI);
         // Under RTL the disclosure cluster anchors to the right edge
         // and the collapsed triangle points left.
@@ -1490,6 +1493,7 @@ impl TreeView {
             row.flat_index = i;
             row.label = flat.label.clone();
             row.depth = flat.depth;
+            row.indent = self.indent;
             row.has_children = flat.has_children;
             row.expanded = flat.expanded;
             row.selected = self.selection.as_deref() == Some(flat.path.as_slice());
@@ -1561,7 +1565,7 @@ impl Widget for TreeView {
             .iter()
             .map(|r| {
                 r.label.chars().count() as f32 * cx.pt(7.0)
-                    + r.depth as f32 * cx.pt(INDENT)
+                    + r.depth as f32 * cx.pt(self.indent)
                     + cx.pt(TRI + TRI_GAP)
             })
             .fold(0.0f32, f32::max);

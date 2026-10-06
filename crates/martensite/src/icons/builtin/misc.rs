@@ -40,6 +40,8 @@ pub mod names {
     pub const GRADUATION_CAP: &str = "misc.graduation-cap";
     /// `"misc.scale"` — balance scale, justice/compare.
     pub const SCALE: &str = "misc.scale";
+    /// `"misc.smile"` — smiley face; emoji-picker / sentiment affordance.
+    pub const SMILE: &str = "misc.smile";
 }
 
 /// `"misc.sun"` — disc plus eight rays.
@@ -88,6 +90,9 @@ pub const MISC_GRADUATION_CAP: &str = "M2 10l10-5 10 5-10 5zM6 12v5c3 3 9 3 12 0
 /// `"misc.scale"` — beam balance on a post.
 pub const MISC_SCALE: &str =
     "M12 3v18M7 21h10M5 7h14M2 15l3-8 3 8c-.9.65-1.9 1-3 1s-2.1-.35-3-1zM16 15l3-8 3 8c-.9.65-1.9 1-3 1s-2.1-.35-3-1z";
+/// `"misc.smile"` — face ring, two eyes, a smile arc.
+pub const MISC_SMILE: &str =
+    "M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9 10h.01M15 10h.01M8 14c1.2 1.4 2.5 2 4 2c1.5 0 2.8-.6 4-2";
 
 /// `misc` entries.
 pub const ENTRIES: &[IconEntry] = &[
@@ -109,6 +114,7 @@ pub const ENTRIES: &[IconEntry] = &[
     IconEntry::new(names::SPARKLES, MISC_SPARKLES),
     IconEntry::new(names::GRADUATION_CAP, MISC_GRADUATION_CAP),
     IconEntry::new(names::SCALE, MISC_SCALE),
+    IconEntry::new(names::SMILE, MISC_SMILE),
 ];
 
 /// `misc` morph pairs.

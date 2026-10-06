@@ -428,28 +428,20 @@ impl Widget for Poll {
             }
             cx.list
                 .push_stroke_shape(krect(rect), &shape, 1.0 * s, edge);
-            // Label (+ check mark for my vote — a native icon lane
-            // when the pack resolves, a `✓` prefix otherwise).
+            // Label (+ check icon for my vote — a native icon lane,
+            // ambient-resolved).
             let mut lx = rect.min_x() + PAD_PT * s * 0.8;
-            let mut label = o.label.clone();
+            let label = o.label.clone();
             if self.my_vote == Some(i) {
                 let side = size;
-                let icon_ok = crate::icons::builtin()
-                    .lookup("status.check")
-                    .is_some_and(|d| {
-                        crate::widgets::morph_icon::paint_icon_d(
-                            cx.list,
-                            Rect::new(lx, rect.min_y() + (rect.height() - side) / 2.0, side, side),
-                            d,
-                            s,
-                            text,
-                        )
-                    });
-                if icon_ok {
-                    lx += side + 4.0 * s;
-                } else {
-                    label = format!("✓ {label}");
-                }
+                crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    Rect::new(lx, rect.min_y() + (rect.height() - side) / 2.0, side, side),
+                    "status.check",
+                    s,
+                    text,
+                );
+                lx += side + 4.0 * s;
             }
             crate::text_paint::paint_label_vcenter(
                 painter,
@@ -465,7 +457,9 @@ impl Widget for Poll {
                 let pct = format!("{:.0}%", o.votes as f32 / total * 100.0);
                 let w = painter
                     .and_then(|p| p.measure_text(&pct, size))
-                    .unwrap_or(pct.len() as f32 * size * 0.6);
+                    .unwrap_or_else(|| {
+                        crate::text_paint::estimate_text_width_px(&(pct), size, 0.6)
+                    });
                 crate::text_paint::paint_label_vcenter(
                     painter,
                     cx.list,

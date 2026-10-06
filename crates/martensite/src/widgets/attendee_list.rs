@@ -512,12 +512,9 @@ impl Widget for AttendeeList {
                 cx.color(TokenKey::TextColor, TEXT),
             );
             // Badges, right-aligned — native mic-off/hand icons,
-            // ✕/✋ glyphs as fallback.
+            // resolved through the ambient icon family.
             let mut x = r.max_x() - 8.0 * s;
-            for (show, icon, glyph) in [
-                (a.muted, "media.mic-off", "✕"),
-                (a.hand_raised, "edit.hand", "✋"),
-            ] {
+            for (show, icon) in [(a.muted, "media.mic-off"), (a.hand_raised, "edit.hand")] {
                 if !show {
                     continue;
                 }
@@ -530,31 +527,18 @@ impl Widget for AttendeeList {
                 );
                 cx.list.push_fill_shape(br, &shape, BADGE_BG);
                 let side = w * 0.68;
-                let icon_ok = crate::icons::builtin().lookup(icon).is_some_and(|d| {
-                    crate::widgets::morph_icon::paint_icon_d(
-                        cx.list,
-                        Rect::new(
-                            (br.x0 + f64::from(w) / 2.0 - f64::from(side) / 2.0) as f32,
-                            (br.y0 + f64::from(w) / 2.0 - f64::from(side) / 2.0) as f32,
-                            side,
-                            side,
-                        ),
-                        d,
-                        s,
-                        BADGE_FG,
-                    )
-                });
-                if !icon_ok {
-                    crate::text_paint::paint_label_vcenter(
-                        painter,
-                        cx.list,
-                        br,
-                        br.x0 + f64::from(w) * 0.22,
-                        glyph,
-                        FONT_PT * s,
-                        BADGE_FG,
-                    );
-                }
+                crate::widgets::morph_icon::paint_icon_named(
+                    cx.list,
+                    Rect::new(
+                        (br.x0 + f64::from(w) / 2.0 - f64::from(side) / 2.0) as f32,
+                        (br.y0 + f64::from(w) / 2.0 - f64::from(side) / 2.0) as f32,
+                        side,
+                        side,
+                    ),
+                    icon,
+                    s,
+                    BADGE_FG,
+                );
                 x -= w + 4.0 * s;
             }
         }

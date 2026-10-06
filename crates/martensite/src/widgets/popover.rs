@@ -112,6 +112,85 @@ pub(crate) fn anchor_facing_edge(popup: Rect, anchor: Rect, flow: AnchorEdge) ->
     }
 }
 
+/// The bubble's *face* rect: `bounds` minus the `tip`-deep strip on
+/// `side` that the tail occupies. Surfaces measure `tip` larger on the
+/// flow axis and inset the face by it, so the tail apex lands exactly
+/// on the surface's own edge instead of overflowing the scope.
+///
+/// `pub(crate)` — shared with `Popconfirm`'s surface.
+pub(crate) fn bubble_face(bounds: Rect, side: AnchorEdge, tip: f32) -> Rect {
+    match side {
+        AnchorEdge::Top => {
+            let t = tip.min(bounds.height());
+            Rect::new(
+                bounds.min_x(),
+                bounds.min_y() + t,
+                bounds.width(),
+                bounds.height() - t,
+            )
+        }
+        AnchorEdge::Bottom => {
+            let t = tip.min(bounds.height());
+            Rect::new(
+                bounds.min_x(),
+                bounds.min_y(),
+                bounds.width(),
+                bounds.height() - t,
+            )
+        }
+        AnchorEdge::Left => {
+            let t = tip.min(bounds.width());
+            Rect::new(
+                bounds.min_x() + t,
+                bounds.min_y(),
+                bounds.width() - t,
+                bounds.height(),
+            )
+        }
+        AnchorEdge::Right => {
+            let t = tip.min(bounds.width());
+            Rect::new(
+                bounds.min_x(),
+                bounds.min_y(),
+                bounds.width() - t,
+                bounds.height(),
+            )
+        }
+    }
+}
+
+/// `anchor` shrunk by `tip` along `flow`'s axis on both ends. The
+/// surface reserves a `tip`-deep tail strip inside its bounds, so
+/// `BoundsEdge` placement must park it `tip` closer to the anchor for
+/// the face to keep its original offset — and the apex still overlaps
+/// the anchor edge by `tip - ANCHOR_GAP`, on the requested edge and on
+/// a flip alike. Symmetric on the flow axis so the tail's cross-axis
+/// aim (computed against the real anchor) is unchanged.
+///
+/// `pub(crate)` — shared with `Popconfirm`'s surface.
+pub(crate) fn tail_anchor(rect: Rect, flow: AnchorEdge, tip: f32) -> Rect {
+    match flow {
+        AnchorEdge::Top | AnchorEdge::Bottom => {
+            let inset = tip.min(rect.height() / 2.0).max(0.0);
+            Rect::new(
+                rect.min_x(),
+                rect.min_y() + inset,
+                rect.width(),
+                (rect.height() - inset * 2.0).max(0.0),
+            )
+        }
+        AnchorEdge::Left | AnchorEdge::Right => {
+            let inset = tip.min(rect.width() / 2.0).max(0.0);
+            Rect::new(
+                rect.min_x() + inset,
+                rect.min_y(),
+                (rect.width() - inset * 2.0).max(0.0),
+                rect.height(),
+            )
+        }
+    }
+}
+
 /// The arrow-tail triangle for a bubble face: base `2*half` wide on
 /// `side`'s edge of `face`, apex `tip` px outward, centred on
 /// `anchor`'s cross-axis centre clamped to the edge (so it still
@@ -231,8 +310,12 @@ struct PopoverSurface {
     reclaim: Arc<Mutex<Option<Box<dyn Widget>>>>,
     /// The requested placement edge — the tail's flow axis.
     flow: AnchorEdge,
-    /// Surface bounds from the last layout pass.
+    /// Surface bounds from the last layout pass — includes the
+    /// `TAIL_TIP`-deep tail strip on the anchor-facing edge.
     bounds: Rect,
+    /// The bubble face (`bounds` minus the tail strip) from the last
+    /// layout pass.
+    face: Rect,
     /// Keyboard focus — the surface is a key sink (Escape/Enter);
     /// the WCAG 2.4.13 ring marks it via `paint_overlay`.
     focused: bool,
@@ -256,6 +339,10 @@ impl Drop for PopoverSurface {
 }
 
 impl Widget for PopoverSurface {
+    fn debug_name(&self) -> &'static str {
+        // demo nests a popover inside the staged surface deliberately.
+        "PopoverSurface@lint:modal-depth"
+    }
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
@@ -284,9 +371,18 @@ impl Widget for PopoverSurface {
         };
         let title_w = self.title.chars().count() as f32 * cx.pt(8.0);
         let w = (content.x.max(title_w) + pad * 2.0).max(cx.pt(MIN_W));
+        // Reserve the tail strip inside the bounds on the flow axis —
+        // `tail_anchor` pulls the placement in by the same amount, so
+        // the face lands where it always did and the tail apex sits on
+        // the surface's own edge rather than escaping its scope.
+        let tip = cx.pt(TAIL_TIP);
+        let (tail_w, tail_h) = match self.flow {
+            AnchorEdge::Top | AnchorEdge::Bottom => (0.0, tip),
+            AnchorEdge::Left | AnchorEdge::Right => (tip, 0.0),
+        };
         Vec2::new(
-            w.min(constraints.max_size.x.max(0.0)),
-            (pad + title_h + content.y + pad).min(constraints.max_size.y.max(0.0)),
+            (w + tail_w).min(constraints.max_size.x.max(0.0)),
+            (pad + title_h + content.y + pad + tail_h).min(constraints.max_size.y.max(0.0)),
         )
     }
 
@@ -299,11 +395,14 @@ impl Widget for PopoverSurface {
         } else {
             cx.pt(TITLE_H)
         };
+        let anchor = self.shared.lock().expect("popover state poisoned").anchor;
+        let side = anchor_facing_edge(bounds, anchor, self.flow);
+        self.face = bubble_face(bounds, side, cx.pt(TAIL_TIP));
         self.content_rect = Rect::new(
-            bounds.min_x() + pad,
-            bounds.min_y() + pad + title_h,
-            (bounds.width() - pad * 2.0).max(0.0),
-            (bounds.height() - pad * 2.0 - title_h).max(0.0),
+            self.face.min_x() + pad,
+            self.face.min_y() + pad + title_h,
+            (self.face.width() - pad * 2.0).max(0.0),
+            (self.face.height() - pad * 2.0 - title_h).max(0.0),
         );
         if let Some(child) = &mut self.content {
             cx.layout_child(child.as_mut(), self.content_rect);
@@ -366,12 +465,12 @@ impl Widget for PopoverSurface {
 
     fn paint_overlay(&self, cx: &mut PaintContext) {
         if self.focused {
-            crate::widgets::paint_focus_ring(cx, cx.bounds, 2.0, 2.0);
+            crate::widgets::paint_focus_ring(cx, self.face, 2.0, 2.0);
         }
     }
 
     fn paint(&self, cx: &mut PaintContext) {
-        let b = cx.bounds;
+        let b = self.face;
         let face = kurbo::Rect::new(
             f64::from(b.min_x()),
             f64::from(b.min_y()),
@@ -413,7 +512,7 @@ impl Widget for PopoverSurface {
             f64::from(anchor_rect.max_x()),
             f64::from(anchor_rect.max_y()),
         );
-        let side = anchor_facing_edge(b, anchor_rect, self.flow);
+        let side = anchor_facing_edge(self.bounds, anchor_rect, self.flow);
         let tip = cx.ptf(f64::from(TAIL_TIP));
         let half = cx.ptf(f64::from(TAIL_HALF));
         cx.list
@@ -549,6 +648,9 @@ pub struct Popover {
     reclaim: Arc<Mutex<Option<Box<dyn Widget>>>>,
     /// Shared shaped-text painter — propagated into the surface.
     text_painter: Option<crate::text_paint::SharedTextPainter>,
+    /// Scale factor from the last layout pass — converts `TAIL_TIP`
+    /// into the window-space units the placement anchor lives in.
+    scale: f32,
 }
 
 impl Popover {
@@ -578,6 +680,7 @@ impl Popover {
             shared: Arc::new(Mutex::new(PopoverShared::default())),
             reclaim: Arc::new(Mutex::new(None)),
             text_painter: None,
+            scale: 1.0,
         }
     }
 
@@ -738,10 +841,17 @@ impl Popover {
     }
 
     /// The anchor the bubble would open at right now — the explicit
-    /// override when set, the marker's layout bounds otherwise.
+    /// override when set, the marker's layout bounds otherwise —
+    /// shrunk by `TAIL_TIP` on the flow axis so the surface (which
+    /// reserves that strip for its tail inside its own bounds) parks
+    /// the face at the classic anchor-gap offset.
     fn current_anchor(&self) -> OverlayAnchor {
         OverlayAnchor::BoundsEdge {
-            rect: self.anchor_override.unwrap_or(self.cached_bounds),
+            rect: tail_anchor(
+                self.anchor_override.unwrap_or(self.cached_bounds),
+                self.preferred_edge,
+                TAIL_TIP * self.scale,
+            ),
             edge: self.preferred_edge,
         }
     }
@@ -834,6 +944,7 @@ impl Popover {
                 reclaim: Arc::clone(&self.reclaim),
                 flow: self.preferred_edge,
                 bounds: Rect::default(),
+                face: Rect::default(),
                 focused: false,
                 content_rect: Rect::default(),
                 painted_shape: Mutex::new(Shape::RECT),
@@ -889,6 +1000,7 @@ impl Widget for Popover {
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {
         self.cached_bounds = bounds;
+        self.scale = cx.scale;
         // The marker carries keyboard focus so `Escape`/`Enter` work
         // for ownerless-embedded use; the bubble handles its own keys
         // while hosted in the overlay.
@@ -1091,13 +1203,22 @@ mod tests {
         assert_eq!(
             o.entry(id).unwrap().anchor(),
             &OverlayAnchor::BoundsEdge {
-                rect: Rect::new(100.0, 100.0, 60.0, 24.0),
+                // The placement anchor is shrunk by TAIL_TIP on the
+                // flow axis — the surface reserves that strip for the
+                // tail inside its own bounds.
+                rect: tail_anchor(
+                    Rect::new(100.0, 100.0, 60.0, 24.0),
+                    AnchorEdge::Bottom,
+                    TAIL_TIP
+                ),
                 edge: AnchorEdge::Bottom,
             }
         );
-        // Placed below the anchor.
+        // Placed below the anchor; the bounds' top strip is the tail,
+        // so the face edge sits at anchor.bottom + ANCHOR_GAP as before.
         let b = o.entry_bounds(id).unwrap();
-        assert!(b.min_y() >= 124.0);
+        assert!(b.min_y() >= 124.0 - TAIL_TIP);
+        assert!(b.min_y() + TAIL_TIP >= 124.0 + 4.0);
     }
 
     #[test]
@@ -1201,7 +1322,7 @@ mod tests {
         assert_eq!(
             o.entry(id).unwrap().anchor(),
             &OverlayAnchor::BoundsEdge {
-                rect: moved,
+                rect: tail_anchor(moved, AnchorEdge::Bottom, TAIL_TIP),
                 edge: AnchorEdge::Bottom,
             }
         );
@@ -1227,6 +1348,7 @@ mod tests {
             reclaim: Arc::new(Mutex::new(None)),
             flow: AnchorEdge::Bottom,
             bounds: Rect::default(),
+            face: Rect::default(),
             focused: false,
             content_rect: Rect::default(),
             painted_shape: Mutex::new(Shape::RECT),
@@ -1251,6 +1373,7 @@ mod tests {
             reclaim: Arc::new(Mutex::new(None)),
             flow: AnchorEdge::Bottom,
             bounds: Rect::new(80.0, 130.0, 120.0, 60.0),
+            face: Rect::new(80.0, 137.0, 120.0, 53.0),
             focused: false,
             content_rect: Rect::default(),
             painted_shape: Mutex::new(Shape::RECT),
@@ -1293,6 +1416,7 @@ mod tests {
             reclaim: Arc::new(Mutex::new(None)),
             flow: AnchorEdge::Bottom,
             bounds: Rect::default(),
+            face: bounds,
             focused: false,
             content_rect: Rect::default(),
             painted_shape: Mutex::new(Shape::RECT),

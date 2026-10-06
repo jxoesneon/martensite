@@ -179,7 +179,7 @@ impl Widget for Ribbon {
         if let Some(c) = self.child.as_mut() {
             return c.measure(cx, constraints);
         }
-        Vec2::new(80.0, 60.0)
+        Vec2::new(cx.pt(80.0), cx.pt(60.0))
     }
 
     fn layout(&mut self, cx: &mut LayoutContext, bounds: Rect) {

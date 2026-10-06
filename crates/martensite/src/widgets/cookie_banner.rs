@@ -344,7 +344,11 @@ impl Widget for CookieBanner {
         for (i, (rect, consent)) in self.buttons.iter().enumerate() {
             let primary = *consent == CookieConsent::Accepted;
             let (face, fg) = if primary {
-                (accent, [255, 255, 255, 255])
+                // `AccentColor` accept button → inverse ink.
+                (
+                    accent,
+                    cx.color(TokenKey::TextInverseColor, [18, 23, 28, 255]),
+                )
             } else {
                 (BTN_FACE, TEXT_FG)
             };
@@ -359,7 +363,7 @@ impl Widget for CookieBanner {
                 face,
             );
             let fs = LINK_PT * s;
-            let w = labels[i].len() as f32 * fs * 0.55;
+            let w = crate::text_paint::estimate_text_width_px(labels[i], fs, 0.55);
             crate::text_paint::paint_label(
                 painter,
                 cx.list,

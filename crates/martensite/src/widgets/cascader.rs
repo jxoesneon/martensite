@@ -569,37 +569,17 @@ impl Widget for Cascader {
                         col_x + col_w - chev + pad / 2.0
                     };
                     let side = 10.0 * cx.scale;
-                    let icon_ok = crate::icons::builtin()
-                        .lookup(if rtl {
+                    crate::widgets::morph_icon::paint_icon_named(
+                        cx.list,
+                        Rect::new(chev_x, y + (row_h - side) / 2.0, side, side),
+                        if rtl {
                             "nav.chevron-left"
                         } else {
                             "nav.chevron-right"
-                        })
-                        .is_some_and(|d| {
-                            crate::widgets::morph_icon::paint_icon_d(
-                                cx.list,
-                                Rect::new(chev_x, y + (row_h - side) / 2.0, side, side),
-                                d,
-                                cx.scale,
-                                muted,
-                            )
-                        });
-                    if !icon_ok {
-                        crate::text_paint::paint_label_vcenter(
-                            painter,
-                            cx.list,
-                            kurbo::Rect::new(
-                                clip.x0,
-                                f64::from(y),
-                                clip.x1,
-                                f64::from(y + (row_h)),
-                            ),
-                            f64::from(chev_x),
-                            if rtl { "‹" } else { "›" },
-                            10.0 * cx.scale,
-                            muted,
-                        );
-                    }
+                        },
+                        cx.scale,
+                        muted,
+                    );
                 }
             }
         }

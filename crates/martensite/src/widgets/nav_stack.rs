@@ -275,11 +275,11 @@ impl Widget for NavStack {
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        let mut size = Vec2::new(240.0, 160.0);
+        let mut size = Vec2::new(cx.pt(240.0), cx.pt(160.0));
         if let Some(top) = self.pages.last_mut() {
             let want = top.widget.measure(cx, constraints);
             size.x = size.x.max(want.x);
-            size.y = size.y.max(want.y + HEADER_H);
+            size.y = size.y.max(want.y + cx.pt(HEADER_H));
         }
         size
     }
@@ -304,7 +304,11 @@ impl Widget for NavStack {
         let b = cx.bounds;
         let header_h = cx.pt(HEADER_H);
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
-        let ink = cx.color(TEXT, [35, 35, 42, 255]);
+        let ink = if self.enabled {
+            cx.color(TEXT, [35, 35, 42, 255])
+        } else {
+            cx.color(TokenKey::TextMutedColor, [150, 150, 158, 255])
+        };
         let accent = cx.color(ACCENT, [50, 115, 230, 255]);
         let hairline = cx.color(HAIRLINE, [215, 217, 222, 255]);
 

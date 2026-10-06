@@ -181,9 +181,11 @@ impl Widget for Container {
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {
-        // Subtract padding from available space for the child
-        let h_inset = self.padding.horizontal();
-        let v_inset = self.padding.vertical();
+        // Subtract padding from available space for the child.
+        // `EdgeInsets` are logical points — scale to device px so the
+        // inset grows with DPI like every other widget dimension.
+        let h_inset = cx.pt(self.padding.horizontal());
+        let v_inset = cx.pt(self.padding.vertical());
 
         let child_min = Vec2::new(
             (constraints.min_size.x - h_inset).max(0.0),
@@ -217,12 +219,15 @@ impl Widget for Container {
         // Compute content area from bounds minus padding, not from
         // cached measure results. This ensures correct layout even
         // when measure was not called or was called with different
-        // constraints.
+        // constraints. Padding is logical pt — scale to px (same as
+        // `measure`).
+        let pad_l = cx.pt(self.padding.left);
+        let pad_t = cx.pt(self.padding.top);
         let content = Rect::new(
-            bounds.origin.x + self.padding.left,
-            bounds.origin.y + self.padding.top,
-            (bounds.size.x - self.padding.horizontal()).max(0.0),
-            (bounds.size.y - self.padding.vertical()).max(0.0),
+            bounds.origin.x + pad_l,
+            bounds.origin.y + pad_t,
+            (bounds.size.x - cx.pt(self.padding.horizontal())).max(0.0),
+            (bounds.size.y - cx.pt(self.padding.vertical())).max(0.0),
         );
         self.cached_content_size = Size::new(content.size.x, content.size.y);
         self.cached_content_rect = content;

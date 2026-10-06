@@ -496,7 +496,11 @@ impl Widget for PdfView {
                 painter,
                 cx.list,
                 kurbo::Point::new(
-                    f64::from(b.max_x() - pad - label.len() as f32 * fs * 0.55),
+                    f64::from(
+                        b.max_x()
+                            - pad
+                            - crate::text_paint::estimate_text_width_px(&(label), fs, 0.55),
+                    ),
                     f64::from(b.max_y() - pad),
                 ),
                 &label,

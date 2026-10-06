@@ -252,7 +252,7 @@ impl Widget for ActivityRing {
         let size = 13.0 * cx.scale;
         let w = painter
             .and_then(|p| p.measure_text(&pct, size))
-            .unwrap_or(pct.chars().count() as f32 * size * 0.6);
+            .unwrap_or_else(|| crate::text_paint::estimate_text_width_px(&(pct), size, 0.6));
         crate::text_paint::paint_label_clipped(
             painter,
             cx.list,

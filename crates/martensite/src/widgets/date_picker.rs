@@ -714,8 +714,7 @@ impl Widget for CalendarSurface {
         );
         let title = format!("{} {}", month_name, self.view_year);
         let font_px = cx.pt(13.0);
-        let title_y = b.min_y() + pad + (cx.pt(HEADER_H) - font_px) / 2.0;
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
             kurbo::Rect::new(
@@ -724,10 +723,7 @@ impl Widget for CalendarSurface {
                 f64::from(self.next_rect.min_x()),
                 f64::from(b.min_y() + pad + cx.pt(HEADER_H)),
             ),
-            kurbo::Point::new(
-                f64::from(self.prev_rect.max_x() + cx.pt(4.0)),
-                f64::from(title_y),
-            ),
+            f64::from(self.prev_rect.max_x() + cx.pt(4.0)),
             &title,
             font_px,
             ink,
@@ -736,7 +732,7 @@ impl Widget for CalendarSurface {
         // Weekday header.
         let small_px = cx.pt(12.0);
         let cell = cx.pt(CELL);
-        let wk_y = b.min_y() + pad + cx.pt(HEADER_H) + (cx.pt(WEEK_ROW_H) - small_px) / 2.0;
+        let wk_y = b.min_y() + pad + cx.pt(HEADER_H);
         for col in 0..GRID_COLS {
             // Column index → weekday index (0 = Sunday). Under RTL the
             // header cells mirror with the day grid.
@@ -750,13 +746,19 @@ impl Widget for CalendarSurface {
                 .weekday_names
                 .as_ref()
                 .map_or(WEEKDAY_SHORT[wd], |n| n[wd].as_str());
-            crate::text_paint::paint_label(
+            // Two-letter name sits on an 0.18·cell inset — a deliberate
+            // optical offset, not centred, matching the day grid's
+            // left-leaning rhythm.
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                kurbo::Point::new(
-                    f64::from(self.grid_origin.x + draw_col as f32 * cell + cell * 0.18),
+                kurbo::Rect::new(
+                    f64::from(self.grid_origin.x + draw_col as f32 * cell),
                     f64::from(wk_y),
+                    f64::from(self.grid_origin.x + draw_col as f32 * cell + cell),
+                    f64::from(wk_y + cx.pt(WEEK_ROW_H)),
                 ),
+                f64::from(self.grid_origin.x + draw_col as f32 * cell + cell * 0.18),
                 name.get(..2).unwrap_or(name),
                 small_px,
                 cx.color(TokenKey::TextMutedColor, INK_MUTED),
@@ -821,7 +823,7 @@ impl Widget for CalendarSurface {
                 };
                 // Rough centring: digits average ~0.55em wide.
                 let label = date.day.to_string();
-                let approx_w = label.len() as f32 * day_px * 0.55;
+                let approx_w = crate::text_paint::estimate_text_width_px(&(label), day_px, 0.55);
                 crate::text_paint::paint_label(
                     painter,
                     cx.list,
@@ -1784,6 +1786,11 @@ impl Widget for DatePicker {
                 ),
                 icon_ink,
             );
+        }
+    }
+    fn paint_overlay(&self, cx: &mut PaintContext) {
+        if !self.enabled {
+            crate::widgets::paint_disabled_veil(cx, cx.bounds, 6.0);
         }
     }
 }

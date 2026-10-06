@@ -157,8 +157,8 @@ impl Widget for QrCode {
         Some(self)
     }
 
-    fn measure(&mut self, _cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
-        Vec2::splat(120.0)
+    fn measure(&mut self, cx: &mut LayoutContext, _constraints: LayoutConstraints) -> Vec2 {
+        Vec2::splat(cx.pt(120.0))
     }
 
     fn layout(&mut self, _cx: &mut LayoutContext, _bounds: Rect) {}

@@ -256,7 +256,9 @@ impl Widget for Avatar {
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let w = painter
             .and_then(|p| p.measure_text(&initials, size_px))
-            .unwrap_or_else(|| initials.chars().count() as f32 * size_px * 0.6);
+            .unwrap_or_else(|| {
+                crate::text_paint::estimate_text_width_px(&(initials), size_px, 0.6)
+            });
         crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
