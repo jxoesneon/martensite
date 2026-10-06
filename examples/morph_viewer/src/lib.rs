@@ -1,7 +1,7 @@
 //! morph_viewer — the native icon-morph showcase.
 //!
 //! Streams the free stroke-icon packs (`fetch_icons` bin: lucide ISC,
-//! tabler/feather/heroicons/iconoir MIT) into [`MorphIcon`] widgets —
+//! tabler/feather/heroicons/iconoir MIT) into [`MorphIcon`](martensite::widgets::MorphIcon) widgets —
 //! a hero card morphing the last selection beside a living grid that
 //! ripples through the pack on per-cell timers.
 //!
