@@ -3,10 +3,10 @@
 This file tracks work that is **not yet complete** or has known limitations.
 It is a living document — items move off this list when they are resolved.
 
-Last updated: v0.20.0 RELEASED (2026-09-26) — all crates verified
-at 0.20.0. Unified Developer Experience & Distribution milestone completed
-with unanimous Council of Five sign-off (5/5). All local verification gates green;
-tagged v0.20.0 to trigger automated release and publish pipeline.
+Last updated: v0.21.0 prepared (2026-10-05) — workspace bumped to
+0.21.0, CHANGELOG section written, all consistency surfaces synced.
+Pending: CI green on main, then tag v0.21.0 to trigger the automated
+release and publish pipeline.
 
 ## Active Milestone Plan (v0.20.0 → v1.0.0-rc.N → v1.0.0)
 

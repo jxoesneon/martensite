@@ -7,18 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.21.0] - 2026-10-05
 
-- **OS `prefers-reduced-motion` detection (ADR-0040 phase 2)** —
-  `martensite_shell::prefs::prefers_reduced_motion` probes the platform
-  setting (GNOME/GTK `enable-animations` via `gsettings` and GTK
-  `settings.ini` on Linux, `NSWorkspace.accessibilityDisplayShouldReduceMotion`
-  on macOS under `macos-backend`, `SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION)`
-  on Windows under `windows-backend`, `matchMedia("prefers-reduced-motion")`
-  on wasm) with a `MARTENSITE_REDUCED_MOTION` env override.
-  `martensite_window::prefs::apply_platform_preferences` installs the
-  result onto `WidgetArena::set_reduced_motion` in one startup call,
-  after which loading placeholders paint statically.
+### Added — Widget Catalog, Dev Channel, Icons & Internationalization
+
+- **`widget_catalog` example** — A per-widget showcase and inspection
+  tool covering all 275 registered pages: rail navigation with search
+  and aliases, a staged widget viewport, a properties panel exposing
+  every widget option, a structured reference panel, and an event log
+  scoped to the staged subtree. Compact widths switch to a two-tier
+  layout; `--png`, `--stage-png`, `--zoom`, `--rtl`, and `--locale`
+  drive headless verification renders.
+
+- **Dev session runtime & MCP server (ADR-0038, ADR-0039)** —
+  `martensite-devtools::dev_session` serves a live `WidgetArena` over a
+  Unix-socket dev channel (`MARTENSITE_DEV_CHANNEL=1`), and
+  `martensite-mcp` plus `cargo martensite mcp` expose inspection, lint,
+  event, layout, and tweak tools over stdio for AI-assisted development.
+  Tool schemas emit through a `format`-stripping layer so they validate
+  under Ajv-based MCP clients.
+
+- **MorphIcon & ambient icon sets (ADR-0041)** — A path-morphing icon
+  widget, five upstream icon packs in the morph viewer, native
+  named-icon resolution for widget chrome, and
+  `icons::install_ambient_icons`/`ambient_icons` — a thread-local
+  `IconSet` chain that lets overlay packs (morph packs, app-private
+  families) shadow the builtin set as the default icon family.
+
+- **Ambient layout direction & locale** — `intl::install_ambient_intl`,
+  `ambient_direction`, and `ambient_locale` thread direction and locale
+  through layout, paint, and event contexts; `WidgetArena` and
+  `LayoutEngine` install them automatically around their passes.
+
+- **Input sanitization engine** — A configurable `sanitize` surface on
+  editable widgets, backed by `martensite-sanitize` with aggressive,
+  baseline, and raw profiles applied on insertion and commit paths.
+
+- **VirtualRows shared virtualization**, **horizontal zoom controls**,
+  **rotated/vertical text labels** (glyph-outline path painting),
+  **native loading states with skeleton placeholders (ADR-0040)**,
+  **OS `prefers-reduced-motion` detection** (platform probes plus
+  `MARTENSITE_REDUCED_MOTION` override; `apply_platform_preferences`
+  installs the result in one startup call), **modal overlay
+  light-dismiss** (`persistent()` opts out), and **visible focus rings**
+  on every focusable widget (WCAG 2.4.7/2.4.13).
+
+- **`martensite-web` crate + `examples/web`** — the workspace now builds
+  for `wasm32-unknown-unknown`; host-only surfaces (dev channel, plugin
+  runtime, text reference, benches) compile to empty libraries on wasm
+  with target-gated dependencies, and the wasm CI leg covers the new
+  crates.
+
+- **Prop-effect audit gate** — `--audit-props`/`--audit-gate` re-render
+  every catalog page with each property flipped and fail on unexplained
+  dead props, stale baseline entries, or render panics; classified dead
+  props live in `audit_baseline.tsv`. Runs as the `prop-audit` CI job.
+
+- **`Widget::child_paint_scale` hook** — containers that lay a child out
+  at a different context scale (zoom canvases) declare the scale that
+  child's paint pass runs at, so text and strokes magnify with geometry.
+  `paint_overlay` now emits for widget-internal children too.
+
+### Changed
+
+- **Quench theme identity** — iris accent, tinted-steel neutrals, and
+  squircle geometry across the theme.
+- **Text-editing parity** — focus-routed internal children, grapheme-safe
+  deletion, and editing-behavior coverage across the text widgets.
+- **RTL mirroring for navigation widgets** — Breadcrumb mirrors its full
+  trail (leaf leftmost, trailing ellipsis, direction-aware hit-testing
+  and keyboard order); Segmented mirrors option geometry to match its
+  direction-aware keys; PageHeader mirrors title alignment and affordances.
+- **Optically centered labels** — shared `text_paint` helpers
+  (`paint_label_vcenter`, `paint_label_clipped`, `estimate_text_width_px`)
+  replace hand-rolled centering and the duplicated `chars×size` fallback
+  across ~97 sites.
+- **Inspector node badges** — glyph indicators (⚠ ↻ ⛔) replaced with
+  text tokens (`lint`, `signal`, `suppressed`).
+- **ListView section headers** — catalog rail and ListView render real
+  labeled-rule dividers.
+
+### Fixed
+
+- **Scale-blind measurements** — `measure()` implementations returning
+  logical points as device pixels now honor `cx.scale` (QrCode,
+  NavStack, HeaderBar, PageHeader, Ribbon, Grid, BarChart, ScrollView,
+  and `EdgeInsets` padding on Container/Card/GroupBox).
+- **Zoom magnified geometry but not text** — internal children painted
+  at the parent's scale; fixed via `child_paint_scale`.
+- **Kbd** content-blind measurement clipped long legends; measured via
+  real font metrics and painted clipped.
+- **Pagination** painted its ellipsis off-widget; **HexView**
+  under-declared width and mis-hit bytes; **Venn** circles overflowed
+  bounds; **CheckBox** rows were below the 24pt WCAG target; **MindMap**
+  lacked fit-scaling; **DiffView** washed identical ink over its tint;
+  **Ticket** painted its STUB label over barcode ink; and several
+  widgets painted text outside their owning surface — all corrected.
+- **Menu separators/headings** classified as interactive targets.
+- **CI** — `ci-gate` JSON escaping, update-test downgrade assertion,
+  packaging workflow issues, and opt-in VA-API decoding.
+
+**MSRV:** 1.89.0
 
 ## [0.20.1] - 2026-09-26
 
