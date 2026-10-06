@@ -355,13 +355,13 @@ fn test_tree_node_badges_and_indicators() {
     assert_eq!(badges.format_badges(), "");
 
     badges.has_active_lints = true;
-    assert_eq!(badges.format_badges(), "⚠");
+    assert_eq!(badges.format_badges(), "lint");
 
     badges.signal_fired = true;
-    assert_eq!(badges.format_badges(), "⚠ ↻");
+    assert_eq!(badges.format_badges(), "lint signal");
 
     badges.has_suppressed_lints = true;
-    assert_eq!(badges.format_badges(), "⚠ ↻ ⛔");
+    assert_eq!(badges.format_badges(), "lint signal suppressed");
 
     let mut arena = WidgetArena::new();
     let widget = arena.insert(

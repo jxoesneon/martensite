@@ -5755,14 +5755,12 @@ mod tests {
                 return;
             };
             // The edge is owned by every clip rect sharing it. Any
-            // ScrollView owning the cutting edge is the sanctioned
-            // scroll affordance — the widget shows the axis's bar on
-            // overflow regardless of its unbounded-measure axis, so a
-            // cut at a scrollport edge is always reachable by
-            // scrolling — even when a widget-local clip happens to
-            // coincide (e.g. TreeItemRow clips to the visible region).
-            // Otherwise the innermost coincident widget clip is the
-            // culprit.
+            // scrollable widget owning the cutting edge is the
+            // sanctioned scroll affordance — a cut at a scrollport
+            // edge is always reachable by scrolling — even when a
+            // widget-local clip happens to coincide (e.g. TreeItemRow
+            // clips to the visible region). Otherwise the innermost
+            // coincident widget clip is the culprit.
             let matching: Vec<&String> = clips
                 .iter()
                 .filter(|(r, _)| {
@@ -5771,11 +5769,50 @@ mod tests {
                 })
                 .map(|(_, n)| n)
                 .collect();
-            let owner = if matching
+            // Scope names are `debug_name()`s — `Type::Name` type paths
+            // for default widgets, `Name@lint:…` when a widget declares
+            // inline lint allows. Normalise both to the bare widget
+            // name before matching so a lint marker can't mask a
+            // scrollport's ownership.
+            let base_scope = |n: &str| -> String {
+                let unmarked = n.split('@').next().unwrap_or(n);
+                unmarked
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(unmarked)
+                    .to_ascii_lowercase()
+            };
+            const SCROLLERS: &[&str] = &[
+                "scrollview",
+                "listview",
+                "treeview",
+                "datagrid",
+                "tableview",
+                "gridview",
+                "virtuallist",
+                "textarea",
+                "codeview",
+                "pdfview",
+                "imageviewer",
+                "mapview",
+                "terminal",
+                "marquee",
+                "tickertape",
+                "ticker",
+                "viewport",
+                "webview",
+            ];
+            let scroll_edge = matching
                 .iter()
-                .any(|n| n.contains("scrollview::ScrollView"))
-            {
+                .any(|n| SCROLLERS.iter().any(|s| base_scope(n) == *s));
+            // A clip whose widget declares `@lint:text-truncation` is a
+            // deliberate fixed-geometry truncation edge (e.g. WeekView
+            // day columns) — the same sanctioned class as a scrollport.
+            let declared_trunc = matching.iter().any(|n| n.contains("@lint:text-truncation"));
+            let owner = if scroll_edge {
                 "SCROLL-VP".to_string()
+            } else if declared_trunc {
+                "LINT-OK".to_string()
             } else {
                 matching
                     .last()
@@ -5912,13 +5949,13 @@ mod tests {
                     eprintln!("  x{n} {k}");
                 }
                 // Gate: every mid-glyph cut must be owned by a
-                // ScrollView viewport edge — the sanctioned scroll
-                // affordance. A cut owned by any other clip means a
-                // widget's fixed geometry is slicing glyphs the user
-                // can never reach.
+                // sanctioned edge — a scrollport (SCROLL-VP, reachable
+                // by scrolling) or a widget-declared truncation clip
+                // (LINT-OK). Any other owner means fixed geometry is
+                // slicing glyphs the user can never reach.
                 for k in hits.keys() {
                     assert!(
-                        k.contains("clip_owner=SCROLL-VP"),
+                        k.contains("clip_owner=SCROLL-VP") || k.contains("clip_owner=LINT-OK"),
                         "grid/{label}@{zw:.0}: mid-glyph cut outside a scrollport: {k}"
                     );
                 }

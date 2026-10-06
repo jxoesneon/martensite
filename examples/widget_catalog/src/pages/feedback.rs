@@ -757,15 +757,16 @@ page!(ToastHostPage {
             min: 0.0,
             max: 60.0,
             step: 0.5,
-            default: 0.0
+            default: 30.0
         },
     ],
     build: |p| {
         let mut host = ToastHost::new();
         let mut t = Toast::new(Severity::Info, p.str("message"));
-        if p.f64("ttl_secs") != 0.0 {
-            t = t.ttl_secs(p.f64("ttl_secs") as f32);
-        }
+        // 0 = sticky — the remaining-time bar is not painted at all,
+        // so the audit's min-probe yields a static diff instead of a
+        // wall-clock-dependent one.
+        t = t.ttl_secs(p.f64("ttl_secs") as f32);
         host.push(t);
         // Pinned TTL — a live countdown bar jitters between frames,
         // which destabilises the audit's noise floor. The `ttl_secs`
