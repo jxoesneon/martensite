@@ -1,5 +1,5 @@
 //! Per-frame layout snapshot bridging the app-side
-//! [`LayoutEngine`](martensite_layout::LayoutEngine) to the dev channel.
+//! [`LayoutEngine`] to the dev channel.
 //!
 //! `LayoutEngine` is `!Send` (Taffy's compact-length internals carry a
 //! `*const ()`), so it can never live behind the probe's socket-thread

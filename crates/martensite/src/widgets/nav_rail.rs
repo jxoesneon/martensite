@@ -114,7 +114,7 @@ impl NavDestination {
 
     /// Creates a destination whose icon is a stroke path (`d` data on
     /// the 24-unit icon grid — the lucide/feather idiom; see
-    /// [`crate::icons::builtin`] for the native pack's constants).
+    /// [`crate::icons::builtin`](mod@crate::icons::builtin) for the native pack's constants).
     /// The rail hosts it as a real `MorphIcon` internal child, so
     /// `morph_to` animates; the icon is decorative in the a11y tree —
     /// `label` carries the name.
@@ -248,7 +248,7 @@ impl NavRail {
     ///
     /// An icon name (`"nav.home"`, `"nav.settings"`, …) resolves
     /// through the ambient icon family and hosts a
-    /// [`MorphIcon`](crate::widgets::MorphIcon) exactly like
+    /// [`MorphIcon`] exactly like
     /// [`destination_named`](Self::destination_named); any other
     /// string stays a text glyph.
     ///
@@ -271,9 +271,9 @@ impl NavRail {
     }
 
     /// Appends a destination whose icon is a hosted
-    /// [`MorphIcon`](crate::widgets::MorphIcon) stroke icon — `icon_d`
+    /// [`MorphIcon`] stroke icon — `icon_d`
     /// is SVG path data on the 24-unit icon grid (the lucide/feather
-    /// idiom; see [`crate::icons::builtin`] for the native pack's
+    /// idiom; see [`crate::icons::builtin`](mod@crate::icons::builtin) for the native pack's
     /// constants). The icon is a real internal child: it ticks with
     /// the arena (so `morph_to` animates), reports `Role::Image` as
     /// decorative-hidden in the a11y tree, and picks pill-contrasting
@@ -390,7 +390,7 @@ impl NavRail {
     ///
     /// let r = NavRail::new()
     ///     .destination_named("data.grid", "Grid")
-    ///     .destination("nav.settings", "Settings");
+    ///     .destination("*", "Settings");
     /// assert!(r.icon_widget(0).is_some());
     /// assert!(r.icon_widget(1).is_none()); // glyph destination
     /// ```

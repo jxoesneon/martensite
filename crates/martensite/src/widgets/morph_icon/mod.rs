@@ -46,7 +46,7 @@ const SIZE_PT: f32 = 24.0;
 
 /// Canonical demo icon pairs — real `d` strings for doctests and
 /// parity fixtures. Not a vendored icon set (ADR-0041): apps draw
-/// from the native pack ([`crate::icons::builtin`]) or supply their
+/// from the native pack ([`crate::icons::builtin`](mod@crate::icons::builtin)) or supply their
 /// own paths in production.
 #[doc(hidden)]
 pub mod demo;
@@ -207,7 +207,7 @@ impl MorphIcon {
     /// assert!(MorphIcon::named("bogus").is_err());
     /// ```
     /// Resolves `name` through the ambient
-    /// [`IconSet`](crate::icons::IconSet) — installed overlay packs
+    /// [`IconSet`] — installed overlay packs
     /// (the default icon-family setting, see
     /// [`install_ambient_icons`](crate::icons::install_ambient_icons))
     /// shadow the builtin pack.

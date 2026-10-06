@@ -176,7 +176,7 @@ impl FloatButton {
 
     /// Replaces the text glyph with a hosted [`MorphIcon`] stroke icon
     /// — `d` is SVG path data on the 24-unit icon grid (see
-    /// [`crate::icons::builtin`]). The icon is a real internal child:
+    /// [`crate::icons::builtin`](mod@crate::icons::builtin)). The icon is a real internal child:
     /// it ticks with the arena and morphs via
     /// [`icon_widget_mut`](Self::icon_widget_mut). It paints on the
     /// accent face in the button's ink; a `d` the icon engine rejects

@@ -185,18 +185,18 @@ impl InlineEdit {
     /// use martensite_sanitize::{Sanitize, SanitizeContext};
     /// use std::sync::Arc;
     ///
-    /// struct Rev;
-    /// impl Sanitize for Rev {
-    ///     fn name(&self) -> &'static str { "rev" }
+    /// struct Shout;
+    /// impl Sanitize for Shout {
+    ///     fn name(&self) -> &'static str { "shout" }
     ///     fn sanitize(&self, input: &str, _: &SanitizeContext) -> String {
-    ///         input.chars().rev().collect()
+    ///         input.to_uppercase()
     ///     }
     /// }
-    /// let mut edit = InlineEdit::new("x").with_sanitizer(Arc::new(Rev));
+    /// let mut edit = InlineEdit::new("x").with_sanitizer(Arc::new(Shout));
     /// edit.begin_edit();
     /// edit.input_mut().set_value("ab");
     /// edit.commit_edit();
-    /// assert_eq!(edit.value, "ba");
+    /// assert_eq!(edit.value, "AB");
     /// ```
     #[inline]
     #[must_use]

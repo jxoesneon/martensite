@@ -12,11 +12,11 @@
 //!   pipe, newline-delimited JSON-RPC-lite, D1 version-locked `hello`).
 //! - [`offline`] — offline-mode context: workspace discovery, scene dumps,
 //!   disk-mutation confinement, and the mutation audit log.
-//! - [`server`] — the [`MartensiteMcp`](server::MartensiteMcp) type, the
+//! - [`server`] — the [`MartensiteMcp`] type, the
 //!   `rmcp::ServerHandler` wiring, and [`serve_stdio`].
 //! - [`resources`] / [`prompts`] — MCP resource and prompt providers.
 //! - [`types`] — shared serializable descriptor payloads.
-//! - [`error`] — [`McpError`](error::McpError) and its JSON-RPC code mapping.
+//! - [`error`] — [`McpError`] and its JSON-RPC code mapping.
 //!
 //! # Examples
 //!

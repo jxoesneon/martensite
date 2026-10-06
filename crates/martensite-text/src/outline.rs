@@ -1,4 +1,4 @@
-//! Glyph outline extraction — `swash` outlines as kurbo [`BezPath`]s.
+//! Glyph outline extraction — `swash` outlines as kurbo [`BezPath`](kurbo::BezPath)s.
 //!
 //! The paint command set has no rotation/transform op, so labels that
 //! must render rotated (axis captions, edge tabs) emit their shaped

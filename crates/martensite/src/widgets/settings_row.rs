@@ -166,7 +166,7 @@ impl SettingsRow {
     /// Sets the leading icon to a hosted
     /// [`MorphIcon`](crate::widgets::morph_icon::MorphIcon) stroke icon
     /// — `d` is SVG path data on the 24-unit icon grid (see
-    /// [`crate::icons::builtin`]). The icon is a real internal child:
+    /// [`crate::icons::builtin`](mod@crate::icons::builtin)). The icon is a real internal child:
     /// it ticks with the arena (morphs animate) and reports
     /// decorative-hidden — the row title owns the accessible name. A
     /// `d` the icon engine rejects leaves the row iconless rather than

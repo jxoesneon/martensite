@@ -1,4 +1,4 @@
-//! Page registry — one [`Page`] per public widget, grouped by family
+//! Page registry — one [`Page`](crate::page::Page) per public widget, grouped by family
 //! in rail order.
 //!
 //! Each page builds the staged widget from [`PropValues`], emits the

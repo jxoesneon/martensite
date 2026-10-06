@@ -153,12 +153,13 @@ impl Viewport {
     /// Replaces the staged content, keeping zoom and pan.
     ///
     /// ```
+    /// use martensite::prelude::Widget;
     /// use martensite::widgets::viewport::Viewport;
     /// use martensite::widgets::Text;
     ///
     /// let mut v = Viewport::new();
     /// v.set_child(Box::new(Text::new("b")));
-    /// assert!(v.child(0).is_some());
+    /// assert_eq!(v.child_count(), 1);
     /// ```
     pub fn set_child(&mut self, content: Box<dyn Widget>) {
         self.content = content;

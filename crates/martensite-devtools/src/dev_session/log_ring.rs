@@ -62,7 +62,7 @@ impl LogRing {
     }
 
     /// Appends a record, evicting the oldest at capacity. `seq` is
-    /// assigned here; messages longer than [`MAX_MESSAGE_CHARS`] are
+    /// assigned here; messages longer than `MAX_MESSAGE_CHARS` are
     /// truncated.
     pub fn push(&self, mut record: LogRecord) {
         truncate_message(&mut record.message);

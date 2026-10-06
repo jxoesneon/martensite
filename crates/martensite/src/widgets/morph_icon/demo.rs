@@ -2,7 +2,7 @@
 //! (ADR-0041). These are plain 24px-grid stroke paths in the
 //! lucide/feather idiom — written for this project, not vendored from
 //! an icon library. Application icon vocabularies live in the native
-//! pack ([`crate::icons::builtin`]).
+//! pack ([`crate::icons::builtin`](mod@crate::icons::builtin)).
 
 /// Hamburger menu (three strokes) → close (X).
 pub const MENU: &str = "M4 7h16M4 12h16M4 17h16";

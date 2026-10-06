@@ -250,7 +250,7 @@ impl KeyboardShortcuts {
     /// # Examples
     ///
     /// ```
-    /// use martensite::widgets::keyboard_shortcuts::KeyboardShortcuts;
+    /// use martensite::widgets::keyboard_shortcuts::{KeyboardShortcuts, ShortcutGroup};
     ///
     /// let w = KeyboardShortcuts::new(vec![ShortcutGroup::new("A")]).a11y_label("Custom name");
     /// assert_eq!(w.a11y_label.as_deref(), Some("Custom name"));

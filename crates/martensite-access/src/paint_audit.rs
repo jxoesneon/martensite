@@ -83,7 +83,7 @@
 //! the paint level, so the large-text classification uses the 18pt
 //! regular-weight threshold only.
 //!
-//! Findings are reported by [`LintReporter`] through `tracing` on the
+//! Findings are reported by [`LintReporter`](crate::paint_audit::LintReporter) through `tracing` on the
 //! `martensite::paint_audit` target; when no global tracing dispatcher
 //! is installed, each fresh finding is written to stderr as
 //! `martensite paint lint [warning|info]: <detail>` so findings are

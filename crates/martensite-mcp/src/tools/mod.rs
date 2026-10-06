@@ -1,5 +1,6 @@
 //! The 28 `martensite_*` MCP tools, one struct per tool implementing
-//! `rmcp`'s [`ToolBase`] + [`AsyncTool`] traits.
+//! `rmcp`'s [`ToolBase`](rmcp::handler::server::router::tool::ToolBase)
+//! + [`AsyncTool`](rmcp::handler::server::router::tool::AsyncTool) traits.
 //!
 //! Each module is a self-contained work packet; [`tool_router`] merges them
 //! into a single [`ToolRouter`] mounted on the server.

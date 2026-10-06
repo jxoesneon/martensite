@@ -2,7 +2,7 @@
 //!
 //! `WidgetArenaProbe` is the default app-side runtime bridge: an app that
 //! keeps its arena behind `Arc<Mutex<WidgetArena>>` hands a clone to
-//! [`DevSession::new`] and immediately serves real `tree_snapshot`,
+//! [`DevSession::new`](crate::dev_session::DevSession::new) and immediately serves real `tree_snapshot`,
 //! `tree_node`, `overflow_scan`, `a11y_tree`, `theme_get`, `audit_paint`,
 //! and `a11y_action` data over the dev channel. Pointer/scroll
 //! `event_dispatch` is real too: targets resolve by bounds hit-test (or
@@ -11,12 +11,13 @@
 //!
 //! Optional runtimes plug in via builder methods:
 //!
-//! - [`with_layout_store`](Self::with_layout_store) — real Taffy
+//! - [`with_layout_store`](crate::dev_session::WidgetArenaProbe::with_layout_store) — real Taffy
 //!   `layout_chain` output (style constraints, resolved size,
-//!   diagnostics) from a per-frame [`LayoutStore`] snapshot; without it
+//!   diagnostics) from a per-frame [`LayoutStore`](crate::dev_session::layout_store::LayoutStore)
+//!   snapshot; without it
 //!   the probe still answers with arena bounds and ancestry
 //!   (`"layout_engine": null`).
-//! - [`with_focus_manager`](Self::with_focus_manager) — keyboard/text
+//! - [`with_focus_manager`](crate::dev_session::WidgetArenaProbe::with_focus_manager) — keyboard/text
 //!   `event_dispatch` and `a11y_action` target resolution through
 //!   `FocusManager::current_focus`.
 //! - the `render` feature — `capture_node` rasterizes the subtree with

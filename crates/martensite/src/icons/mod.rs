@@ -1,7 +1,7 @@
 //! A native stroke-icon vocabulary and the name-resolution chain for
 //! icon packs.
 //!
-//! Martensite ships [`BUILTIN`] — a hand-authored set of stroke-path
+//! Martensite ships [`BUILTIN`](crate::icons::BUILTIN) — a hand-authored set of stroke-path
 //! icons on the conventional 24px grid, the same `d`-string idiom
 //! [`MorphIcon`](crate::widgets::MorphIcon) renders. Names are
 //! qualified and kebab-cased — `"nav.menu"`, `"media.play"`,
@@ -9,8 +9,9 @@
 //! vocabulary without depending on a downloaded icon pack.
 //!
 //! External packs (generated or fetched lucide, tabler, …) plug in as
-//! an *overlay*: an [`IconSet`] searches its registered [`IconPack`]s
-//! in order and always falls back to [`BUILTIN`]. The stroke-path
+//! an *overlay*: an [`IconSet`](crate::icons::IconSet) searches its registered
+//! [`IconPack`](crate::icons::IconPack)s
+//! in order and always falls back to [`BUILTIN`](crate::icons::BUILTIN). The stroke-path
 //! engine is the universal renderer — nothing in the framework
 //! requires external icon data, and unknown names resolve to `None`
 //! rather than panicking.
@@ -47,7 +48,7 @@ pub mod builtin;
 /// One icon in a pack: a qualified name plus its stroke `d` string.
 ///
 /// `Cow` fields let the same type back a zero-alloc `&'static` table
-/// (generated packs, [`builtin`]) and runtime-owned data (icons
+/// (generated packs, [`builtin`](mod@crate::icons::builtin)) and runtime-owned data (icons
 /// parsed from disk at startup).
 ///
 /// # Examples
@@ -461,8 +462,8 @@ impl Drop for AmbientIconsGuard {
 ///
 /// assert!(ambient_icons().packs().is_empty());
 /// {
-///     let set = IconSet::new()
-///         .with_pack(IconPack::new("app", &[IconEntry::new("app.logo", "M4 4l8 8-8 8")]));
+///     static APP: &[IconEntry] = &[IconEntry::new("app.logo", "M4 4l8 8-8 8")];
+///     let set = IconSet::new().with_pack(IconPack::new("app", APP));
 ///     let _guard = install_ambient_icons(set);
 ///     assert_eq!(ambient_icons().resolve("app.logo"), Some("M4 4l8 8-8 8"));
 /// }

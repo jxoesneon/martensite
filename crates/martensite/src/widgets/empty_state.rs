@@ -136,7 +136,7 @@ impl EmptyState {
 
     /// Sets the icon to a hosted [`MorphIcon`] stroke icon — `d` is
     /// SVG path data on the 24-unit icon grid (the lucide/feather
-    /// idiom; see [`crate::icons::builtin`]). The icon is a real
+    /// idiom; see [`crate::icons::builtin`](mod@crate::icons::builtin)). The icon is a real
     /// internal child: it ticks with the arena, paints the stroke
     /// itself, and reports decorative-hidden in the a11y tree — the
     /// state owns the accessible name.

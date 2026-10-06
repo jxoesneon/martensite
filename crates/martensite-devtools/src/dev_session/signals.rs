@@ -58,7 +58,7 @@ impl DevSession {
     /// type-checked against the registered schema by the app behind
     /// [`ArenaProbe::probe_signal_set`](super::ArenaProbe::probe_signal_set).
     /// When the probe reports `not_implemented` the handler falls back to
-    /// the session's own mechanisms: a matching [`SignalAdapter`]'s
+    /// the session's own mechanisms: a matching [`SignalAdapter`](super::SignalAdapter)'s
     /// `write_json` first, then — under `devtools-timemachine` — a
     /// `mark_dirty` + `flush` force re-evaluation when `signal_id`
     /// resolves to a runtime id. Everything else is an honest

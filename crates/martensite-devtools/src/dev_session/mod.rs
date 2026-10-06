@@ -8,7 +8,7 @@
 //!
 //! Handlers in the sibling modules translate JSON-RPC params into session
 //! calls and produce `serde_json::Value` results; `martensite-host`'s
-//! `dev-channel` feature wires them onto [`DevChannelHandler`].
+//! `dev-channel` feature wires them onto `DevChannelHandler`.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
