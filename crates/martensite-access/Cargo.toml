@@ -32,9 +32,10 @@ kurbo = { workspace = true }
 accesskit_winit = { workspace = true, features = ["accesskit_android"] }
 winit = { workspace = true, features = ["android-game-activity"] }
 
-# Web accessibility bridge (`src/web.rs`): hidden-DOM/ARIA live-region
-# announcer + focusable-role DOM mirror translating AccessKit
-# `TreeUpdate`s. wasm-bindgen externs are safe Rust — no unsafe boundary.
+# Web accessibility bridge (`src/web.rs`): positioned DOM/ARIA mirror +
+# live-region announcer translating AccessKit `TreeUpdate`s — including
+# real `<input>`/`<textarea>` projections for editable-text nodes.
+# wasm-bindgen externs are safe Rust — no unsafe boundary.
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 wasm-bindgen = { workspace = true }
 js-sys = { workspace = true }
@@ -44,6 +45,8 @@ web-sys = { workspace = true, features = [
     "Event",
     "EventTarget",
     "HtmlElement",
+    "HtmlInputElement",
+    "HtmlTextAreaElement",
     "Node",
     "Window",
 ] }
