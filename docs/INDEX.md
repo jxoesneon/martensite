@@ -205,6 +205,7 @@ Detailed per-milestone architectural specifications, entry/exit criteria, and ve
 - [milestones/v0.18.0-production-hardening.md](milestones/v0.18.0-production-hardening.md) — v0.18.0 Production Hardening & Dogfooding
 - [milestones/v0.19.0-distribution.md](milestones/v0.19.0-distribution.md) — v0.19.0 Distribution
 - [milestones/vNEXT-developer-experience.md](milestones/vNEXT-developer-experience.md) — v0.20.0 Unified Developer Experience, AI-Assisted MCP & Distribution
+- [milestones/v0.21.0-web-showcase.md](milestones/v0.21.0-web-showcase.md) — v0.21.0 Web Showcase & Browser Accessibility (positioned WebA11yBridge, dev-web relay, wasm32 catalog, Pages deploy)
 - [milestones/v1.0.0-production-release.md](milestones/v1.0.0-production-release.md) — v1.0.0 Production Stability (API Freeze, docs.rs, Crates.io)
 
 

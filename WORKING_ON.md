@@ -5,10 +5,21 @@ It is a living document — items move off this list when they are resolved.
 
 Last updated: v0.21.0 prepared (2026-10-05) — workspace bumped to
 0.21.0, CHANGELOG section written, all consistency surfaces synced.
+Since that prep, the web-showcase workstream also landed on main
+(positioned `WebA11yBridge` DOM mirror at `0bd0452`, authenticated
+loopback `dev-web` relay per ADR-0042 at `98ca4e1`/`6aabe15`/`a1b5ebe`/
+`f9fcc3f`, dual-target wasm32 `widget_catalog` at `0e2db90`, wasm32
+target-checks + `Deploy Web Catalog` Pages workflow at `a418196`) and
+ships under the same pending tag — spec:
+`docs/milestones/v0.21.0-web-showcase.md`.
 Pending: CI green on main, then tag v0.21.0 to trigger the automated
-release and publish pipeline.
+release and publish pipeline. The `Deploy Web Catalog` workflow stages
+the wasm artifact on qualifying pushes but only publishes once GitHub
+Pages is enabled for the repository; the catalog browser gate
+(`MARTENSITE_WEB_BROWSER=1`, `#[ignore]`) is local/self-hosted and
+passed locally — it does not run in PR CI.
 
-## Active Milestone Plan (v0.20.0 → v1.0.0-rc.N → v1.0.0)
+## Active Milestone Plan (v0.20.0 → v0.21.0 → v1.0.0-rc.N → v1.0.0)
 
 Competitive feature-coverage research (egui 0.35, iced 0.14, Xilem,
 Floem, Vizia, Slint 1.16, Makepad, GPUI, Dioxus) re-scoped the roadmap
@@ -158,6 +169,23 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   Specs: `docs/milestones/v0.19.0-distribution.md` and `docs/milestones/vNEXT-developer-experience.md`.
   **Status: RELEASED & PUBLISHING** — tagged `v0.20.0` (2026-09-26), Council of Five
   unanimous sign-off (5/5), gated publish pipeline running on GitHub.
+- **v0.21.0 Widget Catalog, Dev Channel, Icons & Internationalization +
+  Web Showcase** — `widget_catalog` reference app, dev-session runtime +
+  MCP server, MorphIcon/ambient icon sets (ADR-0041), ambient intl,
+  input sanitization, prop-effect audit gate; then the web-showcase
+  workstream: positioned `WebA11yBridge` DOM/ARIA mirror with
+  editable/composite projection and trusted-event gating (`0bd0452`),
+  authenticated loopback `dev-web` relay (ADR-0042; `98ca4e1`,
+  `6aabe15`, `a1b5ebe`, `f9fcc3f`), dual-target wasm32 catalog with
+  shared `App`/`AccessKitAdapter` and `web-dev` inspector leg
+  (`0e2db90`), and wasm32 `target-checks` coverage plus the
+  `Deploy Web Catalog` Pages workflow (`a418196`).
+  Spec (web showcase): `docs/milestones/v0.21.0-web-showcase.md`;
+  remainder per CHANGELOG §0.21.0.
+  **Status: IMPLEMENTED ON MAIN, PENDING TAG** — browser gate PASS
+  locally (`MARTENSITE_WEB_BROWSER=1`, headless Chromium); Pages deploy
+  requires repository Pages enablement; `dev-web` relay is Unix-only
+  and `web-dev`/`web-dev-channel` compile out of public builds.
 - **v1.0.0-rc.N → v1.0.0** — release-candidate line: full gated
   publish + ≥2-week soak, `cargo-semver-checks` clean vs last `0.x`,
   then the stable tag. Spec (single source of truth for v1.0.0
