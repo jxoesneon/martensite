@@ -12,6 +12,19 @@ homepage.workspace = true
 description = "Comprehensive widget catalog and developer reference for Martensite."
 publish = false
 
+# `cdylib` for wasm-bindgen; `rlib` so `cargo check`/`cargo test` and the
+# host binary link the crate as a normal library.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Browser-side dev channel (ADR-0042): a wasm32-only opt-in that dials the
+# `cargo martensite dev-web` relay over `ws://127.0.0.1` and serves the
+# dev-session protocol (tree/lint/signals/events/a11y) to local tooling.
+# Off by default — public web builds carry none of the transport.
+web-dev = ["martensite-devtools/web-dev-channel"]
+
 [dependencies]
 martensite = { workspace = true, features = [
     # Signal enumeration for `signals_list`/`signal_trigger`.
@@ -38,20 +51,41 @@ serde_json = { workspace = true }
 # accesskit_winit fork and the wgpu engine build against these.
 winit = { version = "0.31.0-beta.3", default-features = false, features = ["x11", "wayland"] }
 wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12", "gles", "webgpu"] }
-pollster = "1.0"
-tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 
-# The dev-channel socket server is host-only (ADR-0038): on wasm it is
-# gated out of the facade, so only request the feature on host targets.
-
-# The event-ledger API used by the panel abort/resume flow lives behind
+# The web showcase runs through the consolidated `martensite-web` facade
+# (canvas lookup, web event loop, WebGPU/WebGL2 probe, font fetch, DOM
+# a11y bridge). The event-ledger API used by the dev session lives behind
 # martensite-window/devtools (normally pulled in transitively by the
-# host-only dev-channel feature). Pull it in directly for the web build.
+# host-only dev-channel feature) — pull it in directly for the web build.
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+martensite-web = { workspace = true }
 martensite-window = { workspace = true, features = ["devtools"] }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true, features = [
+    "console",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "Location",
+    "Node",
+    "Performance",
+    "UrlSearchParams",
+    "Window",
+] }
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+# The dev-channel socket server is host-only (ADR-0038): on wasm it is
+# gated out of the facade, so only request the feature on host targets.
 martensite = { workspace = true, features = ["dev-channel"] }
+# Platform AccessKit bridge — the web target mirrors the tree through
+# `martensite-access`'s WebA11yBridge instead.
+accesskit_winit = { workspace = true }
+pollster = "1.0"
+tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 
 [lints]
 workspace = true

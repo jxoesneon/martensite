@@ -1,0 +1,311 @@
+//! Web gate — headless-browser check for the `wasm32-unknown-unknown`
+//! widget-catalog showcase.
+//!
+//! `#[ignore]`-gated per the repo convention for hardware/environment-
+//! dependent gates (cf. `MARTENSITE_WEB_BROWSER` in
+//! `examples/web/tests/browser_gate.rs`). The gate runs only when
+//! `MARTENSITE_WEB_BROWSER=1` is set in the environment — it is a local
+//! /self-hosted-runner check. CI compiles the wasm boundary separately
+//! via the `target-checks` wasm32 job; it does not drive a browser.
+//!
+//! # Prerequisites (self-hosted runner / local run)
+//!
+//! * `cargo` with the `wasm32-unknown-unknown` target installed.
+//! * `wasm-bindgen` CLI matching the lockfile's wasm-bindgen
+//!   (`cargo install wasm-bindgen-cli --version 0.2.128 --locked`).
+//! * `python3` — static file server for `examples/widget_catalog/web`.
+//! * `node` + `npm` — used to install a pinned `playwright` into a temp
+//!   dir and drive Chromium (a system Chromium/Chrome on PATH is used
+//!   directly when present).
+//!
+//! # What it verifies
+//!
+//! The page loads, the wasm entry point logs `martensite widget
+//! catalog starting`, a GPU backend decision is logged (`web backend
+//! selected: …` or the CPU-raster fallback), the web font fetch lands,
+//! the hidden a11y mirror container (`[data-martensite-a11y-mirror]`)
+//! is in the DOM, and — after programmatic enablement through the
+//! `martensite_catalog_enable_a11y` wasm export — the mirror holds a
+//! real projected role tree (proving the catalog's `AccessKitAdapter`
+//! fed `WebA11yBridge`, not a placeholder). A synthetic pointer click
+//! on the canvas is also dispatched: the app must still be logging no
+//! `pageerror` afterwards.
+//!
+//! # Manual equivalent
+//!
+//! Build + serve per README "Web (wasm32)", open the page in a
+//! browser, click around — the gate automates exactly that.
+
+use std::io::Write as _;
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// The web gate: wasm-bindgen-built catalog + headless-browser check.
+///
+/// Skipped (not failed) unless `MARTENSITE_WEB_BROWSER` is set — the
+/// same skip-if-unset convention as the `examples/web` gate.
+#[test]
+#[ignore = "requires static wasm build + node/npm + python3 — set MARTENSITE_WEB_BROWSER=1"]
+fn web_headless_browser_gate() {
+    if std::env::var_os("MARTENSITE_WEB_BROWSER").is_none() {
+        eprintln!("MARTENSITE_WEB_BROWSER not set; gate skipped");
+        return;
+    }
+
+    let example_dir = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
+    let workspace_dir = example_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("examples/widget_catalog has a workspace grandparent")
+        .to_path_buf();
+    for (tool, args) in [
+        ("node", ["--version"].as_slice()),
+        ("npm", ["--version"].as_slice()),
+        ("python3", ["--version"].as_slice()),
+        ("wasm-bindgen", ["--version"].as_slice()),
+    ] {
+        let ok = Command::new(tool)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(
+            ok,
+            "web browser gate: `{tool}` not found on PATH — install it \
+             (cargo install wasm-bindgen-cli; node + npm + python3) \
+             or unset MARTENSITE_WEB_BROWSER"
+        );
+    }
+
+    // Build the wasm cdylib (--lib keeps the bin's artifact out of the
+    // filename collision), regenerate the JS glue, and statically
+    // serve examples/widget_catalog/web — the same flow the README's
+    // Option B documents.
+    let build = Command::new("cargo")
+        .args([
+            "build",
+            "-p",
+            "widget_catalog",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--release",
+            "--lib",
+        ])
+        .current_dir(&workspace_dir)
+        .status()
+        .expect("spawn cargo build");
+    assert!(
+        build.success(),
+        "web browser gate: wasm release build failed"
+    );
+
+    let pkg_dir = example_dir.join("web").join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("create web/pkg");
+    let glue = Command::new("wasm-bindgen")
+        .args([
+            "--target",
+            "web",
+            "--out-dir",
+            pkg_dir.to_str().expect("utf8 path"),
+            workspace_dir
+                .join("target/wasm32-unknown-unknown/release/widget_catalog.wasm")
+                .to_str()
+                .expect("utf8 path"),
+        ])
+        .status()
+        .expect("spawn wasm-bindgen");
+    assert!(glue.success(), "web browser gate: wasm-bindgen failed");
+
+    // Pick a free port, then release it for the static server.
+    let port = TcpListener::bind("127.0.0.1:0")
+        .expect("bind ephemeral port")
+        .local_addr()
+        .expect("local addr")
+        .port();
+    let url = format!("http://127.0.0.1:{port}/index.html");
+
+    let mut server = Command::new("python3")
+        .args([
+            "-m",
+            "http.server",
+            &port.to_string(),
+            "--bind",
+            "127.0.0.1",
+            "--directory",
+            example_dir.join("web").to_str().expect("utf8 path"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn python3 http.server");
+    let _server_guard = ChildGuard(&mut server);
+
+    wait_for_port(port, Duration::from_secs(30))
+        .unwrap_or_else(|| panic!("python3 http.server did not open port {port}"));
+
+    let temp = std::env::temp_dir().join(format!("martensite-web-gate-{}", std::process::id()));
+    std::fs::create_dir_all(&temp).expect("create gate temp dir");
+    install_playwright(&temp);
+    let script = write_check_script(&temp);
+
+    let output = Command::new("node")
+        .arg(&script)
+        .arg(&url)
+        .current_dir(&temp)
+        .output()
+        .expect("run playwright check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _ = std::fs::remove_dir_all(&temp);
+    assert!(
+        output.status.success(),
+        "web browser gate FAILED\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    eprintln!("{stdout}");
+}
+
+/// Kills the spawned server when the gate ends (pass or panic).
+struct ChildGuard<'a>(&'a mut Child);
+
+impl Drop for ChildGuard<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Polls until the static server accepts connections or the deadline
+/// passes.
+fn wait_for_port(port: u16, timeout: Duration) -> Option<()> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return Some(());
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    None
+}
+
+/// Installs a pinned playwright package into `dir` so the check script
+/// resolves `playwright` from `dir/node_modules`. Pinned per the repo's
+/// no-floating-versions convention.
+fn install_playwright(dir: &Path) {
+    let status = Command::new("npm")
+        .args(["install", "--no-save", "--prefix"])
+        .arg(dir)
+        .arg("playwright@1.55.0")
+        .status()
+        .expect("spawn npm install");
+    assert!(
+        status.success(),
+        "web browser gate: `npm install playwright@1.55.0` failed"
+    );
+}
+
+/// Writes the playwright check script into `dir` (next to its
+/// `node_modules`, so the bare `playwright` import resolves) and returns
+/// its path.
+fn write_check_script(dir: &Path) -> PathBuf {
+    const SCRIPT: &str = r#"import { chromium } from 'playwright';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const url = process.argv[2];
+const logs = [];
+// Prefer a system Chromium/Chrome when present — `npm install
+// playwright` then does not need to download its own browser build.
+const candidates = [
+  process.env.CHROMIUM_PATH,
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/google-chrome',
+].filter((p) => p && fs.existsSync(p));
+const launchArgs = {
+  headless: true,
+  args: ['--no-sandbox', '--enable-unsafe-webgpu'],
+  ...(candidates.length ? { executablePath: candidates[0] } : {}),
+};
+const browser = await chromium.launch(launchArgs);
+var mirror;
+var roleCount = 0;
+var pageErrors = [];
+try {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  page.on('console', (m) => logs.push(m.text()));
+  page.on('pageerror', (e) => {
+    logs.push(`pageerror: ${e}`);
+    pageErrors.push(String(e));
+  });
+  await page.goto(url, { waitUntil: 'load' });
+  // Let wasm init, the GPU probe resolve, the font fetch land, and a
+  // few rAF frames pass.
+  await page.waitForTimeout(6000);
+
+  // Programmatic a11y enablement: the production path is the hidden
+  // "Enable accessibility" button (it insists on a trusted click);
+  // the wasm export exists for exactly this gate.
+  await page.evaluate(async () => {
+    const mod = await import('./pkg/widget_catalog.js');
+    mod.martensite_catalog_enable_a11y();
+  });
+  // The enable request is consumed on the next frame; the pending
+  // tree materializes then.
+  await page.waitForTimeout(1500);
+
+  mirror = await page.$('[data-martensite-a11y-mirror]');
+  if (mirror) {
+    roleCount = await mirror.$$eval('[role]', (els) => els.length);
+  }
+
+  // Interaction smoke: click the rail area of the canvas — a real
+  // pointer event must not produce a pageerror.
+  const canvas = await page.$('#martensite-canvas');
+  if (canvas) {
+    const box = await canvas.boundingBox();
+    if (box) {
+      await page.mouse.click(box.x + 140, box.y + 200);
+      await page.waitForTimeout(500);
+    }
+  }
+} finally {
+  await browser.close();
+}
+
+const joined = logs.join('\n');
+const failures = [];
+if (!joined.includes('martensite widget catalog starting')) {
+  failures.push('missing wasm start log');
+}
+if (!/web backend selected:|no GPU adapter/.test(joined)) {
+  failures.push('no GPU backend decision logged');
+}
+if (!joined.includes('font loaded: assets/fonts/font.ttf')) {
+  failures.push('web font fetch did not land');
+}
+if (!mirror) {
+  failures.push('a11y mirror element missing');
+}
+if (roleCount < 10) {
+  failures.push(`a11y mirror holds ${roleCount} projected roles — expected the real catalog tree`);
+}
+if (pageErrors.length) {
+  failures.push(`page errors: ${pageErrors.join(' | ')}`);
+}
+if (failures.length) {
+  console.error(`BROWSER GATE FAIL:\n - ${failures.join('\n - ')}\nconsole:\n${joined}`);
+  process.exit(1);
+}
+console.log('BROWSER GATE PASS');
+"#;
+    let path = dir.join("browser_check.mjs");
+    let mut file = std::fs::File::create(&path).expect("create check script");
+    file.write_all(SCRIPT.as_bytes())
+        .expect("write check script");
+    path
+}
