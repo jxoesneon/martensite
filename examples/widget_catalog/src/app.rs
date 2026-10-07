@@ -227,17 +227,6 @@ pub(crate) struct App {
     /// handle for it can never be dropped under the live surface.
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     _web_instance: Option<martensite_web::wgpu::Instance>,
-    /// Click-streak state for the web pointer path —
-    /// `EventRouter::dispatch_pointer_event` feeds its `ClickTracker`
-    /// with `Instant::now()`, which traps on wasm, so the web arm
-    /// tracks the streak itself with `now_ms()`:
-    /// `(timestamp_ms, position, streak)`.
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-    web_click_streak: Option<(f64, Vec2, u8)>,
-    /// Mirrors the router's private `pending_focus` so web-side
-    /// ledger records carry the same focus transition payload.
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-    web_pending_focus: Option<WidgetId>,
     /// F12 diagnostic HUD — web-dev builds only.
     #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "web-dev"))]
     hud: martensite::devtools::hud::DiagnosticHud,
@@ -295,10 +284,6 @@ impl App {
             _font_guard: None,
             #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
             _web_instance: None,
-            #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-            web_click_streak: None,
-            #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-            web_pending_focus: None,
             #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "web-dev"))]
             hud: martensite::devtools::hud::DiagnosticHud::new(),
             #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "web-dev"))]
@@ -685,15 +670,7 @@ impl App {
             (Some(window), Some(gpu), Some(surface), Some(orchestrator)) => {
                 orchestrator.render(&list, &self.recovery);
                 if let Err(err) = orchestrator.render_to_surface(&gpu.device, &gpu.queue, surface) {
-                    // `RecoveryMachine::handle_surface_error` stamps
-                    // `Instant::now()` — a wasm trap — so the web arm
-                    // only logs and retries via the resize below. The
-                    // transient-error contract (reconfigure and keep
-                    // presenting) is preserved.
-                    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
                     self.recovery.handle_surface_error(err);
-                    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-                    crate::web::log(&format!("surface present failed: {err}"));
                     let size = window.surface_size();
                     if let Err(err) =
                         surface.resize(&gpu.device, size.width.max(1), size.height.max(1))
@@ -735,15 +712,8 @@ impl App {
     }
 
     /// winit pointer event → `EventRouter` → arena dispatch.
-    ///
-    /// On wasm the router's `dispatch_pointer_event` cannot run: its
-    /// `ClickTracker` stamps `Instant::now()`, which traps on
-    /// `wasm32-unknown-unknown`. [`Self::dispatch_pointer_web`]
-    /// replicates the same pipeline out of the router's public pieces
-    /// (overlay first, capture-aware hit-test, `dispatch_event_ex`,
-    /// hover enter/leave, capture bookkeeping, focus drain, event
-    /// ledger) — the click streak is tracked on `performance.now()`
-    /// instead.
+    /// Identical on both targets: `ClickTracker` inside
+    /// `dispatch_pointer_event` runs on a wasm-safe clock.
     fn dispatch_pointer(
         &mut self,
         position: winit::dpi::PhysicalPosition<f64>,
@@ -765,169 +735,12 @@ impl App {
             button,
             modifiers: mods,
         };
-        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         if let (Some(arena), Some(root), Some(window)) =
             (self.arena.as_ref(), self.root, self.window.as_ref())
         {
             self.router
                 .dispatch_pointer_event(&mut arena.lock().unwrap(), root, window.id(), &ev);
         }
-        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-        self.dispatch_pointer_web(&ev);
-    }
-
-    /// Web-side pointer dispatch — the `dispatch_pointer_event`
-    /// pipeline minus the `Instant`-based click tracker, plus a
-    /// `performance.now()` streak of its own. See
-    /// [`dispatch_pointer`](Self::dispatch_pointer) for why this
-    /// exists.
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-    fn dispatch_pointer_web(&mut self, ev: &PointerEvent) {
-        use martensite::core::{EventResponse, WidgetEvent};
-        use martensite::window::event::{widget_event_for_pointer, EventDispatchOutcome};
-
-        let (Some(arena_rc), Some(root), Some(window)) =
-            (self.arena.clone(), self.root, self.window.clone())
-        else {
-            return;
-        };
-        let mut arena = arena_rc.lock().unwrap();
-
-        // Click streak on `performance.now()` — the router's tracker
-        // would call `Instant::now()` and trap.
-        let click_count = if ev.state == martensite::window::PointerState::Pressed {
-            let now = now_ms();
-            let count = match self.web_click_streak {
-                Some((stamp, pos, streak))
-                    if now - stamp <= 500.0 && pos.distance(ev.position) <= 8.0 =>
-                {
-                    streak.saturating_add(1).max(2)
-                }
-                _ => 1,
-            };
-            self.web_click_streak = Some((now, ev.position, count));
-            count
-        } else {
-            // `ClickTracker` assigns every non-press event count 1.
-            self.web_click_streak = None;
-            1
-        };
-        let widget_ev = widget_event_for_pointer(ev, click_count);
-
-        // Popups in the overlay layer hit-test ahead of window
-        // content — unless an arena widget holds pointer capture.
-        let arena_captured = self
-            .router
-            .captured_widget(ev.pointer_id)
-            .is_some_and(|id| arena.is_alive(id));
-        if !arena_captured {
-            let overlay_response = arena.overlay_mut().dispatch_event(&widget_ev);
-            if overlay_response != EventResponse::Ignored {
-                self.router
-                    .mouse_tracker_mut()
-                    .update_position(window.id(), ev.position);
-                self.drain_focus_request(&mut arena);
-                self.record_web_pointer_ledger(
-                    ev,
-                    root,
-                    martensite::devtools::event_ledger::Disposition::Handled(root),
-                );
-                return;
-            }
-        }
-
-        // `route_pointer_event` carries no clock dependency — it keeps
-        // the mouse tracker (position + hovered widget, which
-        // `dispatch_scroll_event` reads) and resolves capture-aware
-        // hit-test exactly like the native path.
-        let prev_hovered = self.router.mouse_tracker().hovered_widget(window.id());
-        let outcome = self
-            .router
-            .route_pointer_event(&arena, root, window.id(), ev);
-        let now_hovered = self.router.mouse_tracker().hovered_widget(window.id());
-        if ev.state == martensite::window::PointerState::Moved && prev_hovered != now_hovered {
-            if let Some(old) = prev_hovered {
-                // The router also suppresses `PointerLeave` for
-                // loading-covered subtrees; that internal consult is
-                // `pub(crate)`, so the web path accepts the extra
-                // leave — a covered widget seeing its hover end is
-                // semantically harmless.
-                if arena.is_alive(old) {
-                    let _ = arena.dispatch_event(old, &WidgetEvent::PointerLeave);
-                }
-            }
-            if let Some(new) = now_hovered {
-                let _ = arena.dispatch_event(new, &WidgetEvent::PointerEnter);
-            }
-        }
-
-        if let EventDispatchOutcome::Handled(id) = outcome {
-            let disposition = match arena.dispatch_event_ex(id, &widget_ev) {
-                Some((responder, response)) => {
-                    match response {
-                        EventResponse::CapturePointer => {
-                            self.router.capture_pointer(ev.pointer_id, responder);
-                        }
-                        EventResponse::ReleasePointer => {
-                            self.router.release_pointer(ev.pointer_id);
-                        }
-                        _ => {}
-                    }
-                    if arena_captured {
-                        martensite::devtools::event_ledger::Disposition::Captured(responder)
-                    } else if responder == id {
-                        martensite::devtools::event_ledger::Disposition::Handled(responder)
-                    } else {
-                        martensite::devtools::event_ledger::Disposition::BubbledTo(responder)
-                    }
-                }
-                None => martensite::devtools::event_ledger::Disposition::Ignored,
-            };
-            self.drain_focus_request(&mut arena);
-            self.record_web_pointer_ledger(ev, root, disposition);
-        } else {
-            self.drain_focus_request(&mut arena);
-        }
-    }
-
-    /// Mirrors the router's `drain_focus`: moves an arena focus
-    /// request into `web_pending_focus` (for ledger parity) and
-    /// applies it through `FocusManager::apply_focus_request`, which
-    /// only lands focus when the target carries `FOCUSABLE`.
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-    fn drain_focus_request(&mut self, arena: &mut martensite::core::WidgetArena) {
-        if let Some(id) = arena.take_focus_request() {
-            self.web_pending_focus = Some(id);
-            self.focus.lock().unwrap().apply_focus_request(arena, id);
-        }
-    }
-
-    /// Pushes a pointer record into the shared event ledger so the
-    /// dev session's `event_ledger` sees web input exactly like native
-    /// input. The router's per-frame counter is private — the record
-    /// carries frame 0, matching the app's unadvanced frame counter.
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-    fn record_web_pointer_ledger(
-        &mut self,
-        ev: &PointerEvent,
-        root: WidgetId,
-        disposition: martensite::devtools::event_ledger::Disposition,
-    ) {
-        if !self.router.is_ledger_enabled() {
-            return;
-        }
-        let mut path = martensite::devtools::event_ledger::HitPath::new();
-        path.push(root);
-        let record = martensite::devtools::event_ledger::EventRecord::new(
-            0,
-            0,
-            martensite::devtools::event_ledger::EventKind::Pointer,
-            disposition,
-        )
-        .with_position(ev.position)
-        .with_hit_path(path)
-        .with_focus(None, self.web_pending_focus);
-        self.router.event_ledger_mut().push(record);
     }
 
     /// Native surface bring-up: window (invisible until the a11y
