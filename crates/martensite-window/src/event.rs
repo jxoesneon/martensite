@@ -28,10 +28,13 @@
 //! [`HitTester`]: crate::hit_test::HitTester
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use glam::Vec2;
 use martensite_core::{EventResponse, PointerButton, WidgetArena, WidgetEvent, WidgetId};
+// `std::time::Instant` on native; backed by `performance.now()` on
+// wasm32-unknown-unknown, where `std::time::Instant::now` traps.
+use web_time::Instant;
 
 use crate::dpi::DpiScale;
 use crate::hit_test::{loading_covered, HitTester};

@@ -22,6 +22,10 @@ kurbo = { workspace = true }
 bitflags = { workspace = true }
 tracing = { workspace = true }
 martensite-devtools = { workspace = true, optional = true }
+# Monotonic clock that is `std::time::Instant` on native and
+# `performance.now()` on wasm32-unknown-unknown (where `Instant::now`
+# traps) — the click-streak tracker in `event.rs` runs on both.
+web-time = "1.1"
 
 # Android: select winit's GameActivity backend. `NativeActivity` is
 # unsupported — IME events are unreliable and the AccessKit adapter
