@@ -88,8 +88,12 @@ jobs:
           destination: ./_site
       # The catalog is excluded in _config.yml and lands here untouched —
       # wasm/js/ttf ship byte-identical, outside Jekyll's pipeline.
+      # jekyll-build-pages runs in a root-owned container, so _site lands
+      # root-owned; reclaim it before copying.
       - name: Add catalog bundle to site
-        run: cp -r staging/catalog _site/catalog
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" _site
+          cp -r staging/catalog _site/catalog
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./_site
