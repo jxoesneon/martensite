@@ -3627,6 +3627,7 @@ dependencies = [
  "naga 30.0.1",
  "pollster",
  "tracing",
+ "web-time",
  "wgpu",
 ]
 
@@ -3645,6 +3646,7 @@ dependencies = [
  "tracing",
  "wasm-bindgen",
  "web-sys",
+ "web-time",
  "winit",
 ]
 

@@ -35,6 +35,10 @@ bytemuck = { workspace = true }
 glam = { workspace = true }
 # Paint-command geometry (the audit's frame/clip rects are kurbo types).
 kurbo = { workspace = true }
+# Monotonic clock that is `std::time::Instant` on native and
+# `performance.now()` on wasm32-unknown-unknown (where `Instant::now`
+# traps) — `resilience::RecoveryMachine` stamps it on both targets.
+web-time = "1.1"
 
 [dev-dependencies]
 naga = { workspace = true }

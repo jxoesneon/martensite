@@ -27,7 +27,11 @@
 //! failure modes. Production code can construct it from
 //! [`wgpu::CurrentSurfaceTexture`] via [`SurfaceError::from_current_texture`].
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// `std::time::Instant` on native; backed by `performance.now()` on
+// wasm32-unknown-unknown, where `std::time::Instant::now` traps.
+use web_time::Instant;
 
 use crate::surface::SurfaceWrapperError;
 
