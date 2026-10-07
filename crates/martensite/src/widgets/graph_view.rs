@@ -346,7 +346,7 @@ impl Widget for GraphView {
         self.scale = cx.scale;
         // Seed a ring for any unpositioned nodes.
         let n = self.nodes.len();
-        if n == 0 {
+        if n == 0 || bounds.width() <= 0.0 || bounds.height() <= 0.0 {
             return;
         }
         // Positions are stored in absolute coordinates; when the box
@@ -587,6 +587,19 @@ mod tests {
     #[test]
     fn layout_seeds_ring() {
         let mut g = graph();
+        laid_out(&mut g, 260.0, 260.0);
+        let c = Vec2::new(130.0, 130.0);
+        for i in 0..3 {
+            let p = g.position_of(i);
+            assert!((p.distance(c) - 102.0).abs() < 1.0, "node {i} off ring");
+        }
+    }
+
+    #[test]
+    fn empty_layout_does_not_seed_ring() {
+        let mut g = graph();
+        laid_out(&mut g, 0.0, 0.0);
+        assert!(g.positions.iter().all(|p| *p == Vec2::ZERO));
         laid_out(&mut g, 260.0, 260.0);
         let c = Vec2::new(130.0, 130.0);
         for i in 0..3 {

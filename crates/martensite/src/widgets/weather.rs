@@ -167,7 +167,7 @@ impl Weather {
         self
     }
 
-    /// Place name drawn over the temperature.
+    /// Place name shown above the temperature.
     ///
     /// ```
     /// use martensite::widgets::weather::Weather;
@@ -495,63 +495,64 @@ impl Widget for Weather {
 
         let painter = crate::text_paint::resolve_painter(&self.text_painter, cx.text_painter);
         let tx = icon_r.max_x() + PAD_PT * s;
-        let cy = self.bounds.min_y() + self.bounds.height() / 2.0;
         let loc_sz = 10.0 * s;
         let temp_sz = 20.0 * s;
         let hl_sz = 9.0 * s;
         let fg = cx.color(TokenKey::TextColor, FG);
         let muted = cx.color(TokenKey::TextMutedColor, MUTED);
+        let gap = 2.0 * s;
+        let loc_h = loc_sz * 1.25;
+        let temp_h = temp_sz * 1.25;
+        let hl_h = hl_sz * 1.25;
+        let stack_h = temp_h
+            + if self.location.is_empty() {
+                0.0
+            } else {
+                loc_h + gap
+            }
+            + if self.hi_lo.is_some() {
+                hl_h + gap
+            } else {
+                0.0
+            };
+        let mut y = self.bounds.min_y() + (self.bounds.height() - stack_h).max(0.0) * 0.5;
+        let strip = |top: f32, height: f32| {
+            kurbo::Rect::new(
+                f64::from(tx),
+                f64::from(top.max(self.bounds.min_y())),
+                f64::from(self.bounds.max_x()),
+                f64::from((top + height).min(self.bounds.max_y())),
+            )
+        };
         if !self.location.is_empty() {
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                kurbo::Rect::new(
-                    f64::from(tx),
-                    f64::from(self.bounds.min_y()),
-                    f64::from(self.bounds.max_x()),
-                    f64::from(self.bounds.max_y()),
-                ),
-                kurbo::Point::new(
-                    f64::from(tx),
-                    crate::text_paint::centered_label_top(painter, cy, &self.location, loc_sz),
-                ),
+                strip(y, loc_h),
+                f64::from(tx),
                 &self.location,
                 loc_sz,
                 muted,
             );
+            y += loc_h + gap;
         }
-        crate::text_paint::paint_label_clipped(
+        crate::text_paint::paint_label_vcenter(
             painter,
             cx.list,
-            kurbo::Rect::new(
-                f64::from(tx),
-                f64::from(self.bounds.min_y()),
-                f64::from(self.bounds.max_x()),
-                f64::from(self.bounds.max_y()),
-            ),
-            kurbo::Point::new(
-                f64::from(tx),
-                crate::text_paint::centered_label_top(painter, cy, &self.face(), temp_sz),
-            ),
+            strip(y, temp_h),
+            f64::from(tx),
             &self.face(),
             temp_sz,
             fg,
         );
+        y += temp_h + gap;
         if let Some((hi, lo)) = self.hi_lo {
             let t = format!("H {}°  L {}°", hi.round() as i32, lo.round() as i32);
-            crate::text_paint::paint_label_clipped(
+            crate::text_paint::paint_label_vcenter(
                 painter,
                 cx.list,
-                kurbo::Rect::new(
-                    f64::from(tx),
-                    f64::from(self.bounds.min_y()),
-                    f64::from(self.bounds.max_x()),
-                    f64::from(self.bounds.max_y()),
-                ),
-                // Second line: `cy + temp·0.45` drops the hi-lo strip a
-                // half-temp-cap-height below the readout's centre — a
-                // deliberate stack offset, not a centring attempt.
-                kurbo::Point::new(f64::from(tx), f64::from(cy + temp_sz * 0.45)),
+                strip(y, hl_h),
+                f64::from(tx),
                 &t,
                 hl_sz,
                 muted,
@@ -563,7 +564,7 @@ impl Widget for Weather {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use martensite_core::{HotNode, PaintList};
+    use martensite_core::{HotNode, PaintCommand, PaintList};
 
     #[test]
     fn face_rounds_and_units() {
@@ -618,5 +619,41 @@ mod tests {
             };
             w.paint(&mut pcx);
         }
+    }
+
+    #[test]
+    fn text_rows_stack_without_overlap() {
+        let theme = martensite_theme::Theme::new("test");
+        let mut w = Weather::new().location("Lisbon").hi_lo(21.0, 14.0);
+        let mut hot = HotNode::default();
+        let mut cx = LayoutContext {
+            hot: &mut hot,
+            scale: 1.0,
+        };
+        w.layout(&mut cx, Rect::new(0.0, 0.0, 200.0, 56.0));
+        let mut list = PaintList::new();
+        let mut pcx = PaintContext {
+            list: &mut list,
+            bounds: w.bounds,
+            scale: 1.0,
+            theme: &theme,
+            text_painter: None,
+        };
+        w.paint(&mut pcx);
+        let rows: Vec<(&str, f64)> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::DrawText(p, text, ..) => Some((text.as_str(), p.y)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].0, "Lisbon");
+        assert_eq!(rows[1].0, "20°C");
+        assert_eq!(rows[2].0, "H 21°  L 14°");
+        assert!(rows[0].1 + 12.5 <= rows[1].1);
+        assert!(rows[1].1 + 25.0 <= rows[2].1);
+        assert!(rows[2].1 + 11.25 <= 56.0);
     }
 }
