@@ -30,7 +30,7 @@
 //! popup's owning widget, so e.g. combobox typeahead works while its
 //! listbox is open.
 //!
-//! The layer is owned by [`WidgetArena`](crate::WidgetArena)
+//! The layer is owned by [`WidgetArena`]
 //! ([`overlay`](crate::WidgetArena::overlay) /
 //! [`overlay_mut`](crate::WidgetArena::overlay_mut)) in production —
 //! `martensite-window`'s `EventRouter` offers it events before arena
@@ -38,7 +38,7 @@
 //! appends it after arena content, and `martensite-access`'s
 //! `AccessKitAdapter` emits open popups as top-level virtual nodes.
 //! The layer can also be used standalone; widget owners reconcile
-//! with it once per frame via [`Widget::sync_overlay`](crate::Widget::sync_overlay),
+//! with it once per frame via [`Widget::sync_overlay`],
 //! driven by [`WidgetArena::sync_overlays`](crate::WidgetArena::sync_overlays).
 //!
 //! # Examples

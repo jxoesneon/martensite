@@ -3,7 +3,7 @@
 //! out while idle.
 //!
 //! Unlike the interactive scrollbars inside
-//! [`ScrollView`](crate::widgets::ScrollView), this is display-only:
+//! [`ScrollView`], this is display-only:
 //! the host feeds [`ScrollIndicator::set_scroll`] with the viewport
 //! position and visible fraction (e.g. on every scroll event, which
 //! also calls [`ScrollIndicator::flash`]), and `tick` decays the

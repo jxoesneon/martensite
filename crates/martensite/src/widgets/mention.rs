@@ -1,7 +1,7 @@
 //! `Mention` widget: a text field with a trigger-character suggestion
 //! popup — the Ant `Mentions` / Slack `@`-completion equivalent.
 //!
-//! Shares [`AutoComplete`](crate::widgets::AutoComplete)'s
+//! Shares [`AutoComplete`]'s
 //! [APG editable-combobox](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/)
 //! architecture:
 //!

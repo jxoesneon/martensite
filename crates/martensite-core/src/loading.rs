@@ -1,8 +1,8 @@
 //! Shared skeleton/shimmer painter for loading placeholders.
 //!
 //! This module is the single paint path behind the native loading
-//! state ([`Widget::is_loading`](crate::widget::Widget::is_loading) /
-//! [`Widget::paint_loading`](crate::widget::Widget::paint_loading)) and
+//! state ([`Widget::is_loading`] /
+//! [`Widget::paint_loading`]) and
 //! the facade `Skeleton` widget. All loading placeholders in the
 //! framework render through [`paint_skeleton`](crate::loading::paint_skeleton)
 //! so shimmer timing,

@@ -7,7 +7,7 @@
 //! reaching zero parks the side in [`ChessClock::take_flagged`]
 //! ("flag fall"). `r` resets both clocks.
 //!
-//! Companion to [`ChessBoard`](crate::widgets::ChessBoard).
+//! Companion to [`ChessBoard`].
 //!
 //! # Examples
 //!

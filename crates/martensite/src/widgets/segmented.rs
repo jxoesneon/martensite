@@ -5,7 +5,7 @@
 //! segmented button set: one rounded strip divided into equal
 //! segments, exactly one selected at a time.
 //!
-//! Semantics follow [`RadioGroup`](crate::widgets::RadioGroup) (the
+//! Semantics follow [`RadioGroup`] (the
 //! same single-select contract, painted as a strip instead of a row of
 //! circles):
 //!

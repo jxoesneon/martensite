@@ -1,6 +1,6 @@
 //! `BarChart` — categorical column chart.
 //!
-//! The categorical companion to [`Sparkline`](crate::widgets::sparkline::Sparkline)
+//! The categorical companion to [`Sparkline`]
 //! (which is a continuous trend line): labeled columns scaled to
 //! `max`, an optional baseline axis, and per-bar accent coloring.
 //! Display-only — the small-multiples KPI block idiom, not an

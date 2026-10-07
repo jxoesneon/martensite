@@ -4,7 +4,7 @@
 //! with a fuel budget and epoch interruption enabled. The runtime embeds a
 //! WASIp1 context with no filesystem or network capabilities by default, and
 //! injects host functions that validate every call against a
-//! [`CapabilitySet`](crate::security::CapabilitySet).
+//! [`CapabilitySet`].
 //!
 //! # Shared ring buffer ABI
 //!

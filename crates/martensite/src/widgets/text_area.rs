@@ -1,7 +1,7 @@
 //! `TextArea` widget: a multiline plain-text editor.
 //!
 //! `TextArea` is the multiline counterpart of
-//! [`TextInput`](crate::widgets::text_input::TextInput) — a QTextEdit-plain /
+//! [`TextInput`] — a QTextEdit-plain /
 //! GtkTextView-style editable region backed by the headless
 //! [`martensite_blessed::CodeEditor`] line buffer. It exposes
 //! `Role::MultilineTextInput`, an accessible label, the current value, and

@@ -7,8 +7,8 @@
 //! `set_speaking`, and `set_status` update row state host-side,
 //! and [`AttendeeList::raised_hands`] returns the indices with
 //! hands up so the host can surface them. Companion to
-//! [`VideoGrid`](crate::widgets::VideoGrid) and
-//! [`CallControls`](crate::widgets::CallControls).
+//! [`VideoGrid`] and
+//! [`CallControls`].
 //!
 //! # Examples
 //!

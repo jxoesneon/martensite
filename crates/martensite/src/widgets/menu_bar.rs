@@ -1,13 +1,13 @@
 //! `MenuBar` widget: a horizontal menu strip (QMenuBar/NSMenuBar).
 //!
 //! The bar owns a row of menu buttons; pressing a button (or hovering
-//! it while a menu is open) opens that menu's [`Menu`](crate::widgets::menu::Menu)
+//! it while a menu is open) opens that menu's [`Menu`]
 //! popup in the [`OverlayLayer`](martensite_core::overlay::OverlayLayer)
 //! anchored to the button's bounds. While a menu is open, `Left`/`Right`
 //! arrows and hover switch between menus, `Escape` or an outside press
 //! closes, and an activation lands in [`MenuBar::take_activated`] as a
-//! [`MenuPath`](crate::widgets::menu::MenuPath) — the same out-seam as
-//! [`ContextMenu`](crate::widgets::context_menu::ContextMenu).
+//! [`MenuPath`] — the same out-seam as
+//! [`ContextMenu`].
 //!
 //! Keyboard lives in the bar: the overlay offers non-`Escape` keys to
 //! the topmost popup first, so in-menu navigation is handled by the

@@ -1,7 +1,7 @@
 //! `ResizeHandle` — a standalone draggable split sash (VS Code /
 //! Qt `QSplitterHandle` idiom).
 //!
-//! [`SplitView`](crate::widgets::SplitView) embeds this logic
+//! [`SplitView`] embeds this logic
 //! internally; use `ResizeHandle` when the host manages its own
 //! split geometry (multi-pane dashboards, dock layouts, grid
 //! splitters). The widget is deliberately geometry-free: it paints

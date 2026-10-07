@@ -1,7 +1,7 @@
 //! `TickerTape` — a horizontally scrolling strip of structured
 //! market/news items (Bloomberg/AP ticker idiom).
 //!
-//! Distinct from [`Marquee`](crate::widgets::Marquee): items are
+//! Distinct from [`Marquee`]: items are
 //! structured — a symbol, a price, and a signed delta colored
 //! gain/loss — and clicks park the item index in
 //! [`TickerTape::take_selected`]. `tick` advances the scroll;

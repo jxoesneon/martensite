@@ -4,8 +4,8 @@
 //! radio items, separators, section headings, and nested submenus —
 //! rendered in the
 //! [`OverlayLayer`](martensite_core::overlay::OverlayLayer) as a
-//! `Role::Menu` popup. The framework owners [`MenuBar`](crate::widgets::menu_bar::MenuBar)
-//! and [`ContextMenu`](crate::widgets::context_menu::ContextMenu) drive
+//! `Role::Menu` popup. The framework owners [`MenuBar`]
+//! and [`ContextMenu`] drive
 //! the same [`Menu`] surface: they reconcile overlay entries through a
 //! shared [`MenuState`] (`Arc<Mutex<_>>`, the same seam `Dropdown`
 //! uses), so hover, clicks, and AT activations inside a popup reach

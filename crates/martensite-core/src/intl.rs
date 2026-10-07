@@ -1,7 +1,7 @@
 //! Ambient layout direction and locale.
 //!
 //! Direction and locale are framework-level state owned by
-//! [`WidgetArena`](crate::WidgetArena) and published to widgets through
+//! [`WidgetArena`] and published to widgets through
 //! a thread-local ambient channel for the duration of each layout,
 //! paint, and event pass — the same pattern
 //! [`install_ambient_measurer`](crate::paint::install_ambient_measurer)

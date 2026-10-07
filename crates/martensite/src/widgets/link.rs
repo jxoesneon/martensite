@@ -4,7 +4,7 @@
 //! pattern: a single underlined text run that looks and acts like a
 //! web link — accent ink, pointer cursor affordance via hover
 //! emphasis, activation on click and `Enter`/`Space`. Unlike
-//! [`Anchor`](crate::widgets::anchor::Anchor) (a scroll-spy rail)
+//! [`Anchor`] (a scroll-spy rail)
 //! or a `Markdown` inline link, `Link` is a standalone control.
 //!
 //! The widget does **not** open URLs itself — the shell owns

@@ -3,7 +3,7 @@
 //! commands only, stroke rendering, 2px-at-24px stroke convention).
 //!
 //! Names are qualified `namespace.kebab-name` — see [`names`](crate::icons::builtin::names).
-//! Each namespace lives in its own module; [`BUILTIN`](crate::icons::BUILTIN)
+//! Each namespace lives in its own module; [`BUILTIN`]
 //! concatenates every module's `ENTRIES`/`PAIRS` in the order the
 //! modules are declared here.
 //!

@@ -5,8 +5,8 @@
 //! Pointer movement updates the tracked position and parks it in
 //! [`Crosshair::take_moved`] (normalized `0..=1`); the host can
 //! also drive it with [`Crosshair::set_position`]. Pairs with
-//! [`Magnifier`](crate::widgets::Magnifier) and
-//! [`Ruler`](crate::widgets::Ruler) in design-tool surfaces.
+//! [`Magnifier`] and
+//! [`Ruler`] in design-tool surfaces.
 //!
 //! # Examples
 //!

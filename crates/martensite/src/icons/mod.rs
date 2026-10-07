@@ -1,7 +1,7 @@
 //! A native stroke-icon vocabulary and the name-resolution chain for
 //! icon packs.
 //!
-//! Martensite ships [`BUILTIN`](crate::icons::BUILTIN) — a hand-authored set of stroke-path
+//! Martensite ships the [`BUILTIN` set](crate::icons::BUILTIN) — hand-authored stroke-path
 //! icons on the conventional 24px grid, the same `d`-string idiom
 //! [`MorphIcon`](crate::widgets::MorphIcon) renders. Names are
 //! qualified and kebab-cased — `"nav.menu"`, `"media.play"`,
@@ -11,7 +11,7 @@
 //! External packs (generated or fetched lucide, tabler, …) plug in as
 //! an *overlay*: an [`IconSet`](crate::icons::IconSet) searches its registered
 //! [`IconPack`](crate::icons::IconPack)s
-//! in order and always falls back to [`BUILTIN`](crate::icons::BUILTIN). The stroke-path
+//! in order and always falls back to the [`BUILTIN` set](crate::icons::BUILTIN). The stroke-path
 //! engine is the universal renderer — nothing in the framework
 //! requires external icon data, and unknown names resolve to `None`
 //! rather than panicking.

@@ -6,7 +6,7 @@
 //! host owns grading — the card just flips. A subtle two-tone face
 //! treatment distinguishes front from back.
 //!
-//! Distinct from [`Card`](crate::widgets::Card) containers: the
+//! Distinct from [`Card`] containers: the
 //! card owns its two text faces, no child wiring needed.
 //!
 //! # Examples

@@ -7,7 +7,7 @@
 //! [`ToolbarOverflow::take_activated`]; clicking the chevron parks
 //! the overflowed indices in
 //! [`ToolbarOverflow::take_overflow`] for the host to open as a
-//! menu. Companion to [`Toolbar`](crate::widgets::Toolbar).
+//! menu. Companion to [`Toolbar`].
 //!
 //! # Examples
 //!

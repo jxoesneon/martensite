@@ -3,7 +3,7 @@
 //! The Ant `PageHeader` pattern: an optional back chevron (parks
 //! [`PageHeader::take_back`] — the shell owns navigation), a title
 //! with optional subtitle, and a trailing action slot for buttons.
-//! Unlike [`HeaderBar`](crate::widgets::header_bar::HeaderBar)
+//! Unlike [`HeaderBar`]
 //! (centered window title, symmetric slots), a page header is
 //! left-anchored content chrome inside a page, not the window's
 //! title area.

@@ -7,7 +7,7 @@
 //! highlights red) and `Mac` (three colored dots). Maximize shows
 //! a restore glyph when [`WindowControls::set_maximized`] is fed.
 //!
-//! Slot it into a [`HeaderBar`](crate::widgets::HeaderBar) trailing
+//! Slot it into a [`HeaderBar`] trailing
 //! zone for a full custom title bar.
 //!
 //! # Examples

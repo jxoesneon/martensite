@@ -5,8 +5,8 @@
 //!
 //! Hovering a rib parks its index in [`Fishbone::take_hovered`];
 //! the widget is otherwise display-only. Companion to
-//! [`OrgChart`](crate::widgets::OrgChart) and
-//! [`MindMap`](crate::widgets::MindMap).
+//! [`OrgChart`] and
+//! [`MindMap`].
 //!
 //! # Examples
 //!

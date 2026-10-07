@@ -12,7 +12,7 @@
 //!   widgets. `position_in_set`/`size_of_set` carry each item's real
 //!   index, so AT sees honest positions inside the windowed emission.
 //! - Scrolling is owned (wheel, keyboard, and a smart vertical
-//!   scrollbar child) on top of [`VirtualRows`](crate::widgets::VirtualRows),
+//!   scrollbar child) on top of [`VirtualRows`],
 //!   the standard partial-row virtualization primitive —
 //!   `ScrollView` itself cannot be reused here because its content
 //!   child is painted whole; row virtualization needs the offset at

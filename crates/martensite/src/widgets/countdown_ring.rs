@@ -1,7 +1,7 @@
 //! `CountdownRing` — a circular countdown timer (iOS Clock timer /
 //! watchOS workout-ring idiom).
 //!
-//! Unlike [`Countdown`](crate::widgets::Countdown), which is a
+//! Unlike [`Countdown`], which is a
 //! whole-second digital readout, the ring tracks fractional
 //! remaining time so its arc sweeps smoothly every frame. The arc
 //! drains clockwise from 12 o'clock; the center shows `MM:SS`

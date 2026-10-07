@@ -1,7 +1,7 @@
 //! Reactive locale signal integration binding Fluent resources into the signal graph.
 //!
 //! [`L10n`][crate::reactive::L10n] ties a [`FluentCatalog`][crate::fluent::FluentCatalog]
-//! to a root `Signal` holding the active [`LanguageIdentifier`][crate::LanguageIdentifier].
+//! to a root `Signal` holding the active [`LanguageIdentifier`].
 //! A locale switch via [`L10n::set_locale`][crate::reactive::L10n::set_locale] updates the
 //! catalog *and* the root locale signal, so only text leaf nodes bound to
 //! localized strings (via `L10n::localized` / `L10n::localized_with_args`)

@@ -2,7 +2,7 @@
 //!
 //! The `ToggleButton` is the checkable-button control — Qt's checkable
 //! `QPushButton`, Radix `Toggle`, an `aria-pressed` button: it looks
-//! like a [`Button`](crate::widgets::Button) but latches into a
+//! like a [`Button`] but latches into a
 //! pressed appearance on activation.
 //!
 //! - The widget emits `Role::Button` with the `Toggled` state — the

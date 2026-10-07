@@ -5,7 +5,7 @@
 //!
 //! Clicking an icon parks its global index in
 //! [`AppGrid::take_activated`]; `ArrowLeft`/`ArrowRight` (or a
-//! `Page`) change pages. Companion to [`Dock`](crate::widgets::Dock).
+//! `Page`) change pages. Companion to [`Dock`].
 //!
 //! # Examples
 //!

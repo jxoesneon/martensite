@@ -2,7 +2,7 @@
 //!
 //! Widgets that virtualize rows themselves (`ListView`, icon walls)
 //! should stand on
-//! [`VirtualRows`](crate::widgets::VirtualRows), the standard
+//! [`VirtualRows`], the standard
 //! partial-row virtualization primitive, rather than re-deriving the
 //! visible-range math.
 //!

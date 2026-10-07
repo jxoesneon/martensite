@@ -6,7 +6,7 @@
 //!
 //! AccessKit exposes the widget as `Role::Status` (a live
 //! region), so screen readers announce cue changes. Companion to
-//! [`MediaControls`](crate::widgets::MediaControls).
+//! [`MediaControls`].
 //!
 //! # Examples
 //!

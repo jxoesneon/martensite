@@ -2,10 +2,10 @@
 //! with tick marks and a value label (Windows Community Toolkit
 //! `RadialGauge`, SwiftUI `Gauge`, automotive-dial idiom).
 //!
-//! Unlike [`Dial`](crate::widgets::dial::Dial) (an input), `Gauge`
+//! Unlike [`Dial`] (an input), `Gauge`
 //! only reports: value arc + needle + optional min/max ticks and a
 //! centered value readout. Danger zones paint via `zones` like
-//! [`LevelBar`](crate::widgets::level_bar::LevelBar).
+//! [`LevelBar`].
 //!
 //! # Examples
 //!

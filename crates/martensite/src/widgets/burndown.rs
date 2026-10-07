@@ -5,7 +5,7 @@
 //!
 //! Hovering a day column parks its index in
 //! [`Burndown::take_hovered`]. Display-only otherwise; companion
-//! to [`LineChart`](crate::widgets::LineChart).
+//! to [`LineChart`].
 //!
 //! # Examples
 //!

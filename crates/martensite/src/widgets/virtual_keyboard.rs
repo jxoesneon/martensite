@@ -9,7 +9,7 @@
 //! into whichever input is focused. Physical Shift mirrors the
 //! shift state.
 //!
-//! Distinct from [`Keypad`](crate::widgets::Keypad), which is the
+//! Distinct from [`Keypad`], which is the
 //! 3×4 telephony pad.
 //!
 //! # Examples

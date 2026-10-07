@@ -3,7 +3,7 @@
 //! "now playing" bar idiom).
 //!
 //! The metadata companion to
-//! [`MediaControls`](crate::widgets::MediaControls): transport
+//! [`MediaControls`]: transport
 //! lives there; this shows *what* is playing. The host drives
 //! `set_position`/`set_duration` from decoder state; a card click
 //! parks [`NowPlaying::take_clicked`] (expand-to-full intent).

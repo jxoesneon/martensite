@@ -17,7 +17,7 @@
 //!   embedded field's own `Escape` (collapsing an active selection)
 //!   gets first claim; an empty or unfocused field lets the key fall
 //!   through so a containing widget (e.g.
-//!   [`SearchBar`](crate::widgets::search_bar::SearchBar), which turns
+//!   [`SearchBar`], which turns
 //!   `Escape` into a close request before forwarding) can use it;
 //! - an optional caption [`label`](SearchField::label) painted above
 //!   the field when the widget's bounds leave room for a caption

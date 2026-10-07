@@ -2,7 +2,7 @@
 //!
 //! [`FluentCatalog`][crate::fluent::FluentCatalog] owns a set of thread-safe
 //! [`FluentBundle`][crate::fluent::FluentBundle]s keyed by
-//! [`LanguageIdentifier`][crate::LanguageIdentifier] and provides message
+//! [`LanguageIdentifier`] and provides message
 //! resolution with arguments, locale negotiation via `fluent-langneg`, and
 //! tracks the current locale and its
 //! [`ScriptDirection`][crate::direction::ScriptDirection].

@@ -2,7 +2,7 @@
 //! `KCommandBar` / cmdk `Command` / VS Code `Ctrl+Shift+P` equivalent.
 //!
 //! Implements the [APG editable-combobox pattern](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/)
-//! with the same architecture [`AutoComplete`](crate::widgets::AutoComplete)
+//! with the same architecture [`AutoComplete`]
 //! uses:
 //!
 //! - The widget embeds a [`TextInput`] internal child as its face — a

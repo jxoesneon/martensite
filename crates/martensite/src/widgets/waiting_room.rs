@@ -8,7 +8,7 @@
 //! button parks `usize::MAX` in `take_admitted` (admit all). The
 //! host removes admitted rows with
 //! [`WaitingRoom::remove`]. Companion to
-//! [`AttendeeList`](crate::widgets::AttendeeList).
+//! [`AttendeeList`].
 //!
 //! # Examples
 //!

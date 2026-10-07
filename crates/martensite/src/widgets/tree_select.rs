@@ -1,8 +1,8 @@
 //! `TreeSelect` widget: a dropdown face whose popup hosts a tree of
 //! options — the Ant `TreeSelect` / WinUI tree-combo equivalent.
 //!
-//! Shares [`Dropdown`](crate::widgets::Dropdown)'s select-only-combobox
-//! seam and [`DatePicker`](crate::widgets::DatePicker)'s
+//! Shares [`Dropdown`]'s select-only-combobox
+//! seam and [`DatePicker`]'s
 //! stateful-popup architecture:
 //!
 //! - The face emits `Role::ComboBox` with `aria-haspopup="tree"`,
@@ -14,7 +14,7 @@
 //!   [`OverlayLayer`](martensite_core::overlay::OverlayLayer) — placed
 //!   below the face, flipping above and clamping near the viewport
 //!   edge — and hosts a real
-//!   [`TreeView`](crate::widgets::TreeView) internal child (emitted as
+//!   [`TreeView`] internal child (emitted as
 //!   `Role::Tree` with `Role::TreeItem` rows), so expansion,
 //!   virtualization, scrolling, and the full APG tree keyboard model
 //!   (`ArrowRight`/`ArrowLeft` expand/collapse, `Home`/`End`,

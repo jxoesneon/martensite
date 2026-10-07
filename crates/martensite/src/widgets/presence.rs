@@ -2,7 +2,7 @@
 //! dot plus an optional name/status line (Teams/Slack presence
 //! idiom).
 //!
-//! Distinct from [`Avatar`](crate::widgets::Avatar): presence is
+//! Distinct from [`Avatar`]: presence is
 //! about the *state* — a [`PresenceStatus`] colored dot with a
 //! contrasting ring and a text line — where Avatar is image/initial
 //! chrome. No image pipeline here; the disc paints initials.

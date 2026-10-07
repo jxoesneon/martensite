@@ -2,7 +2,7 @@
 //! avatar dot, author + timestamp header, body text, and
 //! per-depth indent with a reply connector rail.
 //!
-//! Distinct from [`MessageList`](crate::widgets::MessageList),
+//! Distinct from [`MessageList`],
 //! which renders flat chat bubbles; a comment thread renders a
 //! depth-annotated discussion tree. Clicking a comment's reply
 //! affordance parks its id in [`CommentThread::take_reply`];

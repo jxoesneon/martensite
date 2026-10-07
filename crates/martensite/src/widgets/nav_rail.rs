@@ -10,7 +10,7 @@
 //! the app decides whether to change `selected`.
 //!
 //! A destination's icon is either a text glyph ([`NavRail::destination`])
-//! or a hosted [`MorphIcon`](crate::widgets::MorphIcon) stroke icon
+//! or a hosted [`MorphIcon`] stroke icon
 //! ([`NavRail::destination_icon`], [`NavRail::destination_named`]) —
 //! the latter is a real internal
 //! child: it ticks with the arena (so `morph_to` animates), stays

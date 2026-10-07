@@ -10,7 +10,7 @@
 //! Mirroring and line-break prohibitions are no longer performed by dead
 //! helper functions on raw strings; instead they are produced as metadata
 //! that the shaping pipeline can apply to individual glyphs. See
-//! [`line_break`](crate::line_break) for UAX #14 support.
+//! [`line_break`] for UAX #14 support.
 
 use unicode_bidi::{bidi_class, BidiClass, BidiInfo, Level, ParagraphInfo};
 

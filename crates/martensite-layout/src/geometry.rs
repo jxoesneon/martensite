@@ -1,7 +1,7 @@
 //! Geometry primitives for layout: `Point`, `Size`, `Constraints`, `EdgeInsets`.
 //!
 //! These types provide the foundational spatial vocabulary used by the
-//! [`LayoutEngine`](crate::engine::LayoutEngine) and the Taffy bridge to
+//! [`LayoutEngine`] and the Taffy bridge to
 //! communicate measurement constraints and final positions between the
 //! widget tree and the layout engine.
 

@@ -1,7 +1,7 @@
 //! `ToolPalette` — a compact grid of single-select tool buttons
 //! (Photoshop tools palette / paint-app toolbox idiom).
 //!
-//! Distinct from [`Toolbar`](crate::widgets::Toolbar): a palette
+//! Distinct from [`Toolbar`]: a palette
 //! is a *modal tool choice* — one tool is always active (accent
 //! face) and clicks park the index in
 //! [`ToolPalette::take_selected`]. Arrows navigate the grid,

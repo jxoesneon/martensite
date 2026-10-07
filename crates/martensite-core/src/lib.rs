@@ -38,7 +38,7 @@ pub mod node;
 /// content, with anchor placement, viewport clamping, and
 /// outside-click/`Escape` dismissal.
 pub mod overlay;
-/// The [`PaintList`](paint::PaintList) command stream vocabulary produced by
+/// The [`PaintList`] command stream vocabulary produced by
 /// the widget paint pass and consumed by render backends.
 pub mod paint;
 pub mod shape;

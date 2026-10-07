@@ -7,7 +7,7 @@
 //!
 //! ## Design Note: Mirrored TaffyTree vs ArenaBridge
 //!
-//! The [`ArenaBridge`](crate::taffy_bridge::ArenaBridge) implements
+//! The [`ArenaBridge`] implements
 //! `TraversePartialTree` over the `WidgetArena`, allowing Taffy to
 //! traverse the arena directly. However, `LayoutEngine` maintains its
 //! own `TaffyTree<WidgetId>` instead of using the bridge because:

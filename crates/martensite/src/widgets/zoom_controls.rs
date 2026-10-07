@@ -5,7 +5,7 @@
 //! Each press parks a [`ZoomAction`] in
 //! [`ZoomControls::take_action`] — the widget is stateless about the
 //! view (the host owns zoom, typically feeding a
-//! [`Viewport`](crate::widgets::Viewport)). An optional readout
+//! [`Viewport`]). An optional readout
 //! shows the current percent via [`ZoomControls::set_zoom`].
 //!
 //! # Examples

@@ -8,8 +8,8 @@
 //! `Escape` clears without sending; the send button (or the
 //! attach/emoji buttons when enabled) park intents in
 //! [`ChatInput::take_attach`]/[`ChatInput::take_emoji`]. Completes
-//! the chat family with [`MessageList`](crate::widgets::MessageList)
-//! and [`TypingIndicator`](crate::widgets::TypingIndicator).
+//! the chat family with [`MessageList`]
+//! and [`TypingIndicator`].
 //!
 //! # Examples
 //!

@@ -2,7 +2,7 @@
 //! [`Thumbnail`] item, ‹ › navigation, an × close, a `3 / 8`
 //! counter, and a caption line (photo-viewer idiom).
 //!
-//! Unlike [`Dialog`](crate::widgets::Dialog) — a generic modal
+//! Unlike [`Dialog`] — a generic modal
 //! container — a lightbox is the *media browsing* idiom: backdrop
 //! clicks and `Escape` park [`Lightbox::take_closed`]; arrows and
 //! edge buttons step the item and park

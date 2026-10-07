@@ -5,8 +5,8 @@
 //! Arrow keys and horizontal `Scroll` move the selection, clicking
 //! a side cover selects it, and the index parks in
 //! [`Coverflow::take_selected`]. Items are
-//! [`Thumbnail`](crate::widgets::Thumbnail) swatches — label +
-//! color — like [`Filmstrip`](crate::widgets::Filmstrip), but
+//! [`Thumbnail`] swatches — label +
+//! color — like [`Filmstrip`], but
 //! spatial instead of linear.
 //!
 //! # Examples

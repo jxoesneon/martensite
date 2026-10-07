@@ -1,7 +1,7 @@
 //! `Table` widget: a virtualized data grid with a pinned, sortable,
 //! resizable column header.
 //!
-//! The data counterpart to [`ListView`](crate::widgets::ListView) —
+//! The data counterpart to [`ListView`] —
 //! the `QTableView` / GTK `ColumnView` / WinUI `DataGrid` / Ant
 //! `Table` slot in the widget set:
 //!

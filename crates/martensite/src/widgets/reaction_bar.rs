@@ -6,7 +6,7 @@
 //! `mine` flag update locally and the index parks in
 //! [`ReactionBar::take_toggled`] for the host to sync. The `+`
 //! chip parks [`ReactionBar::take_add`]. Pairs with
-//! [`MessageList`](crate::widgets::MessageList).
+//! [`MessageList`].
 //!
 //! # Examples
 //!

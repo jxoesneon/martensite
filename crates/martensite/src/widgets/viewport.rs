@@ -1,7 +1,7 @@
 //! `Viewport` — a pannable, zoomable canvas hosting one child
 //! (Figma / map / CAD canvas idiom).
 //!
-//! Unlike [`ScrollView`](crate::widgets::ScrollView), which scrolls a
+//! Unlike [`ScrollView`], which scrolls a
 //! document at 1×, `Viewport` scales its content: the child is laid
 //! out at `scale * zoom`, so text, strokes, and spacing magnify
 //! uniformly. A dotted canvas grid paints under the content.

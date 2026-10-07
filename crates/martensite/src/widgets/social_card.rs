@@ -5,8 +5,8 @@
 //!
 //! Clicking an action parks its index in
 //! [`SocialCard::take_action`]; `set_liked`/`set_counts` update
-//! state host-side. Companion to [`Card`](crate::widgets::Card)
-//! and [`ReactionBar`](crate::widgets::ReactionBar).
+//! state host-side. Companion to [`Card`]
+//! and [`ReactionBar`].
 //!
 //! # Examples
 //!

@@ -2,12 +2,12 @@
 //!
 //! Wraps a content child; a secondary-button press anywhere on the
 //! child (or an AT `ShowContextMenu` action) opens a
-//! [`Menu`](crate::widgets::menu::Menu) popup in the
+//! [`Menu`] popup in the
 //! [`OverlayLayer`](martensite_core::overlay::OverlayLayer) anchored at
 //! the pointer. Item activation lands in
 //! [`ContextMenu::take_activated`] as a
-//! [`MenuPath`](crate::widgets::menu::MenuPath) — the same out-seam as
-//! [`MenuBar`](crate::widgets::menu_bar::MenuBar) and the dashboard's
+//! [`MenuPath`] — the same out-seam as
+//! [`MenuBar`] and the dashboard's
 //! hand-rolled `ContextMenu` this supersedes.
 //!
 //! The child receives all other input normally. Keyboard navigation

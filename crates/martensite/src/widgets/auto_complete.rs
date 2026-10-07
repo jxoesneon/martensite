@@ -13,7 +13,7 @@
 //! - The popup is a `Role::ListBox` of `Role::ListBoxOption` children
 //!   living in the [`OverlayLayer`](martensite_core::overlay::OverlayLayer),
 //!   placed below the field (flipping above near the bottom edge) —
-//!   the same architecture [`Dropdown`](crate::widgets::Dropdown) uses,
+//!   the same architecture [`Dropdown`] uses,
 //!   including `Arc<Mutex<_>>`-shared state so hover/click inside the
 //!   popup reaches the owner.
 //! - Typing filters [`suggestions`](AutoComplete::suggestions) by
