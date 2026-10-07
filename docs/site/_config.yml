@@ -27,8 +27,10 @@ defaults:
       # Wrap every converted page in the theme's default layout without
       # needing per-file front matter.
       layout: default
-      # The corpus contains literal `{{ }}` sequences (JSX samples,
-      # scaffolding placeholders) that Liquid must never evaluate.
+      # Intent: the corpus contains literal `{{ }}` sequences that
+      # Liquid must never evaluate. Jekyll 3.10 (github-pages gemset)
+      # ignores this key — the deploy workflow wraps staged pages in
+      # `{% raw %}` instead; this stays for a future Jekyll 4 gemset.
       render_with_liquid: false
 
 # The widget catalog bundle is copied into _site after the Jekyll build

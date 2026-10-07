@@ -66,6 +66,19 @@ jobs:
           # Landing page + Jekyll config (committed under docs/site/).
           cp docs/site/index.md staging/index.md
           cp docs/site/_config.yml staging/_config.yml
+          # The github-pages gemset pins Jekyll 3.10, which ignores the
+          # `render_with_liquid` front-matter default (Jekyll 4.x only).
+          # Wrap every staged page in {% raw %}...{% endraw %} so the
+          # corpus's literal `{{ }}`/`{% %}` samples survive Liquid.
+          # YAML front matter stays at byte 0 where it exists.
+          find staging -name '*.md' -print0 | while IFS= read -r -d '' f; do
+            [ -s "$f" ] || continue
+            awk 'NR==1 { if ($0 ~ /^---[[:space:]]*$/) { print; fm=1 } else { print "{% raw %}"; print }; next }
+                 fm && $0 ~ /^(-{3}|\.\.\.)[[:space:]]*$/ { print; print "{% raw %}"; fm=0; next }
+                 { print }
+                 END { if (!fm) print "{% endraw %}" }' "$f" > "$f.tmp" \
+              && mv "$f.tmp" "$f"
+          done
       - uses: actions/configure-pages@v5
       # staging/ — not the repo root — is the Jekyll source so the build
       # never scans target/ or other non-site trees.
