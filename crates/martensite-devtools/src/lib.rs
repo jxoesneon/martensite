@@ -53,6 +53,15 @@ pub mod timemachine;
 pub mod tracy;
 #[cfg(feature = "devtools")]
 pub mod tweak;
+/// Browser-side dev-channel transport leg (ADR-0042). Compiled only for
+/// `wasm32-unknown-unknown` builds that opt into the `web-dev-channel`
+/// feature; absent everywhere else, including release/gh-pages builds.
+#[cfg(all(
+    target_arch = "wasm32",
+    target_os = "unknown",
+    feature = "web-dev-channel"
+))]
+pub mod web_channel;
 
 #[cfg(feature = "devtools")]
 pub use dev_session::{

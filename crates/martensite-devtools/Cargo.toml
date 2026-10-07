@@ -33,6 +33,18 @@ martensite-design-lint = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
+# Browser-side dev-channel transport leg (ADR-0042). Only consumed when the
+# `web-dev-channel` feature is enabled on a wasm32 build; the desktop build
+# never links these bindings.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, optional = true, features = [
+    "CloseEvent",
+    "Event",
+    "MessageEvent",
+    "WebSocket",
+] }
+
 [dev-dependencies]
 glam = { workspace = true }
 martensite-reactive = { workspace = true }
@@ -69,6 +81,12 @@ devtools-timemachine = [
     "martensite-core/devtools-timemachine",
     "martensite-reactive/devtools-timemachine",
 ]
+# Browser-side dev-channel transport leg (ADR-0042): serves dev-channel
+# JSON-RPC lines over a client-initiated ws://127.0.0.1 socket to the
+# `cargo martensite dev-web` relay. Compiles to nothing on non-wasm targets
+# and in any build that does not opt in — release/gh-pages builds are
+# unaffected.
+web-dev-channel = ["dep:wasm-bindgen", "dep:web-sys", "dep:serde_json"]
 
 [lints]
 workspace = true
