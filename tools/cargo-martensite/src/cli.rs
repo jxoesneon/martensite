@@ -23,6 +23,11 @@ use std::process;
 /// The default development server port used when none is supplied on the CLI.
 pub const DEFAULT_DEV_PORT: u16 = 8765;
 
+/// The default `dev-web` relay WebSocket port (bound on `127.0.0.1` only)
+/// used when none is supplied on the CLI. Matches
+/// `martensite_devtools::web_channel::DEFAULT_RELAY_PORT` (ADR-0042).
+pub const DEFAULT_WEB_RELAY_PORT: u16 = 8788;
+
 /// A parsed top-level command for the `cargo-martensite` toolchain.
 ///
 /// Each variant corresponds to a user-facing subcommand. The data carried by a
@@ -146,6 +151,17 @@ pub enum Command {
         file: Option<String>,
         /// Dry run mode for apply (preview changes without modifying files).
         dry_run: bool,
+    },
+    /// `cargo martensite dev-web` — serve the authenticated loopback
+    /// WebSocket bridge exposing a browser-hosted app's dev channel to
+    /// local tools (ADR-0042). Requires the `web-dev-channel` feature.
+    DevWeb {
+        /// WebSocket port bound on `127.0.0.1` (default 8788).
+        port: u16,
+        /// Dev-channel Unix socket path the relay binds for local tools.
+        socket: Option<String>,
+        /// Forward `Mutate`-classified methods as well as `Read` ones.
+        allow_mutations: bool,
     },
     /// `cargo martensite mcp` — serve the Martensite MCP server over stdio.
     Mcp {
@@ -323,6 +339,13 @@ impl From<crate::update::UpdateError> for CliError {
     }
 }
 
+#[cfg(feature = "web-dev-channel")]
+impl From<crate::web_relay::RelayError> for CliError {
+    fn from(err: crate::web_relay::RelayError) -> Self {
+        CliError::InfrastructureFailure(err.to_string())
+    }
+}
+
 impl From<crate::tweak::TweakError> for CliError {
     fn from(err: crate::tweak::TweakError) -> Self {
         match err {
@@ -389,6 +412,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, CliError> {
         "dev" => parse_dev(rest),
         "build" => parse_build(rest),
         "tweak" | "tweaks" => parse_tweak(rest),
+        "dev-web" => parse_dev_web(rest),
         "mcp" => parse_mcp(rest),
         "self-update" | "update" => parse_self_update(rest),
         "help" | "--help" | "-h" => Ok(Command::Help),
@@ -977,6 +1001,52 @@ fn parse_tweak(rest: &[&str]) -> Result<Command, CliError> {
     })
 }
 
+/// Parses flags for the `dev-web` subcommand.
+fn parse_dev_web(rest: &[&str]) -> Result<Command, CliError> {
+    let mut port = DEFAULT_WEB_RELAY_PORT;
+    let mut socket = None;
+    let mut allow_mutations = false;
+
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--port" | "-p" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--port".to_string(),
+                    reason: "missing value".to_string(),
+                })?;
+                port = raw.parse().map_err(|_| CliError::InvalidArgument {
+                    flag: "--port".to_string(),
+                    reason: format!("`{raw}` is not a valid port number"),
+                })?;
+            }
+            "--socket" => {
+                i += 1;
+                let raw = rest.get(i).ok_or_else(|| CliError::InvalidArgument {
+                    flag: "--socket".to_string(),
+                    reason: "missing socket path".to_string(),
+                })?;
+                socket = Some((*raw).to_string());
+            }
+            "--allow-mutations" => allow_mutations = true,
+            other => {
+                return Err(CliError::InvalidArgument {
+                    flag: other.to_string(),
+                    reason: "unknown flag for `dev-web`".to_string(),
+                });
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::DevWeb {
+        port,
+        socket,
+        allow_mutations,
+    })
+}
+
 /// Parses flags for the `mcp` subcommand.
 fn parse_mcp(rest: &[&str]) -> Result<Command, CliError> {
     let mut socket = None;
@@ -1137,6 +1207,11 @@ pub fn run_command(cmd: Command) -> Result<(), CliError> {
             file,
             dry_run,
         } => run_tweak_cmd(action, socket, allow_version_mismatch, file, dry_run),
+        Command::DevWeb {
+            port,
+            socket,
+            allow_mutations,
+        } => run_dev_web(port, socket, allow_mutations),
         Command::Mcp {
             socket,
             scene,
@@ -1150,6 +1225,63 @@ pub fn run_command(cmd: Command) -> Result<(), CliError> {
             allow_version_mismatch,
             offline,
         ),
+    }
+}
+
+/// Runs the `dev-web` subcommand: the authenticated loopback WebSocket
+/// bridge to a browser-hosted dev session (ADR-0042). Compiled out unless
+/// the `web-dev-channel` feature is enabled.
+fn run_dev_web(port: u16, socket: Option<String>, allow_mutations: bool) -> Result<(), CliError> {
+    #[cfg(feature = "web-dev-channel")]
+    {
+        let socket_path = socket
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| martensite_host::dev_channel::socket_path_for_session("web"));
+        let config = crate::web_relay::WebRelayConfig {
+            port,
+            socket_path,
+            allow_mutations,
+            token: None,
+        };
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| CliError::ExecutionFailed(format!("tokio runtime init failed: {e}")))?;
+        runtime
+            .block_on(crate::web_relay::serve_dev_web(
+                config,
+                move |ep| {
+                    println!("dev-web relay listening:");
+                    println!("  websocket:  {}", ep.ws_url());
+                    println!("  dev socket: {}", ep.socket_path.display());
+                    println!(
+                        "  mode:       {}",
+                        if allow_mutations {
+                            "read + mutate (--allow-mutations)"
+                        } else {
+                            "read-only (pass --allow-mutations to unlock mutation methods)"
+                        }
+                    );
+                    println!("give the wasm app the bearer token above, e.g. as a `?dev_token=`");
+                    println!(
+                        "page parameter; serve the page separately (e.g. `python3 -m http.server`)"
+                    );
+                },
+                async {
+                    let _ = tokio::signal::ctrl_c().await;
+                    println!("dev-web relay shutting down");
+                },
+            ))
+            .map_err(CliError::from)
+    }
+    #[cfg(not(feature = "web-dev-channel"))]
+    {
+        let _ = (port, socket, allow_mutations);
+        Err(CliError::ExecutionFailed(
+            "`dev-web` requires the `web-dev-channel` feature: rebuild \
+             cargo-martensite with `--features web-dev-channel`"
+                .to_string(),
+        ))
     }
 }
 
@@ -1314,6 +1446,7 @@ fn print_help() {
          lint     Evaluate design standards in offline or dev-channel attach mode\n    \
          inspect  Headless widget inspector attached to running dev app\n    \
          dev      Launch the hot-reload development loop [default: --watch]\n    \
+         dev-web  Authenticated loopback WebSocket bridge to a wasm app's dev channel\n    \
          build    Compile the guest crate as a cdylib\n    \
          tweak    Dump active live tweaks or apply source patches back to files\n    \
          mcp      Serve the Martensite MCP server over stdio\n    \
@@ -1348,10 +1481,13 @@ fn print_help() {
          --all-features          Check with all feature flags enabled (check)\n    \
          --package <P>, -p <P>   Target a specific workspace package (dev, build, check)\n    \
          --watch / --no-watch    Toggle file watching (dev)\n    \
-         --port <N>, -p <N>      Development server port (dev, default {port})\n    \
+         --port <N>, -p <N>      Development server port (dev, default {port};\n    \
+                                dev-web relay, default {web_port})\n    \
+         --allow-mutations       Forward Mutate-classified methods (dev-web)\n    \
          --release               Build in release mode (build)\n",
         version = env!("CARGO_PKG_VERSION"),
         port = DEFAULT_DEV_PORT,
+        web_port = DEFAULT_WEB_RELAY_PORT,
     );
 }
 
@@ -1571,6 +1707,47 @@ mod tests {
             matches!(err, CliError::InvalidArgument { ref flag, ref reason }
             if flag == "--port" && reason.contains("not a valid port"))
         );
+    }
+
+    #[test]
+    fn parse_dev_web_defaults() {
+        let cmd = parse_args(&args(&["martensite", "dev-web"])).unwrap();
+        assert_eq!(
+            cmd,
+            Command::DevWeb {
+                port: DEFAULT_WEB_RELAY_PORT,
+                socket: None,
+                allow_mutations: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_dev_web_flags() {
+        let cmd = parse_args(&args(&[
+            "martensite",
+            "dev-web",
+            "--port",
+            "9999",
+            "--socket",
+            "/tmp/x.sock",
+            "--allow-mutations",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cmd,
+            Command::DevWeb {
+                port: 9999,
+                socket: Some("/tmp/x.sock".to_string()),
+                allow_mutations: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_dev_web_unknown_flag_errors() {
+        let err = parse_args(&args(&["martensite", "dev-web", "--bogus"])).unwrap_err();
+        assert!(matches!(err, CliError::InvalidArgument { ref flag, .. } if flag == "--bogus"));
     }
 
     #[test]

@@ -36,6 +36,10 @@ pub mod scaffold;
 pub mod tweak;
 /// Cryptographically signed updates and self-update command (v0.19.0 §4.3).
 pub mod update;
+/// Authenticated loopback WebSocket bridge to a browser-hosted app's dev
+/// channel (ADR-0042). Only compiled with the `web-dev-channel` feature.
+#[cfg(feature = "web-dev-channel")]
+pub mod web_relay;
 
 pub use check::{run_check, CheckError, CheckOptions, CheckReport, LegResult};
 pub use cli::{parse_args, run_command, CliError, Command, DEFAULT_DEV_PORT};
@@ -73,3 +77,5 @@ pub use update::{
     sign_manifest, verify_asset, verify_manifest, ReleaseAsset, SelfUpdateOptions, UpdateError,
     UpdateManifest, VersionStatus, CURRENT_TARGET, DEFAULT_PUBLIC_KEY_HEX, OFFICIAL_RELEASE_SEED,
 };
+#[cfg(feature = "web-dev-channel")]
+pub use web_relay::{serve_dev_web, RelayEndpoints, RelayError, WebRelayConfig, RELAY_WS_PATH};

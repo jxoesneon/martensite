@@ -19,8 +19,11 @@ pollster = { workspace = true }
 fontdb = { workspace = true, features = ["std", "fontconfig"] }
 martensite-design-lint = { workspace = true }
 martensite-devtools = { workspace = true }
+martensite-host = { workspace = true, optional = true, features = ["dev-channel"] }
 martensite-mcp = { workspace = true }
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake", "connect"], optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"], optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["fast", "std", "rand_core"] }
@@ -29,11 +32,16 @@ sha2 = "0.10"
 hex = "0.4"
 semver = "1.0"
 
-
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
 tempfile = "3.27"
 martensite-host = { workspace = true }
 toml = "0.9"
+
+[features]
+default = []
+## Authenticated loopback WebSocket bridge to a browser-hosted app's dev
+## channel (ADR-0042). Opt-in only; never enabled for release installs.
+web-dev-channel = ["dep:tokio-tungstenite", "dep:futures-util", "dep:martensite-host"]
 
 [lib]
 name = "cargo_martensite"
