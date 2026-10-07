@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.21.0] - 2026-10-05
+## [0.21.0] - 2026-10-07
 
 ### Added — Widget Catalog, Dev Channel, Icons & Internationalization
 
@@ -68,6 +68,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   child's paint pass runs at, so text and strokes magnify with geometry.
   `paint_overlay` now emits for widget-internal children too.
 
+### Added — Web Platform Showcase
+
+- **Dual-target `widget_catalog` for the browser** — the catalog now
+  compiles to `wasm32-unknown-unknown` and runs in a real `<canvas>` via
+  `martensite-web` with the same rail/stage/properties UI as the desktop
+  build: browser event-loop semantics, bundled font assets, and the
+  `WebBackend` decision boundary (WebGPU → WebGL2 → TinySkia CPU raster).
+  A headless-Chromium `browser_gate` keeps the wasm entry honest.
+- **Flutter-grade web accessibility bridge** — `martensite-access::web`
+  projects the AccessKit tree into a positioned, diffed DOM mirror:
+  real `<input>`/`<textarea>` elements for editable text (password
+  inputs never expose values), `aria-owns`/`aria-activedescendant`
+  composites, roving tabindex, trusted-event gating, and opt-in
+  activation.
+- **Authenticated loopback dev-channel bridge (ADR-0042)** —
+  `martensite-devtools::web_channel` (behind `web-dev-channel`) and
+  `cargo martensite dev-web` give wasm apps a WebSocket transport into
+  the Unix-socket dev channel: loopback-only bind, Origin allowlist,
+  per-session bearer token, and read-only method classification with an
+  explicit `--allow-mutations` opt-in. The transport compiles out of
+  public builds.
+- **GitHub Pages showcase site** — `deploy-catalog-pages.yml` renders
+  the `docs/` corpus at the site root via Jekyll and serves the catalog
+  bundle byte-identical under `/catalog/`.
+
 ### Changed
 
 - **Quench theme identity** — iris accent, tinted-steel neutrals, and
@@ -104,6 +129,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Ticket** painted its STUB label over barcode ink; and several
   widgets painted text outside their owning surface — all corrected.
 - **Menu separators/headings** classified as interactive targets.
+- **Wasm-safe clocks** — `ClickTracker` and `RecoveryMachine` now stamp
+  with `web-time`'s `Instant` (a `std::time` re-export on native),
+  removing `Instant::now()` panics on wasm32 without changing native
+  behavior; the wasm catalog arm runs the production dispatch and
+  surface-error paths.
+- **Weather and GraphView catalog rendering**, the Godot adapter's
+  `INode::init`, and platform lint regressions corrected.
 - **CI** — `ci-gate` JSON escaping, update-test downgrade assertion,
   packaging workflow issues, and opt-in VA-API decoding.
 
