@@ -1,0 +1,62 @@
+name: Deploy Web Catalog
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "examples/widget_catalog/**"
+      - "crates/martensite-web/**"
+      - "crates/martensite-*/src/web.rs"
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  deploy-catalog:
+    name: Build & Deploy Widget Catalog
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "pages-wasm32"
+      - name: Build widget catalog (wasm32)
+        run: cargo build -p widget_catalog --target wasm32-unknown-unknown --release
+      # Pinned to the wasm-bindgen crate version in the workspace lockfile
+      # (examples/web convention): the CLI must match the library or glue
+      # generation rejects the descriptor section.
+      - name: Install wasm-bindgen-cli 0.2.128
+        run: cargo install wasm-bindgen-cli --version 0.2.128 --locked
+      - name: Generate wasm-bindgen glue
+        run: |
+          mkdir -p examples/widget_catalog/web/pkg
+          wasm-bindgen --target web \
+            --out-dir examples/widget_catalog/web/pkg \
+            target/wasm32-unknown-unknown/release/widget_catalog.wasm
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: examples/widget_catalog/web/
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
