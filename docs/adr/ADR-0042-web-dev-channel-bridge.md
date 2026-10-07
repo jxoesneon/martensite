@@ -89,7 +89,7 @@ Chosen option: **Option 3**.
     sandboxed local pages), or `http(s)://{127.0.0.1,localhost,[::1]}:*`.
   - `HelloParams` gains an optional `auth_token`; a server configured
     with `DevChannelConfig::with_auth_token` rejects missing/mismatched
-    tokens with a structured `auth_failed` error (-32009). **No
+    tokens with a structured `auth_failed` error (-32002). **No
     configured token ⇒ behavior is unchanged** — existing Unix-socket
     clients keep working unauthenticated.
   - The relay injects the bearer into forwarded `hello` requests, so a
