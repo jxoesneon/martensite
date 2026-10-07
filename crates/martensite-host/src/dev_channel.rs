@@ -123,6 +123,9 @@ pub const ERR_INTERNAL: i32 = -32603;
 pub const ERR_HANDSHAKE_REQUIRED: i32 = -32000;
 /// Custom error code indicating that the client and server versions do not match (Constraint D1).
 pub const ERR_VERSION_MISMATCH: i32 = -32001;
+/// Custom error code indicating that the `Hello` handshake did not present the
+/// bearer token the session requires (ADR-0042 authenticated forwarders).
+pub const ERR_AUTH_FAILED: i32 = -32002;
 
 fn default_jsonrpc_version() -> String {
     "2.0".to_string()
@@ -313,6 +316,7 @@ impl JsonRpcResponse {
 /// let params = HelloParams {
 ///     client_version: "0.19.0".to_string(),
 ///     protocol_version: 1,
+///     auth_token: None,
 /// };
 /// assert_eq!(params.protocol_version, 1);
 /// ```
@@ -323,6 +327,13 @@ pub struct HelloParams {
     pub client_version: String,
     /// Protocol version supported by the client.
     pub protocol_version: u32,
+    /// Optional bearer token presented during the handshake (ADR-0042).
+    ///
+    /// Only inspected when the server was configured with a required token —
+    /// see [`DevChannelConfig::with_auth_token`]. Local Unix-socket sessions
+    /// that configure no token ignore this field entirely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
 }
 
 /// Result returned from a successful `Hello` handshake.
@@ -1178,6 +1189,104 @@ pub struct NodeSetLoadingParams {
     /// clears the override (a widget's own `is_loading` declaration still
     /// applies). Required — its absence fails deserialization.
     pub loading: bool,
+}
+
+/// Read/write classification of a dev-channel RPC method.
+///
+/// Used by authenticated forwarders (ADR-0042) that expose the channel
+/// beyond the raw user-only socket to offer a read-only default mode:
+/// only [`MethodClass::Read`] methods are forwarded unless the operator
+/// explicitly opts in to mutation.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_host::dev_channel::MethodClass;
+///
+/// assert_eq!(MethodClass::Read, MethodClass::Read);
+/// assert_ne!(MethodClass::Read, MethodClass::Mutate);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MethodClass {
+    /// The method only observes session state. It cannot mutate the widget
+    /// tree, reactive signals, theme, inspector state, event routing, source
+    /// files, or the filesystem.
+    Read,
+    /// The method can mutate app/session state or external resources:
+    /// property tweaks, signal writes, dispatched events, accessibility
+    /// actions, theme changes, source sync, artifact files, marker files,
+    /// inspector arming, or clearing captured diagnostics.
+    Mutate,
+}
+
+/// Classification table over the normalized method names recognized by
+/// `process_request_line` (lowercase, with `_`, `-`, and spaces stripped).
+///
+/// Fail-closed rule: any method absent from this table — including every
+/// `handle_custom` extension point — classifies as [`MethodClass::Mutate`].
+const METHOD_CLASSES: &[(&str, MethodClass)] = &[
+    ("hello", MethodClass::Read),
+    ("treesnapshot", MethodClass::Read),
+    ("lintpull", MethodClass::Read),
+    ("lintscene", MethodClass::Read),
+    ("eventledger", MethodClass::Read),
+    // `lint_apply` evaluates fix ops against a *copy* of the scene model;
+    // the live arena is never touched (ADR-0038).
+    ("lintapply", MethodClass::Read),
+    ("treenode", MethodClass::Read),
+    ("layoutchain", MethodClass::Read),
+    ("overflowscan", MethodClass::Read),
+    ("signalslist", MethodClass::Read),
+    ("a11ytree", MethodClass::Read),
+    ("tweakslist", MethodClass::Read),
+    ("themeget", MethodClass::Read),
+    ("auditpaint", MethodClass::Read),
+    ("reloadstatus", MethodClass::Read),
+    ("logs", MethodClass::Read),
+    ("inspectorselect", MethodClass::Mutate),
+    ("signaltrigger", MethodClass::Mutate),
+    ("tweakset", MethodClass::Mutate),
+    ("themeset", MethodClass::Mutate),
+    ("tweakssync", MethodClass::Mutate),
+    ("eventdispatch", MethodClass::Mutate),
+    ("timemachinestep", MethodClass::Mutate),
+    ("capturenode", MethodClass::Mutate),
+    ("signalset", MethodClass::Mutate),
+    // `runtime_errors` accepts `clear: true`, draining captured panic state.
+    ("runtimeerrors", MethodClass::Mutate),
+    ("a11yaction", MethodClass::Mutate),
+    // `hot_reload` drops a `<socket>.reload-request` marker file the dev
+    // coordinator polls for.
+    ("hotreload", MethodClass::Mutate),
+    ("nodesetloading", MethodClass::Mutate),
+];
+
+/// Classifies a dev-channel RPC method name as [`MethodClass::Read`] or
+/// [`MethodClass::Mutate`].
+///
+/// `method` is normalized exactly like the request dispatcher —
+/// lowercased with `_`, `-`, and space removed — so `"TreeSnapshot"`,
+/// `"tree_snapshot"`, and `"tree snapshot"` classify identically.
+/// Unknown methods classify as [`MethodClass::Mutate`] (fail closed).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_host::dev_channel::{method_class, MethodClass};
+///
+/// assert_eq!(method_class("TreeSnapshot"), MethodClass::Read);
+/// assert_eq!(method_class("tree_snapshot"), MethodClass::Read);
+/// assert_eq!(method_class("ThemeSet"), MethodClass::Mutate);
+/// // Unknown/extension methods fail closed.
+/// assert_eq!(method_class("ExecuteArbitraryCode"), MethodClass::Mutate);
+/// ```
+pub fn method_class(method: &str) -> MethodClass {
+    let norm = method.to_ascii_lowercase().replace(['_', '-', ' '], "");
+    METHOD_CLASSES
+        .iter()
+        .find(|(name, _)| *name == norm)
+        .map(|(_, class)| *class)
+        .unwrap_or(MethodClass::Mutate)
 }
 
 /// Trait implemented by application dev tools handlers to service Dev Channel requests.
@@ -2290,6 +2399,13 @@ pub struct DevChannelConfig {
     pub socket_path: Option<PathBuf>,
     /// Request handler implementation.
     pub handler: Arc<dyn DevChannelHandler>,
+    /// Bearer token required in the `Hello` handshake (ADR-0042).
+    ///
+    /// When `Some`, a `Hello` whose [`HelloParams::auth_token`] does not
+    /// match is rejected with [`ERR_AUTH_FAILED`]. `None` (the default)
+    /// preserves the unauthenticated local-socket posture — existing
+    /// clients are unaffected.
+    pub auth_token: Option<String>,
 }
 
 impl Default for DevChannelConfig {
@@ -2314,6 +2430,7 @@ impl DevChannelConfig {
             build_id: None,
             socket_path: None,
             handler: Arc::new(DefaultDevChannelHandler),
+            auth_token: None,
         }
     }
 
@@ -2360,6 +2477,26 @@ impl DevChannelConfig {
     /// ```
     pub fn with_handler(mut self, handler: Arc<dyn DevChannelHandler>) -> Self {
         self.handler = handler;
+        self
+    }
+
+    /// Requires every `Hello` handshake on this server to present `token`
+    /// as [`HelloParams::auth_token`] (ADR-0042).
+    ///
+    /// Intended for transports that forward the channel beyond the raw
+    /// user-only socket — e.g. the loopback WebSocket bridge — so the
+    /// bearer survives translation. Local sessions should leave this unset.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_host::dev_channel::DevChannelConfig;
+    ///
+    /// let config = DevChannelConfig::new().with_auth_token("s3cret");
+    /// assert_eq!(config.auth_token.as_deref(), Some("s3cret"));
+    /// ```
+    pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
+        self.auth_token = Some(token.into());
         self
     }
 
@@ -2466,11 +2603,12 @@ impl DevChannelServer {
         let running_listener = Arc::clone(&running);
         let handler = config.handler;
         let build_id = config.build_id.clone();
+        let auth_token = config.auth_token.clone();
 
         let accept_thread = std::thread::Builder::new()
             .name("martensite-dev-channel-listener".to_string())
             .spawn(move || {
-                run_listener_loop(listener, handler, running_listener, build_id);
+                run_listener_loop(listener, handler, running_listener, build_id, auth_token);
             })?;
 
         Ok(Self {
@@ -2559,6 +2697,7 @@ fn run_listener_loop(
     handler: Arc<dyn DevChannelHandler>,
     running: Arc<AtomicBool>,
     build_id: Option<String>,
+    auth_token: Option<String>,
 ) {
     while running.load(Ordering::SeqCst) {
         match listener.accept() {
@@ -2569,10 +2708,11 @@ fn run_listener_loop(
                 let handler = Arc::clone(&handler);
                 let running_child = Arc::clone(&running);
                 let build_id = build_id.clone();
+                let auth_token = auth_token.clone();
                 let _ = std::thread::Builder::new()
                     .name("martensite-dev-channel-client".to_string())
                     .spawn(move || {
-                        handle_client(stream, handler, running_child, build_id);
+                        handle_client(stream, handler, running_child, build_id, auth_token);
                     });
             }
             Err(_) => {
@@ -2591,6 +2731,7 @@ fn handle_client(
     handler: Arc<dyn DevChannelHandler>,
     running: Arc<AtomicBool>,
     build_id: Option<String>,
+    auth_token: Option<String>,
 ) {
     let read_stream = match stream.try_clone() {
         Ok(s) => s,
@@ -2617,6 +2758,7 @@ fn handle_client(
             &mut handshook,
             handler.as_ref(),
             build_id.as_deref(),
+            auth_token.as_deref(),
         );
 
         let mut resp_json = match serde_json::to_string(&response) {
@@ -2641,11 +2783,16 @@ fn handle_client(
 }
 
 /// Processes a single request line and returns the appropriate JSON-RPC response.
+///
+/// `required_token` is the optional bearer token configured on the server
+/// (ADR-0042): when `Some`, the `Hello` handshake must carry a matching
+/// [`HelloParams::auth_token`] or it is rejected with [`ERR_AUTH_FAILED`].
 pub(crate) fn process_request_line(
     line: &str,
     handshook: &mut bool,
     handler: &dyn DevChannelHandler,
     build_id: Option<&str>,
+    required_token: Option<&str>,
 ) -> JsonRpcResponse {
     let req: JsonRpcRequest = match serde_json::from_str(line) {
         Ok(r) => r,
@@ -2688,6 +2835,24 @@ pub(crate) fn process_request_line(
                     );
                 }
             };
+
+            // Bearer-token gate (ADR-0042): when the session was configured
+            // with a required token, a `Hello` that does not carry a
+            // matching `auth_token` is rejected before any version data is
+            // exchanged. Sessions without a configured token are unaffected.
+            if let Some(expected) = required_token {
+                if params.auth_token.as_deref() != Some(expected) {
+                    *handshook = false;
+                    return JsonRpcResponse::error(
+                        req.id,
+                        ERR_AUTH_FAILED,
+                        "auth_failed: this dev channel session requires a bearer token",
+                        Some(serde_json::json!({
+                            "error_type": "auth_failed",
+                        })),
+                    );
+                }
+            }
 
             // Version handshake verification (Constraint D1).
             let version_matches = params.client_version == MARTENSITE_VERSION;
@@ -3376,10 +3541,48 @@ impl DevChannelClient {
         client_version: &str,
         protocol_version: u32,
     ) -> io::Result<Result<HelloResult, JsonRpcError>> {
+        self.hello_inner(client_version, protocol_version, None)
+    }
+
+    /// Performs the mandatory `Hello` handshake, presenting `token` as the
+    /// [`HelloParams::auth_token`] bearer credential (ADR-0042).
+    ///
+    /// Needed when connecting to a session configured with
+    /// [`DevChannelConfig::with_auth_token`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use martensite_host::dev_channel::{DevChannelClient, MARTENSITE_VERSION, DEV_CHANNEL_PROTOCOL_VERSION};
+    /// use std::path::Path;
+    ///
+    /// let mut client = DevChannelClient::connect(Path::new("/tmp/test.sock")).unwrap();
+    /// let res = client
+    ///     .hello_with_token(MARTENSITE_VERSION, DEV_CHANNEL_PROTOCOL_VERSION, "s3cret")
+    ///     .unwrap();
+    /// ```
+    pub fn hello_with_token(
+        &mut self,
+        client_version: &str,
+        protocol_version: u32,
+        token: &str,
+    ) -> io::Result<Result<HelloResult, JsonRpcError>> {
+        self.hello_inner(client_version, protocol_version, Some(token))
+    }
+
+    /// Shared `Hello` handshake body for [`hello`](Self::hello) and
+    /// [`hello_with_token`](Self::hello_with_token).
+    fn hello_inner(
+        &mut self,
+        client_version: &str,
+        protocol_version: u32,
+        auth_token: Option<&str>,
+    ) -> io::Result<Result<HelloResult, JsonRpcError>> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let params = HelloParams {
             client_version: client_version.to_string(),
             protocol_version,
+            auth_token: auth_token.map(ToString::to_string),
         };
         let req = JsonRpcRequest::new(
             Some(id),
@@ -3526,5 +3729,146 @@ impl DevChannelClient {
                 "response missing both result and error fields",
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a `Hello` request line with an optional `auth_token` param.
+    fn hello_line(token: Option<&str>) -> String {
+        let params = match token {
+            Some(t) => serde_json::json!({
+                "client_version": MARTENSITE_VERSION,
+                "protocol_version": DEV_CHANNEL_PROTOCOL_VERSION,
+                "auth_token": t,
+            }),
+            None => serde_json::json!({
+                "client_version": MARTENSITE_VERSION,
+                "protocol_version": DEV_CHANNEL_PROTOCOL_VERSION,
+            }),
+        };
+        serde_json::to_string(&JsonRpcRequest::new(Some(1), "Hello", params))
+            .expect("hello request serializes")
+    }
+
+    #[test]
+    fn method_class_covers_every_dispatch_arm() {
+        // Every normalized method name the dispatcher matches must appear
+        // in the classification table — an absent entry would fail closed
+        // to Mutate, so also assert the intended class for each arm.
+        for (name, expected) in [
+            ("hello", MethodClass::Read),
+            ("treesnapshot", MethodClass::Read),
+            ("lintpull", MethodClass::Read),
+            ("lintscene", MethodClass::Read),
+            ("eventledger", MethodClass::Read),
+            ("lintapply", MethodClass::Read),
+            ("treenode", MethodClass::Read),
+            ("layoutchain", MethodClass::Read),
+            ("overflowscan", MethodClass::Read),
+            ("signalslist", MethodClass::Read),
+            ("a11ytree", MethodClass::Read),
+            ("tweakslist", MethodClass::Read),
+            ("themeget", MethodClass::Read),
+            ("auditpaint", MethodClass::Read),
+            ("reloadstatus", MethodClass::Read),
+            ("logs", MethodClass::Read),
+            ("inspectorselect", MethodClass::Mutate),
+            ("signaltrigger", MethodClass::Mutate),
+            ("tweakset", MethodClass::Mutate),
+            ("themeset", MethodClass::Mutate),
+            ("tweakssync", MethodClass::Mutate),
+            ("eventdispatch", MethodClass::Mutate),
+            ("timemachinestep", MethodClass::Mutate),
+            ("capturenode", MethodClass::Mutate),
+            ("signalset", MethodClass::Mutate),
+            ("runtimeerrors", MethodClass::Mutate),
+            ("a11yaction", MethodClass::Mutate),
+            ("hotreload", MethodClass::Mutate),
+            ("nodesetloading", MethodClass::Mutate),
+        ] {
+            assert_eq!(method_class(name), expected, "method `{name}`");
+        }
+    }
+
+    #[test]
+    fn method_class_normalizes_and_fails_closed() {
+        assert_eq!(method_class("Tree_Snapshot"), MethodClass::Read);
+        assert_eq!(method_class("TREE-SNAPSHOT"), MethodClass::Read);
+        assert_eq!(method_class("signal set"), MethodClass::Mutate);
+        assert_eq!(method_class("definitely_not_a_method"), MethodClass::Mutate);
+        assert_eq!(method_class(""), MethodClass::Mutate);
+    }
+
+    #[test]
+    fn hello_rejected_without_token_when_required() {
+        let mut handshook = false;
+        let resp = process_request_line(
+            &hello_line(None),
+            &mut handshook,
+            &DefaultDevChannelHandler,
+            None,
+            Some("expected-token"),
+        );
+        let err = resp.error.expect("hello without token must fail");
+        assert_eq!(err.code, ERR_AUTH_FAILED);
+        assert_eq!(
+            err.data.as_ref().and_then(|d| d.get("error_type")),
+            Some(&serde_json::json!("auth_failed"))
+        );
+        assert!(!handshook, "rejected handshake must not mark handshook");
+    }
+
+    #[test]
+    fn hello_rejected_with_wrong_token() {
+        let mut handshook = false;
+        let resp = process_request_line(
+            &hello_line(Some("wrong")),
+            &mut handshook,
+            &DefaultDevChannelHandler,
+            None,
+            Some("expected-token"),
+        );
+        assert_eq!(
+            resp.error.expect("wrong token must fail").code,
+            ERR_AUTH_FAILED
+        );
+        assert!(!handshook);
+    }
+
+    #[test]
+    fn hello_accepted_with_matching_token() {
+        let mut handshook = false;
+        let resp = process_request_line(
+            &hello_line(Some("expected-token")),
+            &mut handshook,
+            &DefaultDevChannelHandler,
+            Some("build_x"),
+            Some("expected-token"),
+        );
+        assert!(resp.error.is_none(), "matching token must pass: {resp:?}");
+        assert!(handshook);
+        let result = resp.result.expect("hello result");
+        assert_eq!(
+            result["protocol_version"],
+            serde_json::json!(DEV_CHANNEL_PROTOCOL_VERSION)
+        );
+        assert_eq!(result["build_id"], serde_json::json!("build_x"));
+    }
+
+    #[test]
+    fn hello_unaffected_when_no_token_configured() {
+        let mut handshook = false;
+        let resp = process_request_line(
+            &hello_line(None),
+            &mut handshook,
+            &DefaultDevChannelHandler,
+            None,
+            None,
+        );
+        assert!(resp.error.is_none(), "no token configured: {resp:?}");
+        assert!(handshook);
     }
 }
