@@ -1,4 +1,4 @@
-name: Deploy Web Catalog
+name: Deploy Docs & Catalog
 
 permissions:
   contents: read
@@ -12,9 +12,11 @@ on:
   push:
     branches: [main]
     paths:
+      - "docs/**"
+      - "docs/site/**"
       - "examples/widget_catalog/**"
-      - "crates/martensite-web/**"
-      - "crates/martensite-*/src/web.rs"
+      - "crates/**/src/web.rs"
+      - ".github/workflows/deploy-catalog-pages.yml"
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,16 +24,9 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  deploy-catalog:
-    name: Build & Deploy Widget Catalog
+  build:
+    name: Build site (docs + catalog)
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -47,16 +42,57 @@ jobs:
       # generation rejects the descriptor section.
       - name: Install wasm-bindgen-cli 0.2.128
         run: cargo install wasm-bindgen-cli --version 0.2.128 --locked
-      - name: Generate wasm-bindgen glue
+      - name: Assemble site staging
         run: |
-          mkdir -p examples/widget_catalog/web/pkg
+          set -euo pipefail
+          # Catalog bundle under staging/catalog/ — index.html loads
+          # ./pkg/*.js and fetches ./assets/fonts/font.ttf relative to
+          # itself, so it works verbatim under /martensite/catalog/.
+          mkdir -p staging/catalog/pkg
           wasm-bindgen --target web \
-            --out-dir examples/widget_catalog/web/pkg \
+            --out-dir staging/catalog/pkg \
             target/wasm32-unknown-unknown/release/widget_catalog.wasm
+          cp examples/widget_catalog/web/index.html staging/catalog/
+          cp -r examples/widget_catalog/web/assets staging/catalog/
+          # Full documentation corpus at /martensite/docs/.
+          cp -r docs staging/docs
+          # docs/site holds this site's own source (landing page, Jekyll
+          # config) — it is copied to the staging root below, not served
+          # under /docs/.
+          rm -rf staging/docs/site
+          # Repo-root documents that docs/ pages link to via "../".
+          cp README.md CONTRIBUTING.md CHANGELOG.md staging/
+          cp LICENSE-MIT LICENSE-APACHE staging/
+          # Landing page + Jekyll config (committed under docs/site/).
+          cp docs/site/index.md staging/index.md
+          cp docs/site/_config.yml staging/_config.yml
       - uses: actions/configure-pages@v5
+      # staging/ — not the repo root — is the Jekyll source so the build
+      # never scans target/ or other non-site trees.
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: staging
+          destination: ./_site
+      # The catalog is excluded in _config.yml and lands here untouched —
+      # wasm/js/ttf ship byte-identical, outside Jekyll's pipeline.
+      - name: Add catalog bundle to site
+        run: cp -r staging/catalog _site/catalog
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: examples/widget_catalog/web/
+          path: ./_site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

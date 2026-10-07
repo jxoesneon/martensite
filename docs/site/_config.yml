@@ -1,0 +1,40 @@
+# Jekyll configuration for the Martensite GitHub Pages site.
+#
+# `actions/jekyll-build-pages` builds this with the github-pages gemset —
+# the theme and every plugin below ship inside it.
+
+theme: jekyll-theme-minimal
+title: Martensite
+description: >-
+  A retained-mode, GPU-accelerated graphical user interface framework
+  for Rust.
+markdown: kramdown
+
+plugins:
+  # The docs corpus carries no YAML front matter — render every .md
+  # file as an HTML page anyway.
+  - jekyll-optional-front-matter
+  # Pull <title> from each page's first heading.
+  - jekyll-titles-from-headings
+  # Rewrite relative .md links to their .html output so the in-repo
+  # cross-references (docs/INDEX.md et al.) keep working on the site.
+  - jekyll-relative-links
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      # Wrap every converted page in the theme's default layout without
+      # needing per-file front matter.
+      layout: default
+      # The corpus contains literal `{{ }}` sequences (JSX samples,
+      # scaffolding placeholders) that Liquid must never evaluate.
+      render_with_liquid: false
+
+# The widget catalog bundle is copied into _site after the Jekyll build
+# so its wasm/js/html ship byte-identical — exclude keeps Jekyll from
+# reading staging/catalog at all. docs/site holds the site's own source
+# files (this config, the landing page) and is not published content.
+exclude:
+  - catalog
+  - docs/site
