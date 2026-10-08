@@ -90,8 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit `--allow-mutations` opt-in. The transport compiles out of
   public builds.
 - **GitHub Pages showcase site** — `deploy-catalog-pages.yml` renders
-  the `docs/` corpus at the site root via Jekyll and serves the catalog
-  bundle byte-identical under `/catalog/`.
+  the `docs/` corpus to `/docs/` via Jekyll behind a landing page at the
+  site root, and serves the catalog bundle byte-identical under
+  `/catalog/`.
 
 ### Changed
 
