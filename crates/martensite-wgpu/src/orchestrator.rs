@@ -1897,7 +1897,7 @@ mod tests {
 
     use super::*;
     use martensite_render::Rect;
-    use std::time::{Duration, Instant};
+    use web_time::{Duration, Instant};
 
     #[test]
     fn new_with_default_config_uses_gpu() {

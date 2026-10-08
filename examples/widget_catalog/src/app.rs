@@ -13,9 +13,10 @@
 //!   and the opt-in `web-dev` feature serves the dev channel over the
 //!   local `cargo martensite dev-web` relay (ADR-0042).
 //!
-//! Wall-clock timing goes through [`now_ms`]: `Instant::now` traps on
-//! wasm, so the web arm reads `performance.now()` instead. Everything
-//! `std::env`/process/thread-bound stays behind the non-wasm cfg.
+//! Wall-clock timing goes through the private `now_ms` helper:
+//! `Instant::now` traps on wasm, so the web arm reads
+//! `performance.now()` instead. Everything `std::env`/process/
+//! thread-bound stays behind the non-wasm cfg.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
