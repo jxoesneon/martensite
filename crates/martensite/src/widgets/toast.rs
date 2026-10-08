@@ -21,7 +21,11 @@
 //! ```
 
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+
+// `web_time::Instant` is `std::time::Instant` on native and
+// `performance.now()` on wasm32 — `std::time::Instant::now` traps in the
+// browser, and `Toast::new` is constructed there by the catalog.
+use web_time::Instant;
 
 use accesskit::Node as AccessKitNode;
 use glam::Vec2;

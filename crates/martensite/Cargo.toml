@@ -50,6 +50,10 @@ kurbo = { workspace = true }
 taffy = { workspace = true }
 parking_lot = { workspace = true }
 unicode-segmentation = { workspace = true }
+# Monotonic clock that is `std::time::Instant` on native and
+# `performance.now()` on wasm32-unknown-unknown (where `Instant::now`
+# traps) — `widgets::toast` stamps toast creation times on both targets.
+web-time = "1.1"
 
 [dev-dependencies]
 martensite-test = { workspace = true }
@@ -61,6 +65,14 @@ tiny-skia = { workspace = true }
 # martensite-host itself carries the dev_channel modules.
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 martensite-host = { workspace = true, optional = true }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+# Carries the `History` web-sys feature into the unified wasm feature
+# set: the widget-catalog `web-dev` channel scrubs `?dev_token=` from
+# `location` via `window.history().replace_state_with_url`, which is
+# feature-gated in web-sys. Features unify across the graph, so
+# declaring it here lights it up for every consumer of the facade.
+web-sys = { workspace = true, features = ["History"] }
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
 martensite-plugin = { workspace = true }

@@ -85,6 +85,13 @@ pub const ERR_UPSTREAM_TIMEOUT: i32 = -32012;
 /// relay synthesizes [`ERR_UPSTREAM_TIMEOUT`].
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Capacity of the wasm-bound frame queue per attached session. Local
+/// tools can burst requests faster than a browser tab drains them; the
+/// bound keeps that back-pressure honest — a full queue fails the
+/// request (or drops the notification) instead of growing memory.
+#[cfg(unix)]
+const UPSTREAM_TX_CAPACITY: usize = 256;
+
 /// Configuration for the `dev-web` relay.
 ///
 /// # Examples
@@ -96,7 +103,7 @@ const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(30);
 /// assert!(!config.allow_mutations);
 /// assert!(config.token.is_none());
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WebRelayConfig {
     /// WebSocket port bound on `127.0.0.1` (`0` asks the OS for a free
     /// port — used by tests).
@@ -110,6 +117,19 @@ pub struct WebRelayConfig {
     /// Bearer token required on the WS upgrade. `None` generates a fresh
     /// per-run token — the supported operator flow.
     pub token: Option<String>,
+}
+
+// `token` is the WS-upgrade bearer — Debug redacts it so a logged
+// config dump cannot leak the credential.
+impl fmt::Debug for WebRelayConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebRelayConfig")
+            .field("port", &self.port)
+            .field("socket_path", &self.socket_path)
+            .field("allow_mutations", &self.allow_mutations)
+            .field("token", &self.token.as_ref().map(|_| "[redacted]"))
+            .finish()
+    }
 }
 
 impl Default for WebRelayConfig {
@@ -138,7 +158,7 @@ impl Default for WebRelayConfig {
 /// };
 /// assert!(ep.ws_url().ends_with("token=deadbeef"));
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RelayEndpoints {
     /// TCP port the WS listener actually bound (post-`0` resolution).
     pub port: u16,
@@ -146,6 +166,19 @@ pub struct RelayEndpoints {
     pub socket_path: PathBuf,
     /// The bearer token a wasm app must present as `?token=`.
     pub token: String,
+}
+
+// `token` is the WS-upgrade bearer — Debug redacts it so a logged
+// endpoints dump cannot leak the credential. `ws_url()` still returns
+// the real dial URL; only the Debug surface is scrubbed.
+impl fmt::Debug for RelayEndpoints {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RelayEndpoints")
+            .field("port", &self.port)
+            .field("socket_path", &self.socket_path)
+            .field("token", &"[redacted]")
+            .finish()
+    }
 }
 
 impl RelayEndpoints {
@@ -251,8 +284,9 @@ fn origin_allowed(origin: Option<&str>) -> bool {
 /// plus the request-correlation table local tools' requests wait on.
 #[cfg(unix)]
 struct Upstream {
-    /// Lines to transmit as WS text frames.
-    tx: mpsc::UnboundedSender<Message>,
+    /// Lines to transmit as WS text frames. Bounded: a flooded queue
+    /// fails the waiter rather than buffering unboundedly.
+    tx: mpsc::Sender<Message>,
     /// Relay-assigned request id → waiter for the response line.
     pending: Mutex<HashMap<u64, oneshot::Sender<String>>>,
     /// Relay-assigned request id counter (clients' ids collide across
@@ -449,7 +483,7 @@ async fn accept_ws_session(
     .map_err(|_| ())?;
 
     let (mut sink, mut read) = ws.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let (tx, mut rx) = mpsc::channel::<Message>(UPSTREAM_TX_CAPACITY);
     let upstream = Arc::new(Upstream {
         tx,
         pending: Mutex::new(HashMap::new()),
@@ -462,7 +496,7 @@ async fn accept_ws_session(
         .expect("upstream mutex")
         .replace(Arc::clone(&upstream))
     {
-        let _ = old.tx.send(Message::Close(None));
+        let _ = old.tx.try_send(Message::Close(None));
         old.fail_all_pending();
     }
 
@@ -632,7 +666,13 @@ async fn route_line(
             .lock()
             .expect("upstream pending mutex")
             .insert(up_id, tx);
-        if up.tx.send(Message::text(req.to_string())).is_err() {
+        if up.tx.try_send(Message::text(req.to_string())).is_err() {
+            // Queue full or session gone: fail this request and drop its
+            // waiter instead of buffering unboundedly.
+            eprintln!(
+                "dev-web relay: dropping `{method}` — wasm-bound queue is full \
+                 or the session detached"
+            );
             up.pending
                 .lock()
                 .expect("upstream pending mutex")
@@ -671,8 +711,14 @@ async fn route_line(
             }
         }
     } else {
-        // Notification: forwarded without a waiter.
-        let _ = up.tx.send(Message::text(req.to_string()));
+        // Notification: forwarded without a waiter — a full queue drops
+        // it (no `id` exists to answer with an error).
+        if up.tx.try_send(Message::text(req.to_string())).is_err() {
+            eprintln!(
+                "dev-web relay: dropping `{method}` notification — wasm-bound queue \
+                 is full or the session detached"
+            );
+        }
         None
     }
 }
@@ -715,5 +761,54 @@ mod tests {
         assert_eq!(a.len(), 64);
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);
+    }
+
+    /// Extracts the quoted entries of a `&[..]` table from `src` between
+    /// `marker` (the table's declaration text) and the closing `];`.
+    fn table_entries(src: &str, marker: &str) -> Vec<String> {
+        let start = src
+            .find(marker)
+            .unwrap_or_else(|| panic!("`{marker}` not found in source"));
+        let end = src[start..]
+            .find("];")
+            .map(|i| start + i)
+            .expect("table terminator");
+        src[start..end]
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Method-table parity gate for the wasm leg (ADR-0042): the served
+    /// method set a `WebDevChannel` consumer dispatches —
+    /// `martensite_devtools::web_channel::DEV_CHANNEL_METHODS`, consumed
+    /// by `examples/widget_catalog::web_dev` — must equal the host
+    /// dispatcher's `METHOD_CLASSES` key set minus `hello` (which the
+    /// leg owns at the handshake gate). Neither table is visible to the
+    /// other side as code (`METHOD_CLASSES` is private, `web_channel` is
+    /// wasm-gated), so the comparison runs over source text — the one
+    /// surface where both compile together. A host-side RPC added
+    /// without updating the wasm list fails here, which is the signal
+    /// that the web leg would silently `-32601` the new method.
+    #[test]
+    fn wasm_dev_channel_method_table_matches_host() {
+        const HOST_SRC: &str = include_str!("../../../crates/martensite-host/src/dev_channel.rs");
+        const WASM_SRC: &str =
+            include_str!("../../../crates/martensite-devtools/src/web_channel.rs");
+        let host: std::collections::BTreeSet<String> =
+            table_entries(HOST_SRC, "const METHOD_CLASSES")
+                .into_iter()
+                .filter(|m| m != "hello")
+                .collect();
+        let wasm: std::collections::BTreeSet<String> =
+            table_entries(WASM_SRC, "pub const DEV_CHANNEL_METHODS")
+                .into_iter()
+                .collect();
+        assert_eq!(
+            wasm, host,
+            "wasm dev-channel method table drifted from the host METHOD_CLASSES key set"
+        );
     }
 }

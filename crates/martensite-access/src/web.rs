@@ -1591,13 +1591,7 @@ impl Inner {
     fn ingest(&mut self, update: &TreeUpdate) -> Result<Option<HtmlElement>, WebA11yError> {
         if !self.enabled {
             match &mut self.pending {
-                Some(p) => {
-                    p.nodes.extend(update.nodes.iter().cloned());
-                    if update.tree.is_some() {
-                        p.tree = update.tree.clone();
-                    }
-                    p.focus = update.focus;
-                }
+                Some(p) => merge_pending(p, update),
                 None => self.pending = Some(update.clone()),
             }
             return Ok(None);
@@ -1674,6 +1668,23 @@ impl Inner {
         // Phase 2: rewire parent→child edges and record each child's
         // parent for roving/managed-group and positioning decisions.
         for (parent_id, children) in &new_children {
+            // Steady state: the parent's applied child list already
+            // matches — order included — and every child still records
+            // this parent. `append_child` is a DOM move even for an
+            // already-correct edge, so per-update churn skips rewiring
+            // entirely. A child rebuilt in Phase 1 reports `parent:
+            // None` (its fresh element is detached) and still forces
+            // the loop below to run.
+            if self.entries.get(parent_id).is_some_and(|e| {
+                e.children == *children
+                    && children.iter().all(|c| {
+                        self.entries
+                            .get(c)
+                            .is_some_and(|ce| ce.parent == Some(*parent_id))
+                    })
+            }) {
+                continue;
+            }
             for &child_id in children {
                 if let Some(child_entry) = self.entries.get_mut(&child_id) {
                     child_entry.parent = Some(*parent_id);
@@ -2059,6 +2070,21 @@ impl Inner {
     }
 }
 
+/// Merges `update` into the disabled bridge's `pending` accumulator,
+/// last-write-wins per [`NodeId`]: a node present in `update` replaces
+/// any earlier pending copy, and the latest `tree`/`focus` win. Without
+/// the dedup a bridge that stays disabled would accumulate a duplicate
+/// node entry on every update forever.
+fn merge_pending(pending: &mut TreeUpdate, update: &TreeUpdate) {
+    let incoming: HashSet<NodeId> = update.nodes.iter().map(|(id, _)| *id).collect();
+    pending.nodes.retain(|(id, _)| !incoming.contains(id));
+    pending.nodes.extend(update.nodes.iter().cloned());
+    if update.tree.is_some() {
+        pending.tree = update.tree.clone();
+    }
+    pending.focus = update.focus;
+}
+
 /// Writes `text` into an `aria-live` element, toggling a trailing
 /// zero-width space on repeated identical text so *every* call produces
 /// a DOM text mutation (a fixed suffix would defeat the screen reader's
@@ -2310,21 +2336,25 @@ mod tests {
         };
         u1.nodes[0].1.set_label("first");
         let mut u2 = TreeUpdate {
-            nodes: vec![(NodeId(2), node(Role::CheckBox))],
+            nodes: vec![
+                (NodeId(1), node(Role::Button)),
+                (NodeId(2), node(Role::CheckBox)),
+            ],
             tree: None,
             tree_id: TreeId::ROOT,
             focus: NodeId(2),
         };
-        u2.nodes[0].1.set_label("second");
+        u2.nodes[0].1.set_label("first-v2");
+        u2.nodes[1].1.set_label("second");
         let mut pending = Some(u1);
-        let p = pending.as_mut().unwrap();
-        p.nodes.extend(u2.nodes.iter().cloned());
-        if u2.tree.is_some() {
-            p.tree = u2.tree.clone();
-        }
-        p.focus = u2.focus;
+        merge_pending(pending.as_mut().unwrap(), &u2);
         let p = pending.unwrap();
+        // NodeId(1) is replaced in place, not duplicated — a disabled
+        // bridge cannot grow an unbounded duplicate backlog.
         assert_eq!(p.nodes.len(), 2);
+        assert_eq!(p.nodes.iter().filter(|(id, _)| *id == NodeId(1)).count(), 1);
+        let node1 = &p.nodes[0].1;
+        assert_eq!(node1.label(), Some("first-v2"));
         assert_eq!(p.focus, NodeId(2));
         assert_eq!(p.tree.unwrap().root, NodeId(1));
     }

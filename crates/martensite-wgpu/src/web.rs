@@ -78,7 +78,11 @@ use crate::device::{GpuContext, GpuContextError};
 /// assert!(WebBackend::WebGpu.supports_vello());
 /// assert!(!WebBackend::WebGl2.supports_vello());
 /// ```
+///
+/// `non_exhaustive` so a future browser backend (e.g. a WebGPU-on-WebGL
+/// shim) can be added pre-1.0 without breaking downstream `match`es.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum WebBackend {
     /// The browser's native WebGPU API (`navigator.gpu`). Compute shaders
     /// are available, so the Vello renderer can run.

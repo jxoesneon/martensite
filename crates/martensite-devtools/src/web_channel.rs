@@ -46,6 +46,61 @@ pub const ERR_AUTH_FAILED: i32 = -32002;
 /// `-32700`.
 pub const ERR_PARSE: i32 = -32700;
 
+/// The normalized method names a `WebDevChannel` consumer's
+/// post-handshake dispatcher serves — the canonical parity list for the
+/// wasm leg's method table.
+///
+/// Method names are normalized exactly like the host dispatcher:
+/// lowercased with `_`, `-`, and space stripped (`"TreeSnapshot"` →
+/// `"treesnapshot"`). This is the wasm-side mirror of
+/// `martensite-host`'s `METHOD_CLASSES` key set minus `"hello"`, which
+/// the leg itself owns at the handshake gate. `METHOD_CLASSES` is
+/// private and this module is wasm-gated, so set parity is enforced
+/// where both surfaces are visible: the
+/// `wasm_dev_channel_method_table_matches_host` test in
+/// `cargo-martensite`'s `web_relay` module (host side) extracts both
+/// tables from source and asserts they are equal — adding an RPC to the
+/// host without updating this list fails that test.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_devtools::web_channel::DEV_CHANNEL_METHODS;
+///
+/// assert!(DEV_CHANNEL_METHODS.contains(&"treesnapshot"));
+/// assert!(!DEV_CHANNEL_METHODS.contains(&"hello"));
+/// ```
+pub const DEV_CHANNEL_METHODS: &[&str] = &[
+    "a11yaction",
+    "a11ytree",
+    "auditpaint",
+    "capturenode",
+    "eventdispatch",
+    "eventledger",
+    "hotreload",
+    "inspectorselect",
+    "layoutchain",
+    "lintapply",
+    "lintpull",
+    "lintscene",
+    "logs",
+    "nodesetloading",
+    "overflowscan",
+    "reloadstatus",
+    "runtimeerrors",
+    "signalset",
+    "signalslist",
+    "signaltrigger",
+    "themeget",
+    "themeset",
+    "timemachinestep",
+    "treenode",
+    "treesnapshot",
+    "tweakset",
+    "tweakslist",
+    "tweakssync",
+];
+
 /// Builds the relay WebSocket URL for `port`, embedding the operator's
 /// per-run bearer `token` as the `token` query parameter.
 ///
@@ -111,7 +166,7 @@ impl std::error::Error for WebChannelError {}
 ///     .with_required_token("per-run-bearer");
 /// assert_eq!(opts.required_token.as_deref(), Some("per-run-bearer"));
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WebChannelOptions {
     /// Version string echoed in `HelloResult.server_version` and enforced
     /// against the client's `client_version` (Constraint D1). Defaults to
@@ -128,6 +183,22 @@ pub struct WebChannelOptions {
     pub required_token: Option<String>,
     /// Optional build/session identifier echoed in `HelloResult.build_id`.
     pub build_id: Option<String>,
+}
+
+// `required_token` is the bearer — Debug redacts it so a logged options
+// dump cannot leak the credential.
+impl std::fmt::Debug for WebChannelOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebChannelOptions")
+            .field("server_version", &self.server_version)
+            .field("protocol_version", &self.protocol_version)
+            .field(
+                "required_token",
+                &self.required_token.as_ref().map(|_| "[redacted]"),
+            )
+            .field("build_id", &self.build_id)
+            .finish()
+    }
 }
 
 impl Default for WebChannelOptions {
@@ -309,8 +380,12 @@ pub struct WebDevChannel {
 
 impl std::fmt::Debug for WebDevChannel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `ws.url()` embeds `?token=<bearer>` — print host/path only so a
+        // Debug dump cannot leak the credential.
+        let url = self.ws.url();
+        let safe_url = url.split(['?', '#']).next().unwrap_or(&url);
         f.debug_struct("WebDevChannel")
-            .field("url", &self.ws.url())
+            .field("url", &safe_url)
             .field("closed", &self.closed.get())
             .finish()
     }
@@ -396,9 +471,11 @@ impl WebDevChannel {
                     let is_hello = !handshook.get() || line_is_hello(line);
                     let reply = if is_hello {
                         let (resp, ok) = evaluate_hello(line, &opts);
-                        if ok {
-                            handshook.set(true);
-                        }
+                        // Host parity (dev_channel.rs): a *failed* re-`Hello`
+                        // — bad bearer or version mismatch on an already-
+                        // handshook leg — revokes the handshake, so the next
+                        // non-`Hello` line answers `handshake_required` again.
+                        handshook.set(ok);
                         resp
                     } else {
                         (handler.borrow_mut())(line)

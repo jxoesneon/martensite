@@ -46,11 +46,12 @@
 use std::sync::{Arc, Mutex};
 
 use martensite::core::WidgetArena;
-use martensite::devtools::dev_session::{DevSession, SignalAdapter};
+use martensite::devtools::dev_session::{DevSession, SessionResult, SignalAdapter};
 use martensite::devtools::web_channel::{
-    relay_url, WebChannelOptions, WebDevChannel, DEFAULT_RELAY_PORT,
+    relay_url, WebChannelOptions, WebDevChannel, DEFAULT_RELAY_PORT, DEV_CHANNEL_METHODS,
 };
 use martensite::focus::FocusManager;
+use wasm_bindgen::JsValue;
 
 /// Reads `dev_token` from `location.search`. `None` disables the web
 /// dev channel — without the per-run token the relay would refuse the
@@ -68,6 +69,37 @@ fn dev_token() -> Option<String> {
         .filter(|token| !token.is_empty())
 }
 
+/// Strips `dev_token` from the address bar after [`dev_token`] has read
+/// it — the bearer must not linger in `location.href` or the history
+/// entry, where a copied or shared URL would leak it. Other query
+/// parameters and the fragment are preserved. Best-effort: any DOM/JS
+/// failure leaves the URL untouched rather than panicking.
+fn scrub_dev_token_param() {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let location = window.location();
+    let (Ok(search), Ok(pathname), Ok(hash)) =
+        (location.search(), location.pathname(), location.hash())
+    else {
+        return;
+    };
+    let Ok(params) = web_sys::UrlSearchParams::new_with_str(&search) else {
+        return;
+    };
+    params.delete("dev_token");
+    let query: String = params.to_string().into();
+    // A relative URL keeps `replaceState` same-origin by construction.
+    let scrubbed = if query.is_empty() {
+        format!("{pathname}{hash}")
+    } else {
+        format!("{pathname}?{query}{hash}")
+    };
+    if let Ok(history) = window.history() {
+        let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&scrubbed));
+    }
+}
+
 /// Opens the WebSocket leg to `cargo martensite dev-web` and wires the
 /// dev-session dispatcher to it.
 ///
@@ -82,6 +114,11 @@ pub(crate) fn serve(
     signal_adapters: Vec<SignalAdapter>,
 ) -> Option<(Arc<DevSession>, WebDevChannel)> {
     let token = dev_token()?;
+    scrub_dev_token_param();
+    debug_assert!(
+        dispatch_covers_method_table(),
+        "web dev-channel DISPATCH drifted from DEV_CHANNEL_METHODS"
+    );
     let session = Arc::new(DevSession::with_arena(arena));
     session.attach_focus_manager(focus);
     session.set_log_ring(log_ring);
@@ -113,6 +150,62 @@ pub(crate) fn serve(
             None
         }
     }
+}
+
+/// A [`DevSession`] method handler: takes the raw `params` JSON and
+/// answers with the result value or an error string.
+type SessionMethod = fn(&DevSession, &serde_json::Value) -> SessionResult;
+
+/// Normalized method name → [`DevSession`] call. One entry per name in
+/// [`DEV_CHANNEL_METHODS`] — the canonical method list the wasm leg
+/// shares with the host dispatcher; `serve()` debug-asserts the two
+/// tables stay the same set, and the
+/// `wasm_dev_channel_method_table_matches_host` test in
+/// `cargo-martensite`'s `web_relay` module fails a host-side RPC added
+/// without updating the list (which is what would otherwise silently
+/// `-32601` on the web).
+const DISPATCH: &[(&str, SessionMethod)] = &[
+    ("a11yaction", DevSession::a11y_action),
+    ("a11ytree", DevSession::a11y_tree),
+    ("auditpaint", DevSession::audit_paint),
+    ("capturenode", DevSession::capture_node),
+    ("eventdispatch", DevSession::event_dispatch),
+    ("eventledger", DevSession::event_ledger),
+    ("hotreload", DevSession::hot_reload),
+    ("inspectorselect", DevSession::inspector_select),
+    ("layoutchain", DevSession::layout_chain),
+    ("lintapply", DevSession::lint_apply),
+    ("lintpull", DevSession::lint_pull),
+    ("lintscene", DevSession::lint_pull),
+    ("logs", DevSession::logs),
+    ("nodesetloading", DevSession::node_set_loading),
+    ("overflowscan", DevSession::overflow_scan),
+    ("reloadstatus", DevSession::reload_status),
+    ("runtimeerrors", DevSession::runtime_errors),
+    ("signalset", DevSession::signal_set),
+    ("signalslist", DevSession::signals_list),
+    ("signaltrigger", DevSession::signal_trigger),
+    ("themeget", DevSession::theme_get),
+    ("themeset", DevSession::theme_set),
+    ("timemachinestep", DevSession::timemachine_step),
+    ("treenode", DevSession::tree_node),
+    ("treesnapshot", DevSession::tree_snapshot),
+    ("tweakset", DevSession::tweak_set),
+    ("tweakslist", DevSession::tweaks_list),
+    ("tweakssync", DevSession::tweaks_sync),
+];
+
+/// `true` when [`DISPATCH`] and [`DEV_CHANNEL_METHODS`] name the same
+/// method set — checked in [`serve`] under `debug_assertions` so a
+/// debug wasm build fails loudly at startup on drift.
+#[cfg(debug_assertions)]
+fn dispatch_covers_method_table() -> bool {
+    DEV_CHANNEL_METHODS
+        .iter()
+        .all(|m| DISPATCH.iter().any(|(name, _)| name == m))
+        && DISPATCH
+            .iter()
+            .all(|(name, _)| DEV_CHANNEL_METHODS.contains(name))
 }
 
 /// Post-handshake JSON-RPC dispatch onto [`DevSession`].
@@ -148,39 +241,12 @@ fn process_request_line(session: &DevSession, line: &str) -> Option<String> {
         .unwrap_or(serde_json::Value::Null);
 
     // The transport leg owns `hello` (it stays reachable after the
-    // handshake, matching the host dispatcher); route it anyway for
-    // defense in depth — it can only arrive here if the leg's gate
-    // already answered it.
-    let result = match method.as_str() {
-        "treesnapshot" => Some(session.tree_snapshot(&params)),
-        "lintpull" | "lintscene" => Some(session.lint_pull(&params)),
-        "eventledger" => Some(session.event_ledger(&params)),
-        "inspectorselect" => Some(session.inspector_select(&params)),
-        "lintapply" => Some(session.lint_apply(&params)),
-        "treenode" => Some(session.tree_node(&params)),
-        "layoutchain" => Some(session.layout_chain(&params)),
-        "overflowscan" => Some(session.overflow_scan(&params)),
-        "signalslist" => Some(session.signals_list(&params)),
-        "signaltrigger" => Some(session.signal_trigger(&params)),
-        "signalset" => Some(session.signal_set(&params)),
-        "a11ytree" => Some(session.a11y_tree(&params)),
-        "a11yaction" => Some(session.a11y_action(&params)),
-        "tweakslist" => Some(session.tweaks_list(&params)),
-        "tweakset" => Some(session.tweak_set(&params)),
-        "tweakssync" => Some(session.tweaks_sync(&params)),
-        "themeset" => Some(session.theme_set(&params)),
-        "themeget" => Some(session.theme_get(&params)),
-        "eventdispatch" => Some(session.event_dispatch(&params)),
-        "timemachinestep" => Some(session.timemachine_step(&params)),
-        "capturenode" => Some(session.capture_node(&params)),
-        "auditpaint" => Some(session.audit_paint(&params)),
-        "reloadstatus" => Some(session.reload_status(&params)),
-        "runtimeerrors" => Some(session.runtime_errors(&params)),
-        "logs" => Some(session.logs(&params)),
-        "hotreload" => Some(session.hot_reload(&params)),
-        "nodesetloading" => Some(session.node_set_loading(&params)),
-        _ => None,
-    };
+    // handshake, matching the host dispatcher); it never reaches this
+    // table — `DEV_CHANNEL_METHODS` deliberately omits it.
+    let result = DISPATCH
+        .iter()
+        .find(|(name, _)| *name == method)
+        .map(|(_, handler)| handler(session, &params));
 
     match result {
         // Notifications carry no `id`; method-not-found keeps the
