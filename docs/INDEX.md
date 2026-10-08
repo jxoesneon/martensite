@@ -72,7 +72,7 @@ Each ADR records a binding architectural decision in MADR 3.0.0 format.
 - [ADR-0031](adr/ADR-0031-benchmark-baseline-policy.md) — Benchmark Baseline Policy
 - [ADR-0032](adr/ADR-0032-documentation-completeness.md) — Documentation Completeness
 
-### Milestone & DX Decisions (ADR 0033–0039)
+### Milestone & DX Decisions (ADR 0033–0042)
 - [ADR-0033](adr/ADR-0033-host-mode-external-surface-embedding.md) — Host-Mode External Surface Embedding
 - [ADR-0034](adr/ADR-0034-bevy-rendercreation-manual.md) — Bevy Host-Mode Device Injection via `RenderCreation::Manual`
 - [ADR-0035](adr/ADR-0035-godot-readback-honesty.md) — Godot Readback Honesty — Two Tiers, No Zero-Copy Claim
@@ -80,6 +80,9 @@ Each ADR records a binding architectural decision in MADR 3.0.0 format.
 - [ADR-0037](adr/ADR-0037-hot-reload-contract.md) — Hot-Reload Contract — cdylib Swap Only, No Code Patching
 - [ADR-0038](adr/ADR-0038-dev-channel.md) — Dev Channel — Narrow, Read-Only, Version-Handshook IPC
 - [ADR-0039](adr/ADR-0039-mcp-server-for-ai-assisted-development.md) — First-Party Model Context Protocol (MCP) Server for AI-Assisted Development
+- [ADR-0040](adr/ADR-0040-native-loading-state.md) — Native Loading State — Widget-Declared, Arena-Enforced Skeleton Mode
+- [ADR-0041](adr/ADR-0041-native-icon-morphing.md) — Native Icon Morphing — Facade-Private Engine, `MorphIcon` Widget
+- [ADR-0042](adr/ADR-0042-web-dev-channel-bridge.md) — Authenticated Loopback WebSocket Bridge for the Dev Channel
 
 ---
 

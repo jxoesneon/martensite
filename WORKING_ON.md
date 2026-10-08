@@ -9,15 +9,16 @@ Since that prep, the web-showcase workstream also landed on main
 (positioned `WebA11yBridge` DOM mirror at `0bd0452`, authenticated
 loopback `dev-web` relay per ADR-0042 at `98ca4e1`/`6aabe15`/`a1b5ebe`/
 `f9fcc3f`, dual-target wasm32 `widget_catalog` at `0e2db90`, wasm32
-target-checks + `Deploy Web Catalog` Pages workflow at `a418196`) and
+target-checks + `Deploy Docs & Catalog` Pages workflow at `a418196`,
+expanded to the docs corpus at `bb81005`) and
 ships under the same pending tag — spec:
 `docs/milestones/v0.21.0-web-showcase.md`.
 Pending: CI green on main, then tag v0.21.0 to trigger the automated
-release and publish pipeline. The `Deploy Web Catalog` workflow stages
-the wasm artifact on qualifying pushes but only publishes once GitHub
-Pages is enabled for the repository; the catalog browser gate
-(`MARTENSITE_WEB_BROWSER=1`, `#[ignore]`) is local/self-hosted and
-passed locally — it does not run in PR CI.
+release and publish pipeline. The `Deploy Docs & Catalog` workflow
+stages the docs + wasm artifact on qualifying pushes but only
+publishes once GitHub Pages is enabled for the repository; the catalog
+browser gate (`MARTENSITE_WEB_BROWSER=1`, `#[ignore]`) is
+local/self-hosted and passed locally — it does not run in PR CI.
 
 ## Active Milestone Plan (v0.20.0 → v0.21.0 → v1.0.0-rc.N → v1.0.0)
 
@@ -179,7 +180,8 @@ no API changes land between `v1.0.0-rc.1` and the stable tag.
   `6aabe15`, `a1b5ebe`, `f9fcc3f`), dual-target wasm32 catalog with
   shared `App`/`AccessKitAdapter` and `web-dev` inspector leg
   (`0e2db90`), and wasm32 `target-checks` coverage plus the
-  `Deploy Web Catalog` Pages workflow (`a418196`).
+  `Deploy Docs & Catalog` Pages workflow (`a418196`, docs corpus added
+  at `bb81005`).
   Spec (web showcase): `docs/milestones/v0.21.0-web-showcase.md`;
   remainder per CHANGELOG §0.21.0.
   **Status: IMPLEMENTED ON MAIN, PENDING TAG** — browser gate PASS
